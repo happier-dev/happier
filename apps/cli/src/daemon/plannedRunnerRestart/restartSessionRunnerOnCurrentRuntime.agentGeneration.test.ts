@@ -9,6 +9,7 @@ import {
   restartAllSessionRunnersOnCurrentRuntime,
   restartSessionRunnerOnCurrentRuntime,
 } from './restartSessionRunnerOnCurrentRuntime';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const CURRENT_CLI_IDENTITY = {
   status: 'known',
@@ -19,6 +20,7 @@ const CURRENT_CLI_IDENTITY = {
 
 function trackedRunner(): TrackedSession {
   return {
+    trackingKey: legacyPidSessionTrackingKey(4242),
     startedBy: 'daemon',
     pid: 4242,
     happySessionId: 'sess-1',

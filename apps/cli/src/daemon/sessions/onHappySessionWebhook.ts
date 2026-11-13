@@ -28,7 +28,6 @@ import {
   isPidPlaceholderSessionId,
   listSessionMarkers,
   promoteSessionMarkerPid,
-  removeSessionMarkerIfOwned,
   writeSessionMarker,
 } from '../sessionRegistry';
 import { buildSessionRunnerRespawnDescriptorV1FromSpawnOptions } from '../processSupervision/sessionRunnerRespawnDescriptor';
@@ -41,6 +40,15 @@ import type {
   ProcessCensusProcessFact,
 } from '@/processes/census/processFacts';
 import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
+import {
+  isCurrentTrackedSession,
+  mintSessionTrackingKey,
+  trackSession,
+  trackedSessionForSingleSessionProcess,
+  untrackSession,
+  type SessionTrackingKey,
+  type TrackedSessionMap,
+} from '@/daemon/sessions/sessionTrackingKey';
 
 export function resolveSessionWebhookPath(
   inputPath: string,
@@ -120,18 +128,18 @@ function adoptReportedSessionIdentity(
 
 /** Foreground identity registration is shared by reports and pre-runtime materialization. */
 function registerExternalTrackedSession(input: Readonly<{
-  pidToTrackedSession: Map<number, TrackedSession>;
+  trackedSessionsByKey: TrackedSessionMap;
   pid: number;
   sessionId: string;
   metadata: Metadata;
 }>): TrackedSession {
-  const existing = input.pidToTrackedSession.get(input.pid);
+  const existing = trackedSessionForSingleSessionProcess(input.trackedSessionsByKey, input.pid);
   if (existing) return existing;
   const path = resolveSessionWebhookPath(input.metadata.path);
   const metadata = path === input.metadata.path ? input.metadata : { ...input.metadata, path };
-  const tracked: TrackedSession = { startedBy: 'happy directly - likely by user from terminal',
+  const tracked: TrackedSession = { trackingKey: mintSessionTrackingKey(), startedBy: 'happy directly - likely by user from terminal',
     happySessionId: input.sessionId, happySessionMetadataFromLocalWebhook: metadata, pid: input.pid };
-  input.pidToTrackedSession.set(input.pid, tracked);
+  trackSession(input.trackedSessionsByKey, tracked);
   invalidateProcessLaunchDiscovery();
   return tracked;
 }
@@ -153,23 +161,23 @@ async function persistForegroundSessionMarker(input: Readonly<{
   if (processStartTimeMs !== undefined && processCommandHash) adoptTrackedSessionRunnerIdentity(input.tracked, {
     pid: input.tracked.pid, processStartTimeMs, processCommandHash, processCommand,
   });
-  await (input.writeSessionMarkerFn ?? writeSessionMarker)({ pid: input.tracked.pid, happySessionId: input.sessionId,
+  await (input.writeSessionMarkerFn ?? writeSessionMarker)({ trackingKey: input.tracked.trackingKey, pid: input.tracked.pid, happySessionId: input.sessionId,
     startedBy: input.metadata.startedBy ?? 'terminal', cwd: input.metadata.path, metadata: input.metadata,
     processCommand, processCommandHash, processStartTimeMs });
 }
 
 /** Registers foreground process custody through the same tracker and marker owner as ordinary reports. */
 export async function registerExternalSessionIdentity(input: Readonly<{
-  pidToTrackedSession: Map<number, TrackedSession>;
+  trackedSessionsByKey: TrackedSessionMap;
   pid: number;
   sessionId: string;
   metadata: Metadata;
 }>): Promise<TrackedSession | null> {
-  const existing = input.pidToTrackedSession.get(input.pid);
+  const existing = trackedSessionForSingleSessionProcess(input.trackedSessionsByKey, input.pid);
   const tracked = registerExternalTrackedSession(input);
   const custody = tracked.reportMarkerCustody ??= { pending: Promise.resolve(), retiring: false };
   if (custody.retiring) return null;
-  const isCurrent = () => input.pidToTrackedSession.get(input.pid) === tracked && !custody.retiring;
+  const isCurrent = () => isCurrentTrackedSession(input.trackedSessionsByKey, tracked) && !custody.retiring;
   let accepted = false;
   // Register custody before the first OS await: exit retirement must include
   // this pending observation, not allow it to publish a new owner afterwards.
@@ -202,7 +210,7 @@ export async function registerExternalSessionIdentity(input: Readonly<{
       // Drop only this attempt's provisional record. An ordinary report can
       // adopt the same tracker while OS I/O is pending; its custody is retained.
       if (!existing && isCurrent() && tracked.sessionMarkerPersistence === marker && !accepted) {
-        input.pidToTrackedSession.delete(input.pid);
+        untrackSession(input.trackedSessionsByKey, tracked);
       }
     }
   };
@@ -217,22 +225,22 @@ function didDaemonWebhookPidTimeOut(
   input: Readonly<{
     pid: number;
     metadata: Metadata;
-    pidToTrackedSession: Map<number, TrackedSession>;
+    trackedSessionsByKey: TrackedSessionMap;
   }>,
 ): boolean {
   if (input.metadata.startedBy !== 'daemon') return false;
-  return didSessionWebhookTimeout(input.pidToTrackedSession.get(input.pid));
+  return didSessionWebhookTimeout(trackedSessionForSingleSessionProcess(input.trackedSessionsByKey, input.pid));
 }
 
 function didDaemonWebhookParentTimeOut(
   input: Readonly<{
     parentPid: number | null;
     metadata: Metadata;
-    pidToTrackedSession: Map<number, TrackedSession>;
+    trackedSessionsByKey: TrackedSessionMap;
   }>,
 ): boolean {
   if (input.metadata.startedBy !== 'daemon' || typeof input.parentPid !== 'number') return false;
-  return didSessionWebhookTimeout(input.pidToTrackedSession.get(input.parentPid));
+  return didSessionWebhookTimeout(trackedSessionForSingleSessionProcess(input.trackedSessionsByKey, input.parentPid));
 }
 
 function createStartupReadinessGate(): Readonly<{
@@ -284,8 +292,8 @@ export function buildSessionCreationTerminalSpawnErrorResult(
  * attempt identity; a report must never select an arbitrary pending waiter.
  */
 export function createOnDaemonSessionStartupFailure(params: Readonly<{
-  pidToTrackedSession: Map<number, TrackedSession>;
-  pidToAwaiter: Map<number, (session: TrackedSession) => void>;
+  trackedSessionsByKey: TrackedSessionMap;
+  spawnAwaiterByKey: Map<SessionTrackingKey, (session: TrackedSession) => void>;
 }>): (input: Readonly<{
   spawnNonce: string;
   errorDetail: SessionCreationTerminalSpawnErrorDetail;
@@ -294,7 +302,7 @@ export function createOnDaemonSessionStartupFailure(params: Readonly<{
     const spawnNonce = input.spawnNonce.trim();
     if (!spawnNonce) return false;
 
-    const candidates = [...params.pidToTrackedSession.values()].filter((tracked) => {
+    const candidates = [...params.trackedSessionsByKey.values()].filter((tracked) => {
       if (tracked.startedBy !== 'daemon' || didSessionWebhookTimeout(tracked)) {
         return false;
       }
@@ -306,39 +314,29 @@ export function createOnDaemonSessionStartupFailure(params: Readonly<{
         ? tracked.happySessionId.trim()
         : '';
       if (!isPidPlaceholderSessionId(currentSessionId)) return false;
-      const awaiterPid = tracked.spawnStartupAwaiterPid ?? tracked.pid;
-      return params.pidToAwaiter.has(awaiterPid);
+      return params.spawnAwaiterByKey.has(tracked.trackingKey);
     });
 
     // A nonce must designate one live, pending spawn. Ambiguity and stale
     // reports deliberately do nothing rather than waking another attempt.
     if (candidates.length !== 1) return false;
     const tracked = candidates[0]!;
-    const awaiterPid = tracked.spawnStartupAwaiterPid ?? tracked.pid;
-    const awaiter = params.pidToAwaiter.get(awaiterPid);
+    const awaiter = params.spawnAwaiterByKey.get(tracked.trackingKey);
     if (!awaiter) return false;
 
     tracked.spawnStartupReadinessFailure ??=
       buildSessionCreationTerminalSpawnErrorResult(input.errorDetail);
     // Claim before invoking the existing waiter so duplicate/later callbacks
     // cannot race its cleanup path or settle this spawn twice.
-    params.pidToAwaiter.delete(awaiterPid);
+    params.spawnAwaiterByKey.delete(tracked.trackingKey);
     awaiter(tracked);
     return true;
   };
 }
 
 export function createOnHappySessionWebhook(params: Readonly<{
-  pidToTrackedSession: Map<number, TrackedSession>;
-  pidToAwaiter: Map<number, (session: TrackedSession) => void>;
-  spawnResourceCleanupByPid?: Map<
-    number,
-    () => void | Promise<void>
-  >;
-  sessionAttachCleanupByPid?: Map<
-    number,
-    () => Promise<void>
-  >;
+  trackedSessionsByKey: TrackedSessionMap;
+  spawnAwaiterByKey: Map<SessionTrackingKey, (session: TrackedSession) => void>;
   deviceLocalSecretStorage?: DeviceLocalSecretStorage;
   findHappyProcessByPidFn?: typeof findHappyProcessByPid;
   readProcessIdentityByPidFn?: typeof readProcessIdentityByPid;
@@ -348,7 +346,6 @@ export function createOnHappySessionWebhook(params: Readonly<{
   listSessionMarkersFn?: typeof listSessionMarkers;
   writeSessionMarkerFn?: typeof writeSessionMarker;
   promoteSessionMarkerFn?: typeof promoteSessionMarkerPid;
-  removeSessionMarkerIfOwnedFn?: typeof removeSessionMarkerIfOwned;
   getParentPidFn?: (pid: number) => number | null | Promise<number | null>;
   readCredentialsFn?: typeof readStoredCredentials;
   onTrackedSessionReady?: (tracked: TrackedSession) => Promise<void>;
@@ -365,12 +362,11 @@ export function createOnHappySessionWebhook(params: Readonly<{
   sessionMetadata: Metadata,
   reconcileCanonicalReadiness?: (tracked: TrackedSession) => Promise<void>,
   sessionCreationOutcome?: SessionCreationOutcome,
+  reportedTrackingKey?: SessionTrackingKey | null,
 ) => Promise<void> {
   const {
-    pidToTrackedSession,
-    pidToAwaiter,
-    spawnResourceCleanupByPid,
-    sessionAttachCleanupByPid,
+    trackedSessionsByKey,
+    spawnAwaiterByKey,
     findHappyProcessByPidFn = findHappyProcessByPid,
     readProcessIdentityByPidFn = readProcessIdentityByPid,
     readAllWindowsProcessFactsFn =
@@ -378,7 +374,6 @@ export function createOnHappySessionWebhook(params: Readonly<{
     listSessionMarkersFn = listSessionMarkers,
     writeSessionMarkerFn = writeSessionMarker,
     promoteSessionMarkerFn = promoteSessionMarkerPid,
-    removeSessionMarkerIfOwnedFn = removeSessionMarkerIfOwned,
     getParentPidFn = getParentPid,
     readCredentialsFn = readStoredCredentials,
     onTrackedSessionReady,
@@ -392,6 +387,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
     sessionMetadata: Metadata,
     reconcileCanonicalReadiness?: (tracked: TrackedSession) => Promise<void>,
     sessionCreationOutcome?: SessionCreationOutcome,
+    reportedTrackingKey?: SessionTrackingKey | null,
   ) => {
     const normalizedPath = resolveSessionWebhookPath(sessionMetadata.path);
     const normalizedMetadata =
@@ -413,9 +409,9 @@ export function createOnHappySessionWebhook(params: Readonly<{
     const pid = pidRaw;
 
     logger.debug(`[DAEMON RUN] Session webhook: ${sessionId}, PID: ${pid}, started by: ${normalizedMetadata.startedBy || 'unknown'}`);
-    logger.debug(`[DAEMON RUN] Current tracked sessions before webhook: ${Array.from(pidToTrackedSession.keys()).join(', ')}`);
+    logger.debug(`[DAEMON RUN] Current tracked sessions before webhook: ${Array.from(trackedSessionsByKey.values(), (tracked) => tracked.pid).join(', ')}`);
 
-    if (didDaemonWebhookPidTimeOut({ pid, metadata: normalizedMetadata, pidToTrackedSession })) {
+    if (didDaemonWebhookPidTimeOut({ pid, metadata: normalizedMetadata, trackedSessionsByKey })) {
       logger.debug(`[DAEMON RUN] Ignoring late session webhook for timed-out daemon PID ${pid}: ${sessionId}`);
       return;
     }
@@ -423,9 +419,20 @@ export function createOnHappySessionWebhook(params: Readonly<{
     // The OS sample is only admission evidence for a still-unmatched daemon
     // report. Re-read correlation maps after this await; acceptance can arrive
     // while the existing process-state boundary is inspecting the runner.
+    // A report names its Session by the key its daemon spawn handed it; the
+    // key counts only from the process that Session is tracked on, so an
+    // inherited key in a descendant process never claims it.
+    const resolveReportedSession = (): TrackedSession | undefined => {
+      const keyedSession = reportedTrackingKey
+        ? trackedSessionsByKey.get(reportedTrackingKey)
+        : undefined;
+      return keyedSession?.pid === pid || keyedSession?.sessionRunnerPid === pid
+        ? keyedSession
+        : trackedSessionForSingleSessionProcess(trackedSessionsByKey, pid);
+    };
     const untrackedDaemonRunState = normalizedMetadata.startedBy === 'daemon'
-      && !pidToTrackedSession.has(pid)
-      && !findTrackedSessionByRunnerPid(pidToTrackedSession, pid)
+      && !resolveReportedSession()
+      && !findTrackedSessionByRunnerPid(trackedSessionsByKey, pid)
         ? await readProcessRunState(pid)
         : null;
     const rejectDeadExternalDaemonReport = (): boolean => {
@@ -434,7 +441,8 @@ export function createOnHappySessionWebhook(params: Readonly<{
       return true;
     };
     // Check if we already have this PID (daemon-spawned)
-    const existingSession = pidToTrackedSession.get(pid);
+    const reportedSession = resolveReportedSession();
+    const existingSession = reportedSession?.pid === pid ? reportedSession : undefined;
     const isPlaceholderSessionId = isPidPlaceholderSessionId(sessionId);
     let trackedForPid: TrackedSession | null = null;
     let requiresCanonicalMarkerAdoption = false;
@@ -451,7 +459,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
         shouldRequireCanonicalRunnerMarkerAdoption(
           existingSession,
           isPlaceholderSessionId,
-          pidToAwaiter.has(existingSession.spawnStartupAwaiterPid ?? existingSession.pid),
+          spawnAwaiterByKey.has(existingSession.trackingKey),
         );
       // Update tracked session with latest webhook data.
       adoptReportedSessionIdentity(
@@ -462,7 +470,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
       );
       if (existingSession.startedBy === 'daemon') {
         logger.debug(`[DAEMON RUN] Updated daemon-spawned session ${sessionId} with metadata`);
-        if (isPlaceholderSessionId && pidToAwaiter.has(pid)) {
+        if (isPlaceholderSessionId && spawnAwaiterByKey.has(existingSession.trackingKey)) {
           logger.debug(
             `[DAEMON RUN] Deferred awaiter resolution for PID ${pid}; waiting for canonical session id`,
           );
@@ -481,7 +489,9 @@ export function createOnHappySessionWebhook(params: Readonly<{
       //   but the webhook reports the actual session binary PID (child).
       //
       // First: check if we already associated this runner PID with a tracked daemon session.
-      const trackedByRunnerPid = findTrackedSessionByRunnerPid(pidToTrackedSession, pid);
+      const trackedByRunnerPid = reportedSession?.sessionRunnerPid === pid
+        ? reportedSession
+        : findTrackedSessionByRunnerPid(trackedSessionsByKey, pid);
       if (trackedByRunnerPid) {
         if (didSessionWebhookTimeout(trackedByRunnerPid)) {
           logger.debug(`[DAEMON RUN] Ignoring late runner webhook for timed-out daemon spawn PID ${trackedByRunnerPid.pid}: ${sessionId}`);
@@ -494,7 +504,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
         ) {
           const exactMatch =
             await findPendingWindowsTerminalTrackedSession({
-              pidToTrackedSession,
+              trackedSessionsByKey,
               webhookPid: pid,
               metadata: normalizedMetadata,
               readProcessIdentityByPidFn,
@@ -517,7 +527,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
           shouldRequireCanonicalRunnerMarkerAdoption(
             trackedByRunnerPid,
             isPlaceholderSessionId,
-          pidToAwaiter.has(trackedByRunnerPid.spawnStartupAwaiterPid ?? trackedByRunnerPid.pid),
+          spawnAwaiterByKey.has(trackedByRunnerPid.trackingKey),
           );
         adoptReportedSessionIdentity(
           trackedByRunnerPid,
@@ -530,7 +540,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
         if (
           trackedByRunnerPid.startedBy === 'daemon'
           && isPlaceholderSessionId
-          && pidToAwaiter.has(trackedByRunnerPid.pid)
+          && spawnAwaiterByKey.has(trackedByRunnerPid.trackingKey)
         ) {
           logger.debug(
             `[DAEMON RUN] Deferred awaiter resolution for wrapper PID ${trackedByRunnerPid.pid}; waiting for canonical session id`,
@@ -538,7 +548,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
         }
       } else {
         const ordinaryParent = await resolveOrdinaryDaemonParentCorrelation({
-          metadata: normalizedMetadata, pid, pidToTrackedSession, pidToAwaiter, getParentPidFn,
+          metadata: normalizedMetadata, pid, trackedSessionsByKey, spawnAwaiterByKey, getParentPidFn,
         });
         const ordinaryParentPid = ordinaryParent.parentPid;
         const ordinaryParentSession = ordinaryParent.tracked;
@@ -547,10 +557,8 @@ export function createOnHappySessionWebhook(params: Readonly<{
         const ordinaryParentEligible = ordinaryParent.eligible;
         const windowsTerminalMatch =
           !ordinaryParentEligible
-          && spawnResourceCleanupByPid
-          && sessionAttachCleanupByPid
             ? await findPendingWindowsTerminalTrackedSession({
-                pidToTrackedSession,
+                trackedSessionsByKey,
                 webhookPid: pid,
                 metadata: normalizedMetadata,
                 readProcessIdentityByPidFn,
@@ -600,15 +608,15 @@ export function createOnHappySessionWebhook(params: Readonly<{
           );
         // Heuristic: only attempt PPID correlation when at least one
         // ordinary daemon spawn is in flight.
-        } else if (pidToAwaiter.size === 0) {
+        } else if (spawnAwaiterByKey.size === 0) {
           const parentPid = normalizedMetadata.startedBy === 'daemon' ? await getParentPidFn(pid) : null;
-          if (didDaemonWebhookParentTimeOut({ parentPid, metadata: normalizedMetadata, pidToTrackedSession })) {
+          if (didDaemonWebhookParentTimeOut({ parentPid, metadata: normalizedMetadata, trackedSessionsByKey })) {
             logger.debug(`[DAEMON RUN] Ignoring late child webhook for timed-out daemon wrapper PID ${parentPid}: ${sessionId}`);
             return;
           }
 
           if (rejectDeadExternalDaemonReport()) return;
-          const trackedSession = registerExternalTrackedSession({ pidToTrackedSession, pid, sessionId, metadata: normalizedMetadata });
+          const trackedSession = registerExternalTrackedSession({ trackedSessionsByKey, pid, sessionId, metadata: normalizedMetadata });
           trackedForPid = trackedSession;
           logger.debug(`[DAEMON RUN] Registered externally-started session ${sessionId}`);
         } else {
@@ -616,7 +624,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
           const parentSession = ordinaryParentSession;
           const hasAwaiter = ordinaryParentHasAwaiter;
           const hasChildHandle = ordinaryParentHasChildHandle;
-          if (didDaemonWebhookParentTimeOut({ parentPid: ppid, metadata: normalizedMetadata, pidToTrackedSession })) {
+          if (didDaemonWebhookParentTimeOut({ parentPid: ppid, metadata: normalizedMetadata, trackedSessionsByKey })) {
             logger.debug(`[DAEMON RUN] Ignoring late child webhook for timed-out daemon wrapper PID ${ppid}: ${sessionId}`);
             return;
           }
@@ -636,7 +644,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
               shouldRequireCanonicalRunnerMarkerAdoption(
                 parentSession,
                 isPlaceholderSessionId,
-          pidToAwaiter.has(parentSession.spawnStartupAwaiterPid ?? parentSession.pid),
+          spawnAwaiterByKey.has(parentSession.trackingKey),
               );
             parentSession.sessionRunnerPid = pid;
             adoptReportedSessionIdentity(
@@ -647,7 +655,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
             );
             logger.debug(`[DAEMON RUN] Matched session webhook PID ${pid} to daemon wrapper PID ${ppid}`);
 
-            if (isPlaceholderSessionId && pidToAwaiter.has(ppid)) {
+            if (isPlaceholderSessionId && spawnAwaiterByKey.has(parentSession.trackingKey)) {
               logger.debug(
                 `[DAEMON RUN] Deferred awaiter resolution for wrapper PID ${ppid}; waiting for canonical session id`,
               );
@@ -655,7 +663,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
           } else {
             // New session started externally (not by this daemon)
             if (rejectDeadExternalDaemonReport()) return;
-            const trackedSession = registerExternalTrackedSession({ pidToTrackedSession, pid, sessionId, metadata: normalizedMetadata });
+            const trackedSession = registerExternalTrackedSession({ trackedSessionsByKey, pid, sessionId, metadata: normalizedMetadata });
             trackedForPid = trackedSession;
             logger.debug(`[DAEMON RUN] Registered externally-started session ${sessionId}`);
           }
@@ -690,8 +698,9 @@ export function createOnHappySessionWebhook(params: Readonly<{
       }
 
       const markers = await listSessionMarkersFn().catch(() => []);
+      const markerTrackingKey = trackedForPid.trackingKey;
       const existingMarker = markers
-        .filter((marker) => marker.pid === currentSessionMarkerPid)
+        .filter((marker) => marker.trackingKey === markerTrackingKey && marker.pid === currentSessionMarkerPid)
         .sort((left, right) => right.updatedAt - left.updatedAt)[0] ?? null;
       const markerVendorResumeId = existingMarker && agentId
         ? resolveVendorResumeIdFromSessionMetadata(agentId, existingMarker.metadata)
@@ -751,8 +760,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
     const assertTrackedStartupCustody = (): void => {
       if (!trackedDaemonCanonicalSession) return;
       if (
-        pidToTrackedSession.get(trackedDaemonCanonicalSession.pid)
-        !== trackedDaemonCanonicalSession
+        !isCurrentTrackedSession(trackedSessionsByKey, trackedDaemonCanonicalSession)
       ) {
         throw new Error(
           'Daemon session startup custody changed during reconciliation',
@@ -882,8 +890,11 @@ export function createOnHappySessionWebhook(params: Readonly<{
           processIdentity, writeSessionMarkerFn });
         return;
       }
+      if (!trackedForPid) return;
+      const markerTrackingKey = trackedForPid.trackingKey;
       await writeSessionMarkerFn(
         {
+          trackingKey: markerTrackingKey,
           pid: currentSessionMarkerPid,
           happySessionId: sessionId,
           startedBy: persistedMetadata.startedBy ?? 'terminal',
@@ -925,7 +936,11 @@ export function createOnHappySessionWebhook(params: Readonly<{
         if (!runnerIdentity || runnerIdentity.pid !== pid) {
           throw new Error('Canonical Session runner identity is unavailable');
         }
-        const promotion = await promoteSessionMarkerFn(currentSessionMarkerPid, pid);
+        const promotion = await promoteSessionMarkerFn({
+          trackingKey: markerTrackingKey,
+          fromPid: currentSessionMarkerPid,
+          toPid: pid,
+        });
         await awaitTrackedMarkerPromotion();
         if (
           trackedForPid?.runnerProcessIdentity !== runnerIdentity
@@ -1005,15 +1020,13 @@ export function createOnHappySessionWebhook(params: Readonly<{
     const reconcileTrackedDaemonCanonicalWebhook =
       async (): Promise<void> => {
     const completeSpawnAwaiter = async (): Promise<void> => {
-      const trackedPid =
-        trackedDaemonCanonicalSession.spawnStartupAwaiterPid
-        ?? trackedDaemonCanonicalSession.pid;
-      const awaiter = pidToAwaiter.get(trackedPid);
+      const awaiterKey = trackedDaemonCanonicalSession.trackingKey;
+      const awaiter = spawnAwaiterByKey.get(awaiterKey);
       if (!awaiter) return;
-      pidToAwaiter.delete(trackedPid);
+      spawnAwaiterByKey.delete(awaiterKey);
       await awaiter(trackedDaemonCanonicalSession);
       logger.debug(
-        `[DAEMON RUN] Resolved session awaiter for canonical session ${sessionId} via PID ${trackedPid}`,
+        `[DAEMON RUN] Resolved session awaiter for canonical session ${sessionId} via PID ${trackedDaemonCanonicalSession.pid}`,
       );
     };
     const identityFailure =
@@ -1056,25 +1069,13 @@ export function createOnHappySessionWebhook(params: Readonly<{
       throw new Error('Daemon spawn custody was not accepted');
     }
     if (windowsTerminalHostPid !== null) {
-      if (!spawnResourceCleanupByPid || !sessionAttachCleanupByPid) {
-        throw new Error(
-          'Windows Terminal startup custody maps are unavailable',
-        );
-      }
-      if (pidToAwaiter.has(windowsTerminalHostPid)) {
-        trackedDaemonCanonicalSession.spawnStartupAwaiterPid ??=
-          windowsTerminalHostPid;
-      }
       const promoted =
         await promoteTrackedSessionPidCustody({
           fromPid: windowsTerminalHostPid,
           toPid: pid,
           trackedSession: trackedDaemonCanonicalSession,
-          pidToTrackedSession,
-          spawnResourceCleanupByPid,
-          sessionAttachCleanupByPid,
+          trackedSessionsByKey,
           promoteSessionMarkerFn,
-          removeSessionMarkerIfOwnedFn,
           requireExactTargetOwnership: true,
           expectedTargetProcessIdentity:
             trackedDaemonCanonicalSession
@@ -1150,10 +1151,7 @@ export function createOnHappySessionWebhook(params: Readonly<{
       }
       invalidateProcessLaunchDiscovery();
       await awaitTrackedMarkerPromotion();
-      const spawnAwaiterPid =
-        trackedDaemonCanonicalSession.spawnStartupAwaiterPid
-        ?? trackedDaemonCanonicalSession.pid;
-      const hasActiveSpawnAwaiter = pidToAwaiter.has(spawnAwaiterPid);
+      const hasActiveSpawnAwaiter = spawnAwaiterByKey.has(trackedDaemonCanonicalSession.trackingKey);
       if (
         reconcileCanonicalReadiness
         && trackedDaemonCanonicalSession.reattachedFromDiskMarker !== true

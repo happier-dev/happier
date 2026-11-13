@@ -19,6 +19,7 @@ import { createLeftBehindPass } from '../processes/leftBehind/leftBehindPass';
 import { createMachineVitalsSampler } from '../vitals/createMachineVitalsSampler';
 import { createMinuteHistoryStore } from '../vitals/history/minuteHistoryStore';
 import { withTempDir } from '@/testkit/fs/tempDir';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('Guard process refs consumed by Processes', () => {
   it('projects the admitted native birth and stops that birth while refusing a reused PID', async () => withTempDir('guard-process-refs-', async directory => {
@@ -41,7 +42,7 @@ describe('Guard process refs consumed by Processes', () => {
     const initialCensus = await (await import('@/processes/census/processCensus')).createProcessCensusReader(censusDependencies)({ freshness: 'fresh', scope: 'all' });
     if (initialCensus.status !== 'ok') throw new Error('Expected readable process table');
     const native = initialCensus.rows.find(row => row.pid === 30)!;
-    const tracked: TrackedSession = { pid: 30, happySessionId: 'session', startedBy: 'daemon', processStartTimeMs: native.start.startTimeMs,
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(30), pid: 30, happySessionId: 'session', startedBy: 'daemon', processStartTimeMs: native.start.startTimeMs,
       requesterWorkAttributionV1: { ...target, accountId: 'owner' } };
     const inventory = { coverage: 'complete' as const, items: [] };
     const ownership = createProcessOwnershipRuntime({ platform: 'linux', daemonScopeKey: scope, censusDependencies,

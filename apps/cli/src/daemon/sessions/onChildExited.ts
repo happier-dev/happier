@@ -1,3 +1,4 @@
+import type { SparedHeldAgentTransaction } from '@/daemon/processSupervision/sparedHeldAgents';
 import { isPidPresent } from '@happier-dev/cli-common/process';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import { logger } from '@/ui/logger';
@@ -12,7 +13,7 @@ import {
   type SessionMarkerOwnership,
   updateSessionMarkerActiveTurn,
 } from '../sessionRegistry';
-import { cleanupPidSessionResources } from './cleanupPidSessionResources';
+import { cleanupSessionResources, type SessionAttachCleanupByKey, type SpawnResourceCleanupByKey } from './cleanupSessionResources';
 import { promoteTrackedSessionPidCustody } from './promoteTrackedSessionPidCustody';
 import { classifyTrackedSessionProcessPresence } from './isSessionRunnerActive';
 import { readProcessRunState } from '../processRunState';
@@ -25,6 +26,13 @@ import type { SessionSpawnLaunchErrorV1 } from '@happier-dev/protocol/spawnSessi
 import { settleFinalExitPublisher } from './sessionTerminalSettlement';
 import { releaseUnretainedRequesterSessionRuntimeContext } from '../sessionEncryption/requesterSessionCredentials';
 import { buildChildExitBeforeWebhookFailure } from '../spawn/childStderrDiagnostic';
+import {
+  isCurrentTrackedSession,
+  trackedSessionsForProcess,
+  untrackSession,
+  type SessionTrackingKey,
+  type TrackedSessionMap,
+} from '@/daemon/sessions/sessionTrackingKey';
 
 export type ChildExit = {
   reason: string;
@@ -34,6 +42,11 @@ export type ChildExit = {
   /** Producer-redacted startup diagnostic; custody forwards it without recapturing stderr. */
   childExit?: NonNullable<SessionSpawnLaunchErrorV1['childExit']>;
   failureCause?: SessionSpawnLaunchErrorV1['failureCause'];
+  /**
+   * The end of one Session of a session host (the host process lives on): observed for that
+   * Session only. Absent = the process exited, observed for every Session it hosted.
+   */
+  trackingKey?: SessionTrackingKey;
 };
 
 function normalizeSessionId(value: unknown): string {
@@ -62,15 +75,15 @@ function isTrackedSessionAlive(tracked: TrackedSession): boolean {
 }
 
 function findLiveReplacementForSameSession(
-  pidToTrackedSession: Map<number, TrackedSession>,
+  trackedSessionsByKey: TrackedSessionMap,
   pid: number,
   tracked: TrackedSession,
 ): TrackedSession | null {
   const sessionId = normalizeSessionId(tracked.happySessionId);
   if (!sessionId) return null;
 
-  for (const [candidatePid, candidate] of pidToTrackedSession.entries()) {
-    if (candidatePid === pid) continue;
+  for (const candidate of trackedSessionsByKey.values()) {
+    if (candidate.pid === pid) continue;
     if (normalizeSessionId(candidate.happySessionId) !== sessionId) continue;
     if (isTrackedSessionAlive(candidate)) return candidate;
   }
@@ -95,15 +108,21 @@ export type ChildExitHandler = ((pid: number, exit: ChildExit) => Promise<void>)
 
 export function createOnChildExited(params: Readonly<{
   skillStore?: SkillStore;
-  pidToTrackedSession: Map<number, TrackedSession>;
+  trackedSessionsByKey: TrackedSessionMap;
   ownerRemainder?: OwnerRemainderPort;
+  /**
+   * A crashed runner's live held primary Agent that its respawned runner may adopt
+   * (null otherwise). Its tree is spared by this exit's remainder end; the respawn
+   * owner ends it on every give-up.
+   */
+  spareHeldAgent?: (tracked: TrackedSession) => Promise<SparedHeldAgentTransaction | null>;
   observeSessionScopeExit?: (tracked: TrackedSession) => Promise<void>;
   processPresenceDependencies?: Readonly<{
     readProcessRunState?: typeof readProcessRunState;
     readProcessIdentityByPid?: typeof readProcessIdentityByPid;
   }>;
-  spawnResourceCleanupByPid: Map<number, () => void | Promise<void>>;
-  sessionAttachCleanupByPid: Map<number, () => Promise<void>>;
+  spawnResourceCleanupByKey: SpawnResourceCleanupByKey;
+  sessionAttachCleanupByKey: SessionAttachCleanupByKey;
   getApiMachineForSessions: () => Pick<ApiMachineClient,
     'enqueueDaemonTerminalExactTurnEnd' | 'captureMachineSessionTerminal' | 'finalizeMachineSessionTerminal'> | null;
   beforeUnexpectedExitSettlement?: (
@@ -149,9 +168,9 @@ export function createOnChildExited(params: Readonly<{
   stageObservedExitFn?: typeof stageObservedExit;
 }>): ChildExitHandler {
   const {
-    pidToTrackedSession,
-    spawnResourceCleanupByPid,
-    sessionAttachCleanupByPid,
+    trackedSessionsByKey,
+    spawnResourceCleanupByKey,
+    sessionAttachCleanupByKey,
     getApiMachineForSessions,
     beforeUnexpectedExitSettlement,
     onUnexpectedExit,
@@ -168,33 +187,45 @@ export function createOnChildExited(params: Readonly<{
   } = params;
 
   const removeObservedSessionMarker = async (
-    pid: number,
     tracked: TrackedSession,
     isStillOwned: () => boolean,
     markerOwnership: SessionMarkerOwnership = resolveTrackedMarkerOwnership(tracked),
   ): Promise<void> => {
     if (removeSessionMarkerFn) {
-      await removeSessionMarkerFn(pid);
+      await removeSessionMarkerFn(tracked.trackingKey);
       return;
     }
     await removeSessionMarkerIfOwnedFn({
-      pid,
+      trackingKey: tracked.trackingKey,
       ...markerOwnership,
       isStillOwned,
     });
   };
 
   type ExitLifetime = { account?: SessionNativeCredentialLifetimeAccount; nativeBindingsReleased: boolean; scopeExitObserved: boolean };
-  const observeChildExit = async (pid: number, exit: ChildExit, lifetime?: ExitLifetime) => {
+  // The spare decision is settled by this observation: handed to the respawn
+  // owner, or ended on every other way out (early return or failure).
+  const observeChildExit = async (pid: number, exit: ChildExit, tracked?: TrackedSession, lifetime?: ExitLifetime) => {
+    const spare: { transaction: SparedHeldAgentTransaction | null } = { transaction: null };
+    try {
+      await observeChildExitWithSpare(pid, exit, spare, tracked, lifetime);
+    } finally {
+      await spare.transaction?.abandon();
+    }
+  };
+  const observeChildExitWithSpare = async (pid: number, exit: ChildExit,
+    spare: { transaction: SparedHeldAgentTransaction | null }, tracked: TrackedSession | undefined, lifetime?: ExitLifetime) => {
     const lifetimeAccount = lifetime?.account;
-    const tracked = pidToTrackedSession.get(pid);
+    // This Session is still tracked on the exited process (a wrapper→runner
+    // promotion moves it to another pid).
+    const isCurrentPidOwner = (): boolean => tracked !== undefined && isCurrentTrackedSession(trackedSessionsByKey, tracked) && tracked.pid === pid;
     if (exit.reason === 'process-missing' && tracked?.windowsTerminalLaunchCustody) {
       const presence = await classifyTrackedSessionProcessPresence({
         tracked,
         readProcessRunState: params.processPresenceDependencies?.readProcessRunState ?? readProcessRunState,
         readProcessIdentityByPid: params.processPresenceDependencies?.readProcessIdentityByPid ?? readProcessIdentityByPid,
       });
-      if (pidToTrackedSession.get(pid) !== tracked) return;
+      if (!isCurrentPidOwner()) return;
       if (tracked.stopRequestedAtMs === undefined && presence !== 'absent'
         && (presence !== 'present' || !tracked.sessionRunnerPid || tracked.sessionRunnerPid === pid)) {
         logger.infoFile('[DAEMON RUN] Missing Windows dispatcher does not prove runner exit; retaining startup custody', { pid });
@@ -206,7 +237,7 @@ export function createOnChildExited(params: Readonly<{
     const override = tracked && isExitUnexpectedOverride ? isExitUnexpectedOverride(tracked, exit) : null;
     if (tracked && typeof runnerPid === 'number' && runnerPid !== pid && isPidPresent(runnerPid)) {
       if (tracked.acceptedSpawnMarkerGate && !await tracked.acceptedSpawnMarkerGate) return;
-      if (pidToTrackedSession.get(pid) !== tracked) return;
+      if (!isCurrentPidOwner()) return;
       const currentRunnerPid = tracked.sessionRunnerPid;
       let canPromoteRunner = typeof currentRunnerPid === 'number' && currentRunnerPid !== pid && isPidPresent(currentRunnerPid);
       if (canPromoteRunner && (tracked.runnerProcessIdentity || tracked.startupCustody)) {
@@ -215,7 +246,7 @@ export function createOnChildExited(params: Readonly<{
           readProcessRunState: params.processPresenceDependencies?.readProcessRunState ?? readProcessRunState,
           readProcessIdentityByPid: params.processPresenceDependencies?.readProcessIdentityByPid ?? readProcessIdentityByPid,
         });
-        if (pidToTrackedSession.get(pid) !== tracked || tracked.sessionRunnerPid !== currentRunnerPid || tracked.reportMarkerCustody?.retiring) return;
+        if (!isCurrentPidOwner() || tracked.sessionRunnerPid !== currentRunnerPid || tracked.reportMarkerCustody?.retiring) return;
         if (presence === 'unknown' || presence === 'recoverable_stopped') {
           logger.infoFile('[DAEMON RUN] Runner generation unresolved; retaining wrapper custody', { pid, runnerPid: currentRunnerPid, presence });
           return;
@@ -228,19 +259,8 @@ export function createOnChildExited(params: Readonly<{
           fromPid: pid,
           toPid: currentRunnerPid,
           trackedSession: tracked,
-          pidToTrackedSession,
-          spawnResourceCleanupByPid,
-          sessionAttachCleanupByPid,
+          trackedSessionsByKey,
           promoteSessionMarkerFn,
-          removeSessionMarkerIfOwnedFn,
-          removeSourceMarker: async (ownership, isStillOwned) => {
-            await removeObservedSessionMarker(
-              pid,
-              tracked,
-              isStillOwned,
-              ownership,
-            );
-          },
           onPidPromoted,
         });
         return;
@@ -261,7 +281,6 @@ export function createOnChildExited(params: Readonly<{
       tracked.reportMarkerCustody.retiring = true;
       if (markerCustody) await markerCustody.pending;
       if (startupCustody) await startupCustody.finalization;
-      const isCurrentPidOwner = (): boolean => pidToTrackedSession.get(pid) === tracked;
       if (!isCurrentPidOwner()) return;
       try {
         if (!lifetime?.scopeExitObserved) {
@@ -287,10 +306,10 @@ export function createOnChildExited(params: Readonly<{
           });
         }
       };
-      const cleanupComplete = await observeStopExitPhase('pid_resources', () => cleanupPidSessionResources({
-        pid,
-        spawnResourceCleanupByPid,
-        sessionAttachCleanupByPid,
+      const cleanupComplete = await observeStopExitPhase('pid_resources', () => cleanupSessionResources({
+        trackingKey: tracked.trackingKey,
+        spawnResourceCleanupByKey,
+        sessionAttachCleanupByKey,
       }));
       if (!cleanupComplete || !isCurrentPidOwner()) return;
       const requester = tracked.requesterSessionRuntimeContext;
@@ -302,7 +321,7 @@ export function createOnChildExited(params: Readonly<{
         // exit retires the current pointer after its dependent PID resources.
         await observeStopExitPhase('requester_release', async () => {
           if (requester) await releaseUnretainedRequesterSessionRuntimeContext(requester,
-            [...pidToTrackedSession.values()].map(candidate => candidate.requesterSessionRuntimeContext));
+            [...trackedSessionsByKey.values()].map(candidate => candidate.requesterSessionRuntimeContext));
         });
       } catch (error) {
         if (requester && !tracked.requesterSessionRuntimeContext) tracked.requesterSessionRuntimeContext = requester;
@@ -315,7 +334,7 @@ export function createOnChildExited(params: Readonly<{
           sessionId: tracked.happySessionId, pid, elapsedMs: Date.now() - resourceCleanupStartedAtMs,
         });
       }
-      const liveReplacement = findLiveReplacementForSameSession(pidToTrackedSession, pid, tracked);
+      const liveReplacement = findLiveReplacementForSameSession(trackedSessionsByKey, pid, tracked);
       const shouldReportSessionEnd = liveReplacement === null;
       const isUnexpectedBase =
         exit.reason === 'process-exited-before-webhook' ||
@@ -361,7 +380,15 @@ export function createOnChildExited(params: Readonly<{
       }
       if ((shouldReportSessionEnd || tracked.ownerRemainderCapture?.scope === 'subtree') && finalSessionId && params.ownerRemainder) {
         const remainderStartedAtMs = Date.now();
-        const remainder = await params.ownerRemainder.end({ kind: 'session', sessionId: finalSessionId }, tracked.ownerRemainderCapture);
+        // Only an unexpected exit of a daemon runner may be respawned and adopt its Agent.
+        spare.transaction = shouldReportSessionEnd && isUnexpected && tracked.startedBy === 'daemon'
+          && isServerBackedSessionId(finalSessionId) ? await params.spareHeldAgent?.(tracked) ?? null : null;
+        const spared = spare.transaction?.held;
+        if (spared) tracked.sparedHeldAgentV1 = { ...spared, ...(spare.transaction?.turnId ? { turnId: spare.transaction.turnId } : {}) };
+        // A target-held Agent's pids are the target's: nothing on this Machine to spare.
+        const sparedLocalHolder = spared && !tracked.spawnOptions?.managedTargetPlacement ? spared.holderPid : null;
+        const remainder = await params.ownerRemainder.end({ kind: 'session', sessionId: finalSessionId }, tracked.ownerRemainderCapture,
+          sparedLocalHolder !== null ? { spare: [sparedLocalHolder] } : undefined);
         tracked.ownerRemainderResult = remainder;
         if (typeof tracked.stopRequestedAtMs === 'number') {
           logger.infoFile('[DAEMON STOP] Runner remainder cleanup completed', {
@@ -447,11 +474,13 @@ export function createOnChildExited(params: Readonly<{
           // A permanently unavailable peer/Session cannot accept exact-turn or
           // control retirement. Release only this already-dead runner's evidence.
           if (!shouldPreserveMarker) {
-            await Promise.all(Array.from(new Set([pid, tracked.sessionRunnerPid ?? pid])).map(candidatePid =>
-              removeObservedSessionMarker(candidatePid, tracked, isCurrentPidOwner)));
+            await removeObservedSessionMarker(tracked, isCurrentPidOwner);
           }
         } else await stageObservedExitFn({
-          trackedSession: trackedExitSettlementEvidence,
+          // A spared Agent's running turn is not ended here: the respawned runner
+          // completes it, and the spare's give-up ends it (one turn owner at a time).
+          trackedSession: spare.transaction
+            ? { ...trackedExitSettlementEvidence, activeTurnId: undefined } : trackedExitSettlementEvidence,
           observedAt,
           enqueueExactTurnEnd: async (mutation) => {
             if (!apiMachineForSessions?.enqueueDaemonTerminalExactTurnEnd) {
@@ -459,23 +488,18 @@ export function createOnChildExited(params: Readonly<{
             }
             await apiMachineForSessions.enqueueDaemonTerminalExactTurnEnd(mutation);
           },
-          releaseMarkerEvidence: async ({ markerPid, sessionId, turnId }) => {
+          releaseMarkerEvidence: async ({ sessionId, turnId }) => {
             if (!isCurrentPidOwner()) return;
-            const markerPids = Array.from(new Set([pid, markerPid]));
             if (shouldPreserveMarker) {
               if (turnId === null) return;
-              await Promise.all(markerPids.map(async (candidatePid) => {
-                await updateSessionMarkerActiveTurnFn({
-                  pid: candidatePid,
-                  sessionId,
-                  activeTurnId: null,
-                });
-              }));
+              await updateSessionMarkerActiveTurnFn({
+                trackingKey: tracked.trackingKey,
+                sessionId,
+                activeTurnId: null,
+              });
               return;
             }
-            await Promise.all(markerPids.map(async (candidatePid) => {
-              await removeObservedSessionMarker(candidatePid, tracked, isCurrentPidOwner);
-            }));
+            await removeObservedSessionMarker(tracked, isCurrentPidOwner);
           },
         });
         if (typeof tracked.stopRequestedAtMs === 'number') {
@@ -543,6 +567,8 @@ export function createOnChildExited(params: Readonly<{
           });
         }
         try {
+          // The respawn owner now holds the spared Agent: respawn adopts it, every give-up ends it.
+          if (onUnexpectedExit) spare.transaction?.handOff();
           await onUnexpectedExit?.(tracked, exit);
         } catch (error) {
           logger.debug('[DAEMON RUN] Failed to run onUnexpectedExit handler', error);
@@ -570,31 +596,33 @@ export function createOnChildExited(params: Readonly<{
       // A disconnected Machine must not retain a fully cleaned, dead runner in
       // the local inventory or prevent Stop from completing.
       if (isCurrentPidOwner()) {
-        pidToTrackedSession.delete(pid);
+        untrackSession(trackedSessionsByKey, tracked);
       }
       return;
     }
-    await cleanupPidSessionResources({
-      pid,
-      spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid,
-    });
+    // A process with no tracked Session holds no per-Session resources.
   };
 
   type ExitSettlement = { completion: Promise<void>; pending: boolean; lifetime: ExitLifetime };
   const inFlightByTrackedSession = new WeakMap<TrackedSession, ExitSettlement>();
+  const isTrackedOnProcess = (trackedSession: TrackedSession, pid: number): boolean =>
+    isCurrentTrackedSession(trackedSessionsByKey, trackedSession) && trackedSession.pid === pid;
+  // A process exit is observed for every Session it hosts.
   const handleChildExit = async (pid: number, exit: ChildExit): Promise<void> => {
-    const trackedSession = pidToTrackedSession.get(pid);
-    if (!trackedSession) {
+    const hosted = trackedSessionsForProcess(trackedSessionsByKey, pid)
+      .filter(trackedSession => exit.trackingKey === undefined || trackedSession.trackingKey === exit.trackingKey);
+    if (hosted.length === 0) {
       await observeChildExit(pid, exit);
       return;
     }
-
+    await Promise.all(hosted.map(trackedSession => handleTrackedSessionExit(pid, exit, trackedSession)));
+  };
+  const handleTrackedSessionExit = async (pid: number, exit: ChildExit, trackedSession: TrackedSession): Promise<void> => {
     const existing = inFlightByTrackedSession.get(trackedSession);
     if (existing?.pending) {
       await existing.completion;
-      if (exit.reason !== 'process-missing' && pidToTrackedSession.get(pid) === trackedSession) {
-        await handleChildExit(pid, exit);
+      if (exit.reason !== 'process-missing' && isTrackedOnProcess(trackedSession, pid)) {
+        await handleTrackedSessionExit(pid, exit, trackedSession);
       }
       return;
     }
@@ -606,20 +634,20 @@ export function createOnChildExited(params: Readonly<{
     } : undefined);
     const lifetime: ExitLifetime = existing?.lifetime ?? { nativeBindingsReleased: false, scopeExitObserved: false,
       ...(lifetimeAccount ? { account: lifetimeAccount } : {}) };
-    const observation = observeChildExit(pid, exit, lifetime);
+    const observation = observeChildExit(pid, exit, trackedSession, lifetime);
     const settlement: ExitSettlement = { completion: observation, pending: true, lifetime };
     inFlightByTrackedSession.set(trackedSession, settlement);
     try {
       await observation;
     } finally {
       settlement.pending = false;
-      if (pidToTrackedSession.get(pid) !== trackedSession && inFlightByTrackedSession.get(trackedSession) === settlement) {
+      if (!isTrackedOnProcess(trackedSession, pid) && inFlightByTrackedSession.get(trackedSession) === settlement) {
         inFlightByTrackedSession.delete(trackedSession);
       }
     }
   };
   return Object.assign(handleChildExit, { async awaitPendingExits(): Promise<void> {
-    const completions = [...new Set(pidToTrackedSession.values())].flatMap(tracked => {
+    const completions = [...new Set(trackedSessionsByKey.values())].flatMap(tracked => {
       const pending = inFlightByTrackedSession.get(tracked);
       return pending ? [pending.completion] : [];
     });

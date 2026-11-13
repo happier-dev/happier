@@ -36,6 +36,7 @@ import {
   publishAgentRuntimeDaemonServiceAuthority,
   readAgentRuntimeDaemonServiceAuthorityForVerifiedMarker,
 } from './sessionBridgeAuthorization';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const runner = Object.freeze({
   pid: 4242,
@@ -186,7 +187,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
     const fixture = await createPublishedAuthority(retained);
     try {
       const tracked: TrackedSession = {
-        pid: 4242,
+        trackingKey: legacyPidSessionTrackingKey(4242), pid: 4242,
         happySessionId: fixture.sessionId,
         startedBy: 'happy directly - likely by user from terminal',
         processStartTimeMs: 2_000,
@@ -198,7 +199,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
       await expect(promoteForegroundDaemonServiceAuthority({
         happyHomeDir: fixture.happyHomeDir,
         publicReleaseRing: 'stable',
-        trackedSessions: new Map([[tracked.pid, tracked]]),
+        trackedSessions: new Map([[tracked.trackingKey, tracked]]),
         canonicalSessionId: fixture.sessionId,
         foregroundPid: tracked.pid,
         authorityFilePath: fixture.authorityFilePath,
@@ -252,7 +253,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
         });
       await commitHardRevision(happyHomeDir, 1);
       const tracked: TrackedSession = {
-        pid: 4242,
+        trackingKey: legacyPidSessionTrackingKey(4242), pid: 4242,
         happySessionId: 'canonical-session-1',
         startedBy:
           'happy directly - likely by user from terminal',
@@ -280,7 +281,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
       await expect(promote({
         happyHomeDir,
         publicReleaseRing: 'stable',
-        trackedSessions: new Map([[tracked.pid, tracked]]),
+        trackedSessions: new Map([[tracked.trackingKey, tracked]]),
         canonicalSessionId: 'canonical-session-1',
         foregroundPid: tracked.pid,
         authorityFilePath,
@@ -328,7 +329,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
     const fixture = await createPublishedAuthority();
     try {
       const tracked: TrackedSession = {
-        pid: 4242,
+        trackingKey: legacyPidSessionTrackingKey(4242), pid: 4242,
         happySessionId: 'canonical-session-1',
         startedBy: 'happy directly - likely by user from terminal',
         processStartTimeMs: 2_000,
@@ -346,7 +347,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
       const promotion = promoteForegroundDaemonServiceAuthority({
         happyHomeDir: fixture.happyHomeDir,
         publicReleaseRing: 'stable',
-        trackedSessions: new Map([[tracked.pid, tracked]]),
+        trackedSessions: new Map([[tracked.trackingKey, tracked]]),
         canonicalSessionId: fixture.sessionId,
         foregroundPid: tracked.pid,
         authorityFilePath: fixture.authorityFilePath,
@@ -398,7 +399,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
     const fixture = await createPublishedAuthority();
     try {
       const tracked: TrackedSession = {
-        pid: 4242,
+        trackingKey: legacyPidSessionTrackingKey(4242), pid: 4242,
         happySessionId: 'canonical-session-1',
         startedBy: 'happy directly - likely by user from terminal',
         processStartTimeMs: 2_000,
@@ -441,7 +442,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
       const promotion = promoteForegroundDaemonServiceAuthority({
         happyHomeDir: fixture.happyHomeDir,
         publicReleaseRing: 'stable',
-        trackedSessions: new Map([[tracked.pid, tracked]]),
+        trackedSessions: new Map([[tracked.trackingKey, tracked]]),
         canonicalSessionId: fixture.sessionId,
         foregroundPid: tracked.pid,
         authorityFilePath: fixture.authorityFilePath,
@@ -471,6 +472,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
       await expect(promotion).resolves.toBe(false);
       expect(clearPersistedPromotion).toHaveBeenCalledWith({
         pid: tracked.pid,
+        trackingKey: tracked.trackingKey,
         sessionId: fixture.sessionId,
         processCommandHash: fixture.runner.processCommandHash,
         processStartTimeMs: fixture.runner.processStartTimeMs,
@@ -499,7 +501,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
     const fixture = await createPublishedAuthority();
     try {
       const tracked: TrackedSession = {
-        pid: 4242,
+        trackingKey: legacyPidSessionTrackingKey(4242), pid: 4242,
         happySessionId: 'canonical-session-1',
         startedBy: 'happy directly - likely by user from terminal',
         processStartTimeMs: 2_000,
@@ -577,7 +579,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
       const promotion = promoteForegroundDaemonServiceAuthority({
         happyHomeDir: fixture.happyHomeDir,
         publicReleaseRing: 'stable',
-        trackedSessions: new Map([[tracked.pid, tracked]]),
+        trackedSessions: new Map([[tracked.trackingKey, tracked]]),
         canonicalSessionId: fixture.sessionId,
         foregroundPid: tracked.pid,
         authorityFilePath: fixture.authorityFilePath,
@@ -612,6 +614,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
       await expect(promotion).resolves.toBe(false);
       expect(clearPersistedPromotion).toHaveBeenCalledWith({
         pid: tracked.pid,
+        trackingKey: tracked.trackingKey,
         sessionId: fixture.sessionId,
         processCommandHash: fixture.runner.processCommandHash,
         processStartTimeMs: fixture.runner.processStartTimeMs,
@@ -647,7 +650,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
     const fixture = await createPublishedAuthority();
     try {
       const tracked: TrackedSession = {
-        pid: 4242,
+        trackingKey: legacyPidSessionTrackingKey(4242), pid: 4242,
         happySessionId: 'canonical-session-1',
         startedBy: 'happy directly - likely by user from terminal',
         processStartTimeMs: 2_000,
@@ -715,7 +718,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
       await expect(promoteForegroundDaemonServiceAuthority({
         happyHomeDir: fixture.happyHomeDir,
         publicReleaseRing: 'stable',
-        trackedSessions: new Map([[tracked.pid, tracked]]),
+        trackedSessions: new Map([[tracked.trackingKey, tracked]]),
         canonicalSessionId: fixture.sessionId,
         foregroundPid: tracked.pid,
         authorityFilePath: fixture.authorityFilePath,
@@ -749,6 +752,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
       expect(hardRevocationInjected).toBe(true);
       expect(clearPersistedPromotion).toHaveBeenCalledWith({
         pid: tracked.pid,
+        trackingKey: tracked.trackingKey,
         sessionId: fixture.sessionId,
         processCommandHash: fixture.runner.processCommandHash,
         processStartTimeMs: fixture.runner.processStartTimeMs,
@@ -784,7 +788,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
     const fixture = await createPublishedAuthority();
     try {
     const tracked: TrackedSession = {
-      pid: 4242,
+      trackingKey: legacyPidSessionTrackingKey(4242), pid: 4242,
       happySessionId: 'canonical-session-1',
       startedBy: 'happy directly - likely by user from terminal',
       processStartTimeMs: 2_000,
@@ -797,7 +801,7 @@ describe('promoteForegroundDaemonServiceAuthority', () => {
       promoteForegroundDaemonServiceAuthority({
         happyHomeDir: fixture.happyHomeDir,
         publicReleaseRing: 'stable',
-        trackedSessions: new Map([[tracked.pid, tracked]]),
+        trackedSessions: new Map([[tracked.trackingKey, tracked]]),
         canonicalSessionId: 'canonical-session-1',
         foregroundPid: tracked.pid,
         authorityFilePath: fixture.authorityFilePath,

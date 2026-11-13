@@ -11,6 +11,7 @@ import { withTrackedSessionRpc } from './withTrackedSessionRpc';
 import { createGuardSessionAccess } from '../guard/sessionAccess';
 import { createRequesterSessionRuntimeContextResolver, releaseUnretainedRequesterSessionRuntimeContext } from './requesterSessionCredentials';
 import type { TrackedSession } from '../types';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const sessionId = 'caaaaaaaaaaaaaaaaaaaaaaaa';
 afterEach(() => vi.restoreAllMocks());
@@ -55,8 +56,8 @@ async function setup(notify: () => Promise<void>) {
       void execution.finally(() => pending.delete(execution));
     });
   });
-  const tracked: TrackedSession = { pid: 123, startedBy: 'daemon', happySessionId: sessionId };
-  const sessions = new Map([[tracked.pid, tracked]]);
+  const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(123), pid: 123, startedBy: 'daemon', happySessionId: sessionId };
+  const sessions = new Map([[tracked.trackingKey, tracked]]);
   const guard = createGuardSessionAccess({
     readAccess: () => ({ credentials: { token: 'fixture-token', encryption: null }, custodianAccountId: 'account',
       serverId: 'home', machineId: 'machine', serverHttpBaseUrl: 'https://guard-home.test' }),
@@ -68,14 +69,14 @@ async function setup(notify: () => Promise<void>) {
     }),
     releaseRequesterSessionRuntimeContext: context => releaseUnretainedRequesterSessionRuntimeContext(context,
       [...sessions.values()].map(session => session.requesterSessionRuntimeContext)),
-    isTrackedCurrent: session => current && sessions.get(session.pid) === session,
+    isTrackedCurrent: session => current && sessions.get(session.trackingKey) === session,
   });
   return {
     metadata: () => metadata,
     retire: () => { current = false; },
     sendGuardNotice: () => guard.sendNotice(tracked, { kind: 'stopping', stopAt: 300_000, rule: 'idle_sessions' }),
     send: (signal: AbortSignal, timeoutMs?: number | null) => {
-      const access = { tracked: { pid: 123, startedBy: 'daemon', happySessionId: sessionId },
+      const access = { tracked: { trackingKey: legacyPidSessionTrackingKey(123), pid: 123, startedBy: 'daemon', happySessionId: sessionId },
         credentials: { token: 'fixture-token', encryption: null }, custodianAccountId: 'account',
         serverId: 'home', machineId: 'machine', serverHttpBaseUrl: 'https://guard-home.test',
         isTrackedCurrent: () => current, signal, ...(timeoutMs === undefined ? {} : { timeoutMs }) };

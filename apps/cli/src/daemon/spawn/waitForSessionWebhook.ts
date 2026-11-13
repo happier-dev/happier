@@ -6,16 +6,20 @@ import type { PersistedTakeoverAdmissionWaitRegistration } from './persistedTake
 import { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS } from '@happier-dev/protocol/sessions/creation/sessionSpawnBudget';
 import { logger } from '@/ui/logger';
 import { buildChildExitBeforeWebhookFailure } from './childStderrDiagnostic';
+import { isCurrentTrackedSession, type SessionTrackingKey, type TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 export { DEFAULT_SESSION_WEBHOOK_TIMEOUT_MS };
 const SESSION_WEBHOOK_TIMEOUT_ENV_KEY = 'HAPPIER_DAEMON_SESSION_WEBHOOK_TIMEOUT_MS';
 
 type WaitForSessionWebhookParams = {
+  /** The spawned Session; its waiters are keyed by it. */
+  trackingKey: SessionTrackingKey;
+  /** Launched process, for diagnostics. */
   pid: number;
-  pidToAwaiter: Map<number, (session: TrackedSession) => void>;
-  pidToSpawnResultResolver: Map<number, (result: SpawnSessionResult) => void>;
-  pidToSpawnWebhookTimeout: Map<number, NodeJS.Timeout>;
-  pidToTrackedSession?: Map<number, TrackedSession>;
+  spawnAwaiterByKey: Map<SessionTrackingKey, (session: TrackedSession) => void>;
+  spawnResultResolverByKey: Map<SessionTrackingKey, (result: SpawnSessionResult) => void>;
+  spawnWebhookTimeoutByKey: Map<SessionTrackingKey, NodeJS.Timeout>;
+  trackedSessionsByKey?: TrackedSessionMap;
   timeoutMs?: number;
   takeoverAdmission?: PersistedTakeoverAdmissionWaitRegistration;
   timeoutErrorMessage: string;
@@ -42,19 +46,12 @@ export function resolveSessionStartupTimeoutMs(explicitTimeoutMs?: number): numb
 }
 
 function findRequestTrackedSession(
-  params: Pick<WaitForSessionWebhookParams, 'pid' | 'pidToTrackedSession'>,
+  params: Pick<WaitForSessionWebhookParams, 'trackedSessionsByKey'>,
   requestTrackedSession: TrackedSession | undefined,
 ): TrackedSession | null {
-  const direct = params.pidToTrackedSession?.get(params.pid);
-  if (direct === requestTrackedSession) return direct ?? null;
-  if (
-    requestTrackedSession
-    && params.pidToTrackedSession?.get(requestTrackedSession.pid)
-      === requestTrackedSession
-  ) {
-    return requestTrackedSession;
-  }
-  return null;
+  return requestTrackedSession && params.trackedSessionsByKey && isCurrentTrackedSession(params.trackedSessionsByKey, requestTrackedSession)
+    ? requestTrackedSession
+    : null;
 }
 
 export type SessionWebhookCompletion = Promise<SpawnSessionResult> & Readonly<{
@@ -96,20 +93,17 @@ export function waitForSessionWebhook(
   params: WaitForSessionWebhookParams,
 ): SessionWebhookCompletion {
   const timeoutMs = resolveSessionStartupTimeoutMs(params.timeoutMs);
-  const requestTrackedSession = params.pidToTrackedSession?.get(params.pid);
+  const requestTrackedSession = params.trackedSessionsByKey?.get(params.trackingKey);
   let isPending = () => true;
   let settleFailure!: SessionWebhookCompletion['settleFailure'];
   let waitForFinalization = () => Promise.resolve();
   const completion = new Promise<SpawnSessionResult>((resolve) => {
-    const requestTrackedSession = params.pidToTrackedSession?.get(params.pid);
+    const requestTrackedSession = params.trackedSessionsByKey?.get(params.trackingKey);
     let settled = false;
     let webhookSession: TrackedSession | null = null;
     const requestResolver = (result: SpawnSessionResult): void => {
       if (settled) return;
       settled = true;
-      if (requestTrackedSession?.spawnStartupAwaiterPid === params.pid) {
-        delete requestTrackedSession.spawnStartupAwaiterPid;
-      }
       clearTimeout(requestTimeout);
       clearRequestOwnedState();
       if (result.type !== 'success') params.takeoverAdmission?.cancel();
@@ -122,26 +116,26 @@ export function waitForSessionWebhook(
     waitForFinalization = () => successFinalization ?? Promise.resolve();
     let requestTimeout!: NodeJS.Timeout;
     const clearRequestOwnedState = () => {
-      if (params.pidToAwaiter.get(params.pid) === requestAwaiter) {
-        params.pidToAwaiter.delete(params.pid);
+      if (params.spawnAwaiterByKey.get(params.trackingKey) === requestAwaiter) {
+        params.spawnAwaiterByKey.delete(params.trackingKey);
       }
-      if (params.pidToSpawnResultResolver.get(params.pid) === requestResolver) {
-        params.pidToSpawnResultResolver.delete(params.pid);
+      if (params.spawnResultResolverByKey.get(params.trackingKey) === requestResolver) {
+        params.spawnResultResolverByKey.delete(params.trackingKey);
       }
-      if (params.pidToSpawnWebhookTimeout.get(params.pid) === requestTimeout) {
-        params.pidToSpawnWebhookTimeout.delete(params.pid);
+      if (params.spawnWebhookTimeoutByKey.get(params.trackingKey) === requestTimeout) {
+        params.spawnWebhookTimeoutByKey.delete(params.trackingKey);
       }
     };
 
-    params.pidToSpawnResultResolver.set(params.pid, requestResolver);
+    params.spawnResultResolverByKey.set(params.trackingKey, requestResolver);
 
     requestTimeout = setTimeout(() => {
-      const stillOwnsTimeout = params.pidToSpawnWebhookTimeout.get(params.pid) === requestTimeout;
-      const currentTrackedSession = params.pidToTrackedSession === undefined
+      const stillOwnsTimeout = params.spawnWebhookTimeoutByKey.get(params.trackingKey) === requestTimeout;
+      const currentTrackedSession = params.trackedSessionsByKey === undefined
         ? requestTrackedSession ?? null
         : findRequestTrackedSession(params, requestTrackedSession);
       const stillOwnsTrackedSession =
-        params.pidToTrackedSession === undefined
+        params.trackedSessionsByKey === undefined
         || currentTrackedSession !== null;
       clearRequestOwnedState();
       if (stillOwnsTimeout && stillOwnsTrackedSession) {
@@ -155,13 +149,13 @@ export function waitForSessionWebhook(
       });
     }, timeoutMs);
 
-    params.pidToSpawnWebhookTimeout.set(params.pid, requestTimeout);
+    params.spawnWebhookTimeoutByKey.set(params.trackingKey, requestTimeout);
 
     requestAwaiter = (completedSession) => {
       if (settled) return;
       if (params.takeoverAdmission && (
-        params.pidToSpawnResultResolver.get(params.pid) !== requestResolver
-        || (params.pidToTrackedSession !== undefined && findRequestTrackedSession(params, requestTrackedSession) === null)
+        params.spawnResultResolverByKey.get(params.trackingKey) !== requestResolver
+        || (params.trackedSessionsByKey !== undefined && findRequestTrackedSession(params, requestTrackedSession) === null)
       )) {
         requestResolver({
           type: 'error',
@@ -214,7 +208,7 @@ export function waitForSessionWebhook(
       }
       return complete;
     };
-    params.pidToAwaiter.set(params.pid, requestAwaiter);
+    params.spawnAwaiterByKey.set(params.trackingKey, requestAwaiter);
     void params.takeoverAdmission?.outcome.then((outcome) => {
       if (settled) return;
       if (outcome.status === 'failed') {

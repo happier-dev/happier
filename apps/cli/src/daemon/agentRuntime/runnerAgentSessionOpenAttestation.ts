@@ -82,8 +82,6 @@ export async function recordTrackedRunnerAgentSessionOpenAttestation(
       input.request,
     );
   const sessionId = input.tracked.happySessionId?.trim() ?? '';
-  const runnerPid =
-    input.tracked.sessionRunnerPid ?? input.tracked.pid;
   const runnerIdentity = resolveTrackedSessionRunnerIdentity(input.tracked);
   const authorityFilePath =
     input.tracked
@@ -125,7 +123,7 @@ export async function recordTrackedRunnerAgentSessionOpenAttestation(
     input.updateMarker
     ?? updateSessionMarkerAgentRuntimeSessionOpenAttestation
   )({
-    pid: runnerPid,
+    trackingKey: input.tracked.trackingKey,
     sessionId,
     authorityFilePath,
     attestation,

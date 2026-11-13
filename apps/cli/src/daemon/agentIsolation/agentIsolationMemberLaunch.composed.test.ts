@@ -26,6 +26,8 @@ import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
 import { SpawnSessionControlErrorResponseSchema, projectSpawnSessionControlErrorResponse } from '@/session/shared/spawnSessionContract';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import type { SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import { trackedSessionsForProcess } from '@/daemon/sessions/sessionTrackingKey';
 
 const spawnBoundary = vi.hoisted(() => ({ spawn: vi.fn() }));
 vi.mock('@/utils/spawnHappyCLI', async importOriginal => ({
@@ -161,26 +163,29 @@ describe.skipIf(process.platform !== 'linux')('member setup → selected materia
             const child = new ChildProcess();
             child.pid = 4242;
             spawnBoundary.spawn.mockReset().mockReturnValue(child);
-            const tracked = new Map<number, TrackedSession>();
-            const awaiters = new Map<number, (session: TrackedSession) => void>();
+            const tracked = new Map<SessionTrackingKey, TrackedSession>();
+            const awaiters = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
             const params: Parameters<typeof routeSpawnModeAndWaitForWebhook>[0] = {
               directory: expected.home, options: { directory: expected.home }, trackedSpawnOptions: { directory: expected.home },
               terminalRequest: { requested: 'plain' }, effectiveBackendTargetV2: { kind: 'backend', sourceKind: 'built_in', backendId: 'codex' },
               normalizedExistingSessionId: '', effectiveResume: '', directoryCreated: false,
               extraEnvForChildWithMessage: { [SESSION_REQUESTED_DIRECTORY_ENV]: expected.home }, processEnv: process.env, happyHomeDir: activeServerDir,
-              pidToTrackedSession: tracked, pidToAwaiter: awaiters, pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+              trackedSessionsByKey: tracked, spawnAwaiterByKey: awaiters, spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
               resolveCanonicalTrackedSessionId: () => 'member-session', onChildExited() {}, cleanupSpawnResources() {},
-              spawnLifecycleCallbacks: { registerConnectedServiceSpawnTarget() {}, registerSpawnResourceCleanupForPid() {},
-                cleanupSpawnResourcesForPid: async () => true, consumeSessionAttachCleanupForPid() {}, cleanupPendingSessionAttach: async () => {},
+              spawnLifecycleCallbacks: { registerConnectedServiceSpawnTarget() {}, registerSpawnResourceCleanupForSession() {},
+                cleanupSpawnResourcesForSession: async () => true, consumeSessionAttachCleanupForSession() {}, cleanupPendingSessionAttach: async () => {},
                 persistAcceptedSpawnMarker: async () => {}, removeAcceptedSpawnMarkerIfOwned: async () => true },
               logDebug() {}, warn() {}, onUntrackedHostedChild() {},
             };
             const pending = routeSpawnModeAndWaitForWebhook(params);
             let settled = false;
             void pending.then(() => { settled = true; });
-            await vi.waitFor(() => expect(awaiters.has(4242) || settled).toBe(true));
+            // The spawn mints the Session's tracking key; find it through the launched process.
+            const launchedSession = () => trackedSessionsForProcess(tracked, 4242).find(session => awaiters.has(session.trackingKey));
+            await vi.waitFor(() => expect(Boolean(launchedSession()) || settled).toBe(true));
             if (settled) expect(await pending).toEqual({ type: 'success', sessionId: 'member-session' });
-            awaiters.get(4242)!(tracked.get(4242)!);
+            const launched = launchedSession()!;
+            awaiters.get(launched.trackingKey)!(launched);
             expect(await pending).toMatchObject({ type: 'success' });
             const physicalLaunch = spawnBoundary.spawn.mock.calls.at(-1)![1];
             expect(physicalLaunch.cwd).toBe(process.cwd());

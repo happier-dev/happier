@@ -10,6 +10,7 @@ import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { writeExecutableShim } from '@/testkit/fs/executableShim';
 import { waitForSessionWebhook } from './spawn/waitForSessionWebhook';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const { waitForSessionWebhook: waitForRealSessionWebhook } = await vi.importActual<typeof import('./spawn/waitForSessionWebhook')>('./spawn/waitForSessionWebhook');
 
@@ -18,13 +19,13 @@ const { waitForSessionWebhook: waitForRealSessionWebhook } = await vi.importActu
 function completeSessionWebhook(params: Parameters<typeof waitForSessionWebhook>[0], sessionId = 'sess_plain') {
   const completion = waitForRealSessionWebhook(params);
   queueMicrotask(() => {
-    const tracked = params.pidToTrackedSession?.get(params.pid);
+    const tracked = params.trackedSessionsByKey?.get(params.trackingKey);
     if (!tracked) {
       completion.settleFailure({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
         errorMessage: 'Expected tracked child at the webhook boundary' });
       return;
     }
-    params.pidToAwaiter.get(params.pid)?.({ ...tracked, happySessionId: sessionId });
+    params.spawnAwaiterByKey.get(params.trackingKey)?.({ ...tracked, happySessionId: sessionId });
   });
   return completion;
 }
@@ -319,10 +320,12 @@ const onChildExitedCapture = vi.hoisted(() => {
   const onChildExited = vi.fn();
   return {
     onChildExited,
-    createOnChildExited: vi.fn(({ pidToTrackedSession }: { pidToTrackedSession: Map<number, any> }) =>
+    createOnChildExited: vi.fn(({ trackedSessionsByKey }: { trackedSessionsByKey: Map<SessionTrackingKey, any> }) =>
       vi.fn(async (pid: number, exit: { reason: string; code: number | null; signal: string | null }) => {
         onChildExited(pid, exit);
-        pidToTrackedSession.delete(pid);
+        for (const [trackingKey, tracked] of trackedSessionsByKey) {
+          if (tracked.pid === pid) trackedSessionsByKey.delete(trackingKey);
+        }
       })),
   };
 });
@@ -330,7 +333,7 @@ const onChildExitedCapture = vi.hoisted(() => {
 const stopSessionCapture = vi.hoisted(() => ({
   implementation: null as null | ((
     sessionId: string,
-    pidToTrackedSession: Map<number, any>,
+    trackedSessionsByKey: Map<SessionTrackingKey, any>,
   ) => Promise<import('./sessions/stopSessionContract').StopSessionResult>),
   createStopSession: vi.fn<typeof import('./sessions/stopSession').createStopSession>(),
 }));
@@ -541,7 +544,7 @@ vi.mock('./sessions/stopSession', async (importOriginal) => {
     });
     return async (sessionId) => {
       if (stopSessionCapture.implementation) {
-        return await stopSessionCapture.implementation(sessionId, params.pidToTrackedSession);
+        return await stopSessionCapture.implementation(sessionId, params.trackedSessionsByKey);
       }
       return await realStopSession(sessionId);
     };
@@ -787,9 +790,9 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     ensureSessionMachineAccessKeyBindingMock.mockImplementation(realBinding.ensureSessionMachineAccessKeyBinding);
 
     try {
-      reattachTrackedSessionsFromMarkersMock.mockImplementation(async ({ pidToTrackedSession }) => {
-        pidToTrackedSession.set(7788, {
-          pid: 7788,
+      reattachTrackedSessionsFromMarkersMock.mockImplementation(async ({ trackedSessionsByKey }) => {
+        trackedSessionsByKey.set(legacyPidSessionTrackingKey(7788), {
+          trackingKey: legacyPidSessionTrackingKey(7788), pid: 7788,
           startedBy: 'daemon',
           happySessionId: 'session-reattached-control',
           reattachedFromDiskMarker: true,
@@ -914,9 +917,9 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       vi.resetModules();
       harness.resetControlRefs();
       const reattachModule = await import('./sessions/reattachFromMarkers');
-      vi.mocked(reattachModule.reattachTrackedSessionsFromMarkers).mockImplementation(async ({ pidToTrackedSession }) => {
-        pidToTrackedSession.set(6480, {
-          pid: 6480,
+      vi.mocked(reattachModule.reattachTrackedSessionsFromMarkers).mockImplementation(async ({ trackedSessionsByKey }) => {
+        trackedSessionsByKey.set(legacyPidSessionTrackingKey(6480), {
+          trackingKey: legacyPidSessionTrackingKey(6480), pid: 6480,
           startedBy: 'daemon',
           happySessionId: 'sess-stop-6480',
           reattachedFromDiskMarker: true,
@@ -971,15 +974,15 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     try {
       vi.resetModules();
       harness.resetControlRefs();
-      stopSessionCapture.implementation = async (_sessionId, pidToTrackedSession) => {
-        pidToTrackedSession.delete(6481);
+      stopSessionCapture.implementation = async (_sessionId, trackedSessionsByKey) => {
+        trackedSessionsByKey.delete(legacyPidSessionTrackingKey(6481));
         await stopDisposition;
         return { status: 'stopped' };
       };
       const reattachModule = await import('./sessions/reattachFromMarkers');
-      vi.mocked(reattachModule.reattachTrackedSessionsFromMarkers).mockImplementation(async ({ pidToTrackedSession }) => {
-        pidToTrackedSession.set(6481, {
-          pid: 6481,
+      vi.mocked(reattachModule.reattachTrackedSessionsFromMarkers).mockImplementation(async ({ trackedSessionsByKey }) => {
+        trackedSessionsByKey.set(legacyPidSessionTrackingKey(6481), {
+          trackingKey: legacyPidSessionTrackingKey(6481), pid: 6481,
           startedBy: 'daemon',
           happySessionId: 'sess-stop-resume-barrier',
           reattachedFromDiskMarker: true,
@@ -1032,14 +1035,14 @@ describe('startDaemon spawn resume wiring (integration)', () => {
     try {
       vi.resetModules();
       harness.resetControlRefs();
-      stopSessionCapture.implementation = async (_sessionId, pidToTrackedSession) => {
-        pidToTrackedSession.delete(6482);
+      stopSessionCapture.implementation = async (_sessionId, trackedSessionsByKey) => {
+        trackedSessionsByKey.delete(legacyPidSessionTrackingKey(6482));
         return { status: 'stopped' };
       };
       const reattachModule = await import('./sessions/reattachFromMarkers');
-      vi.mocked(reattachModule.reattachTrackedSessionsFromMarkers).mockImplementation(async ({ pidToTrackedSession }) => {
-        pidToTrackedSession.set(6482, {
-          pid: 6482,
+      vi.mocked(reattachModule.reattachTrackedSessionsFromMarkers).mockImplementation(async ({ trackedSessionsByKey }) => {
+        trackedSessionsByKey.set(legacyPidSessionTrackingKey(6482), {
+          trackingKey: legacyPidSessionTrackingKey(6482), pid: 6482,
           startedBy: 'daemon',
           happySessionId: 'sess-stop-resume-respawn',
           reattachedFromDiskMarker: true,
@@ -1077,7 +1080,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       }]>;
       const childExitOwnerParams = childExitOwnerCalls.at(-1)?.[0];
       childExitOwnerParams?.onUnexpectedExit?.({
-        pid: 6483,
+        trackingKey: legacyPidSessionTrackingKey(6483), pid: 6483,
         startedBy: 'daemon',
         happySessionId: 'sess-stop-resume-respawn',
         spawnOptions: {
@@ -1655,7 +1658,7 @@ describe('startDaemon spawn resume wiring (integration)', () => {
       const onHappySessionWebhookModule = await import('./sessions/onHappySessionWebhook');
 
       const trackedSessionCapture: {
-        current: Map<number, {
+        current: Map<SessionTrackingKey, {
           pid: number;
           spawnOptions?: {
             environmentVariables?: Record<string, string>;
@@ -1663,8 +1666,8 @@ describe('startDaemon spawn resume wiring (integration)', () => {
         }> | null;
       } = { current: null };
 
-      vi.mocked(onHappySessionWebhookModule.createOnHappySessionWebhook).mockImplementation(({ pidToTrackedSession }) => {
-        trackedSessionCapture.current = pidToTrackedSession as typeof trackedSessionCapture.current;
+      vi.mocked(onHappySessionWebhookModule.createOnHappySessionWebhook).mockImplementation(({ trackedSessionsByKey }) => {
+        trackedSessionCapture.current = trackedSessionsByKey as typeof trackedSessionCapture.current;
         return vi.fn();
       });
 
@@ -2107,9 +2110,9 @@ describe('startDaemon spawn resume wiring (integration)', () => {
 
     try {
       const reattachModule = await import('./sessions/reattachFromMarkers');
-      vi.mocked(reattachModule.reattachTrackedSessionsFromMarkers).mockImplementation(async ({ pidToTrackedSession }) => {
-        pidToTrackedSession.set(6480, {
-          pid: 6480,
+      vi.mocked(reattachModule.reattachTrackedSessionsFromMarkers).mockImplementation(async ({ trackedSessionsByKey }) => {
+        trackedSessionsByKey.set(legacyPidSessionTrackingKey(6480), {
+          trackingKey: legacyPidSessionTrackingKey(6480), pid: 6480,
           startedBy: 'daemon',
           happySessionId: 'sess-6480',
           reattachedFromDiskMarker: true,

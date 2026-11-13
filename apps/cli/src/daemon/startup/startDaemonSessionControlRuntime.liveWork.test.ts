@@ -20,12 +20,13 @@ import { startAutomationWorker } from '../automation/automationWorker';
 import { createLiveWorkProducerGroup, createManagedActivityInventory } from '../lifecycle/managedActivity';
 import { createRequesterSessionControlRuntimeFixture } from '../testkit/requesterSessionControlRuntimeFixture';
 import type { TrackedSession } from '../types';
+import type { SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 it('keeps simulated 300s healthy-runner and Automation observations off Session Home reads while activity hints and explicit reads remain fresh', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'happier-healthy-live-work-'));
   const network = await createRequesterCurrentnessSocketHarness();
   const ids = ['c1234567890123456789012345', 'c2234567890123456789012345'];
-  const sessions = new Map<number, TrackedSession>(ids.map((happySessionId, index) => [index + 1, {
+  const sessions = new Map<SessionTrackingKey, TrackedSession>(ids.map((happySessionId, index) => [index + 1, {
     pid: index + 1, startedBy: 'daemon', happySessionId,
   }]));
   const queues = ids.map(() => new MessageQueue2<string>(() => 'mode'));

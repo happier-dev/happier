@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { PassThrough } from 'node:stream';
 import axios from 'axios';
 import type { ApiMachineClient } from '@/api/apiMachine';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 type ShutdownSource = 'happier-app' | 'happier-cli' | 'os-signal' | 'exception';
 type BuildHappyCliSubprocessLaunchSpec = typeof import('@/utils/spawnHappyCLI').buildHappyCliSubprocessLaunchSpec;
@@ -1275,6 +1276,7 @@ describe('startDaemon session handoff wiring (integration)', () => {
         try {
             const onHappySessionWebhookModule = await import('./sessions/onHappySessionWebhook');
             type TrackedSessionRef = {
+                trackingKey: SessionTrackingKey;
                 startedBy: string;
                 pid: number;
                 happySessionId?: string;
@@ -1282,9 +1284,9 @@ describe('startDaemon session handoff wiring (integration)', () => {
                 vendorResumeId?: string;
                 spawnOptions?: Record<string, unknown>;
             };
-            const trackedSessionCapture: { current: Map<number, TrackedSessionRef> | null } = { current: null };
-            vi.mocked(onHappySessionWebhookModule.createOnHappySessionWebhook).mockImplementation(({ pidToTrackedSession }) => {
-                trackedSessionCapture.current = pidToTrackedSession as Map<number, TrackedSessionRef>;
+            const trackedSessionCapture: { current: Map<SessionTrackingKey, TrackedSessionRef> | null } = { current: null };
+            vi.mocked(onHappySessionWebhookModule.createOnHappySessionWebhook).mockImplementation(({ trackedSessionsByKey }) => {
+                trackedSessionCapture.current = trackedSessionsByKey as Map<SessionTrackingKey, TrackedSessionRef>;
                 return vi.fn();
             });
 
@@ -1300,7 +1302,8 @@ describe('startDaemon session handoff wiring (integration)', () => {
             if (!trackedSessions) {
                 throw new Error('Expected tracked session map from webhook wiring');
             }
-            trackedSessions.set(1557, {
+            trackedSessions.set(legacyPidSessionTrackingKey(1557), {
+                trackingKey: legacyPidSessionTrackingKey(1557),
                 startedBy: 'daemon',
                 pid: 1557,
                 happySessionId: 'sess_handoff_back',
@@ -1324,7 +1327,8 @@ describe('startDaemon session handoff wiring (integration)', () => {
                     }),
                 }),
             );
-            trackedSessions.set(2660, {
+            trackedSessions.set(legacyPidSessionTrackingKey(2660), {
+                trackingKey: legacyPidSessionTrackingKey(2660),
                 startedBy: 'daemon',
                 pid: 2660,
                 happySessionId: 'sess_handoff_pre_webhook',
@@ -1379,6 +1383,7 @@ describe('startDaemon session handoff wiring (integration)', () => {
         try {
             const onHappySessionWebhookModule = await import('./sessions/onHappySessionWebhook');
             type TrackedSessionRef = {
+                trackingKey: SessionTrackingKey;
                 startedBy: string;
                 pid: number;
                 happySessionId?: string;
@@ -1386,9 +1391,9 @@ describe('startDaemon session handoff wiring (integration)', () => {
                 vendorResumeId?: string;
                 spawnOptions?: Record<string, unknown>;
             };
-            const trackedSessionCapture: { current: Map<number, TrackedSessionRef> | null } = { current: null };
-            vi.mocked(onHappySessionWebhookModule.createOnHappySessionWebhook).mockImplementation(({ pidToTrackedSession }) => {
-                trackedSessionCapture.current = pidToTrackedSession as Map<number, TrackedSessionRef>;
+            const trackedSessionCapture: { current: Map<SessionTrackingKey, TrackedSessionRef> | null } = { current: null };
+            vi.mocked(onHappySessionWebhookModule.createOnHappySessionWebhook).mockImplementation(({ trackedSessionsByKey }) => {
+                trackedSessionCapture.current = trackedSessionsByKey as Map<SessionTrackingKey, TrackedSessionRef>;
                 return vi.fn();
             });
 
@@ -1404,7 +1409,8 @@ describe('startDaemon session handoff wiring (integration)', () => {
             if (!trackedSessions) {
                 throw new Error('Expected tracked session map from webhook wiring');
             }
-            trackedSessions.set(3661, {
+            trackedSessions.set(legacyPidSessionTrackingKey(3661), {
+                trackingKey: legacyPidSessionTrackingKey(3661),
                 startedBy: 'daemon',
                 pid: 3661,
                 happySessionId: 'sess_handoff_resume_fallback',
@@ -1456,6 +1462,7 @@ describe('startDaemon session handoff wiring (integration)', () => {
         try {
             const onHappySessionWebhookModule = await import('./sessions/onHappySessionWebhook');
             type TrackedSessionRef = {
+                trackingKey: SessionTrackingKey;
                 startedBy: string;
                 pid: number;
                 happySessionId?: string;
@@ -1463,9 +1470,9 @@ describe('startDaemon session handoff wiring (integration)', () => {
                 vendorResumeId?: string;
                 spawnOptions?: Record<string, unknown>;
             };
-            const trackedSessionCapture: { current: Map<number, TrackedSessionRef> | null } = { current: null };
-            vi.mocked(onHappySessionWebhookModule.createOnHappySessionWebhook).mockImplementation(({ pidToTrackedSession }) => {
-                trackedSessionCapture.current = pidToTrackedSession as Map<number, TrackedSessionRef>;
+            const trackedSessionCapture: { current: Map<SessionTrackingKey, TrackedSessionRef> | null } = { current: null };
+            vi.mocked(onHappySessionWebhookModule.createOnHappySessionWebhook).mockImplementation(({ trackedSessionsByKey }) => {
+                trackedSessionCapture.current = trackedSessionsByKey as Map<SessionTrackingKey, TrackedSessionRef>;
                 return vi.fn();
             });
 
@@ -1481,7 +1488,8 @@ describe('startDaemon session handoff wiring (integration)', () => {
             if (!trackedSessions) {
                 throw new Error('Expected tracked session map from webhook wiring');
             }
-            trackedSessions.set(4662, {
+            trackedSessions.set(legacyPidSessionTrackingKey(4662), {
+                trackingKey: legacyPidSessionTrackingKey(4662),
                 startedBy: 'daemon',
                 pid: 4662,
                 happySessionId: 'sess_handoff_overlay_only',
@@ -1499,6 +1507,7 @@ describe('startDaemon session handoff wiring (integration)', () => {
         try {
             const onHappySessionWebhookModule = await import('./sessions/onHappySessionWebhook');
             type TrackedSessionRef = {
+                trackingKey: SessionTrackingKey;
                 startedBy: string;
                 pid: number;
                 happySessionId?: string;
@@ -1506,9 +1515,9 @@ describe('startDaemon session handoff wiring (integration)', () => {
                 vendorResumeId?: string;
                 spawnOptions?: Record<string, unknown>;
             };
-            const trackedSessionCapture: { current: Map<number, TrackedSessionRef> | null } = { current: null };
-            vi.mocked(onHappySessionWebhookModule.createOnHappySessionWebhook).mockImplementation(({ pidToTrackedSession }) => {
-                trackedSessionCapture.current = pidToTrackedSession as Map<number, TrackedSessionRef>;
+            const trackedSessionCapture: { current: Map<SessionTrackingKey, TrackedSessionRef> | null } = { current: null };
+            vi.mocked(onHappySessionWebhookModule.createOnHappySessionWebhook).mockImplementation(({ trackedSessionsByKey }) => {
+                trackedSessionCapture.current = trackedSessionsByKey as Map<SessionTrackingKey, TrackedSessionRef>;
                 return vi.fn();
             });
 
@@ -1525,7 +1534,8 @@ describe('startDaemon session handoff wiring (integration)', () => {
                 throw new Error('Expected tracked session map from webhook wiring');
             }
             const opaqueVendorResumeId = ' sess-handoff-direct-vendor-only\n';
-            trackedSessions.set(5663, {
+            trackedSessions.set(legacyPidSessionTrackingKey(5663), {
+                trackingKey: legacyPidSessionTrackingKey(5663),
                 startedBy: 'daemon',
                 pid: 5663,
                 vendorResumeId: opaqueVendorResumeId,

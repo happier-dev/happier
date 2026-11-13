@@ -69,6 +69,7 @@ import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import type { createEnvKeyScope } from '@/testkit/env/envScope';
 
 import { startDaemonSessionControlRuntime } from './startDaemonSessionControlRuntime';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 export const PARENT_AGENT_ID = `${PUBLIC_HANDOFF_AGENT_PLUGIN_ID}/${PUBLIC_HANDOFF_AGENT_ID}`;
 export const RUN_AGENT_ID = 'acme.run-agent/run-agent';
@@ -271,6 +272,7 @@ export async function composeAttachedRunJourney(params: Readonly<{
         teamId: 'team-a',
     });
     const tracked: TrackedSession = {
+        trackingKey: legacyPidSessionTrackingKey(process.pid),
         pid: process.pid,
         sessionRunnerPid: process.pid,
         startedBy: 'daemon',
@@ -287,6 +289,7 @@ export async function composeAttachedRunJourney(params: Readonly<{
         runnerAgentBootstrapIdentity: { agentId: PARENT_AGENT_ID, backendId: PARENT_AGENT_ID },
     };
     await writeSessionMarker({
+        trackingKey: tracked.trackingKey,
         pid: runner.pid,
         happySessionId: sessionId,
         startedBy: 'daemon',
@@ -325,7 +328,7 @@ export async function composeAttachedRunJourney(params: Readonly<{
     });
 
     // --- The real daemon dispatcher. ---
-    const pidToTrackedSession = new Map([[tracked.pid, tracked]]);
+    const trackedSessionsByKey = new Map([[tracked.trackingKey, tracked]]);
     const daemon = await startDaemonSessionControlRuntime({
         machineId,
         serverId: 'server-attached-run-broker',
@@ -343,14 +346,14 @@ export async function composeAttachedRunJourney(params: Readonly<{
         connectedServicesMaterializationBaseDir: join(happyHomeDir, 'connected-services'),
         getConnectedServiceRefreshCoordinator: () => null,
         getConnectedServiceQuotasCoordinator: () => null,
-        pidToTrackedSession,
-        pidToAwaiter: new Map(),
-        pidToSpawnResultResolver: new Map(),
-        pidToSpawnWebhookTimeout: new Map(),
+        trackedSessionsByKey,
+        spawnAwaiterByKey: new Map(),
+        spawnResultResolverByKey: new Map(),
+        spawnWebhookTimeoutByKey: new Map(),
         getApiMachineForSessions: () => null,
-        spawnResourceCleanupByPid: new Map(),
-        sessionAttachCleanupByPid: new Map(),
-        connectedServicesRestartRequestedPids: new Set(),
+        spawnResourceCleanupByKey: new Map(),
+        sessionAttachCleanupByKey: new Map(),
+        connectedServicesRestartRequestedSessions: new Set(),
         beforeShutdown: vi.fn(),
         onHappySessionWebhook: vi.fn(),
         requestShutdown: vi.fn(),
@@ -368,7 +371,7 @@ export async function composeAttachedRunJourney(params: Readonly<{
     });
     tracked.agentRuntimeDaemonServiceAuthorityFilePath = authorityFilePath;
     await expect(updateSessionMarkerAgentRuntimeDaemonServiceAuthorityPath({
-        pid: runner.pid,
+        trackingKey: tracked.trackingKey, pid: runner.pid,
         sessionId,
         processCommandHash: runner.processCommandHash,
         processStartTimeMs: runner.processStartTimeMs,
@@ -412,7 +415,7 @@ export async function composeAttachedRunJourney(params: Readonly<{
             retainedAgent: authority.document.retainedAgent,
             invocationContext: tracked.runnerAgentInvocationContext!,
             trackedSession: tracked,
-            isCurrent: async () => pidToTrackedSession.get(tracked.pid) === tracked,
+            isCurrent: async () => trackedSessionsByKey.get(tracked.trackingKey) === tracked,
             signal: init?.signal ?? undefined,
         });
         return new Response(JSON.stringify(response), {

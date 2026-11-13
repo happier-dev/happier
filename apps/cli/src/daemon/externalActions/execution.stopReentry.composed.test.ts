@@ -55,10 +55,10 @@ it.each(['explicit_stop', 'lifecycle_control'] as const)('settles one requester 
   await once(child, 'message');
   const identity = await readProcessIdentityByPid(child.pid!);
   if (!identity) throw new Error('Owned runner identity unavailable');
-  h.pidToTrackedSession.clear();
+  h.trackedSessionsByKey.clear();
   const tracked = { ...h.tracked, pid: child.pid!, sessionRunnerPid: child.pid!, childProcess: child,
     processStartTimeMs: identity.processStartTimeMs, processCommandHash: hashProcessCommand(identity.command) };
-  h.pidToTrackedSession.set(tracked.pid, tracked);
+  h.trackedSessionsByKey.set(tracked.trackingKey, tracked);
   h.machine.setRPCHandlers({ spawnSession: async () => { throw new Error('Stop cannot spawn'); },
     stopSession: h.daemon.stopSession, requestShutdown() {} });
   // Home's terminal publisher acknowledgement is the network boundary. The
@@ -174,7 +174,7 @@ it.each(['explicit_stop', 'lifecycle_control'] as const)('settles one requester 
       response: { execution: { ok: true, result: { stopped: true } } } });
     await exited;
     expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
-    expect(h.pidToTrackedSession.has(tracked.pid)).toBe(false);
+    expect(h.trackedSessionsByKey.has(tracked.trackingKey)).toBe(false);
     for (const event of ['session_stop_received', 'session_stop_attempt']) {
       expect(diagnostic.mock.calls).toContainEqual([expect.any(String), expect.objectContaining({ event,
         sessionId: h.sessionId, requestTransport: 'external_action', requestSource: { surface: 'ui', callerKind: 'host' } })]);

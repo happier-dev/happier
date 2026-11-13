@@ -13,6 +13,7 @@ import type { TrackedSession } from '../types';
 import { createStopSession } from './stopSession';
 import { retireExactTerminalControlServiceability } from './retireTerminalControlServiceability';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -73,7 +74,7 @@ describe('Stop attachment retirement after real runner exit', () => {
       const identity = await readProcessIdentityByPid(child.pid);
       if (typeof identity?.processStartTimeMs !== 'number') throw new Error('missing real process generation');
       const tracked: TrackedSession = {
-        startedBy: 'daemon', pid: child.pid, childProcess: child, happySessionId: sessionId,
+        trackingKey: legacyPidSessionTrackingKey(child.pid), startedBy: 'daemon', pid: child.pid, childProcess: child, happySessionId: sessionId,
         processStartTimeMs: identity.processStartTimeMs,
         spawnOptions: { directory: home, terminal: { mode: 'herdr' } },
       };
@@ -93,7 +94,7 @@ describe('Stop attachment retirement after real runner exit', () => {
           } });
       }
       const stop = createStopSession({
-        pidToTrackedSession: new Map([[child.pid, tracked]]),
+        trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
         terminalHostAdapters: { herdr: adapter },
         expectedTerminalAttachmentId: attachment.attachmentId,
         ...(serviceabilitySuperseded ? {

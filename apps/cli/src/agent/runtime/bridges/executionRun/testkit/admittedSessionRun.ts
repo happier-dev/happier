@@ -36,6 +36,7 @@ import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/ad
 import type { PluginDaemonModuleNamespace } from '@/plugins/runtime/types';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { writeSessionMarker, hashProcessCommand, updateSessionMarkerAgentRuntimeDaemonServiceAuthorityPath } from '@/daemon/sessionRegistry';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 import * as processIdentity from '@/daemon/processIdentity';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createDaemonControlApp } from '@/daemon/controlServer';
@@ -638,7 +639,7 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
     if (source === 'ordinary accepted marker') {
       const identity = await processIdentity.readProcessIdentityByPid(process.pid);
       if (identity?.processStartTimeMs === undefined) throw new Error('Missing actual child process generation');
-      await writeSessionMarker({ pid: process.pid, happySessionId: 'admitted-session',
+      await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, happySessionId: 'admitted-session',
         createdAt: Date.now(), updatedAt: Date.now(), startedBy: 'daemon', requesterWorkAttributionV1: attribution,
         processStartTimeMs: identity.processStartTimeMs, processCommandHash: hashProcessCommand(identity.command) });
     }
@@ -720,13 +721,13 @@ export async function runRequesterAttributionCase(source: 'protected child' | 'o
     const path = await createAgentRuntimeDaemonServiceAuthorityPath(configuration);
     const published = await publishAgentRuntimeDaemonServiceAuthority({ ...configuration, path,
       sessionId: 'admitted-session', runner, retainedAgent: binding, httpPort: daemonAddress.port });
-    tracked.push({ startedBy: 'daemon', happySessionId: 'admitted-session', ...runner,
+    tracked.push({ trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon', happySessionId: 'admitted-session', ...runner,
       agentRuntimeDaemonServiceAuthorityFilePath: path, agentRuntimeDaemonServiceCapabilityHash: published.capabilityDigest,
       runnerAgentSourceCustodyV1: binding.sourceCustody,
       runnerAgentInvocationContext: { cwd: directory, environment: {}, providerBindingActive: false } });
     vi.stubEnv(HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY, path);
     if (source === 'ordinary accepted marker') {
-      expect(await updateSessionMarkerAgentRuntimeDaemonServiceAuthorityPath({ pid: process.pid,
+      expect(await updateSessionMarkerAgentRuntimeDaemonServiceAuthorityPath({ trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid,
         sessionId: 'admitted-session', processCommandHash: hashProcessCommand(command),
         processStartTimeMs: actualIdentity.processStartTimeMs, authorityFilePath: path })).toBe(true);
     }

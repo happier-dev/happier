@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDaemonControlApp } from './controlServer';
 import { SPAWN_SESSION_ERROR_CODES } from '@/rpc/handlers/registerSessionHandlers';
 import { logger } from '@/ui/logger';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 vi.mock('@/ui/logger', () => ({
   logger: {
@@ -594,7 +595,7 @@ describe('daemon control server: /spawn-session', () => {
     const app = createDaemonControlApp({
       getChildren: () => [
         {
-          startedBy: 'daemon',
+          trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
           pid: 123,
           happySessionId: 'sess-ready',
           spawnOptions: { directory: '/tmp', spawnNonce: 'nonce-1' },
@@ -863,7 +864,7 @@ describe('daemon control server: /spawn-session', () => {
   it('rejoins a reattached pre-webhook child on a direct same-nonce retry without launching a competitor', async () => {
     const trackedChildren = [
       {
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(124), startedBy: 'daemon',
         pid: 124,
         happySessionId: 'PID-124',
         spawnOptions: { directory: '/tmp/original', spawnNonce: 'nonce-reattached-pending' },
@@ -937,7 +938,7 @@ describe('daemon control server: /spawn-session', () => {
 
   it('marks spawn-nonce success only after async session-started readiness adopts the canonical id', async () => {
     const trackedChildren = [{
-      startedBy: 'daemon',
+      trackingKey: legacyPidSessionTrackingKey(125), startedBy: 'daemon',
       pid: 125,
       happySessionId: 'PID-125',
       spawnOptions: {
@@ -1025,7 +1026,7 @@ describe('daemon control server: /spawn-session', () => {
 
   it('does not mark spawn-nonce success when async session-started readiness refuses', async () => {
     const trackedChildren = [{
-      startedBy: 'daemon',
+      trackingKey: legacyPidSessionTrackingKey(126), startedBy: 'daemon',
       pid: 126,
       happySessionId: 'PID-126',
       spawnOptions: {
@@ -1141,7 +1142,7 @@ describe('daemon control server: /spawn-session', () => {
 
       trackedChildren = [
         {
-          startedBy: 'daemon',
+          trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
           pid: 123,
           happySessionId: 'sess-timeout-resolved',
           spawnOptions: { directory: '/tmp/one', spawnNonce: 'nonce-timeout-pending' },
@@ -1247,7 +1248,7 @@ describe('daemon control server: /spawn-session', () => {
       expect(spawnSession).toHaveBeenCalledOnce();
 
       trackedChildren = [{
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(8892), startedBy: 'daemon',
         pid: 8892,
         happySessionId: 'session-too-late',
         spawnOptions: { directory: '/tmp', spawnNonce: 'nonce-child-exit' },
@@ -1278,7 +1279,7 @@ describe('daemon control server: /spawn-session', () => {
     const app = createDaemonControlApp({
       getChildren: () => [
         {
-          startedBy: 'daemon',
+          trackingKey: legacyPidSessionTrackingKey(321), startedBy: 'daemon',
           pid: 321,
           happySessionId: 'PID-321',
           spawnOptions: { directory: '/tmp', spawnNonce: 'nonce-pending' },

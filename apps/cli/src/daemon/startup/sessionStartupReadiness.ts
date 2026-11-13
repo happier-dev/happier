@@ -2,6 +2,7 @@ import type { Metadata, SessionCreationOutcome } from '@/api/types';
 
 import type { createOnHappySessionWebhook } from '../sessions/onHappySessionWebhook';
 import type { TrackedSession } from '../types';
+import type { SessionTrackingKey } from '../sessions/sessionTrackingKey';
 
 /** The control acknowledgement owns custody and authority, not runner RPC follow-up. */
 export function createSessionStartupReadinessHandler(params: Readonly<{
@@ -15,12 +16,14 @@ export function createSessionStartupReadinessHandler(params: Readonly<{
         metadata: Metadata,
         _reconcileCanonicalReadiness?: (tracked: TrackedSession) => Promise<void>,
         sessionCreationOutcome?: SessionCreationOutcome,
+        reportedTrackingKey?: SessionTrackingKey | null,
     ): Promise<void> => {
         await params.onHappySessionWebhook(
             sessionId,
             metadata,
             params.reconcileCanonicalReadiness,
             sessionCreationOutcome,
+            reportedTrackingKey,
         );
         // Runner RPC availability is a follow-up fact, not canonical custody.
         // Keep its failure observable without failing accepted readiness or

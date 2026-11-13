@@ -10,6 +10,7 @@ import {
   migrateTrackedSessionProcessesOutOfDaemonServiceCgroup,
   moveProcessOutOfDaemonServiceCgroup,
 } from './migrateTrackedSessionsOutOfDaemonServiceCgroup';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 async function writeProcCgroup(procfsRootDir: string, pid: number, relativePath: string): Promise<void> {
   const procDir = join(procfsRootDir, String(pid));
@@ -64,13 +65,13 @@ describe('migrateTrackedSessionsOutOfDaemonServiceCgroup', () => {
 
     const trackedSessions = [
       {
-        pid: 6480,
+        trackingKey: legacyPidSessionTrackingKey(6480), pid: 6480,
         startedBy: 'daemon',
         happySessionId: 'sess-6480',
         reattachedFromDiskMarker: true,
       },
       {
-        pid: 9761,
+        trackingKey: legacyPidSessionTrackingKey(9761), pid: 9761,
         startedBy: 'daemon',
         happySessionId: 'sess-9761',
         reattachedFromDiskMarker: true,
@@ -144,19 +145,19 @@ describe('migrateTrackedSessionsOutOfDaemonServiceCgroup', () => {
 
     const trackedSessions = [
       {
-        pid: 222,
+        trackingKey: legacyPidSessionTrackingKey(222), pid: 222,
         startedBy: 'daemon',
         happySessionId: 'sess-outside',
         reattachedFromDiskMarker: true,
       },
       {
-        pid: 333,
+        trackingKey: legacyPidSessionTrackingKey(333), pid: 333,
         startedBy: 'terminal',
         happySessionId: 'sess-external',
         reattachedFromDiskMarker: true,
       },
       {
-        pid: 444,
+        trackingKey: legacyPidSessionTrackingKey(444), pid: 444,
         startedBy: 'daemon',
         happySessionId: 'sess-not-reattached',
       },

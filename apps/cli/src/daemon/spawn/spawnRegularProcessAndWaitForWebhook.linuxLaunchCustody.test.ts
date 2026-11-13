@@ -14,7 +14,7 @@ import { waitForProcessExit } from '@/testkit/process/spawn';
 import { getHappierTempDirOwnerPath } from '@happier-dev/cli-common/tempDirs';
 import { withHerdrApi } from '@/integrations/herdr/herdrApi.testkit';
 import { readOrCreateDeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
-import { listSessionMarkers } from '../sessionRegistry';
+import { readSessionMarker } from '../sessionRegistry';
 import { listHappierProcessRoots } from '../processes/roots/listHappierProcessRoots';
 import { createProcessOwnershipRuntime } from '../processes/ownership/processOwnershipRuntime';
 import { createEndOwnerRemainder } from '../processes/endOwnerRemainder';
@@ -28,6 +28,7 @@ import { persistAcceptedSpawnMarker } from './persistAcceptedSpawnMarker';
 import { spawnRegularProcessAndWaitForWebhook } from './spawnRegularProcessAndWaitForWebhook';
 import { spawnTmuxHostedSessionAndWaitForWebhook } from './spawnTmuxHostedSessionAndWaitForWebhook';
 import { spawnAdapterHostedSessionAndWaitForWebhook } from './spawnAdapterHostedSessionAndWaitForWebhook';
+import type { SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const osBoundary = vi.hoisted(() => ({
   ready: true, systemdRunPath: '', runnerPath: '',
@@ -197,16 +198,16 @@ describe('fresh Linux launch custody', () => {
     vi.stubEnv('HAPPIER_PROCESS_OWNER', daemonOwner);
     vi.stubEnv('PATH', scratch);
     vi.stubEnv('DBUS_SESSION_BUS_ADDRESS', 'unix:path=/fixture/bus');
-    const tracked = new Map<number, TrackedSession>();
-    const awaiters = new Map<number, (session: TrackedSession) => void>();
+    const tracked = new Map<SessionTrackingKey, TrackedSession>();
+    const awaiters = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
     let registered!: (session: TrackedSession) => void;
     const registration = new Promise<TrackedSession>(resolve => { registered = resolve; });
     const deviceLocalSecretStorage = await readOrCreateDeviceLocalSecretStorage({ path: join(scratch, 'device-local-key.json') });
     const callbacks = createSpawnLifecycleCallbacks({
       connectedServicesBindingsRaw: null, catalogAgentId: null, materializationKey: 'fixture',
       hasConnectedServiceAuth: () => false, getSpawnResourceCleanupOnExit: () => null,
-      onSpawnResourceCleanupArmed: () => {}, spawnResourceCleanupByPid: new Map(),
-      getSessionAttachCleanup: () => null, setSessionAttachCleanup: () => {}, sessionAttachCleanupByPid: new Map(),
+      onSpawnResourceCleanupArmed: () => {}, spawnResourceCleanupByKey: new Map(),
+      getSessionAttachCleanup: () => null, setSessionAttachCleanup: () => {}, sessionAttachCleanupByKey: new Map(),
       onTrackedSessionRegistered: () => registered([...tracked.values()][0]!),
       persistAcceptedSpawnMarker: async (session, options) => await persistAcceptedSpawnMarker({ trackedSession: session, deviceLocalSecretStorage, ...options }),
     });
@@ -219,8 +220,8 @@ describe('fresh Linux launch custody', () => {
         processEnv: { ...process.env, PATH: directory, DBUS_SESSION_BUS_ADDRESS: 'unix:path=/fixture/bus', HAPPIER_HOME_DIR: configuration.happyHomeDir, HAPPIER_PROCESS_OWNER: daemonOwner },
         runnerLaunchOptions: { runtimeDecision: { runtime: 'node', argvPrefix: [osBoundary.runnerPath] } },
         ...(ceiling ? { memoryHighBytes: 1073741824 } : {}),
-        pidToTrackedSession: tracked, pidToAwaiter: awaiters, pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
-        resolveCanonicalTrackedSessionId: pid => tracked.get(pid)?.happySessionId ?? '',
+        trackedSessionsByKey: tracked, spawnAwaiterByKey: awaiters, spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
+        resolveCanonicalTrackedSessionId: trackingKey => tracked.get(trackingKey)?.happySessionId ?? '',
         onChildExited: stopBeforeReady ? createOnChildExited({ trackedSessionsByKey: tracked,
           spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null,
         }) : () => {}, spawnLifecycleCallbacks: callbacks, cleanupSpawnResources: () => {}, logDebug: () => {}, warn: () => {},
@@ -244,7 +245,7 @@ describe('fresh Linux launch custody', () => {
             // Settle the old unbounded launch before asserting RED, so it cannot
             // leave its webhook deadline or owned child running after the test.
             await record.acceptedSpawnMarkerGate;
-            const report = createOnHappySessionWebhook({ pidToTrackedSession: tracked, pidToAwaiter: awaiters });
+            const report = createOnHappySessionWebhook({ trackedSessionsByKey: tracked, spawnAwaiterByKey: awaiters });
             await report('canonical-session', { hostPid: record.pid, path: scratch, startedBy: 'daemon' } as Metadata);
             await record.reportMarkerCustody?.pending;
             await pending;
@@ -289,13 +290,13 @@ describe('fresh Linux launch custody', () => {
         return;
       }
       // Always settle the real startup owner before assertions, including RED.
-      const report = createOnHappySessionWebhook({ pidToTrackedSession: tracked, pidToAwaiter: awaiters });
+      const report = createOnHappySessionWebhook({ trackedSessionsByKey: tracked, spawnAwaiterByKey: awaiters });
       await report('canonical-session', { hostPid: record.pid, path: scratch, startedBy: 'daemon' } as Metadata);
       await record.reportMarkerCustody?.pending;
       await expect(pending).resolves.toMatchObject(host !== 'tmux'
         ? { type: 'success', sessionId: 'canonical-session' }
         : { spawnResult: { type: 'success', sessionId: 'canonical-session' } });
-      expect(tracked.get(record.pid)).toBe(record);
+      expect(tracked.get(record.trackingKey)).toBe(record);
       expect(record.happySessionId).toBe('canonical-session');
       let stopDetached: (() => Promise<void>) | undefined;
       if (detachedCase) {
@@ -330,7 +331,7 @@ describe('fresh Linux launch custody', () => {
           const exited = new Promise<void>(resolve => runner.once('exit', () => resolve()));
           runner.kill();
           await exited;
-          tracked.delete(record.pid);
+          tracked.delete(record.trackingKey);
           const ended = await remainder.end(owner, captured);
           expect(ended.status).toBe('complete');
           expect(ended.outcomes).toContainEqual(expect.objectContaining({ pid: detachedPid, outcome: 'ended' }));
@@ -354,8 +355,8 @@ describe('fresh Linux launch custody', () => {
       if (host !== 'tmux') expect(parseProcessOwnerTag(launch.env.HAPPIER_PROCESS_OWNER)).toEqual(parseProcessOwnerTag(expectedOwner));
       else expect(osBoundary.tmuxLauncher).toContain(expectedOwner);
       expect(record).toMatchObject({ linuxLaunchUnit: unit });
-      await vi.waitFor(async () => expect((await listSessionMarkers()).find(candidate => candidate.pid === record.pid)?.happySessionId).toBe('canonical-session'));
-      const marker = (await listSessionMarkers()).find(candidate => candidate.pid === record.pid);
+      await vi.waitFor(async () => expect((await readSessionMarker(record.trackingKey))?.happySessionId).toBe('canonical-session'));
+      const marker = await readSessionMarker(record.trackingKey);
       expect(marker).toMatchObject({ processStartTimeMs: record.processStartTimeMs, happySessionId: 'canonical-session' });
       expect(marker?.processCommand).toContain(osBoundary.runnerPath);
       // Resume retains the accepted marker's existing launch custody; fresh

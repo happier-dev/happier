@@ -45,6 +45,7 @@ import { createSessionConnectedServiceAccountAdoptionVerifier } from './sessionC
 import { createConnectedServiceSessionAuthSwitchCore } from '../runtimeAuth/connectedServiceSessionAuthSwitchCore';
 import { ConnectedServiceRuntimeRegistry } from '../runtimeRegistry/registry';
 import { resolveSessionConnectedServiceSwitchContinuity } from './continuity';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 function qualifiedApiForRecord(record: ReturnType<typeof buildConnectedServiceCredentialRecord>) {
   const service = resolveFirstPartyQualifiedConnectedAccountServiceForLegacyServiceId(record.serviceId);
@@ -121,7 +122,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       const bindings = (profileId: string): ConnectedServiceBindingsV2 => ({ v: 2, bindingsByServiceId: {
         [CODEX_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId },
       } });
-      const tracked: TrackedSession = { startedBy: 'daemon', happySessionId: sessionId, pid: 123, spawnOptions: {
+      const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon', happySessionId: sessionId, pid: 123, spawnOptions: {
         directory: root, backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
         connectedServices: bindings('exhausted'),
       } };
@@ -270,7 +271,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
               api: api as unknown as ApiClient, readGroup: () => readQualifiedConnectedAccountGroupV4({
                 token: credentials.token, group: { service, groupId: 'pool' } }) }), processEnv: {},
             input: { mode: 'apply', sessionId: 'session', agentId: 'codex', serviceId: CODEX_SERVICE_KEY, previous: null,
-              tracked: { startedBy: 'daemon', happySessionId: 'session', pid: 123 },
+              tracked: { trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon', happySessionId: 'session', pid: 123 },
               next: { source: 'connected', selection: 'group', serviceId: CODEX_SERVICE_KEY, groupId: 'pool', profileId: 'backup' },
               groupMetadata: { groupId: 'pool', activeProfileId: 'backup', fallbackProfileId: 'backup', generation: 3 },
               previousBindings: bindings, normalizedBindings: bindings },
@@ -355,7 +356,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
           byAgentId: {}, acknowledgedRisksByAgentId: {},
         } }),
         input: { mode: 'apply' as const, sessionId, agentId: 'claude', serviceId: CLAUDE_SUBSCRIPTION_SERVICE_KEY,
-          tracked: { startedBy: 'daemon' as const, happySessionId: sessionId, pid: 123 },
+          tracked: { trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon' as const, happySessionId: sessionId, pid: 123 },
           previous: selection, next: selection, previousBindings: bindings, normalizedBindings: bindings },
       };
       for (let application = 0; application < 2; application += 1) {
@@ -410,7 +411,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
         baseDir: join(root, 'materialized'), connectedAccountsOwner: purposeOwner,
         activatePurposeBindings: purposeOwner.activatePurposeBindings,
         validateGroupMutationCurrentness: validateCurrent, processEnv: {},
-        input: { mode: 'apply', tracked: { startedBy: 'daemon', happySessionId: sessionId, pid: 123 },
+        input: { mode: 'apply', tracked: { trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon', happySessionId: sessionId, pid: 123 },
           sessionId, agentId: 'codex', serviceId: CODEX_SERVICE_KEY, previous: null,
           next: { source: 'connected', selection: 'group', serviceId: CODEX_SERVICE_KEY, groupId: 'pool', profileId: 'backup' },
           groupMetadata: { groupId: 'pool', activeProfileId: 'backup', fallbackProfileId: 'backup', generation: 3 },
@@ -496,7 +497,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
           v: 1, defaults: { configMode: 'isolated', stateMode: 'isolated' }, byAgentId: {}, acknowledgedRisksByAgentId: {},
         } }),
         input: {
-          mode, tracked: { startedBy: 'daemon', happySessionId: 'retained-session', pid: 123, spawnOptions: {
+          mode, tracked: { trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon', happySessionId: 'retained-session', pid: 123, spawnOptions: {
             directory: '/project',
             runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { backendMode: 'appServer', home: 'connectedService', homePath: priorHome } },
           }, ...(resume ? { vendorResumeId } : {}) },
@@ -544,7 +545,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
     });
     const params = {
       credentials: { token: 'bob-token', encryption: null }, api: api as unknown as ApiClient,
-      input: { mode: 'apply', tracked: { startedBy: 'daemon', happySessionId: 'bob-session', pid: 123 },
+      input: { mode: 'apply', tracked: { trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon', happySessionId: 'bob-session', pid: 123 },
         sessionId: 'bob-session', agentId: 'codex', serviceId: CODEX_SERVICE_KEY,
         previous: null, next: { source: 'connected', selection: 'profile', serviceId: CODEX_SERVICE_KEY, profileId: 'bob', groupId: null },
         previousBindings: bindings, normalizedBindings: bindings,
@@ -562,7 +563,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
     const bindings: ConnectedServiceBindingsV2 = { v: 2, bindingsByServiceId: {
       [serviceId]: { source: 'connected', selection: 'profile', profileId: 'work' },
     } };
-    const tracked: TrackedSession = { startedBy: 'daemon', happySessionId: 'qualified-session', pid: 123,
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon', happySessionId: 'qualified-session', pid: 123,
       spawnOptions: { directory: '/tmp/project', backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' }, connectedServices: bindings },
     };
     vi.spyOn(axios, 'get').mockImplementation(async (url) => {
@@ -598,7 +599,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       },
     };
     const tracked = {
-      startedBy: 'daemon',
+      trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
       happySessionId: 'sess_revision',
       pid: 123,
       spawnOptions: {
@@ -684,7 +685,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       },
     };
     const tracked: TrackedSession = {
-      startedBy: 'daemon',
+      trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
       happySessionId: 'sess_1',
       pid: 123,
       spawnOptions: {
@@ -774,7 +775,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       },
     };
     const tracked: TrackedSession = {
-      startedBy: 'daemon',
+      trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
       happySessionId: 'sess_1',
       pid: 123,
       spawnOptions: {
@@ -859,7 +860,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       },
     };
     const tracked: TrackedSession = {
-      startedBy: 'daemon',
+      trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
       happySessionId: 'sess_1',
       pid: 123,
       spawnOptions: {
@@ -948,7 +949,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       },
     };
     const tracked: TrackedSession = {
-      startedBy: 'daemon',
+      trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
       happySessionId: 'sess_1',
       pid: 123,
       spawnOptions: {
@@ -1064,7 +1065,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       },
     };
     const tracked: TrackedSession = {
-      startedBy: 'daemon',
+      trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
       happySessionId: 'sess_1',
       pid: 123,
       spawnOptions: {

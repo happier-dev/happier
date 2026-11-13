@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { TrackedSession } from '../types';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('persistAcceptedSpawnMarker native runner witness', () => {
     it('persists the runner generation rather than a distinct native wrapper, preserving explicit custody overrides', async () => {
@@ -12,7 +13,7 @@ describe('persistAcceptedSpawnMarker native runner witness', () => {
         try {
             const { persistAcceptedSpawnMarker } = await import('./persistAcceptedSpawnMarker');
             const { readProcessIdentityByPid } = await import('../processIdentity');
-            const { readSessionMarkerForPid } = await import('../sessionRegistry');
+            const { readSessionMarker } = await import('../sessionRegistry');
             const { readOrCreateDeviceLocalSecretStorage } = await import('../deviceLocalSecretStorage');
             const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(home, 'fixture-secret.key') });
             // Genuine procfs boundary: wrapper and runner have different native births.
@@ -37,7 +38,7 @@ describe('persistAcceptedSpawnMarker native runner witness', () => {
                     entries: [{ entryPath: 'projects', sourceEntryRoot: join(home, 'native', 'projects'),
                         materializedEntryPath: join(home, 'materialized', 'projects') }],
                 };
-            const tracked: TrackedSession = { pid: 1111, sessionRunnerPid: 2222, startedBy: 'daemon', happySessionId: 's1',
+            const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(1111), pid: 1111, sessionRunnerPid: 2222, startedBy: 'daemon', happySessionId: 's1',
                 linuxLaunchUnit: 'happier-session-0123456789ab.session-0123456789abcdef0123456789abcdef.scope',
                 spawnOptions: { directory: home, backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } } };
             const readIdentity: typeof readProcessIdentityByPid = pid => readProcessIdentityByPid(pid, { platform: 'linux', linuxBoundary });
@@ -52,8 +53,8 @@ describe('persistAcceptedSpawnMarker native runner witness', () => {
                     expect(tracked.materializedStateObservationBinding).toBe(materializedStateObservationBinding);
                 },
                 getSpawnResourceCleanupOnExit: () => null, onSpawnResourceCleanupArmed: () => {},
-                spawnResourceCleanupByPid: new Map(), getSessionAttachCleanup: () => null,
-                setSessionAttachCleanup: () => {}, sessionAttachCleanupByPid: new Map(),
+                spawnResourceCleanupByKey: new Map(), getSessionAttachCleanup: () => null,
+                setSessionAttachCleanup: () => {}, sessionAttachCleanupByKey: new Map(),
                 persistAcceptedSpawnMarker: async trackedSession => {
                     await persistAcceptedSpawnMarker({ trackedSession, deviceLocalSecretStorage: storage, readProcessIdentityByPidFn: readIdentity });
                 },
@@ -61,7 +62,7 @@ describe('persistAcceptedSpawnMarker native runner witness', () => {
             callbacks.onTrackedSessionRegistered?.(tracked);
             await callbacks.persistAcceptedSpawnMarker(tracked);
             expect(tracked.materializedStateObservationBinding).toBe(materializedStateObservationBinding);
-            const marker = await readSessionMarkerForPid(2222);
+            const marker = await readSessionMarker(tracked.trackingKey);
             expect(marker).toMatchObject({ pid: 2222, processStartTimeMs: 4560, linuxLaunchUnit: tracked.linuxLaunchUnit });
             const { buildTrackedSessionFromMarker } = await import('../sessions/trackedSessionFromMarker');
             expect(buildTrackedSessionFromMarker({ marker: marker!, startedByFallback: 'reattached' }).linuxLaunchUnit).toBe(tracked.linuxLaunchUnit);
@@ -70,20 +71,20 @@ describe('persistAcceptedSpawnMarker native runner witness', () => {
             const { writeSessionMarker } = await import('../sessionRegistry');
             const invalidBinding = { ...materializedStateObservationBinding,
                 sourceCustody: { kind: 'development' as const, registeredRootId: 'external-plugin-root', authority: 'untrusted-extension' } };
-            await expect(writeSessionMarker({ pid: 2222, happySessionId: 's1', startedBy: 'daemon', processStartTimeMs: 4560,
+            await expect(writeSessionMarker({ trackingKey: tracked.trackingKey, pid: 2222, happySessionId: 's1', startedBy: 'daemon', processStartTimeMs: 4560,
                 materializedStateObservationBinding: invalidBinding })).rejects.toBeDefined();
-            await writeSessionMarker({ pid: 2222, happySessionId: 's1', startedBy: 'daemon', processStartTimeMs: 4560 });
-            expect(await readSessionMarkerForPid(2222)).toHaveProperty('linuxLaunchUnit', tracked.linuxLaunchUnit);
-            expect(await readSessionMarkerForPid(2222)).toHaveProperty('materializedStateObservationBinding', tracked.materializedStateObservationBinding);
-            await writeSessionMarker({ pid: 2222, happySessionId: 's1', startedBy: 'daemon', processStartTimeMs: 9990 });
-            const replacement = await readSessionMarkerForPid(2222);
+            await writeSessionMarker({ trackingKey: tracked.trackingKey, pid: 2222, happySessionId: 's1', startedBy: 'daemon', processStartTimeMs: 4560 });
+            expect(await readSessionMarker(tracked.trackingKey)).toHaveProperty('linuxLaunchUnit', tracked.linuxLaunchUnit);
+            expect(await readSessionMarker(tracked.trackingKey)).toHaveProperty('materializedStateObservationBinding', tracked.materializedStateObservationBinding);
+            await writeSessionMarker({ trackingKey: tracked.trackingKey, pid: 2222, happySessionId: 's1', startedBy: 'daemon', processStartTimeMs: 9990 });
+            const replacement = await readSessionMarker(tracked.trackingKey);
             expect(replacement).not.toHaveProperty('materializedStateObservationBinding');
             expect(buildTrackedSessionFromMarker({ marker: replacement!, startedByFallback: 'reattached' }))
                 .not.toHaveProperty('materializedStateObservationBinding');
-            expect(await readSessionMarkerForPid(1111)).toBeNull();
+            expect(replacement?.pid).toBe(2222);
             expect(tracked.processStartTimeMs).toBe(1230);
             await persistAcceptedSpawnMarker({ trackedSession: tracked, processPid: 1111, deviceLocalSecretStorage: storage, readProcessIdentityByPidFn: readIdentity });
-            expect(await readSessionMarkerForPid(1111)).toMatchObject({ pid: 1111, processStartTimeMs: 1230 });
+            expect(await readSessionMarker(tracked.trackingKey)).toMatchObject({ pid: 1111, processStartTimeMs: 1230 });
         } finally {
             vi.unstubAllEnvs();
             vi.resetModules();

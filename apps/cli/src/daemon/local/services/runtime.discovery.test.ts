@@ -10,6 +10,7 @@ import { removeSessionMarker, writeSessionMarker } from '@/daemon/sessionRegistr
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { registerDaemonLocalServicesMachineRpcHandlers } from '@/rpc/handlers/daemonLocalServices';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const observations = vi.hoisted(() => ({ directories: [] as string[], attachments: new Set<string>(), starts: [] as string[], events: [] as string[],
     failedWatchPath: undefined as string | undefined,
@@ -169,7 +170,7 @@ describe('Services declaration discovery demand', () => {
         await mkdir(cache, { recursive: true });
         await mkdir(join(project, '.happier'), { recursive: true });
         await writeFile(join(project, 'package.json'), JSON.stringify({ name: 'project', scripts: { dev: 'serve' } }));
-        await writeSessionMarker({ pid: process.pid, happySessionId: 'raw-home', cwd: home });
+        await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, happySessionId: 'raw-home', cwd: home });
         const runtime = createLocalServicesDaemonRuntime({ machineId: 'machine', startLoop: false, inventoryEnabled: () => true,
             workspaceFacts: () => ({ facts: [{ path: home }], acceptedWorkspaceRefs: [{ id: 'project', serverId: 'home',
                 machineId: 'machine', rootPath: project, createdAtMs: 1 }], diagnostics: [] }),
@@ -187,7 +188,7 @@ describe('Services declaration discovery demand', () => {
             await vi.waitFor(() => expect(observations.starts).toContain(join(project, '.happier')));
             expect(observations.starts.filter(path => path === join(home, '.cache') || path.startsWith(`${home}/.cache/`))).toEqual([]);
         } finally {
-            cancellation.abort(); await observing; await runtime.stop(); await removeSessionMarker(process.pid);
+            cancellation.abort(); await observing; await runtime.stop(); await removeSessionMarker(legacyPidSessionTrackingKey(process.pid));
             await rm(base, { recursive: true, force: true });
         }
     });

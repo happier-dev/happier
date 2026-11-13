@@ -14,6 +14,8 @@ import { buildActiveTerminalHostHandleFromMetadata, resolveExistingTerminalHostL
 import type { TerminalHostHandle } from '@happier-dev/agents';
 import { buildTerminalFallbackMessage } from '@/terminal/attachment/terminalFallbackMessage';
 import { logger } from '@/ui/logger';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { SESSION_TRACKING_KEY_ENV } from '@/daemon/sessions/sessionTrackingKey';
 import { resolveSessionReportRetryPolicy } from '@/daemon/spawn/sessionWebhookTimeoutPolicy';
 import type {
     HostPrivatePersistedTakeoverAdmission,
@@ -291,9 +293,11 @@ async function runDaemonSessionReport(
         let diagnostic: Awaited<ReturnType<typeof notifyDaemonSessionStarted>> | undefined;
         try {
             logger.debug(`[START] Reporting session ${sessionId} to daemon (attempt ${attempt})`);
+            const trackingKey = sessionProcessEnvironment()[SESSION_TRACKING_KEY_ENV];
             const result = await notifyFn(sessionId, metadata, {
                 timeoutMs: boundedAttemptTimeoutMs,
                 ...(sessionCreationOutcome ? { sessionCreationOutcome } : {}),
+                ...(trackingKey ? { trackingKey } : {}),
             });
             if (!result?.error) {
                 if (state.revision !== revision) continue;

@@ -26,6 +26,7 @@ import { createDaemonAdmissionDrain } from '../lifecycle/admissionDrain';
 import { createLiveWorkProducerGroup, createManagedActivityInventory } from '../lifecycle/managedActivity';
 import { createSessionLiveWorkProducer } from '../lifecycle/sessionLiveWorkProducer';
 import { startAutomationWorker } from './automationWorker';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllEnvs(); reloadConfiguration(); });
 
@@ -92,7 +93,7 @@ async function harness(withSession = false, failedInitialAssignments = false, in
     const worker = startAutomationWorker({ token: 'disposable-harness',
         credentials: { token: 'disposable-harness', encryption: null }, machineId: 'guest', admissionDrain: drain });
     const automation = createLiveWorkProducerGroup(() => [worker.liveWorkProducer]);
-    const tracked = { pid: 1, startedBy: 'daemon' as const, happySessionId: 'retained-session' };
+    const tracked = { trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon' as const, happySessionId: 'retained-session' };
     const sessions = createSessionLiveWorkProducer({ readSessions: () => withSession ? [tracked] : [],
         readActivity: () => requestSessionInputLiveWork({ callRpc: async () =>
             (await fetch(`${origin}/session/activity`)).json() }) });

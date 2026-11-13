@@ -10,10 +10,11 @@ import {
   isRequestAuthSourceCutoverRequirementCurrent,
   resolveRequestAuthSourceCutoverRequirement,
 } from './requestAuthSourceCutover';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 function trackedSession(overrides: Partial<TrackedSession> = {}): TrackedSession {
   return {
-    startedBy: 'daemon',
+    trackingKey: legacyPidSessionTrackingKey(4242), startedBy: 'daemon',
     pid: 4242,
     happySessionId: 'sess-1',
     processCommandHash: 'hash-1',

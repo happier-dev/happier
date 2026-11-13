@@ -25,13 +25,14 @@ import { join } from 'node:path';
 import { createOnHappySessionWebhook } from '@/daemon/sessions/onHappySessionWebhook';
 import { createSessionStartupReadinessHandler } from '@/daemon/startup/sessionStartupReadiness';
 import { waitForSessionWebhook } from '@/daemon/spawn/waitForSessionWebhook';
-import { hashProcessCommand, promoteSessionMarkerPid, readSessionMarkerForPid, writeSessionMarker } from '@/daemon/sessionRegistry';
+import { hashProcessCommand, promoteSessionMarkerPid, readSessionMarker, writeSessionMarker } from '@/daemon/sessionRegistry';
 import { createAgentRuntimeDaemonServiceAuthorityPath } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
 import { refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority } from '@/daemon/agentRuntime/refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority';
 import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import type { TrackedSession } from '@/daemon/types';
 import { buildSessionRunnerRespawnDescriptorV1FromSpawnOptions } from '@/daemon/processSupervision/sessionRunnerRespawnDescriptor';
 import { clearDaemonStateForTestTeardown, writeDaemonState } from '@/persistence';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const boundary = vi.hoisted(() => ({ readCredentials: vi.fn(), readSettings: vi.fn(), readDaemonState: vi.fn(), fetchSession: vi.fn(), currentness: vi.fn() }));
 // Filesystem credential/settings reads and HTTP requests are system boundaries.
@@ -252,7 +253,7 @@ describe('daemon RPC to protected Session input admission composition', () => {
       });
       const { spawn } = registerSpawnBoundary('e2ee', async (request) => {
         const tracked: TrackedSession = {
-          pid: wrapperPid, startedBy: 'daemon', happySessionId: `PID-${wrapperPid}`,
+          trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid, startedBy: 'daemon', happySessionId: `PID-${wrapperPid}`,
           processStartTimeMs: 12_345, processCommandHash: hashProcessCommand((await readIdentity(wrapperPid)).command),
           agentRuntimeDaemonServiceAuthorityFilePath: authorityPath,
           runnerAgentBootstrapIdentity: { agentId: binding.agentId, backendId: binding.agentId },
@@ -262,20 +263,20 @@ describe('daemon RPC to protected Session input admission composition', () => {
         const respawn = buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(tracked.spawnOptions!);
         if (!respawn) throw new Error('Expected canonical fixture respawn descriptor');
         await writeSessionMarker({
-          pid: wrapperPid, happySessionId: tracked.happySessionId!, startedBy: 'daemon', cwd: '/repo',
+          trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid, happySessionId: tracked.happySessionId!, startedBy: 'daemon', cwd: '/repo',
           processStartTimeMs: tracked.processStartTimeMs, processCommandHash: tracked.processCommandHash, respawn,
         });
-        const sessions = new Map([[wrapperPid, tracked]]);
-        const awaiters = new Map<number, (session: TrackedSession) => void>();
+        const sessions = new Map([[legacyPidSessionTrackingKey(wrapperPid), tracked]]);
+        const awaiters = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
         const completed = waitForSessionWebhook({
-          pid: wrapperPid, pidToTrackedSession: sessions, pidToAwaiter: awaiters,
-          pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(), timeoutErrorMessage: 'Fixture startup did not settle',
+          trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid, trackedSessionsByKey: sessions, spawnAwaiterByKey: awaiters,
+          spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(), timeoutErrorMessage: 'Fixture startup did not settle',
         });
         const report = createSessionStartupReadinessHandler({
           onHappySessionWebhook: createOnHappySessionWebhook({
-            pidToTrackedSession: sessions, pidToAwaiter: awaiters, getParentPidFn: () => wrapperPid,
+            trackedSessionsByKey: sessions, spawnAwaiterByKey: awaiters, getParentPidFn: () => wrapperPid,
             readProcessIdentityByPidFn: readIdentity, readCredentialsFn: async () => null,
-            promoteSessionMarkerFn: (fromPid, toPid) => promoteSessionMarkerPid(fromPid, toPid, { readProcessIdentityByPidFn: readIdentity }),
+            promoteSessionMarkerFn: (params) => promoteSessionMarkerPid(params, { readProcessIdentityByPidFn: readIdentity }),
           }),
           reconcileCanonicalReadiness: async (candidate) => {
             // The catalog fixture comes from its canonical binding producer; authority,
@@ -295,7 +296,8 @@ describe('daemon RPC to protected Session input admission composition', () => {
         const outcomes = await Promise.allSettled([reporting, completed]);
         if (outcomes[0].status === 'rejected') throw outcomes[0].reason;
         if (outcomes[1].status === 'rejected') throw outcomes[1].reason;
-        expect(await readSessionMarkerForPid(runnerPid)).toMatchObject({
+        expect(await readSessionMarker(tracked.trackingKey)).toMatchObject({
+          pid: runnerPid,
           happySessionId: sessionId, processStartTimeMs: 23_456, runnerAgentSourceCustodyV1: binding.sourceCustody,
         });
         expect(tracked.processStartTimeMs).toBe(12_345);

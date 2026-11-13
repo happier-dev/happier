@@ -3,9 +3,10 @@ import { ProviderConnectionIdSchema } from '@happier-dev/protocol/providers';
 
 import { createVersionRuntimeRefreshAttemptHandoff } from './versionRuntimeRefreshAttemptHandoff';
 import type { TrackedSession } from '../types';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 function makeTracked(): TrackedSession {
-  return { pid: 111, startedBy: 'daemon', happySessionId: 'sess-1' };
+  return { trackingKey: legacyPidSessionTrackingKey(111), pid: 111, startedBy: 'daemon', happySessionId: 'sess-1' };
 }
 
 describe('createVersionRuntimeRefreshAttemptHandoff', () => {

@@ -1,19 +1,20 @@
 import { describe, expect, it } from 'vitest';
 
 import { createDaemonControlApp } from './controlServer';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('daemon control server: /list', () => {
     it('returns only the stable tracked session fields', async () => {
         const app = createDaemonControlApp({
             getChildren: () => [
                 {
-                    startedBy: 'daemon',
+                    trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon',
                     happySessionId: 'sess-1',
                     pid: 111,
                     spawnOptions: { directory: '/tmp/project-a' },
                 },
                 {
-                    startedBy: 'daemon',
+                    trackingKey: legacyPidSessionTrackingKey(222), startedBy: 'daemon',
                     happySessionId: 'sess-2',
                     pid: 222,
                 },

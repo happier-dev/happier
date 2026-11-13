@@ -29,6 +29,7 @@ import {
 import {
   refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority,
 } from './refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 function retainedAgent() {
   return createAgentSessionRunnerFactoryBinding({
@@ -84,7 +85,7 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority currentness', (
       });
       const tracked: TrackedSession = {
         startedBy: 'daemon',
-        pid: 4261,
+        trackingKey: legacyPidSessionTrackingKey(4261), pid: 4261,
         sessionRunnerPid: 4262,
         happySessionId: 'session-reattached',
         processStartTimeMs: 12_345,
@@ -146,7 +147,7 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority currentness', (
       });
       const tracked: TrackedSession = {
         startedBy: 'daemon',
-        pid: 4251,
+        trackingKey: legacyPidSessionTrackingKey(4251), pid: 4251,
         sessionRunnerPid: 4252,
         runnerProcessIdentity: { pid: 4252, processStartTimeMs: 23_345, processCommandHash },
         happySessionId: 'session-final-currentness',
@@ -234,7 +235,7 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority currentness', (
       });
       const tracked: TrackedSession = {
         startedBy: 'daemon',
-        pid: 4351,
+        trackingKey: legacyPidSessionTrackingKey(4351), pid: 4351,
         sessionRunnerPid: 4352,
         runnerProcessIdentity: { pid: 4352, processStartTimeMs: 23_445, processCommandHash },
         happySessionId: 'session-retained-p-final-currentness',
@@ -344,7 +345,7 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority currentness', (
       });
       const tracked: TrackedSession = {
         startedBy: 'daemon',
-        pid: 4353,
+        trackingKey: legacyPidSessionTrackingKey(4353), pid: 4353,
         sessionRunnerPid: 4354,
         runnerProcessIdentity: { pid: 4354, processStartTimeMs: 23_446, processCommandHash },
         happySessionId: 'session-retained-p-post-attachment-currentness',
@@ -453,6 +454,7 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority currentness', (
         boundaries.updateSessionMarkerRunnerManagedProviderAuthority,
       ).toHaveBeenCalledWith({
         pid: 4354,
+        trackingKey: tracked.trackingKey,
         sessionId: 'session-retained-p-post-attachment-currentness',
         processCommandHash,
         processStartTimeMs: 23_446,
@@ -506,7 +508,7 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority currentness', (
       });
       const tracked: TrackedSession = {
         startedBy: 'daemon',
-        pid: 4355,
+        trackingKey: legacyPidSessionTrackingKey(4355), pid: 4355,
         sessionRunnerPid: 4356,
         runnerProcessIdentity: { pid: 4356, processStartTimeMs: 23_447, processCommandHash },
         happySessionId: 'session-retained-p-final-read-unavailable',

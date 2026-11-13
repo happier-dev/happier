@@ -39,9 +39,9 @@ describe('daemon heartbeat allocator maintenance', () => {
     let publications = 0;
     const intervals = vi.spyOn(globalThis, 'setInterval');
     timer = startDaemonHeartbeatLoop({
-      pidToTrackedSession: new Map(),
-      spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey: new Map(),
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       controlPort: 8765,
       fileState: { pid: process.pid, httpPort: 8765, startedAt: Date.now(),

@@ -21,6 +21,7 @@ vi.mock('@/api/client/connectedServiceCredentialApi', () => ({
 }));
 
 import { resolveExistingSessionSpawnPreGate } from './resolveExistingSessionSpawnPreGate';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 async function observeRunnerPresence(sessionId: string, present: boolean) {
   return await readRunnerPresence({
@@ -42,9 +43,10 @@ describe('resolveExistingSessionSpawnPreGate', () => {
   it('fences a restart survivor before activity probing and admits one replacement after retirement', async () => {
     const probeSessionRunnerPresence = vi.fn(async (sessionId: string) => await observeRunnerPresence(sessionId, false));
     const onAlreadyRunning = vi.fn(async () => ({ action: 'use_existing' as const }));
-    const pidToTrackedSession = new Map([[
-      85855,
+    const trackedSessionsByKey = new Map([[
+      legacyPidSessionTrackingKey(85855),
       {
+        trackingKey: legacyPidSessionTrackingKey(85855),
         pid: 85855,
         startedBy: 'daemon' as const,
         happySessionId: 'sess-restart-unavailable',
@@ -55,7 +57,7 @@ describe('resolveExistingSessionSpawnPreGate', () => {
 
     const resolved = await resolveExistingSessionSpawnPreGate({
       existingSessionId: 'sess-restart-unavailable',
-      pidToTrackedSession,
+      trackedSessionsByKey,
       probeSessionRunnerPresence,
       waitForExitTimeoutMs: 0,
       waitForExitPollIntervalMs: 50,
@@ -71,10 +73,10 @@ describe('resolveExistingSessionSpawnPreGate', () => {
     expect(probeSessionRunnerPresence).not.toHaveBeenCalled();
     expect(onAlreadyRunning).not.toHaveBeenCalled();
 
-    pidToTrackedSession.delete(85855);
+    trackedSessionsByKey.delete(legacyPidSessionTrackingKey(85855));
     await expect(resolveExistingSessionSpawnPreGate({
       existingSessionId: 'sess-restart-unavailable',
-      pidToTrackedSession,
+      trackedSessionsByKey,
       probeSessionRunnerPresence,
       waitForExitTimeoutMs: 0,
       waitForExitPollIntervalMs: 50,
@@ -93,7 +95,7 @@ describe('resolveExistingSessionSpawnPreGate', () => {
 
     const resolved = await resolveExistingSessionSpawnPreGate({
       existingSessionId: privateSessionId,
-      pidToTrackedSession: new Map(),
+      trackedSessionsByKey: new Map(),
       probeSessionRunnerPresence,
       waitForExitTimeoutMs: 0,
       waitForExitPollIntervalMs: 50,
@@ -119,7 +121,7 @@ describe('resolveExistingSessionSpawnPreGate', () => {
 
     const resolved = await resolveExistingSessionSpawnPreGate({
       existingSessionId: privateSessionId,
-      pidToTrackedSession: new Map(),
+      trackedSessionsByKey: new Map(),
       probeSessionRunnerPresence: async () => await readRunnerPresence({
         sessionId: privateSessionId, trackedSessions: [],
         readSessionRunnerLockStatus: async () => { throw new Error(privateProbeError); },
@@ -150,7 +152,7 @@ describe('resolveExistingSessionSpawnPreGate', () => {
 
     const resolved = await resolveExistingSessionSpawnPreGate({
       existingSessionId: 'sess-live',
-      pidToTrackedSession: new Map(),
+      trackedSessionsByKey: new Map(),
       probeSessionRunnerPresence,
       waitForExitTimeoutMs: 100,
       waitForExitPollIntervalMs: 1,
@@ -172,7 +174,7 @@ describe('resolveExistingSessionSpawnPreGate', () => {
 
     const resolved = await resolveExistingSessionSpawnPreGate({
       existingSessionId: 'sess-live',
-      pidToTrackedSession: new Map(),
+      trackedSessionsByKey: new Map(),
       probeSessionRunnerPresence: vi.fn(async (sessionId: string) => await observeRunnerPresence(sessionId, true)),
       waitForExitTimeoutMs: 0,
       waitForExitPollIntervalMs: 1,
@@ -196,7 +198,7 @@ describe('existing-session process evidence admission', () => {
       readProcessRunState: async () => { throw new Error('OS process evidence unavailable'); },
     };
     const admission = {
-      existingSessionId: sessionId, pidToTrackedSession: new Map(),
+      existingSessionId: sessionId, trackedSessionsByKey: new Map(),
       probeSessionRunnerPresence: async () => await readRunnerPresence(processEvidence),
       waitForExitTimeoutMs: 0, waitForExitPollIntervalMs: 1, logDebug: vi.fn(), logWarn: vi.fn(),
     };
@@ -217,32 +219,32 @@ describe('pending fresh runner admission before its webhook', () => {
       launchControlMetadata: captureSessionLaunchControlMetadata({ processEnvironment: {} }),
     }).metadata;
     const tracked: TrackedSession = {
-      pid: process.pid, startedBy: 'daemon', happySessionId: `PID-${process.pid}`,
+      trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, startedBy: 'daemon', happySessionId: `PID-${process.pid}`,
       spawnOptions: { directory: metadata.path, spawnNonce: 'original-fresh-launch' },
       processStartTimeMs: identity.processStartTimeMs,
     };
-    const sessions = new Map([[process.pid, tracked]]);
-    const awaiters = new Map<number, (session: TrackedSession) => void>();
-    const resolvers = new Map<number, (result: SpawnSessionResult) => void>();
-    const timeouts = new Map<number, ReturnType<typeof setTimeout>>();
+    const sessions = new Map([[tracked.trackingKey, tracked]]);
+    const awaiters = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
+    const resolvers = new Map<SessionTrackingKey, (result: SpawnSessionResult) => void>();
+    const timeouts = new Map<SessionTrackingKey, ReturnType<typeof setTimeout>>();
     const completion = waitForSessionWebhook({
-      pid: process.pid, pidToTrackedSession: sessions, pidToAwaiter: awaiters,
-      pidToSpawnResultResolver: resolvers, pidToSpawnWebhookTimeout: timeouts,
+      trackingKey: tracked.trackingKey, pid: process.pid, trackedSessionsByKey: sessions, spawnAwaiterByKey: awaiters,
+      spawnResultResolverByKey: resolvers, spawnWebhookTimeoutByKey: timeouts,
       timeoutErrorMessage: 'Fixture webhook timeout',
     });
-    const originalAwaiter = awaiters.get(process.pid);
+    const originalAwaiter = awaiters.get(tracked.trackingKey);
     vi.mocked(fetchSessionByIdCompat).mockResolvedValue(createSessionRecordFixture({
       id: sessionId, encryptionMode: 'plain', metadata: JSON.stringify(metadata), dataEncryptionKey: null,
     }));
     try {
       const admission = {
-        existingSessionId: sessionId, pidToTrackedSession: sessions,
+        existingSessionId: sessionId, trackedSessionsByKey: sessions,
         probeSessionRunnerPresence: async (id: string) => await readRunnerPresence({
           sessionId: id, trackedSessions: sessions.values(), readProcessIdentityByPid,
           readSessionRunnerLockStatus: async () => ({ ok: false as const, reason: 'not_found' as const }),
         }),
         pendingSessionStartup: {
-          pidToAwaiter: awaiters, machineId: 'machine-fresh-startup', happyHomeDir: configuration.happyHomeDir,
+          spawnAwaiterByKey: awaiters, machineId: 'machine-fresh-startup', happyHomeDir: configuration.happyHomeDir,
           readSessionMetadata: async (id: string) => {
             const context = await resolveExistingSessionAttachContext({ token: 'test', sessionId: id, credentials: null });
             if (!context.ok) throw new Error(context.reason);
@@ -256,13 +258,13 @@ describe('pending fresh runner admission before its webhook', () => {
           shortCircuitResult: { type: 'success', sessionId },
         });
         expect(sessions.size).toBe(1);
-        expect(awaiters.get(process.pid)).toBe(originalAwaiter);
+        expect(awaiters.get(tracked.trackingKey)).toBe(originalAwaiter);
         expect(completion.isPending()).toBe(true);
         expect(tracked.happySessionMetadataFromLocalWebhook).toBeUndefined();
         expect(tracked.spawnStartupCanonicalSessionId).toBeUndefined();
       }
       const report = createOnHappySessionWebhook({
-        pidToTrackedSession: sessions, pidToAwaiter: awaiters,
+        trackedSessionsByKey: sessions, spawnAwaiterByKey: awaiters,
         readProcessIdentityByPidFn: readProcessIdentityByPid,
         writeSessionMarkerFn: async () => {}, listSessionMarkersFn: async () => [], readCredentialsFn: async () => null,
       });
@@ -282,13 +284,13 @@ describe('pending fresh runner admission before its webhook', () => {
     const identity = await readProcessIdentityByPid(process.pid);
     if (identity?.processStartTimeMs === undefined) throw new Error('Test requires OS generation evidence');
     const tracked: TrackedSession = {
-      pid: process.pid, startedBy: 'daemon',
+      trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, startedBy: 'daemon',
       processStartTimeMs: identity.processStartTimeMs,
       spawnOptions: { directory: '/tmp' },
     };
-    const trackedSessions = new Map([[process.pid, tracked]]);
+    const trackedSessions = new Map([[tracked.trackingKey, tracked]]);
     const waiter = vi.fn();
-    const awaiters = new Map([[process.pid, waiter]]);
+    const awaiters = new Map([[tracked.trackingKey, waiter]]);
     const readProcessRunState = async () => {
       if (generation === 'unknown') throw new Error('OS evidence unavailable');
       if (generation === 'stopped') return 'stopped' as const;
@@ -310,16 +312,16 @@ describe('pending fresh runner admission before its webhook', () => {
       id: sessionId, encryptionMode: 'plain', metadata: JSON.stringify(metadata), dataEncryptionKey: null,
     }));
     const admission = {
-      existingSessionId: sessionId, pidToTrackedSession: trackedSessions,
+      existingSessionId: sessionId, trackedSessionsByKey: trackedSessions,
       probeSessionRunnerPresence: async () => await readRunnerPresence({ ...evidence, trackedSessions: trackedSessions.values() }),
       waitForExitTimeoutMs: 0, waitForExitPollIntervalMs: 1, logDebug: vi.fn(), logWarn: vi.fn(),
       pendingSessionStartup: {
-        pidToAwaiter: awaiters, machineId: 'machine-startup', happyHomeDir: '/tmp/startup-home',
+        spawnAwaiterByKey: awaiters, machineId: 'machine-startup', happyHomeDir: '/tmp/startup-home',
         readProcessRunState, readProcessIdentityByPid,
         readSessionMetadata: async (id: string) => {
           const context = await resolveExistingSessionAttachContext({ token: 'test', sessionId: id, credentials: null });
           if (!context.ok) throw new Error(context.reason);
-          if (generation === 'retired') trackedSessions.delete(process.pid);
+          if (generation === 'retired') trackedSessions.delete(tracked.trackingKey);
           return context.metadata;
         },
       },
@@ -335,7 +337,7 @@ describe('pending fresh runner admission before its webhook', () => {
       expect(result.shortCircuitResult).toBeNull();
       expect(tracked.happySessionId).toBeUndefined();
     }
-    expect(awaiters.has(process.pid)).toBe(true);
+    expect(awaiters.has(tracked.trackingKey)).toBe(true);
     expect(waiter).not.toHaveBeenCalled();
     expect(tracked.spawnStartupCanonicalSessionId).toBeUndefined();
   });
@@ -355,13 +357,13 @@ describe('pending Windows Terminal runner admission after dispatcher exit', () =
       windows: { host: 'windows_terminal' as const, pid: hostPid, windowId: 'happier-test', title: 'Happier test' },
     };
     const tracked: TrackedSession = {
-      pid: hostPid, startedBy: 'daemon', happySessionId: 'PID-' + hostPid,
+      trackingKey: legacyPidSessionTrackingKey(hostPid), pid: hostPid, startedBy: 'daemon', happySessionId: 'PID-' + hostPid,
       spawnOptions: { directory: '/tmp' }, hostedTerminal: terminal,
       windowsTerminalLaunchCustody: { executablePath, argv, correlation },
     };
-    const sessions = new Map([[hostPid, tracked]]);
+    const sessions = new Map([[tracked.trackingKey, tracked]]);
     const waiter = vi.fn();
-    const awaiters = new Map([[hostPid, waiter]]);
+    const awaiters = new Map([[tracked.trackingKey, waiter]]);
     const fact = {
       pid: runnerPid, executablePath, command: serializeWindowsCommandLine([executablePath, ...argv]),
       processStartTimeMs: caseName === 'stale' ? 3_000 : 2_000,
@@ -381,7 +383,7 @@ describe('pending Windows Terminal runner admission after dispatcher exit', () =
       }),
     }));
     const result = await resolveExistingSessionSpawnPreGate({
-      existingSessionId: sessionId, pidToTrackedSession: sessions,
+      existingSessionId: sessionId, trackedSessionsByKey: sessions,
       probeSessionRunnerPresence: async () => await readRunnerPresence({
         sessionId, trackedSessions: sessions.values(), readProcessRunState: readState,
         readProcessIdentityByPid: readIdentity,
@@ -389,7 +391,7 @@ describe('pending Windows Terminal runner admission after dispatcher exit', () =
       }),
       waitForExitTimeoutMs: 0, waitForExitPollIntervalMs: 1, logDebug: vi.fn(), logWarn: vi.fn(),
       pendingSessionStartup: {
-        pidToAwaiter: awaiters, machineId: 'machine-windows', happyHomeDir: '/tmp/windows-home',
+        spawnAwaiterByKey: awaiters, machineId: 'machine-windows', happyHomeDir: '/tmp/windows-home',
         readProcessRunState: readState, readProcessIdentityByPid: readIdentity,
         readAllWindowsProcessFactsFn: async () => new Map([[runnerPid, fact]]),
         readSessionMetadata: async (id) => {
@@ -410,9 +412,9 @@ describe('pending Windows Terminal runner admission after dispatcher exit', () =
       expect(tracked.happySessionId).toBe('PID-' + hostPid);
     }
     expect(tracked.pid).toBe(hostPid);
-    expect(sessions.get(hostPid)).toBe(tracked);
+    expect(sessions.get(tracked.trackingKey)).toBe(tracked);
     expect(waiter).not.toHaveBeenCalled();
-    expect(awaiters.has(hostPid)).toBe(true);
+    expect(awaiters.has(tracked.trackingKey)).toBe(true);
     expect(tracked.spawnStartupCanonicalSessionId).toBeUndefined();
   });
 });
@@ -425,12 +427,12 @@ describe('pending ordinary wrapper runner admission', () => {
     const wrapperPid = 683001;
     const sessionId = 'sess-wrapper-before-webhook';
     const tracked: TrackedSession = {
-      pid: wrapperPid, sessionRunnerPid: process.pid, processStartTimeMs: 1_000,
+      trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid, sessionRunnerPid: process.pid, processStartTimeMs: 1_000,
       startedBy: 'daemon', spawnOptions: { directory: '/tmp' },
     };
-    const sessions = new Map([[wrapperPid, tracked]]);
+    const sessions = new Map([[tracked.trackingKey, tracked]]);
     const waiter = vi.fn();
-    const awaiters = new Map([[wrapperPid, waiter]]);
+    const awaiters = new Map([[tracked.trackingKey, waiter]]);
     const readState = async (pid: number) => {
       if (pid === wrapperPid) return 'dead' as const;
       if (caseName === 'unknown') throw new Error('OS evidence unavailable');
@@ -444,14 +446,14 @@ describe('pending ordinary wrapper runner admission', () => {
       }),
     }));
     const result = await resolveExistingSessionSpawnPreGate({
-      existingSessionId: sessionId, pidToTrackedSession: sessions,
+      existingSessionId: sessionId, trackedSessionsByKey: sessions,
       probeSessionRunnerPresence: async () => await readRunnerPresence({
         sessionId, trackedSessions: sessions.values(), readProcessRunState: readState, readProcessIdentityByPid,
         readSessionRunnerLockStatus: async () => ({ ok: false, reason: 'not_found' }),
       }),
       waitForExitTimeoutMs: 0, waitForExitPollIntervalMs: 1, logDebug: vi.fn(), logWarn: vi.fn(),
       pendingSessionStartup: {
-        pidToAwaiter: awaiters, machineId: 'machine-wrapper', happyHomeDir: '/tmp/wrapper-home',
+        spawnAwaiterByKey: awaiters, machineId: 'machine-wrapper', happyHomeDir: '/tmp/wrapper-home',
         readProcessRunState: readState, readProcessIdentityByPid,
         readSessionMetadata: async (id) => {
           const context = await resolveExistingSessionAttachContext({ token: 'test', sessionId: id, credentials: null });
@@ -472,7 +474,7 @@ describe('pending ordinary wrapper runner admission', () => {
     }
     expect(tracked.pid).toBe(wrapperPid);
     expect(tracked.processStartTimeMs).toBe(1_000);
-    expect(awaiters.has(wrapperPid)).toBe(true);
+    expect(awaiters.has(tracked.trackingKey)).toBe(true);
     expect(waiter).not.toHaveBeenCalled();
     expect(tracked.spawnStartupCanonicalSessionId).toBeUndefined();
   });
@@ -482,12 +484,12 @@ describe('pending ordinary wrapper runner admission', () => {
 describe('provider conversation spawn admission', () => {
   it.each(['reported', 'command'] as const)('blocks a live sibling entry using %s identity, ignores another target and admits a positively absent runner', async (identitySource) => {
     const backendTarget = { kind: 'backend', sourceKind: 'built_in', backendId: 'claude' } as const;
-    const tracked: TrackedSession = { pid: 91234, startedBy: 'terminal', happySessionId: 'replacement',
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(91234), pid: 91234, startedBy: 'terminal', happySessionId: 'replacement',
       ...(identitySource === 'reported' ? { vendorResumeId: 'conversation' } : { processCommand: 'happier claude --resume conversation' }),
       spawnOptions: { directory: '/repo', backendTarget } };
     const probe = async (present: boolean, resumeId = 'conversation', backendId = 'claude') => {
       const input = {
-        existingSessionId: 'old-entry', pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+        existingSessionId: 'old-entry', trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
         providerConversation: { resumeId, backendTarget: { kind: 'backend' as const, sourceKind: 'built_in' as const, backendId } },
         probeSessionRunnerPresence: async (sessionId: string) => await readRunnerPresence({
           sessionId, trackedSessions: [tracked], readProcessRunState: async () => present ? 'servable' : 'dead',

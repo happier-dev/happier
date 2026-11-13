@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { readProcessIdentityByPid } from '@/daemon/processIdentity';
 import type { TrackedSession } from '@/daemon/types';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 import type { SessionRunnerRuntimeStateV1 } from '@happier-dev/protocol';
 
 import { resolveSessionRunnerRuntimeStatusV2 } from './resolveRuntimeStatusV2';
@@ -39,6 +40,7 @@ const state = {
 
 function tracked(overrides: Partial<TrackedSession> = {}): TrackedSession {
   return {
+    trackingKey: legacyPidSessionTrackingKey(overrides.pid ?? 123),
     happySessionId: 'sess-1',
     startedBy: 'daemon',
     pid: 123,

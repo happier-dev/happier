@@ -54,12 +54,12 @@ it.each(['unchanged', 'renewed', 'other-account', 'other-daemon-account'] as con
   h.tracked.pid = 2_147_000_000;
   h.tracked.sessionRunnerPid = h.tracked.pid;
   h.tracked.stopRequestedAtMs = Date.now();
-  h.pidToTrackedSession.clear();
-  h.pidToTrackedSession.set(h.tracked.pid, h.tracked);
-  const exited = createOnChildExited({ pidToTrackedSession: h.pidToTrackedSession,
-    spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null });
+  h.trackedSessionsByKey.clear();
+  h.trackedSessionsByKey.set(h.tracked.trackingKey, h.tracked);
+  const exited = createOnChildExited({ trackedSessionsByKey: h.trackedSessionsByKey,
+    spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null });
   await exited(h.tracked.pid, { reason: 'process-exited', code: 0, signal: null });
-  h.pidToTrackedSession.clear();
+  h.trackedSessionsByKey.clear();
   if (signIn === 'renewed' || signIn === 'other-account') {
     const token = `e30.${Buffer.from(JSON.stringify({ sub: signIn === 'renewed' ? 'requester' : 'another-account',
       jti: 'renewed-terminal', provenance: { v: 1, kind: 'terminal', authority: 'account_automation' } })).toString('base64url')}.signature`;
@@ -92,16 +92,16 @@ it('keeps persisted requester birth through Stop, physical exit and cold Resume'
   h.tracked.pid = 2_147_000_000;
   h.tracked.sessionRunnerPid = h.tracked.pid;
   h.tracked.stopRequestedAtMs = Date.now();
-  h.pidToTrackedSession.clear();
-  h.pidToTrackedSession.set(h.tracked.pid, h.tracked);
-  const exited = createOnChildExited({ pidToTrackedSession: h.pidToTrackedSession,
-    spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null });
+  h.trackedSessionsByKey.clear();
+  h.trackedSessionsByKey.set(h.tracked.trackingKey, h.tracked);
+  const exited = createOnChildExited({ trackedSessionsByKey: h.trackedSessionsByKey,
+    spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null });
   await exited(h.tracked.pid, { reason: 'process-exited', code: 0, signal: null });
   await expect(access(path)).resolves.toBeUndefined();
   expect(h.tracked.requesterSessionRuntimeContext).toBeUndefined();
   // A cold daemon has no retained PID/attribution hints. Home terminal
   // publication is outside this fixture; discard that in-memory census.
-  h.pidToTrackedSession.clear();
+  h.trackedSessionsByKey.clear();
   await expect(h.daemon.spawnSession({ existingSessionId: h.sessionId, directory: h.cwd,
     environmentVariables: { 'INVALID=KEY': 'fixture' } }))
     .resolves.toMatchObject({ type: 'error', errorCode: 'INVALID_ENVIRONMENT_VARIABLES' });

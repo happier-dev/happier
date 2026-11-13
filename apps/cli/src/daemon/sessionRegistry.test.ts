@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { DeviceLocalSecretStorage } from './deviceLocalSecretStorage';
+import { legacyPidSessionTrackingKey } from './sessions/sessionTrackingKey';
 
 const testDeviceLocalSecretStorage: DeviceLocalSecretStorage = {
   sealJson: ({ value }) => `test.${Buffer.from(JSON.stringify(value), 'utf8').toString('base64url')}`,
@@ -46,10 +47,10 @@ describe('sessionRegistry', () => {
 
   it('keeps daemon retirement evidence when a terminal-only caller cleans stopped markers', async () => {
     const { writeSessionMarker, removeSessionMarkerIfOwned, listSessionMarkers } = await import('./sessionRegistry');
-    await writeSessionMarker({ pid: 123451, happySessionId: 'stopped-session', startedBy: 'daemon', processStartTimeMs: 123 });
-    await writeSessionMarker({ pid: 123452, happySessionId: 'stopped-session', startedBy: 'terminal', processStartTimeMs: 456 });
+    await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(123451), pid: 123451, happySessionId: 'stopped-session', startedBy: 'daemon', processStartTimeMs: 123 });
+    await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(123452), pid: 123452, happySessionId: 'stopped-session', startedBy: 'terminal', processStartTimeMs: 456 });
     for (const marker of await listSessionMarkers()) {
-      const ownership = { pid: marker.pid, happySessionId: marker.happySessionId,
+      const ownership = { trackingKey: marker.trackingKey, happySessionId: marker.happySessionId,
         processStartTimeMs: marker.processStartTimeMs, startedBy: 'terminal' as const };
       await removeSessionMarkerIfOwned(ownership);
     }
@@ -98,7 +99,7 @@ describe('sessionRegistry', () => {
     const { listSessionMarkers, writeSessionMarker } = await import('./sessionRegistry');
 
     await writeSessionMarker({
-      pid: 12345,
+      trackingKey: legacyPidSessionTrackingKey(12345), pid: 12345,
       happySessionId: 'sess-1',
       startedBy: 'terminal',
       cwd: '/tmp',
@@ -116,7 +117,7 @@ describe('sessionRegistry', () => {
     const updatedAt1 = markers1[0].updatedAt;
 
     await writeSessionMarker({
-      pid: 12345,
+      trackingKey: legacyPidSessionTrackingKey(12345), pid: 12345,
       happySessionId: 'sess-2',
       startedBy: 'terminal',
       cwd: '/tmp',
@@ -132,7 +133,7 @@ describe('sessionRegistry', () => {
   it('retains only admitted requester attribution through same-process marker rewrites and stored extras', async () => {
     const { listSessionMarkers, writeSessionMarker } = await import('./sessionRegistry');
     const attribution = { serverId: 'home', accountId: 'alice', machineId: 'machine', installationId: 'installation' };
-    const ownership = { pid: 12349, happySessionId: 'requester-session', processStartTimeMs: 1234 };
+    const ownership = { trackingKey: legacyPidSessionTrackingKey(12349), pid: 12349, happySessionId: 'requester-session', processStartTimeMs: 1234 };
     await writeSessionMarker({ ...ownership, requesterWorkAttributionV1: attribution });
     expect((await listSessionMarkers())[0]).toMatchObject({ requesterWorkAttributionV1: attribution });
     const markerPath = join(happyHomeDir, 'tmp', 'daemon-sessions', 'pid-12349.json');
@@ -148,7 +149,7 @@ describe('sessionRegistry', () => {
 
   it('drops retired nested admission fields while preserving the Session marker across an update', async () => {
     const { listSessionMarkers, writeSessionMarker } = await import('./sessionRegistry');
-    const ownership = { pid: 12348, happySessionId: 'session', processStartTimeMs: 1234 };
+    const ownership = { trackingKey: legacyPidSessionTrackingKey(12348), pid: 12348, happySessionId: 'session', processStartTimeMs: 1234 };
     await writeSessionMarker(ownership);
     const markerPath = join(happyHomeDir, 'tmp', 'daemon-sessions', 'pid-12348.json');
     const raw = JSON.parse(readFileSync(markerPath, 'utf8'));
@@ -165,7 +166,7 @@ describe('sessionRegistry', () => {
   });
 
   it.each(['commit', 'refused'] as const)('rehydrates a recorded native-open %s through tolerant stored reads while keeping writes strict', async phase => {
-    const { listSessionMarkers, readSessionMarkerForPid, writeSessionMarker,
+    const { listSessionMarkers, readSessionMarker, writeSessionMarker,
       updateSessionMarkerAgentRuntimeSessionOpenAttestation } = await import('./sessionRegistry');
     const { recordTrackedRunnerAgentSessionOpenAttestation, awaitTrackedRunnerAgentSessionOpen } =
       await import('./agentRuntime/runnerAgentSessionOpenAttestation');
@@ -173,7 +174,7 @@ describe('sessionRegistry', () => {
     const { AgentRuntimeDaemonServiceSessionOpenAttestationV1Schema } =
       await import('@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol');
     const { buildTrackedSessionFromMarker } = await import('./sessions/trackedSessionFromMarker');
-    const runner = { pid: 12346, processStartTimeMs: 1234, processCommandHash: 'a'.repeat(64) };
+    const runner = { trackingKey: legacyPidSessionTrackingKey(12346), pid: 12346, processStartTimeMs: 1234, processCommandHash: 'a'.repeat(64) };
     // The private service authority identity also names the runner snapshot; the marker keeps process identity only.
     const attestedRunner = { ...runner, snapshotIdentity: 'fixture-runner' };
     const binding = createAgentSessionRunnerFactoryBinding({ v: 1, pluginId: 'acme.plugin', pluginVersion: '1.0.0',
@@ -201,14 +202,14 @@ describe('sessionRegistry', () => {
     const extraAttestation = { ...recorded, future: true, request: { ...request, future: true },
       ...(phase === 'refused' ? { refusal: { code: 'native_agent_session_mode_unavailable' as const, future: true } } : {}) };
     expect(AgentRuntimeDaemonServiceSessionOpenAttestationV1Schema.safeParse(extraAttestation).success).toBe(false);
-    await expect(updateSessionMarkerAgentRuntimeSessionOpenAttestation({ pid: runner.pid,
+    await expect(updateSessionMarkerAgentRuntimeSessionOpenAttestation({ trackingKey: legacyPidSessionTrackingKey(runner.pid),
       sessionId: request.sessionId, authorityFilePath: canonicalAuthority,
       attestation: extraAttestation })).rejects.toThrow();
     const markerPath = join(happyHomeDir, 'tmp', 'daemon-sessions', `pid-${runner.pid}.json`);
-    const previousMarker = await readSessionMarkerForPid(runner.pid);
+    const previousMarker = await readSessionMarker(legacyPidSessionTrackingKey(runner.pid));
     writeFileSync(markerPath, JSON.stringify({ ...previousMarker, future: true,
       agentRuntimeDaemonServiceSessionOpenAttestation: extraAttestation }));
-    const restored = await readSessionMarkerForPid(runner.pid);
+    const restored = await readSessionMarker(legacyPidSessionTrackingKey(runner.pid));
     expect(restored?.agentRuntimeDaemonServiceSessionOpenAttestation).toEqual(recorded);
     expect((await listSessionMarkers())[0]?.agentRuntimeDaemonServiceSessionOpenAttestation).toEqual(recorded);
     if (!restored) throw new Error('Recorded native-open marker was lost');
@@ -230,7 +231,7 @@ describe('sessionRegistry', () => {
       join(happyHomeDir, 'tmp', 'agent-authorities', 'session.json');
 
     await writeSessionMarker({
-      pid: 12347,
+      trackingKey: legacyPidSessionTrackingKey(12347), pid: 12347,
       happySessionId: 'session-authority-path',
       startedBy: 'daemon',
       cwd: '/tmp/project',
@@ -270,7 +271,7 @@ describe('sessionRegistry', () => {
       qualifiedDependencyIds: ['acme.plugin/dependency'],
     };
     await writeSessionMarker({
-      pid: 12348,
+      trackingKey: legacyPidSessionTrackingKey(12348), pid: 12348,
       happySessionId: 'session-stale-promotion',
       startedBy: 'daemon',
       cwd: '/tmp/project',
@@ -293,7 +294,7 @@ describe('sessionRegistry', () => {
 
     await expect(
       clearSessionMarkerAgentRuntimeDaemonServicePromotionIfOwned({
-        pid: 12348,
+        trackingKey: legacyPidSessionTrackingKey(12348), pid: 12348,
         sessionId: 'session-stale-promotion',
         processCommandHash,
         processStartTimeMs,
@@ -326,7 +327,7 @@ describe('sessionRegistry', () => {
     );
 
     await writeSessionMarker({
-      pid: 12348,
+      trackingKey: legacyPidSessionTrackingKey(12348), pid: 12348,
       happySessionId: 'session-stale-promotion',
       startedBy: 'daemon',
       cwd: '/tmp/project',
@@ -340,7 +341,7 @@ describe('sessionRegistry', () => {
     });
     await expect(
       clearSessionMarkerAgentRuntimeDaemonServicePromotionIfOwned({
-        pid: 12348,
+        trackingKey: legacyPidSessionTrackingKey(12348), pid: 12348,
         sessionId: 'session-stale-promotion',
         processCommandHash,
         processStartTimeMs,
@@ -360,7 +361,7 @@ describe('sessionRegistry', () => {
     );
 
     await writeSessionMarker({
-      pid: 12348,
+      trackingKey: legacyPidSessionTrackingKey(12348), pid: 12348,
       happySessionId: 'session-stale-promotion',
       startedBy: 'daemon',
       cwd: '/tmp/project',
@@ -374,7 +375,7 @@ describe('sessionRegistry', () => {
     });
     await expect(
       clearSessionMarkerAgentRuntimeDaemonServicePromotionIfOwned({
-        pid: 12348,
+        trackingKey: legacyPidSessionTrackingKey(12348), pid: 12348,
         sessionId: 'session-stale-promotion',
         processCommandHash,
         processStartTimeMs,
@@ -410,7 +411,7 @@ describe('sessionRegistry', () => {
     const processCommandHash = 'c'.repeat(64);
     const processStartTimeMs = 1_717_171_717_321;
     await writeSessionMarker({
-      pid: 12349,
+      trackingKey: legacyPidSessionTrackingKey(12349), pid: 12349,
       happySessionId: 'session-managed-dependency-retention',
       startedBy: 'daemon',
       processCommandHash,
@@ -424,7 +425,7 @@ describe('sessionRegistry', () => {
 
     await expect(
       updateSessionMarkerRunnerManagedDependencyRetention({
-        pid: 12349,
+        trackingKey: legacyPidSessionTrackingKey(12349), pid: 12349,
         sessionId: 'session-managed-dependency-retention',
         processCommandHash: 'd'.repeat(64),
         processStartTimeMs,
@@ -443,7 +444,7 @@ describe('sessionRegistry', () => {
     ).resolves.toBe(true);
     await expect(
       updateSessionMarkerRunnerManagedDependencyRetention({
-        pid: 12349,
+        trackingKey: legacyPidSessionTrackingKey(12349), pid: 12349,
         sessionId: 'session-managed-dependency-retention',
         processCommandHash,
         processStartTimeMs: processStartTimeMs + 1,
@@ -484,6 +485,7 @@ describe('sessionRegistry', () => {
     const processCommandHash = 'e'.repeat(64);
     const processStartTimeMs = 1_717_171_717_500;
     const identity = {
+      trackingKey: legacyPidSessionTrackingKey(12351),
       pid: 12351,
       sessionId: 'session-managed-provider-retention',
       processCommandHash,
@@ -506,7 +508,7 @@ describe('sessionRegistry', () => {
       manifestAuthority: 'external',
     } as const;
     await writeSessionMarker({
-      pid: identity.pid,
+      trackingKey: identity.trackingKey, pid: identity.pid,
       happySessionId: identity.sessionId,
       startedBy: 'daemon',
       processCommandHash,
@@ -596,7 +598,7 @@ describe('sessionRegistry', () => {
     const processCommandHash = 'd'.repeat(64);
     const processStartTimeMs = 1_717_171_717_654;
     await writeSessionMarker({
-      pid: 12350,
+      trackingKey: legacyPidSessionTrackingKey(12350), pid: 12350,
       happySessionId: 'session-runner-agent-generation',
       startedBy: 'daemon',
       processCommandHash,
@@ -605,7 +607,7 @@ describe('sessionRegistry', () => {
 
     await expect(
       updateSessionMarkerRunnerAgentSourceCustody({
-        pid: 12350,
+        trackingKey: legacyPidSessionTrackingKey(12350), pid: 12350,
         sessionId: 'session-runner-agent-generation',
         processCommandHash,
         processStartTimeMs,
@@ -614,7 +616,7 @@ describe('sessionRegistry', () => {
     ).resolves.toBe(true);
     await expect(
       updateSessionMarkerRunnerAgentSourceCustody({
-        pid: 12350,
+        trackingKey: legacyPidSessionTrackingKey(12350), pid: 12350,
         sessionId: 'session-runner-agent-generation',
         processCommandHash,
         processStartTimeMs,
@@ -623,7 +625,7 @@ describe('sessionRegistry', () => {
     ).resolves.toBe(true);
     await expect(
       updateSessionMarkerRunnerAgentSourceCustody({
-        pid: 12350,
+        trackingKey: legacyPidSessionTrackingKey(12350), pid: 12350,
         sessionId: 'session-runner-agent-generation',
         processCommandHash,
         processStartTimeMs,
@@ -632,14 +634,14 @@ describe('sessionRegistry', () => {
     ).resolves.toBe(false);
 
     await writeSessionMarker({
-      pid: 12350,
+      trackingKey: legacyPidSessionTrackingKey(12350), pid: 12350,
       happySessionId: 'session-runner-agent-generation',
       startedBy: 'daemon',
       processCommandHash,
       processStartTimeMs,
     });
     await writeSessionMarker({
-      pid: 12351,
+      trackingKey: legacyPidSessionTrackingKey(12351), pid: 12351,
       happySessionId: 'session-runner-agent-generation-h',
       startedBy: 'daemon',
       processCommandHash: 'e'.repeat(64),
@@ -662,14 +664,14 @@ describe('sessionRegistry', () => {
   it('adopts accepted birth-only custody without deriving identity from systemd spawn arguments', async () => {
     const { ChildProcess } = await import('node:child_process');
     const { persistAcceptedSpawnMarker } = await import('./spawn/persistAcceptedSpawnMarker');
-    const { readSessionMarkerForPid, writeSessionMarker, hashProcessCommand } = await import('./sessionRegistry');
+    const { readSessionMarker, writeSessionMarker, hashProcessCommand } = await import('./sessionRegistry');
     const child = new ChildProcess();
     // OS subprocess boundary: Node publishes spawnargs as a readonly property.
     Object.defineProperty(child, 'spawnargs', {
       value: ['systemd-run', '--user', '--scope', '--', '/usr/bin/node', 'runner'],
     });
     const trackedSession: import('./types').TrackedSession = {
-      pid: 12346, startedBy: 'daemon', childProcess: child,
+      trackingKey: legacyPidSessionTrackingKey(12346), pid: 12346, startedBy: 'daemon', childProcess: child,
       processCommand: child.spawnargs.join(' '),
       processCommandHash: hashProcessCommand(child.spawnargs.join(' ')),
       spawnOptions: { directory: '/tmp/project', spawnNonce: 'birth-only-nonce',
@@ -677,16 +679,16 @@ describe('sessionRegistry', () => {
     };
     await persistAcceptedSpawnMarker({ trackedSession, deviceLocalSecretStorage: testDeviceLocalSecretStorage,
       readProcessIdentityByPidFn: async () => ({ pid: 12346, processStartTimeMs: 123450, command: '' }) });
-    const accepted = await readSessionMarkerForPid(12346);
+    const accepted = await readSessionMarker(legacyPidSessionTrackingKey(12346));
     expect(accepted?.processStartTimeMs).toBe(123450);
     expect(accepted?.processCommandHash).toBeUndefined();
     expect(accepted?.processCommand).toBeUndefined();
     expect(trackedSession.processCommandHash).toBeUndefined();
-    const canonical = { pid: 12346, happySessionId: 'canonical-birth-only', startedBy: 'daemon' as const,
+    const canonical = { trackingKey: legacyPidSessionTrackingKey(12346), pid: 12346, happySessionId: 'canonical-birth-only', startedBy: 'daemon' as const,
       processStartTimeMs: 123450, processCommand: '/usr/bin/node runner',
       processCommandHash: hashProcessCommand('/usr/bin/node runner'), respawn: accepted!.respawn };
     await writeSessionMarker(canonical, { adoptCanonicalSessionIdFromPidPlaceholder: true });
-    expect((await readSessionMarkerForPid(12346))?.happySessionId).toBe(canonical.happySessionId);
+    expect((await readSessionMarker(legacyPidSessionTrackingKey(12346)))?.happySessionId).toBe(canonical.happySessionId);
     const { logger } = await import('@/ui/logger');
     const diagnostic = vi.spyOn(logger, 'debug');
     try {
@@ -718,7 +720,7 @@ describe('sessionRegistry', () => {
     const { readProcessIdentityByPid } = await import('./processIdentity');
     const { persistAcceptedSpawnMarker } = await import('./spawn/persistAcceptedSpawnMarker');
     const { createOnHappySessionWebhook } = await import('./sessions/onHappySessionWebhook');
-    const { readSessionMarkerForPid } = await import('./sessionRegistry');
+    const { readSessionMarker } = await import('./sessionRegistry');
     const { configuration } = await import('@/configuration');
     const launchSpec = { runtime: 'node' as const, filePath: process.execPath,
       args: ['-e', 'console.log(process.pid);setInterval(()=>{},1000)'] };
@@ -744,24 +746,24 @@ describe('sessionRegistry', () => {
         expect(stdout.trim()).toMatch(/^\d+$/);
       });
       const pid = Number(stdout.trim());
-      const tracked: import('./types').TrackedSession = { pid, childProcess: child, startedBy: 'daemon',
+      const tracked: import('./types').TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid), pid, childProcess: child, startedBy: 'daemon',
         agentRuntimeDaemonServiceAuthorityFilePath: join(happyHomeDir, 'authority.json'),
         spawnOptions: { directory: happyHomeDir, spawnNonce: 'real-child-nonce',
           backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } } };
       await persistAcceptedSpawnMarker({ trackedSession: tracked, deviceLocalSecretStorage: testDeviceLocalSecretStorage,
         readProcessIdentityByPidFn: (targetPid) => readProcessIdentityByPid(targetPid, { platform: 'linux',
           linuxBoundary: { readFile: async (path, encoding) => String(path).endsWith('/cmdline') ? '' : readFile(path, encoding), readdir, readlink } }) });
-      const accepted = await readSessionMarkerForPid(pid);
+      const accepted = await readSessionMarker(legacyPidSessionTrackingKey(pid));
       expect(accepted?.processStartTimeMs).toBeDefined();
       expect(accepted?.processCommandHash).toBeUndefined();
-      const onWebhook = createOnHappySessionWebhook({ pidToTrackedSession: new Map([[pid, tracked]]), pidToAwaiter: new Map(),
+      const onWebhook = createOnHappySessionWebhook({ trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]), spawnAwaiterByKey: new Map(),
         getParentPidFn: () => null, findHappyProcessByPidFn: async () => null,
         readCredentialsFn: async () => null, deviceLocalSecretStorage: testDeviceLocalSecretStorage });
       await onWebhook('real-child-canonical', { path: happyHomeDir, host: 'test-host', homeDir: '/tmp',
         happyHomeDir: configuration.happyHomeDir, happyLibDir: '/tmp/lib', happyToolsDir: '/tmp/tools',
         hostPid: pid, startedBy: 'daemon', machineId: 'machine-test' });
       await tracked.reportMarkerCustody?.pending;
-      const adopted = await readSessionMarkerForPid(pid);
+      const adopted = await readSessionMarker(legacyPidSessionTrackingKey(pid));
       expect(adopted?.happySessionId).toBe('real-child-canonical');
       expect(adopted?.processStartTimeMs).toBe(accepted?.processStartTimeMs);
       expect(adopted?.processCommandHash).toBeDefined();
@@ -777,15 +779,15 @@ describe('sessionRegistry', () => {
 
   it('rejects accepted custody without an OS start witness instead of hashing spawn arguments', async () => {
     const { persistAcceptedSpawnMarker } = await import('./spawn/persistAcceptedSpawnMarker');
-    const { readSessionMarkerForPid } = await import('./sessionRegistry');
+    const { readSessionMarker } = await import('./sessionRegistry');
     await expect(persistAcceptedSpawnMarker({
-      trackedSession: { pid: 12346, startedBy: 'daemon', processCommand: 'systemd-run -- node runner',
+      trackedSession: { trackingKey: legacyPidSessionTrackingKey(12346), pid: 12346, startedBy: 'daemon', processCommand: 'systemd-run -- node runner',
         spawnOptions: { directory: '/tmp/project', spawnNonce: 'missing-birth-nonce',
           backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } } },
       deviceLocalSecretStorage: testDeviceLocalSecretStorage,
       readProcessIdentityByPidFn: async () => null,
     })).rejects.toThrow('Accepted spawn process start witness is unavailable');
-    expect(await readSessionMarkerForPid(12346)).toBeNull();
+    expect(await readSessionMarker(legacyPidSessionTrackingKey(12346))).toBeNull();
   });
 
   it('persists accepted pre-webhook child custody with secret-free startup identity before session attach', async () => {
@@ -807,6 +809,7 @@ describe('sessionRegistry', () => {
     };
     const trackedSession: import('./types').TrackedSession = {
       startedBy: 'daemon',
+      trackingKey: legacyPidSessionTrackingKey(12346),
       pid: 12346,
       agentRuntimeDaemonServiceAuthorityFilePath:
         '/tmp/private/runner-daemon-authority.json',
@@ -894,7 +897,7 @@ describe('sessionRegistry', () => {
     };
 
     await writeSessionMarker({
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       happySessionId: `PID-${pid}`,
       startedBy: 'daemon',
       processCommand,
@@ -903,7 +906,7 @@ describe('sessionRegistry', () => {
     });
 
     await expect(writeSessionMarker({
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       happySessionId: 'session-canonical-after-webhook',
       startedBy: 'daemon',
       processCommand,
@@ -925,7 +928,7 @@ describe('sessionRegistry', () => {
 
     const mismatchedPid = pid + 1;
     await writeSessionMarker({
-      pid: mismatchedPid,
+      trackingKey: legacyPidSessionTrackingKey(mismatchedPid), pid: mismatchedPid,
       happySessionId: `PID-${mismatchedPid}`,
       startedBy: 'daemon',
       processCommand,
@@ -933,7 +936,7 @@ describe('sessionRegistry', () => {
       respawn: { ...respawn, spawnNonce: 'nonce-command-mismatch' },
     });
     await expect(writeSessionMarker({
-      pid: mismatchedPid,
+      trackingKey: legacyPidSessionTrackingKey(mismatchedPid), pid: mismatchedPid,
       happySessionId: 'session-command-mismatch',
       startedBy: 'daemon',
       processCommand: 'different runner command',
@@ -956,7 +959,7 @@ describe('sessionRegistry', () => {
     const respawn = { version: 1 as const, directory: '/tmp/project', spawnNonce: 'nonce-exec-same-generation' };
 
     await writeSessionMarker({
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       happySessionId: `PID-${pid}`,
       startedBy: 'daemon',
       processCommand: launchCommand,
@@ -966,7 +969,7 @@ describe('sessionRegistry', () => {
     });
 
     await expect(writeSessionMarker({
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       happySessionId: 'session-after-exec',
       startedBy: 'daemon',
       processCommand: runnerCommand,
@@ -984,7 +987,7 @@ describe('sessionRegistry', () => {
     ]);
 
     await expect(writeSessionMarker({
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       happySessionId: 'session-after-exec',
       startedBy: 'daemon',
       processCommand: runnerCommand,
@@ -995,7 +998,7 @@ describe('sessionRegistry', () => {
       'session_marker_canonical_adoption_ownership_mismatch',
     );
     await expect(writeSessionMarker({
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       happySessionId: 'session-after-exec',
       startedBy: 'daemon',
       processCommand: runnerCommand,
@@ -1008,7 +1011,7 @@ describe('sessionRegistry', () => {
 
     const refreshedCommand = `${runnerCommand} --runtime-ready`;
     await writeSessionMarker({
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       happySessionId: 'session-after-exec',
       startedBy: 'daemon',
       processCommand: refreshedCommand,
@@ -1027,15 +1030,15 @@ describe('sessionRegistry', () => {
   });
 
   it('refuses recovered terminal settlement when the marker already holds a newer active turn', async () => {
-    const { writeSessionMarker, readSessionMarkerForPid, updateSessionMarkerActiveTurn } = await import('./sessionRegistry');
-    await writeSessionMarker({ pid: 4321, happySessionId: 'session-recovered', startedBy: 'daemon',
+    const { writeSessionMarker, readSessionMarker, updateSessionMarkerActiveTurn } = await import('./sessionRegistry');
+    await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(4321), pid: 4321, happySessionId: 'session-recovered', startedBy: 'daemon',
       activeTurnId: 'new-turn' });
-    await expect(updateSessionMarkerActiveTurn({ pid: 4321, sessionId: 'session-recovered',
+    await expect(updateSessionMarkerActiveTurn({ trackingKey: legacyPidSessionTrackingKey(4321), sessionId: 'session-recovered',
       activeTurnId: null, expectedActiveTurnId: 'old-turn' })).resolves.toBe(false);
-    expect((await readSessionMarkerForPid(4321))?.activeTurnId).toBe('new-turn');
-    await expect(updateSessionMarkerActiveTurn({ pid: 4321, sessionId: 'session-recovered',
+    expect((await readSessionMarker(legacyPidSessionTrackingKey(4321)))?.activeTurnId).toBe('new-turn');
+    await expect(updateSessionMarkerActiveTurn({ trackingKey: legacyPidSessionTrackingKey(4321), sessionId: 'session-recovered',
       activeTurnId: null, expectedActiveTurnId: 'new-turn' })).resolves.toBe(true);
-    expect((await readSessionMarkerForPid(4321))?.activeTurnId).toBeUndefined();
+    expect((await readSessionMarker(legacyPidSessionTrackingKey(4321)))?.activeTurnId).toBeUndefined();
   });
 
   it('persists and clears only the exact active turn and causal input custody for the matching session marker', async () => {
@@ -1045,7 +1048,7 @@ describe('sessionRegistry', () => {
       writeSessionMarker,
     } = await import('./sessionRegistry');
     await writeSessionMarker({
-      pid: 12347,
+      trackingKey: legacyPidSessionTrackingKey(12347), pid: 12347,
       happySessionId: 'sess-active-turn',
       startedBy: 'daemon',
       cwd: '/tmp',
@@ -1058,7 +1061,7 @@ describe('sessionRegistry', () => {
     } as const;
 
     await expect(updateSessionMarkerActiveTurn({
-      pid: 12347,
+      trackingKey: legacyPidSessionTrackingKey(12347),
       sessionId: 'sess-active-turn',
       activeTurnId: 'session-turn:exact-1',
       agentRuntimeDaemonServiceActiveAdmission: admission,
@@ -1076,7 +1079,7 @@ describe('sessionRegistry', () => {
     ]);
 
     await expect(updateSessionMarkerActiveTurn({
-      pid: 12347,
+      trackingKey: legacyPidSessionTrackingKey(12347),
       sessionId: 'other-session',
       activeTurnId: null,
     })).resolves.toBe(false);
@@ -1085,7 +1088,7 @@ describe('sessionRegistry', () => {
     ]);
 
     await expect(updateSessionMarkerActiveTurn({
-      pid: 12347,
+      trackingKey: legacyPidSessionTrackingKey(12347),
       sessionId: 'sess-active-turn',
       activeTurnId: null,
       expectedAgentRuntimeDaemonServiceActiveAdmission: {
@@ -1101,7 +1104,7 @@ describe('sessionRegistry', () => {
     ]);
 
     await expect(updateSessionMarkerActiveTurn({
-      pid: 12347,
+      trackingKey: legacyPidSessionTrackingKey(12347),
       sessionId: 'sess-active-turn',
       activeTurnId: null,
       expectedAgentRuntimeDaemonServiceActiveAdmission:
@@ -1117,7 +1120,7 @@ describe('sessionRegistry', () => {
   it('preserves active-turn custody across routine writes for the same session only', async () => {
     const { listSessionMarkers, writeSessionMarker } = await import('./sessionRegistry');
     await writeSessionMarker({
-      pid: 12348,
+      trackingKey: legacyPidSessionTrackingKey(12348), pid: 12348,
       happySessionId: 'sess-active-turn-preserve',
       startedBy: 'daemon',
       cwd: '/tmp',
@@ -1131,7 +1134,7 @@ describe('sessionRegistry', () => {
     });
 
     await writeSessionMarker({
-      pid: 12348,
+      trackingKey: legacyPidSessionTrackingKey(12348), pid: 12348,
       happySessionId: 'sess-active-turn-preserve',
       startedBy: 'daemon',
       cwd: '/tmp/refreshed',
@@ -1150,7 +1153,7 @@ describe('sessionRegistry', () => {
     ]);
 
     await writeSessionMarker({
-      pid: 12348,
+      trackingKey: legacyPidSessionTrackingKey(12348), pid: 12348,
       happySessionId: 'sess-replacement',
       startedBy: 'daemon',
       cwd: '/tmp/replacement',
@@ -1183,7 +1186,7 @@ describe('sessionRegistry', () => {
       },
     };
     await writeSessionMarker({
-      pid: 12350,
+      trackingKey: legacyPidSessionTrackingKey(12350), pid: 12350,
       happySessionId: 'sess-respawn-preserve',
       startedBy: 'daemon',
       cwd: '/tmp/session-respawn-preserve',
@@ -1193,7 +1196,7 @@ describe('sessionRegistry', () => {
     });
 
     await writeSessionMarker({
-      pid: 12350,
+      trackingKey: legacyPidSessionTrackingKey(12350), pid: 12350,
       happySessionId: 'sess-respawn-preserve',
       startedBy: 'daemon',
       cwd: '/tmp/session-respawn-preserve/refreshed',
@@ -1225,7 +1228,7 @@ describe('sessionRegistry', () => {
     ]);
 
     await writeSessionMarker({
-      pid: 12350,
+      trackingKey: legacyPidSessionTrackingKey(12350), pid: 12350,
       happySessionId: 'sess-respawn-preserve',
       startedBy: 'terminal',
       cwd: '/tmp/session-respawn-preserve/terminal-owned',
@@ -1241,7 +1244,7 @@ describe('sessionRegistry', () => {
     expect(terminalOwned).not.toHaveProperty('respawn');
 
     await writeSessionMarker({
-      pid: 12350,
+      trackingKey: legacyPidSessionTrackingKey(12350), pid: 12350,
       happySessionId: 'sess-replacement',
       startedBy: 'daemon',
       cwd: '/tmp/session-replacement',
@@ -1264,7 +1267,7 @@ describe('sessionRegistry', () => {
       revision: 7,
     };
     await writeSessionMarker({
-      pid: 12349,
+      trackingKey: legacyPidSessionTrackingKey(12349), pid: 12349,
       happySessionId: 'sess-startup-instructions',
       startedBy: 'daemon',
       cwd: '/tmp',
@@ -1272,20 +1275,20 @@ describe('sessionRegistry', () => {
 
     await expect(
       updateSessionMarkerAgentSessionStartupInstructionsMarker({
-        pid: 12349,
+        trackingKey: legacyPidSessionTrackingKey(12349),
         sessionId: 'sess-startup-instructions',
         marker,
       }),
     ).resolves.toBe(true);
     await expect(
       updateSessionMarkerAgentSessionStartupInstructionsMarker({
-        pid: 12349,
+        trackingKey: legacyPidSessionTrackingKey(12349),
         sessionId: 'other-session',
         marker: { ...marker, revision: 8 },
       }),
     ).resolves.toBe(false);
     await expect(writeSessionMarker({
-      pid: 12349,
+      trackingKey: legacyPidSessionTrackingKey(12349), pid: 12349,
       happySessionId: 'sess-startup-instructions',
       startedBy: 'daemon',
       cwd: '/tmp/conflicting',
@@ -1298,7 +1301,7 @@ describe('sessionRegistry', () => {
     );
 
     await writeSessionMarker({
-      pid: 12349,
+      trackingKey: legacyPidSessionTrackingKey(12349), pid: 12349,
       happySessionId: 'sess-startup-instructions',
       startedBy: 'daemon',
       cwd: '/tmp/refreshed',
@@ -1311,7 +1314,7 @@ describe('sessionRegistry', () => {
     ]);
 
     await writeSessionMarker({
-      pid: 12349,
+      trackingKey: legacyPidSessionTrackingKey(12349), pid: 12349,
       happySessionId: 'sess-replacement',
       startedBy: 'daemon',
       cwd: '/tmp/replacement',
@@ -1336,7 +1339,7 @@ describe('sessionRegistry', () => {
       revision: 7,
     };
     await writeSessionMarker({
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       happySessionId: `PID-${pid}`,
       startedBy: 'daemon',
       cwd: '/tmp',
@@ -1353,7 +1356,7 @@ describe('sessionRegistry', () => {
 
     await expect(
       updateSessionMarkerAgentSessionStartupInstructionsMarker({
-        pid,
+        trackingKey: legacyPidSessionTrackingKey(pid),
         sessionId: 'sess-startup-instructions-placeholder',
         marker,
         expectedSpawnNonce: 'wrong-nonce',
@@ -1361,7 +1364,7 @@ describe('sessionRegistry', () => {
     ).resolves.toBe(false);
     await expect(
       updateSessionMarkerAgentSessionStartupInstructionsMarker({
-        pid,
+        trackingKey: legacyPidSessionTrackingKey(pid),
         sessionId: 'sess-startup-instructions-placeholder',
         marker,
         expectedSpawnNonce: spawnNonce,
@@ -1398,7 +1401,7 @@ describe('sessionRegistry', () => {
 
   it('removeSessionMarker should not throw if the marker does not exist', async () => {
     const { removeSessionMarker } = await import('./sessionRegistry');
-    await expect(removeSessionMarker(99999)).resolves.toBeUndefined();
+    await expect(removeSessionMarker(legacyPidSessionTrackingKey(99999))).resolves.toBeUndefined();
   });
 
   it('conditionally removes only the marker owned by the observed session identity', async () => {
@@ -1412,18 +1415,18 @@ describe('sessionRegistry', () => {
     const oldProcessCommandHash = hashProcessCommand('old runner');
     const replacementProcessCommandHash = hashProcessCommand('replacement runner');
     await writeSessionMarker({
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       happySessionId: 'session-old',
       processCommandHash: oldProcessCommandHash,
     });
     await writeSessionMarker({
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       happySessionId: 'session-replacement',
       processCommandHash: replacementProcessCommandHash,
     });
 
     await expect(removeSessionMarkerIfOwned({
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid),
       happySessionId: 'session-old',
       processCommandHash: oldProcessCommandHash,
     })).resolves.toBe(false);
@@ -1445,14 +1448,14 @@ describe('sessionRegistry', () => {
     } = await import('./sessionRegistry');
     const pid = 34570;
     await writeSessionMarker({
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       happySessionId: 'session-same',
       processCommandHash: 'a'.repeat(64),
       processStartTimeMs: 2_000,
     });
 
     await expect(removeSessionMarkerIfOwned({
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid),
       happySessionId: 'session-same',
       processCommandHash: 'a'.repeat(64),
       processStartTimeMs: 1_000,
@@ -1473,18 +1476,18 @@ describe('sessionRegistry', () => {
     const oldProcessCommandHash = hashProcessCommand('old runner');
     const replacementProcessCommandHash = hashProcessCommand('replacement runner');
     await writeSessionMarker({
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       happySessionId: 'session-old',
       processCommandHash: oldProcessCommandHash,
     });
 
     const removal = removeSessionMarkerIfOwned({
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid),
       happySessionId: 'session-old',
       processCommandHash: oldProcessCommandHash,
     });
     const replacement = writeSessionMarker({
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       happySessionId: 'session-replacement',
       processCommandHash: replacementProcessCommandHash,
     });
@@ -1509,13 +1512,13 @@ describe('sessionRegistry', () => {
     const pid = 34569;
     const processCommandHash = hashProcessCommand('same resumed runner');
     await writeSessionMarker({
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       happySessionId: 'session-same',
       processCommandHash,
     });
 
     await expect(removeSessionMarkerIfOwned({
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid),
       happySessionId: 'session-same',
       processCommandHash,
       isStillOwned: () => false,
@@ -1538,7 +1541,7 @@ describe('sessionRegistry', () => {
     const processCommandHash = 'a'.repeat(64);
 
     await writeSessionMarker({
-      pid: 54321,
+      trackingKey: legacyPidSessionTrackingKey(54321), pid: 54321,
       happySessionId: 'sess-xyz',
       startedBy: 'daemon',
       cwd: '/tmp',
@@ -1574,7 +1577,7 @@ describe('sessionRegistry', () => {
 
     expect(respawn).not.toBeNull();
     await writeSessionMarker({
-      pid: 54323,
+      trackingKey: legacyPidSessionTrackingKey(54323), pid: 54323,
       happySessionId: 'sess-native-v1-marker',
       startedBy: 'daemon',
       cwd: '/tmp/repo',
@@ -1619,7 +1622,7 @@ describe('sessionRegistry', () => {
 
     expect(respawn).not.toBeNull();
     await writeSessionMarker({
-      pid: 54325,
+      trackingKey: legacyPidSessionTrackingKey(54325), pid: 54325,
       happySessionId: 'sess-ohmypi-v1-marker',
       startedBy: 'daemon',
       cwd: '/tmp/repo',
@@ -1683,7 +1686,7 @@ describe('sessionRegistry', () => {
 
     expect(respawn).not.toBeNull();
     await writeSessionMarker({
-      pid: 54324,
+      trackingKey: legacyPidSessionTrackingKey(54324), pid: 54324,
       happySessionId: 'sess-configured-v1-marker',
       startedBy: 'daemon',
       cwd: '/tmp/repo',
@@ -1716,13 +1719,13 @@ describe('sessionRegistry', () => {
     await expect(
       Promise.all([
         writeSessionMarker({
-          pid: 12346,
+          trackingKey: legacyPidSessionTrackingKey(12346), pid: 12346,
           happySessionId: 'sess-concurrent-a',
           startedBy: 'daemon',
           cwd: '/tmp',
         }),
         writeSessionMarker({
-          pid: 12346,
+          trackingKey: legacyPidSessionTrackingKey(12346), pid: 12346,
           happySessionId: 'sess-concurrent-b',
           startedBy: 'daemon',
           cwd: '/tmp',
@@ -1744,7 +1747,7 @@ describe('sessionRegistry', () => {
     const { listSessionMarkers, writeSessionMarker } = await import('./sessionRegistry');
 
     await writeSessionMarker({
-      pid: 777,
+      trackingKey: legacyPidSessionTrackingKey(777), pid: 777,
       happySessionId: 'sess-opencode',
       startedBy: 'terminal',
       flavor: 'opencode',
@@ -1766,14 +1769,14 @@ describe('sessionRegistry', () => {
     } = await import('./sessionRegistry');
 
     await writeSessionMarker({
-      pid: 778,
+      trackingKey: legacyPidSessionTrackingKey(778), pid: 778,
       happySessionId: 'sess-restart-intent',
       startedBy: 'daemon',
       cwd: '/tmp',
     });
 
     await expect(markSessionMarkerConnectedServiceRestartIntent({
-      pid: 778,
+      trackingKey: legacyPidSessionTrackingKey(778),
       requestedAtMs: 1234.9,
     })).resolves.toBe(true);
 
@@ -1787,7 +1790,7 @@ describe('sessionRegistry', () => {
       }),
     ]);
 
-    await clearSessionMarkerConnectedServiceRestartIntent(778);
+    await clearSessionMarkerConnectedServiceRestartIntent(legacyPidSessionTrackingKey(778));
     await expect(listSessionMarkers()).resolves.toEqual([
       expect.not.objectContaining({
         connectedServiceRestartIntent: expect.anything(),
@@ -1803,19 +1806,19 @@ describe('sessionRegistry', () => {
     } = await import('./sessionRegistry');
 
     await writeSessionMarker({
-      pid: 780,
+      trackingKey: legacyPidSessionTrackingKey(780), pid: 780,
       happySessionId: 'sess-preserve-restart-intent',
       startedBy: 'daemon',
       cwd: '/tmp',
     });
     await expect(markSessionMarkerConnectedServiceRestartIntent({
-      pid: 780,
+      trackingKey: legacyPidSessionTrackingKey(780),
       requestedAtMs: 55_000,
     })).resolves.toBe(true);
 
     await writeSessionMarker(
       {
-        pid: 780,
+        trackingKey: legacyPidSessionTrackingKey(780), pid: 780,
         happySessionId: 'sess-preserve-restart-intent',
         startedBy: 'daemon',
         cwd: '/tmp',
@@ -1866,7 +1869,7 @@ describe('sessionRegistry', () => {
       } = await import('./sessionRegistry');
 
       await writeSessionMarker({
-        pid: 782,
+        trackingKey: legacyPidSessionTrackingKey(782), pid: 782,
         happySessionId: 'sess-mark-refresh-race',
         startedBy: 'daemon',
         cwd: '/tmp',
@@ -1874,7 +1877,7 @@ describe('sessionRegistry', () => {
 
       const refreshPromise = writeSessionMarker(
         {
-          pid: 782,
+          trackingKey: legacyPidSessionTrackingKey(782), pid: 782,
           happySessionId: 'sess-mark-refresh-race',
           startedBy: 'daemon',
           cwd: '/tmp',
@@ -1885,7 +1888,7 @@ describe('sessionRegistry', () => {
       await waitUntil(() => refreshWriteBlocked);
 
       const markPromise = markSessionMarkerConnectedServiceRestartIntent({
-        pid: 782,
+        trackingKey: legacyPidSessionTrackingKey(782),
         requestedAtMs: 78_200,
       });
       await Promise.race([
@@ -1942,7 +1945,7 @@ describe('sessionRegistry', () => {
       } = await import('./sessionRegistry');
 
       await writeSessionMarker({
-        pid: 783,
+        trackingKey: legacyPidSessionTrackingKey(783), pid: 783,
         happySessionId: 'sess-clear-refresh-race',
         startedBy: 'daemon',
         cwd: '/tmp',
@@ -1954,7 +1957,7 @@ describe('sessionRegistry', () => {
 
       const refreshPromise = writeSessionMarker(
         {
-          pid: 783,
+          trackingKey: legacyPidSessionTrackingKey(783), pid: 783,
           happySessionId: 'sess-clear-refresh-race',
           startedBy: 'daemon',
           cwd: '/tmp',
@@ -1964,7 +1967,7 @@ describe('sessionRegistry', () => {
       );
       await waitUntil(() => refreshWriteBlocked);
 
-      const clearPromise = clearSessionMarkerConnectedServiceRestartIntent(783);
+      const clearPromise = clearSessionMarkerConnectedServiceRestartIntent(legacyPidSessionTrackingKey(783));
       await Promise.race([
         clearPromise,
         new Promise((resolve) => setTimeout(resolve, 100)),
@@ -1991,14 +1994,15 @@ describe('sessionRegistry', () => {
     const { listSessionMarkers, markSessionMarkerConnectedServiceRestartIntent } = await import('./sessionRegistry');
 
     await expect(markSessionMarkerConnectedServiceRestartIntent({
-      pid: 779,
+      trackingKey: legacyPidSessionTrackingKey(779),
       requestedAtMs: 1234,
     })).resolves.toBe(false);
     await expect(listSessionMarkers()).resolves.toEqual([]);
   });
 
-  it('promotes onto a nonce-correlated canonical runner marker without replacing its identity', async () => {
+  it('promotes the Session marker in place onto its runner pid, keeping Session facts and dropping wrapper restart intent', async () => {
     const {
+      hashProcessCommand,
       listSessionMarkers,
       markSessionMarkerConnectedServiceRestartIntent,
       promoteSessionMarkerPid,
@@ -2011,7 +2015,7 @@ describe('sessionRegistry', () => {
     };
 
     await writeSessionMarker({
-      pid: 780,
+      trackingKey: legacyPidSessionTrackingKey(780), pid: 780,
       happySessionId: 'PID-780',
       startedBy: 'daemon',
       cwd: '/wrapper',
@@ -2027,54 +2031,40 @@ describe('sessionRegistry', () => {
         revision: 7,
       },
     });
-    await writeSessionMarker({
-      pid: 781,
-      happySessionId: 'sess-promote-intent',
-      startedBy: 'daemon',
-      cwd: '/runner',
-      processCommandHash: 'b'.repeat(64),
-      processCommand: 'runner command',
-      metadata: { owner: 'runner' },
-      respawn: {
-        ...respawn,
-        directory: '/runner',
-      },
-    });
     await markSessionMarkerConnectedServiceRestartIntent({
-      pid: 780,
+      trackingKey: legacyPidSessionTrackingKey(780),
       requestedAtMs: 5678,
     });
 
-    await expect(promoteSessionMarkerPid(780, 781)).resolves.toEqual({
+    await expect(promoteSessionMarkerPid({ trackingKey: legacyPidSessionTrackingKey(780), fromPid: 780, toPid: 781 }, {
+      readProcessIdentityByPidFn: async () => ({ pid: 781, processStartTimeMs: 2_000, command: 'runner command' }),
+    })).resolves.toEqual({
       sourceMarkerOwnership: {
         happySessionId: 'PID-780',
         processCommandHash: 'a'.repeat(64),
         processStartTimeMs: 1_000,
       },
       targetMarkerOwnership: {
-        happySessionId: 'sess-promote-intent',
-        processCommandHash: 'b'.repeat(64),
+        happySessionId: 'PID-780',
+        processCommandHash: hashProcessCommand('runner command'),
+        processStartTimeMs: 2_000,
       },
       targetProcessCommand: 'runner command',
     });
 
+    // One marker per Session: the promotion rewrites its hosting process fields under the same key.
     const markers = await listSessionMarkers();
-    const wrapperMarker = markers.find((marker) => marker.pid === 780);
-    const runnerMarker = markers.find((marker) => marker.pid === 781);
-    expect(wrapperMarker).toEqual(expect.objectContaining({
-      happySessionId: 'PID-780',
-      connectedServiceRestartIntent: {
-        v: 1,
-        requestedAtMs: 5678,
-      },
-    }));
+    expect(markers).toHaveLength(1);
+    const runnerMarker = markers[0];
     expect(runnerMarker).toEqual(expect.objectContaining({
+      trackingKey: legacyPidSessionTrackingKey(780),
       pid: 781,
-      happySessionId: 'sess-promote-intent',
-      cwd: '/runner',
-      processCommandHash: 'b'.repeat(64),
+      happySessionId: 'PID-780',
+      cwd: '/wrapper',
+      processCommandHash: hashProcessCommand('runner command'),
       processCommand: 'runner command',
-      metadata: { owner: 'runner' },
+      processStartTimeMs: 2_000,
+      metadata: { owner: 'wrapper' },
       activeTurnId: 'turn-from-wrapper',
       agentSessionStartupInstructionsMarkerV1: {
         v: 1,
@@ -2085,7 +2075,7 @@ describe('sessionRegistry', () => {
     expect(runnerMarker).not.toHaveProperty('connectedServiceRestartIntent');
   });
 
-  it('promotes a canonical resume wrapper onto the same nonce-correlated canonical runner session', async () => {
+  it('promotes a canonical resume wrapper marker in place onto its runner pid', async () => {
     const {
       hashProcessCommand,
       listSessionMarkers,
@@ -2094,7 +2084,7 @@ describe('sessionRegistry', () => {
     } = await import('./sessionRegistry');
 
     await writeSessionMarker({
-      pid: 792,
+      trackingKey: legacyPidSessionTrackingKey(792), pid: 792,
       happySessionId: 'sess-resume-promotion',
       startedBy: 'daemon',
       cwd: '/wrapper',
@@ -2112,48 +2102,33 @@ describe('sessionRegistry', () => {
         requestedAtMs: 7890,
       },
     });
-    await writeSessionMarker({
-      pid: 793,
-      happySessionId: 'sess-resume-promotion',
-      startedBy: 'daemon',
-      cwd: '/runner',
-      processCommandHash: 'b'.repeat(64),
-      processCommand: 'runner command',
-      metadata: { owner: 'runner' },
-      respawn: {
-        version: 1,
-        directory: '/runner',
-        spawnNonce: 'nonce-resume-promotion',
-      },
-    });
 
-    await expect(promoteSessionMarkerPid(792, 793)).resolves.toEqual({
+    await expect(promoteSessionMarkerPid({ trackingKey: legacyPidSessionTrackingKey(792), fromPid: 792, toPid: 793 }, {
+      readProcessIdentityByPidFn: async () => ({ pid: 793, processStartTimeMs: 3_000, command: 'runner command' }),
+    })).resolves.toEqual({
       sourceMarkerOwnership: {
         happySessionId: 'sess-resume-promotion',
         processCommandHash: 'a'.repeat(64),
       },
       targetMarkerOwnership: {
         happySessionId: 'sess-resume-promotion',
-        processCommandHash: 'b'.repeat(64),
+        processCommandHash: hashProcessCommand('runner command'),
+        processStartTimeMs: 3_000,
       },
       targetProcessCommand: 'runner command',
     });
 
     const markers = await listSessionMarkers();
-    expect(markers.find((marker) => marker.pid === 792)).toEqual(expect.objectContaining({
-      happySessionId: 'sess-resume-promotion',
-      connectedServiceRestartIntent: {
-        v: 1,
-        requestedAtMs: 7890,
-      },
-    }));
-    const runnerMarker = markers.find((marker) => marker.pid === 793);
+    expect(markers).toHaveLength(1);
+    const runnerMarker = markers[0];
     expect(runnerMarker).toEqual(expect.objectContaining({
+      trackingKey: legacyPidSessionTrackingKey(792),
+      pid: 793,
       happySessionId: 'sess-resume-promotion',
-      cwd: '/runner',
-      processCommandHash: 'b'.repeat(64),
+      cwd: '/wrapper',
+      processCommandHash: hashProcessCommand('runner command'),
       processCommand: 'runner command',
-      metadata: { owner: 'runner' },
+      metadata: { owner: 'wrapper' },
       activeTurnId: 'turn-from-resume-wrapper',
       respawn: expect.objectContaining({
         spawnNonce: 'nonce-resume-promotion',
@@ -2176,7 +2151,7 @@ describe('sessionRegistry', () => {
       sourceSessionId: 'sess-composed-promotion',
     },
   ])(
-    'removes only the exact $sourceIdentity wrapper marker after transferring live custody to its canonical runner',
+    'keeps the one $sourceIdentity Session marker and moves it to the canonical runner when live custody transfers',
     async ({ wrapperPid, runnerPid, sourceSessionId }) => {
       const {
         listSessionMarkers,
@@ -2190,7 +2165,7 @@ describe('sessionRegistry', () => {
       const spawnNonce = `nonce-composed-promotion-${wrapperPid}`;
 
       await writeSessionMarker({
-        pid: wrapperPid,
+        trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid,
         happySessionId: sourceSessionId,
         startedBy: 'daemon',
         cwd: '/wrapper',
@@ -2203,37 +2178,17 @@ describe('sessionRegistry', () => {
           spawnNonce,
         },
       });
-      await writeSessionMarker({
-        pid: runnerPid,
-        happySessionId: canonicalSessionId,
-        startedBy: 'daemon',
-        cwd: '/runner',
-        processCommandHash: runnerProcessCommandHash,
-        processCommand: 'runner command',
-        metadata: { owner: 'runner' },
-        respawn: {
-          version: 1,
-          directory: '/runner',
-          spawnNonce,
-        },
-      });
 
       const tracked = {
+        trackingKey: legacyPidSessionTrackingKey(wrapperPid),
         pid: wrapperPid,
         startedBy: 'daemon',
         happySessionId: canonicalSessionId,
         processCommandHash: runnerProcessCommandHash,
         sessionRunnerPid: runnerPid,
       };
-      const pidToTrackedSession = new Map([[wrapperPid, tracked]]);
-      const removeSessionMarkerIfOwnedFn = vi.fn(async (input: Parameters<typeof removeSessionMarkerIfOwned>[0]) => {
-        expect(pidToTrackedSession.has(wrapperPid)).toBe(false);
-        expect(pidToTrackedSession.get(runnerPid)).toEqual(expect.objectContaining({
-          pid: runnerPid,
-          happySessionId: canonicalSessionId,
-        }));
-        return await removeSessionMarkerIfOwned(input);
-      });
+      const trackedSessionsByKey = new Map([[tracked.trackingKey, tracked]]);
+      const removeSessionMarkerIfOwnedFn = vi.fn(removeSessionMarkerIfOwned);
       const originalKill = process.kill.bind(process);
       const killSpy = vi.spyOn(process, 'kill').mockImplementation(((pid: number, signal?: NodeJS.Signals | number) => {
         if (pid === runnerPid && signal === 0) return true;
@@ -2242,9 +2197,9 @@ describe('sessionRegistry', () => {
 
       try {
         const onChildExited = createOnChildExited({
-          pidToTrackedSession,
-          spawnResourceCleanupByPid: new Map(),
-          sessionAttachCleanupByPid: new Map(),
+          trackedSessionsByKey,
+          spawnResourceCleanupByKey: new Map(),
+          sessionAttachCleanupByKey: new Map(),
           getApiMachineForSessions: () => null,
           removeSessionMarkerIfOwnedFn,
         });
@@ -2255,27 +2210,30 @@ describe('sessionRegistry', () => {
           signal: null,
         });
 
-        expect(removeSessionMarkerIfOwnedFn).toHaveBeenCalledWith(expect.objectContaining({
-          pid: wrapperPid,
-          happySessionId: sourceSessionId,
-          processCommandHash: wrapperProcessCommandHash,
+        // Custody moved under the Session's own key; its marker is promoted, never removed.
+        expect(trackedSessionsByKey.get(tracked.trackingKey)).toEqual(expect.objectContaining({
+          pid: runnerPid,
+          happySessionId: canonicalSessionId,
         }));
+        expect(removeSessionMarkerIfOwnedFn).not.toHaveBeenCalled();
         expect(await listSessionMarkers()).toEqual([
           expect.objectContaining({
+            trackingKey: tracked.trackingKey,
             pid: runnerPid,
-            happySessionId: canonicalSessionId,
-            processCommandHash: runnerProcessCommandHash,
-            processCommand: 'runner command',
-            metadata: { owner: 'runner' },
+            happySessionId: sourceSessionId,
+            metadata: { owner: 'wrapper' },
+            respawn: expect.objectContaining({ spawnNonce }),
           }),
         ]);
       } finally {
         killSpy.mockRestore();
       }
     },
+    // First use cold-imports the daemon exit owner (~25s on a loaded test host).
+    60_000,
   );
 
-  it('rejects an existing runner marker with a different spawn nonce without changing either marker', async () => {
+  it('refuses to promote a Session marker that another process hosts, leaving it unchanged', async () => {
     const {
       listSessionMarkers,
       promoteSessionMarkerPid,
@@ -2283,7 +2241,7 @@ describe('sessionRegistry', () => {
     } = await import('./sessionRegistry');
 
     await writeSessionMarker({
-      pid: 784,
+      trackingKey: legacyPidSessionTrackingKey(784), pid: 784,
       happySessionId: 'PID-784',
       startedBy: 'daemon',
       cwd: '/wrapper',
@@ -2297,92 +2255,22 @@ describe('sessionRegistry', () => {
       },
       activeTurnId: 'turn-wrapper',
     });
-    await writeSessionMarker({
-      pid: 785,
-      happySessionId: 'sess-unrelated-runner',
-      startedBy: 'daemon',
-      cwd: '/runner',
-      processCommandHash: 'b'.repeat(64),
-      processCommand: 'runner command',
-      metadata: { owner: 'runner' },
-      respawn: {
-        version: 1,
-        directory: '/runner',
-        spawnNonce: 'nonce-other',
-      },
-    });
     const before = await listSessionMarkers();
 
-    await expect(promoteSessionMarkerPid(784, 785)).resolves.toBeNull();
+    await expect(promoteSessionMarkerPid({ trackingKey: legacyPidSessionTrackingKey(784), fromPid: 783, toPid: 785 })).resolves.toBeNull();
     await expect(listSessionMarkers()).resolves.toEqual(before);
   });
 
-  it('rejects an existing runner marker for a different canonical session or missing nonce correlation', async () => {
-    const {
-      listSessionMarkers,
-      promoteSessionMarkerPid,
-      writeSessionMarker,
-    } = await import('./sessionRegistry');
-
-    await writeSessionMarker({
-      pid: 788,
-      happySessionId: 'sess-not-a-wrapper-placeholder',
-      startedBy: 'daemon',
-      cwd: '/wrapper',
-      respawn: {
-        version: 1,
-        directory: '/wrapper',
-        spawnNonce: 'nonce-shared',
-      },
-    });
-    await writeSessionMarker({
-      pid: 789,
-      happySessionId: 'sess-canonical-runner',
-      startedBy: 'daemon',
-      cwd: '/runner',
-      respawn: {
-        version: 1,
-        directory: '/runner',
-        spawnNonce: 'nonce-shared',
-      },
-    });
-    const beforeNonPlaceholder = await listSessionMarkers();
-    await expect(promoteSessionMarkerPid(788, 789)).resolves.toBeNull();
-    await expect(listSessionMarkers()).resolves.toEqual(beforeNonPlaceholder);
-
-    await writeSessionMarker({
-      pid: 790,
-      happySessionId: 'PID-790',
-      startedBy: 'daemon',
-      cwd: '/wrapper-without-nonce',
-      respawn: {
-        version: 1,
-        directory: '/wrapper-without-nonce',
-      },
-    });
-    await writeSessionMarker({
-      pid: 791,
-      happySessionId: 'sess-runner-without-correlation',
-      startedBy: 'daemon',
-      cwd: '/runner-without-nonce',
-      respawn: {
-        version: 1,
-        directory: '/runner-without-nonce',
-      },
-    });
-    const beforeMissingNonce = await listSessionMarkers();
-    await expect(promoteSessionMarkerPid(790, 791)).resolves.toBeNull();
-    await expect(listSessionMarkers()).resolves.toEqual(beforeMissingNonce);
-  });
-
   it('preserves an observed start witness when promoting to a runner with no command', async () => {
-    const { writeSessionMarker, promoteSessionMarkerPid, readSessionMarkerForPid } = await import('./sessionRegistry');
-    await writeSessionMarker({ pid: 784, happySessionId: 'PID-784', startedBy: 'daemon' });
-    await promoteSessionMarkerPid(784, 785, {
+    const { writeSessionMarker, promoteSessionMarkerPid, readSessionMarker } = await import('./sessionRegistry');
+    await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(784), pid: 784, happySessionId: 'PID-784', startedBy: 'daemon' });
+    await promoteSessionMarkerPid({ trackingKey: legacyPidSessionTrackingKey(784), fromPid: 784, toPid: 785 }, {
       readProcessIdentityByPidFn: async () => ({ pid: 785, processStartTimeMs: 123450, command: '' }),
     });
-    expect((await readSessionMarkerForPid(785))?.processStartTimeMs).toBe(123450);
-    expect((await readSessionMarkerForPid(785))?.processCommandHash).toBeUndefined();
+    const promoted = await readSessionMarker(legacyPidSessionTrackingKey(784));
+    expect(promoted?.pid).toBe(785);
+    expect(promoted?.processStartTimeMs).toBe(123450);
+    expect(promoted?.processCommandHash).toBeUndefined();
   });
 
   it('retains the existing no-target marker promotion behavior', async () => {
@@ -2394,7 +2282,7 @@ describe('sessionRegistry', () => {
     } = await import('./sessionRegistry');
 
     await writeSessionMarker({
-      pid: 786,
+      trackingKey: legacyPidSessionTrackingKey(786), pid: 786,
       happySessionId: 'PID-786',
       startedBy: 'daemon',
       cwd: '/wrapper',
@@ -2413,7 +2301,7 @@ describe('sessionRegistry', () => {
       },
     });
 
-    await expect(promoteSessionMarkerPid(786, 787, {
+    await expect(promoteSessionMarkerPid({ trackingKey: legacyPidSessionTrackingKey(786), fromPid: 786, toPid: 787 }, {
       readProcessIdentityByPidFn: async () => ({
         pid: 787,
         processStartTimeMs: 1_717_171_717_000,
@@ -2455,7 +2343,7 @@ describe('sessionRegistry', () => {
     const { writeSessionMarker } = await import('./sessionRegistry');
 
     await writeSessionMarker({
-      pid: 9001,
+      trackingKey: legacyPidSessionTrackingKey(9001), pid: 9001,
       happySessionId: 'sess-dev',
       startedBy: 'terminal',
       cwd: '/tmp',
@@ -2498,7 +2386,7 @@ describe('sessionRegistry', () => {
       happySessionId: 'sess-404',
     });
 
-    await removeSessionMarker(404);
+    await removeSessionMarker(legacyPidSessionTrackingKey(404));
     expect(existsSync(join(legacyPreviewDir, 'pid-404.json'))).toBe(false);
   });
 
@@ -2553,7 +2441,7 @@ describe('sessionRegistry', () => {
     const seedText = `REPLAY-SEED-${'x'.repeat(4096)}`;
 
     await writeSessionMarker({
-      pid: 12399,
+      trackingKey: legacyPidSessionTrackingKey(12399), pid: 12399,
       happySessionId: 'sess-replay-seeded',
       startedBy: 'daemon',
       cwd: '/tmp/project',
@@ -2622,7 +2510,7 @@ describe('sessionRegistry', () => {
     );
 
     await updateSessionMarkerActiveTurn({
-      pid: 12400,
+      trackingKey: legacyPidSessionTrackingKey(12400),
       sessionId: 'sess-stale-seed',
       activeTurnId: 'turn-1',
     });

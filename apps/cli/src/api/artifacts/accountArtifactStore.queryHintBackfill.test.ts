@@ -289,7 +289,7 @@ describe('explicit daemon Account Artifact query-hint backfill', () => {
         startupSource: 'manual' as const, serviceLabel: undefined, daemonLogPath: '/tmp/artifact-bootstrap.log', controlToken: 'control',
         publishDaemonState: () => true, happyHomeDir: '/tmp/artifact-bootstrap-home', activeServerDir: '/tmp/artifact-bootstrap-server',
         filesystemAccessPolicy: { kind: 'osUser' as const }, publicReleaseChannel: 'dev' as const,
-        connectedServicesRestartRequestedPids: new Set<number>(), pidToTrackedSession: new Map(),
+        connectedServicesRestartRequestedSessions: new Set(), trackedSessionsByKey: new Map(),
         connectedServiceAuthGroupPreTurnSwitchCoordinator: { ...healthSwitchContext, switchBeforeTurn: unsupported, applyCommittedGeneration: unsupported, applyCredentialUpdate: unsupported },
         connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(), providerAccountUsageStore: createProviderAccountUsageStore(),
         artifactQueryHints: { signal: lifetime.signal,

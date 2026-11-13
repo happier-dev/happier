@@ -5,22 +5,23 @@ import { createSessionProcessActionLifecycle } from './sessionProcessActionLifec
 import { createStopSession } from './stopSession';
 import { createOnChildExited } from './onChildExited';
 import { createSessionStopOperationBarrier } from './sessionStopOperationBarrier';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 function fixture(prepareStopIntent: (sessionId: string) => Promise<void> = async () => {}) {
-  const tracked: TrackedSession = { pid: 300, startedBy: 'daemon', happySessionId: 'session-a',
+  const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(300), pid: 300, startedBy: 'daemon', happySessionId: 'session-a',
     processStartTimeMs: 100, vendorResumeId: 'vendor-a', spawnOptions: { directory: '/repo' } };
-  const peer: TrackedSession = { ...tracked, pid: 301, happySessionId: 'session-b' };
-  const sessions = new Map([[tracked.pid, tracked], [peer.pid, peer]]);
+  const peer: TrackedSession = { ...tracked, trackingKey: legacyPidSessionTrackingKey(301), pid: 301, happySessionId: 'session-b' };
+  const sessions = new Map([[tracked.trackingKey, tracked], [peer.trackingKey, peer]]);
   let spawned = 0;
   const respawn = createSessionRunnerRespawnManager({ enabled: true, maxRestarts: 2,
     baseDelayMs: 0, maxDelayMs: 0, jitterMs: 0, random: () => 0,
     isSessionAlreadyRunning: () => false, spawnSession: async () => { spawned++; return { type: 'success' }; },
     logDebug: () => {}, logWarn: () => {} });
-  const lifecycle = createSessionProcessActionLifecycle({ pidToTrackedSession: sessions,
+  const lifecycle = createSessionProcessActionLifecycle({ trackedSessionsByKey: sessions,
     markStopRequested: respawn.markStopRequested,
     registerPhysicalStopEffect: createSessionStopOperationBarrier().registerPhysicalStopEffect,
     prepareStopIntent,
-    stopSession: createStopSession({ pidToTrackedSession: sessions }) });
+    stopSession: createStopSession({ trackedSessionsByKey: sessions }) });
   return { tracked, peer, sessions, lifecycle, respawn, spawned: () => spawned };
 }
 
@@ -80,7 +81,7 @@ describe('Session process Action lifecycle', () => {
     expect(await f.lifecycle.prepareKill({ targets: [{ pid: 300, start: { startTimeMs: 101 } }] })).toBeNull();
     const stamp = await f.lifecycle.prepareKill({ targets: [{ pid: 300, start: { startTimeMs: 100 } }] });
     const replacement = { ...f.tracked };
-    f.sessions.set(300, replacement);
+    f.sessions.set(replacement.trackingKey, replacement);
     expect(await stamp?.()).toBe(false);
     expect(f.tracked.stopRequestedAtMs).toBeUndefined();
     expect(replacement.stopRequestedAtMs).toBeUndefined();
@@ -105,17 +106,16 @@ describe('Session process Action lifecycle', () => {
   it('does not lend an earlier kill preparation to a newly adopted runner', async () => {
     const f = fixture();
     const stamp = await f.lifecycle.prepareKill({ targets: [{ pid: 302, start: { startTimeMs: 100 } }] });
-    const adopted = { ...f.peer, pid: 302 };
-    f.sessions.set(302, adopted);
+    const adopted = { ...f.peer, trackingKey: legacyPidSessionTrackingKey(302), pid: 302 };
+    f.sessions.set(adopted.trackingKey, adopted);
     expect(await stamp?.()).toBe(false);
     expect(adopted.stopRequestedAtMs).toBeUndefined();
   });
 
   it('refuses same-object PID promotion during the Stop metadata transport', async () => {
     const f = fixture(async () => {
-      f.sessions.delete(300);
+      // The Session keeps its key; only its hosting pid moves.
       f.tracked.pid = 302;
-      f.sessions.set(302, f.tracked);
     });
     const stamp = await f.lifecycle.prepareKill({ targets: [{ pid: 300, start: { startTimeMs: 100 } }] });
     expect(await stamp?.()).toBe(false);
@@ -127,13 +127,13 @@ describe('Session process Action lifecycle', () => {
     f.tracked.happySessionId = 'PID-300';
     const stamp = await f.lifecycle.prepareKill({ targets: [{ pid: 300, start: { startTimeMs: 100 } }] });
     expect(await stamp?.()).toBe(true);
-    const exit = createOnChildExited({ pidToTrackedSession: f.sessions,
-      spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+    const exit = createOnChildExited({ trackedSessionsByKey: f.sessions,
+      spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null, removeSessionMarkerFn: async () => undefined });
     await exit(300, { reason: 'process-exited', code: null, signal: 'SIGKILL' });
-    expect(f.sessions.has(300)).toBe(false);
+    expect(f.sessions.has(f.tracked.trackingKey)).toBe(false);
     expect(await stamp?.()).toBe(true);
-    f.sessions.set(302, { ...f.tracked, pid: 302, processStartTimeMs: 101, stopRequestedAtMs: undefined,
+    f.sessions.set(legacyPidSessionTrackingKey(302), { ...f.tracked, trackingKey: legacyPidSessionTrackingKey(302), pid: 302, processStartTimeMs: 101, stopRequestedAtMs: undefined,
       stopRequestedReason: undefined });
     expect(await stamp?.()).toBe(false);
   });

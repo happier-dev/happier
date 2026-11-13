@@ -22,7 +22,7 @@ import {
 import type { TrackedSession } from '@/daemon/types';
 import { resolveTrackedSessionRunnerIdentity } from '@/daemon/sessions/sessionReportCorrelation';
 import {
-  readSessionMarkerForPid,
+  readSessionMarker,
   updateSessionMarkerRunnerAgentSourceCustody,
   updateSessionMarkerRunnerManagedDependencyRetention,
   updateSessionMarkerRunnerManagedProviderAuthority,
@@ -316,7 +316,7 @@ export async function refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority(
   const trackedManagedProviderCleanupAuthority =
     input.tracked.runnerManagedDependencyRetentionV1
       ?.adoptedManagedProviderAuthority;
-  const persistedMarker = await readSessionMarkerForPid(runner.pid);
+  const persistedMarker = await readSessionMarker(input.tracked.trackingKey);
   const persistedMarkerIsExact = Boolean(
     persistedMarker
     && persistedMarker.happySessionId === sessionId
@@ -488,6 +488,7 @@ export async function refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority(
             ?? updateSessionMarkerRunnerAgentSourceCustody
           )({
             pid: runner.pid,
+            trackingKey: input.tracked.trackingKey,
             sessionId,
             processCommandHash: runner.processCommandHash,
             processStartTimeMs: runner.processStartTimeMs,
@@ -504,6 +505,7 @@ export async function refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority(
             ?? updateSessionMarkerRunnerManagedDependencyRetention
           )({
             pid: runner.pid,
+            trackingKey: input.tracked.trackingKey,
             sessionId,
             processCommandHash: runner.processCommandHash,
             processStartTimeMs: runner.processStartTimeMs,
@@ -587,6 +589,7 @@ export async function refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority(
     if (adoptedManagedProviderAuthority && !retainedProviderCurrent) {
       await updateSessionMarkerRunnerManagedProviderAuthority({
         pid: runner.pid,
+        trackingKey: input.tracked.trackingKey,
         sessionId,
         processCommandHash: runner.processCommandHash,
         processStartTimeMs: runner.processStartTimeMs,

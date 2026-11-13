@@ -7,6 +7,7 @@ import {
 import { resolveConnectedServiceRuntimeAuthRecoverySelection } from './resolveConnectedServiceRuntimeAuthRecoverySelection';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from './sanitizeConnectedServiceRuntimeFailureClassification';
 import type { ConnectedServiceRuntimeFailureClassification } from './types';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 /**
  * Runtime-auth failure contract for a NOVEL EXTERNAL plugin service identified
@@ -116,7 +117,7 @@ describe('qualified external connected-service runtime-auth failure contract', (
     it('authorizes the exact external failure source from the live runtime registry binding', async () => {
         const result = await authorizeConnectedServiceRuntimeAuthFailureSource({
             getChildren: () => [{
-                startedBy: 'daemon' as const,
+                trackingKey: legacyPidSessionTrackingKey(4242), startedBy: 'daemon' as const,
                 pid: 4242,
                 happySessionId: 'sess_external_qualified',
                 spawnOptions: { directory: '/tmp/project', environmentVariables: {} },
@@ -158,7 +159,7 @@ describe('qualified external connected-service runtime-auth failure contract', (
     ] as const)('retains the exact qualified service continuation and usable reset identity (%s, %s, %s, %s, %s)', async (resetStatus, activeProfileId, resetKey, remainingPercent, capturedAtMs, shouldContinue) => {
         const generation = activeProfileId === 'gateway-backup' ? 4 : 3;
         const tracked = {
-            startedBy: 'daemon' as const,
+            trackingKey: legacyPidSessionTrackingKey(4242), startedBy: 'daemon' as const,
             pid: 4242,
             happySessionId: 'sess_external_switch',
             spawnOptions: {

@@ -36,6 +36,11 @@ export type ConnectedServiceRuntimeTargetInput = Readonly<{
   pid: number;
   agentId?: CatalogAgentId | string | null;
   sessionId?: string | null;
+  /**
+   * The daemon's SessionTrackingKey of the spawn that registered this target before its runner
+   * reported a Session id; several fresh Sessions of one session host stay apart by it.
+   */
+  spawnTrackingKey?: string;
   connectedServicesBindingsRaw?: unknown;
   connectedServiceSelectionsEnv?: Pick<NodeJS.ProcessEnv, string> | null;
   connectedServiceSelectionsEnvRaw?: string | null;
@@ -57,6 +62,7 @@ export type ConnectedServiceRuntimeTarget = Readonly<{
   pid: number;
   agentId: string | null;
   sessionId: string | null;
+  spawnTrackingKey?: string;
   connectedServicesBindingsRaw: ConnectedServicesRuntimeBindingsV1Like;
   connectedServiceSelectionsEnv: Readonly<Record<string, string>>;
   connectedServiceSelections: ReadonlyArray<ConnectedServiceChildSelection>;

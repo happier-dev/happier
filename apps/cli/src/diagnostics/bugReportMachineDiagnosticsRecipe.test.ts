@@ -6,6 +6,7 @@ import { configuration } from '@/configuration';
 import { writeDaemonState } from '@/persistence';
 import { collectBugReportMachineDiagnosticsSnapshotForBugReport } from './bugReportMachineDiagnosticsRecipe';
 import { collectBugReportMachineDiagnosticsSnapshot } from './bugReportMachineDiagnostics';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('selected bug report machine diagnostics', () => {
   it('uses the artifact owner budget beyond the former selected-log cap', async () => {
@@ -57,7 +58,7 @@ describe('selected bug report machine diagnostics', () => {
       await writeFile(daemonLogPath, 'SELECTED_DAEMON_BODY');
       await writeFile(join(configuration.logsDir, 'newest.log'), 'UNRELATED_RUNNER_BODY');
       writeDaemonState({ pid: process.pid, httpPort: 1, startedAt: 1, startedWithCliVersion: 'fixture', daemonLogPath });
-      await writeSessionMarker({ pid: 12345, happySessionId: 'selected-session', metadata: { sessionLogPath: selected, summary: { text: 'PRIVATE_METADATA_SUMMARY' } } });
+      await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(12345), pid: 12345, happySessionId: 'selected-session', metadata: { sessionLogPath: selected, summary: { text: 'PRIVATE_METADATA_SUMMARY' } } });
       const selectedResult = await collectBugReportMachineDiagnosticsSnapshotForBugReport({ sessionId: 'selected-session' });
       expect(selectedResult.sessionDiagnostics?.logs.find(entry => entry.kind === 'session')?.artifact?.content).toBe('SELECTED_SESSION_BODY');
       expect(selectedResult.sessionDiagnostics?.logs.find(entry => entry.kind === 'daemon')?.artifact?.content).toBe('SELECTED_DAEMON_BODY');
@@ -68,7 +69,7 @@ describe('selected bug report machine diagnostics', () => {
       const link = join(configuration.logsDir, 'escape.log');
       await writeFile(outside, 'PRIVATE_OUTSIDE_BODY');
       await symlink(outside, link);
-      await writeSessionMarker({ pid: 12345, happySessionId: 'selected-session', metadata: { sessionLogPath: link } });
+      await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(12345), pid: 12345, happySessionId: 'selected-session', metadata: { sessionLogPath: link } });
       const refused = await collectBugReportMachineDiagnosticsSnapshotForBugReport({ sessionId: 'selected-session' });
       expect(refused.sessionDiagnostics?.logs.find(entry => entry.kind === 'session')?.status).toBe('unavailable');
       expect(JSON.stringify(refused)).not.toContain('PRIVATE_OUTSIDE_BODY');

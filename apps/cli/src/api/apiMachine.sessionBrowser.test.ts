@@ -22,6 +22,7 @@ import { createProviderAccountUsageStore } from '@/daemon/connectedServices/acco
 import { admitRequesterSessionBootstrap, createRequesterSessionRuntimeContextResolver, releaseUnretainedRequesterSessionRuntimeContext } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { createRequesterSessionRuntimeContext } from '@/daemon/sessionEncryption/createRequesterSessionRuntimeContext';
 import type { TrackedSession } from '@/daemon/types';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const boundary = vi.hoisted(() => ({ credentials: null as StoredCredentials | null,
     identity: null as import('@happier-dev/protocol').MachineInstallationIdentityV1 | null }));
@@ -73,7 +74,7 @@ it.each(['plain', 'e2ee'] as const)('uses retained guest custody for shared Brow
         capabilities: { serverIdentity: { serverIdentityId: 'srv_browser_home' } } }), { status: 200 })));
     const directory = await mkdtemp(join(tmpdir(), 'requester-browser-'));
     const serverId = configuration.activeServerId, serverHttpBaseUrl = resolveServerHttpBaseUrl();
-    const trackedSessions = new Map<number, TrackedSession>(), registry = new ConnectedServiceRuntimeRegistry();
+    const trackedSessions = new Map<SessionTrackingKey, TrackedSession>(), registry = new ConnectedServiceRuntimeRegistry();
     let runtime: Awaited<ReturnType<typeof createRequesterSessionRuntimeContext>> = null;
     const host = await createRequesterSessionControlRuntimeFixture({ happyHomeDir: directory, activeServerDir: directory,
         serverId, serverHttpBaseUrl, machineId, custodianAccountId: 'custodian', credentials: boundary.credentials,
@@ -89,10 +90,10 @@ it.each(['plain', 'e2ee'] as const)('uses retained guest custody for shared Brow
         activeServerDir: directory, connectedServicesMaterializationBaseDir: join(directory, 'materialized'), resolveQualifiedConnectedAccountV4Support: () => 'indeterminate',
         coordinatorInput: { machineId, machineIdProvider: () => machineId, runtimeId: 'browser-runtime', happyHomeDir: directory,
             logger: { debug() {}, info() {}, warn() {} }, processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '0', HAPPIER_CONNECTED_SERVICES_QUOTAS_ENABLED: '0' },
-            pidToTrackedSession: trackedSessions, connectedServiceRuntimeRegistry: registry,
+            trackedSessionsByKey: trackedSessions, connectedServiceRuntimeRegistry: registry,
             connectedServiceAuthGroupPreTurnSwitchCoordinator: host.runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator } });
     if (!runtime) throw new Error('Requester runtime was not retained');
-    trackedSessions.set(process.pid, { pid: process.pid, happySessionId: sessionId, startedBy: 'daemon',
+    trackedSessions.set(legacyPidSessionTrackingKey(process.pid), { trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, happySessionId: sessionId, startedBy: 'daemon',
         requesterWorkAttributionV1: runtime.bootstrap.attribution, requesterSessionRuntimeContext: runtime });
     const resolve = createRequesterSessionRuntimeContextResolver({ trackedSessions, getCreateRuntime: () => null, recoverBootstrap: async () => null });
     let releases = 0;

@@ -16,6 +16,7 @@ import {
   type SpawnSessionOptions,
 } from '@/session/shared/spawnSessionContract';
 import type { TrackedSession } from '@/daemon/types';
+import type { SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 import { DAEMON_PLUGIN_TOOL_CATALOG_UNAVAILABLE_CODE } from '@/mcp/pluginToolCatalogError';
 
 import {
@@ -219,11 +220,13 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
   onRespawnSuccess?: (input: Readonly<{
     sessionId: string;
     previousPid: number;
+    previousTrackingKey: SessionTrackingKey;
     result: unknown;
   }>) => void;
   onRespawnTerminal?: (input: Readonly<{
     sessionId: string;
     previousPid: number;
+    previousTrackingKey: SessionTrackingKey;
     reason: SessionRunnerRespawnTerminalReason;
     detail?: string;
   }>) => void | Promise<void>;
@@ -410,7 +413,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
         params.logWarn(`[DAEMON RUN] Session ${sessionId} crashed; respawn suppressed (${decision.reason})`);
       }
       endRespawnCycle(sessionId);
-      beginTerminalSettlement({ sessionId, previousPid, reason: 'no_restart', detail: decision.reason });
+      beginTerminalSettlement({ sessionId, previousPid, previousTrackingKey: trackedSession.trackingKey, reason: 'no_restart', detail: decision.reason });
       return;
     }
 
@@ -445,7 +448,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
     const reportStopRetirement = () => {
       if (stopRetirementReported) return;
       stopRetirementReported = true;
-      beginTerminalSettlement({ sessionId, previousPid, reason: 'stop_requested' });
+      beginTerminalSettlement({ sessionId, previousPid, previousTrackingKey: trackedSession.trackingKey, reason: 'stop_requested' });
     };
     existing.retire = reportStopRetirement;
     const timer = setTimeout(() => {
@@ -464,7 +467,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
         if (finishIfCycleRetired()) return;
         if (alreadyRunning) {
           endRespawnCycle(sessionId);
-          beginTerminalSettlement({ sessionId, previousPid, reason: 'already_running' });
+          beginTerminalSettlement({ sessionId, previousPid, previousTrackingKey: trackedSession.trackingKey, reason: 'already_running' });
           return;
         }
         const issue = await params.readStartupFailure?.({ sessionId, trackedSession });
@@ -475,7 +478,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
         if (isCurrentDefiniteSessionStartupFailure(issue, processStartTimeMs)) {
           endRespawnCycle(sessionId);
           params.logWarn(`[DAEMON RUN] Respawn suppressed for session ${sessionId} (startup dependency: ${issue.code})`);
-          beginTerminalSettlement({ sessionId, previousPid, reason: 'startup_dependency_failure', detail: issue.code });
+          beginTerminalSettlement({ sessionId, previousPid, previousTrackingKey: trackedSession.trackingKey, reason: 'startup_dependency_failure', detail: issue.code });
           return;
         }
 
@@ -499,6 +502,13 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
         void params
           .spawnSession({
             ...respawnOptions,
+            // The crashed runner's spared Agent: the new runner adopts it instead of starting one.
+            ...(trackedSession.sparedHeldAgentV1 ? { adoptSessionHolder: {
+              socketPath: trackedSession.sparedHeldAgentV1.socketPath,
+              holderPid: trackedSession.sparedHeldAgentV1.holderPid,
+              agentPid: trackedSession.sparedHeldAgentV1.agentPid,
+              ...(trackedSession.sparedHeldAgentV1.turnId ? { turnId: trackedSession.sparedHeldAgentV1.turnId } : {}),
+            } } : {}),
             beforeSessionRunnerLaunch: async () => {
               // Launch preparation can outlive Stop. Keep the existing cycle's
               // custody through the physical launch, including an awaited caller hook.
@@ -513,7 +523,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
           .then((result) => {
             if (finishIfCycleRetired()) return;
             if (result && typeof result === 'object' && (result as any).type === 'success') {
-              params.onRespawnSuccess?.({ sessionId, previousPid, result });
+              params.onRespawnSuccess?.({ sessionId, previousPid, previousTrackingKey: trackedSession.trackingKey, result });
               observeRespawnSuccess(sessionId);
               return;
             }
@@ -521,7 +531,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
             if (result && typeof result === 'object' && (result as any).type === 'requestToApproveDirectoryCreation') {
               params.logWarn(`[DAEMON RUN] Respawn suppressed for session ${sessionId} (directory approval required)`);
               endRespawnCycle(sessionId);
-              beginTerminalSettlement({ sessionId, previousPid, reason: 'directory_approval_required' });
+              beginTerminalSettlement({ sessionId, previousPid, previousTrackingKey: trackedSession.trackingKey, reason: 'directory_approval_required' });
               return;
             }
 
@@ -529,7 +539,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
             if (refusal) {
               params.logWarn(`[DAEMON RUN] Respawn suppressed for session ${sessionId} (spawn:${refusal.code})`);
               endRespawnCycle(sessionId);
-              beginTerminalSettlement({ sessionId, previousPid, reason: refusal.reason, detail: refusal.code });
+              beginTerminalSettlement({ sessionId, previousPid, previousTrackingKey: trackedSession.trackingKey, reason: refusal.reason, detail: refusal.code });
               return;
             }
 
@@ -656,7 +666,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
         endRespawnCycle(sessionId);
         // Keep requester custody until the existing exact-activation failure
         // owner has read Home. This terminal exit bypasses the retry preflight.
-        beginTerminalSettlement({ sessionId, previousPid: trackedSession.pid, reason: 'continuation_unreachable' }, async () => {
+        beginTerminalSettlement({ sessionId, previousPid: trackedSession.pid, previousTrackingKey: trackedSession.trackingKey, reason: 'continuation_unreachable' }, async () => {
           try {
             await params.readStartupFailure?.({ sessionId, trackedSession, runnerExitCode: exit.code });
           } catch (error) {
@@ -677,7 +687,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
         params.logWarn(`[DAEMON RUN] Respawn suppressed for session ${sessionId} (terminal follow admission failed)`);
         beginTerminalSettlement({
           sessionId,
-          previousPid: trackedSession.pid,
+          previousPid: trackedSession.pid, previousTrackingKey: trackedSession.trackingKey,
           reason: 'terminal_follow_admission_failed',
         });
         return 'terminal';
@@ -689,7 +699,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
       if (trackedSession.projectSetupOperation) {
         endRespawnCycle(sessionId);
         params.logWarn(`[DAEMON RUN] Respawn suppressed for session ${sessionId} (original startup exited before native open)`);
-        beginTerminalSettlement({ sessionId, previousPid: trackedSession.pid, reason: 'startup_operation_failed' });
+        beginTerminalSettlement({ sessionId, previousPid: trackedSession.pid, previousTrackingKey: trackedSession.trackingKey, reason: 'startup_operation_failed' });
         return 'terminal';
       }
 
@@ -705,7 +715,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
       ) {
         beginTerminalSettlement({
           sessionId,
-          previousPid: trackedSession.pid,
+          previousPid: trackedSession.pid, previousTrackingKey: trackedSession.trackingKey,
           reason: 'missing_spawn_options',
         });
         return 'terminal';
@@ -727,7 +737,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
         );
         beginTerminalSettlement({
           sessionId,
-          previousPid: trackedSession.pid,
+          previousPid: trackedSession.pid, previousTrackingKey: trackedSession.trackingKey,
           reason: 'startup_instructions_cold_resume_unproven',
         });
         return 'terminal';
@@ -754,7 +764,7 @@ export function createSessionRunnerRespawnManager(params: Readonly<{
         endRespawnCycle(sessionId);
         beginTerminalSettlement({
           sessionId,
-          previousPid: trackedSession.pid,
+          previousPid: trackedSession.pid, previousTrackingKey: trackedSession.trackingKey,
           reason: 'no_restart',
           detail: decision.reason,
         });

@@ -123,6 +123,7 @@ import {
     writePublicHandoffAgentPluginFixture as writeExternalPublicHandoffAgentPluginFixture,
     writePublicHandoffProviderPluginFixture as writeExternalPublicHandoffProviderPluginFixture,
 } from './runnerManagedProviderPublicHandoff.fixture';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const FIXTURE_AGENT_PLUGIN_ID = 'acme.public-handoff-agent';
 const FIXTURE_PROVIDER_PLUGIN_ID = 'acme.public-provider-handoff';
@@ -927,7 +928,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
             processCommandHash: hashProcessCommand(runnerProcessCommand),
         });
         const tracked: TrackedSession = {
-            pid: process.pid,
+            trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid,
             sessionRunnerPid: process.pid,
             startedBy: 'daemon',
             happySessionId: sessionId,
@@ -957,13 +958,13 @@ describe('representative public Provider-to-SVC09 handoff', () => {
             },
         };
         await writeSessionMarker({
-            pid: runner.pid,
+            trackingKey: legacyPidSessionTrackingKey(runner.pid), pid: runner.pid,
             happySessionId: sessionId,
             startedBy: 'daemon',
             processStartTimeMs: runner.processStartTimeMs,
             processCommandHash: runner.processCommandHash,
         });
-        const pidToTrackedSession = new Map([[tracked.pid, tracked]]);
+        const trackedSessionsByKey = new Map([[tracked.trackingKey, tracked]]);
         const daemonRuntimes: Array<
             Awaited<ReturnType<typeof startDaemonSessionControlRuntime>>
         > = [];
@@ -993,14 +994,14 @@ describe('representative public Provider-to-SVC09 handoff', () => {
                 ),
                 getConnectedServiceRefreshCoordinator: () => null,
                 getConnectedServiceQuotasCoordinator: () => null,
-                pidToTrackedSession,
-                pidToAwaiter: new Map(),
-                pidToSpawnResultResolver: new Map(),
-                pidToSpawnWebhookTimeout: new Map(),
+                trackedSessionsByKey,
+                spawnAwaiterByKey: new Map(),
+                spawnResultResolverByKey: new Map(),
+                spawnWebhookTimeoutByKey: new Map(),
                 getApiMachineForSessions: () => null,
-                spawnResourceCleanupByPid: new Map(),
-                sessionAttachCleanupByPid: new Map(),
-                connectedServicesRestartRequestedPids: new Set(),
+                spawnResourceCleanupByKey: new Map(),
+                sessionAttachCleanupByKey: new Map(),
+                connectedServicesRestartRequestedSessions: new Set(),
                 beforeShutdown: vi.fn(),
                 onHappySessionWebhook: vi.fn(),
                 requestShutdown: vi.fn(),
@@ -1042,7 +1043,7 @@ describe('representative public Provider-to-SVC09 handoff', () => {
             authorityFilePath;
         await expect(
             updateSessionMarkerAgentRuntimeDaemonServiceAuthorityPath({
-                pid: runner.pid,
+                trackingKey: legacyPidSessionTrackingKey(runner.pid), pid: runner.pid,
                 sessionId,
                 processCommandHash: runner.processCommandHash,
                 processStartTimeMs: runner.processStartTimeMs,

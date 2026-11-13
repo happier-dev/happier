@@ -19,13 +19,14 @@ import type { RuntimeAuthFailureReportIntake } from './controlServer';
 import { createRuntimeAuthRecoverySchedulerForDaemon } from './connectedServices/runtimeAuth/createRuntimeAuthRecoverySchedulerForDaemon';
 import { createConnectedServiceContinuationMessageDispatcher } from './connectedServices/continuation/createConnectedServiceContinuationMessageDispatcher';
 import { resolveConnectedServiceContinuationOriginId } from './connectedServices/continuation/switchRecovery';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('registered runtime-auth failure recovery', () => {
   it.each(['plan', 'usage_limit', 'rate_limit'] as const)('does not admit model-scoped %s to account recovery', async kind => {
     const recover = (input: Readonly<{ sessionId: string; classification: ConnectedServiceRuntimeFailureClassification }>) =>
       handleConnectedServiceRuntimeAuthFailure({ ...input, switchesThisTurn: 0, switchCoordinator: null,
         selection: { kind: 'profile', serviceId: input.classification.serviceId, profileId: 'primary' } });
-    const scheduler = new RuntimeAuthRecoveryScheduler({ recover });
+    const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: () => Date.now(), recover });
     const app = createDaemonControlApp({ getChildren: () => [], machineId: 'machine', controlToken: 'token',
       stopSession: async () => ({ status: 'not_found' }),
       spawnSession: async () => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage: 'unused' }),
@@ -48,7 +49,7 @@ describe('registered runtime-auth failure recovery', () => {
   ), { commitRevision: null, observation: 'unproven_then_registered' as const }])('settles verified recipient activity despite $observation observation (commit=$commitRevision)', async ({ commitRevision, observation }) => {
     const serviceId = 'happier.agent.codex/openai-codex';
     const actualRevision = 'csr_bbbbbbbbbbbbbbbbbbbbbb';
-    const tracked = { startedBy: 'daemon' as const, happySessionId: 'actual-revision', pid: 123 };
+    const tracked = { trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon' as const, happySessionId: 'actual-revision', pid: 123 };
     let current: ConnectedServiceAuthGroupSwitchState = { serviceId, groupId: 'pool', activeProfileId: 'A', generation: 1,
       credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
       policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, autoSwitch: true, strategy: 'priority' },
@@ -136,7 +137,7 @@ describe('registered runtime-auth failure recovery', () => {
     const recoveries: unknown[] = [];
     let resets = 0;
     let applications = 0;
-    const tracked = { startedBy: 'daemon' as const, happySessionId: 'stopped', pid: 123 };
+    const tracked = { trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon' as const, happySessionId: 'stopped', pid: 123 };
     let current: ConnectedServiceAuthGroupSwitchState = { serviceId, groupId: 'pool', activeProfileId: 'A', generation: 1,
       credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
       policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2, autoSwitch: true, strategy: 'priority',
@@ -262,7 +263,7 @@ describe('registered runtime-auth failure recovery', () => {
   });
   it.each([1, undefined])('defers adopted late reports to scheduler custody (generation=%s)', async groupGeneration => {
     const serviceId = 'happier.agent.codex/openai-codex';
-    const tracked = { startedBy: 'daemon' as const, happySessionId: 'late-report', pid: 124 };
+    const tracked = { trackingKey: legacyPidSessionTrackingKey(124), startedBy: 'daemon' as const, happySessionId: 'late-report', pid: 124 };
     const current: ConnectedServiceAuthGroupSwitchState = { serviceId, groupId: 'pool', activeProfileId: 'B', generation: 2,
       credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb', policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
       members: [{ profileId: 'B', priority: 0, enabled: true, createdAtMs: 1 }],
@@ -340,7 +341,7 @@ describe('registered runtime-auth failure recovery', () => {
     } finally { await app.close(); await removeTempDir(outboxDir); }
   });
   it('retires a native-login report before arming any daemon recovery attempt', async () => {
-    const tracked = { startedBy: 'daemon' as const, pid: 224, happySessionId: 'native-login', spawnOptions: { directory: '/project' } };
+    const tracked = { trackingKey: legacyPidSessionTrackingKey(224), startedBy: 'daemon' as const, pid: 224, happySessionId: 'native-login', spawnOptions: { directory: '/project' } };
     const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: Date.now,
       recover: async () => { throw new Error('Native login has no daemon Account attempt'); } });
     const app = createDaemonControlApp({ getChildren: () => [tracked], machineId: 'machine', controlToken: 'token',
@@ -363,7 +364,7 @@ describe('registered runtime-auth failure recovery', () => {
   });
   it('recovers an unattributed provider-started pool turn without assigning its failure to a member', async () => {
     const serviceId = 'happier.agent.codex/openai-codex';
-    const tracked = { startedBy: 'daemon' as const, pid: 223, happySessionId: 'provider-started-pool', spawnOptions: { directory: '/project' } };
+    const tracked = { trackingKey: legacyPidSessionTrackingKey(223), startedBy: 'daemon' as const, pid: 223, happySessionId: 'provider-started-pool', spawnOptions: { directory: '/project' } };
     const sourceBinding = { serviceId, groupId: 'pool', profileId: 'primary', generation: 1,
       credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa' };
     let state: ConnectedServiceAuthGroupSwitchState = { serviceId, groupId: 'pool', activeProfileId: 'primary',
@@ -415,7 +416,7 @@ describe('registered runtime-auth failure recovery', () => {
   });
   it('resolves group continuation policy after evidence-only Session failure receives its current binding', async () => {
     const serviceId = 'happier.agent.claude/claude-subscription';
-    const tracked = { startedBy: 'daemon' as const, pid: 222, happySessionId: 'evidence-session', spawnOptions: { directory: '/project' } };
+    const tracked = { trackingKey: legacyPidSessionTrackingKey(222), startedBy: 'daemon' as const, pid: 222, happySessionId: 'evidence-session', spawnOptions: { directory: '/project' } };
     const registry = new ConnectedServiceRuntimeRegistry();
     registry.registerTarget({ pid: tracked.pid, sessionId: tracked.happySessionId, agentId: 'claude',
       connectedServicesBindingsRaw: { v: 2, bindingsByServiceId: { [serviceId]: { source: 'connected', selection: 'group', groupId: 'current-pool' } } },

@@ -1121,9 +1121,9 @@ export async function createHarness(actionId: ActionId, approval: 'ask' | 'allow
     daemonSessionMutationCustody: { stageTranscriptEvent: async () => { throw new Error('Unexpected Session event'); },
       stageTranscriptMessage: async () => { throw new Error('Unexpected Session message'); } },
     getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-    pidToTrackedSession: new Map(), pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
-    getApiMachineForSessions: () => machineClient, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
-    connectedServicesRestartRequestedPids: new Set(), resolveCurrentMachineExecutionOriginContext: origin,
+    trackedSessionsByKey: new Map(), spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
+    getApiMachineForSessions: () => machineClient, spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
+    connectedServicesRestartRequestedSessions: new Set(), resolveCurrentMachineExecutionOriginContext: origin,
     beforeShutdown: async () => {}, onHappySessionWebhook: async () => { throw new Error('Open must never start an Agent'); },
     requestShutdown() {}, processEnv: {} });
   const runtime = await startRuntime(client, target.machineId, resolveOrigin);

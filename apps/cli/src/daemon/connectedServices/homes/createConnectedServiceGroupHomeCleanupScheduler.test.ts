@@ -10,6 +10,7 @@ import { resolveRequesterSessionRuntimeDirectories } from '../../sessionEncrypti
 import type { TrackedSession } from '../../types';
 import { createConnectedServiceGroupHomeCleanupScheduler } from './createConnectedServiceGroupHomeCleanupScheduler';
 import { resolveConnectedServiceGroupHomeDir, resolveConnectedServiceHomeDir } from './resolveConnectedServiceHomeDir';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 // Only filesystem rename is faulted; tracked binding parsing, factory wiring,
 // group-home selection and eventual quarantine use their real owners.
@@ -46,19 +47,19 @@ describe('createConnectedServiceGroupHomeCleanupScheduler', () => {
       const ownHomes = ownRoots.map(homeAt);
       const foreignHome = homeAt(requesterRoot('other-account'));
       await Promise.all([...ownHomes, foreignHome].map(writeRetainedAccountHome));
-      const pidToTrackedSession = new Map<number, TrackedSession>([[123, {
-        startedBy: 'daemon', happySessionId: 'session-1', pid: 123,
+      const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[legacyPidSessionTrackingKey(123), {
+        trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon', happySessionId: 'session-1', pid: 123,
         spawnOptions: { directory: '/tmp/project', connectedServices: { v: 2, bindingsByServiceId: {
           'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
         } } },
       }]]);
       const scheduler = createConnectedServiceGroupHomeCleanupScheduler({
-        activeServerDir: root, additionalAccountHomeRoots: [ownRoots[1]!], pidToTrackedSession,
+        activeServerDir: root, additionalAccountHomeRoots: [ownRoots[1]!], trackedSessionsByKey,
       });
       await expect(scheduler.scheduleDeletedAccountCleanup({ account })).resolves.toMatchObject({ cleaned: false, pending: true });
       await expect(scheduler.cleanupPendingDeletedGroupHomes()).resolves.toEqual([]);
       for (const home of ownHomes) await expect(stat(home)).resolves.toBeTruthy();
-      pidToTrackedSession.clear();
+      trackedSessionsByKey.clear();
       await scheduler.cleanupPendingDeletedGroupHomes();
       for (const home of ownHomes) {
         await expect(stat(join(home, 'codex-home', 'auth.json'))).rejects.toMatchObject({ code: 'ENOENT' });
@@ -72,8 +73,8 @@ describe('createConnectedServiceGroupHomeCleanupScheduler', () => {
     const root = await createTempDir('happier-connected-service-account-home-live-target-');
     try {
       const account = { service: { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'work' };
-      const pidToTrackedSession = new Map<number, TrackedSession>([[123, {
-        startedBy: 'daemon', happySessionId: 'session-1', pid: 123,
+      const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[legacyPidSessionTrackingKey(123), {
+        trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon', happySessionId: 'session-1', pid: 123,
         spawnOptions: { directory: '/tmp/project', backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
           connectedServices: { v: 2, bindingsByServiceId: {
             'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'work' },
@@ -81,11 +82,11 @@ describe('createConnectedServiceGroupHomeCleanupScheduler', () => {
       }]]);
       const home = resolveConnectedServiceHomeDir({ activeServerDir: root, serviceId: 'happier.agent.codex/openai-codex', profileId: 'work', agentId: 'codex' });
       await writeRetainedAccountHome(home);
-      const scheduler = createConnectedServiceGroupHomeCleanupScheduler({ activeServerDir: root, pidToTrackedSession });
+      const scheduler = createConnectedServiceGroupHomeCleanupScheduler({ activeServerDir: root, trackedSessionsByKey });
       await expect(scheduler.scheduleDeletedAccountCleanup({ account })).resolves.toMatchObject({ cleaned: false, pending: true });
       await expect(scheduler.cleanupPendingDeletedGroupHomes()).resolves.toEqual([]);
       await expect(stat(home)).resolves.toBeTruthy();
-      pidToTrackedSession.clear();
+      trackedSessionsByKey.clear();
       await expect(scheduler.cleanupPendingDeletedGroupHomes()).resolves.toEqual([expect.objectContaining({ cleaned: true })]);
       await expect(stat(join(home, 'codex-home', 'auth.json'))).rejects.toMatchObject({ code: 'ENOENT' });
       expect(await readFile(join(home, 'codex-home', 'retained-history'), 'utf8')).toBe('isolated-session-history');
@@ -95,10 +96,11 @@ describe('createConnectedServiceGroupHomeCleanupScheduler', () => {
   it('retains a live bound group home and recovers quarantine after four busy exit cleanups', async () => {
     const root = await createTempDir('happier-connected-service-group-home-live-target-');
     try {
-      const pidToTrackedSession = new Map<number, TrackedSession>([
+      const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([
         [
-          123,
+          legacyPidSessionTrackingKey(123),
           {
+            trackingKey: legacyPidSessionTrackingKey(123),
             startedBy: 'daemon',
             happySessionId: 'session-1',
             pid: 123,
@@ -130,7 +132,7 @@ describe('createConnectedServiceGroupHomeCleanupScheduler', () => {
 
       const scheduler = createConnectedServiceGroupHomeCleanupScheduler({
         activeServerDir: root,
-        pidToTrackedSession,
+        trackedSessionsByKey,
       });
 
       await expect(scheduler.scheduleDeletedGroupCleanup({
@@ -140,7 +142,7 @@ describe('createConnectedServiceGroupHomeCleanupScheduler', () => {
       })).resolves.toMatchObject({ cleaned: false, pending: true, path: home });
       await expect(stat(home)).resolves.toBeTruthy();
 
-      pidToTrackedSession.clear();
+      trackedSessionsByKey.clear();
       for (let pass = 0; pass < 4; pass += 1) {
         vi.mocked(rename).mockRejectedValueOnce(Object.assign(new Error('busy'), { code: 'EBUSY' }));
         await expect(scheduler.cleanupPendingDeletedGroupHomes()).rejects.toMatchObject({ code: 'EBUSY' });
@@ -158,10 +160,11 @@ describe('createConnectedServiceGroupHomeCleanupScheduler', () => {
   it('keeps deleted group homes pending from webhook metadata when spawn options no longer carry bindings', async () => {
     const root = await createTempDir('happier-connected-service-group-home-metadata-target-');
     try {
-      const pidToTrackedSession = new Map<number, TrackedSession>([
+      const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([
         [
-          123,
+          legacyPidSessionTrackingKey(123),
           {
+            trackingKey: legacyPidSessionTrackingKey(123),
             startedBy: 'daemon',
             happySessionId: 'session-1',
             pid: 123,
@@ -201,7 +204,7 @@ describe('createConnectedServiceGroupHomeCleanupScheduler', () => {
 
       const scheduler = createConnectedServiceGroupHomeCleanupScheduler({
         activeServerDir: root,
-        pidToTrackedSession,
+        trackedSessionsByKey,
       });
 
       await expect(scheduler.scheduleDeletedGroupCleanup({

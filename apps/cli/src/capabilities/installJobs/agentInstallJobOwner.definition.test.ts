@@ -14,6 +14,7 @@ import type { DaemonState } from '@/api/types';
 import { resolveAcpLaunch } from '@/agent/acp/catalog/configured/resolveAcpLaunch';
 import { createAgentInstallJobOwner, type AgentInstallJobOwner } from './agentInstallJobOwner';
 import cliTestConfig from '../../../vitest.config';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const fixtureTimeout = cliTestConfig.test?.testTimeout;
 if (typeof fixtureTimeout !== 'number') throw new Error('Missing CLI fixture timeout');
@@ -72,7 +73,7 @@ describe('definition-qualified managed Agent jobs', () => {
   });
   it('installs pinned npm definitions and records removable identity in the host workspace manifest', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-definition-npm-job-'));
-    const sessions: TrackedSession[] = [{ pid: process.pid, startedBy: 'daemon', spawnOptions: { directory: root,
+    const sessions: TrackedSession[] = [{ trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, startedBy: 'daemon', spawnOptions: { directory: root,
       agentTarget: { kind: 'agent', identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId: 'npm-agent' } } }];
     let owner: AgentInstallJobOwner | undefined;
     const publications: DaemonState[] = [];
@@ -179,7 +180,7 @@ describe('definition-qualified managed Agent jobs', () => {
       expect(listed.jobs.some(job => job.jobId === foreign.jobId)).toBe(false);
       expect(owner.read({ jobId: foreign.jobId, cursor: 0 }, 'alice')).toMatchObject({ ok: false, errorCode: 'job_not_found' });
       expect(await owner.cancel({ jobId: foreign.jobId }, 'alice')).toMatchObject({ ok: false, errorCode: 'job_not_found' });
-      sessions.push({ pid: process.pid, startedBy: 'daemon', spawnOptions: { directory: root,
+      sessions.push({ trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, startedBy: 'daemon', spawnOptions: { directory: root,
         agentTarget: { kind: 'agent', identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId: 'beta' } } });
       if (definitions[1]!.launch.kind !== 'archive') throw new Error('Expected archive fixture');
       definitions[1]!.launch.version = '2.0.0';
@@ -208,7 +209,7 @@ describe('definition-qualified managed Agent jobs', () => {
 
   it.each(['linux', 'darwin', 'win32'] as const)('refuses live definition uninstall and forced reinstall on %s', async platform => {
     const definitions = [definition('busy', 'https://definition-job-fixture.invalid/unused')];
-    const sessions: TrackedSession[] = [{ pid: process.pid, startedBy: 'daemon', spawnOptions: {
+    const sessions: TrackedSession[] = [{ trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, startedBy: 'daemon', spawnOptions: {
       directory: tmpdir(), agentTarget: { kind: 'agent', identity: CUSTOM_ACP_AGENT_CONTRIBUTION_IDENTITY_V1, definitionId: 'busy' },
     } }];
     const owner = createAgentInstallJobOwner({ accountId: 'alice', platform, readRegistry: () => ({ agents: [{ id: 'custom-acp',

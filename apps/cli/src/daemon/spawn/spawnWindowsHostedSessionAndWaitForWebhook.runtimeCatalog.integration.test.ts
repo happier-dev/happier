@@ -11,6 +11,23 @@ import { spawnWindowsHostedSessionAndWaitForWebhook } from './spawnWindowsHosted
 import { createOnHappySessionWebhook } from '../sessions/onHappySessionWebhook';
 import { configuration } from '@/configuration';
 import type { TrackedSession } from '../types';
+import {
+  trackedSessionForSingleSessionProcess,
+  trackedSessionsForProcess,
+  untrackSession,
+  type SessionTrackingKey,
+  type TrackedSessionMap,
+} from '@/daemon/sessions/sessionTrackingKey';
+
+// Production mints each spawned Session's key; the fixture launchers report
+// fixed host PIDs, so lookups go through the Session tracked on that process.
+function trackedFor(input: { trackedSessionsByKey: TrackedSessionMap }, pid: number): TrackedSession | undefined {
+  return trackedSessionForSingleSessionProcess(input.trackedSessionsByKey, pid);
+}
+
+function keyFor(input: { trackedSessionsByKey: TrackedSessionMap }, pid: number): SessionTrackingKey {
+  return trackedFor(input, pid)?.trackingKey ?? (`pid-untracked-${pid}` as SessionTrackingKey);
+}
 
 const mocks = vi.hoisted(() => {
   const visibleConsoleCancel = vi.fn(async () => ({
@@ -82,12 +99,14 @@ vi.mock('@/terminal/attachment/terminalAttachmentInfo', () => ({
 }));
 
 function createParams(overrides: Partial<Parameters<typeof import('./spawnWindowsHostedSessionAndWaitForWebhook').spawnWindowsHostedSessionAndWaitForWebhook>[0]> = {}) {
-  const pidToTrackedSession =
-    overrides.pidToTrackedSession ?? new Map();
+  const trackedSessionsByKey: TrackedSessionMap =
+    overrides.trackedSessionsByKey ?? new Map();
   const onChildExited =
     overrides.onChildExited
     ?? vi.fn(async (pid: number) => {
-      pidToTrackedSession.delete(pid);
+      for (const tracked of trackedSessionsForProcess(trackedSessionsByKey, pid)) {
+        untrackSession(trackedSessionsByKey, tracked);
+      }
     });
   const input = {
     windowsLaunchMode: 'console' as const,
@@ -108,17 +127,17 @@ function createParams(overrides: Partial<Parameters<typeof import('./spawnWindow
       HAPPIER_DAEMON_REPORT_SESSION_HTTP_TIMEOUT_MS: '100',
     },
     happyHomeDir: 'C:\\Users\\test\\.happier',
-    pidToTrackedSession,
-    pidToAwaiter: new Map(),
-    pidToSpawnResultResolver: new Map(),
-    pidToSpawnWebhookTimeout: new Map(),
+    trackedSessionsByKey,
+    spawnAwaiterByKey: new Map(),
+    spawnResultResolverByKey: new Map(),
+    spawnWebhookTimeoutByKey: new Map(),
     resolveCanonicalTrackedSessionId: vi.fn(() => 'session-1'),
     onChildExited,
     spawnLifecycleCallbacks: {
       registerConnectedServiceSpawnTarget: vi.fn(),
-      registerSpawnResourceCleanupForPid: vi.fn(),
-      cleanupSpawnResourcesForPid: vi.fn(async () => true),
-      consumeSessionAttachCleanupForPid: vi.fn(),
+      registerSpawnResourceCleanupForSession: vi.fn(),
+      cleanupSpawnResourcesForSession: vi.fn(async () => true),
+      consumeSessionAttachCleanupForSession: vi.fn(),
       cleanupPendingSessionAttach: vi.fn(async () => {}),
       persistAcceptedSpawnMarker: vi.fn(async () => {}),
       removeAcceptedSpawnMarkerIfOwned: vi.fn(async () => true),
@@ -136,7 +155,7 @@ function createParams(overrides: Partial<Parameters<typeof import('./spawnWindow
     },
     ...overrides,
   };
-  const report = createOnHappySessionWebhook({ pidToTrackedSession: input.pidToTrackedSession, pidToAwaiter: input.pidToAwaiter,
+  const report = createOnHappySessionWebhook({ trackedSessionsByKey: input.trackedSessionsByKey, spawnAwaiterByKey: input.spawnAwaiterByKey,
     readProcessIdentityByPidFn: async () => null, findHappyProcessByPidFn: async () => null,
     readCredentialsFn: async () => null, writeSessionMarkerFn: async () => {} });
   // Simulate only the child's network report after the external launcher returns;
@@ -153,18 +172,18 @@ async function resolveWindowsTerminalWebhook(
   input: ReturnType<typeof createParams>,
   updateTrackedSession: (
     trackedSession: NonNullable<
-      ReturnType<typeof input.pidToTrackedSession.get>
+      ReturnType<typeof input.trackedSessionsByKey.get>
     >,
   ) => void,
 ): Promise<SpawnSessionResult> {
   const pending =
     spawnWindowsHostedSessionAndWaitForWebhook(input);
   await vi.waitFor(() => {
-    expect(input.pidToAwaiter.get(8888)).toEqual(
+    expect(input.spawnAwaiterByKey.get(keyFor(input, 8888))).toEqual(
       expect.any(Function),
     );
   });
-  const trackedSession = input.pidToTrackedSession.get(8888);
+  const trackedSession = trackedFor(input, 8888);
   if (!trackedSession) {
     throw new Error('Expected Windows Terminal tracked session');
   }
@@ -175,7 +194,7 @@ async function resolveWindowsTerminalWebhook(
       processStartTimeMs: 2_000,
       processCommandHash: 'a'.repeat(64),
     });
-  input.pidToAwaiter.get(8888)?.(trackedSession);
+  input.spawnAwaiterByKey.get(trackedSession.trackingKey)?.(trackedSession);
   return await pending;
 }
 
@@ -196,11 +215,11 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
       const pending = spawnWindowsHostedSessionAndWaitForWebhook(input);
       let trackedSession: TrackedSession | undefined;
       try {
-        await vi.waitFor(() => expect(input.pidToAwaiter.has(7777)).toBe(true));
-        trackedSession = input.pidToTrackedSession.get(7777);
+        await vi.waitFor(() => expect(input.spawnAwaiterByKey.has(keyFor(input, 7777))).toBe(true));
+        trackedSession = trackedFor(input, 7777);
         if (!trackedSession) throw new Error('Expected visible-console tracked Session');
         const report = createOnHappySessionWebhook({
-          pidToTrackedSession: input.pidToTrackedSession, pidToAwaiter: input.pidToAwaiter,
+          trackedSessionsByKey: input.trackedSessionsByKey, spawnAwaiterByKey: input.spawnAwaiterByKey,
           readProcessIdentityByPidFn: async () => null, findHappyProcessByPidFn: async () => null,
           readCredentialsFn: async () => null, writeSessionMarkerFn: async () => {},
         });
@@ -210,10 +229,10 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
         });
         await expect(pending).resolves.toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED });
       } finally {
-        input.pidToSpawnResultResolver.get(7777)?.({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK, errorMessage: 'Fixture cleanup' });
+        if (trackedSession) input.spawnResultResolverByKey.get(trackedSession.trackingKey)?.({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK, errorMessage: 'Fixture cleanup' });
         await Promise.allSettled([pending]);
         await trackedSession?.reportMarkerCustody?.pending;
-        for (const timeout of input.pidToSpawnWebhookTimeout.values()) clearTimeout(timeout);
+        for (const timeout of input.spawnWebhookTimeoutByKey.values()) clearTimeout(timeout);
         Object.defineProperty(configuration, 'happyHomeDir', { value: previousHome });
       }
     });
@@ -409,10 +428,10 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
       const pending = spawnWindowsHostedSessionAndWaitForWebhook(input);
       await vi.waitFor(() => {
         expect(order).toEqual(['marker-start']);
-        expect(input.pidToAwaiter.has(7777)).toBe(true);
+        expect(input.spawnAwaiterByKey.has(keyFor(input, 7777))).toBe(true);
       });
       expect(
-        input.pidToTrackedSession.get(7777)?.acceptedSpawnMarkerGate,
+        trackedFor(input, 7777)?.acceptedSpawnMarkerGate,
       ).toEqual(expect.any(Promise));
 
       resolveMarker();
@@ -443,12 +462,12 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
         spawnWindowsHostedSessionAndWaitForWebhook(input);
       await vi.waitFor(() => {
         expect(
-          input.pidToTrackedSession.get(8888)
+          trackedFor(input, 8888)
             ?.persistWindowsTerminalAcceptedAgentMarker,
         ).toEqual(expect.any(Function));
       });
       await expect(
-        input.pidToTrackedSession.get(8888)!
+        trackedFor(input, 8888)!
           .persistWindowsTerminalAcceptedAgentMarker?.({
             pid: 9_999,
             processStartTimeMs: 2_000,
@@ -463,7 +482,7 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
           reason: 'startup-cancelled-before-ack',
         }),
       );
-      expect(input.pidToTrackedSession.has(8888)).toBe(false);
+      expect(trackedFor(input, 8888) !== undefined).toBe(false);
     });
   });
 
@@ -472,7 +491,7 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
       const input = createParams();
       const deliverReport = mocks.reportVisibleSession;
       mocks.reportVisibleSession = (pid) => {
-          const tracked = input.pidToTrackedSession.get(pid);
+          const tracked = trackedFor(input, pid);
           Object.assign(tracked!, {
             happySessionId: 'session-windows-readiness-refused',
             spawnStartupReadinessFailure: {
@@ -500,7 +519,7 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
         mocks.visibleConsoleCancel.mock.invocationCallOrder[0]!,
       );
       expect(input.onChildExited).toHaveBeenCalledOnce();
-      expect(input.pidToTrackedSession.has(7777)).toBe(false);
+      expect(trackedFor(input, 7777) !== undefined).toBe(false);
     });
   });
 
@@ -626,7 +645,7 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
       expect(terminalLaunch?.args[correlationIndex + 1]).toMatch(
         /^[a-f0-9]{32}$/u,
       );
-      expect(input.pidToTrackedSession.size).toBe(1);
+      expect(input.trackedSessionsByKey.size).toBe(1);
       expect(mocks.writeTerminalAttachmentInfo).toHaveBeenCalledWith(expect.objectContaining({
         sessionId: 'session-8888',
         terminal: expect.objectContaining({
@@ -676,7 +695,7 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
         expect(mocks.visibleConsoleCancel).not.toHaveBeenCalled();
         expect(input.cleanupSpawnResources).toHaveBeenCalledOnce();
         expect(input.onChildExited).toHaveBeenCalledOnce();
-        expect(input.pidToTrackedSession.has(8888)).toBe(false);
+        expect(trackedFor(input, 8888) !== undefined).toBe(false);
         expect(mocks.writeTerminalAttachmentInfo).not.toHaveBeenCalled();
       });
     },
@@ -709,11 +728,11 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
         spawnWindowsHostedSessionAndWaitForWebhook(input);
       await vi.waitFor(() => {
         expect(
-          input.pidToTrackedSession.get(8888)
+          trackedFor(input, 8888)
             ?.persistWindowsTerminalAcceptedAgentMarker,
         ).toEqual(expect.any(Function));
       });
-      const tracked = input.pidToTrackedSession.get(8888)!;
+      const tracked = trackedFor(input, 8888)!;
       tracked.happySessionId =
         'session-timeout-overlap';
       const exactAgentIdentity = {
@@ -730,7 +749,7 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
           .toHaveBeenCalledOnce();
       });
       tracked.sessionWebhookTimedOutAtMs = Date.now();
-      input.pidToSpawnResultResolver.get(8888)?.({
+      input.spawnResultResolverByKey.get(keyFor(input, 8888))?.({
         type: 'error',
         errorCode:
           SPAWN_SESSION_ERROR_CODES
@@ -756,7 +775,7 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
       expect(
         removeAcceptedSpawnMarkerIfOwned,
       ).toHaveBeenCalledWith({
-        pid: exactAgentIdentity.pid,
+        trackingKey: tracked.trackingKey,
         happySessionId:
           'session-timeout-overlap',
         processStartTimeMs:
@@ -766,7 +785,7 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
         isStillOwned: expect.any(Function),
       });
       expect(input.onChildExited).toHaveBeenCalledOnce();
-      expect(input.pidToTrackedSession.has(8888))
+      expect(trackedFor(input, 8888) !== undefined)
         .toBe(false);
     });
   });
@@ -790,12 +809,12 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
         spawnWindowsHostedSessionAndWaitForWebhook(input);
       await vi.waitFor(() => {
         expect(
-          input.pidToSpawnResultResolver.get(8888),
+          input.spawnResultResolverByKey.get(keyFor(input, 8888)),
         ).toEqual(expect.any(Function));
       });
-      const tracked = input.pidToTrackedSession.get(8888)!;
+      const tracked = trackedFor(input, 8888)!;
       tracked.sessionWebhookTimedOutAtMs = Date.now();
-      input.pidToSpawnResultResolver.get(8888)?.({
+      input.spawnResultResolverByKey.get(keyFor(input, 8888))?.({
         type: 'error',
         errorCode:
           SPAWN_SESSION_ERROR_CODES
@@ -817,7 +836,7 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
       expect(input.cleanupSpawnResources)
         .toHaveBeenCalledOnce();
       expect(input.onChildExited).toHaveBeenCalledOnce();
-      expect(input.pidToTrackedSession.has(8888))
+      expect(trackedFor(input, 8888) !== undefined)
         .toBe(false);
     });
   });
@@ -866,11 +885,11 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
         spawnWindowsHostedSessionAndWaitForWebhook(input);
       await vi.waitFor(() => {
         expect(
-          input.pidToTrackedSession.get(8888)
+          trackedFor(input, 8888)
             ?.persistWindowsTerminalAcceptedAgentMarker,
         ).toEqual(expect.any(Function));
       });
-      const tracked = input.pidToTrackedSession.get(8888)!;
+      const tracked = trackedFor(input, 8888)!;
       const exactAgentIdentity = {
         pid: 9_999,
         processStartTimeMs: 2_000,
@@ -886,7 +905,7 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
           exactAgentIdentity,
         );
       tracked.sessionWebhookTimedOutAtMs = Date.now();
-      input.pidToSpawnResultResolver.get(8888)?.({
+      input.spawnResultResolverByKey.get(keyFor(input, 8888))?.({
         type: 'error',
         errorCode:
           SPAWN_SESSION_ERROR_CODES
@@ -907,7 +926,7 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
       expect(removeAcceptedSpawnMarkerIfOwned)
         .toHaveBeenCalledOnce();
       expect(input.onChildExited).toHaveBeenCalledOnce();
-      expect(input.pidToTrackedSession.has(8888))
+      expect(trackedFor(input, 8888) !== undefined)
         .toBe(false);
       expect(
         mocks.startHappySessionInVisibleWindowsConsole,
@@ -934,12 +953,12 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
         spawnWindowsHostedSessionAndWaitForWebhook(input);
       await vi.waitFor(() => {
         expect(
-          input.pidToTrackedSession.get(8888)
+          trackedFor(input, 8888)
             ?.persistWindowsTerminalAcceptedAgentMarker,
         ).toEqual(expect.any(Function));
       });
       await expect(
-        input.pidToTrackedSession.get(8888)!
+        trackedFor(input, 8888)!
           .persistWindowsTerminalAcceptedAgentMarker?.({
             pid: 9_999,
             processStartTimeMs: 2_000,
@@ -952,7 +971,7 @@ describe('spawnWindowsHostedSessionAndWaitForWebhook', () => {
       expect(mocks.visibleConsoleCancel).not.toHaveBeenCalled();
       expect(input.cleanupSpawnResources).toHaveBeenCalledOnce();
       expect(input.onChildExited).toHaveBeenCalledOnce();
-      expect(input.pidToTrackedSession.has(8888)).toBe(false);
+      expect(trackedFor(input, 8888) !== undefined).toBe(false);
       expect(mocks.writeTerminalAttachmentInfo).not.toHaveBeenCalled();
     });
   });

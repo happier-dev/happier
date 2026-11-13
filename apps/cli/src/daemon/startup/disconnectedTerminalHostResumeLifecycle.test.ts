@@ -11,6 +11,7 @@ import { resolveDisconnectedTerminalHostResumeGate } from '../sessions/disconnec
 import { resolveDaemonSessionTerminalPresentation } from '../sessions/resolveTrackedSessionTerminalPresentation';
 
 import { createDisconnectedTerminalHostResumeLifecycle } from './disconnectedTerminalHostResumeLifecycle';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('disconnected terminal-host resume lifecycle', () => {
   it.each(['herdr', 'tmux', 'zellij'] as const)(
@@ -67,7 +68,7 @@ describe('disconnected terminal-host resume lifecycle', () => {
         unresolvedTerminalHostSessionIds: new Set(),
         clearUnresolvedTerminalHostSession: () => {},
         findDisconnectedCandidate: sessionId => ({
-          sessionId, pid: 7_010, happyHomeDir: '/tmp/happy', attachmentId,
+          sessionId, trackingKey: legacyPidSessionTrackingKey(7_010), pid: 7_010, happyHomeDir: '/tmp/happy', attachmentId,
           handle: { kind: hostKind, attachmentId, sessionName: 'retained', paneId: 'pane-1',
             ...(hostKind === 'herdr' ? { socketPath: '/tmp/retained.sock', terminalId: 'terminal-1' } : {}),
             attachMetadata: { attachStrategy: 'terminal_host', topology: 'shared', liveProbe: 'required' } },
@@ -139,7 +140,7 @@ describe('disconnected terminal-host resume lifecycle', () => {
     const attachmentId = createTerminalAttachmentId();
     const candidates = [{
       sessionId: 'sess-stop-resume',
-      pid: 7_001,
+      trackingKey: legacyPidSessionTrackingKey(7_001), pid: 7_001,
       happyHomeDir: '/tmp/happy',
       attachmentId,
       handle: {
@@ -207,7 +208,7 @@ describe('disconnected terminal-host resume lifecycle', () => {
       clearUnresolvedTerminalHostSession: () => {},
       findDisconnectedCandidate: () => retired ? null : {
         sessionId: 'sess-retirement-incomplete',
-        pid: 7_002,
+        trackingKey: legacyPidSessionTrackingKey(7_002), pid: 7_002,
         happyHomeDir: '/tmp/happy',
         attachmentId,
         handle: {

@@ -47,6 +47,7 @@ import { hashPrivateBearer } from '@/daemon/privateBearerFile';
 import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner/agentSessionRunnerFactoryBinding';
 import { createAgentRuntimeDaemonServiceAuthorityPath, publishAgentRuntimeDaemonServiceAuthority,
   removeAgentRuntimeDaemonServiceAuthorityIfOwned } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const processIdentity = vi.hoisted(() => vi.fn());
 const machineRpc = vi.hoisted(() => vi.fn<(event: string, args: unknown[]) => unknown>());
@@ -257,7 +258,7 @@ it.each([false, true])('routes delayed Agent approval through its Account owner;
     callerPermissionMode: 'default' as const,
     causalPermissionAuthority: { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'default' as const },
     agentStartCaller: { kind: 'session' as const, sessionId, starterDepth: 1, turnDepth: 2 } };
-  const tracked: TrackedSession = { startedBy: 'daemon', pid: runner.pid, sessionRunnerPid: runner.pid,
+  const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon', pid: runner.pid, sessionRunnerPid: runner.pid,
     happySessionId: sessionId, processStartTimeMs: runner.processStartTimeMs, processCommandHash: runner.processCommandHash,
     runnerAgentSourceCustodyV1: authority.retainedAgent.sourceCustody,
     runnerAgentInvocationContext: { cwd: '/workspace', environment: {}, providerBindingActive: false },

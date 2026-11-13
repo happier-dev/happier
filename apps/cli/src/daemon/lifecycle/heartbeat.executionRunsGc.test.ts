@@ -17,6 +17,7 @@ vi.mock('@/persistence', () => ({
 }));
 
 import { readDaemonState } from '@/persistence';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('startDaemonHeartbeatLoop execution run marker gc', () => {
   const originalHappyHomeDir = process.env.HAPPIER_HOME_DIR;
@@ -81,9 +82,9 @@ describe('startDaemonHeartbeatLoop execution run marker gc', () => {
     const { startDaemonHeartbeatLoop } = await import('./heartbeat');
 
     startDaemonHeartbeatLoop({
-      pidToTrackedSession: new Map([[process.pid, { pid: process.pid, happySessionId: 'sess-1', machineId: 'm1' } as any]]),
-      spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(process.pid), { trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, happySessionId: 'sess-1', machineId: 'm1' } as any]]),
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       controlPort: 8765,
       fileState: {

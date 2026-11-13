@@ -42,6 +42,7 @@ import type {
 } from '@/session/shared/spawnSessionContract';
 import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
 import { logger } from '@/ui/logger';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const ambientCredentials = vi.hoisted(() => ({
   current: null as Readonly<{ token: string; encryption: null }> | null,
@@ -1078,17 +1079,18 @@ describe('external-session persisted takeover admission action', () => {
           attemptId: 'attempt-1',
         }));
         if (!admission) throw new Error('Expected pending exact admission');
-        const pidToAwaiter = new Map<number, (session: import('@/daemon/types').TrackedSession) => void>();
+        const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: import('@/daemon/types').TrackedSession) => void>();
         const startup = waitForSessionWebhook({
+          trackingKey: legacyPidSessionTrackingKey(4202),
           pid: 4202,
-          pidToAwaiter,
-          pidToSpawnResultResolver: new Map(),
-          pidToSpawnWebhookTimeout: new Map(),
+          spawnAwaiterByKey,
+          spawnResultResolverByKey: new Map(),
+          spawnWebhookTimeoutByKey: new Map(),
           takeoverAdmission: admission,
           timeoutMs: 20,
           timeoutErrorMessage: 'startup timed out',
         });
-        pidToAwaiter.get(4202)?.({ pid: 4202, startedBy: 'daemon', happySessionId: initial.request.sessionId });
+        spawnAwaiterByKey.get(legacyPidSessionTrackingKey(4202))?.({ trackingKey: legacyPidSessionTrackingKey(4202), pid: 4202, startedBy: 'daemon', happySessionId: initial.request.sessionId });
         return await startup;
       });
       const executor = createExternalSessionTakeoverAdmissionActionExecutor({

@@ -89,6 +89,7 @@ export async function persistAcceptedSpawnMarker(params: Readonly<{
     : undefined;
 
   const marker: Parameters<typeof writeSessionMarker>[0] = {
+    trackingKey: trackedSession.trackingKey,
     pid: processPid,
     happySessionId: canonicalSessionId ?? `PID-${processPid}`,
     startedBy: 'daemon',

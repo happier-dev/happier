@@ -10,6 +10,7 @@ import { resolvePurposeTeamCredentialBindingIntentsFromHome } from '@/session/se
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { withRealForegroundAdmissionFixture } from './foregroundAdmission.testkit';
 import { createExternalConnectedAccountForegroundFixture } from './prepareForegroundAdmission.connectedServices.testkit';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const nativeHomeLaunch: AgentConnectedAccountLaunchContributionV1 = {
   stateSharingDescriptor: {
@@ -298,19 +299,19 @@ describe('foreground Connected Account custody through real authored Agent activ
         nativeHomeRoot: await realpath(targetRoot!),
         entries: [{ entryPath: 'projects', sourceEntryRoot: await realpath(join(sourceRoot, 'projects')), materializedEntryPath: join(await realpath(targetRoot!), 'projects') }],
       });
-      const { writeSessionMarker, readSessionMarkerForPid, clearSessionMarkerAgentRuntimeDaemonServicePromotionIfOwned } = await import('../sessionRegistry');
+      const { writeSessionMarker, readSessionMarker, clearSessionMarkerAgentRuntimeDaemonServicePromotionIfOwned } = await import('../sessionRegistry');
       const { configuration } = await import('@/configuration');
       const { promoteForegroundDaemonServiceAuthority } = await import('./promoteForegroundDaemonServiceAuthority');
       const { buildTrackedSessionFromMarker } = await import('../sessions/trackedSessionFromMarker');
-      const tracked: TrackedSession = { startedBy: 'terminal', pid: fixture.foregroundPid,
+      const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(fixture.foregroundPid), startedBy: 'terminal', pid: fixture.foregroundPid,
         happySessionId: claimInput.canonicalSessionId,
         processStartTimeMs: claimed.authority.runner.processStartTimeMs,
         processCommandHash: claimed.authority.runner.processCommandHash };
-      await writeSessionMarker({ pid: tracked.pid, happySessionId: claimInput.canonicalSessionId, startedBy: 'terminal',
+      await writeSessionMarker({ trackingKey: tracked.trackingKey, pid: tracked.pid, happySessionId: claimInput.canonicalSessionId, startedBy: 'terminal',
         processStartTimeMs: tracked.processStartTimeMs, processCommandHash: tracked.processCommandHash });
       expect(await promoteForegroundDaemonServiceAuthority({
         happyHomeDir: fixture.home, publicReleaseRing: configuration.publicReleaseRing,
-        trackedSessions: new Map([[tracked.pid, tracked]]), canonicalSessionId: claimInput.canonicalSessionId,
+        trackedSessions: new Map([[tracked.trackingKey, tracked]]), canonicalSessionId: claimInput.canonicalSessionId,
         foregroundPid: tracked.pid, authorityFilePath: admitted.prepared.authorization.authorityFilePath,
         retainedAgent: claimed.authority.retainedAgent, runner: claimed.authority.runner,
         runnerManagedDependencyRetentionV1: claimed.authority.runnerManagedDependencyRetentionV1,
@@ -318,19 +319,19 @@ describe('foreground Connected Account custody through real authored Agent activ
         materializedStateObservationBinding: claimed.materializedStateObservationBinding,
       })).toBe(true);
       expect(tracked.materializedStateObservationBinding).toBe(claimed.materializedStateObservationBinding);
-      const promotedMarker = await readSessionMarkerForPid(tracked.pid);
+      const promotedMarker = await readSessionMarker(tracked.trackingKey);
       expect(promotedMarker?.materializedStateObservationBinding).toEqual(claimed.materializedStateObservationBinding);
       expect(buildTrackedSessionFromMarker({ marker: promotedMarker!, startedByFallback: 'reattached' }).materializedStateObservationBinding)
         .toEqual(claimed.materializedStateObservationBinding);
       // The existing partial-promotion retirement path can omit source custody
       // when retained-dependency publication did not finish.
       expect(await clearSessionMarkerAgentRuntimeDaemonServicePromotionIfOwned({
-        pid: tracked.pid, sessionId: claimInput.canonicalSessionId,
+        trackingKey: tracked.trackingKey, pid: tracked.pid, sessionId: claimInput.canonicalSessionId,
         processStartTimeMs: claimed.authority.runner.processStartTimeMs,
         processCommandHash: claimed.authority.runner.processCommandHash,
         authorityFilePath: admitted.prepared.authorization.authorityFilePath,
       })).toBe(true);
-      expect(await readSessionMarkerForPid(tracked.pid)).not.toHaveProperty('materializedStateObservationBinding');
+      expect(await readSessionMarker(tracked.trackingKey)).not.toHaveProperty('materializedStateObservationBinding');
       await expect(readFile(join(targetRoot!, 'auth.json'))).resolves.toEqual(Buffer.from(selectedAuth));
       await expect(readFile(join(targetRoot!, 'config.toml'), 'utf8')).resolves.toBe('profile-source\n');
       await expect(readFile(join(sourceRoot, 'auth.json'))).resolves.toEqual(Buffer.from(persistentAuth));

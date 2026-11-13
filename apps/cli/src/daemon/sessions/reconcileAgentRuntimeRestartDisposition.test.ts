@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 import type { Metadata } from '@/api/types';
 import type { TrackedSession } from '../types';
@@ -6,6 +7,7 @@ import { reconcileAgentRuntimeRestartDisposition } from './reconcileAgentRuntime
 
 function tracked(overrides: Partial<TrackedSession> = {}): TrackedSession {
   return {
+    trackingKey: legacyPidSessionTrackingKey(overrides.pid ?? 85855),
     pid: 85855,
     startedBy: 'daemon',
     happySessionId: 'session-restarted',
@@ -189,8 +191,8 @@ describe('reconcileAgentRuntimeRestartDisposition', () => {
       agentRuntimeRunnerRestartDisposition: 'runner_authority_unavailable',
     });
     const trackedSessions = new Map([
-      [first.pid, first],
-      [sibling.pid, sibling],
+      [first.trackingKey, first],
+      [sibling.trackingKey, sibling],
     ]);
     const acquireRegistryLease = vi.fn();
     const retireSession = vi.fn(async (sessionId: string) => {

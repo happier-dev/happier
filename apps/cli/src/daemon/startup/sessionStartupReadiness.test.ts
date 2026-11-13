@@ -20,7 +20,7 @@ import { buildTerminalMetadataFromHostHandle } from '@/terminal/runtime/terminal
 import { createDaemonControlApp } from '../controlServer';
 import { readOrCreateDeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
 import { readProcessIdentityByPid } from '../processIdentity';
-import { hashProcessCommand, listSessionMarkers, promoteSessionMarkerPid, readSessionMarkerForPid, writeSessionMarker } from '../sessionRegistry';
+import { hashProcessCommand, listSessionMarkers, promoteSessionMarkerPid, readSessionMarker, writeSessionMarker } from '../sessionRegistry';
 import { createAgentRuntimeDaemonServiceAuthorityPath, readAgentRuntimeDaemonServiceAuthorityForVerifiedMarker } from '../agentRuntime/sessionBridgeAuthorization';
 import { refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority } from '../agentRuntime/refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority';
 import { promoteForegroundDaemonServiceAuthority } from '../agentRuntime/promoteForegroundDaemonServiceAuthority';
@@ -33,6 +33,7 @@ import { waitForSessionWebhook } from '../spawn/waitForSessionWebhook';
 import { probeAlreadyRunningExistingSessionServiceability } from './pendingQueueNudge';
 import { publishReportedTerminalControlServiceability } from './publishReportedTerminalControlServiceability';
 import { createSessionStartupReadinessHandler } from './sessionStartupReadiness';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 afterEach(() => { vi.unstubAllEnvs(); reloadConfiguration(); });
 
@@ -80,7 +81,7 @@ describe('session startup acknowledgement', () => {
             locator: { module: './runtime.mjs', export: 'createRuntime', runtimeApiVersion: 1 },
             normalizedModulePath: 'runtime.mjs', loadMode: 'immutable-js' });
         const initialSessionId = phase === 'committed Team Session' ? sessionId : `PID-${wrapperPid}`;
-        const tracked: TrackedSession = { pid: wrapperPid, startedBy: 'daemon', happySessionId: initialSessionId,
+        const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid, startedBy: 'daemon', happySessionId: initialSessionId,
             processStartTimeMs: 12_345, processCommandHash: hashProcessCommand('/runtime/scope-exit'),
             runnerAgentInvocationContext: Object.freeze({ cwd: home, environment: Object.freeze({}), providerBindingActive: false }),
             agentRuntimeDaemonServiceAuthorityFilePath: authorityPath, acceptedSpawnMarkerGate: Promise.resolve(true),
@@ -89,19 +90,19 @@ describe('session startup acknowledgement', () => {
                 ...(phase === 'committed Team Session' ? { existingSessionId: sessionId, primaryTeamId: 'team',
                     teamCredentialBindings: [{ v: 1, slot: { kind: 'provider_model' }, teamId: 'team', resourceId: 'resource',
                         expectedResourceRevision: 2, deliveryMode: 'brokered' }] } : {}) } };
-        await writeSessionMarker({ pid: wrapperPid, happySessionId: initialSessionId, startedBy: 'daemon', cwd: home,
+        await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid, happySessionId: initialSessionId, startedBy: 'daemon', cwd: home,
             processStartTimeMs: 12_345,
             respawn: { version: 1, directory: home, backendTarget: { kind: 'builtInAgent', agentId: 'fixture' }, spawnNonce: 'fresh-wrapper' } });
-        const sessions = new Map([[wrapperPid, tracked]]);
-        const awaiters = new Map<number, (session: TrackedSession) => void>();
-        const resolvers = new Map<number, (result: SpawnSessionResult) => void>();
-        const timeouts = new Map<number, NodeJS.Timeout>();
-        const startup = waitForSessionWebhook({ pid: wrapperPid, pidToTrackedSession: sessions, pidToAwaiter: awaiters,
-            pidToSpawnResultResolver: resolvers, pidToSpawnWebhookTimeout: timeouts, timeoutErrorMessage: 'Fixture startup failed' });
+        const sessions = new Map([[legacyPidSessionTrackingKey(wrapperPid), tracked]]);
+        const awaiters = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
+        const resolvers = new Map<SessionTrackingKey, (result: SpawnSessionResult) => void>();
+        const timeouts = new Map<SessionTrackingKey, NodeJS.Timeout>();
+        const startup = waitForSessionWebhook({ trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid, trackedSessionsByKey: sessions, spawnAwaiterByKey: awaiters,
+            spawnResultResolverByKey: resolvers, spawnWebhookTimeoutByKey: timeouts, timeoutErrorMessage: 'Fixture startup failed' });
         const handler = createSessionStartupReadinessHandler({
-            onHappySessionWebhook: createOnHappySessionWebhook({ pidToTrackedSession: sessions, pidToAwaiter: awaiters,
+            onHappySessionWebhook: createOnHappySessionWebhook({ trackedSessionsByKey: sessions, spawnAwaiterByKey: awaiters,
                 getParentPidFn: async () => wrapperPid, readProcessIdentityByPidFn: readIdentity,
-                promoteSessionMarkerFn: (from, to) => promoteSessionMarkerPid(from, to, { readProcessIdentityByPidFn: readIdentity }),
+                promoteSessionMarkerFn: (params) => promoteSessionMarkerPid(params, { readProcessIdentityByPidFn: readIdentity }),
                 readCredentialsFn: async () => null }),
             reconcileCanonicalReadiness: async (candidate) => {
                 await refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority({ happyHomeDir: home,
@@ -145,14 +146,14 @@ describe('session startup acknowledgement', () => {
                 expect(response.statusCode, response.body).toBe(200);
             }
             await expect(startup).resolves.toMatchObject({ type: 'success', sessionId });
-            const marker = await readSessionMarkerForPid(runnerPid);
+            const marker = await readSessionMarker(tracked.trackingKey);
             expect(marker).toMatchObject({ pid: runnerPid, happySessionId: sessionId, processStartTimeMs: 23_456,
                 runnerAgentSourceCustodyV1: binding.sourceCustody });
             const authority = await readAgentRuntimeDaemonServiceAuthorityForVerifiedMarker({ happyHomeDir: home,
                 publicReleaseRing: configuration.publicReleaseRing, path: authorityPath, sessionId,
                 runner: { pid: runnerPid, processStartTimeMs: 23_456, processCommandHash: hashProcessCommand(command) } });
             expect(authority).toMatchObject({ sessionId, runner: { pid: runnerPid, processStartTimeMs: 23_456 }, retainedAgent: binding });
-            expect(sessions.get(wrapperPid)).toBe(tracked);
+            expect(sessions.get(legacyPidSessionTrackingKey(wrapperPid))).toBe(tracked);
             expect(tracked.processStartTimeMs).toBe(12_345);
             if (!authority) throw new Error('missing published runner authority');
             if (phase === 'restart reattachment') {
@@ -238,7 +239,7 @@ describe('session startup acknowledgement', () => {
         const identity = await readProcessIdentityByPid(process.pid);
         if (identity?.processStartTimeMs === undefined) throw new Error('missing process generation');
         const tracked: TrackedSession = {
-            pid: process.pid,
+            trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid,
             processStartTimeMs: identity.processStartTimeMs,
             startedBy: 'daemon',
             happySessionId: `PID-${process.pid}`,
@@ -270,8 +271,8 @@ describe('session startup acknowledgement', () => {
             controlToken: 'readiness-token',
             onHappySessionWebhook: createSessionStartupReadinessHandler({
                 onHappySessionWebhook: createOnHappySessionWebhook({
-                    pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-                    pidToAwaiter: new Map([[tracked.pid, () => {}]]),
+                    trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+                    spawnAwaiterByKey: new Map([[legacyPidSessionTrackingKey(tracked.pid), () => {}]]),
                     readCredentialsFn: async () => null,
                     deviceLocalSecretStorage,
                 }),

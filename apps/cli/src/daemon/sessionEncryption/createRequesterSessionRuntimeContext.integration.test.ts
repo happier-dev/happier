@@ -83,6 +83,7 @@ import { ArtifactJsonCreateHttpInputV1Schema } from '@happier-dev/protocol';
 import { MachineInstallationProofV1Schema, RequesterSessionCurrentnessPurposeV1Schema,
   verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 // HTTP substitutes authentication; the real Account owners still inspect the subject.
 function accountToken(accountId: string) {
@@ -98,7 +99,7 @@ it('returns installed Account personal ready policy through startup and refuses 
   const hostTurnId = 'installed-completed-host-turn';
   const token = accountToken('installed');
   const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
-  const tracked: TrackedSession = { pid: process.pid, startedBy: 'daemon', happySessionId: sessionId,
+  const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, startedBy: 'daemon', happySessionId: sessionId,
     spawnOptions: { directory } };
   const control: { routes?: Parameters<typeof controlServer.startDaemonControlServer>[0] } = {};
   const listening = vi.spyOn(controlServer, 'startDaemonControlServer').mockImplementation(async routes => {
@@ -163,7 +164,7 @@ it('returns installed Account personal ready policy through startup and refuses 
     host = await createRequesterSessionControlRuntimeFixture({ happyHomeDir: directory, activeServerDir: directory,
       serverId, serverHttpBaseUrl: home, machineId: 'machine', custodianAccountId: 'installed', credentials,
       connectedServicesMaterializationBaseDir: join(directory, 'materialized'), registry: new ConnectedServiceRuntimeRegistry(),
-      trackedSessions: new Map([[tracked.pid, tracked]]), getRequester: () => null,
+      trackedSessions: new Map([[tracked.trackingKey, tracked]]), getRequester: () => null,
       getApiMachineForSessions: () => machine.current, resolveQualifiedConnectedAccountV4Support: () => 'indeterminate',
       startup: { resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: 'machine', serverIdentityId: serverId }) },
       beforeStartup: async () => {
@@ -508,7 +509,7 @@ it.each(['managed-provider-authority', 'settings-key-subscriptions', 'usage-owne
   let followRuntimeInput: Parameters<typeof createRequesterSessionRuntimeContext>[0] | undefined;
   try {
     const registry = new ConnectedServiceRuntimeRegistry();
-    const trackedSessions = new Map<number, TrackedSession>();
+    const trackedSessions = new Map<SessionTrackingKey, TrackedSession>();
     const followMachineBoundary = { machineId: 'machine', daemonToken: aliceCredentials.token,
       readInstallation: readInstallationIdentityIfExistsSync,
       isHomeCurrent: () => configuration.activeServerId === 'bob-home',
@@ -574,7 +575,7 @@ it.each(['managed-provider-authority', 'settings-key-subscriptions', 'usage-owne
             if (surface === 'startup-home-failure') runHomeStatus = 503;
             return '0';
           }, HAPPIER_CONNECTED_SERVICES_QUOTAS_ENABLED: '0' },
-        pidToTrackedSession: trackedSessions, connectedServiceRuntimeRegistry: registry,
+        trackedSessionsByKey: trackedSessions, connectedServiceRuntimeRegistry: registry,
         connectedServiceAuthGroupPreTurnSwitchCoordinator: host.runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator }
     } satisfies Parameters<typeof createRequesterSessionRuntimeContext>[0];
     followRuntimeInput = runtimeInput;
@@ -744,7 +745,7 @@ it.each(['managed-provider-authority', 'settings-key-subscriptions', 'usage-owne
           logger: { debug: () => {}, info: () => {}, warn: () => {} },
           processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '1', HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: '1',
             HAPPIER_CONNECTED_SERVICES_QUOTAS_DISCOVERY_ENABLED: '0' },
-          pidToTrackedSession: trackedSessions, connectedServiceRuntimeRegistry: loopRegistry,
+          trackedSessionsByKey: trackedSessions, connectedServiceRuntimeRegistry: loopRegistry,
           connectedServiceRuntimeQuotaSnapshots: requester.connectedServiceRuntimeQuotaSnapshots,
           providerAccountUsageStore: requester.providerAccountUsageStore,
           connectedServiceAuthGroupPreTurnSwitchCoordinator: host!.runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator,
@@ -839,9 +840,9 @@ it.each(['managed-provider-authority', 'settings-key-subscriptions', 'usage-owne
       }, requesterSessionRuntimeContext: requester, credentials: requester.bootstrap.credentials, api: requester.api,
         connectedServicesMaterializationBaseDir: directory,
         connectedServiceRefreshCoordinator: null, connectedServiceQuotasCoordinator: null,
-        connectedServiceRuntimeRegistry: registry, pidToTrackedSession: trackedSessions,
-        pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
-        spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+        connectedServiceRuntimeRegistry: registry, trackedSessionsByKey: trackedSessions,
+        spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
+        spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
         resolveCanonicalTrackedSessionId: () => { throw new Error('Unexpected runner'); },
         onChildExited: () => { throw new Error('Unexpected runner'); },
       });
@@ -879,7 +880,7 @@ it.each(['managed-provider-authority', 'settings-key-subscriptions', 'usage-owne
       return;
     }
     if (surface === 'resolution-currentness') {
-      trackedSessions.set(process.pid, { pid: process.pid, happySessionId: requesterSessionId, startedBy: 'daemon',
+      trackedSessions.set(legacyPidSessionTrackingKey(process.pid), { trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, happySessionId: requesterSessionId, startedBy: 'daemon',
         requesterSessionRuntimeContext: runtime, requesterWorkAttributionV1: runtime.bootstrap.attribution });
       const resolveRequester = createRequesterSessionRuntimeContextResolver({ trackedSessions,
         getCreateRuntime: () => null, recoverBootstrap: async () => null });
@@ -1074,9 +1075,9 @@ it.each(['managed-provider-authority', 'settings-key-subscriptions', 'usage-owne
               requesterSessionRuntimeContext: runtime!, credentials: runtime!.bootstrap.credentials, api: runtime!.api,
               connectedServicesMaterializationBaseDir: directory,
               connectedServiceRefreshCoordinator: null, connectedServiceQuotasCoordinator: null,
-              connectedServiceRuntimeRegistry: registry, pidToTrackedSession: trackedSessions,
-              pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
-              spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+              connectedServiceRuntimeRegistry: registry, trackedSessionsByKey: trackedSessions,
+              spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
+              spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
               resolveCanonicalTrackedSessionId: () => { throw new Error('Unexpected runner'); },
               onChildExited: () => { throw new Error('Unexpected runner'); },
               }),
@@ -1186,7 +1187,7 @@ it.each(['managed-provider-authority', 'settings-key-subscriptions', 'usage-owne
         runtimeOptions: { pluginIds: ['happier.agent.codex'] } });
       const runner = await readProcessIdentityByPid(process.pid);
       if (!runner?.processStartTimeMs || !runner.command) throw new Error('Missing live test runner identity');
-      trackedSessions.set(process.pid, { pid: process.pid, happySessionId: requesterSessionId, startedBy: 'daemon',
+      trackedSessions.set(legacyPidSessionTrackingKey(process.pid), { trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, happySessionId: requesterSessionId, startedBy: 'daemon',
         requesterSessionRuntimeContext: runtime, requesterWorkAttributionV1: runtime.bootstrap.attribution,
         runnerProcessIdentity: { pid: process.pid, processStartTimeMs: runner.processStartTimeMs,
           processCommandHash: hashProcessCommand(runner.command) } });
@@ -1269,7 +1270,7 @@ it.each(['managed-provider-authority', 'settings-key-subscriptions', 'usage-owne
         },
         assertSessionAccountCurrent: async (_sessionId, expected, _attribution, readerSignal) => await assertRequesterSessionAccountContextCurrent({
           expected, signal: readerSignal, resolveCurrent: async () => exactRuntime,
-          readTrackedContext: () => trackedSessions.get(process.pid)?.requesterSessionRuntimeContext ?? null,
+          readTrackedContext: () => trackedSessions.get(legacyPidSessionTrackingKey(process.pid))?.requesterSessionRuntimeContext ?? null,
         }),
       });
       runHomeStatus = 503;
@@ -2154,7 +2155,7 @@ it.each(['generation', 'usage', 'reconnect', 'run_custody'] as const)('keeps req
   let host: Awaited<ReturnType<typeof createRequesterSessionControlRuntimeFixture>> | null = null;
   let admitted: Awaited<ReturnType<typeof admitRequesterSessionBootstrap>> = null;
   const registry = new ConnectedServiceRuntimeRegistry();
-  const trackedSessions = new Map<number, TrackedSession>();
+  const trackedSessions = new Map<SessionTrackingKey, TrackedSession>();
   try {
     host = await createRequesterSessionControlRuntimeFixture({ happyHomeDir: directory, activeServerDir: directory,
       serverId: 'bob-home', serverHttpBaseUrl: 'https://bob-home.test', machineId: 'machine', custodianAccountId: 'alice',
@@ -2173,7 +2174,7 @@ it.each(['generation', 'usage', 'reconnect', 'run_custody'] as const)('keeps req
       coordinatorInput: { machineId: 'machine', machineIdProvider: () => 'machine', runtimeId: 'runtime', happyHomeDir: directory,
         logger: { debug: () => {}, info: () => {}, warn: () => {} }, processEnv: {
           HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '0', HAPPIER_CONNECTED_SERVICES_QUOTAS_ENABLED: '0' },
-        pidToTrackedSession: trackedSessions, connectedServiceRuntimeRegistry: registry,
+        trackedSessionsByKey: trackedSessions, connectedServiceRuntimeRegistry: registry,
         connectedServiceAuthGroupPreTurnSwitchCoordinator: host.runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator } });
     if (!runtime) throw new Error('Missing real requester runtime');
     if (surface === 'run_custody') {
@@ -2312,7 +2313,7 @@ it.each(['retired', 'pending_release', 'concurrent_resume'] as const)('keeps req
   let admitted: Awaited<ReturnType<typeof admitRequesterSessionBootstrap>> = null;
   try {
     const registry = new ConnectedServiceRuntimeRegistry();
-    const trackedSessions = new Map<number, TrackedSession>();
+    const trackedSessions = new Map<SessionTrackingKey, TrackedSession>();
     host = await createRequesterSessionControlRuntimeFixture({ happyHomeDir: directory, activeServerDir: directory,
       serverId: 'bob-home', serverHttpBaseUrl: 'https://bob-home.test', machineId: 'machine', custodianAccountId: 'alice',
       credentials: { token: accountToken('alice'), encryption: null }, connectedServicesMaterializationBaseDir: join(directory, 'materialized'),
@@ -2331,7 +2332,7 @@ it.each(['retired', 'pending_release', 'concurrent_resume'] as const)('keeps req
       coordinatorInput: { machineId: 'machine', machineIdProvider: () => 'machine', runtimeId: 'runtime', happyHomeDir: directory,
         logger: { debug: () => {}, info: () => {}, warn: () => {} }, processEnv: {
           HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '0', HAPPIER_CONNECTED_SERVICES_QUOTAS_ENABLED: '0' },
-        pidToTrackedSession: trackedSessions, connectedServiceRuntimeRegistry: registry,
+        trackedSessionsByKey: trackedSessions, connectedServiceRuntimeRegistry: registry,
         connectedServiceAuthGroupPreTurnSwitchCoordinator: host.runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator } };
     runtime = await createRequesterSessionRuntimeContext(runtimeInput);
     if (!runtime) throw new Error('Missing real requester runtime');
@@ -2341,7 +2342,7 @@ it.each(['retired', 'pending_release', 'concurrent_resume'] as const)('keeps req
       const captured = await createRequesterSessionRuntimeContext({ ...runtimeInput, bootstrapOwnership: 'borrowed' });
       if (!captured) throw new Error('Missing cold requester context');
       expect(captured).not.toBe(resumed);
-      onProjectionRead = () => trackedSessions.set(process.pid, { pid: process.pid, startedBy: 'daemon', happySessionId: 'bob-session',
+      onProjectionRead = () => trackedSessions.set(legacyPidSessionTrackingKey(process.pid), { trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, startedBy: 'daemon', happySessionId: 'bob-session',
         requesterSessionRuntimeContext: resumed, requesterWorkAttributionV1: resumed.bootstrap.attribution });
       try {
         // The native resume publishes its runner while the cold operation's
@@ -2351,7 +2352,7 @@ it.each(['retired', 'pending_release', 'concurrent_resume'] as const)('keeps req
           withSessionAccountContext: async (_sessionId, operation) => await operation(captured),
           assertSessionAccountCurrent: async () => await assertRequesterSessionAccountContextCurrent({ expected: captured,
             resolveCurrent: async () => resumed,
-            readTrackedContext: () => trackedSessions.get(process.pid)?.requesterSessionRuntimeContext ?? null }),
+            readTrackedContext: () => trackedSessions.get(legacyPidSessionTrackingKey(process.pid))?.requesterSessionRuntimeContext ?? null }),
         })).resolves.toMatchObject({ requester: true });
         const reads = get.mock.calls.slice(before).filter(([url]) => String(url).endsWith('/profile'));
         expect(reads).toHaveLength(1);

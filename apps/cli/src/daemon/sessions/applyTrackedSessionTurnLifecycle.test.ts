@@ -2,10 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { TrackedSession } from '../types';
 import { applyTrackedSessionTurnLifecycle } from './applyTrackedSessionTurnLifecycle';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 function tracked(overrides: Partial<TrackedSession> = {}): TrackedSession {
   return {
-    pid: 41,
+    trackingKey: legacyPidSessionTrackingKey(41), pid: 41,
     sessionRunnerPid: 42,
     startedBy: 'daemon',
     happySessionId: 'session-1',
@@ -54,7 +55,7 @@ describe('applyTrackedSessionTurnLifecycle', () => {
     expect(current.reattachedInterruptedTurnId).toBeUndefined();
     expect(current.agentRuntimeDaemonServiceAdmittedTurnId).toBeUndefined();
     expect(updateSessionMarkerActiveTurn).toHaveBeenCalledWith({
-      pid: 42, sessionId: 'session-1', activeTurnId: null, expectedActiveTurnId: 'settled-turn',
+      trackingKey: legacyPidSessionTrackingKey(41), sessionId: 'session-1', activeTurnId: null, expectedActiveTurnId: 'settled-turn',
     });
   });
 
@@ -100,7 +101,7 @@ describe('applyTrackedSessionTurnLifecycle', () => {
     })).resolves.toEqual({ status: 'recorded', activeTurnId: 'session-turn:exact-1' });
     expect(current.activeTurnId).toBe('session-turn:exact-1');
     expect(updateSessionMarkerActiveTurn).toHaveBeenLastCalledWith({
-      pid: 42,
+      trackingKey: legacyPidSessionTrackingKey(41),
       sessionId: 'session-1',
       activeTurnId: 'session-turn:exact-1',
     });
@@ -215,7 +216,7 @@ describe('applyTrackedSessionTurnLifecycle', () => {
     expect(current.agentRuntimeDaemonServiceAdmittedUserMessageSeqs)
       .toBeUndefined();
     expect(updateSessionMarkerActiveTurn).toHaveBeenLastCalledWith({
-      pid: 42,
+      trackingKey: legacyPidSessionTrackingKey(41),
       sessionId: 'session-1',
       activeTurnId: null,
     });

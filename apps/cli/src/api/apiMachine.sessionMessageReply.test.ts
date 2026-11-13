@@ -39,6 +39,7 @@ import { buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetad
 import { SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
 import * as machineRpc from '@/session/transport/rpc/machineRpc';
 import fs from 'node:fs/promises';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const os = vi.hoisted(() => ({ identity: null as import('@happier-dev/protocol').MachineInstallationIdentityV1 | null,
   credentials: null as StoredCredentials | null }));
@@ -423,7 +424,7 @@ it.each([
     await requesterHost?.dispose();
     if (directory) await rm(directory, { recursive: true, force: true });
   });
-  const trackedSessions = new Map<number, TrackedSession>();
+  const trackedSessions = new Map<SessionTrackingKey, TrackedSession>();
   if (directory) {
     const serverId = configuration.activeServerId, serverHttpBaseUrl = resolveServerHttpBaseUrl();
     const registry = new ConnectedServiceRuntimeRegistry();
@@ -444,11 +445,11 @@ it.each([
       coordinatorInput: { machineId: 'target-machine', machineIdProvider: () => 'target-machine', runtimeId: 'return-runtime',
         happyHomeDir: directory, logger: { debug() {}, info() {}, warn() {} },
         processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '0', HAPPIER_CONNECTED_SERVICES_QUOTAS_ENABLED: '0' },
-        pidToTrackedSession: trackedSessions, connectedServiceRuntimeRegistry: registry,
+        trackedSessionsByKey: trackedSessions, connectedServiceRuntimeRegistry: registry,
         connectedServiceAuthGroupPreTurnSwitchCoordinator: requesterHost.runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator } });
     if (!requesterRuntime) throw new Error('Missing real requester runtime');
     expect(requesterRuntime.readAccountSettingsSnapshot().settings.actionsSettingsV1.approvalWaivedSurfaces?.['discussion.reply']).toEqual(['agent']);
-    trackedSessions.set(process.pid, { pid: process.pid, happySessionId: requestSessionId, startedBy: 'daemon',
+    trackedSessions.set(legacyPidSessionTrackingKey(process.pid), { trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, happySessionId: requestSessionId, startedBy: 'daemon',
       requesterWorkAttributionV1: requesterRuntime.bootstrap.attribution, requesterSessionRuntimeContext: requesterRuntime });
   }
   const requesterResolver = createRequesterSessionRuntimeContextResolver({ trackedSessions,

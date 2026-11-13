@@ -15,10 +15,11 @@ import { createStopSession } from './stopSession';
 import { waitForExistingSessionExitIfStopRequested } from './waitForExistingSessionExitIfStopRequested';
 import { waitForTrackedRunnerProcessesExit } from './waitForTrackedRunnerProcessesExit';
 import { subscribeManagedSessionDirectoryRemoval } from './subscribeManagedSessionDirectoryRemoval';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey, trackedSessionsForProcess } from '@/daemon/sessions/sessionTrackingKey';
 
 it.each(['live', 'preparing'] as const)('retires an inactive Session’s %s successor on deletion without a directory allocation, preserving its neighbour', async successorState => {
   await withConfiguredDaemonTestHome({ prefix: 'deleted-respawn-' }, async ({ homeDir }) => {
-    const sessions = new Map<number, TrackedSession>();
+    const sessions = new Map<SessionTrackingKey, TrackedSession>();
     const children: ChildProcess[] = [];
     const exits = new Map<number, Promise<unknown>>();
     const sessionId = 'deleted-inactive-session';
@@ -31,11 +32,11 @@ it.each(['live', 'preparing'] as const)('retires an inactive Session’s %s succ
       await once(child, 'message');
       const identity = await readProcessIdentityByPid(child.pid!);
       if (!identity) throw new Error('Missing process fixture identity');
-      const tracked: TrackedSession = { pid: child.pid!, childProcess: child, happySessionId: id,
+      const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(child.pid!), pid: child.pid!, childProcess: child, happySessionId: id,
         startedBy: 'daemon', processStartTimeMs: identity.processStartTimeMs,
         processCommandHash: hashProcessCommand(identity.command), spawnOptions: { directory: homeDir } };
-      sessions.set(tracked.pid, tracked);
-      await writeSessionMarker({ pid: tracked.pid, happySessionId: id, startedBy: 'daemon',
+      sessions.set(tracked.trackingKey, tracked);
+      await writeSessionMarker({ trackingKey: tracked.trackingKey, pid: tracked.pid, happySessionId: id, startedBy: 'daemon',
         processStartTimeMs: identity.processStartTimeMs, processCommandHash: hashProcessCommand(identity.command) });
       return tracked;
     };
@@ -63,17 +64,17 @@ it.each(['live', 'preparing'] as const)('retires an inactive Session’s %s succ
       enqueueDaemonTerminalExactTurnEnd: async () => { throw new Error('Inactive Session has no exact turn to settle'); },
       finalizeMachineSessionTerminal: async () => { throw new Error('Inactive Session must not request terminal finalization'); },
     } satisfies Pick<ApiMachineClient, 'captureMachineSessionTerminal' | 'enqueueDaemonTerminalExactTurnEnd' | 'finalizeMachineSessionTerminal'>;
-    const onExit = createOnChildExited({ pidToTrackedSession: sessions,
-      spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+    const onExit = createOnChildExited({ trackedSessionsByKey: sessions,
+      spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => machine,
       onUnexpectedExit: (tracked, exit) => { respawn.handleUnexpectedExit(tracked, exit); } });
-    const core = createStopSession({ pidToTrackedSession: sessions,
+    const core = createStopSession({ trackedSessionsByKey: sessions,
       areTrackedRunnersExited: ({ trackedPids }) => waitForTrackedRunnerProcessesExit({
         runners: trackedPids.map(pid => ({ pid })), timeoutMs: 0, pollIntervalMs: 0 }),
       waitForTrackedRunnersExit: async ({ sessionId: id, trackedPids }) => {
-        await waitForExistingSessionExitIfStopRequested({ sessionId: id, pidToTrackedSession: sessions,
+        await waitForExistingSessionExitIfStopRequested({ sessionId: id, trackedSessionsByKey: sessions,
           timeoutMs: 1000, pollIntervalMs: 10, onExitObserved: onExit });
-        return trackedPids.every(pid => !sessions.has(pid));
+        return trackedPids.every(pid => trackedSessionsForProcess(sessions, pid).length === 0);
       } });
     const receipts: unknown[] = [];
     let deleted: ((input: { sessionId: string }) => void | Promise<void>) | undefined;
@@ -114,7 +115,7 @@ it.each(['live', 'preparing'] as const)('retires an inactive Session’s %s succ
       if (successorState === 'preparing') await vi.waitFor(() => expect(preparationSettled).toBe(true));
       expect(await waitForTrackedRunnerProcessesExit({ runners: [{ pid: successor.pid }], timeoutMs: 0, pollIntervalMs: 0 })).toBe(true);
       expect([...sessions.values()].filter(row => row.happySessionId === sessionId)).toEqual([]);
-      expect(sessions.get(neighbour.pid)).toBe(neighbour);
+      expect(sessions.get(neighbour.trackingKey)).toBe(neighbour);
       expect(neighbour.childProcess!.exitCode).toBeNull();
       expect(respawn.handleUnexpectedExit(successor, { reason: 'process-exit', code: 1, signal: null })).toBe('ignored');
       await deleted!({ sessionId });

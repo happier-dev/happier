@@ -1,6 +1,5 @@
 import type { CatalogAgentId } from '@/agent/catalog/ids';
 import type { AgentLaunchMaterialization } from '../agentIsolation/agentLaunchMaterials';
-import { configuration } from '@/configuration';
 import { HAPPIER_PROVIDER_BINDING_LAUNCH_MATERIALIZATION_V1_ENV_KEY } from '@/plugins/runtime/providerBindings/handoff';
 import {
     serializeProviderBindingLaunchHandoffForEnv,
@@ -11,6 +10,7 @@ import {
     resolveAbsentSessionControlEnvKeys,
 } from '@/session/runtime/control/sessionControlEnvironment';
 import type { SpawnSessionOptions, SpawnSessionResult } from '@/session/shared/spawnSessionContract';
+import type { TrackedSession } from '../types';
 import { normalizeUnsetEnvKeys } from '@/utils/processEnv/buildScopedProcessEnv';
 import type { ConnectedServiceMaterializationIdentityV1 } from '@happier-dev/protocol';
 import type {
@@ -23,32 +23,18 @@ import type { ConnectedServiceRefreshCoordinator } from '../connectedServices/re
 import type { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeRegistry/registry';
 import { createSessionAttachFile } from '../sessionAttachFile';
 import { createSpawnLifecycleCallbacks } from './createSpawnLifecycleCallbacks';
+import type { SessionAttachCleanupByKey, SpawnResourceCleanupByKey } from '../sessions/cleanupSessionResources';
 import type {
     prepareRunnerAgentSessionBootstrapForLease,
 } from './prepareAgentRuntimeSessionBridge';
 import { resolveStackProcessKindOverrideForSessionSpawn } from './resolveStackProcessKindOverrideForSessionSpawn';
 import { persistAcceptedSpawnMarker } from './persistAcceptedSpawnMarker';
+import { buildDaemonOwnedSpawnChildEnv } from './daemonOwnedSpawnChildEnvironment';
 import type { DeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
 import type { RequesterSessionRuntimeContext } from '../sessionEncryption/requesterSessionCredentials';
 import type { ConnectedServiceMaterializedStateObservationBinding } from '../connectedServices/materialization/materializer';
 
 type SpawnResourceCleanup = () => void | Promise<void>;
-
-function buildDaemonOwnedSpawnChildEnv(): Record<string, string> {
-    return {
-        HAPPIER_HOME_DIR: configuration.happyHomeDir,
-        HAPPIER_ACTIVE_SERVER_ID: configuration.activeServerId,
-        HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID:
-            String(process.env.HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID ?? '').trim()
-            || configuration.activeServerId,
-        HAPPIER_SERVER_URL: configuration.serverUrl,
-        // Process-local carrier listeners belong to the daemon. The surviving runner
-        // acquires its own carrier; URL-only Homes keep this configured route.
-        HAPPIER_LOCAL_SERVER_URL: configuration.apiServerUrl,
-        HAPPIER_PUBLIC_SERVER_URL: configuration.publicServerUrl,
-        HAPPIER_WEBAPP_URL: configuration.webappUrl,
-    };
-}
 
 export async function prepareDaemonSpawnLifecycle(input: Readonly<{
     agentLaunchMaterials?: AgentLaunchMaterialization;
@@ -79,12 +65,12 @@ export async function prepareDaemonSpawnLifecycle(input: Readonly<{
     connectedServiceRefreshCoordinator: ConnectedServiceRefreshCoordinator | null;
     connectedServiceQuotasCoordinator: ConnectedServiceQuotasCoordinator | null;
     connectedServiceRuntimeRegistry: Pick<ConnectedServiceRuntimeRegistry, 'registerTarget'>;
-    spawnResourceCleanupByPid: Map<number, SpawnResourceCleanup>;
-    sessionAttachCleanupByPid: Map<number, () => Promise<void>>;
+    spawnResourceCleanupByKey: SpawnResourceCleanupByKey;
+    sessionAttachCleanupByKey: SessionAttachCleanupByKey;
     setPendingSessionAttachCleanup: (cleanup: (() => Promise<void>) | null) => void;
     getSpawnResourceCleanupOnExit: () => SpawnResourceCleanup | null;
     onSpawnResourceCleanupArmed: () => void;
-    onTrackedSessionRegistered?: () => void;
+    onTrackedSessionRegistered?: (trackedSession: Readonly<Pick<TrackedSession, 'pid' | 'childProcess'>>) => void;
     deviceLocalSecretStorage?: DeviceLocalSecretStorage;
     requesterSessionRuntimeContext?: RequesterSessionRuntimeContext;
     projectSetupOperation?: SpawnSessionOptions['projectSetupOperation'];
@@ -167,6 +153,7 @@ export async function prepareDaemonSpawnLifecycle(input: Readonly<{
             input.connectedServiceQuotasCoordinator?.registerSpawnTarget({
                 pid: target.pid,
                 ...(target.sessionId ? { sessionId: target.sessionId } : {}),
+                ...(target.spawnTrackingKey ? { spawnTrackingKey: target.spawnTrackingKey } : {}),
                 connectedServicesBindingsRaw: target.connectedServicesBindingsRaw as Readonly<{
                     v?: unknown;
                     bindingsByServiceId?: Record<string, unknown>;
@@ -190,13 +177,13 @@ export async function prepareDaemonSpawnLifecycle(input: Readonly<{
         onSpawnResourceCleanupArmed: input.onSpawnResourceCleanupArmed,
         onTrackedSessionRegistered: input.onTrackedSessionRegistered,
         projectSetupOperation: input.projectSetupOperation,
-        spawnResourceCleanupByPid: input.spawnResourceCleanupByPid,
+        spawnResourceCleanupByKey: input.spawnResourceCleanupByKey,
         getSessionAttachCleanup: () => sessionAttachCleanup,
         setSessionAttachCleanup: (cleanup) => {
             sessionAttachCleanup = cleanup;
             input.setPendingSessionAttachCleanup(cleanup);
         },
-        sessionAttachCleanupByPid: input.sessionAttachCleanupByPid,
+        sessionAttachCleanupByKey: input.sessionAttachCleanupByKey,
         persistAcceptedSpawnMarker: async (
             trackedSession,
             options,

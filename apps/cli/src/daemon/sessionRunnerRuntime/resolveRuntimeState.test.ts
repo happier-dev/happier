@@ -7,10 +7,11 @@ import { requestPlannedRunnerRestart } from '../plannedRunnerRestart/requestPlan
 import { requestConnectedServiceSessionRestartSignal } from '../connectedServices/sessionAuthSwitch/requestConnectedServiceSessionRestartSignal';
 import { adoptTrackedSessionRunnerIdentity } from '../sessions/sessionReportCorrelation';
 import { resolveSessionRunnerRuntimeStatusV2 } from './resolveRuntimeStatusV2';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('resolveSessionRunnerRuntimeState', () => {
   it('projects one executable identity for a wrapped runner without borrowing launcher evidence', async () => {
-    const tracked: TrackedSession = { pid: 123, startedBy: 'daemon', happySessionId: 'wrapped',
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(123), pid: 123, startedBy: 'daemon', happySessionId: 'wrapped',
       processStartTimeMs: 100, processCommandHash: 'launcher-hash', processCommand: 'launcher' };
     adoptTrackedSessionRunnerIdentity(tracked, { pid: 456, processStartTimeMs: 200,
       processCommandHash: 'runner-hash',
@@ -26,7 +27,7 @@ describe('resolveSessionRunnerRuntimeState', () => {
   });
 
   it('does not make a refresh hold itself or another Session effect', () => {
-    const tracked: TrackedSession = { pid: 123, startedBy: 'daemon', happySessionId: 'session' };
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(123), pid: 123, startedBy: 'daemon', happySessionId: 'session' };
     const operations = [
       { method: 'session.runtime.refresh', activeForMs: 1,
         sessionEffect: { sessionId: 'session', actionId: 'session.runtime.refresh' } },
@@ -40,7 +41,7 @@ describe('resolveSessionRunnerRuntimeState', () => {
   });
 
   it('does not make a connected-account switch hold its own restart while retaining other work', () => {
-    const tracked: TrackedSession = { pid: 123, startedBy: 'daemon', happySessionId: 'session' };
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(123), pid: 123, startedBy: 'daemon', happySessionId: 'session' };
     const switchOperation = { method: 'approved-switch', activeForMs: 1,
       sessionEffect: { sessionId: 'session', actionId: 'session.connected_services_auth.set' } };
     expect(resolveTrackedSessionRunnerActivity(tracked, [switchOperation]))
@@ -58,7 +59,7 @@ describe('resolveSessionRunnerRuntimeState', () => {
     const input = {
       sessionId: 'sess-1',
       tracked: {
-        happySessionId: 'sess-1',
+        trackingKey: legacyPidSessionTrackingKey(123), happySessionId: 'sess-1',
         pid: 123,
         startedBy: 'daemon',
         processCommand: 'node /work/apps/cli/src/index.ts claude --happy-starting-mode remote --started-by daemon',
@@ -88,7 +89,7 @@ describe('resolveSessionRunnerRuntimeState', () => {
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
     const requestRestart: Parameters<typeof restartSessionRunnerOnCurrentRuntime>[0]['requestRestart'] = async request =>
       await requestPlannedRunnerRestart({ ...request, deferral: { kind: 'none' },
-        restartRequestedPids: new Set(), pidToTrackedSession: new Map([[input.tracked.pid, input.tracked]]),
+        restartRequestedSessions: new Set(), trackedSessionsByKey: new Map([[input.tracked.trackingKey, input.tracked]]),
         isProcessSafeToSignal: async () => true,
         requestSignal: signal => requestConnectedServiceSessionRestartSignal({ pid: input.tracked.pid, delayMs: 0,
           shouldSignal: signal.shouldSignal, onSignalFailure: signal.onSignalFailure }) });

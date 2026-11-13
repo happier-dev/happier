@@ -425,7 +425,7 @@ it('admits an OAuth server from the Session requester catalog and supplies reque
     hint: { sessionId: h.sessionId, requestId: 'wake-input', requestedAt: 12, pendingVersion: 1, source: 'live' },
     resolveRequesterSessionRuntimeContext: h.resolveRequesterRuntime,
     releaseRequesterSessionRuntimeContext: context => releaseUnretainedRequesterSessionRuntimeContext(context,
-      [...h.pidToTrackedSession.values()].map(tracked => tracked.requesterSessionRuntimeContext)),
+      [...h.trackedSessionsByKey.values()].map(tracked => tracked.requesterSessionRuntimeContext)),
     resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({
       serverUrl: 'https://session-home.test', resolveCurrentMachineId: () => 'machine',
     }),

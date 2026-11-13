@@ -13,7 +13,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { mkdtemp, rm, unlink, writeFile } from 'node:fs/promises';
 import { createOnChildExited } from './onChildExited';
-import { promoteSessionMarkerPid, readSessionMarkerForPid, writeSessionMarker } from '../sessionRegistry';
+import { promoteSessionMarkerPid, readSessionMarker, writeSessionMarker } from '../sessionRegistry';
 import { spawnInlineNodeParentWithChild, spawnInlineNodeTestProcess } from '@/testkit/process/spawn';
 import { once } from 'node:events';
 
@@ -34,6 +34,7 @@ import { resolveExistingSessionSpawnPreGate } from '../spawn/resolveExistingSess
 import { resolveSessionRunnerRuntimeState } from '../sessionRunnerRuntime/resolveRuntimeState';
 import { buildSessionRunnerRuntimeRefreshRequestV1 } from '@happier-dev/protocol/sessions/control/sessionRunnerRestartV1';
 import { restartSessionRunnerOnCurrentRuntime } from '../plannedRunnerRestart/restartSessionRunnerOnCurrentRuntime';
+import { legacyPidSessionTrackingKey, trackedSessionsForProcess, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 function createMetadata(pid: number, startedBy: 'daemon' | 'terminal', rootPath = '/tmp'): Metadata {
   return {
@@ -64,30 +65,30 @@ describe('createOnHappySessionWebhook', () => {
         command: pid === wrapperPid ? '/runtime/scope-exit' : '/runtime/versions/1.2.3/bin/happier claude --happy-starting-mode remote --started-by daemon',
       });
       const tracked: TrackedSession = {
-        pid: wrapperPid, startedBy: 'daemon', happySessionId: `PID-${wrapperPid}`,
+        trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid, startedBy: 'daemon', happySessionId: `PID-${wrapperPid}`,
         agentRuntimeDaemonServiceAuthorityFilePath: path.join(dir, 'authority.json'),
         acceptedSpawnMarkerGate: Promise.resolve(true),
         spawnOptions: { directory: dir, backendTarget: { kind: 'backend', backendId: 'claude' }, spawnNonce: 'wrapper-launch', resume: 'retained-thread' },
       };
       await writeSessionMarker({
-        pid: wrapperPid, happySessionId: `PID-${wrapperPid}`, startedBy: 'daemon', cwd: dir,
+        trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid, happySessionId: `PID-${wrapperPid}`, startedBy: 'daemon', cwd: dir,
         processStartTimeMs: 12_345,
         respawn: { version: 1, directory: dir, backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, spawnNonce: 'wrapper-launch' },
       });
       if (generation === 'reused') {
         await writeSessionMarker({
-          pid: runnerPid, happySessionId: sessionId, startedBy: 'daemon', cwd: dir, processStartTimeMs: 23_455,
+          trackingKey: tracked.trackingKey, pid: runnerPid, happySessionId: sessionId, startedBy: 'daemon', cwd: dir, processStartTimeMs: 23_455,
           respawn: { version: 1, directory: dir, backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, spawnNonce: 'wrapper-launch' },
         });
       }
-      const sessions = new Map([[wrapperPid, tracked]]);
+      const sessions = new Map([[tracked.trackingKey, tracked]]);
       const awaiter = vi.fn();
       const onTrackedSessionReady = vi.fn(async () => {
-        expect(await readSessionMarkerForPid(runnerPid)).toMatchObject({
+        expect(await readSessionMarker(tracked.trackingKey)).toMatchObject({
           pid: runnerPid, happySessionId: sessionId, processStartTimeMs: 23_456,
           agentRuntimeDaemonServiceAuthorityFilePath: tracked.agentRuntimeDaemonServiceAuthorityFilePath,
         });
-        expect(sessions.get(wrapperPid)).toBe(tracked);
+        expect(sessions.get(legacyPidSessionTrackingKey(wrapperPid))).toBe(tracked);
         expect(tracked.pid).toBe(wrapperPid);
         expect(tracked.processStartTimeMs).toBe(12_345);
         expect(tracked.runnerProcessIdentity).toMatchObject({ pid: runnerPid, processStartTimeMs: 23_456 });
@@ -111,24 +112,26 @@ describe('createOnHappySessionWebhook', () => {
         });
       });
       const report = createOnHappySessionWebhook({
-        pidToTrackedSession: sessions, pidToAwaiter: new Map([[wrapperPid, awaiter]]),
+        trackedSessionsByKey: sessions, spawnAwaiterByKey: new Map([[legacyPidSessionTrackingKey(wrapperPid), awaiter]]),
         getParentPidFn: () => wrapperPid,
         readProcessIdentityByPidFn: readIdentity,
         // The OS identity read is the boundary; the marker promotion and persistence remain real.
-        promoteSessionMarkerFn: (fromPid, toPid) => promoteSessionMarkerPid(fromPid, toPid, { readProcessIdentityByPidFn: readIdentity }),
+        promoteSessionMarkerFn: (input) => promoteSessionMarkerPid(input, { readProcessIdentityByPidFn: readIdentity }),
         readCredentialsFn: async () => null,
         onTrackedSessionReady,
       });
       const reporting = report(sessionId, createMetadata(runnerPid, 'daemon', dir));
       if (generation === 'reused') {
-        await expect(reporting).rejects.toThrow('Canonical Session runner marker identity changed');
+        // One marker per Session: a stale runner generation already recorded on the
+        // Session's own marker fails canonical adoption before readiness.
+        await expect(reporting).rejects.toThrow('session_marker_canonical_adoption_ownership_mismatch');
         expect(onTrackedSessionReady).not.toHaveBeenCalled();
       } else {
         await reporting;
         expect(onTrackedSessionReady).toHaveBeenCalledOnce();
       }
       expect(awaiter).toHaveBeenCalledOnce();
-      expect((await readSessionMarkerForPid(wrapperPid))?.happySessionId).toBe(sessionId);
+      expect((await readSessionMarker(legacyPidSessionTrackingKey(wrapperPid)))?.happySessionId).toBe(sessionId);
     } finally {
       Object.defineProperty(configuration, 'happyHomeDir', originalHome);
       await rm(dir, { recursive: true, force: true });
@@ -153,15 +156,15 @@ describe('createOnHappySessionWebhook', () => {
           materializedEntryPath: path.join(dir, 'home', 'claude-config', 'projects') }],
       };
       const tracked: TrackedSession = {
-        pid: wrapperPid, startedBy: 'daemon', happySessionId: sessionId,
+        trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid, startedBy: 'daemon', happySessionId: sessionId,
         agentRuntimeDaemonServiceAuthorityFilePath: path.join(dir, 'authority.json'),
         materializedStateObservationBinding: binding,
         spawnOptions: { directory: dir, backendTarget: { kind: 'backend', backendId: 'claude' },
           spawnNonce: 'existing-launch', existingSessionId: sessionId },
       };
-      const sessions = new Map([[wrapperPid, tracked]]);
+      const sessions = new Map([[tracked.trackingKey, tracked]]);
       const report = createOnHappySessionWebhook({
-        pidToTrackedSession: sessions, pidToAwaiter: new Map([[wrapperPid, vi.fn()]]),
+        trackedSessionsByKey: sessions, spawnAwaiterByKey: new Map([[legacyPidSessionTrackingKey(wrapperPid), vi.fn()]]),
         getParentPidFn: () => wrapperPid,
         // The OS identity read is the boundary; marker persistence stays real.
         readProcessIdentityByPidFn: async (pid) => ({ pid, processStartTimeMs: pid === wrapperPid ? 1_000 : 2_000,
@@ -170,7 +173,7 @@ describe('createOnHappySessionWebhook', () => {
       });
       await report(sessionId, createMetadata(runnerPid, 'daemon', dir));
       await tracked.reportMarkerCustody?.pending;
-      expect(await readSessionMarkerForPid(runnerPid)).toMatchObject({
+      expect(await readSessionMarker(tracked.trackingKey)).toMatchObject({
         pid: runnerPid, happySessionId: sessionId, materializedStateObservationBinding: binding,
       });
     } finally {
@@ -183,9 +186,9 @@ describe('createOnHappySessionWebhook', () => {
     const wrapperPid = 649125;
     const firstRunnerPid = 649126;
     const latestRunnerPid = 649127;
-    const tracked: TrackedSession = { pid: wrapperPid, startedBy: 'daemon', happySessionId: `PID-${wrapperPid}` };
-    const sessions = new Map([[wrapperPid, tracked]]);
-    const awaiters = new Map<number, (session: TrackedSession) => void>([[wrapperPid, () => {}]]);
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid, startedBy: 'daemon', happySessionId: `PID-${wrapperPid}` };
+    const sessions = new Map([[tracked.trackingKey, tracked]]);
+    const awaiters = new Map<SessionTrackingKey, (session: TrackedSession) => void>([[legacyPidSessionTrackingKey(wrapperPid), () => {}]]);
     let releaseFirst!: () => void;
     let releaseLatest!: () => void;
     const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
@@ -193,7 +196,7 @@ describe('createOnHappySessionWebhook', () => {
     let firstRead = false;
     let latestRead = false;
     const report = createOnHappySessionWebhook({
-      pidToTrackedSession: sessions, pidToAwaiter: awaiters, getParentPidFn: () => wrapperPid,
+      trackedSessionsByKey: sessions, spawnAwaiterByKey: awaiters, getParentPidFn: () => wrapperPid,
       // Different reports enter the real owner before their queued OS reads complete.
       readProcessIdentityByPidFn: async (pid) => {
         if (pid === firstRunnerPid) { firstRead = true; await firstGate; }
@@ -236,17 +239,17 @@ describe('createOnHappySessionWebhook', () => {
       throw new Error('Test requires current runner generation evidence');
     }
     const tracked: TrackedSession = {
-      pid: wrapperPid, startedBy: 'daemon', happySessionId: `PID-${wrapperPid}`,
+      trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid, startedBy: 'daemon', happySessionId: `PID-${wrapperPid}`,
       processStartTimeMs: 1000, spawnOptions: { directory: '/tmp', spawnNonce: 'pending-wrapper-launch' },
       agentRuntimeDaemonServiceAuthorityFilePath: '/tmp/fixture-session-authority',
     };
-    const sessions = new Map([[wrapperPid, tracked]]);
-    const awaiters = new Map<number, (session: TrackedSession) => void>();
-    const resolvers = new Map<number, (result: SpawnSessionResult) => void>();
-    const timeouts = new Map<number, NodeJS.Timeout>();
+    const sessions = new Map([[tracked.trackingKey, tracked]]);
+    const awaiters = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
+    const resolvers = new Map<SessionTrackingKey, (result: SpawnSessionResult) => void>();
+    const timeouts = new Map<SessionTrackingKey, NodeJS.Timeout>();
     const completion = waitForSessionWebhook({
-      pid: wrapperPid, pidToTrackedSession: sessions, pidToAwaiter: awaiters,
-      pidToSpawnResultResolver: resolvers, pidToSpawnWebhookTimeout: timeouts,
+      trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid, trackedSessionsByKey: sessions, spawnAwaiterByKey: awaiters,
+      spawnResultResolverByKey: resolvers, spawnWebhookTimeoutByKey: timeouts,
       timeoutErrorMessage: 'Fixture webhook timeout',
     });
     armSessionWebhookStartupCustody(tracked, completion, Promise.resolve());
@@ -261,12 +264,12 @@ describe('createOnHappySessionWebhook', () => {
       await identityGate;
       return runnerIdentity;
     };
-    await writeSessionMarker({ pid: wrapperPid, happySessionId: `PID-${wrapperPid}`, startedBy: 'daemon',
+    await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid, happySessionId: `PID-${wrapperPid}`, startedBy: 'daemon',
       processStartTimeMs: 1000, respawn: { version: 1, directory: '/tmp', spawnNonce: 'pending-wrapper-launch' } });
-    const promoteMarker = (fromPid: number, toPid: number) => promoteSessionMarkerPid(fromPid, toPid,
+    const promoteMarker = (input: Parameters<typeof promoteSessionMarkerPid>[0]) => promoteSessionMarkerPid(input,
       { readProcessIdentityByPidFn: readIdentity });
     const report = createOnHappySessionWebhook({
-      pidToTrackedSession: sessions, pidToAwaiter: awaiters,
+      trackedSessionsByKey: sessions, spawnAwaiterByKey: awaiters,
       getParentPidFn: () => wrapperPid,
       // Hold the OS read after the real report owner records its runner PID.
       readProcessIdentityByPidFn: readIdentity,
@@ -276,7 +279,7 @@ describe('createOnHappySessionWebhook', () => {
     const reporting = report(sessionId, createMetadata(runnerPid, 'daemon'), async () => await readinessGate);
     const readState = async (pid: number) => pid === wrapperPid ? 'dead' as const : 'servable' as const;
     const exit = createOnChildExited({
-      pidToTrackedSession: sessions, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey: sessions, spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       processPresenceDependencies: { readProcessRunState: readState, readProcessIdentityByPid },
       promoteSessionMarkerFn: promoteMarker,
@@ -286,21 +289,21 @@ describe('createOnHappySessionWebhook', () => {
       expect(tracked.sessionRunnerPid).toBe(runnerPid);
       expect(tracked.runnerProcessIdentity).toBeUndefined();
       const resumed = await resolveExistingSessionSpawnPreGate({
-        existingSessionId: sessionId, pidToTrackedSession: sessions,
+        existingSessionId: sessionId, trackedSessionsByKey: sessions,
         probeSessionRunnerPresence: async (id) => await probeSessionRunnerPresence({
           sessionId: id, trackedSessions: sessions.values(), readProcessRunState: readState,
           readProcessIdentityByPid, readSessionRunnerLockStatus: async () => ({ ok: false, reason: 'not_found' }),
         }),
         pendingSessionStartup: {
-          pidToAwaiter: awaiters, machineId: 'machine-test', happyHomeDir: configuration.happyHomeDir,
+          spawnAwaiterByKey: awaiters, machineId: 'machine-test', happyHomeDir: configuration.happyHomeDir,
           readSessionMetadata: async () => null,
         },
         waitForExitTimeoutMs: 0, waitForExitPollIntervalMs: 1, logDebug: () => {}, logWarn: () => {},
       });
       expect(resumed.shortCircuitResult).toMatchObject({ type: 'error', errorCode: 'UNEXPECTED' });
       await exit(wrapperPid, { reason: 'process-missing', code: null, signal: null });
-      expect(sessions.get(wrapperPid)).toBe(tracked);
-      expect(sessions.has(runnerPid)).toBe(false);
+      expect(sessions.get(tracked.trackingKey)).toBe(tracked);
+      expect(tracked.pid).toBe(wrapperPid);
       expect(completion.isPending()).toBe(true);
       releaseIdentity();
       await vi.waitFor(() => expect(tracked.runnerProcessIdentity?.pid).toBe(runnerPid));
@@ -308,8 +311,9 @@ describe('createOnHappySessionWebhook', () => {
       await reporting;
       await expect(completion).resolves.toMatchObject({ type: 'success', sessionId });
       await exit(wrapperPid, { reason: 'process-missing', code: null, signal: null });
-      expect(sessions.get(runnerPid)).toBe(tracked);
-      expect(sessions.has(wrapperPid)).toBe(false);
+      expect(sessions.get(tracked.trackingKey)).toBe(tracked);
+      expect(tracked.pid).toBe(runnerPid);
+      expect(trackedSessionsForProcess(sessions, wrapperPid)).toEqual([]);
     } finally {
       releaseIdentity(); releaseReadiness();
       completion.settleFailure({ type: 'error', errorCode: 'UNEXPECTED', errorMessage: 'Fixture cleanup' });
@@ -326,25 +330,25 @@ describe('createOnHappySessionWebhook', () => {
     try {
       const pid = 649123;
       const tracked: TrackedSession = {
-        pid, startedBy: 'daemon', happySessionId: 'PID-' + pid,
+        trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: 'PID-' + pid,
         agentRuntimeDaemonServiceAuthorityFilePath: path.join(dir, 'authority.json'),
         acceptedSpawnMarkerGate: Promise.resolve(true),
         spawnOptions: { directory: dir, backendTarget: { kind: 'backend', backendId: 'claude' }, spawnNonce: 'current-launch' },
       };
       await writeSessionMarker({
-        pid, happySessionId: 'PID-' + pid, startedBy: 'daemon', cwd: dir, processStartTimeMs: 123456,
+        trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: 'PID-' + pid, startedBy: 'daemon', cwd: dir, processStartTimeMs: 123456,
         respawn: { version: 1, directory: dir, backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, spawnNonce: 'different-launch' },
       });
       bindTrackedSessionIdentity(tracked, 'session-before-webhook');
       const onTrackedSessionReady = vi.fn();
       const report = createOnHappySessionWebhook({
-        pidToTrackedSession: new Map([[pid, tracked]]), pidToAwaiter: new Map([[pid, () => {}]]),
+        trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]), spawnAwaiterByKey: new Map([[legacyPidSessionTrackingKey(pid), () => {}]]),
         readProcessIdentityByPidFn: async () => ({ pid, processStartTimeMs: 123456, command: '/runtime/versions/1.2.3/bin/happier claude' }),
         readCredentialsFn: async () => null, onTrackedSessionReady,
       });
       await expect(report('session-before-webhook', createMetadata(pid, 'daemon', dir)))
         .rejects.toThrow('session_marker_canonical_adoption_ownership_mismatch');
-      expect((await readSessionMarkerForPid(pid))?.happySessionId).toBe('PID-' + pid);
+      expect((await readSessionMarker(legacyPidSessionTrackingKey(pid)))?.happySessionId).toBe('PID-' + pid);
       expect(onTrackedSessionReady).not.toHaveBeenCalled();
     } finally {
       Object.defineProperty(configuration, 'happyHomeDir', originalHome);
@@ -355,11 +359,11 @@ describe('createOnHappySessionWebhook', () => {
   it('registers accepted canonical Sessions only after startup readiness, preserving their nested directory', async () => {
     const accepted: string[] = [];
     const metadata = createMetadata(process.pid, 'daemon', '/repo/packages/app');
-    const tracked: TrackedSession = { pid: process.pid, startedBy: 'daemon', happySessionId: `PID-${process.pid}` };
-    const sessions = new Map([[process.pid, tracked]]);
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, startedBy: 'daemon', happySessionId: `PID-${process.pid}` };
+    const sessions = new Map([[tracked.trackingKey, tracked]]);
     const report = createOnHappySessionWebhook({
-      pidToTrackedSession: sessions,
-      pidToAwaiter: new Map([[process.pid, () => {}]]),
+      trackedSessionsByKey: sessions,
+      spawnAwaiterByKey: new Map([[legacyPidSessionTrackingKey(process.pid), () => {}]]),
       readProcessIdentityByPidFn: async () => null,
       writeSessionMarkerFn: async () => {},
       readCredentialsFn: async () => null,
@@ -373,7 +377,7 @@ describe('createOnHappySessionWebhook', () => {
     expect(accepted).toEqual([]);
 
     const foreground = createOnHappySessionWebhook({
-      pidToTrackedSession: new Map(), pidToAwaiter: new Map(),
+      trackedSessionsByKey: new Map(), spawnAwaiterByKey: new Map(),
       readProcessIdentityByPidFn: async () => null,
       writeSessionMarkerFn: async () => {},
       registerAcceptedWorkspace: async (acceptedMetadata) => { accepted.push(acceptedMetadata.path); },
@@ -384,10 +388,10 @@ describe('createOnHappySessionWebhook', () => {
     await foreground('accepted-foreground', { ...metadata, startedBy: 'terminal' });
     await vi.waitFor(() => expect(accepted).toEqual(['/repo/packages/app']));
 
-    const daemonTracked: TrackedSession = { pid: process.pid, startedBy: 'daemon', happySessionId: `PID-${process.pid}` };
+    const daemonTracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, startedBy: 'daemon', happySessionId: `PID-${process.pid}` };
     const daemon = createOnHappySessionWebhook({
-      pidToTrackedSession: new Map([[process.pid, daemonTracked]]),
-      pidToAwaiter: new Map([[process.pid, () => {}]]),
+      trackedSessionsByKey: new Map([[daemonTracked.trackingKey, daemonTracked]]),
+      spawnAwaiterByKey: new Map([[legacyPidSessionTrackingKey(process.pid), () => {}]]),
       readProcessIdentityByPidFn: async () => null,
       writeSessionMarkerFn: async () => {},
       readCredentialsFn: async () => null,
@@ -402,34 +406,36 @@ describe('createOnHappySessionWebhook', () => {
     Object.defineProperty(configuration, 'happyHomeDir', { value: home });
     const { parent, childPid } = await spawnInlineNodeParentWithChild();
     const pid = parent.pid!;
-    const tracked: TrackedSession = { pid, startedBy: 'daemon', happySessionId: `PID-${pid}`, sessionRunnerPid: childPid, childProcess: parent };
-    const sessions = new Map([[pid, tracked]]);
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: `PID-${pid}`, sessionRunnerPid: childPid, childProcess: parent };
+    const sessions = new Map([[tracked.trackingKey, tracked]]);
     let releaseCensus!: () => void;
     const census = new Promise<void>((resolve) => { releaseCensus = resolve; });
     let censusEntered = false;
-    const report = createOnHappySessionWebhook({ pidToTrackedSession: sessions, pidToAwaiter: new Map(),
+    const report = createOnHappySessionWebhook({ trackedSessionsByKey: sessions, spawnAwaiterByKey: new Map(),
       readProcessIdentityByPidFn: async (reportedPid) => {
         if (reportedPid === pid) { censusEntered = true; await census; }
         return readProcessIdentityByPid(reportedPid);
       },
       findHappyProcessByPidFn: async () => null });
-    const exit = createOnChildExited({ pidToTrackedSession: sessions, spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null });
+    const exit = createOnChildExited({ trackedSessionsByKey: sessions, spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null });
     try {
-      await writeSessionMarker({ pid, happySessionId: `PID-${pid}`, startedBy: 'daemon' });
+      await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: `PID-${pid}`, startedBy: 'daemon' });
       await report(`PID-${pid}`, createMetadata(pid, 'daemon'));
       await vi.waitFor(() => expect(censusEntered).toBe(true));
       const exited = once(parent, 'exit');
       parent.kill('SIGTERM');
       await exited;
       await exit(pid, { reason: 'process-exited', code: 0, signal: null });
-      expect(sessions.get(childPid)).toBe(tracked);
-      const promotedMarker = await readSessionMarkerForPid(childPid);
-      expect(promotedMarker).not.toBeNull();
+      // The Session keeps its key; promotion moves only its hosting pid.
+      expect(sessions.get(tracked.trackingKey)).toBe(tracked);
+      expect(tracked.pid).toBe(childPid);
+      const promotedMarker = await readSessionMarker(tracked.trackingKey);
+      expect(promotedMarker?.pid).toBe(childPid);
       releaseCensus();
       await tracked.reportMarkerCustody?.pending;
-      expect(await readSessionMarkerForPid(pid)).toBeNull();
-      expect(await readSessionMarkerForPid(childPid)).toEqual(promotedMarker);
+      // The late wrapper census cannot revive the wrapper pid on the Session's one marker.
+      expect(await readSessionMarker(tracked.trackingKey)).toEqual(promotedMarker);
     } finally {
       releaseCensus();
       await tracked.reportMarkerCustody?.pending;
@@ -443,42 +449,42 @@ describe('createOnHappySessionWebhook', () => {
     const child = spawnInlineNodeTestProcess('');
     const pid = child.pid!;
     await once(child, 'exit');
-    const sessions = new Map<number, TrackedSession>();
-    const report = createOnHappySessionWebhook({ pidToTrackedSession: sessions, pidToAwaiter: new Map(),
+    const sessions = new Map<SessionTrackingKey, TrackedSession>();
+    const report = createOnHappySessionWebhook({ trackedSessionsByKey: sessions, spawnAwaiterByKey: new Map(),
       getParentPidFn: () => null, readProcessIdentityByPidFn: async () => null,
       findHappyProcessByPidFn: async () => null, writeSessionMarkerFn: async () => {} });
     await report(`PID-${pid}`, createMetadata(pid, 'daemon'));
-    expect(sessions.has(pid)).toBe(false);
+    expect(trackedSessionsForProcess(sessions, pid)).toHaveLength(0);
     await report(`PID-${process.pid}`, createMetadata(process.pid, 'daemon'));
-    expect(sessions.has(process.pid)).toBe(true);
+    expect(trackedSessionsForProcess(sessions, process.pid)).toHaveLength(1);
     await report(`PID-${pid}`, createMetadata(pid, 'terminal'));
-    expect(sessions.has(pid)).toBe(true);
+    expect(trackedSessionsForProcess(sessions, pid)).toHaveLength(1);
   });
   it.skipIf(process.platform === 'win32')('re-correlates accepted custody installed during the real process-state probe', async () => {
     const child = spawnInlineNodeTestProcess('');
     const pid = child.pid!;
     await once(child, 'exit');
-    const sessions = new Map<number, TrackedSession>();
-    const awaiters = new Map<number, (session: TrackedSession) => void>();
-    const resolvers = new Map<number, (result: SpawnSessionResult) => void>();
-    const timeouts = new Map<number, NodeJS.Timeout>();
-    const tracked: TrackedSession = { pid, startedBy: 'daemon', happySessionId: `PID-${pid}` };
+    const sessions = new Map<SessionTrackingKey, TrackedSession>();
+    const awaiters = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
+    const resolvers = new Map<SessionTrackingKey, (result: SpawnSessionResult) => void>();
+    const timeouts = new Map<SessionTrackingKey, NodeJS.Timeout>();
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: `PID-${pid}` };
     let completion: ReturnType<typeof waitForSessionWebhook> | undefined;
     const kill = process.kill;
     const probe = vi.spyOn(process, 'kill').mockImplementation((reportedPid, signal) => {
       if (reportedPid === pid && signal === 0 && !completion) {
-        sessions.set(pid, tracked);
-        completion = waitForSessionWebhook({ pid, pidToTrackedSession: sessions, pidToAwaiter: awaiters,
-          pidToSpawnResultResolver: resolvers, pidToSpawnWebhookTimeout: timeouts, timeoutErrorMessage: 'Fixture timeout' });
+        sessions.set(tracked.trackingKey, tracked);
+        completion = waitForSessionWebhook({ trackingKey: legacyPidSessionTrackingKey(pid), pid, trackedSessionsByKey: sessions, spawnAwaiterByKey: awaiters,
+          spawnResultResolverByKey: resolvers, spawnWebhookTimeoutByKey: timeouts, timeoutErrorMessage: 'Fixture timeout' });
       }
       return kill(reportedPid, signal);
     });
-    const report = createOnHappySessionWebhook({ pidToTrackedSession: sessions, pidToAwaiter: awaiters,
+    const report = createOnHappySessionWebhook({ trackedSessionsByKey: sessions, spawnAwaiterByKey: awaiters,
       readProcessIdentityByPidFn: async () => null, findHappyProcessByPidFn: async () => null,
       readCredentialsFn: async () => null, writeSessionMarkerFn: async () => {} });
     try {
       await report('session-admitted-during-probe', createMetadata(pid, 'daemon'));
-      expect(sessions.get(pid)).toBe(tracked);
+      expect(sessions.get(legacyPidSessionTrackingKey(pid))).toBe(tracked);
       expect(completion).toBeDefined();
       await expect(completion).resolves.toMatchObject({ type: 'success', sessionId: 'session-admitted-during-probe' });
     } finally {
@@ -493,23 +499,23 @@ describe('createOnHappySessionWebhook', () => {
     Object.defineProperty(configuration, 'happyHomeDir', { value: home });
     const pid = 4812;
     const sessionId = `PID-${pid}`;
-    const tracked: TrackedSession = { pid, startedBy: origin === 'daemon' ? 'daemon' : 'happy directly - likely by user from terminal', happySessionId: sessionId };
-    const sessions = new Map([[pid, tracked]]);
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: origin === 'daemon' ? 'daemon' : 'happy directly - likely by user from terminal', happySessionId: sessionId };
+    const sessions = new Map([[tracked.trackingKey, tracked]]);
     let releaseCensus!: () => void;
     const census = new Promise<void>((resolve) => { releaseCensus = resolve; });
     let censusEntered = false;
     let written = false;
     const report = createOnHappySessionWebhook({
-      pidToTrackedSession: sessions, pidToAwaiter: new Map(),
+      trackedSessionsByKey: sessions, spawnAwaiterByKey: new Map(),
       readProcessIdentityByPidFn: async () => { censusEntered = true; await census; return null; },
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: async (...args) => { await writeSessionMarker(...args); written = true; },
     });
-    const exit = createOnChildExited({ pidToTrackedSession: sessions,
-      spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null });
+    const exit = createOnChildExited({ trackedSessionsByKey: sessions,
+      spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null });
     let exiting: Promise<void> | undefined;
     try {
-      await writeSessionMarker({ pid, happySessionId: sessionId, startedBy: origin });
+      await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: sessionId, startedBy: origin });
       await report(sessionId, createMetadata(pid, origin));
       await vi.waitFor(() => expect(censusEntered).toBe(true));
       let retired = false;
@@ -519,8 +525,8 @@ describe('createOnHappySessionWebhook', () => {
       releaseCensus();
       await exiting;
       await vi.waitFor(() => expect(written).toBe(true));
-      expect(sessions.has(pid)).toBe(false);
-      expect(await readSessionMarkerForPid(pid)).toBeNull();
+      expect(sessions.has(legacyPidSessionTrackingKey(pid))).toBe(false);
+      expect(await readSessionMarker(legacyPidSessionTrackingKey(pid))).toBeNull();
     } finally {
       releaseCensus();
       await exiting;
@@ -535,29 +541,29 @@ describe('createOnHappySessionWebhook', () => {
     Object.defineProperty(configuration, 'happyHomeDir', { value: home });
     const pid = 4813;
     const sessionId = `PID-${pid}`;
-    const tracked: TrackedSession = { pid, startedBy: origin === 'daemon' ? 'daemon' : 'happy directly - likely by user from terminal', happySessionId: sessionId };
-    const sessions = new Map([[pid, tracked]]);
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: origin === 'daemon' ? 'daemon' : 'happy directly - likely by user from terminal', happySessionId: sessionId };
+    const sessions = new Map([[tracked.trackingKey, tracked]]);
     const resourcePath = path.join(home, 'owned-resource');
     let releaseCleanup!: () => void;
     const cleanup = new Promise<void>((resolve) => { releaseCleanup = resolve; });
     let cleanupEntered = false;
-    const exit = createOnChildExited({ pidToTrackedSession: sessions,
-      spawnResourceCleanupByPid: new Map([[pid, async () => { cleanupEntered = true; await cleanup; await unlink(resourcePath); }]]),
-      sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null });
-    const report = createOnHappySessionWebhook({ pidToTrackedSession: sessions, pidToAwaiter: new Map(),
+    const exit = createOnChildExited({ trackedSessionsByKey: sessions,
+      spawnResourceCleanupByKey: new Map([[tracked.trackingKey, async () => { cleanupEntered = true; await cleanup; await unlink(resourcePath); }]]),
+      sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null });
+    const report = createOnHappySessionWebhook({ trackedSessionsByKey: sessions, spawnAwaiterByKey: new Map(),
       readProcessIdentityByPidFn: async () => null, findHappyProcessByPidFn: async () => null,
       readCredentialsFn: async () => null });
     let exiting: Promise<void> | undefined;
     try {
       await writeFile(resourcePath, 'fixture');
-      await writeSessionMarker({ pid, happySessionId: sessionId, startedBy: origin });
+      await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: sessionId, startedBy: origin });
       exiting = exit(pid, { reason: 'process-exited', code: 0, signal: null });
       await vi.waitFor(() => expect(cleanupEntered).toBe(true));
       await expect(report('session-late-canonical-report', createMetadata(pid, origin))).rejects.toThrow('retiring');
       releaseCleanup();
       await exiting;
-      expect(await readSessionMarkerForPid(pid)).toBeNull();
-      expect(sessions.has(pid)).toBe(false);
+      expect(await readSessionMarker(legacyPidSessionTrackingKey(pid))).toBeNull();
+      expect(sessions.has(legacyPidSessionTrackingKey(pid))).toBe(false);
     } finally {
       releaseCleanup();
       await exiting;
@@ -568,25 +574,25 @@ describe('createOnHappySessionWebhook', () => {
   it('settles only the exact pending daemon spawn awaiter with a typed organization refusal', async () => {
     const pid = 808;
     const tracked: TrackedSession = {
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       startedBy: 'daemon',
       happySessionId: `PID-${pid}`,
       spawnOptions: { directory: '/tmp', spawnNonce: 'creation-attempt-808' },
     };
-    const pidToTrackedSession = new Map<number, TrackedSession>([[pid, tracked]]);
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]);
+    const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
     const resultPromise = waitForSessionWebhook({
-      pid,
-      pidToAwaiter,
-      pidToTrackedSession,
-      pidToSpawnResultResolver: new Map(),
-      pidToSpawnWebhookTimeout: new Map(),
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
+      spawnAwaiterByKey,
+      trackedSessionsByKey,
+      spawnResultResolverByKey: new Map(),
+      spawnWebhookTimeoutByKey: new Map(),
       timeoutMs: 10_000,
       timeoutErrorMessage: 'not expected',
     });
     const onStartupFailure = createOnDaemonSessionStartupFailure({
-      pidToTrackedSession,
-      pidToAwaiter,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
     });
 
     expect(onStartupFailure({
@@ -596,7 +602,7 @@ describe('createOnHappySessionWebhook', () => {
         code: 'organization_invalid',
       },
     })).toBe(false);
-    expect(pidToAwaiter.has(pid)).toBe(true);
+    expect(spawnAwaiterByKey.has(legacyPidSessionTrackingKey(pid))).toBe(true);
 
     expect(onStartupFailure({
       spawnNonce: 'creation-attempt-808',
@@ -614,7 +620,7 @@ describe('createOnHappySessionWebhook', () => {
         code: 'organization_invalid',
       },
     });
-    expect(pidToAwaiter.has(pid)).toBe(false);
+    expect(spawnAwaiterByKey.has(legacyPidSessionTrackingKey(pid))).toBe(false);
     // A duplicated or late terminal callback cannot settle the same waiter twice.
     expect(onStartupFailure({
       spawnNonce: 'creation-attempt-808',
@@ -628,25 +634,25 @@ describe('createOnHappySessionWebhook', () => {
   it('settles the exact pending daemon spawn awaiter with a typed correspondence conflict', async () => {
     const pid = 810;
     const tracked: TrackedSession = {
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       startedBy: 'daemon',
       happySessionId: `PID-${pid}`,
       spawnOptions: { directory: '/tmp', spawnNonce: 'creation-conflict-attempt-810' },
     };
-    const pidToTrackedSession = new Map<number, TrackedSession>([[pid, tracked]]);
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]);
+    const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
     const resultPromise = waitForSessionWebhook({
-      pid,
-      pidToAwaiter,
-      pidToTrackedSession,
-      pidToSpawnResultResolver: new Map(),
-      pidToSpawnWebhookTimeout: new Map(),
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
+      spawnAwaiterByKey,
+      trackedSessionsByKey,
+      spawnResultResolverByKey: new Map(),
+      spawnWebhookTimeoutByKey: new Map(),
       timeoutMs: 10_000,
       timeoutErrorMessage: 'not expected',
     });
     const onStartupFailure = createOnDaemonSessionStartupFailure({
-      pidToTrackedSession,
-      pidToAwaiter,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
     });
 
     expect(onStartupFailure({
@@ -670,7 +676,7 @@ describe('createOnHappySessionWebhook', () => {
   it('does not settle a terminal failure against a timed-out spawn attempt', () => {
     const pid = 809;
     const tracked: TrackedSession = {
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       startedBy: 'daemon',
       happySessionId: `PID-${pid}`,
       spawnOptions: { directory: '/tmp', spawnNonce: 'creation-attempt-timed-out' },
@@ -678,8 +684,8 @@ describe('createOnHappySessionWebhook', () => {
     };
     const awaiter = vi.fn();
     const onStartupFailure = createOnDaemonSessionStartupFailure({
-      pidToTrackedSession: new Map([[pid, tracked]]),
-      pidToAwaiter: new Map([[pid, awaiter]]),
+      trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+      spawnAwaiterByKey: new Map([[legacyPidSessionTrackingKey(pid), awaiter]]),
     });
 
     expect(onStartupFailure({
@@ -694,12 +700,12 @@ describe('createOnHappySessionWebhook', () => {
   });
 
   it('registers an externally started session when PID is unknown', async () => {
-    const pidToTrackedSession = new Map<number, TrackedSession>();
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>();
+    const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
 
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: async () => {},
@@ -707,7 +713,9 @@ describe('createOnHappySessionWebhook', () => {
 
     await onWebhook('PID-123', createMetadata(123, 'terminal'));
 
-    const tracked = pidToTrackedSession.get(123);
+    // A Session first learned of from its report gets a fresh key.
+    expect(trackedSessionsForProcess(trackedSessionsByKey, 123)).toHaveLength(1);
+    const tracked = trackedSessionsForProcess(trackedSessionsByKey, 123)[0];
     expect(tracked).toBeDefined();
     expect(tracked?.startedBy).toBe('happy directly - likely by user from terminal');
     expect(tracked?.happySessionId).toBe('PID-123');
@@ -727,11 +735,11 @@ describe('createOnHappySessionWebhook', () => {
       markerWriteStarted();
       await markerWriteBlocked;
     });
-    const pidToTrackedSession =
-      new Map<number, TrackedSession>();
+    const trackedSessionsByKey =
+      new Map<SessionTrackingKey, TrackedSession>();
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter: new Map(),
+      trackedSessionsByKey,
+      spawnAwaiterByKey: new Map(),
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       readProcessIdentityByPidFn: async () => ({
@@ -753,7 +761,7 @@ describe('createOnHappySessionWebhook', () => {
 
     await markerWriteObserved;
     expect(acknowledged).toBe(true);
-    const tracked = pidToTrackedSession.get(pid);
+    const tracked = trackedSessionsForProcess(trackedSessionsByKey, pid)[0];
     expect(tracked?.sessionMarkerPersistence).toBeDefined();
 
     releaseMarkerWrite();
@@ -785,7 +793,7 @@ describe('createOnHappySessionWebhook', () => {
       ...launchArgv,
     ]);
     const tracked: TrackedSession = {
-      pid: windowsTerminalHostPid,
+      trackingKey: legacyPidSessionTrackingKey(windowsTerminalHostPid), pid: windowsTerminalHostPid,
       startedBy: 'daemon',
       happySessionId: `PID-${windowsTerminalHostPid}`,
       hostedTerminal: {
@@ -804,21 +812,21 @@ describe('createOnHappySessionWebhook', () => {
         correlation: 'ab'.repeat(16),
       },
     };
-    const pidToTrackedSession =
-      new Map<number, TrackedSession>([[
-        windowsTerminalHostPid,
+    const trackedSessionsByKey =
+      new Map<SessionTrackingKey, TrackedSession>([[
+        tracked.trackingKey,
         tracked,
       ]]);
-    const pidToAwaiter =
-      new Map<number, (session: TrackedSession) => void>();
-    const pidToSpawnResultResolver =
-      new Map<number, (result: SpawnSessionResult) => void>();
-    const pidToSpawnWebhookTimeout =
-      new Map<number, NodeJS.Timeout>();
-    const spawnResourceCleanupByPid =
-      new Map([[windowsTerminalHostPid, spawnCleanup]]);
-    const sessionAttachCleanupByPid =
-      new Map([[windowsTerminalHostPid, attachCleanup]]);
+    const spawnAwaiterByKey =
+      new Map<SessionTrackingKey, (session: TrackedSession) => void>();
+    const spawnResultResolverByKey =
+      new Map<SessionTrackingKey, (result: SpawnSessionResult) => void>();
+    const spawnWebhookTimeoutByKey =
+      new Map<SessionTrackingKey, NodeJS.Timeout>();
+    const spawnResourceCleanupByKey =
+      new Map([[tracked.trackingKey, spawnCleanup]]);
+    const sessionAttachCleanupByKey =
+      new Map([[tracked.trackingKey, attachCleanup]]);
     const lifecycleTargets = new Map<number, string>([[
       windowsTerminalHostPid,
       'known-or-resumed-session',
@@ -836,11 +844,11 @@ describe('createOnHappySessionWebhook', () => {
       if (target) lifecycleTargets.set(toPid, target);
     });
     const wait = waitForSessionWebhook({
-      pid: windowsTerminalHostPid,
-      pidToTrackedSession,
-      pidToAwaiter,
-      pidToSpawnResultResolver,
-      pidToSpawnWebhookTimeout,
+      trackingKey: legacyPidSessionTrackingKey(windowsTerminalHostPid), pid: windowsTerminalHostPid,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
+      spawnResultResolverByKey,
+      spawnWebhookTimeoutByKey,
       timeoutMs: 1_000,
       timeoutErrorMessage:
         `Session webhook timeout for PID ${windowsTerminalHostPid}`,
@@ -863,10 +871,8 @@ describe('createOnHappySessionWebhook', () => {
       targetProcessCommand: processCommand,
     }));
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
-      spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       readProcessIdentityByPidFn: async () => ({
@@ -892,7 +898,6 @@ describe('createOnHappySessionWebhook', () => {
       },
       writeSessionMarkerFn: async () => {},
       promoteSessionMarkerFn,
-      removeSessionMarkerIfOwnedFn: vi.fn(async () => true),
       onTrackedSessionReady,
       onPidPromoted,
     });
@@ -924,19 +929,16 @@ describe('createOnHappySessionWebhook', () => {
       type: 'success',
       sessionId: 'session-agent-windows-terminal',
     });
-    expect(pidToTrackedSession.has(windowsTerminalHostPid)).toBe(false);
-    expect(pidToTrackedSession.get(agentPid)).toBe(tracked);
+    expect(trackedSessionsByKey.get(tracked.trackingKey)).toBe(tracked);
+    expect(trackedSessionsForProcess(trackedSessionsByKey, windowsTerminalHostPid)).toEqual([]);
     expect(tracked).toEqual(expect.objectContaining({
       pid: agentPid,
       happySessionId: 'session-agent-windows-terminal',
       startedBy: 'daemon',
     }));
-    expect(spawnResourceCleanupByPid.has(windowsTerminalHostPid))
-      .toBe(false);
-    expect(spawnResourceCleanupByPid.get(agentPid)).toBe(spawnCleanup);
-    expect(sessionAttachCleanupByPid.has(windowsTerminalHostPid))
-      .toBe(false);
-    expect(sessionAttachCleanupByPid.get(agentPid)).toBe(attachCleanup);
+    // Per-Session resources stay under the Session's key across the promotion.
+    expect(spawnResourceCleanupByKey.get(tracked.trackingKey)).toBe(spawnCleanup);
+    expect(sessionAttachCleanupByKey.get(tracked.trackingKey)).toBe(attachCleanup);
     expect(tracked.runnerProcessIdentity).toEqual({
       pid: agentPid,
       processStartTimeMs: 2_000,
@@ -969,6 +971,7 @@ describe('createOnHappySessionWebhook', () => {
       title: string,
       correlation: string,
     ): TrackedSession => ({
+      trackingKey: legacyPidSessionTrackingKey(pid),
       pid,
       startedBy: 'daemon',
       happySessionId: `PID-${pid}`,
@@ -1007,20 +1010,18 @@ describe('createOnHappySessionWebhook', () => {
       secondLaunch.executablePath,
       ...secondLaunch.argv,
     ]);
-    const pidToTrackedSession = new Map<number, TrackedSession>([
-      [firstHostPid, firstTracked],
-      [secondHostPid, secondTracked],
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([
+      [legacyPidSessionTrackingKey(firstHostPid), firstTracked],
+      [secondTracked.trackingKey, secondTracked],
     ]);
-    const pidToAwaiter =
-      new Map<number, (session: TrackedSession) => void>([
-        [firstHostPid, firstAwaiter],
-        [secondHostPid, secondAwaiter],
+    const spawnAwaiterByKey =
+      new Map<SessionTrackingKey, (session: TrackedSession) => void>([
+        [firstTracked.trackingKey, firstAwaiter],
+        [secondTracked.trackingKey, secondAwaiter],
       ]);
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
-      spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       readProcessIdentityByPidFn: async () => ({
@@ -1038,7 +1039,7 @@ describe('createOnHappySessionWebhook', () => {
         }],
       ]),
       writeSessionMarkerFn: async () => {},
-      promoteSessionMarkerFn: vi.fn(async (fromPid, toPid) => ({
+      promoteSessionMarkerFn: vi.fn(async ({ fromPid, toPid }: Parameters<typeof promoteSessionMarkerPid>[0]) => ({
         sourceMarkerOwnership: {
           happySessionId: `PID-${fromPid}`,
         },
@@ -1049,7 +1050,6 @@ describe('createOnHappySessionWebhook', () => {
         },
         targetProcessCommand: processCommand,
       })),
-      removeSessionMarkerIfOwnedFn: vi.fn(async () => true),
     });
 
     await onWebhook('session-second', {
@@ -1067,9 +1067,10 @@ describe('createOnHappySessionWebhook', () => {
 
     expect(firstAwaiter).not.toHaveBeenCalled();
     expect(secondAwaiter).toHaveBeenCalledWith(secondTracked);
-    expect(pidToTrackedSession.get(firstHostPid)).toBe(firstTracked);
-    expect(pidToTrackedSession.has(secondHostPid)).toBe(false);
-    expect(pidToTrackedSession.get(agentPid)).toBe(secondTracked);
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(firstHostPid))).toBe(firstTracked);
+    expect(trackedSessionsByKey.get(secondTracked.trackingKey)).toBe(secondTracked);
+    expect(secondTracked.pid).toBe(agentPid);
+    expect(trackedSessionsForProcess(trackedSessionsByKey, secondHostPid)).toEqual([]);
   });
 
   it('keeps an exact late Windows Terminal webhook fail-closed after the spawn awaiter is removed', async () => {
@@ -1088,7 +1089,7 @@ describe('createOnHappySessionWebhook', () => {
       ...argv,
     ]);
     const tracked: TrackedSession = {
-      pid: hostPid,
+      trackingKey: legacyPidSessionTrackingKey(hostPid), pid: hostPid,
       startedBy: 'daemon',
       happySessionId: `PID-${hostPid}`,
       acceptedSpawnMarkerGate: Promise.resolve(false),
@@ -1108,17 +1109,11 @@ describe('createOnHappySessionWebhook', () => {
         correlation,
       },
     };
-    const pidToTrackedSession =
-      new Map<number, TrackedSession>([[hostPid, tracked]]);
+    const trackedSessionsByKey =
+      new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]);
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter: new Map(),
-      spawnResourceCleanupByPid: new Map([
-        [hostPid, vi.fn()],
-      ]),
-      sessionAttachCleanupByPid: new Map([
-        [hostPid, vi.fn(async () => undefined)],
-      ]),
+      trackedSessionsByKey,
+      spawnAwaiterByKey: new Map(),
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       readProcessIdentityByPidFn: async () => ({
@@ -1151,8 +1146,9 @@ describe('createOnHappySessionWebhook', () => {
       },
     })).rejects.toThrow('Daemon spawn custody was not accepted');
 
-    expect(pidToTrackedSession.get(hostPid)).toBe(tracked);
-    expect(pidToTrackedSession.has(agentPid)).toBe(false);
+    expect(trackedSessionsByKey.get(tracked.trackingKey)).toBe(tracked);
+    expect(tracked.pid).toBe(hostPid);
+    expect(trackedSessionsForProcess(trackedSessionsByKey, agentPid)).toEqual([]);
     expect(tracked.startedBy).toBe('daemon');
     expect(tracked.runnerProcessIdentity).toEqual({
       pid: agentPid,
@@ -1184,7 +1180,7 @@ describe('createOnHappySessionWebhook', () => {
       acceptMarker(true);
     });
     const tracked: TrackedSession = {
-      pid: hostPid,
+      trackingKey: legacyPidSessionTrackingKey(hostPid), pid: hostPid,
       startedBy: 'daemon',
       happySessionId: `PID-${hostPid}`,
       acceptedSpawnMarkerGate,
@@ -1206,9 +1202,9 @@ describe('createOnHappySessionWebhook', () => {
       },
     };
     const awaiter = vi.fn();
-    const pidToTrackedSession =
-      new Map<number, TrackedSession>([[hostPid, tracked]]);
-    const pidToAwaiter = new Map([[hostPid, awaiter]]);
+    const trackedSessionsByKey =
+      new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]);
+    const spawnAwaiterByKey = new Map([[legacyPidSessionTrackingKey(hostPid), awaiter]]);
     const promotion = vi.fn(async () => ({
       sourceMarkerOwnership: null,
       targetMarkerOwnership: {
@@ -1225,12 +1221,8 @@ describe('createOnHappySessionWebhook', () => {
       command,
     };
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
-      spawnResourceCleanupByPid:
-        new Map([[hostPid, vi.fn()]]),
-      sessionAttachCleanupByPid:
-        new Map([[hostPid, vi.fn(async () => undefined)]]),
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => null,
       readProcessIdentityByPidFn: async () => process,
       readAllWindowsProcessFactsFn: async () =>
@@ -1258,10 +1250,11 @@ describe('createOnHappySessionWebhook', () => {
       processStartTimeMs: 5_500,
       processCommandHash: hashProcessCommand(command),
     });
-    expect(promotion).toHaveBeenCalledWith(
-      hostPid,
-      agentPid,
-    );
+    expect(promotion).toHaveBeenCalledWith({
+      trackingKey: tracked.trackingKey,
+      fromPid: hostPid,
+      toPid: agentPid,
+    });
     expect(awaiter).toHaveBeenCalledWith(tracked);
   });
 
@@ -1283,7 +1276,7 @@ describe('createOnHappySessionWebhook', () => {
     const persistTargetMarker = vi.fn(async () => {});
     const activate = vi.fn(async () => null);
     const tracked: TrackedSession = {
-      pid: hostPid,
+      trackingKey: legacyPidSessionTrackingKey(hostPid), pid: hostPid,
       startedBy: 'daemon',
       happySessionId: `PID-${hostPid}`,
       acceptedSpawnMarkerGate: Promise.resolve(true),
@@ -1315,13 +1308,9 @@ describe('createOnHappySessionWebhook', () => {
     let inventoryReadCount = 0;
     const awaiter = vi.fn();
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession:
-        new Map<number, TrackedSession>([[hostPid, tracked]]),
-      pidToAwaiter: new Map([[hostPid, awaiter]]),
-      spawnResourceCleanupByPid:
-        new Map([[hostPid, vi.fn()]]),
-      sessionAttachCleanupByPid:
-        new Map([[hostPid, vi.fn(async () => undefined)]]),
+      trackedSessionsByKey:
+        new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]),
+      spawnAwaiterByKey: new Map([[legacyPidSessionTrackingKey(hostPid), awaiter]]),
       getParentPidFn: () => null,
       readProcessIdentityByPidFn: async () => process,
       readAllWindowsProcessFactsFn: async () => {
@@ -1379,7 +1368,7 @@ describe('createOnHappySessionWebhook', () => {
     const ordinaryAgentPid = 7_772;
     const correlation = '77'.repeat(16);
     const pendingTerminal: TrackedSession = {
-      pid: windowsTerminalHostPid,
+      trackingKey: legacyPidSessionTrackingKey(windowsTerminalHostPid), pid: windowsTerminalHostPid,
       startedBy: 'daemon',
       happySessionId: `PID-${windowsTerminalHostPid}`,
       windowsTerminalLaunchCustody: {
@@ -1402,27 +1391,19 @@ describe('createOnHappySessionWebhook', () => {
       },
     };
     const ordinary: TrackedSession = {
-      pid: ordinaryWrapperPid,
+      trackingKey: legacyPidSessionTrackingKey(ordinaryWrapperPid), pid: ordinaryWrapperPid,
       startedBy: 'daemon',
     };
     const ordinaryAwaiter = vi.fn();
-    const pidToTrackedSession =
-      new Map<number, TrackedSession>([
-        [windowsTerminalHostPid, pendingTerminal],
-        [ordinaryWrapperPid, ordinary],
+    const trackedSessionsByKey =
+      new Map<SessionTrackingKey, TrackedSession>([
+        [legacyPidSessionTrackingKey(windowsTerminalHostPid), pendingTerminal],
+        [ordinary.trackingKey, ordinary],
       ]);
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter:
-        new Map([[ordinaryWrapperPid, ordinaryAwaiter]]),
-      spawnResourceCleanupByPid: new Map([
-        [windowsTerminalHostPid, vi.fn()],
-        [ordinaryWrapperPid, vi.fn()],
-      ]),
-      sessionAttachCleanupByPid: new Map([
-        [windowsTerminalHostPid, vi.fn(async () => undefined)],
-        [ordinaryWrapperPid, vi.fn(async () => undefined)],
-      ]),
+      trackedSessionsByKey,
+      spawnAwaiterByKey:
+        new Map([[ordinary.trackingKey, ordinaryAwaiter]]),
       getParentPidFn: (pid) =>
         pid === ordinaryAgentPid ? ordinaryWrapperPid : null,
       findHappyProcessByPidFn: async () => null,
@@ -1450,7 +1431,7 @@ describe('createOnHappySessionWebhook', () => {
     expect(ordinary.happySessionId).toBe(
       'session-ordinary-while-terminal-pending',
     );
-    expect(pidToTrackedSession.get(windowsTerminalHostPid))
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(windowsTerminalHostPid)))
       .toBe(pendingTerminal);
   });
 
@@ -1482,7 +1463,7 @@ describe('createOnHappySessionWebhook', () => {
       const awaiter = vi.fn();
       const writeSessionMarker = vi.fn(async () => {});
       const tracked: TrackedSession = {
-        pid: hostPid,
+        trackingKey: legacyPidSessionTrackingKey(hostPid), pid: hostPid,
         startedBy: 'daemon',
         happySessionId: `PID-${hostPid}`,
         activateConnectedAccountSessionBindingOnCanonicalSession:
@@ -1503,17 +1484,11 @@ describe('createOnHappySessionWebhook', () => {
           correlation,
         },
       };
-      const pidToTrackedSession =
-        new Map<number, TrackedSession>([[hostPid, tracked]]);
+      const trackedSessionsByKey =
+        new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]);
       const onWebhook = createOnHappySessionWebhook({
-        pidToTrackedSession,
-        pidToAwaiter: new Map([[hostPid, awaiter]]),
-        spawnResourceCleanupByPid: new Map([
-          [hostPid, vi.fn()],
-        ]),
-        sessionAttachCleanupByPid: new Map([
-          [hostPid, vi.fn(async () => undefined)],
-        ]),
+        trackedSessionsByKey,
+        spawnAwaiterByKey: new Map([[legacyPidSessionTrackingKey(hostPid), awaiter]]),
         getParentPidFn: () => null,
         findHappyProcessByPidFn: async () => null,
         readProcessIdentityByPidFn: async () => {
@@ -1595,28 +1570,28 @@ describe('createOnHappySessionWebhook', () => {
       expect(activate).not.toHaveBeenCalled();
       expect(awaiter).not.toHaveBeenCalled();
       expect(writeSessionMarker).not.toHaveBeenCalled();
-      expect(pidToTrackedSession.get(hostPid)).toBe(tracked);
-      expect(pidToTrackedSession.has(agentPid)).toBe(false);
+      expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(hostPid))).toBe(tracked);
+      expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(agentPid))).toBe(false);
       expect(tracked.happySessionId).toBe(`PID-${hostPid}`);
     },
   );
 
   it('updates an already tracked external session when a new session id is reported', () => {
-    const pidToTrackedSession = new Map<number, TrackedSession>([
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([
       [
-        456,
+        legacyPidSessionTrackingKey(456),
         {
-          pid: 456,
+          trackingKey: legacyPidSessionTrackingKey(456), pid: 456,
           startedBy: 'happy directly - likely by user from terminal',
           happySessionId: 'PID-456',
         },
       ],
     ]);
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
+    const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
 
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: async () => {},
@@ -1624,21 +1599,21 @@ describe('createOnHappySessionWebhook', () => {
 
     onWebhook('session-real-456', createMetadata(456, 'terminal'));
 
-    expect(pidToTrackedSession.get(456)?.happySessionId).toBe('session-real-456');
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(456))?.happySessionId).toBe('session-real-456');
   });
 
   it('updates daemon-spawned session id and resolves spawn awaiter', async () => {
     const tracked: TrackedSession = {
-      pid: 789,
+      trackingKey: legacyPidSessionTrackingKey(789), pid: 789,
       startedBy: 'daemon',
     };
-    const pidToTrackedSession = new Map<number, TrackedSession>([[789, tracked]]);
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]);
     const awaiter = vi.fn();
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>([[789, awaiter]]);
+    const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>([[legacyPidSessionTrackingKey(789), awaiter]]);
 
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: async () => {},
@@ -1646,17 +1621,17 @@ describe('createOnHappySessionWebhook', () => {
 
     await onWebhook('session-daemon-789', createMetadata(789, 'daemon'));
 
-    expect(pidToTrackedSession.get(789)?.happySessionId).toBe('session-daemon-789');
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(789))?.happySessionId).toBe('session-daemon-789');
     expect(awaiter).toHaveBeenCalledTimes(1);
-    expect(pidToAwaiter.has(789)).toBe(false);
+    expect(spawnAwaiterByKey.has(legacyPidSessionTrackingKey(789))).toBe(false);
   });
 
   it('waits for async spawn finalization before acknowledging the session report', async () => {
     const tracked: TrackedSession = {
-      pid: 792,
+      trackingKey: legacyPidSessionTrackingKey(792), pid: 792,
       startedBy: 'daemon',
     };
-    const pidToTrackedSession = new Map<number, TrackedSession>([[792, tracked]]);
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]);
     let finishFinalization!: () => void;
     const finalization = new Promise<void>((resolve) => {
       finishFinalization = resolve;
@@ -1664,10 +1639,10 @@ describe('createOnHappySessionWebhook', () => {
     const awaiter = vi.fn(async () => {
       await finalization;
     });
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>([[792, awaiter]]);
+    const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>([[legacyPidSessionTrackingKey(792), awaiter]]);
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: async () => {},
@@ -1689,14 +1664,14 @@ describe('createOnHappySessionWebhook', () => {
 
   it('stores the separate create-or-rejoin outcome on the matched daemon runner before resolving', async () => {
     const tracked: TrackedSession = {
-      pid: 790,
+      trackingKey: legacyPidSessionTrackingKey(790), pid: 790,
       startedBy: 'daemon',
     };
-    const pidToTrackedSession = new Map<number, TrackedSession>([[790, tracked]]);
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]);
     const awaiter = vi.fn();
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter: new Map([[790, awaiter]]),
+      trackedSessionsByKey,
+      spawnAwaiterByKey: new Map([[legacyPidSessionTrackingKey(790), awaiter]]),
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: async () => {},
@@ -1719,20 +1694,20 @@ describe('createOnHappySessionWebhook', () => {
 
   it('ignores a late webhook from a daemon spawn that already timed out', async () => {
     const tracked: TrackedSession = {
-      pid: 791,
+      trackingKey: legacyPidSessionTrackingKey(791), pid: 791,
       startedBy: 'daemon',
       happySessionId: 'PID-791',
       sessionWebhookTimedOutAtMs: 123,
     };
-    const pidToTrackedSession = new Map<number, TrackedSession>([[791, tracked]]);
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]);
     const awaiter = vi.fn();
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>([[791, awaiter]]);
+    const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>([[legacyPidSessionTrackingKey(791), awaiter]]);
     const onTrackedSessionReported = vi.fn();
     const writeSessionMarkerFn = vi.fn(async () => {});
 
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn,
@@ -1742,23 +1717,23 @@ describe('createOnHappySessionWebhook', () => {
     onWebhook('session-daemon-791', createMetadata(791, 'daemon'));
     await Promise.resolve();
 
-    expect(pidToTrackedSession.get(791)?.happySessionId).toBe('PID-791');
-    expect(pidToTrackedSession.get(791)?.happySessionMetadataFromLocalWebhook).toBeUndefined();
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(791))?.happySessionId).toBe('PID-791');
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(791))?.happySessionMetadataFromLocalWebhook).toBeUndefined();
     expect(awaiter).not.toHaveBeenCalled();
-    expect(pidToAwaiter.has(791)).toBe(true);
+    expect(spawnAwaiterByKey.has(legacyPidSessionTrackingKey(791))).toBe(true);
     expect(onTrackedSessionReported).not.toHaveBeenCalled();
     expect(writeSessionMarkerFn).not.toHaveBeenCalled();
   });
 
   it('allows a fresh daemon retry through its current PID owner', async () => {
     const tracked: TrackedSession = {
-      pid: 795,
+      trackingKey: legacyPidSessionTrackingKey(795), pid: 795,
       startedBy: 'daemon',
       happySessionId: 'PID-795',
     };
-    const pidToTrackedSession = new Map<number, TrackedSession>([[795, tracked]]);
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]);
     const awaiter = vi.fn();
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>([[795, awaiter]]);
+    const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>([[legacyPidSessionTrackingKey(795), awaiter]]);
     const onTrackedSessionReported = vi.fn();
     let resolveMarker!: () => void;
     const markerWritten = new Promise<void>((resolve) => {
@@ -1769,8 +1744,8 @@ describe('createOnHappySessionWebhook', () => {
     });
 
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn,
@@ -1780,7 +1755,7 @@ describe('createOnHappySessionWebhook', () => {
     onWebhook('session-daemon-795', createMetadata(795, 'daemon'));
     await markerWritten;
 
-    expect(pidToTrackedSession.get(795)?.happySessionId).toBe('session-daemon-795');
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(795))?.happySessionId).toBe('session-daemon-795');
     expect(awaiter).toHaveBeenCalledTimes(1);
     expect(onTrackedSessionReported).toHaveBeenCalledWith(expect.objectContaining({
       happySessionId: 'session-daemon-795',
@@ -1791,13 +1766,13 @@ describe('createOnHappySessionWebhook', () => {
 
   it('allows a fresh wrapper retry through its current parent PID owner', async () => {
     const tracked: TrackedSession = {
-      pid: 796,
+      trackingKey: legacyPidSessionTrackingKey(796), pid: 796,
       startedBy: 'daemon',
       happySessionId: 'PID-796',
     };
-    const pidToTrackedSession = new Map<number, TrackedSession>([[796, tracked]]);
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]);
     const awaiter = vi.fn();
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>([[796, awaiter]]);
+    const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>([[legacyPidSessionTrackingKey(796), awaiter]]);
     let resolveMarker!: () => void;
     const markerWritten = new Promise<void>((resolve) => {
       resolveMarker = resolve;
@@ -1807,8 +1782,8 @@ describe('createOnHappySessionWebhook', () => {
     });
 
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => 796,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn,
@@ -1817,23 +1792,23 @@ describe('createOnHappySessionWebhook', () => {
     onWebhook('session-daemon-797', createMetadata(797, 'daemon'));
     await markerWritten;
 
-    expect(pidToTrackedSession.get(796)?.happySessionId).toBe('session-daemon-797');
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(796))?.happySessionId).toBe('session-daemon-797');
     expect(awaiter).toHaveBeenCalledTimes(1);
     expect(writeSessionMarkerFn).toHaveBeenCalledTimes(1);
   });
 
   it('notifies when a tracked daemon session reports its canonical session id', async () => {
     const tracked: TrackedSession = {
-      pid: 790,
+      trackingKey: legacyPidSessionTrackingKey(790), pid: 790,
       startedBy: 'daemon',
     };
-    const pidToTrackedSession = new Map<number, TrackedSession>([[790, tracked]]);
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]);
+    const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
     const onTrackedSessionReported = vi.fn();
 
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: async () => {},
@@ -1850,7 +1825,7 @@ describe('createOnHappySessionWebhook', () => {
 
   it('waits for accepted spawn custody and required readiness before resolving the spawn awaiter', async () => {
     const tracked: TrackedSession = {
-      pid: 798,
+      trackingKey: legacyPidSessionTrackingKey(798), pid: 798,
       startedBy: 'daemon',
       happySessionId: 'session-daemon-798',
       agentRuntimeDaemonServiceAuthorityFilePath:
@@ -1880,8 +1855,8 @@ describe('createOnHappySessionWebhook', () => {
       canonicalMarkerPersisted = true;
     });
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession: new Map<number, TrackedSession>([[798, tracked]]),
-      pidToAwaiter: new Map<number, (session: TrackedSession) => void>([[798, awaiter]]),
+      trackedSessionsByKey: new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]),
+      spawnAwaiterByKey: new Map<SessionTrackingKey, (session: TrackedSession) => void>([[legacyPidSessionTrackingKey(798), awaiter]]),
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       readProcessIdentityByPidFn: async () => ({
@@ -1925,7 +1900,7 @@ describe('createOnHappySessionWebhook', () => {
 
   it('waits for report-scoped canonical readiness before resolving the spawn awaiter', async () => {
     const tracked: TrackedSession = {
-      pid: 796,
+      trackingKey: legacyPidSessionTrackingKey(796), pid: 796,
       startedBy: 'daemon',
       acceptedSpawnMarkerGate: Promise.resolve(true),
       agentRuntimeDaemonServiceAuthorityFilePath:
@@ -1942,8 +1917,8 @@ describe('createOnHappySessionWebhook', () => {
       await canonicalReadiness;
     });
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-      pidToAwaiter: new Map([[tracked.pid, awaiter]]),
+      trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+      spawnAwaiterByKey: new Map([[legacyPidSessionTrackingKey(tracked.pid), awaiter]]),
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       listSessionMarkersFn: async () => [],
@@ -1975,7 +1950,7 @@ describe('createOnHappySessionWebhook', () => {
 
   it('joins concurrent non-Windows canonical reports into one fresh-spawn readiness reconciliation', async () => {
     const tracked: TrackedSession = {
-      pid: 7_961,
+      trackingKey: legacyPidSessionTrackingKey(7_961), pid: 7_961,
       startedBy: 'daemon',
       acceptedSpawnMarkerGate: Promise.resolve(true),
       agentRuntimeDaemonServiceAuthorityFilePath:
@@ -1990,8 +1965,8 @@ describe('createOnHappySessionWebhook', () => {
       await readiness;
     });
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-      pidToAwaiter: new Map([[tracked.pid, awaiter]]),
+      trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+      spawnAwaiterByKey: new Map([[legacyPidSessionTrackingKey(tracked.pid), awaiter]]),
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       listSessionMarkersFn: async () => [],
@@ -2037,7 +2012,7 @@ describe('createOnHappySessionWebhook', () => {
 
   it('does not apply fresh-spawn readiness reconciliation to reattached runners', async () => {
     const tracked: TrackedSession = {
-      pid: 7_962,
+      trackingKey: legacyPidSessionTrackingKey(7_962), pid: 7_962,
       startedBy: 'daemon',
       happySessionId: 'session-daemon-7962',
       reattachedFromDiskMarker: true,
@@ -2048,8 +2023,8 @@ describe('createOnHappySessionWebhook', () => {
       throw new Error('fresh-spawn readiness must not run');
     });
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-      pidToAwaiter: new Map(),
+      trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+      spawnAwaiterByKey: new Map(),
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       listSessionMarkersFn: async () => [],
@@ -2073,29 +2048,29 @@ describe('createOnHappySessionWebhook', () => {
   it('fails the existing spawn readiness result when report-scoped canonical readiness rejects', async () => {
     const { logger } = await import('@/ui/logger');
     const tracked: TrackedSession = {
-      pid: 795,
+      trackingKey: legacyPidSessionTrackingKey(795), pid: 795,
       startedBy: 'daemon',
       acceptedSpawnMarkerGate: Promise.resolve(true),
       agentRuntimeDaemonServiceAuthorityFilePath:
         '/tmp/runner-authority-readiness-failure.json',
     };
-    const pidToTrackedSession = new Map([[tracked.pid, tracked]]);
-    const pidToAwaiter =
-      new Map<number, (session: TrackedSession) => void>();
-    const pidToSpawnResultResolver =
-      new Map<number, (result: SpawnSessionResult) => void>();
-    const pidToSpawnWebhookTimeout = new Map<number, NodeJS.Timeout>();
+    const trackedSessionsByKey = new Map([[tracked.trackingKey, tracked]]);
+    const spawnAwaiterByKey =
+      new Map<SessionTrackingKey, (session: TrackedSession) => void>();
+    const spawnResultResolverByKey =
+      new Map<SessionTrackingKey, (result: SpawnSessionResult) => void>();
+    const spawnWebhookTimeoutByKey = new Map<SessionTrackingKey, NodeJS.Timeout>();
     const spawnResult = waitForSessionWebhook({
-      pid: tracked.pid,
-      pidToTrackedSession,
-      pidToAwaiter,
-      pidToSpawnResultResolver,
-      pidToSpawnWebhookTimeout,
+      trackingKey: tracked.trackingKey, pid: tracked.pid,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
+      spawnResultResolverByKey,
+      spawnWebhookTimeoutByKey,
       timeoutErrorMessage: 'unexpected timeout',
     });
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       listSessionMarkersFn: async () => [],
@@ -2135,9 +2110,9 @@ describe('createOnHappySessionWebhook', () => {
       errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_FAILED,
       errorMessage: 'Session startup reconciliation failed',
     });
-    expect(pidToAwaiter.size).toBe(0);
-    expect(pidToSpawnResultResolver.size).toBe(0);
-    expect(pidToSpawnWebhookTimeout.size).toBe(0);
+    expect(spawnAwaiterByKey.size).toBe(0);
+    expect(spawnResultResolverByKey.size).toBe(0);
+    expect(spawnWebhookTimeoutByKey.size).toBe(0);
   });
 
   it('returns canonical-session activation failure through the spawn awaiter and rejects startup acknowledgement', async () => {
@@ -2149,32 +2124,32 @@ describe('createOnHappySessionWebhook', () => {
     const activateConnectedAccountSessionBindingOnCanonicalSession =
       vi.fn(async () => failure);
     const tracked: TrackedSession = {
-      pid: 797,
+      trackingKey: legacyPidSessionTrackingKey(797), pid: 797,
       startedBy: 'daemon',
       acceptedSpawnMarkerGate: Promise.resolve(true),
       activateConnectedAccountSessionBindingOnCanonicalSession,
     };
-    const pidToTrackedSession = new Map<number, TrackedSession>([
-      [tracked.pid, tracked],
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([
+      [tracked.trackingKey, tracked],
     ]);
-    const pidToAwaiter =
-      new Map<number, (session: TrackedSession) => void>();
-    const pidToSpawnResultResolver =
-      new Map<number, (result: SpawnSessionResult) => void>();
-    const pidToSpawnWebhookTimeout = new Map<number, NodeJS.Timeout>();
+    const spawnAwaiterByKey =
+      new Map<SessionTrackingKey, (session: TrackedSession) => void>();
+    const spawnResultResolverByKey =
+      new Map<SessionTrackingKey, (result: SpawnSessionResult) => void>();
+    const spawnWebhookTimeoutByKey = new Map<SessionTrackingKey, NodeJS.Timeout>();
     const spawnResult = waitForSessionWebhook({
-      pid: tracked.pid,
-      pidToTrackedSession,
-      pidToAwaiter,
-      pidToSpawnResultResolver,
-      pidToSpawnWebhookTimeout,
+      trackingKey: tracked.trackingKey, pid: tracked.pid,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
+      spawnResultResolverByKey,
+      spawnWebhookTimeoutByKey,
       timeoutErrorMessage: 'unexpected timeout',
     });
     const onTrackedSessionReady = vi.fn();
     const writeSessionMarkerFn = vi.fn(async () => {});
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn,
@@ -2195,9 +2170,9 @@ describe('createOnHappySessionWebhook', () => {
     expect(
       tracked.activateConnectedAccountSessionBindingOnCanonicalSession,
     ).toBeUndefined();
-    expect(pidToAwaiter.size).toBe(0);
-    expect(pidToSpawnResultResolver.size).toBe(0);
-    expect(pidToSpawnWebhookTimeout.size).toBe(0);
+    expect(spawnAwaiterByKey.size).toBe(0);
+    expect(spawnResultResolverByKey.size).toBe(0);
+    expect(spawnWebhookTimeoutByKey.size).toBe(0);
 
     await expect(
       onWebhook(
@@ -2214,7 +2189,7 @@ describe('createOnHappySessionWebhook', () => {
 
   it('keeps ordinary fresh-daemon marker refresh failure best effort', async () => {
     const tracked: TrackedSession = {
-      pid: 793,
+      trackingKey: legacyPidSessionTrackingKey(793), pid: 793,
       startedBy: 'daemon',
       acceptedSpawnMarkerGate: Promise.resolve(true),
       activateConnectedAccountSessionBindingOnCanonicalSession:
@@ -2226,8 +2201,8 @@ describe('createOnHappySessionWebhook', () => {
     });
     const onTrackedSessionReady = vi.fn(async () => undefined);
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-      pidToAwaiter: new Map([[tracked.pid, awaiter]]),
+      trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+      spawnAwaiterByKey: new Map([[legacyPidSessionTrackingKey(tracked.pid), awaiter]]),
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       readProcessIdentityByPidFn: async () => ({
@@ -2258,7 +2233,7 @@ describe('createOnHappySessionWebhook', () => {
     const wrapperPid = 792;
     const runnerPid = 793;
     const trackedBeforePromotion: TrackedSession = {
-      pid: wrapperPid,
+      trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid,
       startedBy: 'daemon',
       happySessionId: `PID-${wrapperPid}`,
       sessionRunnerPid: runnerPid,
@@ -2267,25 +2242,26 @@ describe('createOnHappySessionWebhook', () => {
       activateConnectedAccountSessionBindingOnCanonicalSession:
         vi.fn(async () => null),
     };
-    const pidToTrackedSession = new Map<number, TrackedSession>([
-      [wrapperPid, trackedBeforePromotion],
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([
+      [legacyPidSessionTrackingKey(wrapperPid), trackedBeforePromotion],
     ]);
-    const pidToAwaiter =
-      new Map<number, (session: TrackedSession) => void>();
-    const pidToSpawnResultResolver =
-      new Map<number, (result: SpawnSessionResult) => void>();
-    const pidToSpawnWebhookTimeout =
-      new Map<number, NodeJS.Timeout>();
+    const spawnAwaiterByKey =
+      new Map<SessionTrackingKey, (session: TrackedSession) => void>();
+    const spawnResultResolverByKey =
+      new Map<SessionTrackingKey, (result: SpawnSessionResult) => void>();
+    const spawnWebhookTimeoutByKey =
+      new Map<SessionTrackingKey, NodeJS.Timeout>();
     const admissionWaiter = createPersistedTakeoverAdmissionWaiter();
     const correlation = { mode: 'persisted' as const, operationId: 'operation-1', attemptId: 'attempt-1' };
     const admission = admissionWaiter.register(correlation);
     const spawnResult = waitForSessionWebhook({
       takeoverAdmission: admission,
+      trackingKey: trackedBeforePromotion.trackingKey,
       pid: wrapperPid,
-      pidToTrackedSession,
-      pidToAwaiter,
-      pidToSpawnResultResolver,
-      pidToSpawnWebhookTimeout,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
+      spawnResultResolverByKey,
+      spawnWebhookTimeoutByKey,
       timeoutMs: 1_000,
       timeoutErrorMessage: 'unexpected timeout',
     });
@@ -2293,14 +2269,11 @@ describe('createOnHappySessionWebhook', () => {
       pid: runnerPid,
       happySessionId: `PID-${runnerPid}`,
       sessionRunnerPid: undefined,
-      spawnStartupAwaiterPid: wrapperPid,
     });
-    pidToTrackedSession.delete(wrapperPid);
-    pidToTrackedSession.set(runnerPid, promoted);
     const writeSessionMarkerFn = vi.fn(async () => undefined);
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       readProcessIdentityByPidFn: async () => ({
@@ -2316,8 +2289,9 @@ describe('createOnHappySessionWebhook', () => {
       'session-daemon-promoted',
       createMetadata(runnerPid, 'daemon'),
     )).resolves.toBeUndefined();
-    expect(promoted.spawnStartupAwaiterPid).toBe(wrapperPid);
-    expect(pidToSpawnResultResolver.has(wrapperPid)).toBe(true);
+    // Startup waiters stay keyed by the Session across wrapper→runner promotion.
+    expect(trackedSessionsByKey.get(promoted.trackingKey)).toBe(promoted);
+    expect(spawnResultResolverByKey.has(promoted.trackingKey)).toBe(true);
     expect(admission.readOutcome()).toBeNull();
     admissionWaiter.settle(correlation, { status: 'committed' });
     await expect(spawnResult).resolves.toEqual({
@@ -2331,10 +2305,9 @@ describe('createOnHappySessionWebhook', () => {
       }),
       { adoptCanonicalSessionIdFromPidPlaceholder: true },
     );
-    expect(pidToAwaiter).toHaveLength(0);
-    expect(pidToSpawnResultResolver).toHaveLength(0);
-    expect(pidToSpawnWebhookTimeout).toHaveLength(0);
-    expect(promoted.spawnStartupAwaiterPid).toBeUndefined();
+    expect(spawnAwaiterByKey).toHaveLength(0);
+    expect(spawnResultResolverByKey).toHaveLength(0);
+    expect(spawnWebhookTimeoutByKey).toHaveLength(0);
   });
 
   it('locks the first canonical daemon session identity across concurrent webhooks', async () => {
@@ -2348,7 +2321,7 @@ describe('createOnHappySessionWebhook', () => {
         return null;
       });
     const tracked: TrackedSession = {
-      pid: 796,
+      trackingKey: legacyPidSessionTrackingKey(796), pid: 796,
       startedBy: 'daemon',
       acceptedSpawnMarkerGate: Promise.resolve(true),
       activateConnectedAccountSessionBindingOnCanonicalSession,
@@ -2356,10 +2329,10 @@ describe('createOnHappySessionWebhook', () => {
     const onTrackedSessionReady = vi.fn();
     const writeSessionMarkerFn = vi.fn(async () => {});
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession: new Map<number, TrackedSession>([
-        [tracked.pid, tracked],
+      trackedSessionsByKey: new Map<SessionTrackingKey, TrackedSession>([
+        [tracked.trackingKey, tracked],
       ]),
-      pidToAwaiter: new Map(),
+      spawnAwaiterByKey: new Map(),
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn,
@@ -2394,7 +2367,7 @@ describe('createOnHappySessionWebhook', () => {
 
   it('rejects a canonical webhook that conflicts with a known daemon session before readiness effects', async () => {
     const tracked: TrackedSession = {
-      pid: 797,
+      trackingKey: legacyPidSessionTrackingKey(797), pid: 797,
       startedBy: 'daemon',
       happySessionId: 'session-expected',
       acceptedSpawnMarkerGate:
@@ -2404,9 +2377,9 @@ describe('createOnHappySessionWebhook', () => {
     const writeSessionMarkerFn =
       vi.fn(async () => undefined);
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession:
-        new Map([[tracked.pid, tracked]]),
-      pidToAwaiter: new Map(),
+      trackedSessionsByKey:
+        new Map([[tracked.trackingKey, tracked]]),
+      spawnAwaiterByKey: new Map(),
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn,
@@ -2437,7 +2410,7 @@ describe('createOnHappySessionWebhook', () => {
 
   it('rejects required readiness when accepted spawn custody is declined', async () => {
     const tracked: TrackedSession = {
-      pid: 799,
+      trackingKey: legacyPidSessionTrackingKey(799), pid: 799,
       startedBy: 'daemon',
     };
     let resolveAcceptedSpawnMarker!: (accepted: boolean) => void;
@@ -2446,8 +2419,8 @@ describe('createOnHappySessionWebhook', () => {
     });
     const onTrackedSessionReady = vi.fn();
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession: new Map<number, TrackedSession>([[799, tracked]]),
-      pidToAwaiter: new Map<number, (session: TrackedSession) => void>(),
+      trackedSessionsByKey: new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]),
+      spawnAwaiterByKey: new Map<SessionTrackingKey, (session: TrackedSession) => void>(),
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: async () => {},
@@ -2463,12 +2436,12 @@ describe('createOnHappySessionWebhook', () => {
 
   it('does not fail session registration when a best-effort tracked-session observer throws synchronously', () => {
     const tracked: TrackedSession = {
-      pid: 791,
+      trackingKey: legacyPidSessionTrackingKey(791), pid: 791,
       startedBy: 'daemon',
     };
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession: new Map<number, TrackedSession>([[791, tracked]]),
-      pidToAwaiter: new Map<number, (session: TrackedSession) => void>(),
+      trackedSessionsByKey: new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]),
+      spawnAwaiterByKey: new Map<SessionTrackingKey, (session: TrackedSession) => void>(),
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: async () => {},
@@ -2483,15 +2456,15 @@ describe('createOnHappySessionWebhook', () => {
 
   it('stores vendorResumeId from session metadata when available', () => {
     const tracked: TrackedSession = {
-      pid: 444,
+      trackingKey: legacyPidSessionTrackingKey(444), pid: 444,
       startedBy: 'daemon',
     };
-    const pidToTrackedSession = new Map<number, TrackedSession>([[444, tracked]]);
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]);
+    const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
 
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: async () => {},
@@ -2503,16 +2476,16 @@ describe('createOnHappySessionWebhook', () => {
       codexSessionId: 'vendor-session-444',
     });
 
-    expect(pidToTrackedSession.get(444)?.vendorResumeId).toBe('vendor-session-444');
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(444))?.vendorResumeId).toBe('vendor-session-444');
   });
 
   it('does not preserve durable connected-service restart intent by default when refreshing a daemon marker from webhook metadata', async () => {
     const tracked: TrackedSession = {
-      pid: 447,
+      trackingKey: legacyPidSessionTrackingKey(447), pid: 447,
       startedBy: 'daemon',
     };
-    const pidToTrackedSession = new Map<number, TrackedSession>([[447, tracked]]);
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]);
+    const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
 
     let markerOptions: unknown;
     let resolveMarker!: () => void;
@@ -2521,8 +2494,8 @@ describe('createOnHappySessionWebhook', () => {
     });
 
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: async (_args: unknown, options: unknown) => {
@@ -2543,11 +2516,11 @@ describe('createOnHappySessionWebhook', () => {
 
   it('does not preserve durable connected-service restart intent through routine marker refreshes', async () => {
     const tracked: TrackedSession = {
-      pid: 448,
+      trackingKey: legacyPidSessionTrackingKey(448), pid: 448,
       startedBy: 'daemon',
     };
-    const pidToTrackedSession = new Map<number, TrackedSession>([[448, tracked]]);
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]);
+    const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
 
     let markerOptions: unknown;
     let resolveMarker!: () => void;
@@ -2556,8 +2529,8 @@ describe('createOnHappySessionWebhook', () => {
     });
 
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: async (_args: unknown, options: unknown) => {
@@ -2578,12 +2551,12 @@ describe('createOnHappySessionWebhook', () => {
 
    it('preserves a previously discovered provider session id when a later webhook metadata payload is stale', async () => {
     const tracked: TrackedSession = {
-      pid: 445,
+      trackingKey: legacyPidSessionTrackingKey(445), pid: 445,
       startedBy: 'daemon',
       happySessionId: 'session-daemon-445',
     };
-    const pidToTrackedSession = new Map<number, TrackedSession>([[445, tracked]]);
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]);
+    const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
 
     let markerArgs: any = null;
     let resolveMarker!: () => void;
@@ -2592,12 +2565,13 @@ describe('createOnHappySessionWebhook', () => {
     });
 
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       listSessionMarkersFn: async () => [
         {
+          trackingKey: tracked.trackingKey,
           pid: 445,
           happySessionId: 'session-daemon-445',
           happyHomeDir: configuration.happyHomeDir,
@@ -2633,16 +2607,16 @@ describe('createOnHappySessionWebhook', () => {
 
   it('does not resolve daemon awaiter on PID placeholder and resolves on canonical id', async () => {
     const tracked: TrackedSession = {
-      pid: 9001,
+      trackingKey: legacyPidSessionTrackingKey(9001), pid: 9001,
       startedBy: 'daemon',
     };
-    const pidToTrackedSession = new Map<number, TrackedSession>([[9001, tracked]]);
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]);
     const awaiter = vi.fn();
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>([[9001, awaiter]]);
+    const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>([[legacyPidSessionTrackingKey(9001), awaiter]]);
 
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: async () => {},
@@ -2651,19 +2625,19 @@ describe('createOnHappySessionWebhook', () => {
     await onWebhook('PID-9001', createMetadata(9001, 'daemon'));
 
     expect(awaiter).toHaveBeenCalledTimes(0);
-    expect(pidToAwaiter.has(9001)).toBe(true);
-    expect(pidToTrackedSession.get(9001)?.happySessionId).toBe('PID-9001');
+    expect(spawnAwaiterByKey.has(legacyPidSessionTrackingKey(9001))).toBe(true);
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(9001))?.happySessionId).toBe('PID-9001');
 
     await onWebhook('session-real-9001', createMetadata(9001, 'daemon'));
 
     expect(awaiter).toHaveBeenCalledTimes(1);
-    expect(pidToAwaiter.has(9001)).toBe(false);
-    expect(pidToTrackedSession.get(9001)?.happySessionId).toBe('session-real-9001');
+    expect(spawnAwaiterByKey.has(legacyPidSessionTrackingKey(9001))).toBe(false);
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(9001))?.happySessionId).toBe('session-real-9001');
   });
 
   it('expands tilde paths before writing the session marker', async () => {
-    const pidToTrackedSession = new Map<number, TrackedSession>();
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>();
+    const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
 
     let markerArgs: any = null;
     let resolveMarker!: () => void;
@@ -2672,8 +2646,8 @@ describe('createOnHappySessionWebhook', () => {
     });
 
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: async (args) => {
@@ -2709,7 +2683,7 @@ describe('createOnHappySessionWebhook', () => {
     };
 
     const tracked: TrackedSession = {
-      pid: 555,
+      trackingKey: legacyPidSessionTrackingKey(555), pid: 555,
       startedBy: 'daemon',
       spawnOptions: {
         directory: '/tmp/workspace',
@@ -2730,8 +2704,8 @@ describe('createOnHappySessionWebhook', () => {
       } as any,
     };
 
-    const pidToTrackedSession = new Map<number, TrackedSession>([[555, tracked]]);
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]);
+    const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
 
     let markerArgs: any = null;
     let resolveMarker!: () => void;
@@ -2740,8 +2714,8 @@ describe('createOnHappySessionWebhook', () => {
     });
 
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       readCredentialsFn: async () => credentials,
@@ -2782,7 +2756,7 @@ describe('createOnHappySessionWebhook', () => {
 
   it('persists zellij topology in the daemon marker respawn fallback', async () => {
     const tracked: TrackedSession = {
-      pid: 556,
+      trackingKey: legacyPidSessionTrackingKey(556), pid: 556,
       startedBy: 'daemon',
       spawnOptions: {
         directory: '/tmp/workspace',
@@ -2809,8 +2783,8 @@ describe('createOnHappySessionWebhook', () => {
       resolveMarker();
     });
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-      pidToAwaiter: new Map(),
+      trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+      spawnAwaiterByKey: new Map(),
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn,
@@ -2831,14 +2805,14 @@ describe('createOnHappySessionWebhook', () => {
   it('matches an unknown webhook PID to a daemon-tracked wrapper PID via PPID and resolves awaiter', async () => {
     const wrapperPid = 111;
     const runnerPid = 222;
-    const tracked: TrackedSession = { pid: wrapperPid, startedBy: 'daemon' };
-    const pidToTrackedSession = new Map<number, TrackedSession>([[wrapperPid, tracked]]);
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid, startedBy: 'daemon' };
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]);
     const awaiter = vi.fn();
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>([[wrapperPid, awaiter]]);
+    const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>([[legacyPidSessionTrackingKey(wrapperPid), awaiter]]);
 
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => wrapperPid,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: async () => {},
@@ -2847,23 +2821,23 @@ describe('createOnHappySessionWebhook', () => {
     await onWebhook('session-real-222', createMetadata(runnerPid, 'daemon'));
 
     expect(awaiter).toHaveBeenCalledTimes(1);
-    expect(pidToAwaiter.has(wrapperPid)).toBe(false);
-    expect(pidToTrackedSession.has(runnerPid)).toBe(false);
-    expect(pidToTrackedSession.get(wrapperPid)?.happySessionId).toBe('session-real-222');
-    expect(pidToTrackedSession.get(wrapperPid)?.sessionRunnerPid).toBe(runnerPid);
+    expect(spawnAwaiterByKey.has(legacyPidSessionTrackingKey(wrapperPid))).toBe(false);
+    expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(runnerPid))).toBe(false);
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(wrapperPid))?.happySessionId).toBe('session-real-222');
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(wrapperPid))?.sessionRunnerPid).toBe(runnerPid);
   });
 
   it('defers wrapper awaiter resolution on PID placeholder and resolves on canonical id', async () => {
     const wrapperPid = 111;
     const runnerPid = 222;
-    const tracked: TrackedSession = { pid: wrapperPid, startedBy: 'daemon' };
-    const pidToTrackedSession = new Map<number, TrackedSession>([[wrapperPid, tracked]]);
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid, startedBy: 'daemon' };
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]);
     const awaiter = vi.fn();
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>([[wrapperPid, awaiter]]);
+    const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>([[legacyPidSessionTrackingKey(wrapperPid), awaiter]]);
 
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => wrapperPid,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: async () => {},
@@ -2872,12 +2846,12 @@ describe('createOnHappySessionWebhook', () => {
     await onWebhook(`PID-${runnerPid}`, createMetadata(runnerPid, 'daemon'));
 
     expect(awaiter).toHaveBeenCalledTimes(0);
-    expect(pidToAwaiter.has(wrapperPid)).toBe(true);
+    expect(spawnAwaiterByKey.has(legacyPidSessionTrackingKey(wrapperPid))).toBe(true);
 
     await onWebhook('session-real-222', createMetadata(runnerPid, 'daemon'));
 
     expect(awaiter).toHaveBeenCalledTimes(1);
-    expect(pidToAwaiter.has(wrapperPid)).toBe(false);
+    expect(spawnAwaiterByKey.has(legacyPidSessionTrackingKey(wrapperPid))).toBe(false);
   });
 
   it('keeps birth-only webhook identity without hashing daemon child spawn arguments', async () => {
@@ -2892,12 +2866,12 @@ describe('createOnHappySessionWebhook', () => {
       'daemon',
     ];
     const tracked: TrackedSession = {
-      pid: sessionPid,
+      trackingKey: legacyPidSessionTrackingKey(sessionPid), pid: sessionPid,
       startedBy: 'daemon',
       childProcess: { pid: sessionPid, spawnargs: spawnArgs } as any,
     };
-    const pidToTrackedSession = new Map<number, TrackedSession>([[sessionPid, tracked]]);
-    const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]);
+    const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
 
     let markerArgs: any = null;
     let resolveMarker!: () => void;
@@ -2906,8 +2880,8 @@ describe('createOnHappySessionWebhook', () => {
     });
 
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: () => null,
       findHappyProcessByPidFn: async () => null,
       readProcessIdentityByPidFn: async () => ({
@@ -2927,8 +2901,8 @@ describe('createOnHappySessionWebhook', () => {
     expect(markerArgs.processCommand).toBeUndefined();
     expect(markerArgs.processCommandHash).toBeUndefined();
     expect(markerArgs.processStartTimeMs).toBe(1_717_171_717_000);
-    expect(pidToTrackedSession.get(sessionPid)?.processCommand).toBeUndefined();
-    expect(pidToTrackedSession.get(sessionPid)?.processCommandHash).toBeUndefined();
-    expect(pidToTrackedSession.get(sessionPid)?.processStartTimeMs).toBe(1_717_171_717_000);
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(sessionPid))?.processCommand).toBeUndefined();
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(sessionPid))?.processCommandHash).toBeUndefined();
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(sessionPid))?.processStartTimeMs).toBe(1_717_171_717_000);
   });
 });

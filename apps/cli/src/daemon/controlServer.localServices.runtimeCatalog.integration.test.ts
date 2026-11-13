@@ -11,6 +11,7 @@ import type { LocalServiceInventoryRoutes } from './local/services/inventory/rou
 import type { LocalServiceLauncherRoutes } from './local/services/launch/routes';
 import type { LocalServicePreviewRoutes } from './local/services/preview/routes';
 import type { LocalServicePublicPreviewRoutes } from './local/services/public/routes';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('daemon control server: local service inventory endpoints', () => {
     it('routes snapshot, refresh, and label patches to the daemon-owned inventory routes', async () => {
@@ -34,7 +35,7 @@ describe('daemon control server: local service inventory endpoints', () => {
         };
         const app = createDaemonControlApp({
             getChildren: () => [{
-                startedBy: 'daemon',
+                trackingKey: legacyPidSessionTrackingKey(1234), startedBy: 'daemon',
                 pid: 1234,
                 happySessionId: 'session-1',
             }],

@@ -8,6 +8,7 @@ import { createSessionSystemRecordPayloadService } from '@/session/systemRecords
 import type { LegacyHostSessionSystemRecord } from '@happier-dev/protocol';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
 beforeAll(async () => { runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
@@ -16,7 +17,7 @@ afterAll(async () => { await runtime?.dispose(); });
 
 describe('memory guard Session stop admission', () => {
   it.each(['pid', 'birth', 'promoted_runner', 'equal_promoted_runner'] as const)('pins the captured target through same tracked object %s final admission', async change => {
-    const tracked: TrackedSession = { pid: 10, happySessionId: 's', startedBy: 'daemon', processStartTimeMs: 1 };
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(10), pid: 10, happySessionId: 's', startedBy: 'daemon', processStartTimeMs: 1 };
     if (change === 'equal_promoted_runner') {
       tracked.sessionRunnerPid = 11; tracked.runnerProcessIdentity = { pid: 11, processStartTimeMs: 2, processCommandHash: 'runner-11' };
     }
@@ -53,7 +54,7 @@ describe('memory guard Session stop admission', () => {
         namespace: request.namespace, localId: request.localId, kind: 'session_stop.v1', content }),
       upsertSessionSystemRecord: async request => { content = request.content; addresses.push(request.localId); },
     });
-    const tracked: TrackedSession = { pid: 10, happySessionId: 's', startedBy: 'daemon',
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(10), pid: 10, happySessionId: 's', startedBy: 'daemon',
       guardStopReceipt: createGuardSessionStopReceipt({ records, at: 1000 }) };
     const root = { owner: { kind: 'session' as const, sessionId: 's' }, pid: 10, start: { startTimeMs: 1 }, live: true, ownerCreatedAtMs: 0 };
     const eligibilityInput = { tracked,
@@ -75,7 +76,7 @@ describe('memory guard Session stop admission', () => {
     expect(addresses).toEqual(['activity:session_stop:v1:1000']);
   });
   it('does not stop a replaced occurrence, fresh draft, or newly settled interval', async () => {
-    const tracked: TrackedSession = { pid: 10, happySessionId: 's', startedBy: 'daemon' };
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(10), pid: 10, happySessionId: 's', startedBy: 'daemon' };
     const root = { owner: { kind: 'session' as const, sessionId: 's' }, pid: 10, start: { startTimeMs: 1 }, live: true, ownerCreatedAtMs: 0 };
     const resume = { sessionId: 's', rawSession: { machineId: 'm', path: '/project' },
       metadata: { runtimeDescriptorV1: { v: 1 as const, agentId: 'codex', agent: { backendMode: 'appServer' } }, machineId: 'm', path: '/project', flavor: 'codex', codexSessionId: 'native-s' } };

@@ -8,6 +8,7 @@ import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createRequesterSessionCredentialCustody } from '../sessionEncryption/requesterSessionCredentials';
 import type { TrackedSession } from '../types';
 import { createOnChildExited } from './onChildExited';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 it.each(['clean', 'stop', 'crash', 'replacement', 'other-requester'] as const)(
     'retains resumable requester custody after physical exit: %s', async scenario => {
@@ -25,13 +26,13 @@ it.each(['clean', 'stop', 'crash', 'replacement', 'other-requester'] as const)(
             child.once('error', reject);
             child.once('exit', (code, signal) => resolve({ code, signal }));
         });
-        const tracked: TrackedSession = { pid, happySessionId: 'requester-session', startedBy: 'daemon',
+        const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: 'requester-session', startedBy: 'daemon',
             ...(scenario === 'stop' ? { stopRequestedAtMs: Date.now() } : {}),
             requesterWorkAttributionV1: scenario === 'other-requester' ? { ...attribution, accountId: 'cara' } : attribution };
-        const sessions = new Map([[pid, tracked]]);
-        if (scenario === 'replacement') sessions.set(process.pid, { ...tracked, pid: process.pid });
-        const exited = createOnChildExited({ pidToTrackedSession: sessions, spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null });
+        const sessions = new Map([[legacyPidSessionTrackingKey(pid), tracked]]);
+        if (scenario === 'replacement') sessions.set(legacyPidSessionTrackingKey(process.pid), { ...tracked, trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid });
+        const exited = createOnChildExited({ trackedSessionsByKey: sessions, spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null });
         try {
             await exited(pid, { reason: 'process-exited', ...exit });
             await expect(access(custody.path)).resolves.toBeUndefined();

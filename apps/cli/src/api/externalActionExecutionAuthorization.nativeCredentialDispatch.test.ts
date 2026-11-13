@@ -25,6 +25,7 @@ import { releaseDaemonSessionTeamCredentialNativeBindings } from '@/daemon/provi
 import { createOnChildExited } from '@/daemon/sessions/onChildExited';
 import type { TrackedSession } from '@/daemon/types';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const birthTransport = vi.hoisted(() => ({ fetchSessionByIdCompat: vi.fn() }));
 vi.mock('@/session/transport/http/sessionsHttp', async importOriginal => ({
@@ -298,16 +299,16 @@ it.each(['plain', 'e2ee'] as const)('carries only the exact source-signed %s spa
   await expect(releaseDaemonSessionTeamCredentialNativeBindings({ ...releaseInput, owningAccountId: 'other-account' }, lifetime))
     .rejects.toMatchObject({ code: 'team_credential_provider_selection_not_current' });
   expect(post.mock.calls.length).toBe(beforeWrongOwner);
-  const tracked: TrackedSession = { pid: 2147482912, startedBy: 'daemon', happySessionId: releaseInput.sessionId };
-  const sessions = new Map([[tracked.pid, tracked]]);
+  const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(2147482912), pid: 2147482912, startedBy: 'daemon', happySessionId: releaseInput.sessionId };
+  const sessions = new Map([[tracked.trackingKey, tracked]]);
   const withdrawnPeer = { ...bornBinding, nativeDelivery: { ...nativeDelivery,
     bindingKey: 'withdrawn-peer', placeholderRef: 'peer-placeholder' } };
   let settleRemoval!: () => void;
   removalGate = new Promise<void>(resolve => { settleRemoval = resolve; });
   const finalizeMachineSessionTerminal = vi.fn(async ({ sessionId }: { sessionId: string }) => ({
     v: 1 as const, status: 'closed' as const, sessionId }));
-  const onExit = createOnChildExited({ pidToTrackedSession: sessions, spawnResourceCleanupByPid: new Map(),
-    sessionAttachCleanupByPid: new Map(), removeSessionMarkerFn: async () => {},
+  const onExit = createOnChildExited({ trackedSessionsByKey: sessions, spawnResourceCleanupByKey: new Map(),
+    sessionAttachCleanupByKey: new Map(), removeSessionMarkerFn: async () => {},
     getApiMachineForSessions: () => ({ enqueueDaemonTerminalExactTurnEnd: async () => undefined,
       captureMachineSessionTerminal: async sessionId => ({ v: 1 as const, status: 'captured' as const,
         sessionId, authority: { kind: 'generation' as const, publisherGeneration: '1' } }), finalizeMachineSessionTerminal }),
@@ -317,7 +318,7 @@ it.each(['plain', 'e2ee'] as const)('carries only the exact source-signed %s spa
   try {
     await vi.waitFor(() => expect(releases).toBe(1));
     expect(finalizeMachineSessionTerminal).not.toHaveBeenCalled();
-    expect(sessions.get(tracked.pid)).toBe(tracked);
+    expect(sessions.get(tracked.trackingKey)).toBe(tracked);
     settleRemoval();
     await exiting;
     expect(finalizeMachineSessionTerminal).toHaveBeenCalledOnce();

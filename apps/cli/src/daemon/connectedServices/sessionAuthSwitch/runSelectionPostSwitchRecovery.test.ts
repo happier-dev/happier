@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { runSelectionPostSwitchRecovery } from './runSelectionPostSwitchRecovery';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('runSelectionPostSwitchRecovery', () => {
   it('invokes provider-owned post-switch callbacks from runtime auth selections', async () => {
@@ -8,7 +9,7 @@ describe('runSelectionPostSwitchRecovery', () => {
 
     const result = await runSelectionPostSwitchRecovery({
       tracked: {
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
         happySessionId: 'sess_1',
         pid: 123,
         spawnOptions: {
@@ -51,7 +52,7 @@ describe('runSelectionPostSwitchRecovery', () => {
 
     const result = await runSelectionPostSwitchRecovery({
       tracked: {
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
         happySessionId: 'sess_1',
         pid: 123,
         spawnOptions: {

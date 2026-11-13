@@ -24,6 +24,7 @@ import { createGuardWatch } from './guardWatch';
 import { createIdleTerminalPolicyFixture } from '../idleTerminalPolicy.testkit';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
 beforeAll(async () => { runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
@@ -68,7 +69,7 @@ describe('Guard requester view and parked watch', () => {
     await sampler.start(); cleanup.push(() => sampler.stop());
     const summary = createMachineResourceSummary({ sampler, readNearlyFull: () => null, nowMs: Date.now,
       onError: error => { throw error; } }); cleanup.push(() => summary.stop());
-    const tracked = [1001, 1002, 1003].map((pid, index): TrackedSession => ({ pid, startedBy: 'daemon', happySessionId: `s${index}` }));
+    const tracked = [1001, 1002, 1003].map((pid, index): TrackedSession => ({ trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: `s${index}` }));
     const browserOwner = {};
     const projects = [{ id: 'own-project', workspace: { rootPath: '/own-project' }, attribution },
       { id: 'other-project', workspace: { rootPath: '/other-project' }, attribution: { ...attribution, accountId: 'bob' } }];

@@ -3,10 +3,11 @@ import { describe, expect, it } from 'vitest';
 import type { Metadata } from '@/api/types';
 import type { TrackedSession } from '@/daemon/types';
 import { resolveTrackedSessionCatalogAgentId } from './resolveTrackedSessionCatalogAgentId';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 function trackedSession(overrides: Partial<TrackedSession>): TrackedSession {
   return {
-    startedBy: 'daemon',
+    trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
     pid: 123,
     ...overrides,
   };

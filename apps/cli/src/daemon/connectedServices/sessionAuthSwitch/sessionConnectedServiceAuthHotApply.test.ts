@@ -6,6 +6,7 @@ import { createCodexConnectedAccountNativeAuthCodec, createCodexConnectedService
 
 import type { ConnectedServiceProviderRuntimeAuthAdapter } from '../runtimeAuth/types';
 import { createSessionConnectedServiceAuthHotApply } from './sessionConnectedServiceAuthHotApply';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('createSessionConnectedServiceAuthHotApply', () => {
   it.each(['profile', 'group'] as const)('keeps applied %s truth when a later Home currentness read fails', async (selection) => {
@@ -74,7 +75,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
     };
     const apply = createSessionConnectedServiceAuthHotApply(dependencies);
     const transition = apply({
-      tracked: { startedBy: 'daemon', happySessionId: 'parent', pid: 123,
+      tracked: { trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon', happySessionId: 'parent', pid: 123,
         spawnOptions: { directory: '/tmp/project', backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' } } },
       normalizedBindings: next,
       runtimeAuthSelectionsByServiceId: new Map([[serviceId, {
@@ -133,7 +134,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
 
     await expect(apply({
       tracked: {
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
         happySessionId: 'sess_1',
         pid: 123,
         happySessionMetadataFromLocalWebhook: {
@@ -175,7 +176,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
 
     await expect(apply({
       tracked: {
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
         happySessionId: 'sess_1',
         pid: 123,
         spawnOptions: {
@@ -223,7 +224,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
 
     await expect(apply({
       tracked: {
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
         happySessionId: 'sess_1',
         pid: 123,
         spawnOptions: {
@@ -282,7 +283,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
 
     await expect(apply({
       tracked: {
-        startedBy: 'daemon', happySessionId: 'sess_1', pid: 123,
+        trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon', happySessionId: 'sess_1', pid: 123,
         spawnOptions: { directory: '/tmp/project', backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' } },
       },
       normalizedBindings: {
@@ -337,7 +338,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
 
     await expect(apply({
       tracked: {
-        startedBy: 'daemon', happySessionId: 'sess_1', pid: 123,
+        trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon', happySessionId: 'sess_1', pid: 123,
         spawnOptions: { directory: '/tmp/project', backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' } },
       },
       normalizedBindings: {
@@ -392,7 +393,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
 
     await expect(apply({
       tracked: {
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
         happySessionId: 'sess_1',
         pid: 123,
         spawnOptions: {
@@ -425,7 +426,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
 
     await expect(apply({
       tracked: {
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
         happySessionId: 'sess_1',
         pid: 123,
         spawnOptions: {
@@ -469,7 +470,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
 
     await expect(apply({
       tracked: {
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
         happySessionId: 'sess_1',
         pid: 123,
         spawnOptions: {
@@ -516,7 +517,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
 
     await expect(apply({
       tracked: {
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
         happySessionId: 'sess_1',
         pid: 123,
         spawnOptions: {
@@ -563,7 +564,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
 
     await expect(apply({
       tracked: {
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
         happySessionId: 'sess_1',
         pid: 123,
         spawnOptions: {
@@ -606,7 +607,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
 
     await expect(apply({
       tracked: {
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
         happySessionId: 'sess_1',
         pid: 123,
         spawnOptions: {
@@ -654,7 +655,7 @@ describe('createSessionConnectedServiceAuthHotApply', () => {
 
     await expect(apply({
       tracked: {
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
         happySessionId: 'sess_1',
         pid: 123,
         spawnOptions: {

@@ -21,6 +21,7 @@ import {
   shouldRunDaemonReattachIntegration,
   spawnHappyLookingProcess,
 } from './testkit/realIntegration.testkit';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey, trackedSessionsForProcess } from '@/daemon/sessions/sessionTrackingKey';
 
 describe.skipIf(!shouldRunDaemonReattachIntegration())(
   'reattach (real) integration tests (opt-in)',
@@ -74,7 +75,7 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())(
       };
 
       await writeSessionMarker({
-        pid: p.pid,
+        trackingKey: legacyPidSessionTrackingKey(p.pid), pid: p.pid,
         happySessionId: 'sess-1',
         startedBy: 'terminal',
         cwd: '/tmp',
@@ -87,17 +88,17 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())(
       expect(markers).toHaveLength(1);
 
       const happyProcesses = await findAllHappyProcesses();
-      const map = new Map<number, TrackedSession>();
+      const map = new Map<SessionTrackingKey, TrackedSession>();
       const identity = await readProcessIdentityByPid(p.pid);
-      const { adopted } = adoptSessionsFromMarkers({ markers, happyProcesses, pidToTrackedSession: map,
+      const { adopted } = adoptSessionsFromMarkers({ markers, happyProcesses, trackedSessionsByKey: map,
         processIdentityByPid: new Map(identity ? [[p.pid, identity]] : []) });
       expect(adopted).toBe(1);
-      expect(map.get(p.pid)?.reattachedFromDiskMarker).toBe(true);
-      expect(map.get(p.pid)?.processCommandHash).toBe(hashProcessCommand(proc.command));
+      expect(map.get(legacyPidSessionTrackingKey(p.pid))?.reattachedFromDiskMarker).toBe(true);
+      expect(map.get(legacyPidSessionTrackingKey(p.pid))?.processCommandHash).toBe(hashProcessCommand(proc.command));
     });
 
     it('adopts the surviving built Stack runner with the same marker generation into a successor registry', async () => {
-      const { writeSessionMarker, readSessionMarkerForPid, hashProcessCommand } = await import('./sessionRegistry');
+      const { writeSessionMarker, readSessionMarker, hashProcessCommand } = await import('./sessionRegistry');
       const home = process.env.HAPPIER_HOME_DIR!;
       const entrypoint = join(home, 'source-bundles', 'bundle-fixture', 'apps', 'cli', 'src', 'index.mjs');
       await mkdir(join(entrypoint, '..'), { recursive: true });
@@ -109,14 +110,14 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())(
       expect(before).not.toBeNull();
       const processCommandHash = hashProcessCommand(before!.command);
       const authorityPath = join(home, 'tmp', 'agent-runtime-daemon-service-authorities', 'original.json');
-      await writeSessionMarker({ pid, happySessionId: 'built-stack-session', startedBy: 'daemon', cwd: home,
+      await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: 'built-stack-session', startedBy: 'daemon', cwd: home,
         processCommand: before!.command, processCommandHash, processStartTimeMs: before!.processStartTimeMs,
         agentRuntimeDaemonServiceAuthorityFilePath: authorityPath });
-      const sessions = new Map<number, TrackedSession>();
-      await reattach({ pidToTrackedSession: sessions });
-      expect(sessions.get(pid)).toMatchObject({ happySessionId: 'built-stack-session', reattachedFromDiskMarker: true,
+      const sessions = new Map<SessionTrackingKey, TrackedSession>();
+      await reattach({ trackedSessionsByKey: sessions });
+      expect(sessions.get(legacyPidSessionTrackingKey(pid))).toMatchObject({ happySessionId: 'built-stack-session', reattachedFromDiskMarker: true,
         processCommandHash, processStartTimeMs: before!.processStartTimeMs, agentRuntimeDaemonServiceAuthorityFilePath: authorityPath });
-      expect(await readSessionMarkerForPid(pid)).toMatchObject({ pid, happySessionId: 'built-stack-session',
+      expect(await readSessionMarker(legacyPidSessionTrackingKey(pid))).toMatchObject({ pid, happySessionId: 'built-stack-session',
         processCommandHash, processStartTimeMs: before!.processStartTimeMs });
       expect(await readProcessIdentityByPid(pid)).toMatchObject({ pid, processStartTimeMs: before!.processStartTimeMs });
       process.kill(pid, 0);
@@ -125,7 +126,7 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())(
     it.each([true, false])('heals an incomplete marker and restores materialized custody only with its captured process generation (%s)', async (withCapturedGeneration) => {
       const { findHappyProcessByPid } = await import('./doctor');
       const { readProcessIdentityByPid } = await import('./processIdentity');
-      const { writeSessionMarker, readSessionMarkerForPid, hashProcessCommand } = await import('./sessionRegistry');
+      const { writeSessionMarker, readSessionMarker, hashProcessCommand } = await import('./sessionRegistry');
       const child = spawnTestProcess(process.execPath, ['-e',
         `/* ${projectPath()}/bin/happier.mjs codex --started-by daemon --existing-session healed-canonical-reader ${'x'.repeat(1500)} */ setInterval(() => {}, 1000)`]);
       const pid = child.pid!;
@@ -139,18 +140,18 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())(
         nativeHomeRoot: join(process.env.HAPPIER_HOME_DIR!, 'native-home'),
         entries: [{ entryPath: 'projects', sourceEntryRoot: '/native/projects', materializedEntryPath: join(process.env.HAPPIER_HOME_DIR!, 'native-home/projects') }],
       };
-      await writeSessionMarker({ pid, happySessionId: 'healed-canonical-reader', startedBy: 'daemon', cwd: process.cwd(),
+      await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: 'healed-canonical-reader', startedBy: 'daemon', cwd: process.cwd(),
         ...(withCapturedGeneration ? { processStartTimeMs: identity!.processStartTimeMs } : {}),
         materializedStateObservationBinding });
-      const sessions = new Map<number, TrackedSession>();
-      await reattach({ pidToTrackedSession: sessions });
-      expect(sessions.get(pid)?.processCommandHash).toBe(hashProcessCommand(identity!.command));
+      const sessions = new Map<SessionTrackingKey, TrackedSession>();
+      await reattach({ trackedSessionsByKey: sessions });
+      expect(sessions.get(legacyPidSessionTrackingKey(pid))?.processCommandHash).toBe(hashProcessCommand(identity!.command));
       // A start witness already admits exact adoption; only witness-less
       // recovery heals the diagnostic command hash.
-      expect((await readSessionMarkerForPid(pid))?.processCommandHash).toBe(withCapturedGeneration ? undefined : hashProcessCommand(identity!.command));
-      expect((await readSessionMarkerForPid(pid))?.processStartTimeMs).toBe(identity!.processStartTimeMs);
-      expect(sessions.get(pid)?.materializedStateObservationBinding).toEqual(withCapturedGeneration ? materializedStateObservationBinding : undefined);
-      expect((await readSessionMarkerForPid(pid))?.materializedStateObservationBinding).toEqual(withCapturedGeneration ? materializedStateObservationBinding : undefined);
+      expect((await readSessionMarker(legacyPidSessionTrackingKey(pid)))?.processCommandHash).toBe(withCapturedGeneration ? undefined : hashProcessCommand(identity!.command));
+      expect((await readSessionMarker(legacyPidSessionTrackingKey(pid)))?.processStartTimeMs).toBe(identity!.processStartTimeMs);
+      expect(sessions.get(legacyPidSessionTrackingKey(pid))?.materializedStateObservationBinding).toEqual(withCapturedGeneration ? materializedStateObservationBinding : undefined);
+      expect((await readSessionMarker(legacyPidSessionTrackingKey(pid)))?.materializedStateObservationBinding).toEqual(withCapturedGeneration ? materializedStateObservationBinding : undefined);
     });
 
     it('rejects foreign scope in markerless and poisoned-marker recovery, including placeholder recovery', async () => {
@@ -163,14 +164,14 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())(
         spawned.push(() => { child.kill('SIGTERM'); });
         const proc = await waitForPidInspection(findHappyProcessByPid, child.pid!);
         expect(proc?.daemonOwnershipEnvironmentVariables?.HAPPIER_HOME_DIR).toBe(`${process.env.HAPPIER_HOME_DIR}-foreign`);
-        const tracked = new Map<number, TrackedSession>();
-        await reattach({ pidToTrackedSession: tracked });
-        expect(tracked.has(child.pid!)).toBe(false);
+        const tracked = new Map<SessionTrackingKey, TrackedSession>();
+        await reattach({ trackedSessionsByKey: tracked });
+        expect(trackedSessionsForProcess(tracked, child.pid!)).toHaveLength(0);
         expect((await listSessionMarkers()).some((marker) => marker.pid === child.pid)).toBe(false);
-        await writeSessionMarker({ pid: child.pid!, happySessionId: 'foreign-home', startedBy: 'daemon',
+        await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(child.pid!), pid: child.pid!, happySessionId: 'foreign-home', startedBy: 'daemon',
           processCommandHash: hashProcessCommand(proc!.command), processCommand: proc!.command });
-        await reattach({ pidToTrackedSession: tracked });
-        expect(tracked.has(child.pid!)).toBe(false);
+        await reattach({ trackedSessionsByKey: tracked });
+        expect(trackedSessionsForProcess(tracked, child.pid!)).toHaveLength(0);
         process.kill(child.pid!, 0);
       }
     });
@@ -196,9 +197,9 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())(
         await waitForPidInspection(findHappyProcessByPid, child.pid!);
         const { findAllHappyProcesses } = await import('./doctor');
         expect((await findAllHappyProcesses()).some((proc) => proc.pid === child.pid), scenario.name).toBe(true);
-        const tracked = new Map<number, TrackedSession>();
-        await reattach({ pidToTrackedSession: tracked });
-        expect(tracked.has(child.pid!), scenario.name).toBe(scenario.expected);
+        const tracked = new Map<SessionTrackingKey, TrackedSession>();
+        await reattach({ trackedSessionsByKey: tracked });
+        expect(trackedSessionsForProcess(tracked, child.pid!).length > 0, scenario.name).toBe(scenario.expected);
       }
     });
 
@@ -215,7 +216,7 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())(
       if (!proc) return;
 
       await writeSessionMarker({
-        pid: p.pid,
+        trackingKey: legacyPidSessionTrackingKey(p.pid), pid: p.pid,
         happySessionId: 'sess-2',
         startedBy: 'terminal',
         processCommandHash: '0'.repeat(64),
@@ -224,9 +225,9 @@ describe.skipIf(!shouldRunDaemonReattachIntegration())(
 
       const markers = await listSessionMarkers();
       const happyProcesses = await findAllHappyProcesses();
-      const map = new Map<number, TrackedSession>();
+      const map = new Map<SessionTrackingKey, TrackedSession>();
       const identity = await readProcessIdentityByPid(p.pid);
-      const { adopted } = adoptSessionsFromMarkers({ markers, happyProcesses, pidToTrackedSession: map,
+      const { adopted } = adoptSessionsFromMarkers({ markers, happyProcesses, trackedSessionsByKey: map,
         processIdentityByPid: new Map(identity ? [[p.pid, identity]] : []) });
       expect(adopted).toBe(0);
       expect(map.size).toBe(0);

@@ -4,6 +4,7 @@ import { createConnectedAccountPurposeBindingOwner } from '../connectedServices/
 import { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeRegistry/registry';
 import type { TrackedSession } from '../types';
 import { createSpawnLifecycleCallbacks } from './createSpawnLifecycleCallbacks';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 it.each(['before', 'during', 'live'] as const)('keeps deferred Connected Account registration under %s startup custody', async (exitPhase) => {
     const service = { pluginId: 'happier.agent.claude', localId: 'claude-subscription' } as const;
@@ -21,10 +22,10 @@ it.each(['before', 'during', 'live'] as const)('keeps deferred Connected Account
         assertTargetAccountMaterializable: async () => { throw new Error('Unexpected listed-account materialization'); },
     });
     const registry = new ConnectedServiceRuntimeRegistry();
-    const tracked: TrackedSession = { pid: 1235, startedBy: 'daemon', reportMarkerCustody: {
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(1235), pid: 1235, startedBy: 'daemon', reportMarkerCustody: {
         pending: Promise.resolve(), retiring: exitPhase === 'before',
     } };
-    const cleanupByPid = new Map<number, () => void | Promise<void>>();
+    const cleanupByKey = new Map<SessionTrackingKey, () => void | Promise<void>>();
     const activation: { lease: ReturnType<typeof owner.activateSessionPurposeBindings> | null } = { lease: null };
     const callbacks = createSpawnLifecycleCallbacks({
         connectedServicesBindingsRaw: { v: 2, bindingsByServiceId: {
@@ -40,8 +41,8 @@ it.each(['before', 'during', 'live'] as const)('keeps deferred Connected Account
         },
         registerConnectedServiceRuntimeTarget: (target) => { registry.registerTarget(target); },
         getSpawnResourceCleanupOnExit: () => async () => { await activation.lease?.dispose(); },
-        onSpawnResourceCleanupArmed: () => {}, spawnResourceCleanupByPid: cleanupByPid,
-        getSessionAttachCleanup: () => null, setSessionAttachCleanup: () => {}, sessionAttachCleanupByPid: new Map(),
+        onSpawnResourceCleanupArmed: () => {}, spawnResourceCleanupByKey: cleanupByKey,
+        getSessionAttachCleanup: () => null, setSessionAttachCleanup: () => {}, sessionAttachCleanupByKey: new Map(),
         persistAcceptedSpawnMarker: async () => {},
     });
     await callbacks.persistAcceptedSpawnMarker(tracked);
@@ -56,12 +57,12 @@ it.each(['before', 'during', 'live'] as const)('keeps deferred Connected Account
             expect(result).toBeNull();
             expect(activation.lease?.resolvePurposeBinding(purpose)).toEqual(binding);
             expect(registry.getBySessionId('session-deferred')?.pid).toBe(tracked.pid);
-            expect(cleanupByPid.has(tracked.pid)).toBe(true);
+            expect(cleanupByKey.has(tracked.trackingKey)).toBe(true);
         } else {
             expect(result).toMatchObject({ type: 'error', errorCode: 'CHILD_EXITED_BEFORE_WEBHOOK' });
             expect(activation.lease?.resolvePurposeBinding(purpose) ?? null).toBeNull();
             expect(registry.listTargets()).toEqual([]);
-            expect(cleanupByPid.has(tracked.pid)).toBe(false);
+            expect(cleanupByKey.has(tracked.trackingKey)).toBe(false);
         }
     } finally { await activation.lease?.dispose(); }
 });

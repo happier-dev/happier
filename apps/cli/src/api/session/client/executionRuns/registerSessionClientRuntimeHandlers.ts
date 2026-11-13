@@ -116,7 +116,7 @@ import type { ExecutionRunHostBridgeContract } from '@/agent/runtime/bridges/exe
 import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { RequesterWorkAttributionV1Schema } from '@/daemon/lifecycle/requesterWorkAttribution';
-import { hashProcessCommand, readSessionMarkerForPid } from '@/daemon/sessionRegistry';
+import { findSessionMarkerTrackingKey, hashProcessCommand, readSessionMarker } from '@/daemon/sessionRegistry';
 import { processGenerationMatches, readProcessIdentityByPid } from '@/daemon/processIdentity';
 import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createSessionFollowContextReconciler } from '@/agent/runtime/session/follow/sessionFollowContextReconciler';
@@ -291,8 +291,10 @@ export function registerSessionClientRuntimeHandlers(
         }
         // Ordinary daemon-launched custody already has a canonical accepted
         // marker. Only its exact live process generation may supply this fact.
+        const trackingKey = await findSessionMarkerTrackingKey({ pid: process.pid, sessionId: params.sessionId }, markerReadScope);
+        if (!trackingKey) return null;
         const [marker, identity] = await Promise.all([
-            readSessionMarkerForPid(process.pid, markerReadScope), readProcessIdentityByPid(process.pid),
+            readSessionMarker(trackingKey, markerReadScope), readProcessIdentityByPid(process.pid),
         ]);
         const stamp = marker?.requesterWorkAttributionV1;
         if (!marker || !identity || !stamp || marker.pid !== process.pid

@@ -60,7 +60,7 @@ describe('pool-selected native Account cleanup', () => {
       const registry = new ConnectedServiceRuntimeRegistry();
       registry.registerRunTarget({ runKey: 'finite:B', pid: 123, agentId, materializationKey: 'finite:B',
         connectedServicesBindingsRaw: { v: 2, bindingsByServiceId: { [serviceId]: { source: 'connected', selection: 'group', groupId: 'pool', profileId: 'B' } } } });
-      const scheduler = createConnectedServiceGroupHomeCleanupScheduler({ activeServerDir: root, runtimeRegistry: registry, pidToTrackedSession: new Map() });
+      const scheduler = createConnectedServiceGroupHomeCleanupScheduler({ activeServerDir: root, runtimeRegistry: registry, trackedSessionsByKey: new Map() });
       await expect(scheduler.scheduleDeletedAccountCleanup({ account })).resolves.toMatchObject({ cleaned: false, pending: true });
       await expect(scheduler.cleanupPendingDeletedGroupHomes()).resolves.toEqual([]);
       for (const home of [selectedRoot, oldRoot]) for (const path of descriptor.authIsolation.secretEntries) await expect(stat(join(home, path))).resolves.toBeTruthy();
@@ -103,7 +103,7 @@ describe('pool-selected native Account cleanup', () => {
           files: Object.fromEntries(descriptor.authIsolation.secretEntries.map(path => [path, new TextEncoder().encode('fake-selected-B')])) });
         await writeFile(join(home, 'retained-history'), 'session-history');
       }
-      const scheduler = createConnectedServiceGroupHomeCleanupScheduler({ activeServerDir: root, pidToTrackedSession: new Map() });
+      const scheduler = createConnectedServiceGroupHomeCleanupScheduler({ activeServerDir: root, trackedSessionsByKey: new Map() });
       const disabled = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
         runtimeOptions: { pluginIds: ['happier.agent.codex'], contributes: getResolvedContributionRegistry({
           pluginEnablementById: { 'happier.agent.kimi': { machineEnabled: false, enabled: false } },

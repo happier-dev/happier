@@ -50,7 +50,8 @@ import { createSessionLiveWorkProducer } from './lifecycle/sessionLiveWorkProduc
 import type { SessionInputLiveWork } from '@/agent/runtime/session/input/_types';
 import { createDeferred } from '@/testkit/async/deferred';
 import { authorizeRunnerAgentTurnAdmission } from './agentRuntime/runnerAgentTurnAdmission';
-import { writeSessionMarker, updateSessionMarkerActiveTurn, readSessionMarkerForPid, removeSessionMarker } from './sessionRegistry';
+import { writeSessionMarker, updateSessionMarkerActiveTurn, readSessionMarker, removeSessionMarker } from './sessionRegistry';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 type RecordAdmission = NonNullable<
   Parameters<typeof createDaemonControlApp>[0][
@@ -97,12 +98,12 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
       path: authorityPath, sessionId, runner, retainedAgent, httpPort: 46_008,
       capability: capabilityA, readPluginHardRevocationRevision: async () => 0 });
-    const tracked: TrackedSession = { startedBy: 'daemon', pid: runner.pid, sessionRunnerPid: runner.pid,
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon', pid: runner.pid, sessionRunnerPid: runner.pid,
       happySessionId: sessionId, processStartTimeMs: runner.processStartTimeMs, processCommandHash: runner.processCommandHash,
       agentRuntimeDaemonServiceAuthorityFilePath: authorityPath, agentRuntimeDaemonServiceCapabilityHash: authority.capabilityDigest,
       runnerAgentSourceCustodyV1: retainedAgent.sourceCustody,
       runnerAgentInvocationContext: { cwd: '/workspace', environment: {}, providerBindingActive: false } };
-    await writeSessionMarker({ pid: runner.pid, happySessionId: sessionId, startedBy: 'daemon', cwd: '/workspace' });
+    await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(runner.pid), pid: runner.pid, happySessionId: sessionId, startedBy: 'daemon', cwd: '/workspace' });
     const admissionDrain = createDaemonAdmissionDrain();
     const beforeDispatch = phase === 'initial authority' || phase === 'post-wake authority';
     const releaseDrain = beforeDispatch ? admissionDrain.beginTemporaryDrain() : () => {};
@@ -136,12 +137,12 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
         return await authorizeRunnerAgentTurnAdmission({ retainedAgent: subject.retainedAgent, witness: request.operation.witness });
       } }, recordAgentRuntimeDaemonServiceAdmission: async (session, admission) => {
         const recorded = await updateSessionMarkerActiveTurn({
-          pid: session.sessionRunnerPid ?? session.pid, sessionId, activeTurnId: admission.turnId,
+          trackingKey: session.trackingKey, sessionId, activeTurnId: admission.turnId,
           agentRuntimeDaemonServiceActiveAdmission: admission });
         if (phase === 'post-record authority') holdAuthorityRead = true;
         return recorded;
       }, clearAgentRuntimeDaemonServiceAdmission: (session, admission) => updateSessionMarkerActiveTurn({
-        pid: session.sessionRunnerPid ?? session.pid, sessionId, activeTurnId: session.activeTurnId ?? null,
+        trackingKey: session.trackingKey, sessionId, activeTurnId: session.activeTurnId ?? null,
         expectedAgentRuntimeDaemonServiceActiveAdmission: admission }) });
     app.addHook('onRequest', async (_request, reply) => {
       reply.raw.once('close', () => responseClosed.resolve());
@@ -173,12 +174,12 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       releaseDrain();
       await handlerSettled.promise;
       expect(dispatches).toEqual(beforeDispatch ? [] : ['turn.admission.authorize']);
-      expect((await readSessionMarkerForPid(runner.pid))?.agentRuntimeDaemonServiceActiveAdmission).toBeUndefined();
+      expect((await readSessionMarker(legacyPidSessionTrackingKey(runner.pid)))?.agentRuntimeDaemonServiceActiveAdmission).toBeUndefined();
       expect(tracked.activeTurnId).toBeUndefined();
     } finally {
       authorityReply.resolve(0); client.destroy(); admissionDrain.beginShutdown();
       await app.close(); subscription.mockRestore();
-      await removeSessionMarker(runner.pid);
+      await removeSessionMarker(legacyPidSessionTrackingKey(runner.pid));
       await removeAgentRuntimeDaemonServiceAuthorityIfOwned({ happyHomeDir: configuration.happyHomeDir,
         publicReleaseRing: configuration.publicReleaseRing, path: authorityPath, capabilityDigest: authority.capabilityDigest });
     }
@@ -195,12 +196,12 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
       path: authorityPath, sessionId, runner, retainedAgent, httpPort: 46_005,
       capability: capabilityA, readPluginHardRevocationRevision: async () => 0 });
-    const tracked: TrackedSession = { startedBy: 'daemon', pid: runner.pid, sessionRunnerPid: runner.pid,
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon', pid: runner.pid, sessionRunnerPid: runner.pid,
       happySessionId: sessionId, processStartTimeMs: runner.processStartTimeMs, processCommandHash: runner.processCommandHash,
       agentRuntimeDaemonServiceAuthorityFilePath: authorityPath, agentRuntimeDaemonServiceCapabilityHash: authority.capabilityDigest,
       runnerAgentSourceCustodyV1: retainedAgent.sourceCustody,
       runnerAgentInvocationContext: { cwd: '/workspace', environment: {}, providerBindingActive: false } };
-    await writeSessionMarker({ pid: runner.pid, happySessionId: sessionId, startedBy: 'daemon', cwd: '/workspace' });
+    await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(runner.pid), pid: runner.pid, happySessionId: sessionId, startedBy: 'daemon', cwd: '/workspace' });
     let handoffQuiescing = false;
     const admissionDrain = createDaemonAdmissionDrain({ isPluginHandoffQuiescing: () => handoffQuiescing });
     const activityEntered = createDeferred<void>();
@@ -226,7 +227,7 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
         if (request.operation.kind !== 'turn.admission.authorize') throw new Error('Unexpected operation');
         return await authorizeRunnerAgentTurnAdmission({ retainedAgent: subject.retainedAgent, witness: request.operation.witness });
       } }, recordAgentRuntimeDaemonServiceAdmission: (session, admission) => updateSessionMarkerActiveTurn({
-        pid: session.sessionRunnerPid ?? session.pid, sessionId, activeTurnId: admission.turnId,
+        trackingKey: session.trackingKey, sessionId, activeTurnId: admission.turnId,
         agentRuntimeDaemonServiceActiveAdmission: admission }) });
     const waitSubscriptions = vi.spyOn(admissionDrain, 'subscribe');
     try {
@@ -263,13 +264,13 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
         expect(response.json()).toMatchObject(outcome === 'shutdown'
           ? { ok: false, errorCode: 'daemon_shutting_down' }
           : { ok: false, error: { code: 'agent_runtime_daemon_service_forbidden' } });
-        expect((await readSessionMarkerForPid(runner.pid))?.agentRuntimeDaemonServiceActiveAdmission).toBeUndefined();
+        expect((await readSessionMarker(legacyPidSessionTrackingKey(runner.pid)))?.agentRuntimeDaemonServiceActiveAdmission).toBeUndefined();
         return;
       }
       expect(response.statusCode, response.body).toBe(200);
       expect(AgentRuntimeDaemonServiceResponseV1Schema.parse(response.json())).toMatchObject({
         ok: true, result: { kind: 'turn.admission', status: 'admitted', witness: { turnId: 'turn-1' } } });
-      expect(await readSessionMarkerForPid(runner.pid)).toMatchObject({
+      expect(await readSessionMarker(legacyPidSessionTrackingKey(runner.pid))).toMatchObject({
         agentRuntimeDaemonServiceActiveAdmission: { turnId: 'turn-1', inputId: 'input-1' } });
       expect(tracked.activeTurnId).toBe('turn-1');
     } finally {
@@ -277,7 +278,7 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       admissionDrain.beginShutdown();
       waitSubscriptions.mockRestore();
       await app.close(); activity.dispose();
-      await removeSessionMarker(runner.pid);
+      await removeSessionMarker(legacyPidSessionTrackingKey(runner.pid));
       await removeAgentRuntimeDaemonServiceAuthorityIfOwned({ happyHomeDir: configuration.happyHomeDir,
         publicReleaseRing: configuration.publicReleaseRing, path: authorityPath, capabilityDigest: authority.capabilityDigest });
     }
@@ -294,7 +295,7 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
     const path = await createAgentRuntimeDaemonServiceAuthorityPath({
       happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing });
     const tracked: TrackedSession = {
-      startedBy: 'daemon', pid: runner.pid, sessionRunnerPid: runner.pid, happySessionId: sessionId,
+      trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon', pid: runner.pid, sessionRunnerPid: runner.pid, happySessionId: sessionId,
       processStartTimeMs: runner.processStartTimeMs, processCommandHash: runner.processCommandHash,
       runnerAgentSourceCustodyV1: retainedAgent.sourceCustody,
       runnerAgentInvocationContext: { cwd: '/workspace', environment: {}, providerBindingActive: true },
@@ -382,7 +383,7 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       path: authorityPath, sessionId, runner, retainedAgent, httpPort: 46_007,
       capability: capabilityA, readPluginHardRevocationRevision: async () => 0 });
     const tracked: TrackedSession = {
-      startedBy: 'daemon', pid: runner.pid, sessionRunnerPid: runner.pid, happySessionId: sessionId,
+      trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon', pid: runner.pid, sessionRunnerPid: runner.pid, happySessionId: sessionId,
       processStartTimeMs: runner.processStartTimeMs, processCommandHash: runner.processCommandHash,
       agentRuntimeDaemonServiceAuthorityFilePath: authorityPath,
       agentRuntimeDaemonServiceCapabilityHash: authority.capabilityDigest,
@@ -473,7 +474,7 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       const sessionId = 'session-failed-cgroup-migration';
       const retainedAgent = createRetainedAgent();
       const tracked: TrackedSession = {
-        startedBy: 'daemon', pid: wrapperIdentity.pid, happySessionId: sessionId,
+        trackingKey: legacyPidSessionTrackingKey(wrapperIdentity.pid), startedBy: 'daemon', pid: wrapperIdentity.pid, happySessionId: sessionId,
         processStartTimeMs: wrapperIdentity.processStartTimeMs,
         processCommandHash: wrapperIdentity.processCommandHash,
         runnerAgentSourceCustodyV1: retainedAgent.sourceCustody,
@@ -548,7 +549,7 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       path: authorityPath, sessionId, runner, retainedAgent, httpPort: 46_004,
       capability: capabilityA, readPluginHardRevocationRevision: async () => 0 });
     const tracked: TrackedSession = {
-      startedBy: 'daemon', pid: runner.pid, sessionRunnerPid: runner.pid, happySessionId: sessionId,
+      trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon', pid: runner.pid, sessionRunnerPid: runner.pid, happySessionId: sessionId,
       processStartTimeMs: runner.processStartTimeMs, processCommandHash: runner.processCommandHash,
       agentRuntimeDaemonServiceAuthorityFilePath: authorityPath,
       agentRuntimeDaemonServiceCapabilityHash: authority.capabilityDigest,
@@ -559,6 +560,7 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
     // its queued input in a successor. Its different capability is not a veto.
     const predecessor: TrackedSession = {
       ...tracked,
+      trackingKey: legacyPidSessionTrackingKey(runner.pid - 1),
       pid: runner.pid - 1,
       sessionRunnerPid: runner.pid - 1,
       agentRuntimeDaemonServiceCapabilityHash: hashAgentRuntimeSessionBridgeToken(capabilityB),
@@ -728,7 +730,7 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
         );
       }
       const tracked: TrackedSession = {
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon',
         pid: runner.pid,
         sessionRunnerPid: runner.pid,
         happySessionId: sessionId,
@@ -864,7 +866,7 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
         currentRevisions.get(pluginId) ?? 0,
     });
     const tracked: TrackedSession = {
-      startedBy: 'daemon',
+      trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon',
       pid: runner.pid,
       sessionRunnerPid: runner.pid,
       happySessionId: sessionId,
@@ -999,7 +1001,7 @@ describe('daemon control server: runner-scoped Agent runtime services', () => {
       providerBindingActive: false,
     });
     const tracked: TrackedSession = {
-      startedBy: 'daemon',
+      trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon',
       pid: runner.pid,
       sessionRunnerPid: runner.pid,
       happySessionId: sessionId,

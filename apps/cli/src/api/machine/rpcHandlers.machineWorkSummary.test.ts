@@ -13,6 +13,7 @@ import { registerMachineWorkSummaryRpcHandlers } from './rpcHandlers.machineWork
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest } from './machineRpcAuthorization';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const target = { serverId: 'home', machineId: 'machine', installationId: 'installation' };
 const custodian = { accountId: 'alice', displayName: 'Alice' };
@@ -315,7 +316,7 @@ describe('current Machine work summary ingress', () => {
         expect(await call()).toEqual({ kind: 'refused', code: 'access_denied' });
         current = true;
         retireDuringRead = false;
-        trackedSessions = [{ pid: 1, startedBy: 'daemon', happySessionId: 'private-session',
+        trackedSessions = [{ trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon', happySessionId: 'private-session',
             requesterWorkAttributionV1: { ...target, accountId: 'bob' } }];
         expect(await call()).toMatchObject({ kind: 'current', requesters: [{ accountId: 'bob', sessions: 1, tasks: 1 }] });
         expect(await call()).toEqual({ kind: 'refused', code: 'access_denied' });

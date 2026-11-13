@@ -39,6 +39,7 @@ import { bindHomeDomainActionHttpRequestV1 } from '@happier-dev/protocol/actions
 import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams';
 import { TeamsPageV1Schema, resolveTeamAdmissionProjectionV1 } from '@happier-dev/protocol/teams/projections';
 import { TeamCredentialResourceEntitledPageV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY =
   'HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_V1_JSON';
@@ -287,14 +288,14 @@ function createParams() {
     connectedServiceRefreshCoordinator: null,
     connectedServiceQuotasCoordinator: null,
     connectedServiceRuntimeRegistry: { registerTarget: vi.fn() },
-    pidToTrackedSession: new Map(),
-    pidToAwaiter: new Map(),
-    pidToSpawnResultResolver: new Map(),
-    pidToSpawnWebhookTimeout: new Map(),
+    trackedSessionsByKey: new Map(),
+    spawnAwaiterByKey: new Map(),
+    spawnResultResolverByKey: new Map(),
+    spawnWebhookTimeoutByKey: new Map(),
     resolveCanonicalTrackedSessionId: vi.fn(() => 'tracked-session-1'),
     onChildExited: vi.fn(),
-    spawnResourceCleanupByPid: new Map(),
-    sessionAttachCleanupByPid: new Map(),
+    spawnResourceCleanupByKey: new Map(),
+    sessionAttachCleanupByKey: new Map(),
     processEnv: {},
   } as const;
 }
@@ -834,8 +835,8 @@ describe('executeSpawnSessionRequest', () => {
       const sessionCreationTag = deriveSessionCreationTagV1({ callerCreationNamespace: 'spawn-test', creationKey: 'accepted-managed-bind' });
       const allocation = owner.prepareForCreation({ sessionCreationTag });
       const sessionId = 'accepted-managed-session';
-      const tracked = { startedBy: 'daemon', pid: 4123, happySessionId: sessionId } satisfies TrackedSession;
-      const pidToTrackedSession = new Map<number, TrackedSession>();
+      const tracked = { startedBy: 'daemon', trackingKey: legacyPidSessionTrackingKey(4123), pid: 4123, happySessionId: sessionId } satisfies TrackedSession;
+      const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>();
       hoisted.requireCatalogEntry.mockReturnValue({});
       hoisted.resolveSpawnBackendIdentity.mockResolvedValueOnce({
         ok: true,
@@ -852,19 +853,19 @@ describe('executeSpawnSessionRequest', () => {
       });
       const { routeSpawnModeAndWaitForWebhook } = await import('../spawn/routeSpawnModeAndWaitForWebhook');
       vi.mocked(routeSpawnModeAndWaitForWebhook).mockImplementationOnce(async (input) => {
-        input.pidToTrackedSession.set(tracked.pid, tracked);
+        input.trackedSessionsByKey.set(tracked.trackingKey, tracked);
         hoisted.refusedManagedOwnerRecordPath = join(activeServerDir, 'session-directories', '.owners', `${allocation.allocationId}.json`);
         return { type: 'success', sessionId };
       });
       const { executeSpawnSessionRequest } = await import('./executeSpawnSessionRequest');
       const params = createParams();
       const result = await executeSpawnSessionRequest({
-        ...params, pidToTrackedSession,
+        ...params, trackedSessionsByKey,
         options: { ...params.options, resume: undefined, directory: allocation.directory,
           directoryKind: 'managed', sessionCreationTag },
       });
       expect(result).toEqual({ type: 'success', sessionId });
-      expect(pidToTrackedSession.get(tracked.pid)).toBe(tracked);
+      expect(trackedSessionsByKey.get(tracked.trackingKey)).toBe(tracked);
       expect(params.onChildExited).not.toHaveBeenCalled();
       await expect(access(allocation.directory)).resolves.toBeUndefined();
       expect(await owner.listRecords()).toMatchObject([{ allocationId: allocation.allocationId, sessionId: null }]);

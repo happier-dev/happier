@@ -13,6 +13,7 @@ import { waitForTrackedRunnerProcessesExit } from './waitForTrackedRunnerProcess
 import { readTerminalHostAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 import { resolveTrackedSessionTerminalHostExitCandidate, shouldRetainTrackedTerminalHostExitMarker } from './disconnectedTerminalHostSupervision';
 import { listSessionMarkers, writeSessionMarker } from '../sessionRegistry';
+import { legacyPidSessionTrackingKey, trackedSessionsForProcess } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('Stop of an already-dead tracked runner', () => {
   it.each([
@@ -31,12 +32,12 @@ describe('Stop of an already-dead tracked runner', () => {
       if (!identity || identity.processStartTimeMs === undefined) throw new Error('Owned runner identity unavailable');
       const pid = child.pid!;
       const sessionId = 'dead-runner-permanent';
-      const tracked: TrackedSession = { pid, childProcess: child, startedBy: 'daemon', happySessionId: sessionId,
+      const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid), pid, childProcess: child, startedBy: 'daemon', happySessionId: sessionId,
         activeTurnId: 'turn-no-longer-addressable', processStartTimeMs: identity.processStartTimeMs,
         processCommandHash: identity.processCommandHash };
-      await writeSessionMarker({ pid, happySessionId: sessionId, startedBy: 'daemon', cwd: homeDir,
+      await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: sessionId, startedBy: 'daemon', cwd: homeDir,
         processStartTimeMs: identity.processStartTimeMs, processCommandHash: identity.processCommandHash });
-      const sessions = new Map([[pid, tracked]]);
+      const sessions = new Map([[tracked.trackingKey, tracked]]);
       let captures = 0;
       let resourcesReleased = false;
       const machine = {
@@ -49,24 +50,24 @@ describe('Stop of an already-dead tracked runner', () => {
         enqueueDaemonTerminalExactTurnEnd: async () => { throw new Error('Permanently unavailable terminal must not stage a turn'); },
       } satisfies Pick<ApiMachineClient, 'captureMachineSessionTerminal' | 'finalizeMachineSessionTerminal' | 'enqueueDaemonTerminalExactTurnEnd'>;
       const onExit = createOnChildExited({
-        pidToTrackedSession: sessions,
-        spawnResourceCleanupByPid: new Map([[pid, () => { resourcesReleased = true; }]]),
-        sessionAttachCleanupByPid: new Map(),
+        trackedSessionsByKey: sessions,
+        spawnResourceCleanupByKey: new Map([[tracked.trackingKey, () => { resourcesReleased = true; }]]),
+        sessionAttachCleanupByKey: new Map(),
         getApiMachineForSessions: () => machine as ApiMachineClient,
       });
       const stop = createStopSession({
-        pidToTrackedSession: sessions,
+        trackedSessionsByKey: sessions,
         areTrackedRunnersExited: ({ trackedPids }) => waitForTrackedRunnerProcessesExit({
           runners: trackedPids.map(pid => ({ pid })), timeoutMs: 0, pollIntervalMs: 0,
         }),
         waitForTrackedRunnersExit: async ({ trackedPids }) => {
           await waitForExistingSessionExitIfStopRequested({
-            sessionId, pidToTrackedSession: sessions,
+            sessionId, trackedSessionsByKey: sessions,
             timeoutMs: configuration.daemonStopSessionWaitForExitMs,
             pollIntervalMs: configuration.daemonStopSessionWaitForExitPollIntervalMs,
             onExitObserved: onExit,
           });
-          return trackedPids.every(pid => !sessions.has(pid));
+          return trackedPids.every(pid => trackedSessionsForProcess(sessions, pid).length === 0);
         },
       });
       expect(await stop(sessionId)).toEqual({ status: 'stopped' });
@@ -86,7 +87,7 @@ describe('Stop of an already-dead tracked runner', () => {
       await exited;
       const pid = child.pid!;
       const sessionId = 'dead-runner-stop';
-      const tracked: TrackedSession = { pid, childProcess: child, startedBy: 'daemon', happySessionId: sessionId,
+      const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid), pid, childProcess: child, startedBy: 'daemon', happySessionId: sessionId,
         ...(presentation !== 'plain' ? {
           hostedTerminal: { mode: 'tmux' as const },
           publishedTerminalControlServiceabilityAttachmentId: 'already-retired-host',
@@ -95,8 +96,8 @@ describe('Stop of an already-dead tracked runner', () => {
           spawnOptions: { directory: homeDir, terminal: { mode: 'tmux' as const } },
         } : {}),
       };
-      await writeSessionMarker({ pid, happySessionId: sessionId, startedBy: 'daemon', cwd: homeDir });
-      const sessions = new Map([[pid, tracked]]);
+      await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: sessionId, startedBy: 'daemon', cwd: homeDir });
+      const sessions = new Map([[tracked.trackingKey, tracked]]);
       let homeAvailable = false;
       let finalPresenceObserved = false;
       let unexpectedExitObserved = false;
@@ -110,9 +111,9 @@ describe('Stop of an already-dead tracked runner', () => {
         },
       } satisfies Pick<ApiMachineClient, 'captureMachineSessionTerminal'>;
       const onExit = createOnChildExited({
-        pidToTrackedSession: sessions,
-        spawnResourceCleanupByPid: new Map(),
-        sessionAttachCleanupByPid: new Map(),
+        trackedSessionsByKey: sessions,
+        spawnResourceCleanupByKey: new Map(),
+        sessionAttachCleanupByKey: new Map(),
         getApiMachineForSessions: () => machine as ApiMachineClient,
         onUnexpectedExit: () => { unexpectedExitObserved = true; },
         shouldPreserveSessionMarkerOnExit: ({ trackedSession }) => shouldRetainTrackedTerminalHostExitMarker({
@@ -128,23 +129,23 @@ describe('Stop of an already-dead tracked runner', () => {
         },
       });
       const stop = createStopSession({
-        pidToTrackedSession: sessions,
+        trackedSessionsByKey: sessions,
         areTrackedRunnersExited: ({ trackedPids }) => waitForTrackedRunnerProcessesExit({
           runners: trackedPids.map(pid => ({ pid })), timeoutMs: 0, pollIntervalMs: 0,
         }),
         waitForTrackedRunnersExit: async ({ trackedPids }) => {
           await waitForExistingSessionExitIfStopRequested({
-            sessionId, pidToTrackedSession: sessions,
+            sessionId, trackedSessionsByKey: sessions,
             timeoutMs: configuration.daemonStopSessionWaitForExitMs,
             pollIntervalMs: configuration.daemonStopSessionWaitForExitPollIntervalMs,
             onExitObserved: onExit,
           });
-          return trackedPids.every(pid => !sessions.has(pid));
+          return trackedPids.every(pid => trackedSessionsForProcess(sessions, pid).length === 0);
         },
       });
 
       expect((await stop(sessionId)).status).toBe('incomplete');
-      expect(sessions.get(pid)).toBe(tracked);
+      expect(sessions.get(tracked.trackingKey)).toBe(tracked);
       expect(finalPresenceObserved).toBe(false);
       expect(unexpectedExitObserved).toBe(false);
       homeAvailable = true;

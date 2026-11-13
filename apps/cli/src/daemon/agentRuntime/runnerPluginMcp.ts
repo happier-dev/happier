@@ -2,9 +2,10 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import type { TrackedSession } from '@/daemon/types';
 import type { ResolvedSessionMcpServer } from '@/mcp/runtimeTypes';
-import { registerPidSpawnResourceCleanup } from '@/daemon/sessions/cleanupPidSessionResources';
+import { registerSessionSpawnResourceCleanup, type SpawnResourceCleanupByKey } from '@/daemon/sessions/cleanupSessionResources';
 import { detectProviderMcpServers } from '@/mcp/providerDetection/detectProviderMcpServers';
 import { RunnerPluginMcpResultSchema, type RunnerPluginMcpOperation, type RunnerPluginMcpResult } from '@/agent/runtime/session/process/runnerPluginMcpProtocol';
+import { isCurrentTrackedSession, type TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 type Disposable = Readonly<{ dispose(): void | Promise<void> }>;
 type Context = Readonly<{
@@ -22,8 +23,8 @@ export function createDaemonRunnerPluginMcp(input: Readonly<{
   acquireRegistry(): Promise<PluginRuntimeRegistryLease>;
   /** Resolve private Session birth once at preparation, including cold recovery. */
   readAllowNativeAccountState(context: Context): Promise<boolean>;
-  trackedSessions: Map<number, TrackedSession>;
-  spawnResourceCleanupByPid: Map<number, () => void | Promise<void>>;
+  trackedSessions: TrackedSessionMap;
+  spawnResourceCleanupByKey: SpawnResourceCleanupByKey;
   signal: AbortSignal;
 }>) {
   const preparations = new Map<string, Readonly<{
@@ -45,7 +46,7 @@ export function createDaemonRunnerPluginMcp(input: Readonly<{
     if (!tracked || !await context.isCurrent()) throw unavailable();
     context.signal?.throwIfAborted();
     if (tracked.happySessionId !== context.sessionId || tracked.reportMarkerCustody?.retiring
-      || tracked.stopRequestedAtMs !== undefined || input.trackedSessions.get(tracked.pid) !== tracked) throw unavailable();
+      || tracked.stopRequestedAtMs !== undefined || !isCurrentTrackedSession(input.trackedSessions, tracked)) throw unavailable();
     return tracked;
   };
   return {
@@ -85,9 +86,9 @@ export function createDaemonRunnerPluginMcp(input: Readonly<{
         preparations.set(operation.preparationId, preparation);
         try {
           await active(context);
-          unregister = registerPidSpawnResourceCleanup({ pid: tracked.pid, spawnResourceCleanupByPid: input.spawnResourceCleanupByPid,
+          unregister = registerSessionSpawnResourceCleanup({ trackingKey: tracked.trackingKey, spawnResourceCleanupByKey: input.spawnResourceCleanupByKey,
             label: operation.kind,
-            isCurrentPidOwner: () => input.trackedSessions.get(tracked.pid) === tracked && !tracked.reportMarkerCustody?.retiring,
+            isCurrentOwner: () => isCurrentTrackedSession(input.trackedSessions, tracked) && !tracked.reportMarkerCustody?.retiring,
             cleanup: dispose });
           if (!unregister || !lease.registry.projectMcpServerItems) throw unavailable();
           const projectItems = lease.registry.projectMcpServerItems;

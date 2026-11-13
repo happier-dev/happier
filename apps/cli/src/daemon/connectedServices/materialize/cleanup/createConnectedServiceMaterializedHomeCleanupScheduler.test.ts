@@ -14,6 +14,7 @@ import type { TrackedSession } from '../../../types';
 import { normalizeMaterializationKeyForPath } from '../normalizeMaterializationKeyForPath';
 import { createConnectedServiceMaterializedHomeCleanupScheduler } from './createConnectedServiceMaterializedHomeCleanupScheduler';
 import { readRetainedConnectedServiceMaterializationKeys } from './readRetainedConnectedServiceMaterializationKeys';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 // Inject filesystem failures at the OS boundary while retaining the factory,
 // metadata decoding, retention selection and real eventual deletion.
@@ -43,7 +44,7 @@ describe('createConnectedServiceMaterializedHomeCleanupScheduler', () => {
       await symlink(retained, join(baseDir, '.attempts'), 'dir');
       const scheduler = createConnectedServiceMaterializedHomeCleanupScheduler({
         baseDir, nowMs: () => 10_000, orphanTtlMs: 1_000, attemptTtlMs: 1_000,
-        pidToTrackedSession: new Map(), getRetainedMaterializationKeys: async () => ['retained-home'],
+        trackedSessionsByKey: new Map(), getRetainedMaterializationKeys: async () => ['retained-home'],
       });
       await scheduler.reconcile();
       await expect(stat(agentHome)).resolves.toBeTruthy();
@@ -75,7 +76,7 @@ describe('createConnectedServiceMaterializedHomeCleanupScheduler', () => {
       const orphan = await createIdentityRoot(baseDir, 'unrecoverable-run');
       const missing = await createIdentityRoot(baseDir, 'native-state-missing');
       const scheduler = createConnectedServiceMaterializedHomeCleanupScheduler({
-        baseDir, nowMs: () => 10_000, orphanTtlMs: 1_000, pidToTrackedSession: new Map(),
+        baseDir, nowMs: () => 10_000, orphanTtlMs: 1_000, trackedSessionsByKey: new Map(),
         getRetainedMaterializationKeys: async () => [],
       });
       await scheduler.reconcile();
@@ -109,9 +110,9 @@ describe('createConnectedServiceMaterializedHomeCleanupScheduler', () => {
         await mkdir(join(home, 'codex'), { recursive: true });
         await utimes(home, new Date(1_000), new Date(1_000));
       }
-      const pidToTrackedSession = new Map<number, TrackedSession>([
-        [123, {
-          startedBy: 'daemon',
+      const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([
+        [legacyPidSessionTrackingKey(123), {
+          trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
           pid: 123,
           spawnOptions: {
             directory: '/repo',
@@ -129,7 +130,7 @@ describe('createConnectedServiceMaterializedHomeCleanupScheduler', () => {
         nowMs: () => 10_000,
         orphanTtlMs: 1_000,
         attemptTtlMs: 1_000,
-        pidToTrackedSession,
+        trackedSessionsByKey,
         getRetainedMaterializationKeys: async () => await readRetainedConnectedServiceMaterializationKeys({
           credentials: { token: 'fixture-token', encryption: { type: 'legacy', secret: new Uint8Array(32) } },
           getAccountEncryptionCurrentness: async () => ({ mode: 'plain', version: 1,

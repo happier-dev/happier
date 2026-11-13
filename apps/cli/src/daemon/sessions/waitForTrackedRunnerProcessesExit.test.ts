@@ -11,6 +11,7 @@ import { waitForExistingSessionExitIfStopRequested } from './waitForExistingSess
 import { isSessionRunnerActive } from './isSessionRunnerActive';
 
 import { observePlannedRunnerRetirement, waitForTrackedRunnerProcessesExit } from './waitForTrackedRunnerProcessesExit';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('waitForTrackedRunnerProcessesExit', () => {
   it.skipIf(process.platform === 'win32')('preserves custody for a real paused live child', async () => {
@@ -19,11 +20,11 @@ describe('waitForTrackedRunnerProcessesExit', () => {
     await once(child, 'spawn');
     const pid = child.pid!;
     const exited = once(child, 'exit');
-    const tracked = new Map<number, TrackedSession>([
-      [pid, { pid, startedBy: 'terminal', happySessionId: `PID-${pid}`, stopRequestedAtMs: 123 }],
+    const tracked = new Map<SessionTrackingKey, TrackedSession>([
+      [legacyPidSessionTrackingKey(pid), { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'terminal', happySessionId: `PID-${pid}`, stopRequestedAtMs: 123 }],
     ]);
     const onExitObserved = createOnChildExited({
-      pidToTrackedSession: tracked, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey: tracked, spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       // Marker files are an external persistence boundary; no marker belongs to this synthetic child.
       removeSessionMarkerFn: async () => {},
@@ -37,11 +38,11 @@ describe('waitForTrackedRunnerProcessesExit', () => {
       vi.useFakeTimers({ toFake: ['Date'] });
       expect(await isSessionRunnerActive({ sessionId: `PID-${pid}`, trackedSessions: tracked.values() })).toBe(false);
       await waitForExistingSessionExitIfStopRequested({
-        sessionId: `PID-${pid}`, pidToTrackedSession: tracked, timeoutMs: 0, pollIntervalMs: 0,
+        sessionId: `PID-${pid}`, trackedSessionsByKey: tracked, timeoutMs: 0, pollIntervalMs: 0,
         onExitObserved,
       });
       await new Promise<void>((resolve) => setImmediate(resolve));
-      expect(tracked.has(pid)).toBe(true);
+      expect(tracked.has(legacyPidSessionTrackingKey(pid))).toBe(true);
       expect(await readProcessRunState(pid)).toBe('stopped');
     } finally {
       vi.useRealTimers();
@@ -55,8 +56,8 @@ describe('waitForTrackedRunnerProcessesExit', () => {
     await once(child, 'spawn');
     const pid = child.pid!;
     await once(child, 'exit');
-    const tracked = new Map<number, TrackedSession>([
-      [pid, { pid, startedBy: 'terminal', happySessionId: `PID-${pid}`, stopRequestedAtMs: 123,
+    const tracked = new Map<SessionTrackingKey, TrackedSession>([
+      [legacyPidSessionTrackingKey(pid), { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'terminal', happySessionId: `PID-${pid}`, stopRequestedAtMs: 123,
         processCommand: 'private-launch-credential' }],
     ]);
     let releaseMarker!: () => void;
@@ -65,7 +66,7 @@ describe('waitForTrackedRunnerProcessesExit', () => {
     const markerObserved = new Promise<void>((resolve) => { markerStarted = resolve; });
     let markerRetirementAttempts = 0;
     const onExitObserved = createOnChildExited({
-      pidToTrackedSession: tracked, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey: tracked, spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       removeSessionMarkerFn: async () => { markerRetirementAttempts += 1; markerStarted(); await markerPending; },
     });
@@ -81,19 +82,19 @@ describe('waitForTrackedRunnerProcessesExit', () => {
     try {
       await Promise.race([markerObserved, waiting]);
       expect(completed).toBe(false);
-      expect(tracked.has(pid)).toBe(true);
+      expect(tracked.has(legacyPidSessionTrackingKey(pid))).toBe(true);
       await vi.advanceTimersByTimeAsync(timeoutMs);
       // Brief Task 2 replaces the development-only shared physical/retirement
       // cutoff documented in docs/cli-architecture.md:5465–5471.
       expect(completed, 'Physical-exit grace cannot expire required retirement').toBe(false);
-      expect(tracked.has(pid)).toBe(true);
+      expect(tracked.has(legacyPidSessionTrackingKey(pid))).toBe(true);
       // Concurrent Stop joins the same cleanup; the original caller also sees
       // its terminal result, without another request to refresh that outcome.
       const retry = waitForTrackedRunnerProcessesExit({ ...request, timeoutMs: 1_000 });
       releaseMarker();
       expect(await waiting).toBe(true);
       expect(await retry).toBe(true);
-      expect(tracked.has(pid)).toBe(false);
+      expect(tracked.has(legacyPidSessionTrackingKey(pid))).toBe(false);
       expect(markerRetirementAttempts).toBe(1);
       logger.flushSync();
       const diagnostic = readFileSync(logger.getLogPath(), 'utf8').slice(previousLogLength);
@@ -117,22 +118,22 @@ describe('waitForTrackedRunnerProcessesExit', () => {
     const exited = once(child, 'exit');
     await once(child, 'message');
     const readRunState = vi.fn(async () => 'servable' as const);
-    const exits: number[] = [];
+    const exits: SessionTrackingKey[] = [];
     const exitListeners = child.listenerCount('exit');
     const pid = child.pid!;
     const sessionId = `PID-${pid}`;
-    const tracked = new Map<number, TrackedSession>([[pid, {
-      pid, childProcess: child, startedBy: 'daemon', happySessionId: sessionId, stopRequestedAtMs: Date.now(),
+    const tracked = new Map<SessionTrackingKey, TrackedSession>([[legacyPidSessionTrackingKey(pid), {
+      trackingKey: legacyPidSessionTrackingKey(pid), pid, childProcess: child, startedBy: 'daemon', happySessionId: sessionId, stopRequestedAtMs: Date.now(),
     }]]);
     const onExitObserved = createOnChildExited({
-      pidToTrackedSession: tracked, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey: tracked, spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       // Marker persistence is the OS boundary; retirement and map custody stay real.
-      removeSessionMarkerFn: async retiredPid => { exits.push(retiredPid); },
+      removeSessionMarkerFn: async retiredKey => { exits.push(retiredKey); },
     });
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     const waiting = waitForExistingSessionExitIfStopRequested({
-      sessionId, pidToTrackedSession: tracked,
+      sessionId, trackedSessionsByKey: tracked,
       timeoutMs: 1_000, pollIntervalMs: 100, readRunState,
       onExitObserved,
     });
@@ -140,12 +141,12 @@ describe('waitForTrackedRunnerProcessesExit', () => {
       await vi.advanceTimersByTimeAsync(900);
       expect(readRunState, 'An owned child supplies push terminal evidence without OS polling').not.toHaveBeenCalled();
       expect(exits).toEqual([]);
-      if (replacement) tracked.set(pid, { pid, startedBy: 'daemon', happySessionId: sessionId });
+      if (replacement) tracked.set(legacyPidSessionTrackingKey(pid), { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: sessionId });
       child.send('exit');
       await exited;
       await waiting;
-      expect(exits).toEqual(replacement ? [] : [child.pid]);
-      expect(tracked.has(pid)).toBe(replacement);
+      expect(exits).toEqual(replacement ? [] : [legacyPidSessionTrackingKey(child.pid!)]);
+      expect(tracked.has(legacyPidSessionTrackingKey(pid))).toBe(replacement);
       expect(child.listenerCount('exit')).toBe(exitListeners - 1);
       // File logging buffers its own flush; exclude that independent owner.
       logger.flushSync();
@@ -209,18 +210,18 @@ describe('waitForTrackedRunnerProcessesExit', () => {
   });
 
   it('observes every runner death before joining slow exit retirement', async () => {
-    const tracked = new Map<number, TrackedSession>([101, 202].map(pid => [pid, {
-      pid, startedBy: 'terminal', happySessionId: `PID-${pid}`, stopRequestedAtMs: Date.now(),
+    const tracked = new Map<SessionTrackingKey, TrackedSession>([101, 202].map(pid => [legacyPidSessionTrackingKey(pid), {
+      trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'terminal', happySessionId: `PID-${pid}`, stopRequestedAtMs: Date.now(),
     }]));
     let releaseMarker!: () => void;
     let startMarker!: () => void;
     const markerPending = new Promise<void>(resolve => { releaseMarker = resolve; });
     const markerStarted = new Promise<void>(resolve => { startMarker = resolve; });
     const onExitObserved = createOnChildExited({
-      pidToTrackedSession: tracked, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey: tracked, spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
-      removeSessionMarkerFn: async pid => {
-        if (pid === 101) { startMarker(); await markerPending; }
+      removeSessionMarkerFn: async trackingKey => {
+        if (trackingKey === legacyPidSessionTrackingKey(101)) { startMarker(); await markerPending; }
       },
     });
     const readRunState = vi.fn(async (_pid: number) => 'dead' as const);
@@ -252,14 +253,14 @@ describe('waitForTrackedRunnerProcessesExit', () => {
 
 describe('observePlannedRunnerRetirement', () => {
   it('reports unsuccessful adopted retirement instead of dropping the physical observation', async () => {
-    await expect(observePlannedRunnerRetirement({ tracked: { pid: 101, startedBy: 'daemon' },
+    await expect(observePlannedRunnerRetirement({ tracked: { trackingKey: legacyPidSessionTrackingKey(101), pid: 101, startedBy: 'daemon' },
       timeoutMs: 0, pollIntervalMs: 0, readRunState: async () => 'servable' })).resolves.toBe(false);
   });
   it('limits adopted restart process scans to twice per second within the existing completion budget', async () => {
     vi.useFakeTimers();
     try {
       const startedAtMs = Date.now();
-      const tracked: TrackedSession = { pid: 101, startedBy: 'daemon', happySessionId: 'sess-1' };
+      const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(101), pid: 101, startedBy: 'daemon', happySessionId: 'sess-1' };
       const exits: number[] = [];
       // OS process-state probes and the clock are the boundaries; the physical-exit owner runs for real.
       const readRunState = vi.fn(async () => Date.now() - startedAtMs >= 1_000 ? 'dead' as const : 'servable' as const);

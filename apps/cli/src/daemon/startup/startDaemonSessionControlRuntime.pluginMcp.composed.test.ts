@@ -209,13 +209,16 @@ it.each([
   first.happierMcpServer.stop();
   await vi.waitFor(async () => { await expect(homeFetch(endpoints[0]!)).rejects.toThrow(); });
   expect((await probeMcpStdioServerTools({ config: second.mcpServers[wireName]! })).tools.map(tool => tool.name)).toEqual(['echo']);
+  // The launched bridge holds the endpoint bearer; any other local caller of the loopback port is refused.
+  expect((await homeFetch(endpoints[1]!, { method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }) })).status).toBe(401);
   // Same Account separation cannot admit an untracked Session. Keep the
   // genuine bridge/dispatcher in place; remove only Machine runner custody.
-  h.pidToTrackedSession.delete(h.tracked.pid);
+  h.trackedSessionsByKey.delete(h.tracked.trackingKey);
   try {
     await expect(bridge!.pluginMcp!.prepare({ catalog, directory: h.cwd }))
       .rejects.toMatchObject({ code: 'plugin_mcp_preparation_unavailable' });
-  } finally { h.pidToTrackedSession.set(h.tracked.pid, h.tracked); }
+  } finally { h.trackedSessionsByKey.set(h.tracked.trackingKey, h.tracked); }
   h.tracked.stopRequestedAtMs = Date.now();
   const refusal = await bridge!.pluginMcp!.prepare({ catalog, directory: h.cwd }).catch((error: unknown) => error);
   expect(refusal).toMatchObject({ code: 'plugin_mcp_preparation_unavailable' });

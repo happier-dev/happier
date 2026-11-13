@@ -39,6 +39,7 @@ import { createRequesterSessionControlRuntimeFixture } from '../../testkit/reque
 import type { TrackedSession } from '../../types';
 import { createClaudeConnectedAccountNativeAuthCodec } from '../../../../../../packages/plugins/claude/src/agent/auth/services/runtime/failure';
 import { CLAUDE_SUBSCRIPTION_OAUTH_PROFILE } from '../../../../../../packages/plugins/claude/src/connectedAccounts/claudeSubscriptionProfile';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('requester native subscription hot apply', () => {
     const scopes = ['user:inference', 'user:profile', 'user:sessions:claude_code'];
@@ -229,7 +230,7 @@ describe('requester native subscription hot apply', () => {
     });
     try {
       const runtimeRegistry = new ConnectedServiceRuntimeRegistry();
-      const trackedSessions = new Map<number, TrackedSession>();
+      const trackedSessions = new Map<SessionTrackingKey, TrackedSession>();
       const activeServerDir = join(pluginRuntime.happyHomeDir, 'servers', attribution.serverId);
       host = await createRequesterSessionControlRuntimeFixture({ happyHomeDir: pluginRuntime.happyHomeDir, activeServerDir,
         serverId: attribution.serverId, serverHttpBaseUrl: homeUrl, machineId: attribution.machineId,
@@ -259,7 +260,7 @@ describe('requester native subscription hot apply', () => {
         coordinatorInput: { machineId: 'machine', machineIdProvider: () => 'machine', runtimeId: 'runtime',
           happyHomeDir: pluginRuntime.happyHomeDir, logger: { debug() {}, info() {}, warn() {} },
           processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '1', HAPPIER_CONNECTED_SERVICES_QUOTAS_ENABLED: '0' },
-          pidToTrackedSession: trackedSessions, connectedServiceRuntimeRegistry: runtimeRegistry,
+          trackedSessionsByKey: trackedSessions, connectedServiceRuntimeRegistry: runtimeRegistry,
           connectedServiceAuthGroupPreTurnSwitchCoordinator: accountHost.connectedServiceAuthGroupPreTurnSwitchCoordinator,
           resolveQualifiedConnectedAccountPeerClass: () => resolveQualifiedConnectedAccountPeerClass(features),
         } });
@@ -275,10 +276,10 @@ describe('requester native subscription hot apply', () => {
       expect(runtimeRegistry.getBySessionId('bob-bot')?.requesterWorkAttributionV1)
         .toEqual(captured.bootstrap.attribution);
       const root = join(requester.activeServerDir, 'bot-native');
-      const tracked = { startedBy: 'daemon' as const, happySessionId: 'bob-bot', pid: 123,
+      const tracked = { trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon' as const, happySessionId: 'bob-bot', pid: 123,
         spawnOptions: { directory: root, identity,
             backendTarget: { kind: 'backend' as const, backendId: 'claude' as const, sourceKind: 'built_in' as const } } };
-      trackedSessions.set(tracked.pid, { ...tracked, requesterWorkAttributionV1: attribution,
+      trackedSessions.set(tracked.trackingKey, { ...tracked, requesterWorkAttributionV1: attribution,
         requesterSessionRuntimeContext: captured });
       const nativeHome = await createConnectedServiceRuntimeAuthNativeHome({ agentId: 'claude', root });
       if (!nativeHome) throw new Error('Missing admitted native Home');
@@ -352,7 +353,7 @@ describe('requester native subscription hot apply', () => {
       if (!requester) throw new Error('Missing recovered requester runtime');
       expect(await requester.isCurrent()).toBe(true);
       expect(await captured.isCurrent()).toBe(false);
-      trackedSessions.set(tracked.pid, { ...tracked, requesterWorkAttributionV1: attribution,
+      trackedSessions.set(tracked.trackingKey, { ...tracked, requesterWorkAttributionV1: attribution,
         requesterSessionRuntimeContext: requester });
       const recoveredSwitcher = await createSwitcher(requester);
       const result = await runWithServerHttpBaseUrl(homeUrl, () => recoveredSwitcher.switchAfterClassifiedFailure(switchInput));
@@ -454,7 +455,7 @@ describe('requester native subscription hot apply', () => {
         }),
       });
       const input = (accessToken: string) => ({
-        tracked: { startedBy: 'daemon' as const, happySessionId: 'bob-session', pid: 123,
+        tracked: { trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon' as const, happySessionId: 'bob-session', pid: 123,
           spawnOptions: { directory: runtime.happyHomeDir,
             backendTarget: { kind: 'backend' as const, backendId: 'claude' as const, sourceKind: 'built_in' as const } } },
         normalizedBindings: bindings,

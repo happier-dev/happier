@@ -6,6 +6,7 @@ import type { StopSessionResult } from './stopSessionContract';
 import type { ProcessActionExecution } from '../processes/actions/processActionExecutor';
 import { readSessionStopRequestSource } from './stopSessionDiagnostics';
 import type { SessionStopIntent } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
+import { isCurrentTrackedSession, type TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 type ExactTarget = Readonly<{ pid: number; start: ProcessStartIdentity }>;
 type Execution = Readonly<{ signal?: AbortSignal;
@@ -23,7 +24,7 @@ export type SessionProcessActionLifecycle = Readonly<{
 
 /** Action intent lives on the existing tracked generation and stop/respawn owners. */
 export function createSessionProcessActionLifecycle(params: Readonly<{
-  pidToTrackedSession: Map<number, TrackedSession>;
+  trackedSessionsByKey: TrackedSessionMap;
   markStopRequested: SessionRunnerRespawnManager['markStopRequested'];
   prepareStopIntent(sessionId: string, execution: Execution, stopIntent: SessionStopIntent): Promise<void>;
   registerPhysicalStopEffect(sessionId: string, completion: Promise<void>): void;
@@ -43,7 +44,7 @@ export function createSessionProcessActionLifecycle(params: Readonly<{
       && admission.actorAccountId !== target.accountId;
   };
   function bind(target: ExactTarget): BoundRunner | null | undefined {
-    const tracked = [...params.pidToTrackedSession.values()].find(row => row.pid === target.pid || row.sessionRunnerPid === target.pid);
+    const tracked = [...params.trackedSessionsByKey.values()].find(row => row.pid === target.pid || row.sessionRunnerPid === target.pid);
     if (!tracked) return undefined;
     const start = tracked.pid === target.pid ? tracked.processStartTimeMs : tracked.runnerProcessIdentity?.processStartTimeMs;
     if (start === undefined || start !== target.start.startTimeMs) return null;
@@ -53,7 +54,7 @@ export function createSessionProcessActionLifecycle(params: Readonly<{
   }
   function current(witness: BoundRunner): boolean {
     const row = witness.tracked;
-    return row.pid === witness.trackedPid && params.pidToTrackedSession.get(witness.trackedPid) === row
+    return row.pid === witness.trackedPid && isCurrentTrackedSession(params.trackedSessionsByKey, row)
       && row.happySessionId === witness.sessionId
       && row.runnerProcessIdentity === witness.runnerIdentity
       && row.sessionRunnerPid === witness.sessionRunnerPid
@@ -70,7 +71,7 @@ export function createSessionProcessActionLifecycle(params: Readonly<{
         if (witness && !witnesses.some(row => row.tracked === witness.tracked)) witnesses.push(witness);
       }
       const retiredWithoutReplacement = (witness: BoundRunner) => stamped
-        && ![...params.pidToTrackedSession.values()].some(row => row === witness.tracked
+        && ![...params.trackedSessionsByKey.values()].some(row => row === witness.tracked
           || row.pid === witness.trackedPid || row.sessionRunnerPid === witness.sessionRunnerPid && witness.sessionRunnerPid !== undefined
           || witness.sessionId !== undefined && row.happySessionId === witness.sessionId);
       const authorized = async () => await executionCurrent(input)

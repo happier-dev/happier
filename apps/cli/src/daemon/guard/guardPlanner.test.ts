@@ -9,8 +9,9 @@ import type { LiveWorkInventoryV1 } from '../lifecycle/managedActivity';
 import type { TrackedSession } from '../types';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
-const tracked: TrackedSession = { pid: 30, happySessionId: 's', startedBy: 'daemon' };
+const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(30), pid: 30, happySessionId: 's', startedBy: 'daemon' };
 const serviceOwner = {};
 const browserOwner = {};
 const browserWayBack = [{ label: 'reopen' as const, actionId: 'browser.view.open' as const, input: { machineId: 'm' } }];

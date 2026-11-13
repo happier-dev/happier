@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { withConfiguredDaemonTestHome } from '../testkit/fakeDaemonLifecycle.testkit';
 import { writeTerminalHostAttachmentInfo } from '@/terminal/attachment/terminalAttachmentInfo';
 import { readRetiredPlainRunnerObservation, retireObservedSessionRunnerMetadata } from './plainRunnerRetirement';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -21,7 +22,7 @@ it.each(['plain runner', 'live process', 'terminal descriptor', 'hosted launch']
       });
       const metadata = { hostPid: 1234, hostProcessStartTimeMs: 1, lifecycleState: 'running', lifecycleStateSince: 1 };
       const retired = await retireObservedSessionRunnerMetadata({ metadata, sessionId, happyHomeDir: homeDir,
-        expectedRunner: { pid: 1234, startTimeMs: 1 }, trackedSession: { pid: 1234, startedBy: 'daemon',
+        expectedRunner: { pid: 1234, startTimeMs: 1 }, trackedSession: { trackingKey: legacyPidSessionTrackingKey(1234), pid: 1234, startedBy: 'daemon',
           ...(topology === 'hosted launch' ? { hostedTerminal: { mode: 'tmux' } } : {}) },
       });
       expect(retired).not.toHaveProperty('hostPid');
@@ -30,7 +31,7 @@ it.each(['plain runner', 'live process', 'terminal descriptor', 'hosted launch']
         expect(readRetiredPlainRunnerObservation(retired)).toEqual(expect.any(Number));
         expect(retired.terminal).toMatchObject({ mode: 'plain', controlServiceabilityV1: { retired: true } });
         expect(await retireObservedSessionRunnerMetadata({ metadata: retired, sessionId, happyHomeDir: homeDir,
-          expectedRunner: { pid: 1234, startTimeMs: 1 }, trackedSession: { pid: 1234, startedBy: 'daemon' },
+          expectedRunner: { pid: 1234, startTimeMs: 1 }, trackedSession: { trackingKey: legacyPidSessionTrackingKey(1234), pid: 1234, startedBy: 'daemon' },
         })).toBe(retired);
       } else {
         expect(readRetiredPlainRunnerObservation(retired)).toBeNull();

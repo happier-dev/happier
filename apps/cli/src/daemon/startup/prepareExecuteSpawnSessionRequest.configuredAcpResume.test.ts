@@ -20,6 +20,7 @@ vi.mock('@/ui/logger', () => ({
 }));
 
 import { prepareExecuteSpawnSessionRequest } from './prepareExecuteSpawnSessionRequest';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 let runtime: Awaited<ReturnType<typeof createCustomAcpAdmissionRuntimeFixture>>;
 beforeAll(async () => { runtime = await createCustomAcpAdmissionRuntimeFixture(); });
@@ -93,7 +94,7 @@ describe('prepareExecuteSpawnSessionRequest Account-configured ACP resume admiss
             .find(value => value.identity?.pluginId === 'happier.agent.custom-acp');
         if (!agent) throw new Error('Admitted configured Agent unavailable');
         const catalog = readyCatalog(supportsLoadSession);
-        const tracked: TrackedSession = { pid: 42, happySessionId: 'configured-session', startedBy: 'daemon' };
+        const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(42), pid: 42, happySessionId: 'configured-session', startedBy: 'daemon' };
         const metadata = projectCurrentAgentSessionView({ machineId: 'machine-1', path: '/tmp/configured-acp-resume' }, {
             agentId: agent.id,
             runtimeDescriptor: RuntimeDescriptorV1Schema.parse({ v: 1, agentId: agent.id, agent: { definitionId: CONFIGURED_BACKEND_ID } }),

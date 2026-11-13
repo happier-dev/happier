@@ -165,14 +165,14 @@ for (const kind of ['normal', 'respawn-terminal'] as const) {
     await vi.waitFor(() => expect([...h.f.channel.server.sockets.sockets.values()]
       .some(socket => socket.handshake.auth.clientType === 'machine-scoped')).toBe(true));
     const tracked = h.tracked;
-    h.pidToTrackedSession.delete(tracked.pid);
+    h.trackedSessionsByKey.delete(tracked.trackingKey);
     tracked.pid = 2147482911;
     tracked.sessionRunnerPid = tracked.pid;
     delete tracked.projectSetupOperation;
     tracked.spawnOptions = { ...(tracked.spawnOptions ?? { directory: h.cwd }), teamCredentialBindings: [binding] };
     if (kind === 'respawn-terminal') tracked.spawnOptions.directory = '';
     tracked.requesterSessionRuntimeContext = h.requester;
-    h.pidToTrackedSession.set(tracked.pid, tracked);
+    h.trackedSessionsByKey.set(tracked.trackingKey, tracked);
     const exit = { reason: 'process-exited', code: kind === 'normal' ? 0 : 1, signal: null };
     let shutdown: Promise<void> | undefined;
     let exited = false;
@@ -200,7 +200,7 @@ for (const kind of ['normal', 'respawn-terminal'] as const) {
       } else if (phase === 'unknown') {
         releaseRemoval();
         await expect(exiting).rejects.toMatchObject({ code: 'action_outcome_unknown' });
-        expect(h.pidToTrackedSession.get(tracked.pid)).toBe(tracked);
+        expect(h.trackedSessionsByKey.get(tracked.trackingKey)).toBe(tracked);
         expect(finalized).toBe(0);
         await expect(h.daemon.stopControlServer()).rejects.toMatchObject({ code: 'action_outcome_unknown' });
         unknown = false;
@@ -213,7 +213,7 @@ for (const kind of ['normal', 'respawn-terminal'] as const) {
         releaseRemoval();
         if (kind === 'respawn-terminal') await expect(exiting).rejects.toThrow('native_session_terminal_publication_pending');
         else await exiting;
-        expect(h.pidToTrackedSession.get(tracked.pid)).toBe(tracked);
+        expect(h.trackedSessionsByKey.get(tracked.trackingKey)).toBe(tracked);
         publicationFails = false;
         captureFails = false;
         prepared = false;
@@ -225,7 +225,7 @@ for (const kind of ['normal', 'respawn-terminal'] as const) {
       expect(installed).toBe(false);
       if (phase === 'permanent-capture') expect(finalized).toBe(0);
       else expect(finalized).toBeGreaterThan(0);
-      expect(h.pidToTrackedSession.has(tracked.pid)).toBe(false);
+      expect(h.trackedSessionsByKey.has(tracked.trackingKey)).toBe(false);
     } finally {
       releaseRemoval();
       unknown = false;
@@ -233,7 +233,7 @@ for (const kind of ['normal', 'respawn-terminal'] as const) {
       captureFails = false;
       prepared = false;
       await exiting.catch(() => {});
-      if (h.pidToTrackedSession.has(tracked.pid)) await h.daemon.onChildExited(tracked.pid, exit);
+      if (h.trackedSessionsByKey.has(tracked.trackingKey)) await h.daemon.onChildExited(tracked.pid, exit);
       await shutdown;
       await h.daemon.stopControlServer();
       h.machine.shutdown();

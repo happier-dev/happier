@@ -7,6 +7,7 @@ import { createSessionNotificationContextFixture } from '@/testkit/backends/sess
 import type { HostExternalTranscriptFollowEvent } from './privateContract';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { resolveBuiltInContributions } from '@/plugins/projection/registry/resolveBuiltInContributions';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 // Each case retires its real registry; subsequent cases need a fresh module graph.
 beforeEach(() => { vi.resetModules(); });
@@ -391,7 +392,7 @@ it.each(['runner_http_fresh_terminal_inventory_refresh', 'runner_http_fresh_term
         const operations = { followOperation: operation, followTargetOperation: createExternalSessionFollowTargetHostOperation({ machineId: 'machine' }) };
         await owner.install(operations);
         const runner = { pid: 42, processStartTimeMs: 1, processCommandHash: 'a'.repeat(64), snapshotIdentity: 'runner' };
-        const tracked: import('@/daemon/types').TrackedSession = { startedBy: 'daemon', pid: runner.pid, sessionRunnerPid: runner.pid,
+        const tracked: import('@/daemon/types').TrackedSession = { trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon', pid: runner.pid, sessionRunnerPid: runner.pid,
           happySessionId: sessionId, processStartTimeMs: runner.processStartTimeMs, processCommandHash: runner.processCommandHash,
           runnerAgentSourceCustodyV1: retainedAgent.sourceCustody };
         const { authorizeTrackedRunnerAgentDaemonServiceOperation } = await import('@/daemon/agentRuntime/authorizeTrackedRunnerAgentDaemonServiceOperation');

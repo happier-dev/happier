@@ -60,6 +60,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { createMachineSessionStopLifecycleActionExecutor } from '@/session/actions/sessionLifecycleActions';
 import { buildGuardStopWarningPushDataV1, readGuardStopWarningPushActionV1 } from '@happier-dev/protocol/activity/webhookPayload';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const boundary = vi.hoisted(() => ({ control: null as Parameters<typeof startDaemonControlServer>[0] | null }));
 vi.mock('@/utils/spawnHappyCLI', async importOriginal => {
@@ -120,7 +121,7 @@ it.each([
   const diagnostic = vi.spyOn(logger, 'infoFile');
   // The runner executable is an OS fixture, not a separately built CLI artifact.
   vi.stubEnv('HAPPIER_CLI_SUBPROCESS_ENTRYPOINT', runner);
-  h.pidToTrackedSession.clear();
+  h.trackedSessionsByKey.clear();
   const stopped = scenario.stop !== 'absent' && scenario.stop !== 'guard' && scenario.stop !== 'guard-background'
     && scenario.stop !== 'mismatched-context' && scenario.stop !== 'processes' && scenario.stop !== 'info'
     && scenario.stop !== 'archived' && scenario.stop !== 'authority-unavailable' && scenario.stop !== 'missing-session'
@@ -281,17 +282,17 @@ it.each([
     if (!identity) throw new Error('Missing owned runner identity');
     const tracked = { ...h.tracked, pid: child.pid!, sessionRunnerPid: child.pid!, childProcess: child,
       processStartTimeMs: identity.processStartTimeMs, processCommandHash: hashProcessCommand(identity.command) };
-    h.pidToTrackedSession.set(tracked.pid, tracked);
+    h.trackedSessionsByKey.set(tracked.trackingKey, tracked);
     raw.metadata = JSON.stringify({ ...metadata, hostPid: tracked.pid, hostProcessStartTimeMs: identity.processStartTimeMs });
     if (usesEnvelope) updateEnvelopeMetadata({ ...metadata, hostPid: tracked.pid, hostProcessStartTimeMs: identity.processStartTimeMs });
-    await writeSessionMarker({ pid: tracked.pid, happySessionId: h.sessionId, startedBy: 'daemon',
+    await writeSessionMarker({ trackingKey: tracked.trackingKey, pid: tracked.pid, happySessionId: h.sessionId, startedBy: 'daemon',
       processStartTimeMs: identity.processStartTimeMs, processCommandHash: tracked.processCommandHash });
     const control = boundary.control;
     if (!control) throw new Error('Missing production control composition');
     const app = createDaemonControlApp({ ...control, controlToken: 'stop-journey-token' });
     onTestFinished(() => app.close());
     const ownership = createProcessOwnershipRuntime({ daemonScopeKey: resolveProcessOwnerScopeKey(h.f.directory),
-      listRoots: snapshot => listHappierProcessRoots({ snapshot, trackedSessions: h.pidToTrackedSession.values() }) });
+      listRoots: snapshot => listHappierProcessRoots({ snapshot, trackedSessions: h.trackedSessionsByKey.values() }) });
     const leftBehind = createLeftBehindPass({ processOwnershipRuntime: ownership });
     onTestFinished(() => leftBehind.dispose());
     const actions = createProcessActionExecutor({ ownership, leftBehind, allProcessesVisible: () => false,
@@ -388,7 +389,7 @@ it.each([
       expect(eligibility).toMatchObject({ eligible: true });
       expect(await stopGuardSession({ signal: h.signal, candidate: { kind: 'session', root, settledAt: 1,
         target: { kind: 'session', tracked, root, label: 'Session', eligibility } },
-        readCurrentTracked: id => [...h.pidToTrackedSession.values()].find(row => row.happySessionId === id),
+        readCurrentTracked: id => [...h.trackedSessionsByKey.values()].find(row => row.happySessionId === id),
         readCurrentEligibility: readEligibility,
         stopSession: async id => (await h.daemon.stopSession(id, { expectedTrackedRunner: { tracked,
           sessionRunnerPid: tracked.sessionRunnerPid, processStartTimeMs: tracked.processStartTimeMs,
@@ -465,7 +466,7 @@ it.each([
       binding: { sessionId: h.sessionId, attribution: h.requester.bootstrap.attribution },
       resolveRequesterSessionRuntimeContext: h.resolveRequesterRuntime,
       releaseRequesterSessionRuntimeContext: context => releaseUnretainedRequesterSessionRuntimeContext(context,
-        [...h.pidToTrackedSession.values()].map(tracked => tracked.requesterSessionRuntimeContext)),
+        [...h.trackedSessionsByKey.values()].map(tracked => tracked.requesterSessionRuntimeContext)),
       resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({
         serverUrl: 'https://session-home.test', resolveCurrentMachineId: () => 'machine' }) });
   }
@@ -606,7 +607,7 @@ it.each((['definite', 'transient', 'replaced', 'wrong-target', 'continuation', '
           ? 'continuation unreachable' : 'startup dependency: profile_missing'})`)), { timeout: 10_000 }).toBe(true);
       // The terminal notification queues this same mutation without awaiting
       // it. Join the canonical PID queue before removing the fixture's Home.
-      await clearSessionMarkerConnectedServiceRestartIntent(h.tracked.pid);
+      await clearSessionMarkerConnectedServiceRestartIntent(h.tracked.trackingKey);
     }
     if (continuation) {
       // Repeated exit notification cannot settle the original activation twice.

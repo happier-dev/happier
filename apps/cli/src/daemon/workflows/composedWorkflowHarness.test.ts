@@ -84,6 +84,7 @@ import { SessionMessageReplyCapabilityV1Schema, SessionMessageReplyReadResultV1S
 import type { TranscriptRow } from '@/api/session/fetchEncryptedTranscriptWindow';
 import type { TranscriptMessageLookupResult } from '@/api/session/transcriptMessageLookup';
 import type { SessionTurnV1 } from '@happier-dev/protocol';
+import type { SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const nativeLaunchBoundary = vi.hoisted(() => ({ child: null as ChildProcess | null,
   cancel: null as import('../spawn/startupLaunchCancellation').CancelStartupLaunch | null }));
@@ -221,6 +222,7 @@ import {
   prepareWorkflowAcceptedWorkspaceTarget,
   resolveWorkflowWorkspace,
 } from './resolveWorkflowWorkspace';
+import { legacyPidSessionTrackingKey, trackedSessionsForProcess } from '@/daemon/sessions/sessionTrackingKey';
 
 function unexpectedWorkflowDefinitions() {
   const unexpected = (): never => { throw new Error('unexpected_definition_effect'); };
@@ -669,7 +671,7 @@ it.each(['ordinary', 'claim-lost-during-startup'] as const)('delivers a saved th
     return { type: 'success', sessionId: childId, sessionCreationOutcome: {
       disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } };
   } }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ ...input, getTrackedSessions: () => [{
-    pid: 101, startedBy: 'daemon', happySessionId: childId,
+    trackingKey: legacyPidSessionTrackingKey(101), pid: 101, startedBy: 'daemon', happySessionId: childId,
     agentRuntimeDaemonServiceAuthorityFilePath: '/private/authority.json',
     agentRuntimeDaemonServiceSessionOpenAttestation: {
       request: { kind: 'create', sessionId: childId, cwd: directory }, providerSessionId: 'native',
@@ -855,7 +857,7 @@ it.each(['success', 'failure', 'already-stopped', 'foreign-session', 'success-du
     return { type: 'success', sessionId: 'late-child', sessionCreationOutcome: {
       disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] } } };
   } }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ getTrackedSessions: () => [{
-    pid: 101, startedBy: 'daemon', happySessionId: 'late-child',
+    trackingKey: legacyPidSessionTrackingKey(101), pid: 101, startedBy: 'daemon', happySessionId: 'late-child',
     agentRuntimeDaemonServiceAuthorityFilePath: '/private/authority.json',
     agentRuntimeDaemonServiceSessionOpenAttestation: {
       request: { kind: 'create', sessionId: 'late-child', cwd: directory }, providerSessionId: 'native',
@@ -1273,7 +1275,7 @@ it('retains the original cold Session setup operation in durable Workflow progre
   const scope = { accountId, machineId };
   const operations = createHostActionOperationRuntime({ machineId, resolveAccountId: async () => accountId,
     generateOperationId: () => 'original-start', supportsCoreCancellation: () => true });
-  const tracked: TrackedSession = { pid: 101, startedBy: 'daemon', happySessionId: 'setup-child',
+  const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(101), pid: 101, startedBy: 'daemon', happySessionId: 'setup-child',
     agentRuntimeDaemonServiceAuthorityFilePath: '/private/authority.json' };
   let launches = 0;
   // The native process is the sole substituted boundary. Startup ownership,
@@ -1371,7 +1373,7 @@ it.each(['unavailable', 'missing-inventory', 'valid'] as const)(
       kind: 'managed', immutableGenerationId: `sha256:${'1'.repeat(64)}`, installSource: 'localPath' },
     locator: { module: './runtime.mjs', export: 'createRuntime', runtimeApiVersion: 1 },
     normalizedModulePath: '/immutable/acme/runtime.mjs', loadMode: 'immutable-js' });
-  const tracked: TrackedSession = { ...runner, startedBy: 'daemon', happySessionId: 'native-mode-child',
+  const tracked: TrackedSession = { ...runner, trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon', happySessionId: 'native-mode-child',
     runnerAgentSourceCustodyV1: binding.sourceCustody,
     agentRuntimeDaemonServiceAuthorityFilePath: '/private/authority.json' };
   const attestationPhases: string[] = [];
@@ -2047,14 +2049,14 @@ describe('composed Workflow front door and claimed execution', () => {
     const directory = await projectDirectory();
     vi.stubEnv('HAPPIER_HOME_DIR', directory);
     reloadConfiguration();
-    const wrappers = new Map<number, TrackedSession>();
-    const awaiters = new Map<number, (session: TrackedSession) => void>();
-    const resolvers = new Map<number, (result: SpawnSessionResult) => void>();
-    const timeouts = new Map<number, NodeJS.Timeout>();
-    const resources = new Map<number, () => void | Promise<void>>();
-    const attaches = new Map<number, () => Promise<void>>();
-    const onChildExited = createOnChildExited({ pidToTrackedSession: wrappers,
-      spawnResourceCleanupByPid: resources, sessionAttachCleanupByPid: attaches,
+    const wrappers = new Map<SessionTrackingKey, TrackedSession>();
+    const awaiters = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
+    const resolvers = new Map<SessionTrackingKey, (result: SpawnSessionResult) => void>();
+    const timeouts = new Map<SessionTrackingKey, NodeJS.Timeout>();
+    const resources = new Map<SessionTrackingKey, () => void | Promise<void>>();
+    const attaches = new Map<SessionTrackingKey, () => Promise<void>>();
+    const onChildExited = createOnChildExited({ trackedSessionsByKey: wrappers,
+      spawnResourceCleanupByKey: resources, sessionAttachCleanupByKey: attaches,
       getApiMachineForSessions: () => null, removeSessionMarkerFn: async () => {} });
     // Replace only OS launch. The real spawn, retirement, Session creator,
     // coordinator/fact writer, Stop Action and recovery reader stay composed.
@@ -2084,21 +2086,21 @@ describe('composed Workflow front door and claimed execution', () => {
     vi.spyOn(cliSpawn, 'spawnHappyCLI').mockReturnValue(child);
     const lifecycle = createSpawnLifecycleCallbacks({ connectedServicesBindingsRaw: null, catalogAgentId: null,
       materializationKey: 'failed-launch', hasConnectedServiceAuth: () => false,
-      getSpawnResourceCleanupOnExit: () => null, onSpawnResourceCleanupArmed: () => {}, spawnResourceCleanupByPid: resources,
-      getSessionAttachCleanup: () => null, setSessionAttachCleanup: () => {}, sessionAttachCleanupByPid: attaches,
+      getSpawnResourceCleanupOnExit: () => null, onSpawnResourceCleanupArmed: () => {}, spawnResourceCleanupByKey: resources,
+      getSessionAttachCleanup: () => null, setSessionAttachCleanup: () => {}, sessionAttachCleanupByKey: attaches,
       persistAcceptedSpawnMarker: async tracked => {
         // The external marker/readiness callback settles after registration.
         await Promise.resolve();
         tracked.spawnStartupReadinessFailure = { type: 'error', errorCode: 'SPAWN_FAILED', errorMessage: 'startup rejected' };
-        resolvers.get(tracked.pid)!(tracked.spawnStartupReadinessFailure);
+        resolvers.get(tracked.trackingKey)!(tracked.spawnStartupReadinessFailure);
       } });
     freshSessionBoundary = async raw => {
       if (!raw || typeof raw !== 'object' || !('spawnNonce' in raw) || typeof raw.spawnNonce !== 'string') throw new Error('missing_launch_identity');
       const result = transport.startsWith('hosted') ? await waitForTerminalHostedSessionWebhook({
         pid: wrapperPid, label: 'tmux', normalizedExistingSessionId: '', effectiveResume: '', directoryCreated: false,
         trackedSpawnOptions: { directory, spawnNonce: raw.spawnNonce }, trackedSessionFields: { tmuxSessionId: 'fixture-owned-host' },
-        pidToTrackedSession: wrappers, pidToAwaiter: awaiters, pidToSpawnResultResolver: resolvers,
-        pidToSpawnWebhookTimeout: timeouts, onChildExited, spawnLifecycleCallbacks: lifecycle,
+        trackedSessionsByKey: wrappers, spawnAwaiterByKey: awaiters, spawnResultResolverByKey: resolvers,
+        spawnWebhookTimeoutByKey: timeouts, onChildExited, spawnLifecycleCallbacks: lifecycle,
         cleanupSpawnResources: async () => {}, bindCanonicalSession: async () => {}, logDebug: () => {}, warn: () => {},
         // The OS/terminal adapter proves physical retirement of this exact
         // scratch host. A refused disposition deliberately leaves it running.
@@ -2113,7 +2115,7 @@ describe('composed Workflow front door and claimed execution', () => {
             });
             return await tmux.killWindow('@777');
           }
-          if (runner?.pid) wrappers.get(wrapperPid)!.sessionRunnerPid = runner.pid;
+          if (runner?.pid) trackedSessionsForProcess(wrappers, wrapperPid)[0]!.sessionRunnerPid = runner.pid;
           const exited = new Promise<void>(resolve => child.once('exit', () => resolve()));
           process.kill(-wrapperPid, 'SIGTERM');
           await exited;
@@ -2124,15 +2126,15 @@ describe('composed Workflow front door and claimed execution', () => {
         options: { directory, spawnNonce: raw.spawnNonce }, trackedSpawnOptions: { directory, spawnNonce: raw.spawnNonce },
         normalizedExistingSessionId: '', effectiveResume: '', directoryCreated: false, extraEnvForChildWithMessage: {},
         processEnv: { NODE_ENV: 'test', PATH: process.env.PATH }, happyHomeDir: directory,
-        pidToTrackedSession: wrappers, pidToAwaiter: awaiters, pidToSpawnResultResolver: resolvers,
-        pidToSpawnWebhookTimeout: timeouts, resolveCanonicalTrackedSessionId: () => '', onChildExited,
+        trackedSessionsByKey: wrappers, spawnAwaiterByKey: awaiters, spawnResultResolverByKey: resolvers,
+        spawnWebhookTimeoutByKey: timeouts, resolveCanonicalTrackedSessionId: () => '', onChildExited,
         spawnLifecycleCallbacks: lifecycle, cleanupSpawnResources: async () => {}, logDebug: () => {}, warn: () => {},
       }) : await spawnRegularProcessAndWaitForWebhook({ args: [], directory,
         options: { directory, spawnNonce: raw.spawnNonce }, trackedSpawnOptions: { directory, spawnNonce: raw.spawnNonce },
         normalizedExistingSessionId: '', effectiveResume: '', directoryCreated: false, extraEnvForChildWithMessage: {},
         processEnv: { NODE_ENV: 'test', PATH: process.env.PATH, HAPPIER_DAEMON_STARTUP_SOURCE: 'test' },
-        pidToTrackedSession: wrappers, pidToAwaiter: awaiters, pidToSpawnResultResolver: resolvers,
-        pidToSpawnWebhookTimeout: timeouts, resolveCanonicalTrackedSessionId: () => '', onChildExited,
+        trackedSessionsByKey: wrappers, spawnAwaiterByKey: awaiters, spawnResultResolverByKey: resolvers,
+        spawnWebhookTimeoutByKey: timeouts, resolveCanonicalTrackedSessionId: () => '', onChildExited,
         spawnLifecycleCallbacks: lifecycle, cleanupSpawnResources: async () => {}, logDebug: () => {}, warn: () => {} });
       if (result.type !== 'error') throw new Error('expected_startup_failure');
       if (transport === 'hosted_incomplete' || transport === 'hosted_window_only' || transport === 'hosted_runner_alive' || transport === 'windows_incomplete') {
@@ -2944,7 +2946,7 @@ describe('composed Automation workflow claim and optional receipt', () => {
       spawnSession: async options => spawnSession(options),
       stopSession: async () => { throw new Error('Successful startup must not retire its runner'); },
     }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ ...input, getTrackedSessions: () => [{
-      pid: 101, startedBy: 'daemon', happySessionId: 'connected-child',
+      trackingKey: legacyPidSessionTrackingKey(101), pid: 101, startedBy: 'daemon', happySessionId: 'connected-child',
       agentRuntimeDaemonServiceAuthorityFilePath: '/private/authority.json',
       agentRuntimeDaemonServiceSessionOpenAttestation: {
         request: { kind: 'create', sessionId: 'connected-child', cwd: directory }, providerSessionId: 'native',

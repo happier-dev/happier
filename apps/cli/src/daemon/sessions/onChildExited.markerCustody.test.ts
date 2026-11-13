@@ -11,6 +11,7 @@ import type { TrackedSession } from '../types';
 import { readProcessIdentityByPid } from '../processIdentity';
 import { armSessionWebhookStartupCustody, waitForSessionWebhook } from '../spawn/waitForSessionWebhook';
 import type { SpawnSessionResult } from '@/session/shared/spawnSessionContract';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 let temporaryHome: string | undefined;
 
@@ -20,22 +21,22 @@ it('settles the exact guard receipt before requester resource retirement and ret
   const pid = 54321;
   const order: string[] = [];
   let unavailable = true;
-  const tracked: TrackedSession = { pid, happySessionId: `PID-${pid}`, startedBy: 'terminal',
+  const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: `PID-${pid}`, startedBy: 'terminal',
     guardStopReceipt: { settle: async status => {
       order.push(status);
       if (unavailable) throw new Error('Record publication unavailable');
     } } };
-  const sessions = new Map([[pid, tracked]]);
-  const exit = createOnChildExited({ pidToTrackedSession: sessions,
-    spawnResourceCleanupByPid: new Map([[pid, () => { order.push('cleanup'); }]]),
-    sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null });
+  const sessions = new Map([[tracked.trackingKey, tracked]]);
+  const exit = createOnChildExited({ trackedSessionsByKey: sessions,
+    spawnResourceCleanupByKey: new Map([[tracked.trackingKey, () => { order.push('cleanup'); }]]),
+    sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null });
   await exit(pid, { reason: 'process-missing', code: null, signal: null });
   expect(order).toEqual(['stopped']);
-  expect(sessions.get(pid)).toBe(tracked);
+  expect(sessions.get(tracked.trackingKey)).toBe(tracked);
   unavailable = false;
   await exit(pid, { reason: 'process-missing', code: null, signal: null });
   expect(order).toEqual(['stopped', 'stopped', 'cleanup']);
-  expect(sessions.has(pid)).toBe(false);
+  expect(sessions.has(tracked.trackingKey)).toBe(false);
 });
 
 afterEach(async () => {
@@ -50,16 +51,16 @@ it('preserves marker evidence when an exit notification has no tracked custody',
   // Refresh the real environment owner; keep module-loading cost outside the test action clock.
   reloadConfiguration();
   const pid = 54321;
-  await writeSessionMarker({ pid, happySessionId: 'retained-session', startedBy: 'terminal', cwd: temporaryHome });
+  await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: 'retained-session', startedBy: 'terminal', cwd: temporaryHome });
   const removals: Promise<void>[] = [];
   const onChildExited = createOnChildExited({
-    pidToTrackedSession: new Map(),
-    spawnResourceCleanupByPid: new Map(),
-    sessionAttachCleanupByPid: new Map(),
+    trackedSessionsByKey: new Map(),
+    spawnResourceCleanupByKey: new Map(),
+    sessionAttachCleanupByKey: new Map(),
     getApiMachineForSessions: () => null,
-    removeSessionMarkerFn: (markerPid) => {
+    removeSessionMarkerFn: (trackingKey) => {
       // Observe completion without replacing the real marker persistence owner.
-      const removal = removeSessionMarker(markerPid);
+      const removal = removeSessionMarker(trackingKey);
       removals.push(removal);
       return removal;
     },
@@ -77,21 +78,21 @@ it('retains pending wrapper custody until a reported runner has paired generatio
   const pid = 683103;
   const runnerPid = process.pid;
   const tracked: TrackedSession = {
-    pid, startedBy: 'daemon', happySessionId: 'pending-paired-runner', sessionRunnerPid: runnerPid,
+    trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: 'pending-paired-runner', sessionRunnerPid: runnerPid,
     processStartTimeMs: 1000,
   };
-  const sessions = new Map([[pid, tracked]]);
-  const awaiters = new Map<number, (session: TrackedSession) => void>();
-  const resolvers = new Map<number, (result: SpawnSessionResult) => void>();
-  const timeouts = new Map<number, NodeJS.Timeout>();
+  const sessions = new Map([[tracked.trackingKey, tracked]]);
+  const awaiters = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
+  const resolvers = new Map<SessionTrackingKey, (result: SpawnSessionResult) => void>();
+  const timeouts = new Map<SessionTrackingKey, NodeJS.Timeout>();
   const completion = waitForSessionWebhook({
-    pid, pidToTrackedSession: sessions, pidToAwaiter: awaiters,
-    pidToSpawnResultResolver: resolvers, pidToSpawnWebhookTimeout: timeouts,
+    trackingKey: tracked.trackingKey, pid, trackedSessionsByKey: sessions, spawnAwaiterByKey: awaiters,
+    spawnResultResolverByKey: resolvers, spawnWebhookTimeoutByKey: timeouts,
     timeoutErrorMessage: 'Fixture webhook timeout',
   });
   armSessionWebhookStartupCustody(tracked, completion, Promise.resolve());
   const exit = createOnChildExited({
-    pidToTrackedSession: sessions, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+    trackedSessionsByKey: sessions, spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
     getApiMachineForSessions: () => null,
     processPresenceDependencies: {
       readProcessRunState: async (target) => target === pid ? 'dead' : 'servable',
@@ -102,8 +103,9 @@ it('retains pending wrapper custody until a reported runner has paired generatio
   });
   try {
     await exit(pid, { reason: 'process-missing', code: null, signal: null });
-    expect(sessions.get(pid)).toBe(tracked);
-    expect(sessions.has(runnerPid)).toBe(false);
+    expect(sessions.get(tracked.trackingKey)).toBe(tracked);
+    expect(tracked.pid).toBe(pid);
+    expect(sessions.size).toBe(1);
     expect(completion.isPending()).toBe(true);
     expect(tracked.processStartTimeMs).toBe(1000);
   } finally {
@@ -118,10 +120,10 @@ it('preserves a replacement birth-only marker when exiting custody has a differe
   vi.stubEnv('HAPPIER_HOME_DIR', temporaryHome);
   reloadConfiguration();
   const pid = 54321;
-  await writeSessionMarker({ pid, happySessionId: `PID-${pid}`, startedBy: 'terminal', processStartTimeMs: 2000 });
-  const tracked: TrackedSession = { pid, happySessionId: `PID-${pid}`, startedBy: 'terminal', processStartTimeMs: 1000 };
-  const onChildExited = createOnChildExited({ pidToTrackedSession: new Map([[pid, tracked]]),
-    spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null });
+  await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: `PID-${pid}`, startedBy: 'terminal', processStartTimeMs: 2000 });
+  const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: `PID-${pid}`, startedBy: 'terminal', processStartTimeMs: 1000 };
+  const onChildExited = createOnChildExited({ trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+    spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null });
   await onChildExited(pid, { reason: 'process-exited', code: 0, signal: null });
   expect(await listSessionMarkers()).toEqual([expect.objectContaining({ pid, processStartTimeMs: 2000 })]);
 });
@@ -140,17 +142,17 @@ it.skipIf(process.platform === 'win32').each([false, true])('joins held accepted
   const acceptedSpawnMarkerGate = new Promise<boolean>((resolve) => { acceptMarker = resolve; });
   let releaseCommit!: () => void;
   const commit = new Promise<void>((resolve) => { releaseCommit = resolve; });
-  const tracked: TrackedSession = { pid, sessionRunnerPid: childPid, childProcess: parent,
+  const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid), pid, sessionRunnerPid: childPid, childProcess: parent,
     happySessionId: `PID-${pid}`, startedBy: 'daemon', acceptedSpawnMarkerGate,
     processCommand, processCommandHash, processStartTimeMs: identity!.processStartTimeMs };
-  const sessions = new Map([[pid, tracked]]);
+  const sessions = new Map([[tracked.trackingKey, tracked]]);
   const accepted = commit.then(async () => {
-    await writeSessionMarker({ pid, happySessionId: `PID-${pid}`, startedBy: 'daemon',
+    await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: `PID-${pid}`, startedBy: 'daemon',
       processCommand, processCommandHash, processStartTimeMs: identity!.processStartTimeMs });
     acceptMarker(true);
   });
-  const exit = createOnChildExited({ pidToTrackedSession: sessions,
-    spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null });
+  const exit = createOnChildExited({ trackedSessionsByKey: sessions,
+    spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null });
   let exiting: Promise<void> | undefined;
   try {
     const exited = once(parent, 'exit');
@@ -171,8 +173,9 @@ it.skipIf(process.platform === 'win32').each([false, true])('joins held accepted
       expect(sessions.size).toBe(0);
       expect(await listSessionMarkers()).toEqual([]);
     } else {
-      expect(sessions.get(childPid)).toBe(tracked);
-      expect(sessions.has(pid)).toBe(false);
+      expect(sessions.get(tracked.trackingKey)).toBe(tracked);
+      expect(tracked.pid).toBe(childPid);
+      expect(sessions.size).toBe(1);
       expect((await listSessionMarkers()).map((marker) => marker.pid)).toEqual([childPid]);
     }
   } finally {
@@ -191,18 +194,18 @@ it.each(['present', 'reused', 'unknown', 'stopped'] as const)('promotes wrapper 
   const command = 'happier codex --existing-session paired-runner';
   const processCommandHash = hashProcessCommand(command);
   const tracked: TrackedSession = {
-    pid, startedBy: 'daemon', happySessionId: 'paired-runner', sessionRunnerPid: runnerPid,
+    trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: 'paired-runner', sessionRunnerPid: runnerPid,
     runnerProcessIdentity: { pid: runnerPid, processStartTimeMs: 2000, processCommandHash },
   };
-  const sessions = new Map([[pid, tracked]]);
+  const sessions = new Map([[tracked.trackingKey, tracked]]);
   const originalKill = process.kill.bind(process);
   const signalProbe = vi.spyOn(process, 'kill').mockImplementation((target, signal) => {
     if (target === runnerPid && signal === 0) return true;
     return originalKill(target, signal);
   });
   const exit = createOnChildExited({
-    pidToTrackedSession: sessions, spawnResourceCleanupByPid: new Map(),
-    sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null,
+    trackedSessionsByKey: sessions, spawnResourceCleanupByKey: new Map(),
+    sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null,
     processPresenceDependencies: {
       readProcessRunState: async () => {
         if (state === 'unknown') throw new Error('OS run state unavailable');
@@ -219,10 +222,10 @@ it.each(['present', 'reused', 'unknown', 'stopped'] as const)('promotes wrapper 
   });
   try {
     await exit(pid, { reason: 'process-exited', code: 0, signal: null });
-    expect(sessions.get(runnerPid)).toBe(state === 'present' ? tracked : undefined);
     // A proven reused runner begins retirement, but absent Machine terminal authority
     // retains the existing no-turn Session custody rather than fabricating finalization.
-    expect(sessions.get(pid)).toBe(state === 'present' ? undefined : tracked);
+    expect(sessions.get(tracked.trackingKey)).toBe(tracked);
+    expect(tracked.pid).toBe(state === 'present' ? runnerPid : pid);
     expect(tracked.reportMarkerCustody?.retiring).toBe(state === 'reused' ? true : undefined);
   } finally { signalProbe.mockRestore(); }
 });

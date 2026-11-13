@@ -20,6 +20,7 @@ import { createOnChildExited } from './onChildExited';
 import { createStopSession } from './stopSession';
 import { waitForExistingSessionExitIfStopRequested } from './waitForExistingSessionExitIfStopRequested';
 import { waitForTrackedRunnerProcessesExit } from './waitForTrackedRunnerProcessesExit';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 it.each(['complete', 'unavailable'] as const)(
     'collects unpinned plugin content despite an offline Machine, preserving Stop GC roots with %s Artifact coverage', async coverage => {
@@ -106,21 +107,21 @@ it.each(['complete', 'unavailable'] as const)(
             await store.ensureSkillSessionDir({ ownerKey: 'retired-plugin', items: [pluginObsolete], nativeDisables: [] });
             await store.releaseSkillSessionDirs('retired-plugin');
             holdInventory = true;
-            const tracked: TrackedSession = { pid, childProcess: child, startedBy: 'daemon', happySessionId: sessionId,
+            const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid), pid, childProcess: child, startedBy: 'daemon', happySessionId: sessionId,
                 processStartTimeMs: identity.processStartTimeMs, processCommandHash: identity.processCommandHash };
-            const sessions = new Map([[pid, tracked]]);
-            const onExit = createOnChildExited({ skillStore: store, pidToTrackedSession: sessions,
-                spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null,
+            const sessions = new Map([[tracked.trackingKey, tracked]]);
+            const onExit = createOnChildExited({ skillStore: store, trackedSessionsByKey: sessions,
+                spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null,
                 // The fixture has no persisted Session marker; only its OS storage boundary is replaced.
                 removeSessionMarkerFn: async () => {} });
-            const stop = createStopSession({ pidToTrackedSession: sessions,
+            const stop = createStopSession({ trackedSessionsByKey: sessions,
                 areTrackedRunnersExited: ({ trackedPids }) => waitForTrackedRunnerProcessesExit({
                     runners: trackedPids.map(pid => ({ pid })), timeoutMs: 0, pollIntervalMs: 0 }),
                 waitForTrackedRunnersExit: async ({ sessionId, trackedPids }) => {
-                    await waitForExistingSessionExitIfStopRequested({ sessionId, pidToTrackedSession: sessions,
+                    await waitForExistingSessionExitIfStopRequested({ sessionId, trackedSessionsByKey: sessions,
                         timeoutMs: configuration.daemonStopSessionWaitForExitMs,
                         pollIntervalMs: configuration.daemonStopSessionWaitForExitPollIntervalMs, onExitObserved: onExit });
-                    return trackedPids.every(pid => !sessions.has(pid));
+                    return trackedPids.every(pid => !sessions.has(legacyPidSessionTrackingKey(pid)));
                 } });
             expect(await stop(sessionId!)).toEqual({ status: 'stopped' });
             expect(sessions.size).toBe(0);

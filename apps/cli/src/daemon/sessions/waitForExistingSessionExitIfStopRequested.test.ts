@@ -1,18 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ProcessRunState } from '../processRunState';
 import { waitForExistingSessionExitIfStopRequested } from './waitForExistingSessionExitIfStopRequested';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from './sessionTrackingKey';
 
 describe('waitForExistingSessionExitIfStopRequested', () => {
   it('does nothing when no tracked session has a stopRequestedAtMs marker for the session id', async () => {
 
     const readRunState = vi.fn(async () => 'servable' as const);
-    const pidToTrackedSession = new Map<number, any>([
-      [1, { happySessionId: 'sess-1' }],
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([
+      [legacyPidSessionTrackingKey(1), { trackingKey: legacyPidSessionTrackingKey(1), pid: 1, happySessionId: 'sess-1' }],
     ]);
 
     await waitForExistingSessionExitIfStopRequested({
       sessionId: 'sess-1',
-      pidToTrackedSession,
+      trackedSessionsByKey,
       readRunState,
       timeoutMs: 10,
       pollIntervalMs: 1,
@@ -26,13 +27,13 @@ describe('waitForExistingSessionExitIfStopRequested', () => {
 
     const runStates: ProcessRunState[] = ['servable', 'servable', 'dead'];
     const readRunState = vi.fn(async () => runStates.shift() ?? 'dead');
-    const pidToTrackedSession = new Map<number, any>([
-      [1, { happySessionId: 'sess-1', stopRequestedAtMs: 123 }],
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([
+      [legacyPidSessionTrackingKey(1), { trackingKey: legacyPidSessionTrackingKey(1), pid: 1, happySessionId: 'sess-1', stopRequestedAtMs: 123 }],
     ]);
 
     const promise = waitForExistingSessionExitIfStopRequested({
       sessionId: 'sess-1',
-      pidToTrackedSession,
+      trackedSessionsByKey,
       readRunState,
       timeoutMs: 1_000,
       pollIntervalMs: 50,
@@ -51,13 +52,13 @@ describe('waitForExistingSessionExitIfStopRequested', () => {
 
     const readRunState = vi.fn(async () => 'dead' as const);
     const onExitObserved = vi.fn();
-    const pidToTrackedSession = new Map<number, any>([
-      [1, { happySessionId: 'sess-1', stopRequestedAtMs: 123 }],
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([
+      [legacyPidSessionTrackingKey(1), { trackingKey: legacyPidSessionTrackingKey(1), pid: 1, happySessionId: 'sess-1', stopRequestedAtMs: 123 }],
     ]);
 
     await waitForExistingSessionExitIfStopRequested({
       sessionId: 'sess-1',
-      pidToTrackedSession,
+      trackedSessionsByKey,
       readRunState,
       timeoutMs: 1_000,
       pollIntervalMs: 50,
@@ -80,14 +81,14 @@ describe('waitForExistingSessionExitIfStopRequested', () => {
     const onExitObserved = vi.fn(async () => {
       await staging;
     });
-    const pidToTrackedSession = new Map<number, any>([
-      [1, { happySessionId: 'sess-1', stopRequestedAtMs: 123 }],
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([
+      [legacyPidSessionTrackingKey(1), { trackingKey: legacyPidSessionTrackingKey(1), pid: 1, happySessionId: 'sess-1', stopRequestedAtMs: 123 }],
     ]);
 
     let completed = false;
     const wait = waitForExistingSessionExitIfStopRequested({
       sessionId: 'sess-1',
-      pidToTrackedSession,
+      trackedSessionsByKey,
       readRunState: async () => 'dead',
       timeoutMs: 1_000,
       pollIntervalMs: 50,

@@ -8,6 +8,7 @@ import { BROWSER_RUNTIME_ACTION_CONTROL_PATH } from './browser/actions/controlTr
 import { buildDaemonControlHttpHeaders } from './controlHttp';
 import type { TrackedSession } from './types';
 import { native } from './computer/driver/nativeComputerBoundary.testkit';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 // With isolation Off, a personal desktop starts a private worker rather than
 // preparing a member. Refuse that OS boundary; never start a real desktop here.
@@ -23,7 +24,7 @@ function requesterSession(
   role: 'use' | 'manage' | undefined,
 ): TrackedSession {
   return {
-    startedBy: 'daemon',
+    trackingKey: legacyPidSessionTrackingKey(4242), startedBy: 'daemon',
     happySessionId: sessionId,
     pid: 4242,
     requesterSessionRuntimeContext: {
@@ -50,7 +51,7 @@ describe('daemon admission of a Session computer Action', () => {
       ? { structuredContent: { windows: [{ pid: 42, window_id: 123, title: 'Synthetic canary' }] } }
       : { isError: true, content: [] });
     const children = ['owner', 'guest'].map(accountId => ({
-      startedBy: 'daemon', happySessionId: `${accountId}-agent-session`, pid: 4242,
+      trackingKey: legacyPidSessionTrackingKey(4242), startedBy: 'daemon', happySessionId: `${accountId}-agent-session`, pid: 4242,
       requesterSessionRuntimeContext: { bootstrap: {
         attribution: { serverId: 'home', accountId, machineId: 'machine', installationId: 'installation' },
         homeServerIdentityId: 'home', savedSecretOperationContext: {},
@@ -126,7 +127,7 @@ describe('daemon admission of a Session computer Action', () => {
       requesterSession('guest_unknown', undefined),
       requesterSession('guest_manage', 'manage'),
       {
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(4343), startedBy: 'daemon',
         happySessionId: 'owner_session',
         pid: 4343,
       } as TrackedSession,

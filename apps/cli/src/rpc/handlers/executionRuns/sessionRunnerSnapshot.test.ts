@@ -102,6 +102,7 @@ import { executeScmDiffSummaryAction } from '@/scm/actions/executeScmDiffSummary
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createExecutionRunRpcActionDeps } from './dispatchExecutionRunRpcAction';
 import { resolveExecutionRunPolicy } from '@/agent/executionRuns/policy/executionRunPolicy';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const transport = vi.hoisted(() => ({ app: null as unknown }));
 // Only HTTP listener/transport is substituted. Real daemon composition, ingress,
@@ -194,7 +195,7 @@ it.each(['session_close', 'planned_refresh_then_stop', 'owner_action_starts', 'm
     retainedAgent: parentBinding, httpPort: 46021 });
   vi.stubEnv(HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY, authorityPath);
   const launcherPid = process.ppid;
-  const tracked: TrackedSession = { pid: launcherPid, sessionRunnerPid: process.pid, startedBy: 'daemon', happySessionId: sessionId,
+  const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(launcherPid), pid: launcherPid, sessionRunnerPid: process.pid, startedBy: 'daemon', happySessionId: sessionId,
     processStartTimeMs: runner.processStartTimeMs, processCommandHash: runner.processCommandHash,
     runnerProcessIdentity: { pid: process.pid, processStartTimeMs: runner.processStartTimeMs, processCommandHash: runner.processCommandHash },
     runnerAgentSourceCustodyV1: parentBinding.sourceCustody,
@@ -312,7 +313,7 @@ it.each(['session_close', 'planned_refresh_then_stop', 'owner_action_starts', 'm
     homeHttpFailures.push('POST ' + path);
     throw new Error('Unexpected Home HTTP write: ' + path);
   });
-  const trackedSessions = new Map([[launcherPid, tracked]]);
+  const trackedSessions = new Map([[legacyPidSessionTrackingKey(launcherPid), tracked]]);
   setActiveAccountSettingsSnapshot({ scopeKey: resolveAccountSettingsScopeKey(credentials), source: 'network',
     settings: AccountSettingsSchema.parse({}), rawSettings: {}, settingsVersion: 1, loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
     providerConnectionsCatalog: { status: 'ready', revision: 1, catalog: fixture.providerCatalog } });
@@ -336,9 +337,9 @@ it.each(['session_close', 'planned_refresh_then_stop', 'owner_action_starts', 'm
       stageTranscriptEvent: async () => ({ persisted: true, delivered: true }) },
     connectedServicesMaterializationBaseDir: join(home, 'connected-services'),
     getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-    pidToTrackedSession: trackedSessions, pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(),
-    pidToSpawnWebhookTimeout: new Map(), getApiMachineForSessions: () => null, spawnResourceCleanupByPid: new Map(),
-    sessionAttachCleanupByPid: new Map(), connectedServicesRestartRequestedPids: new Set(),
+    trackedSessionsByKey: trackedSessions, spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(),
+    spawnWebhookTimeoutByKey: new Map(), getApiMachineForSessions: () => null, spawnResourceCleanupByKey: new Map(),
+    sessionAttachCleanupByKey: new Map(), connectedServicesRestartRequestedSessions: new Set(),
     beforeShutdown: async () => {}, onHappySessionWebhook: async () => {}, requestShutdown: () => {},
     processEnv: { HAPPIER_FEATURE_PROVIDERS__ENABLED: '1', HAPPIER_BUILD_FEATURES_ALLOW: 'execution.runs,providers' },
   });
@@ -1250,7 +1251,7 @@ it.each(['session_close', 'planned_refresh_then_stop', 'owner_action_starts', 'm
     replaceAuthorityAfterAcquisition = true;
     await expect(resolver()).rejects.toMatchObject({ code: 'native_agent_privileged_effect_authority_unavailable' });
     await daemon.onChildExited(launcherPid, { reason: 'process-exited', code: 0, signal: null });
-    expect(trackedSessions.has(launcherPid)).toBe(false);
+    expect(trackedSessions.has(legacyPidSessionTrackingKey(launcherPid))).toBe(false);
     expect(await readReviewAuthority('acme.snapshot')).toBeNull();
     await vi.waitFor(() => expect(replacementDisposed).toHaveBeenCalledTimes(1));
     await expect(resolver()).rejects.toMatchObject({ code: 'native_agent_privileged_effect_authority_unavailable' });

@@ -11,6 +11,7 @@ import { createSessionRunnerRespawnManager } from '../processSupervision/session
 import { createSessionStopOperationBarrier } from './sessionStopOperationBarrier';
 import { createOnChildExited } from './onChildExited';
 import { logger } from '@/ui/logger';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const procfsGate = vi.hoisted(() => ({
   beforeRead: null as ((path: unknown) => Promise<void>) | null,
@@ -36,16 +37,16 @@ describe.skipIf(process.platform !== 'linux')('Stop exit confirmation', () => {
     const pid = child.pid!;
     await once(child, 'exit');
     const sessionId = `PID-${pid}`;
-    const tracked: TrackedSession = { pid, startedBy: 'terminal', happySessionId: sessionId,
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'terminal', happySessionId: sessionId,
       processCommand: 'private-launch-credential', ...(explicitStop ? { stopRequestedAtMs: Date.now() } : {}) };
-    const sessions = new Map([[pid, tracked]]);
+    const sessions = new Map([[tracked.trackingKey, tracked]]);
     let beginCleanup!: () => void;
     let releaseCleanup!: () => void;
     const cleanupStarted = new Promise<void>(resolve => { beginCleanup = resolve; });
     const cleanupPending = new Promise<void>(resolve => { releaseCleanup = resolve; });
     // Attach persistence is the OS boundary; the exit and resource owners stay real.
-    const onExit = createOnChildExited({ pidToTrackedSession: sessions,
-      spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map([[pid, async () => {
+    const onExit = createOnChildExited({ trackedSessionsByKey: sessions,
+      spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map([[tracked.trackingKey, async () => {
         beginCleanup(); await cleanupPending;
       }]]), getApiMachineForSessions: () => null, removeSessionMarkerFn: async () => {} });
     const diagnostic = vi.spyOn(logger, 'infoFile');
@@ -58,7 +59,7 @@ describe.skipIf(process.platform !== 'linux')('Stop exit confirmation', () => {
       await cleanupStarted;
       expect(phases()).toEqual(explicitStop ? [{ event: '[DAEMON STOP] Runner exit phase started',
         data: { sessionId, pid, phase: 'pid_resources' } }] : []);
-      expect(sessions.get(pid)).toBe(tracked);
+      expect(sessions.get(tracked.trackingKey)).toBe(tracked);
       releaseCleanup();
       await exiting;
       expect(phases()).toEqual(explicitStop ? ['pid_resources', 'requester_release'].flatMap(phase => [
@@ -79,20 +80,20 @@ describe.skipIf(process.platform !== 'linux')('Stop exit confirmation', () => {
     const pid = child.pid!;
     await once(child, 'exit');
     const sessionId = `PID-${pid}`;
-    const tracked: TrackedSession = { pid, startedBy: 'terminal', happySessionId: sessionId };
-    const sessions = new Map([[pid, tracked]]);
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'terminal', happySessionId: sessionId };
+    const sessions = new Map([[tracked.trackingKey, tracked]]);
     let beginRetirement!: () => void;
     let releaseRetirement!: () => void;
     const retiring = new Promise<void>(resolve => { beginRetirement = resolve; });
     const retired = new Promise<void>(resolve => { releaseRetirement = resolve; });
-    const onChildExited = createOnChildExited({ pidToTrackedSession: sessions,
-      spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+    const onChildExited = createOnChildExited({ trackedSessionsByKey: sessions,
+      spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       // Marker persistence is the genuine system boundary held unavailable here.
       removeSessionMarkerFn: async () => { beginRetirement(); await retired; },
     });
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
-    const stop = createStopSession({ pidToTrackedSession: sessions,
+    const stop = createStopSession({ trackedSessionsByKey: sessions,
       readHostAttachmentState: async () => ({ status: 'absent' }),
       areTrackedRunnersExited: async ({ trackedPids }) => await waitForTrackedRunnerProcessesExit({
         runners: trackedPids.map(pid => ({ pid })), timeoutMs: 0, pollIntervalMs: 0,
@@ -109,7 +110,7 @@ describe.skipIf(process.platform !== 'linux')('Stop exit confirmation', () => {
       // stop-runner-exit-latency-1028 brief Task 2: required retirement must
       // settle this caller, rather than expire under a competing phase cutoff.
       expect(settled, 'Physical-exit grace must not time out proven-dead retirement').toBe(false);
-      expect(sessions.get(pid)).toBe(tracked);
+      expect(sessions.get(tracked.trackingKey)).toBe(tracked);
       releaseRetirement();
       expect(await stopping).toEqual({ status: 'stopped' });
     } finally {
@@ -129,10 +130,10 @@ describe.skipIf(process.platform !== 'linux')('Stop exit confirmation', () => {
     const pid = child.pid!;
     const identity = await readProcessIdentityByPid(pid);
     if (!identity || identity.processStartTimeMs === undefined) throw new Error('fixture native identity unavailable');
-    const tracked: TrackedSession = { pid, startedBy: 'daemon', happySessionId: 'native-first-signal',
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: 'native-first-signal',
       processStartTimeMs: identity.processStartTimeMs, childProcess: child,
       vendorResumeId: 'native-resume', spawnOptions: { directory: '/fixture' } };
-    const sessions = new Map([[pid, tracked]]);
+    const sessions = new Map([[tracked.trackingKey, tracked]]);
     let timestampAtSignal: number | undefined;
     let intentPreparedAtSignal = false;
     let intentPrepared = false;
@@ -146,14 +147,14 @@ describe.skipIf(process.platform !== 'linux')('Stop exit confirmation', () => {
       return originalKill(targetPid, signal);
     });
     try {
-      const stop = createStopSession({ pidToTrackedSession: sessions,
+      const stop = createStopSession({ trackedSessionsByKey: sessions,
         readHostAttachmentState: async () => ({ status: 'absent' }),
         waitForTrackedRunnersExit: async () => { await exited; return true; } });
       const respawn = createSessionRunnerRespawnManager({ enabled: true, maxRestarts: 2, baseDelayMs: 0,
         maxDelayMs: 0, jitterMs: 0, random: () => 0, isSessionAlreadyRunning: () => false,
         spawnSession: async () => { throw new Error('Intentional Process Stop must not respawn'); },
         logDebug: () => {}, logWarn: () => {} });
-      const lifecycle = createSessionProcessActionLifecycle({ pidToTrackedSession: sessions,
+      const lifecycle = createSessionProcessActionLifecycle({ trackedSessionsByKey: sessions,
         markStopRequested: respawn.markStopRequested,
         registerPhysicalStopEffect: createSessionStopOperationBarrier().registerPhysicalStopEffect,
         prepareStopIntent: async () => { intentPrepared = true; }, stopSession: stop });
@@ -183,12 +184,12 @@ describe.skipIf(process.platform !== 'linux')('Stop exit confirmation', () => {
     const pid = child.pid!;
     const identity = await readProcessIdentityByPid(pid);
     if (!identity) throw new Error('owned child identity was not observable');
-    const tracked = new Map([[pid, { pid, startedBy: 'daemon' as const, happySessionId: 'exit-during-safety', childProcess: child,
+    const tracked = new Map([[legacyPidSessionTrackingKey(pid), { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon' as const, happySessionId: 'exit-during-safety', childProcess: child,
       processStartTimeMs: identity.processStartTimeMs }]]);
     const observeExit = async ({ trackedPids }: Readonly<{ trackedPids: readonly number[] }>) => {
       return await waitForTrackedRunnerProcessesExit({
         runners: trackedPids.map((runnerPid) => ({ pid: runnerPid })), timeoutMs: 0, pollIntervalMs: 0,
-        onExitObserved: (runnerPid) => { tracked.delete(runnerPid); },
+        onExitObserved: (runnerPid) => { tracked.delete(legacyPidSessionTrackingKey(runnerPid)); },
       });
     };
     let guardedProbeStarted = false;
@@ -208,7 +209,7 @@ describe.skipIf(process.platform !== 'linux')('Stop exit confirmation', () => {
     });
     try {
       const stop = createStopSession({
-        pidToTrackedSession: tracked,
+        trackedSessionsByKey: tracked,
         readHostAttachmentState: async () => ({ status: 'absent' }),
         areTrackedRunnersExited: observeExit,
         waitForTrackedRunnersExit: observeExit,

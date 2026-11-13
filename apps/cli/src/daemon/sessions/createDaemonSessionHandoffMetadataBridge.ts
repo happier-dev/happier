@@ -2,6 +2,7 @@ import type { SessionHandoffLocalMetadataSource } from '@/session/handoff/metada
 
 import { createLoadLocalSessionMetadataForHandoff, createResolveHostedSessionWorkingDirectory } from './createLoadLocalSessionMetadataForHandoff';
 import type { TrackedSession } from '../types';
+import type { TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 export type DaemonSessionHandoffMetadataBridge = Readonly<{
   loadLocalSessionMetadataForHandoff: (sessionId: string) => Promise<SessionHandoffLocalMetadataSource | null>;
@@ -9,13 +10,13 @@ export type DaemonSessionHandoffMetadataBridge = Readonly<{
 }>;
 
 export function createDaemonSessionHandoffMetadataBridge(params: Readonly<{
-  pidToTrackedSession: Map<number, TrackedSession>;
+  trackedSessionsByKey: TrackedSessionMap;
   getMachineId: () => string;
 }>): DaemonSessionHandoffMetadataBridge {
   return {
     resolveHostedSessionWorkingDirectory: createResolveHostedSessionWorkingDirectory(params),
     loadLocalSessionMetadataForHandoff: createLoadLocalSessionMetadataForHandoff({
-      pidToTrackedSession: params.pidToTrackedSession,
+      trackedSessionsByKey: params.trackedSessionsByKey,
       getMachineId: params.getMachineId,
     }),
   };

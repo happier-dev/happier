@@ -19,6 +19,7 @@ import type { TrackedSession } from '../types';
 import { createRequesterSessionRuntimeContext } from './createRequesterSessionRuntimeContext';
 import { admitRequesterSessionBootstrap } from './requesterSessionCredentials';
 import { createPendingResetStartRecoveryPorts } from '../connectedServices/usageLimitRecovery/createPendingResetStartRecoveryPorts';
+import type { SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 it.each(['refresh', 'quota', 'reset', 'reset_release'] as const)('retains the admitted requester lifetime through %s Home I/O', async loop => {
   const directory = await mkdtemp(join(tmpdir(), 'requester-loop-cancellation-'));
@@ -108,7 +109,7 @@ it.each(['refresh', 'quota', 'reset', 'reset_release'] as const)('retains the ad
   let releaseBootstrap: (() => Promise<void>) | undefined;
   try {
     const registry = new ConnectedServiceRuntimeRegistry();
-    const trackedSessions = new Map<number, TrackedSession>();
+    const trackedSessions = new Map<SessionTrackingKey, TrackedSession>();
     host = await createRequesterSessionControlRuntimeFixture({ happyHomeDir: directory, activeServerDir: directory,
       serverId: 'bob-home', serverHttpBaseUrl: 'https://bob-home.test', machineId: 'machine', custodianAccountId: 'alice',
       credentials: { token: 'alice', encryption: null }, connectedServicesMaterializationBaseDir: join(directory, 'materialized'),
@@ -136,7 +137,7 @@ it.each(['refresh', 'quota', 'reset', 'reset_release'] as const)('retains the ad
           HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: loop === 'quota' ? '1' : '0',
           HAPPIER_CONNECTED_SERVICES_QUOTAS_DISCOVERY_ENABLED: '0',
         }, resolveQualifiedConnectedAccountPeerClass: () => 'advertised_v4',
-        pidToTrackedSession: trackedSessions, connectedServiceRuntimeRegistry: registry,
+        trackedSessionsByKey: trackedSessions, connectedServiceRuntimeRegistry: registry,
         connectedServiceAuthGroupPreTurnSwitchCoordinator: host.runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator },
     });
     expect(requester).not.toBeNull();

@@ -14,12 +14,14 @@ import {
 import type { ProviderContributionRegistryView } from '@/providers/registry';
 
 import { resolveTrackedRunnerAgentRuntimeCurrentness } from './resolveAgentRuntimeCurrentness';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const SELECTED_PROVIDER_CONNECTION_ID =
   ProviderConnectionIdSchema.parse('pc_gateway');
 
 function tracked(overrides: Partial<TrackedSession> = {}): TrackedSession {
   return {
+    trackingKey: legacyPidSessionTrackingKey(123),
     startedBy: 'daemon',
     pid: 123,
     runnerAgentSourceCustodyV1:

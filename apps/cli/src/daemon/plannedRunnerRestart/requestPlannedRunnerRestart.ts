@@ -12,6 +12,7 @@ import { resolveTrackedSessionRunnerIdentity } from '../sessions/sessionReportCo
 import type { RestartSessionRunnerCompletion } from './restartSessionRunnerOnCurrentRuntime';
 import type { OwnerRemainderCapture } from '../processes/endOwnerRemainder';
 import { SessionRunnerRestartAdmissionUnsupportedError, type SessionRunnerRestartAdmissionRelease } from '@/agent/runtime/session/input/sessionProviderInputAdmissionRpc';
+import { isCurrentTrackedSession, type ReadonlyTrackedSessionMap, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 type RestartCompletionWaiter = Readonly<{
   promise: Promise<RestartSessionRunnerCompletion>;
@@ -31,8 +32,12 @@ export type RequestPlannedRunnerRestartParams = Readonly<{
   observeRunnerRetirement?: (tracked: TrackedSession, sessionId: string) => void | boolean | Promise<void | boolean>;
   captureRunnerRemainder?: (tracked: TrackedSession, sessionId: string) => Promise<OwnerRemainderCapture | undefined>;
   deferral: PlannedRunnerRestartDeferral;
-  restartRequestedPids: Set<number>;
-  pidToTrackedSession: ReadonlyMap<number, TrackedSession>;
+  /**
+   * Sessions with a planned restart in flight (requested through respawn). Keyed by Session, not
+   * process: Sessions of one session host share a pid but restart independently.
+   */
+  restartRequestedSessions: Set<SessionTrackingKey>;
+  trackedSessionsByKey: ReadonlyTrackedSessionMap;
   requestSignal: (request: PlannedRunnerRestartSignalRequest) => Promise<PlannedRunnerRestartSignalResult>;
   canSignal?: (signal: AbortSignal) => PlannedRunnerRestartSignalGateResult | Promise<PlannedRunnerRestartSignalGateResult>;
   /** Receiving creation admission remains closed through activity/capture checks and the signal. */
@@ -45,22 +50,14 @@ export type RequestPlannedRunnerRestartParams = Readonly<{
     expectedProcessStartTimeMs?: number;
   }>) => Promise<boolean>;
   observeProcessMissing?: (tracked: TrackedSession) => void;
-  clearRestartIntentForPid?: (pid: number, logMessage: string) => void;
+  clearRestartIntent?: (trackingKey: SessionTrackingKey, logMessage: string) => void;
   onSignalFailureLogMessage?: string;
   logDebug?: (message: string, payload?: unknown) => void;
   logWarn?: (message: string, payload?: unknown) => void;
 }>;
 
-function clearRestartIntent(params: Readonly<{
-  pid: number;
-  clearRestartIntentForPid?: (pid: number, logMessage: string) => void;
-  message: string;
-}>): void {
-  params.clearRestartIntentForPid?.(params.pid, params.message);
-}
-
 // Capture the selected deferred callback's result, including its completion promise. A joined
-// caller may resume after retirement has removed the PID reservation and settled the handoff.
+// caller may resume after retirement has removed the Session reservation and settled the handoff.
 class PlannedRunnerRestartExecution {
   constructor(readonly outcome: Readonly<{
     tracked: TrackedSession;
@@ -82,6 +79,7 @@ export async function requestPlannedRunnerRestart(
   let notSignaledReason: PlannedRunnerRestartNotSignaledReason | undefined;
   const isProcessSafeToSignal = params.isProcessSafeToSignal ?? isPidSafeHappySessionProcess;
   const expectedPid = params.tracked.pid;
+  const trackingKey = params.tracked.trackingKey;
   const expectedProcessCommandHash =
     params.tracked.processCommandHash?.trim() ?? '';
   const expectedProcessStartTimeMs = params.tracked.processStartTimeMs;
@@ -115,8 +113,8 @@ export async function requestPlannedRunnerRestart(
     if (!ownsReservation) return;
     ownsReservation = false;
     if (params.tracked.plannedRestartReason === params.reason) delete params.tracked.plannedRestartReason;
-    params.restartRequestedPids.delete(expectedPid);
-    clearRestartIntent({ pid: expectedPid, clearRestartIntentForPid: params.clearRestartIntentForPid, message });
+    params.restartRequestedSessions.delete(trackingKey);
+    params.clearRestartIntent?.(trackingKey, message);
   };
   const captureExecution = () => new PlannedRunnerRestartExecution({
     tracked: params.tracked,
@@ -132,11 +130,11 @@ export async function requestPlannedRunnerRestart(
       completionState.promise = joined;
       return captureExecution();
     }
-    if (params.restartRequestedPids.has(expectedPid) || params.completion?.hasPending()) {
+    if (params.restartRequestedSessions.has(trackingKey) || params.completion?.hasPending()) {
       notSignaledReason = 'restart_already_running';
       return captureExecution();
     }
-    params.restartRequestedPids.add(expectedPid);
+    params.restartRequestedSessions.add(trackingKey);
     ownsReservation = true;
     completionState.waiter = params.completion?.create();
     completionState.promise = completionState.waiter?.promise;
@@ -154,7 +152,7 @@ export async function requestPlannedRunnerRestart(
     const trackedWitnessIsCurrent = (): boolean => {
       if (!ownsReservation) return false;
       ownerStillCurrent =
-        params.pidToTrackedSession.get(expectedPid) === params.tracked;
+        isCurrentTrackedSession(params.trackedSessionsByKey, params.tracked);
       if (!ownerStillCurrent) {
         notSignaledReason = 'stale_owner';
         return false;

@@ -74,6 +74,7 @@ import { registerAgentSessionRealtimeVoiceRpc } from '@/agent/runtime/session/re
 import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
 import type { NativeRealtimeInputAdmissionV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceTurnWitness';
 import { withCodexNativeAttachFixture } from '../../../../packages/plugins/codex/src/agent/runtime/appServer/runtime.nativeAttach.test-support';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 // The native socket fixture owns TMPDIR. Isolate only its OS-user startup
 // lock from running native Agents, preserving the real lock and JSON-RPC path.
@@ -1301,7 +1302,7 @@ describe('createHappierMcpServer real host admission', () => {
         features: FeaturesResponseSchema.parse({ features: { sessions: { enabled: true, board: { enabled: true } } }, capabilities: {} }) }),
     };
     const tracked: TrackedSession = {
-      startedBy: 'daemon', pid: 4242, happySessionId: sessionId,
+      trackingKey: legacyPidSessionTrackingKey(4242), startedBy: 'daemon', pid: 4242, happySessionId: sessionId,
       processCommandHash: 'predecessor-command', processStartTimeMs: 12345,
       processCommand: 'node /Users/alice/.happier/cli-dev/versions/0.2.10/package-dist/index.mjs claude --happy-starting-mode remote --started-by daemon',
       vendorResumeId: 'claude-thread-1',
@@ -1350,8 +1351,8 @@ describe('createHappierMcpServer real host admission', () => {
         tracked,
         currentIdentity: { status: 'known', source: 'launch_spec', comparableId: 'version:0.2.11', entrypointVersion: '0.2.11' },
         requestRestart: input => requestPlannedRunnerRestart({
-          ...input, deferral: { kind: 'none' }, restartRequestedPids: new Set(),
-          pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+          ...input, deferral: { kind: 'none' }, restartRequestedSessions: new Set(),
+          trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
           isProcessSafeToSignal: async () => true,
           requestSignal: async request => {
             if (!await request.shouldSignal()) return { status: 'skipped_stale_owner' };

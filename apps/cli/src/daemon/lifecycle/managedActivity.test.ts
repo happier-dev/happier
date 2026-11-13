@@ -8,6 +8,7 @@ import { waitForChangeOrDeadline } from './waitForChangeOrDeadline';
 import { createActionOperationStore } from '../actionOperations/actionOperationStore';
 
 import { createManagedActivityInventory, createLiveWorkProducerGroup, readMachineMaintenanceAdmission, readWorkspaceSessionIdle, type LiveWorkProducerV1, type LiveWorkItemV1 } from './managedActivity';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 function producer() {
     let items: readonly LiveWorkItemV1[] = [];
@@ -199,7 +200,7 @@ describe('managed activity inventory', () => {
         if (!address || typeof address === 'string') throw new Error('HTTP transport address unavailable');
         let sourceObservations = 0;
         const session = (id: string, pid: number) => {
-            const tracked = { pid, startedBy: 'daemon' as const, happySessionId: id };
+            const tracked = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon' as const, happySessionId: id };
             return createSessionLiveWorkProducer({ readSessions: () => [tracked], readActivity: async () => {
                 const latePassiveRead = id === 'source' && ++sourceObservations === 2;
                 const result = await requestSessionInputLiveWork({ callRpc: async () =>
@@ -248,7 +249,7 @@ describe('managed activity inventory', () => {
         await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
         const address = server.address();
         if (!address || typeof address === 'string') throw new Error('HTTP transport address unavailable');
-        const tracked = { pid: 1, startedBy: 'daemon' as const, happySessionId: 'session' };
+        const tracked = { trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon' as const, happySessionId: 'session' };
         const sessions = createSessionLiveWorkProducer({ readSessions: () => [tracked], readActivity: () =>
             requestSessionInputLiveWork({ callRpc: async () => (await fetch(`http://127.0.0.1:${address.port}/activity`)).json() }) });
         const operations = createActionOperationStore();
@@ -278,7 +279,7 @@ describe('managed activity inventory', () => {
     it('retains idle across healthy Session observations but publishes discovered work and material invalidations', async () => {
         let now = 100;
         let working = false;
-        const tracked = { pid: 1, startedBy: 'daemon' as const, happySessionId: 'session' };
+        const tracked = { trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon' as const, happySessionId: 'session' };
         const source = createSessionLiveWorkProducer({ readSessions: () => [tracked], readActivity: async () => ({
             session: working ? 'active' : 'settled', input: 'settled', agents: 'settled', attention: 'settled',
         }) });
@@ -317,8 +318,8 @@ describe('managed activity inventory', () => {
         await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
         const address = server.address();
         if (!address || typeof address === 'string') throw new Error('HTTP transport address unavailable');
-        const retired = { pid: 1, startedBy: 'daemon' as const, happySessionId: 'retired' };
-        const current = { pid: 2, startedBy: 'daemon' as const, happySessionId: 'current' };
+        const retired = { trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon' as const, happySessionId: 'retired' };
+        const current = { trackingKey: legacyPidSessionTrackingKey(2), pid: 2, startedBy: 'daemon' as const, happySessionId: 'current' };
         let sessions = [retired];
         let now = 100;
         const source = createSessionLiveWorkProducer({ readSessions: () => sessions,
@@ -378,7 +379,7 @@ describe('managed activity inventory', () => {
         await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
         const address = server.address();
         if (!address || typeof address === 'string') throw new Error('HTTP transport address unavailable');
-        const tracked = { pid: 1, startedBy: 'daemon' as const, happySessionId: 'session' };
+        const tracked = { trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon' as const, happySessionId: 'session' };
         const source = createSessionLiveWorkProducer({ readSessions: () => [tracked], readActivity: () =>
             requestSessionInputLiveWork({ callRpc: async () => (await fetch(`http://127.0.0.1:${address.port}/activity`)).json() }) });
         const inventory = createManagedActivityInventory({ producers: [source] });

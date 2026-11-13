@@ -47,6 +47,7 @@ import type { TrackedSession } from "@/daemon/types";
 import { ConnectedServiceRuntimeRegistry } from "@/daemon/connectedServices/runtimeRegistry/registry";
 
 import { readRunnerConnectedAccountBinding } from './runnerConnectedAccountBinding';
+import { isCurrentTrackedSession, type TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 export function createDaemonRunnerInvocationServices({
   params, findTrackedSessionByHappySessionId, runnerExecutionRunSnapshots, acquireDaemonPluginRuntimeRegistryLease, createSessionManagedProviderCustodyDispatch, createSessionManagedProviderCustodyClient, resolveSessionAccountContext, withSessionAccountHome, shutdownCancellationDomains, releaseSessionAccountContext, connectedServiceRuntimeRegistry,
@@ -62,7 +63,7 @@ openAccountConnectionProviderBrokerAccess?: import('@/providers/broker/accountCo
 resolveCurrentMachineExecutionOriginContext?: (
       signal?: AbortSignal,
     ) => Promise<CurrentMachineExecutionOriginContext | null>;
-pidToTrackedSession: Map<number, TrackedSession>;
+trackedSessionsByKey: TrackedSessionMap;
 getApiMachineForSessions: () => ApiMachineClient | null;
 }> & Pick<RequesterSessionRuntimeContextPorts, 'resolveRequesterSessionRuntimeContext'>;
   findTrackedSessionByHappySessionId: (trackedSessions: Iterable<TrackedSession>, sessionIdRaw: string) => TrackedSession | null;
@@ -94,7 +95,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
       let preparationStage: RunnerDaemonPluginServicesPreparationCauseV1['stage'] = 'runner_authority';
       try {
         const tracked = findTrackedSessionByHappySessionId(
-          params.pidToTrackedSession.values(),
+          params.trackedSessionsByKey.values(),
           sessionId,
         );
         const runSnapshot = executionRunSnapshotId && runnerRetainedAgent
@@ -1598,7 +1599,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                 : tracked.requesterSessionRuntimeContext;
               try {
                 signal.throwIfAborted();
-                if (params.pidToTrackedSession.get(tracked.pid) !== tracked || tracked.reportMarkerCustody?.retiring === true
+                if (!isCurrentTrackedSession(params.trackedSessionsByKey, tracked) || tracked.reportMarkerCustody?.retiring === true
                   || requester && tracked.requesterSessionRuntimeContext !== requester) {
                   throw new PluginError({ code: 'project_requester_credentials_unavailable', message: 'Run controller custody is unavailable' });
                 }
@@ -1679,7 +1680,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
             signal, serverId: params.serverId, serverBaseUrl: params.serverBaseUrl, machineId: params.machineId,
             sessionId, credentials: params.credentials, custodianAccountId: params.externalActionAccountId,
             tracked, origin: isolationOrigin, readOrigin: params.resolveCurrentMachineExecutionOriginContext,
-            isCurrent: () => authorizeOperation(undefined) && params.pidToTrackedSession.get(tracked.pid) === tracked
+            isCurrent: () => authorizeOperation(undefined) && isCurrentTrackedSession(params.trackedSessionsByKey, tracked)
               && tracked.reportMarkerCustody?.retiring !== true,
             ...(params.resolveRequesterSessionRuntimeContext ? { resolveRuntime: (requestSignal: AbortSignal) =>
               resolveSessionAccountContext(sessionId, isolationAttribution, requestSignal) } : {}),

@@ -10,12 +10,13 @@ import {
   ConnectedServiceGroupHomeCleanupScheduler,
   type ConnectedServiceGroupDeletionAuthority,
 } from './ConnectedServiceGroupHomeCleanupScheduler';
+import type { ReadonlyTrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 export function createConnectedServiceGroupHomeCleanupScheduler(params: Readonly<{
   activeServerDir: string;
   additionalAccountHomeRoots?: readonly string[];
   runtimeRegistry?: ConnectedServiceRuntimeRegistry;
-  pidToTrackedSession: ReadonlyMap<number, TrackedSession>;
+  trackedSessionsByKey: ReadonlyTrackedSessionMap;
   groupExists?: (target: Readonly<{ serviceId: ConnectedServiceId; groupId: string }>) => Promise<boolean>;
   resolveGroupDeletionAuthority?: (target: Readonly<{ serviceId: ConnectedServiceId; groupId: string }>) => Promise<ConnectedServiceGroupDeletionAuthority>;
 }>): ConnectedServiceGroupHomeCleanupScheduler {
@@ -27,7 +28,7 @@ export function createConnectedServiceGroupHomeCleanupScheduler(params: Readonly
     resolveGroupDeletionAuthority: params.resolveGroupDeletionAuthority,
     hasLiveAccountTarget: account => {
       const serviceKey = buildQualifiedPluginContributionKey(account.service);
-      return [...params.pidToTrackedSession.values()].some(tracked =>
+      return [...params.trackedSessionsByKey.values()].some(tracked =>
         parseConnectedServicesBindings(resolveTrackedConnectedServiceBindingsRaw(tracked)).some(binding =>
           binding.serviceId === serviceKey && binding.profileId === account.accountId));
     },
@@ -36,7 +37,7 @@ export function createConnectedServiceGroupHomeCleanupScheduler(params: Readonly
       // current and released tracked bindings parse to qualified Account keys.
       const serviceKey = readBuiltInLegacyConnectedAccountServiceKeyIngress(serviceId);
       if (!serviceKey) return false;
-      for (const tracked of params.pidToTrackedSession.values()) {
+      for (const tracked of params.trackedSessionsByKey.values()) {
         const trackedAgentId = resolveTrackedSessionCatalogAgentId(tracked);
         if (trackedAgentId !== agentId) continue;
         if (hasTrackedConnectedServiceGroupBinding({ tracked, serviceId: serviceKey, groupId })) {

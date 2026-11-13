@@ -9,6 +9,7 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/
 import type { TrackedSession } from '@/daemon/types';
 import { createDaemonRunnerPluginMcp } from './runnerPluginMcp';
 import { createRunnerPluginMcpPort } from '@/agent/runtime/session/process/runnerPluginMcp';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 it.each(['claude', 'opencode'] as const)('never discovers daemon-home %s servers for a requester; owner discovery stays intact', async agentId => {
   const home = await mkdtemp(join(tmpdir(), 'member-mcp-discovery-'));
@@ -25,11 +26,11 @@ it.each(['claude', 'opencode'] as const)('never discovers daemon-home %s servers
       : await readOpenCodeMcpConfigServers({ env: { HOME: home } });
     return { endpoints: [], detectedServers: result.servers, warnings: result.warnings };
   } } as unknown as ResolvedExecutablePluginRuntimeRegistry;
-  const tracked: TrackedSession = { pid: 123, startedBy: 'daemon', happySessionId: 'session-1' };
+  const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(123), pid: 123, startedBy: 'daemon', happySessionId: 'session-1' };
   let allowNativeAccountState = false;
   const controller = new AbortController();
   const owner = createDaemonRunnerPluginMcp({ acquireRegistry: async () => ({ registry, release: async () => {} }),
-    trackedSessions: new Map([[tracked.pid, tracked]]), spawnResourceCleanupByPid: new Map(), signal: controller.signal,
+    trackedSessions: new Map([[tracked.trackingKey, tracked]]), spawnResourceCleanupByKey: new Map(), signal: controller.signal,
     readAllowNativeAccountState: async () => allowNativeAccountState });
   const context = { sessionId: 'session-1', agentId, trackedSession: tracked, isCurrent: async () => true };
   try {

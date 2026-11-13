@@ -66,9 +66,9 @@ describe('runner lifecycle hooks through the daemon contribution owner', () => {
       daemonSessionMutationCustody, pluginRuntimeController: fixture.controller, credentials, api: {} as never,
       connectedServicesMaterializationBaseDir: join(home, 'connected-services'),
       getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-      pidToTrackedSession: new Map(), pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
-      getApiMachineForSessions: () => null, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
-      connectedServicesRestartRequestedPids: new Set(), beforeShutdown: async () => {}, onHappySessionWebhook: async () => {},
+      trackedSessionsByKey: new Map(), spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
+      getApiMachineForSessions: () => null, spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
+      connectedServicesRestartRequestedSessions: new Set(), beforeShutdown: async () => {}, onHappySessionWebhook: async () => {},
       requestShutdown: () => {}, processEnv: {},
     });
     try {

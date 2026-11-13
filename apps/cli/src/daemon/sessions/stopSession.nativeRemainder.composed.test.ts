@@ -73,6 +73,7 @@ import { readProcessCensus } from '@/processes/census/processCensus';
 import { requestPlannedRunnerRestart } from '../plannedRunnerRestart/requestPlannedRunnerRestart';
 import { createVersionRuntimeRefreshAttemptHandoff } from '../plannedRunnerRestart/versionRuntimeRefreshAttemptHandoff';
 import type { RestartSessionRunnerCompletion } from '../plannedRunnerRestart/restartSessionRunnerOnCurrentRuntime';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 afterEach(() => { native.rows.clear(); native.unavailable = false; native.captureFailure = null; vi.restoreAllMocks(); });
 
@@ -84,8 +85,8 @@ it.skipIf(process.platform !== 'linux').each(['alive', 'gone'] as const)(
     native.rows.set(process.pid, { parent: 1, ticks: 10 });
     native.rows.set(runner, { parent: process.pid, ticks: 100 });
     native.rows.set(child, { parent: runner, ticks: 110 });
-    const tracked: TrackedSession = { pid: runner, happySessionId: sessionId, startedBy: 'terminal', processStartTimeMs: 1000 };
-    const sessions = new Map([[runner, tracked]]);
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(runner), pid: runner, happySessionId: sessionId, startedBy: 'terminal', processStartTimeMs: 1000 };
+    const sessions = new Map([[tracked.trackingKey, tracked]]);
     const ownership = createProcessOwnershipRuntime({ daemonScopeKey: '123456789abc',
       listRoots: snapshot => listHappierProcessRoots({ snapshot, trackedSessions: sessions.values() }) });
     const remainder = createEndOwnerRemainder({ processOwnershipRuntime: ownership, daemonScopeKey: '123456789abc', firstPass() {} });
@@ -97,17 +98,17 @@ it.skipIf(process.platform !== 'linux').each(['alive', 'gone'] as const)(
       }
       return true;
     });
-    const onExit = createOnChildExited({ pidToTrackedSession: sessions, ownerRemainder: remainder,
-      spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null });
+    const onExit = createOnChildExited({ trackedSessionsByKey: sessions, ownerRemainder: remainder,
+      spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null });
     const observeExit = async ({ trackedPids }: Readonly<{ trackedPids: readonly number[] }>) =>
       await waitForTrackedRunnerProcessesExit({ runners: trackedPids.map(pid => ({ pid })), timeoutMs: 0, pollIntervalMs: 0 });
-    const stop = createStopSession({ pidToTrackedSession: sessions, ownerRemainder: remainder,
+    const stop = createStopSession({ trackedSessionsByKey: sessions, ownerRemainder: remainder,
       readHostAttachmentState: async () => ({ status: 'absent' }), readTerminalAttachmentInfo: async () => null,
       areTrackedRunnersExited: observeExit,
       waitForTrackedRunnersExit: async input => {
         const exited = await observeExit(input);
         if (exited) for (const pid of input.trackedPids) await onExit(pid, { reason: 'process-missing', code: null, signal: null });
-        return exited && input.trackedPids.every(pid => !sessions.has(pid));
+        return exited && input.trackedPids.every(pid => !sessions.has(legacyPidSessionTrackingKey(pid)));
       } });
     native.captureFailure = state;
     expect(await stop(sessionId)).toEqual({ status: 'incomplete', reason: 'process_owner_observation_unavailable',
@@ -134,9 +135,9 @@ it.skipIf(process.platform !== 'linux').each([true, false])('force Stop preserve
     native.rows.set(container, { parent: runner, ticks: 130 });
     native.rows.set(containerChild, { parent: container, ticks: 140 });
   }
-  const tracked: TrackedSession = { pid: runner, startedBy: 'terminal', happySessionId: owner.sessionId,
+  const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(runner), pid: runner, startedBy: 'terminal', happySessionId: owner.sessionId,
     processStartTimeMs: 1000 };
-  const sessions = new Map([[runner, tracked]]);
+  const sessions = new Map([[tracked.trackingKey, tracked]]);
   let nativeAdmitted = false;
   const runtime = createProcessOwnershipRuntime({ daemonScopeKey: '123456789abc',
     listRoots: snapshot => listHappierProcessRoots({ snapshot, trackedSessions: sessions.values(),
@@ -157,7 +158,7 @@ it.skipIf(process.platform !== 'linux').each([true, false])('force Stop preserve
   });
   const observeExit = async ({ trackedPids }: Readonly<{ trackedPids: readonly number[] }>) =>
     await waitForTrackedRunnerProcessesExit({ runners: trackedPids.map(pid => ({ pid })), timeoutMs: 0, pollIntervalMs: 0 });
-  const stop = createStopSession({ pidToTrackedSession: sessions, ...(withRemainder ? { ownerRemainder: remainder } : {}),
+  const stop = createStopSession({ trackedSessionsByKey: sessions, ...(withRemainder ? { ownerRemainder: remainder } : {}),
     readHostAttachmentState: async () => ({ status: 'absent' }), readTerminalAttachmentInfo: async () => null,
     areTrackedRunnersExited: observeExit,
     waitForTrackedRunnersExit: async input => {
@@ -227,13 +228,13 @@ it.skipIf(process.platform !== 'linux').each([
     native.rows.set(peer, { parent: runner, ticks: 140, unit });
     native.rows.set(peerChild, { parent: peer, ticks: 150, unit });
   }
-  const tracked: TrackedSession = { pid: runner, startedBy: 'terminal', happySessionId: owner.sessionId,
+  const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(runner), pid: runner, startedBy: 'terminal', happySessionId: owner.sessionId,
     ...(wrapped ? { sessionRunnerPid: worker, runnerProcessIdentity: { pid: worker, processStartTimeMs: 1050 } } : {}),
     processStartTimeMs: 1000, ...(sharedFence || detachedFence ? { linuxLaunchUnit: unit.split('/').at(-1) } : {}) };
-  const peerTracked: TrackedSession = { pid: peer, startedBy: 'terminal', happySessionId: 'peer-session',
+  const peerTracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(peer), pid: peer, startedBy: 'terminal', happySessionId: 'peer-session',
     processStartTimeMs: 900, ...(sharedFence ? { linuxLaunchUnit: unit.split('/').at(-1) } : {}) };
   if (nestedPeer) peerTracked.processStartTimeMs = 1400;
-  const sessions = new Map([[peer, peerTracked], [runner, tracked]]);
+  const sessions = new Map([[peerTracked.trackingKey, peerTracked], [tracked.trackingKey, tracked]]);
   const runtime = createProcessOwnershipRuntime({ daemonScopeKey: scope,
     listRoots: snapshot => listHappierProcessRoots({ snapshot, daemonScopeKey: scope,
       trackedSessions: sessions.values(), executionRuns: [...[run, ...(wrapped ? [review] : [])].map(owner => ({
@@ -261,8 +262,8 @@ it.skipIf(process.platform !== 'linux').each([
     for (const row of native.rows.values()) if (row.parent === pid) row.parent = 1;
     return true;
   });
-  const onChildExited = createOnChildExited({ pidToTrackedSession: sessions, ownerRemainder: remainder,
-    spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null });
+  const onChildExited = createOnChildExited({ trackedSessionsByKey: sessions, ownerRemainder: remainder,
+    spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null });
   const observeExit = async ({ trackedPids }: Readonly<{ trackedPids: readonly number[] }>) => {
     const exited = await waitForTrackedRunnerProcessesExit({
       runners: trackedPids.map(pid => ({ pid })), timeoutMs: 0, pollIntervalMs: 0,
@@ -274,7 +275,7 @@ it.skipIf(process.platform !== 'linux').each([
     }
     return exited;
   };
-  const stop = createStopSession({ pidToTrackedSession: sessions, ownerRemainder: remainder,
+  const stop = createStopSession({ trackedSessionsByKey: sessions, ownerRemainder: remainder,
     readHostAttachmentState: async () => ({ status: 'absent' }),
     areTrackedRunnersExited: observeExit, waitForTrackedRunnersExit: observeExit });
 
@@ -284,14 +285,14 @@ it.skipIf(process.platform !== 'linux').each([
   expect(observed.rows.find(row => row.pid === runner)?.start.startTimeMs).toBe(1000);
   native.unavailable = unavailable;
   if (unavailable) {
-    const reservations = new Set<number>();
+    const reservations = new Set<SessionTrackingKey>();
     const completion = createVersionRuntimeRefreshAttemptHandoff<RestartSessionRunnerCompletion>({ timeoutMs: null,
       timeoutCompletion: { ok: false, status: 'partial_failure' },
       supersededCompletion: { ok: false, status: 'partial_failure' },
       cancelledCompletion: { ok: false, status: 'partial_failure' } });
     const target = { sessionId: owner.sessionId, previousPid: runner, tracked };
     const request = () => requestPlannedRunnerRestart({ sessionId: owner.sessionId, tracked,
-      deferral: { kind: 'none' }, restartRequestedPids: reservations, pidToTrackedSession: sessions,
+      deferral: { kind: 'none' }, restartRequestedSessions: reservations, trackedSessionsByKey: sessions,
       completion: { hasPending: () => completion.hasPending(), join: () => completion.join(target), create: () => completion.create(target) },
       isProcessSafeToSignal: async () => true,
       captureRunnerRemainder: () => remainder.captureTree(owner, { pid: runner, start: { startTimeMs: 1000 } }),

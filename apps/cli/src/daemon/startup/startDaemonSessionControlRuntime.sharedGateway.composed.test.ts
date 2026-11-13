@@ -26,6 +26,7 @@ import { startDaemonSessionControlRuntime } from './startDaemonSessionControlRun
 import { brokerOpenFailureCases, openRefusedAccountConnectionBroker } from '@/providers/broker/accountConnectionClient.testkit';
 import { logger } from '@/ui/logger';
 import { AgentRuntimeDaemonServiceResponseV1Schema } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const boundary = vi.hoisted(() => ({
   controlInput: null as Parameters<typeof startDaemonControlServer>[0] | null,
@@ -128,7 +129,7 @@ it.each([
       const runner = { pid: process.pid, processStartTimeMs: 1717171717000,
         processCommandHash: 'a'.repeat(64), snapshotIdentity: 'version:fixture' };
       const tracked: TrackedSession = {
-        pid: runner.pid, sessionRunnerPid: runner.pid, startedBy: 'daemon', happySessionId: sessionId,
+        trackingKey: legacyPidSessionTrackingKey(runner.pid), pid: runner.pid, sessionRunnerPid: runner.pid, startedBy: 'daemon', happySessionId: sessionId,
         processStartTimeMs: runner.processStartTimeMs, processCommandHash: runner.processCommandHash,
         runnerAgentSourceCustodyV1: retainedAgent.sourceCustody,
         runnerAgentInvocationContext: { cwd: homeDir, environment: {}, providerBindingActive: true },
@@ -147,9 +148,9 @@ it.each([
         },
         connectedServicesMaterializationBaseDir: join(homeDir, 'connected-services'),
         getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-        pidToTrackedSession: new Map([[runner.pid, tracked]]), pidToAwaiter: new Map(),
-        pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(), getApiMachineForSessions: () => null,
-        spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(), connectedServicesRestartRequestedPids: new Set(),
+        trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]), spawnAwaiterByKey: new Map(),
+        spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(), getApiMachineForSessions: () => null,
+        spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(), connectedServicesRestartRequestedSessions: new Set(),
         beforeShutdown: () => {}, onHappySessionWebhook: async () => {}, requestShutdown: () => {}, processEnv: {},
         resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'home', machineId: fixture.machineId }),
         ...(placement === 'peer' ? { openAccountConnectionProviderBrokerAccess: async request => {

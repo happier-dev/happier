@@ -20,11 +20,12 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createSessionRunnerRestartAdmission, prepareSessionRunnerRestartAdmission } from '@/agent/runtime/session/input/sessionProviderInputAdmissionRpc';
 import { readSessionRunnerRestartAdmissionCurrent } from './plannedRunnerRestart/sessionRunnerRestartAdmission';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('daemon control server: session runner restarts', () => {
   it('reopens creation on demand after a lost cancellation forward using the exact daemon attempt', async () => {
     // The daemon tracks the launcher; the RPC receiver can be its distinct runner.
-    const tracked: TrackedSession = { startedBy: 'daemon', pid: process.pid + 1, sessionRunnerPid: process.pid, happySessionId: 'session' };
+    const tracked: TrackedSession = { startedBy: 'daemon', trackingKey: legacyPidSessionTrackingKey(process.pid + 1), pid: process.pid + 1, sessionRunnerPid: process.pid, happySessionId: 'session' };
     const app = createDaemonControlApp({ getChildren: () => [tracked], machineId: 'machine',
       stopSession: async () => ({ status: 'not_found' }), spawnSession: async () => ({ type: 'success', sessionId: 'session' }),
       requestShutdown: () => {}, onHappySessionWebhook: () => {}, controlToken: 'test-token' });
@@ -94,7 +95,7 @@ describe('daemon control server: session runner restarts', () => {
       });
       observeOutput();
       let vendorId = '';
-      const tracked: TrackedSession = { startedBy: 'daemon', pid: process.pid, happySessionId: 'session',
+      const tracked: TrackedSession = { startedBy: 'daemon', trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, happySessionId: 'session',
         processCommandHash: 'fixture-command', processStartTimeMs: 1,
         processCommand: 'node /tmp/cli/versions/0.3.0/package-dist/index.mjs claude --happy-starting-mode remote --started-by daemon',
         vendorResumeId: vendorId, spawnOptions: { directory, backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' }, resume: vendorId } };
@@ -355,7 +356,7 @@ describe('daemon control server: session runner restarts', () => {
   it.each(['V1', 'V2'] as const)('keeps native interruption consent for %s on the dedicated route through the same restart owner', async version => {
     let signals = 0;
     const tracked = {
-      startedBy: 'daemon', pid: 123, happySessionId: 'sess-1', processCommandHash: 'hash', processStartTimeMs: 100,
+      trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon', pid: 123, happySessionId: 'sess-1', processCommandHash: 'hash', processStartTimeMs: 100,
       processCommand: 'node /tmp/versions/0.2.10/package-dist/index.mjs claude --happy-starting-mode remote --started-by daemon',
       vendorResumeId: 'thread', spawnOptions: { directory: '/tmp/project', resume: 'thread',
         backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' } },

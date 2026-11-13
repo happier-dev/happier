@@ -75,9 +75,9 @@ it('delivers public and private authentication completions through CLI, Home and
     daemonSessionMutationCustody: { stageTranscriptEvent: async () => { throw new Error('Unexpected Session event'); },
       stageTranscriptMessage: async () => { throw new Error('Unexpected Session message'); } },
     getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-    pidToTrackedSession: new Map(), pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
-    getApiMachineForSessions: () => machine, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
-    connectedServicesRestartRequestedPids: new Set(), resolveCurrentMachineExecutionOriginContext:
+    trackedSessionsByKey: new Map(), spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
+    getApiMachineForSessions: () => machine, spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
+    connectedServicesRestartRequestedSessions: new Set(), resolveCurrentMachineExecutionOriginContext:
       createCurrentMachineExecutionOriginContextResolver({ serverUrl: home.baseUrl, resolveCurrentMachineId: () => home.machineId,
         resolveCurrentServerIdentityId: () => home.serverId }),
     beforeShutdown: async () => {}, onHappySessionWebhook: async () => { throw new Error('Unexpected Session start'); },

@@ -88,7 +88,7 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
   const followSourceReconciliation = createRequesterSessionFollowSourceReconciliation({ bootstrap, sessionFollowRuleCache,
     receiverRecovery: bootstrap.attribution });
   const connectedServiceRuntimeRegistry = input.coordinatorInput.connectedServiceRuntimeRegistry.scopeToRequester(target => {
-    const tracked = [...input.coordinatorInput.pidToTrackedSession.values()].find(candidate => candidate.happySessionId === target.sessionId);
+    const tracked = [...input.coordinatorInput.trackedSessionsByKey.values()].find(candidate => candidate.happySessionId === target.sessionId);
     const stamp = target.requesterWorkAttributionV1 ?? tracked?.requesterWorkAttributionV1;
     if (!stamp) return Boolean(target.sessionId && target.sessionId === bootstrap.getBoundSessionId());
     return stamp?.serverId === bootstrap.attribution.serverId && stamp.accountId === bootstrap.attribution.accountId

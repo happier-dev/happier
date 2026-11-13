@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import type { BrowserRecordingSessionV1 } from '@happier-dev/protocol';
 import { resolveBrowserRecordingCaptureProfile } from '@happier-dev/protocol/browser/recording/captureProfiles';
+import type { SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 // Only environment is substituted; installed managed Chromium, CDP, overlay and capture stay real.
 const environment = vi.hoisted(() => ({ directory: '' }));
@@ -269,10 +270,10 @@ describe.skipIf(!process.env.HAPPIER_TEST_BROWSER_RUNTIME_HOME)('managed browser
         const owners: { sidecar?: Awaited<ReturnType<typeof factory>>; recordingRuntime?: BrowserRecordingDaemonRuntime | null } = {};
         let viewer: MachineLiveStreamCaptureSession | undefined;
         const attachments: Parameters<DaemonSessionMutationCustody['stageTranscriptMessage']>[0][] = [];
-        const tracked = new Map<number, TrackedSession>();
+        const tracked = new Map<SessionTrackingKey, TrackedSession>();
         const params = { machineId: 'recording_machine', serverBaseUrl, credentials: { token: 'recording-fixture', encryption: null },
             currentMachineHost: metadata.host, currentMachineHomeDir: metadata.homeDir,
-            pidToTrackedSession: tracked, getApiMachineForSessions: () => null, processEnv: {}, liveStreamCaptureRegistry: registry,
+            trackedSessionsByKey: tracked, getApiMachineForSessions: () => null, processEnv: {}, liveStreamCaptureRegistry: registry,
             daemonSessionMutationCustody: { stageTranscriptEvent: async () => { throw new Error('Unexpected transcript event'); },
                 stageTranscriptMessage: async (input: Parameters<DaemonSessionMutationCustody['stageTranscriptMessage']>[0]) => {
                     attachments.push(input); return { persisted: true, delivered: true } as const;

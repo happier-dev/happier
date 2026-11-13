@@ -14,6 +14,7 @@ import { readTrackedSessionInputLiveWork } from './readTrackedSessionInputLiveWo
 import { readCurrentSessionEligibility } from '../guard/sessionEligibility';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
 beforeAll(async () => { runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
@@ -29,7 +30,7 @@ describe('requester-qualified live Session network observation', () => {
   it('queries Bob at the admitted Home, finishes admitted observations, and refuses the next call after access loss', async () => {
     const sessionId = 'c1234567890123456789012345';
     const attribution = { serverId: 'bob-home', accountId: 'bob', machineId: 'machine', installationId: 'installation' };
-    const tracked: TrackedSession = { pid: 1, startedBy: 'daemon', happySessionId: sessionId,
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon', happySessionId: sessionId,
       requesterWorkAttributionV1: attribution };
     let current = true;
     let loseAdmissionDuringRpc = false;
@@ -160,7 +161,7 @@ describe('requester-qualified live Session network observation', () => {
 
   const createIdleRunnerFixture = (pending: () => Readonly<{ pendingCount: number; pendingVersion: number }>) => {
     const sessionId = 'c9234567890123456789012345';
-    const tracked: TrackedSession = { pid: 2, startedBy: 'daemon', happySessionId: sessionId };
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(2), pid: 2, startedBy: 'daemon', happySessionId: sessionId };
     let metadata: Record<string, unknown> = { machineId: 'machine', path: '/project', flavor: 'codex', codexSessionId: 'native-session',
       runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { backendMode: 'appServer' } } };
     let serverPending = { pendingCount: 0, pendingVersion: 1 };

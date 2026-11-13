@@ -402,6 +402,7 @@ export async function notifyDaemonSessionStarted(
   metadata: Metadata,
   options: DaemonControlRequestOptions & Readonly<{
     sessionCreationOutcome?: SessionCreationOutcome;
+    trackingKey?: string;
     persistedTakeoverAdmission?: Readonly<{
       mode: TakeoverAdmissionMode;
       operationId: string;
@@ -420,6 +421,7 @@ export async function notifyDaemonSessionStarted(
 }>> {
   const {
     sessionCreationOutcome,
+    trackingKey,
     persistedTakeoverAdmission,
     ...requestOptions
   } = options;
@@ -427,6 +429,7 @@ export async function notifyDaemonSessionStarted(
     sessionId,
     metadata,
     ...(sessionCreationOutcome ? { sessionCreationOutcome } : {}),
+    ...(trackingKey ? { trackingKey } : {}),
     ...(persistedTakeoverAdmission ? { persistedTakeoverAdmission } : {}),
   }, { ...requestOptions, includeFailureDiagnostics: true });
 }
@@ -892,6 +895,16 @@ export async function notifyDaemonConnectedServiceTurnLifecycle(
     return response.result;
   }
   return response;
+}
+
+/** Records this runner's held primary Agent with the daemon (Session marker owner). */
+export async function notifyDaemonSessionHolder(body: Readonly<{
+  sessionId: string;
+  runnerPid: number;
+  heldAgentsV1: readonly Readonly<{ role: 'primary'; socketPath: string; holderPid: number; agentPid: number }>[];
+}>): Promise<boolean> {
+  const response: unknown = await daemonPost('/session-holder', body);
+  return typeof response === 'object' && response !== null && (response as { ok?: unknown }).ok === true;
 }
 
 /** Invalidation only: the daemon re-reads the current host and never trusts a reported idle Boolean. */

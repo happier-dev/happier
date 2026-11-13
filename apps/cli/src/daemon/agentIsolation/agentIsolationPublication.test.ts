@@ -13,6 +13,7 @@ import { createHostActionOperationRuntime } from '@/daemon/actionOperations';
 import { createSessionLiveWorkProducer } from '@/daemon/lifecycle/sessionLiveWorkProducer';
 import { createOnChildExited } from '@/daemon/sessions/onChildExited';
 import type { TrackedSession } from '@/daemon/types';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 it.skipIf(process.platform !== 'linux')('settles admitted Off on final physical runner retirement without a second Apply or Session read', async () => {
   const machine: Machine = { id: 'off-retirement', encryptionMode: 'plain', metadataVersion: 1, daemonStateVersion: 1,
@@ -32,7 +33,7 @@ it.skipIf(process.platform !== 'linux')('settles admitted Off on final physical 
   } });
   const client = new ApiMachineClient('token', machine, { runtimeId: 'daemon' });
   Reflect.set(client, 'socket', socket);
-  const trackedSessions = new Map<number, TrackedSession>([[456789, { pid: 456789, startedBy: 'daemon' }]]);
+  const trackedSessions = new Map<SessionTrackingKey, TrackedSession>([[legacyPidSessionTrackingKey(456789), { trackingKey: legacyPidSessionTrackingKey(456789), pid: 456789, startedBy: 'daemon' }]]);
   const sessionChanges = createSessionLiveWorkProducer({ readSessions: () => [...trackedSessions.values()],
     readActivity: async () => { sessionReads++; return { session: 'unknown', input: 'unknown' }; } });
   const target = { serverId: 'home', machineId: machine.id, installationId: 'installation', custodianAccountId: 'account' };
@@ -66,10 +67,10 @@ it.skipIf(process.platform !== 'linux')('settles admitted Off on final physical 
     sessionChanges.notifyChanged();
     await client.updateDaemonState(state => state!); // Flush the existing publication drain.
     expect(stateWrites).toBe(writesAfterApply);
-    const retire = createOnChildExited({ pidToTrackedSession: trackedSessions, spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null,
+    const retire = createOnChildExited({ trackedSessionsByKey: trackedSessions, spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null,
       // Marker deletion is the filesystem boundary; physical retirement remains real.
-      removeSessionMarkerIfOwnedFn: async () => {} });
+      removeSessionMarkerIfOwnedFn: async () => true });
     await retire(456789, { reason: 'process-exited', code: 0, signal: null });
     expect(trackedSessions.size).toBe(0);
     sessionChanges.notifyChanged(); // Same event as the daemon's onChildExited wrapper.

@@ -9,13 +9,13 @@ function createStopSession(params: Parameters<typeof import('./stopSession').cre
     platform: 'linux', selfPid, logicalCpus: 4,
     linuxBoundary: {
       daemonUserId: '1000',
-      readdir: async () => [String(selfPid), ...Array.from(params.pidToTrackedSession.keys(), String)],
+      readdir: async () => [String(selfPid), ...Array.from(params.trackedSessionsByKey.values(), tracked => String(tracked.pid))],
       readlink: async () => '/fixture/node',
       readFile: async path => {
         if (path.endsWith('/status')) return 'Uid:\t1000\t1000\t1000\t1000\n';
         if (path.endsWith('/auxv')) return Buffer.alloc(0);
         const pid = Number(/^\/proc\/(\d+)\//u.exec(path)?.[1]);
-        const tracked = params.pidToTrackedSession.get(pid);
+        const tracked = [...params.trackedSessionsByKey.values()].find(candidate => candidate.pid === pid);
         if (pid !== selfPid && (!tracked || params.censusProcessPresent?.(pid) === false)) {
           throw Object.assign(new Error('Fixture process absent'), { code: 'ENOENT' });
         }
@@ -37,6 +37,7 @@ import type {
   TerminalAttachmentInfo,
   TerminalHostAttachmentInfo,
 } from '@/terminal/attachment/terminalAttachmentInfo';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const isPidSafeHappySessionProcess = vi.fn(async () => true);
 vi.mock('../pidSafety', () => ({
@@ -48,7 +49,8 @@ vi.mock('@/plugins/runtime/hooks/session/service', () => ({
   disposeSessionHookArtifactsForSession,
 }));
 
-const spawnSyncMock = vi.fn();
+// vi.mock factories are hoisted above module scope; hoist the mock with them.
+const spawnSyncMock = vi.hoisted(() => vi.fn());
 vi.mock('node:child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:child_process')>();
   return {
@@ -206,10 +208,10 @@ describe('createStopSession', () => {
   it('fails closed before signaling when host attachment topology evidence is unreadable', async () => {
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     const stop = createStopSession({
-      pidToTrackedSession: new Map<number, any>([[
-        110,
+      trackedSessionsByKey: new Map<SessionTrackingKey, any>([[
+        legacyPidSessionTrackingKey(110),
         {
-          startedBy: 'terminal',
+          trackingKey: legacyPidSessionTrackingKey(110), startedBy: 'terminal',
           pid: 110,
           happySessionId: 'sess-unreadable',
           processCommandHash: 'h0',
@@ -230,10 +232,10 @@ describe('createStopSession', () => {
   it('allows descriptor absence only when marker provenance proves a plain runner', async () => {
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     const stop = createStopSession({
-      pidToTrackedSession: new Map<number, any>([[
-        111,
+      trackedSessionsByKey: new Map<SessionTrackingKey, any>([[
+        legacyPidSessionTrackingKey(111),
         {
-          startedBy: 'terminal',
+          trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'terminal',
           pid: 111,
           happySessionId: 'sess-proven-plain',
           processCommandHash: 'h1',
@@ -252,10 +254,10 @@ describe('createStopSession', () => {
   it('fails closed when marker provenance cannot prove whether a host exists', async () => {
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     const stop = createStopSession({
-      pidToTrackedSession: new Map<number, any>([[
-        112,
+      trackedSessionsByKey: new Map<SessionTrackingKey, any>([[
+        legacyPidSessionTrackingKey(112),
         {
-          startedBy: 'terminal',
+          trackingKey: legacyPidSessionTrackingKey(112), startedBy: 'terminal',
           pid: 112,
           happySessionId: 'sess-unknown-topology',
           processCommandHash: 'h2',
@@ -278,7 +280,7 @@ describe('createStopSession', () => {
       status: 'stopped' as const,
     }));
     const stop = createStopSession({
-      pidToTrackedSession: new Map(),
+      trackedSessionsByKey: new Map(),
       readHostAttachmentState: vi.fn(async () => ({ status: 'absent' } as const)),
       recoverStrandedTerminalControlServiceability,
     });
@@ -297,10 +299,10 @@ describe('createStopSession', () => {
         events.push('signal');
         return true as any;
       });
-    const pidToTrackedSession = new Map<number, any>([[
-      113,
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[
+      legacyPidSessionTrackingKey(113),
       {
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(113), startedBy: 'daemon',
         pid: 113,
         happySessionId: 'sess-authority-order',
         childProcess: {
@@ -317,7 +319,7 @@ describe('createStopSession', () => {
       return true;
     });
     const stop = createStopSession({
-      pidToTrackedSession,
+      trackedSessionsByKey,
       retireUpstreamAuthorityBeforeProcessStop: retireAuthority,
       waitForTrackedRunnersExit: vi.fn(async () => true),
     });
@@ -333,7 +335,7 @@ describe('createStopSession', () => {
     const killSpy = vi.spyOn(process, 'kill')
       .mockImplementation(() => true as any);
     const tracked = {
-      startedBy: 'daemon',
+      trackingKey: legacyPidSessionTrackingKey(114), startedBy: 'daemon',
       pid: 114,
       happySessionId: 'sess-authority-failure',
       childProcess: {
@@ -344,10 +346,10 @@ describe('createStopSession', () => {
       },
       processCommandHash: 'h4',
     };
-    const pidToTrackedSession =
-      new Map<number, any>([[114, tracked]]);
+    const trackedSessionsByKey =
+      new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(114), tracked]]);
     const stop = createStopSession({
-      pidToTrackedSession,
+      trackedSessionsByKey,
       retireUpstreamAuthorityBeforeProcessStop:
         vi.fn(async () => false),
       waitForTrackedRunnersExit: vi.fn(async () => true),
@@ -358,7 +360,7 @@ describe('createStopSession', () => {
       reason: 'runner_signal_incomplete',
     });
     expect(killSpy).not.toHaveBeenCalled();
-    expect(pidToTrackedSession.get(114)).toBe(tracked);
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(114))).toBe(tracked);
   });
 
   it('keeps daemon-owned tracking when an identity-safe signal fails without bypassing the terminator', async () => {
@@ -372,23 +374,23 @@ describe('createStopSession', () => {
     });
 
     const trackedSession = {
-      startedBy: 'daemon',
+      trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon',
       pid: 111,
       happySessionId: 'sess-1',
       childProcess: { pid: 111, exitCode: null, signalCode: null, kill: killDaemonChild },
       processCommandHash: 'h1',
     };
-    const pidToTrackedSession = new Map<number, any>([
-      [111, trackedSession],
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([
+      [legacyPidSessionTrackingKey(111), trackedSession],
     ]);
 
-    const stop = createStopSession({ pidToTrackedSession });
+    const stop = createStopSession({ trackedSessionsByKey });
     const ok = await stop('sess-1');
 
     expect(ok).toEqual({ status: 'incomplete', reason: 'runner_signal_incomplete' });
     expect(killSpy).toHaveBeenCalledWith(111, 'SIGTERM');
     expect(killDaemonChild).not.toHaveBeenCalled();
-    expect(pidToTrackedSession.get(111)).toBe(trackedSession);
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(111))).toBe(trackedSession);
   });
 
   it('refuses a POSIX daemon-child signal when the live OS witness fails after authority retirement', async () => {
@@ -399,7 +401,7 @@ describe('createStopSession', () => {
       const retireUpstreamAuthorityBeforeProcessStop = vi.fn(async () => true);
       isPidSafeHappySessionProcess.mockResolvedValueOnce(false);
       const trackedSession: import('../types').TrackedSession = {
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(115), startedBy: 'daemon',
         pid: 115,
         happySessionId: 'sess-posix-live-witness',
         childProcess: {
@@ -411,9 +413,9 @@ describe('createStopSession', () => {
         processStartTimeMs: 4_000,
         processCommandHash: 'expected-posix-command',
       };
-      const pidToTrackedSession = new Map([[115, trackedSession]]);
+      const trackedSessionsByKey = new Map([[legacyPidSessionTrackingKey(115), trackedSession]]);
       const stop = createStopSession({
-        pidToTrackedSession,
+        trackedSessionsByKey,
         retireUpstreamAuthorityBeforeProcessStop,
         waitForTrackedRunnersExit: vi.fn(async () => true),
       });
@@ -422,7 +424,7 @@ describe('createStopSession', () => {
         status: 'incomplete',
         reason: 'runner_signal_incomplete',
       });
-      expect(retireUpstreamAuthorityBeforeProcessStop).toHaveBeenCalledWith(115);
+      expect(retireUpstreamAuthorityBeforeProcessStop).toHaveBeenCalledWith(trackedSession.trackingKey);
       expect(isPidSafeHappySessionProcess).toHaveBeenCalledWith({
         pid: 115,
         expectedProcessCommandHash: 'expected-posix-command',
@@ -430,7 +432,7 @@ describe('createStopSession', () => {
       });
       expect(killSpy).not.toHaveBeenCalled();
       expect(childKill).not.toHaveBeenCalled();
-      expect(pidToTrackedSession.get(115)).toBe(trackedSession);
+      expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(115))).toBe(trackedSession);
     });
   });
 
@@ -442,9 +444,9 @@ describe('createStopSession', () => {
       .mockResolvedValueOnce(false)
       .mockResolvedValueOnce(true);
     const waitForTrackedRunnersExit = vi.fn(async () => true);
-    const pidToTrackedSession = new Map<number, any>([
-      [222, {
-        startedBy: 'terminal',
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([
+      [legacyPidSessionTrackingKey(222), {
+        trackingKey: legacyPidSessionTrackingKey(222), startedBy: 'terminal',
         pid: 222,
         happySessionId: 'sess-exited-during-stop',
         processCommandHash: 'expected-command',
@@ -452,7 +454,7 @@ describe('createStopSession', () => {
     ]);
 
     const stop = createStopSession({
-      pidToTrackedSession,
+      trackedSessionsByKey,
       areTrackedRunnersExited,
       waitForTrackedRunnersExit,
     });
@@ -480,10 +482,10 @@ describe('createStopSession', () => {
     const logWarning = vi.fn();
     const waitForTrackedRunnersExit = vi.fn(async () => true);
     const stop = createStopSession({
-      pidToTrackedSession: new Map<number, any>([[
-        223,
+      trackedSessionsByKey: new Map<SessionTrackingKey, any>([[
+        legacyPidSessionTrackingKey(223),
         {
-          startedBy: 'terminal',
+          trackingKey: legacyPidSessionTrackingKey(223), startedBy: 'terminal',
           pid: 223,
           happySessionId: 'sess-probe-failure',
           processCommandHash: 'expected-command',
@@ -508,7 +510,7 @@ describe('createStopSession', () => {
   it('does not signal a replacement that takes the same pid after exact stop enumeration', async () => {
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     const original: import('../types').TrackedSession = {
-      startedBy: 'daemon' as const,
+      trackingKey: legacyPidSessionTrackingKey(333), startedBy: 'daemon' as const,
       pid: 333,
       sessionRunnerPid: 334,
       happySessionId: 'sess-exact-stop-race',
@@ -534,11 +536,11 @@ describe('createStopSession', () => {
       processStartTimeMs: 2_000,
       processCommandHash: 'replacement-command',
     };
-    const pidToTrackedSession = new Map<number, any>([[333, original]]);
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(333), original]]);
     const stop = createStopSession({
-      pidToTrackedSession,
+      trackedSessionsByKey,
       retireUpstreamAuthorityBeforeProcessStop: vi.fn(async () => {
-        pidToTrackedSession.set(333, replacement);
+        trackedSessionsByKey.set(legacyPidSessionTrackingKey(333), replacement);
         return true;
       }),
       waitForTrackedRunnersExit: vi.fn(async () => true),
@@ -558,14 +560,14 @@ describe('createStopSession', () => {
     expect(killSpy).not.toHaveBeenCalled();
     expect(replacementChildKill).not.toHaveBeenCalled();
     expect(replacement.stopRequestedAtMs).toBeUndefined();
-    expect(pidToTrackedSession.get(333)).toBe(replacement);
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(333))).toBe(replacement);
   });
 
   it('does not taskkill a same-pid Windows replacement after asynchronous PID safety', async () => {
     const originalChildKill = vi.fn(() => true);
     const replacementChildKill = vi.fn(() => true);
     const original: import('../types').TrackedSession = {
-      startedBy: 'daemon',
+      trackingKey: legacyPidSessionTrackingKey(444), startedBy: 'daemon',
       pid: 444,
       sessionRunnerPid: 445,
       happySessionId: 'sess-exact-windows-stop-race',
@@ -590,13 +592,13 @@ describe('createStopSession', () => {
       processStartTimeMs: 4_000,
       processCommandHash: 'replacement-windows-command',
     };
-    const pidToTrackedSession = new Map<number, any>([[444, original]]);
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(444), original]]);
     isPidSafeHappySessionProcess.mockImplementationOnce(async () => {
-      pidToTrackedSession.set(444, replacement);
+      trackedSessionsByKey.set(legacyPidSessionTrackingKey(444), replacement);
       return true;
     });
     const stop = createStopSession({
-      pidToTrackedSession,
+      trackedSessionsByKey,
       waitForTrackedRunnersExit: vi.fn(async () => true),
     });
 
@@ -617,27 +619,27 @@ describe('createStopSession', () => {
     expect(originalChildKill).not.toHaveBeenCalled();
     expect(replacementChildKill).not.toHaveBeenCalled();
     expect(replacement.stopRequestedAtMs).toBeUndefined();
-    expect(pidToTrackedSession.get(444)).toBe(replacement);
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(444))).toBe(replacement);
   });
 
   it('keeps tracked in-flight attaches until exit is observed', async () => {
 
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
 
-    const pidToTrackedSession = new Map<number, any>([
-      [333, { startedBy: 'terminal', pid: 333, spawnOptions: { existingSessionId: 'sess-2' }, processCommandHash: 'h3' }],
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([
+      [legacyPidSessionTrackingKey(333), { trackingKey: legacyPidSessionTrackingKey(333), startedBy: 'terminal', pid: 333, spawnOptions: { existingSessionId: 'sess-2' }, processCommandHash: 'h3' }],
     ]);
 
     const stop = createStopSession({
-      pidToTrackedSession,
+      trackedSessionsByKey,
       waitForTrackedRunnersExit: vi.fn(async () => true),
     });
     const ok = await stop('sess-2');
 
     expect(ok).toEqual({ status: 'stopped' });
     expect(killSpy).toHaveBeenCalledWith(333, 'SIGTERM');
-    expect(pidToTrackedSession.size).toBe(1);
-    expect(pidToTrackedSession.has(333)).toBe(true);
+    expect(trackedSessionsByKey.size).toBe(1);
+    expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(333))).toBe(true);
   });
 
   it('signals and observes the exact runner before destroying its bound terminal host', async () => {
@@ -670,8 +672,8 @@ describe('createStopSession', () => {
       return true as any;
     });
     const stop = createStopSession({
-      pidToTrackedSession: new Map<number, any>([[333, {
-        startedBy: 'terminal',
+      trackedSessionsByKey: new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(333), {
+        trackingKey: legacyPidSessionTrackingKey(333), startedBy: 'terminal',
         pid: 333,
         happySessionId: 'sess-dev-disposition',
         processCommandHash: 'h3',
@@ -703,7 +705,7 @@ describe('createStopSession', () => {
     const attachmentId = 'attachment-untracked' as NonNullable<import('@happier-dev/agents').TerminalHostHandle['attachmentId']>;
     const dispose = vi.fn(async () => undefined);
     const stop = createStopSession({
-      pidToTrackedSession: new Map(),
+      trackedSessionsByKey: new Map(),
       terminalHostAdapters: { zellij: { kind: 'zellij', dispose } as any },
       readHostAttachmentInfo: vi.fn(async () => ({
         version: 2,
@@ -733,7 +735,7 @@ describe('createStopSession', () => {
     const removeHostAttachmentInfo = vi.fn(async () => true);
     const onExactTerminalAttachmentRetired = vi.fn(async () => undefined);
     const stop = createStopSession({
-      pidToTrackedSession: new Map(),
+      trackedSessionsByKey: new Map(),
       readHostAttachmentInfo: vi.fn(async () => attachment),
       recoverStrandedTerminalControlServiceability,
       removeHostAttachmentInfo,
@@ -779,8 +781,8 @@ describe('createStopSession', () => {
     const dispose = vi.fn(async () => undefined);
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     const stop = createStopSession({
-      pidToTrackedSession: new Map([[620, {
-        startedBy: 'terminal',
+      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(620), {
+        trackingKey: legacyPidSessionTrackingKey(620), startedBy: 'terminal',
         pid: 620,
         happySessionId: legacy.sessionId,
         spawnOptions: { terminal: { mode: 'tmux' } },
@@ -818,7 +820,7 @@ describe('createStopSession', () => {
     } satisfies TerminalAttachmentInfo;
     const removeTerminalAttachmentInfo = vi.fn(async () => true);
     const stop = createStopSession({
-      pidToTrackedSession: new Map(),
+      trackedSessionsByKey: new Map(),
       terminalHostAdapters: {
         tmux: {
           kind: 'tmux',
@@ -838,6 +840,40 @@ describe('createStopSession', () => {
     });
   });
 
+  it('reports predecessor metadata read and removal failures instead of dropping them', async () => {
+    const metadata = {
+      version: 1 as const,
+      sessionId: 'sess-remote-predecessor-io',
+      terminal: {
+        mode: 'tmux' as const,
+        tmux: { target: 'happy:legacy-window', tmpDir: '/tmp/legacy-tmux-root' },
+      },
+      updatedAt: 1,
+    } satisfies TerminalAttachmentInfo;
+    const logWarning = vi.fn();
+    const create = (overrides: Record<string, unknown>) => createStopSession({
+      trackedSessionsByKey: new Map(),
+      terminalHostAdapters: {
+        tmux: {
+          kind: 'tmux',
+          evaluateLiveness: vi.fn(async () => ({ paneAlive: false, paneDead: true, observedAt: 1 })),
+        } as any,
+      },
+      readHostAttachmentInfo: vi.fn(async () => null),
+      logWarning,
+      ...overrides,
+    });
+
+    await create({
+      readTerminalAttachmentInfo: vi.fn(async () => metadata),
+      removeTerminalAttachmentInfo: vi.fn(async () => { throw Object.assign(new Error('read-only'), { code: 'EROFS' }); }),
+    })(metadata.sessionId);
+    await create({
+      readTerminalAttachmentInfo: vi.fn(async () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); }),
+    })(metadata.sessionId);
+    expect(logWarning.mock.calls.filter(([message]) => String(message).includes('terminal attachment metadata')).length).toBe(2);
+  });
+
   it('retires Windows display metadata after the exact persisted runner is proven exited', async () => {
     const metadata = {
       version: 1 as const,
@@ -855,8 +891,8 @@ describe('createStopSession', () => {
     } satisfies TerminalAttachmentInfo;
     const removeTerminalAttachmentInfo = vi.fn(async () => true);
     const stop = createStopSession({
-      pidToTrackedSession: new Map([[621, {
-        startedBy: 'daemon',
+      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(621), {
+        trackingKey: legacyPidSessionTrackingKey(621), startedBy: 'daemon',
         pid: 621,
         happySessionId: metadata.sessionId,
         spawnOptions: { terminal: { mode: 'windows_terminal' } },
@@ -881,8 +917,8 @@ describe('createStopSession', () => {
     const dispose = vi.fn(async () => undefined);
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     const stop = createStopSession({
-      pidToTrackedSession: new Map([[552, {
-        startedBy: 'daemon',
+      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(552), {
+        trackingKey: legacyPidSessionTrackingKey(552), startedBy: 'daemon',
         pid: 552,
         happySessionId: 'sess-dead-reconstructed',
       } as any]]),
@@ -918,8 +954,8 @@ describe('createStopSession', () => {
       .mockResolvedValueOnce(true);
     const stop = createStopSession({
       censusProcessPresent: pid => pid !== 551 || runnerAlive,
-      pidToTrackedSession: new Map([[551, {
-        startedBy: 'terminal',
+      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(551), {
+        trackingKey: legacyPidSessionTrackingKey(551), startedBy: 'terminal',
         pid: 551,
         happySessionId: 'sess-timeout',
         processStartTimeMs: 1_000,
@@ -955,7 +991,7 @@ describe('createStopSession', () => {
   it('does not force-signal a replacement runner after the graceful wait', async () => {
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     const original: import('../types').TrackedSession = {
-      startedBy: 'terminal',
+      trackingKey: legacyPidSessionTrackingKey(553), startedBy: 'terminal',
       pid: 553,
       happySessionId: 'sess-timeout-replaced',
       processStartTimeMs: 2_000,
@@ -966,13 +1002,13 @@ describe('createStopSession', () => {
       processStartTimeMs: 3_000,
       processCommandHash: 'replacement-command',
     };
-    const pidToTrackedSession = new Map([[553, original]]);
+    const trackedSessionsByKey = new Map([[legacyPidSessionTrackingKey(553), original]]);
     const waitForTrackedRunnersExit = vi.fn(async () => {
-      pidToTrackedSession.set(553, replacement);
+      trackedSessionsByKey.set(legacyPidSessionTrackingKey(553), replacement);
       return false;
     });
     const stop = createStopSession({
-      pidToTrackedSession,
+      trackedSessionsByKey,
       waitForTrackedRunnersExit,
     });
 
@@ -994,8 +1030,8 @@ describe('createStopSession', () => {
       .mockResolvedValueOnce(false)
       .mockResolvedValueOnce(true);
     const stop = createStopSession({
-      pidToTrackedSession: new Map([[554, {
-        startedBy: 'terminal',
+      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(554), {
+        trackingKey: legacyPidSessionTrackingKey(554), startedBy: 'terminal',
         pid: 554,
         happySessionId: 'sess-exited-before-force',
         processStartTimeMs: 4_000,
@@ -1021,8 +1057,8 @@ describe('createStopSession', () => {
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
 
     const stop = createStopSession({
-      pidToTrackedSession: new Map([[553, {
-        startedBy: 'terminal',
+      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(553), {
+        trackingKey: legacyPidSessionTrackingKey(553), startedBy: 'terminal',
         pid: 553,
         happySessionId: 'sess-replaced',
         spawnOptions: { terminal: { mode: 'zellij' } },
@@ -1046,8 +1082,8 @@ describe('createStopSession', () => {
     const retireExactTerminalControlServiceability = vi.fn(async () => 'retired' as const);
     const adapterDispose = vi.fn(async () => undefined);
     const stop = createStopSession({
-      pidToTrackedSession: new Map([[552, {
-        startedBy: 'terminal',
+      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(552), {
+        trackingKey: legacyPidSessionTrackingKey(552), startedBy: 'terminal',
         pid: 552,
         happySessionId: attachment.sessionId,
         processStartTimeMs: 1_000,
@@ -1098,8 +1134,8 @@ describe('createStopSession', () => {
     const onExactTerminalAttachmentRetired = vi.fn(async () => undefined);
     const retireExactTerminalControlServiceability = vi.fn(async () => 'retired' as const);
     const stop = createStopSession({
-      pidToTrackedSession: new Map([[556, {
-        startedBy: 'terminal',
+      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(556), {
+        trackingKey: legacyPidSessionTrackingKey(556), startedBy: 'terminal',
         pid: 556,
         happySessionId: attachment.sessionId,
         processStartTimeMs: 1_000,
@@ -1138,8 +1174,8 @@ describe('createStopSession', () => {
   it('fails before signaling when the exact terminal-host adapter is unavailable', async () => {
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     const stop = createStopSession({
-      pidToTrackedSession: new Map([[554, {
-        startedBy: 'terminal',
+      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(554), {
+        trackingKey: legacyPidSessionTrackingKey(554), startedBy: 'terminal',
         pid: 554,
         happySessionId: 'sess-adapter-missing',
         spawnOptions: { terminal: { mode: 'zellij' } },
@@ -1160,8 +1196,8 @@ describe('createStopSession', () => {
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     const waitForTrackedRunnersExit = vi.fn(async () => true);
     const stop = createStopSession({
-      pidToTrackedSession: new Map([[557, {
-        startedBy: 'terminal',
+      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(557), {
+        trackingKey: legacyPidSessionTrackingKey(557), startedBy: 'terminal',
         pid: 557,
         happySessionId: 'sess-adapter-load-failed',
         spawnOptions: { terminal: { mode: 'zellij' } },
@@ -1185,8 +1221,8 @@ describe('createStopSession', () => {
   it('refuses a replacement attachment that does not match the caller-pinned identity', async () => {
     const dispose = vi.fn(async () => undefined);
     const stop = createStopSession({
-      pidToTrackedSession: new Map([[556, {
-        startedBy: 'terminal',
+      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(556), {
+        trackingKey: legacyPidSessionTrackingKey(556), startedBy: 'terminal',
         pid: 556,
         happySessionId: 'sess-pinned-original',
         spawnOptions: { terminal: { mode: 'zellij' } },
@@ -1204,8 +1240,8 @@ describe('createStopSession', () => {
   it('reports terminal-host destroy failure as incomplete after runner exit', async () => {
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     const stop = createStopSession({
-      pidToTrackedSession: new Map([[555, {
-        startedBy: 'terminal',
+      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(555), {
+        trackingKey: legacyPidSessionTrackingKey(555), startedBy: 'terminal',
         pid: 555,
         happySessionId: 'sess-destroy-failed',
         spawnOptions: { terminal: { mode: 'zellij' } },
@@ -1234,8 +1270,8 @@ describe('createStopSession', () => {
     const waitForTrackedRunnersExit = vi.fn(async () => true);
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     const createStop = () => createStopSession({
-      pidToTrackedSession: new Map([[556, {
-        startedBy: 'terminal',
+      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(556), {
+        trackingKey: legacyPidSessionTrackingKey(556), startedBy: 'terminal',
         pid: 556,
         happySessionId: 'sess-disposition-running',
         spawnOptions: { terminal: { mode: 'zellij' } },
@@ -1285,8 +1321,8 @@ describe('createStopSession', () => {
     });
     await vi.waitFor(() => expect(beforeDescriptorRetirement).toHaveBeenCalledOnce());
     const stop = createStopSession({
-      pidToTrackedSession: new Map([[557, {
-        startedBy: 'terminal', pid: 557, happySessionId: attachment.sessionId,
+      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(557), {
+        trackingKey: legacyPidSessionTrackingKey(557), startedBy: 'terminal', pid: 557, happySessionId: attachment.sessionId,
         spawnOptions: { terminal: { mode: 'zellij' } },
       } as any]]),
       terminalHostAdapters: { zellij: { kind: 'zellij', dispose } as any },
@@ -1309,8 +1345,8 @@ describe('createStopSession', () => {
       throw new Error('retirement observation unavailable');
     });
     const stop = createStopSession({
-      pidToTrackedSession: new Map([[552, {
-        startedBy: 'terminal',
+      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(552), {
+        trackingKey: legacyPidSessionTrackingKey(552), startedBy: 'terminal',
         pid: 552,
         happySessionId: 'sess-cleanup',
         spawnOptions: { terminal: { mode: 'zellij' } },
@@ -1350,15 +1386,15 @@ describe('createStopSession', () => {
     const onExactTerminalAttachmentRetired = vi.fn(async () => undefined);
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     const stop = createStopSession({
-      pidToTrackedSession: new Map([
-        [552, {
-          startedBy: 'terminal',
+      trackedSessionsByKey: new Map([
+        [legacyPidSessionTrackingKey(552), {
+          trackingKey: legacyPidSessionTrackingKey(552), startedBy: 'terminal',
           pid: 552,
           happySessionId: attachment.sessionId,
           spawnOptions: { terminal: { mode: 'plain' } },
         } as any],
-        [553, {
-          startedBy: 'terminal',
+        [legacyPidSessionTrackingKey(553), {
+          trackingKey: legacyPidSessionTrackingKey(553), startedBy: 'terminal',
           pid: 553,
           happySessionId: attachment.sessionId,
           spawnOptions: { terminal: { mode: 'zellij' } },
@@ -1394,8 +1430,8 @@ describe('createStopSession', () => {
     const onExactTerminalAttachmentRetired = vi.fn(async () => undefined);
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     const stop = createStopSession({
-      pidToTrackedSession: new Map([[554, {
-        startedBy: 'terminal',
+      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(554), {
+        trackingKey: legacyPidSessionTrackingKey(554), startedBy: 'terminal',
         pid: 554,
         happySessionId: attachment.sessionId,
         spawnOptions: { terminal: { mode: 'zellij' } },
@@ -1423,15 +1459,15 @@ describe('createStopSession', () => {
     const retireExactTerminalControlServiceability = vi.fn(async () => undefined);
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     const stop = createStopSession({
-      pidToTrackedSession: new Map([
-        [602, {
-          startedBy: 'terminal',
+      trackedSessionsByKey: new Map([
+        [legacyPidSessionTrackingKey(602), {
+          trackingKey: legacyPidSessionTrackingKey(602), startedBy: 'terminal',
           pid: 602,
           happySessionId: attachment.sessionId,
           spawnOptions: { terminal: { mode: 'windows_console' } },
         } as any],
-        [601, {
-          startedBy: 'terminal',
+        [legacyPidSessionTrackingKey(601), {
+          trackingKey: legacyPidSessionTrackingKey(601), startedBy: 'terminal',
           pid: 601,
           happySessionId: attachment.sessionId,
           spawnOptions: { terminal: { mode: 'windows_console' } },
@@ -1458,8 +1494,8 @@ describe('createStopSession', () => {
     const retireExactTerminalControlServiceability = vi.fn(async () => undefined);
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     const stop = createStopSession({
-      pidToTrackedSession: new Map([[603, {
-        startedBy: 'terminal',
+      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(603), {
+        trackingKey: legacyPidSessionTrackingKey(603), startedBy: 'terminal',
         pid: 603,
         happySessionId: attachment.sessionId,
         spawnOptions: { terminal: { mode: 'windows_terminal' } },
@@ -1491,8 +1527,8 @@ describe('createStopSession', () => {
     const retireExactTerminalControlServiceability = vi.fn(async () => undefined);
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     const stop = createStopSession({
-      pidToTrackedSession: new Map([[605, {
-        startedBy: 'daemon',
+      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(605), {
+        trackingKey: legacyPidSessionTrackingKey(605), startedBy: 'daemon',
         pid: 605,
         happySessionId: attachment.sessionId,
       } as any]]),
@@ -1520,8 +1556,8 @@ describe('createStopSession', () => {
     const dispose = vi.fn(async () => undefined);
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     const stop = createStopSession({
-      pidToTrackedSession: new Map([[604, {
-        startedBy: 'terminal',
+      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(604), {
+        trackingKey: legacyPidSessionTrackingKey(604), startedBy: 'terminal',
         pid: 604,
         happySessionId: attachment.sessionId,
         spawnOptions: { terminal: { mode: 'windows_terminal' } },
@@ -1545,8 +1581,8 @@ describe('createStopSession', () => {
     const dispose = vi.fn(async () => undefined);
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     const stop = createStopSession({
-      pidToTrackedSession: new Map([[606, {
-        startedBy: 'terminal',
+      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(606), {
+        trackingKey: legacyPidSessionTrackingKey(606), startedBy: 'terminal',
         pid: 606,
         happySessionId: attachment.sessionId,
         happySessionMetadataFromLocalWebhook: {
@@ -1583,8 +1619,8 @@ describe('createStopSession', () => {
     const dispose = vi.fn(async () => undefined);
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     const stop = createStopSession({
-      pidToTrackedSession: new Map([[554, {
-        startedBy: 'terminal',
+      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(554), {
+        trackingKey: legacyPidSessionTrackingKey(554), startedBy: 'terminal',
         pid: 554,
         happySessionId: attachment.sessionId,
         spawnOptions: { terminal: { mode: 'zellij' } },
@@ -1612,11 +1648,11 @@ describe('createStopSession', () => {
 
     const tmuxTmpDir = '/tmp/happy-e2e-tmux-test';
 
-    const pidToTrackedSession = new Map<number, any>([
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([
       [
-        444,
+        legacyPidSessionTrackingKey(444),
         {
-          startedBy: 'daemon',
+          trackingKey: legacyPidSessionTrackingKey(444), startedBy: 'daemon',
           pid: 444,
           happySessionId: 'sess-3',
           tmuxSessionId: 'happy-e2e:happy-window',
@@ -1626,14 +1662,14 @@ describe('createStopSession', () => {
       ],
     ]);
 
-    const stop = createStopSession({ pidToTrackedSession });
+    const stop = createStopSession({ trackedSessionsByKey });
     const ok = await stop('sess-3');
 
     expect(ok).toEqual({ status: 'incomplete', reason: 'missing_attachment_identity' });
     expect(killSpy).not.toHaveBeenCalled();
     expect(tmuxCtorCalls).toHaveLength(0);
     expect(tmuxKillWindow).not.toHaveBeenCalled();
-    expect(pidToTrackedSession.get(444)?.stopRequestedAtMs).toBeUndefined();
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(444))?.stopRequestedAtMs).toBeUndefined();
 
     nowSpy.mockRestore();
   });
@@ -1641,8 +1677,8 @@ describe('createStopSession', () => {
   it('does not signal a Herdr-hosted runner without its committed exact-pane attachment', async () => {
     const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true as any);
     const stop = createStopSession({
-      pidToTrackedSession: new Map([[559, {
-        startedBy: 'daemon', pid: 559, happySessionId: 'sess-herdr-unbound',
+      trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(559), {
+        trackingKey: legacyPidSessionTrackingKey(559), startedBy: 'daemon', pid: 559, happySessionId: 'sess-herdr-unbound',
         spawnOptions: { terminal: { mode: 'herdr' } },
       } as any]]),
       readHostAttachmentInfo: vi.fn(async () => null),
@@ -1663,11 +1699,11 @@ describe('createStopSession', () => {
     const tmuxTmpDir = '/tmp/happy-e2e-tmux-test';
     tmuxExecuteTmuxCommand.mockResolvedValueOnce({ returncode: 0, stdout: '', stderr: '', command: [] });
 
-    const pidToTrackedSession = new Map<number, any>([
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([
       [
-        555,
+        legacyPidSessionTrackingKey(555),
         {
-          startedBy: 'daemon',
+          trackingKey: legacyPidSessionTrackingKey(555), startedBy: 'daemon',
           pid: 555,
           happySessionId: 'sess-4',
           tmuxSessionId: '',
@@ -1680,14 +1716,14 @@ describe('createStopSession', () => {
       ],
     ]);
 
-    const stop = createStopSession({ pidToTrackedSession });
+    const stop = createStopSession({ trackedSessionsByKey });
     const ok = await stop('sess-4');
 
     expect(ok).toEqual({ status: 'incomplete', reason: 'missing_attachment_identity' });
     expect(killSpy).not.toHaveBeenCalled();
     expect(tmuxKillWindow).not.toHaveBeenCalled();
     expect(tmuxExecuteTmuxCommand).not.toHaveBeenCalled();
-    expect(pidToTrackedSession.get(555)?.stopRequestedAtMs).toBeUndefined();
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(555))?.stopRequestedAtMs).toBeUndefined();
 
     nowSpy.mockRestore();
   });
@@ -1701,11 +1737,11 @@ describe('createStopSession', () => {
         throw new Error('no posix process group on windows');
       });
       const childKill = vi.fn();
-      const pidToTrackedSession = new Map<number, any>([
+      const trackedSessionsByKey = new Map<SessionTrackingKey, any>([
         [
-          777,
+          legacyPidSessionTrackingKey(777),
           {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(777), startedBy: 'daemon',
             pid: 777,
             happySessionId: 'sess-win',
             childProcess: { pid: 777, exitCode: null, signalCode: null, kill: childKill },
@@ -1714,7 +1750,7 @@ describe('createStopSession', () => {
         ],
       ]);
 
-      const stop = createStopSession({ pidToTrackedSession, logPidReuseRefusal });
+      const stop = createStopSession({ trackedSessionsByKey, logPidReuseRefusal });
       const ok = await stop('sess-win');
 
       expect(ok).toEqual({ status: 'incomplete', reason: 'runner_signal_incomplete' });
@@ -1738,11 +1774,11 @@ describe('createStopSession', () => {
       const killSpy = vi.spyOn(process, 'kill').mockImplementation(() => true);
       const childKill = vi.fn();
       const nowSpy = vi.spyOn(Date, 'now').mockReturnValue(123456789);
-      const pidToTrackedSession = new Map<number, any>([
+      const trackedSessionsByKey = new Map<SessionTrackingKey, any>([
         [
-          778,
+          legacyPidSessionTrackingKey(778),
           {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(778), startedBy: 'daemon',
             pid: 778,
             happySessionId: 'sess-win-safe',
             childProcess: { pid: 778, exitCode: null, signalCode: null, kill: childKill },
@@ -1752,7 +1788,7 @@ describe('createStopSession', () => {
       ]);
 
       const stop = createStopSession({
-        pidToTrackedSession,
+        trackedSessionsByKey,
         waitForTrackedRunnersExit: vi.fn(async () => true),
       });
       const ok = await stop('sess-win-safe');
@@ -1761,7 +1797,7 @@ describe('createStopSession', () => {
       expect(killSpy).toHaveBeenCalledWith(778, 'SIGTERM');
       expect(spawnSyncMock).not.toHaveBeenCalled();
       expect(childKill).not.toHaveBeenCalled();
-      expect(pidToTrackedSession.get(778)?.stopRequestedAtMs).toBe(123456789);
+      expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(778))?.stopRequestedAtMs).toBe(123456789);
 
       nowSpy.mockRestore();
       killSpy.mockRestore();

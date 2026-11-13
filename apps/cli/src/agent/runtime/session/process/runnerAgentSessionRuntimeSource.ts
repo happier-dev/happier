@@ -78,6 +78,7 @@ import {
 import { readPrivateBearerFile } from '@/daemon/privateBearerFile';
 import { readRunnerAgentSessionBootstrap } from './runnerAgentSessionBootstrap';
 import {
+    findSessionMarkerTrackingKey,
     updateSessionMarkerRunnerManagedProviderAuthority,
 } from '@/daemon/sessionRegistry';
 import {
@@ -782,6 +783,14 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                 : {}),
         });
     if (!authority) return null;
+    const requireRunnerSessionMarkerTrackingKey = async () => {
+        const trackingKey = await findSessionMarkerTrackingKey({
+            pid: authority.runner.pid,
+            sessionId: authority.sessionId,
+        });
+        if (!trackingKey) throw new Error('Runner Session marker is unavailable');
+        return trackingKey;
+    };
 
     const binding = input.executionRunSnapshot?.agent?.binding ?? authority.retainedAgent;
     if (
@@ -884,6 +893,7 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                             : [],
                     attach: async () =>
                         await updateSessionMarkerRunnerManagedProviderAuthority({
+                            trackingKey: await requireRunnerSessionMarkerTrackingKey(),
                             pid: authority.runner.pid,
                             sessionId: authority.sessionId,
                             processCommandHash:
@@ -893,8 +903,9 @@ export async function createRunnerAgentSessionRuntimeSource(input: Readonly<{
                             authority: providerAuthority,
                         }),
                 }),
-            releaseAdoptedProviderAuthority: (providerAuthority) =>
-                updateSessionMarkerRunnerManagedProviderAuthority({
+            releaseAdoptedProviderAuthority: async (providerAuthority) =>
+                await updateSessionMarkerRunnerManagedProviderAuthority({
+                    trackingKey: await requireRunnerSessionMarkerTrackingKey(),
                     pid: authority.runner.pid,
                     sessionId: authority.sessionId,
                     processCommandHash:

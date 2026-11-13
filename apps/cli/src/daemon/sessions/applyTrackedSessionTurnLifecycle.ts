@@ -100,7 +100,7 @@ export async function applyTrackedSessionTurnLifecycle(input: Readonly<{
       input.updateSessionMarkerActiveTurn
       ?? updateSessionMarkerActiveTurn
     )({
-      pid: tracked.sessionRunnerPid ?? tracked.pid,
+      trackingKey: tracked.trackingKey,
       sessionId: input.sessionId,
       activeTurnId: activeTurnIdWitness,
     });
@@ -184,7 +184,7 @@ export async function applyTrackedSessionTurnLifecycle(input: Readonly<{
   let markerUpdated: boolean;
   try {
     markerUpdated = await (input.updateSessionMarkerActiveTurn ?? updateSessionMarkerActiveTurn)({
-      pid: tracked.sessionRunnerPid ?? tracked.pid,
+      trackingKey: tracked.trackingKey,
       sessionId: input.sessionId,
       activeTurnId: nextActiveTurnId,
       ...(recoveredTerminalTurnId ? { expectedActiveTurnId: recoveredTerminalTurnId } : {}),

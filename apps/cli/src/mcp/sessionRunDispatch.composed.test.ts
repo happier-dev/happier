@@ -247,8 +247,8 @@ it.each(['account_depth', 'account_agent', 'account_ceiling', 'policy_read_unava
           connectedServicesMaterializationBaseDir: h.cwd,
           connectedServiceRefreshCoordinator: null, connectedServiceQuotasCoordinator: null,
           connectedServiceRuntimeRegistry: workflowRequester.connectedServiceRuntimeRegistry,
-          pidToTrackedSession: h.pidToTrackedSession, pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(),
-          pidToSpawnWebhookTimeout: new Map(), spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+          trackedSessionsByKey: h.trackedSessionsByKey, spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(),
+          spawnWebhookTimeoutByKey: new Map(), spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
           resolveCanonicalTrackedSessionId: () => { throw new Error('Unexpected leaf launch'); },
           onChildExited: () => { throw new Error('Unexpected leaf launch'); },
         });

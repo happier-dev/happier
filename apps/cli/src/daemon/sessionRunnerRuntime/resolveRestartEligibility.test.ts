@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { TrackedSession } from '@/daemon/types';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 import {
   resolveSessionRunnerRestartEligibility,
@@ -9,6 +10,7 @@ import {
 
 function trackedRunner(overrides: Partial<TrackedSession> = {}): TrackedSession {
   return {
+    trackingKey: legacyPidSessionTrackingKey(overrides.pid ?? 4242),
     pid: 4242,
     happySessionId: 'sess-1',
     startedBy: 'daemon',

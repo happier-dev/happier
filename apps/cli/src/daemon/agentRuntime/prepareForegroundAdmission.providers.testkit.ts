@@ -60,6 +60,7 @@ import { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeReg
 import { createProviderAccountUsageStore } from '../connectedServices/accountUsage/store';
 import type { TrackedSession } from '../types';
 import { AUTHORING_MEMORY_ROUTE_V1, AuthoringMemoryReadResponseV1Schema } from '@happier-dev/protocol/account/authoringMemory';
+import type { SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 type BaseContext = Parameters<Parameters<typeof withRealForegroundAdmissionFixture>[1]>[0];
 type RequestOverrides = NonNullable<Parameters<BaseContext['prepare']>[0]>;
@@ -362,7 +363,7 @@ export async function withForegroundProviderFixture<T>(options: FixtureOptions, 
         });
         if (!requesterBootstrap) throw new Error('Requester Provider fixture bootstrap unavailable');
         const registry = new ConnectedServiceRuntimeRegistry();
-        const trackedSessions = new Map<number, TrackedSession>();
+        const trackedSessions = new Map<SessionTrackingKey, TrackedSession>();
         requesterHost = await createRequesterSessionControlRuntimeFixture({
           happyHomeDir: base.home, activeServerDir: configuration.activeServerDir,
           serverId: configuration.activeServerId, serverHttpBaseUrl: origin, machineId: 'machine-1',
@@ -378,7 +379,7 @@ export async function withForegroundProviderFixture<T>(options: FixtureOptions, 
           coordinatorInput: { machineId: 'machine-1', machineIdProvider: () => 'machine-1', runtimeId: 'fixture',
             happyHomeDir: base.home, logger: { debug: () => {}, info: () => {}, warn: () => {} },
             processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '0', HAPPIER_CONNECTED_SERVICES_QUOTAS_ENABLED: '0' },
-            pidToTrackedSession: trackedSessions, connectedServiceRuntimeRegistry: registry,
+            trackedSessionsByKey: trackedSessions, connectedServiceRuntimeRegistry: registry,
             connectedServiceAuthGroupPreTurnSwitchCoordinator: requesterHost.runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator },
         });
         if (!requester) throw new Error('Requester Provider fixture runtime unavailable');

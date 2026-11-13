@@ -12,6 +12,13 @@ import {
   type CancelStartupLaunch,
 } from './startupLaunchCancellation';
 import { armSessionWebhookStartupCustody, waitForSessionWebhook } from './waitForSessionWebhook';
+import {
+  isCurrentTrackedSession,
+  mintSessionTrackingKey,
+  trackSession,
+  type SessionTrackingKey,
+  type TrackedSessionMap,
+} from '@/daemon/sessions/sessionTrackingKey';
 
 export async function waitForTerminalHostedSessionWebhook(params: Readonly<{
   pid: number;
@@ -25,10 +32,10 @@ export async function waitForTerminalHostedSessionWebhook(params: Readonly<{
   trackedSessionFields?: Partial<Pick<TrackedSession, 'tmuxSessionId' | 'tmuxTmpDir' | 'hostedTerminal' | 'linuxLaunchUnit'>>;
   runnerAgentSessionBootstrapAuthorization?: RunnerAgentSessionBootstrapAuthorization | null;
   runnerAgentInvocationContext?: RunnerAgentInvocationContext | null;
-  pidToTrackedSession: Map<number, TrackedSession>;
-  pidToAwaiter: Map<number, (session: TrackedSession) => void>;
-  pidToSpawnResultResolver: Map<number, (result: SpawnSessionResult) => void>;
-  pidToSpawnWebhookTimeout: Map<number, NodeJS.Timeout>;
+  trackedSessionsByKey: TrackedSessionMap;
+  spawnAwaiterByKey: Map<SessionTrackingKey, (session: TrackedSession) => void>;
+  spawnResultResolverByKey: Map<SessionTrackingKey, (result: SpawnSessionResult) => void>;
+  spawnWebhookTimeoutByKey: Map<SessionTrackingKey, NodeJS.Timeout>;
   takeoverAdmission?: PersistedTakeoverAdmissionWaitRegistration;
   onChildExited: (pid: number, exit: ChildExit) => void | Promise<void>;
   spawnLifecycleCallbacks: SpawnLifecycleCallbacks;
@@ -44,7 +51,9 @@ export async function waitForTerminalHostedSessionWebhook(params: Readonly<{
   const acceptedSpawnMarkerGate = new Promise<boolean>((resolve) => {
     resolveAcceptedSpawnMarker = resolve;
   });
+  const trackingKey = mintSessionTrackingKey();
   const trackedSession: TrackedSession = {
+    trackingKey,
     startedBy: 'daemon',
     happySessionId: params.normalizedExistingSessionId || `PID-${params.pid}`,
     pid: params.pid,
@@ -78,7 +87,7 @@ export async function waitForTerminalHostedSessionWebhook(params: Readonly<{
       return await completeStartupCancellationCleanup({
         trackedSession,
         wrapperPid: params.pid,
-        pidToTrackedSession: params.pidToTrackedSession,
+        trackedSessionsByKey: params.trackedSessionsByKey,
         onChildExited: params.onChildExited,
       });
     })();
@@ -86,19 +95,20 @@ export async function waitForTerminalHostedSessionWebhook(params: Readonly<{
   };
   trackedSession.cancelStartupLaunchBeforeAck = cancelStartupLaunch;
 
-  params.pidToTrackedSession.set(params.pid, trackedSession);
+  trackSession(params.trackedSessionsByKey, trackedSession);
   params.spawnLifecycleCallbacks.onTrackedSessionRegistered?.(trackedSession);
-  params.spawnLifecycleCallbacks.registerSpawnResourceCleanupForPid(trackedSession.pid);
-  params.spawnLifecycleCallbacks.consumeSessionAttachCleanupForPid(trackedSession.pid);
+  params.spawnLifecycleCallbacks.registerSpawnResourceCleanupForSession(trackedSession.trackingKey);
+  params.spawnLifecycleCallbacks.consumeSessionAttachCleanupForSession(trackedSession.trackingKey);
   const acceptedSpawnMarkerPromise = params.spawnLifecycleCallbacks.persistAcceptedSpawnMarker(trackedSession);
   params.logDebug(`[DAEMON RUN] Waiting for session webhook for PID ${params.pid} (${params.label})`);
   const spawnResultPromise = waitForSessionWebhook({
+    trackingKey,
     pid: params.pid,
-    pidToAwaiter: params.pidToAwaiter,
+    spawnAwaiterByKey: params.spawnAwaiterByKey,
     takeoverAdmission: params.takeoverAdmission,
-    pidToSpawnResultResolver: params.pidToSpawnResultResolver,
-    pidToSpawnWebhookTimeout: params.pidToSpawnWebhookTimeout,
-    pidToTrackedSession: params.pidToTrackedSession,
+    spawnResultResolverByKey: params.spawnResultResolverByKey,
+    spawnWebhookTimeoutByKey: params.spawnWebhookTimeoutByKey,
+    trackedSessionsByKey: params.trackedSessionsByKey,
     timeoutErrorMessage: `Session webhook timeout for PID ${params.pid} (${params.label})`,
     onTimeout: () => params.logDebug(`[DAEMON RUN] Session webhook timeout for PID ${params.pid} (${params.label})`),
     onSuccess: async (completedSession) => {
@@ -133,18 +143,18 @@ export async function waitForTerminalHostedSessionWebhook(params: Readonly<{
       sanitizeDiagnosticText(error instanceof Error ? error.message : String(error)),
     );
     resolveAcceptedSpawnMarker(false);
-    const timeout = params.pidToSpawnWebhookTimeout.get(params.pid);
+    const timeout = params.spawnWebhookTimeoutByKey.get(trackingKey);
     if (timeout) clearTimeout(timeout);
-    params.pidToSpawnWebhookTimeout.delete(params.pid);
-    params.pidToAwaiter.delete(params.pid);
-    params.pidToSpawnResultResolver.delete(params.pid);
-    if (params.pidToTrackedSession.get(trackedSession.pid) === trackedSession) {
+    params.spawnWebhookTimeoutByKey.delete(trackingKey);
+    params.spawnAwaiterByKey.delete(trackingKey);
+    params.spawnResultResolverByKey.delete(trackingKey);
+    if (isCurrentTrackedSession(params.trackedSessionsByKey, trackedSession)) {
       const incompleteRetirement = resolveSpawnErrorAfterStartupCancellation(await cancelStartupLaunch());
       if (incompleteRetirement) throw new Error(incompleteRetirement);
     }
     throw error;
   }
-  params.spawnLifecycleCallbacks.registerConnectedServiceSpawnTarget(trackedSession.pid);
+  params.spawnLifecycleCallbacks.registerConnectedServiceSpawnTarget(trackedSession.pid, trackedSession.trackingKey);
   trackedSession.acceptedSpawnMarkerGate = undefined;
   resolveAcceptedSpawnMarker(true);
 

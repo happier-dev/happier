@@ -22,6 +22,7 @@ import { spawnTestProcess, waitForProcessExit } from '@/testkit/process/spawn';
 import { HAPPIER_FOREGROUND_AGENT_RUNTIME_ADMISSION_FILE_ENV_KEY } from './foregroundAdmissionContract';
 import { claimDaemonForegroundAgentRuntimeEnvironment } from '@/agent/runtime/session/process/foregroundAgentRuntimeAdmissionClient';
 import { writeDaemonState } from '@/persistence';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const claimInput = {
   canonicalSessionId: 'canonical-session-codex', httpPort: 40123,
@@ -40,7 +41,7 @@ describe('foreground Codex Connected Account lifecycle through real materializat
         return account.admittedRuntime;
       },
     }, async (fixture) => {
-      const trackedSessions = new Map<number, TrackedSession>();
+      const trackedSessions = new Map<SessionTrackingKey, TrackedSession>();
       const preparedBySession = new Map<string, PreparedForegroundAgentRuntimeAdmission>();
       const authorityBySession = new Map<string, NonNullable<Awaited<ReturnType<typeof readForegroundAuthority>>>>();
       let connectedServicePreparationError: unknown;
@@ -73,12 +74,12 @@ describe('foreground Codex Connected Account lifecycle through real materializat
         },
         getHttpPort: () => 40123,
         async promoteDaemonServiceAuthority(input) {
-          const tracked: TrackedSession = { pid: input.foregroundPid, startedBy: 'terminal',
+          const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(input.foregroundPid), pid: input.foregroundPid, startedBy: 'terminal',
             happySessionId: input.canonicalSessionId, processStartTimeMs: input.runner.processStartTimeMs,
             processCommandHash: input.runner.processCommandHash };
-          trackedSessions.set(input.foregroundPid, tracked);
+          trackedSessions.set(tracked.trackingKey, tracked);
           const markerTime = Date.now();
-          await writeSessionMarker({ pid: input.foregroundPid, startedBy: 'terminal',
+          await writeSessionMarker({ trackingKey: tracked.trackingKey, pid: input.foregroundPid, startedBy: 'terminal',
             happySessionId: input.canonicalSessionId,
             createdAt: markerTime, updatedAt: markerTime, processStartTimeMs: input.runner.processStartTimeMs,
             processCommandHash: input.runner.processCommandHash });
@@ -152,7 +153,7 @@ describe('foreground Codex Connected Account lifecycle through real materializat
         const nativeHome = claimed.environment.CODEX_HOME;
         if (!nativeHome) throw new Error('Promoted native home unavailable');
         expect(secondNativeHome).toBe(nativeHome);
-        const tracked = trackedSessions.get(fixture.foregroundPid);
+        const tracked = trackedSessions.get(legacyPidSessionTrackingKey(fixture.foregroundPid));
         expect(tracked?.agentRuntimeDaemonServiceAuthorityFilePath).toBeTruthy();
         const purpose = { consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'primary' };
         const exactPurpose = { purpose, serviceRefs: [account.service],
@@ -175,7 +176,7 @@ describe('foreground Codex Connected Account lifecycle through real materializat
         const refresh = createSessionConnectedServiceRuntimeAuthRefreshHandler({ registry,
           captureSessionAuthority: () => ({ identity: authority, isCurrent: () => prepared.isCurrent()
             && fixture.runtime.controller.isRuntimeRegistryCurrent(fixture.runtime.registry)
-            && trackedSessions.get(fixture.foregroundPid) === tracked }),
+            && trackedSessions.get(legacyPidSessionTrackingKey(fixture.foregroundPid)) === tracked }),
           resolveDaemonAuthBridge: async (serviceId) => ({ serviceId, async refresh(request, context) {
             if (!context || !request.expectedCredentialRevision || !request.refreshAttemptId) {
               return { status: 'unavailable', reason: 'missing_authority' };

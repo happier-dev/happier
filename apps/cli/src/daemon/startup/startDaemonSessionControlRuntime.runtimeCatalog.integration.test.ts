@@ -169,6 +169,7 @@ import { createTestExecutionRunHostRuntime } from '@/agent/runtime/bridges/execu
 import { projectExecutionRunPublicState } from '@/agent/runtime/bridges/executionRun/publicState';
 import { readProcessIdentityByPid } from '../processIdentity';
 import { hashProcessCommand } from '../sessionRegistry';
+import { legacyPidSessionTrackingKey, trackedSessionsForProcess, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 // Genuine descriptor/directory OS boundaries remain real until a fixture selects
 // procfs; wrapped exports permit that fixture under native ESM namespaces.
@@ -416,7 +417,7 @@ it('commits the accepted hot-apply target before stale bootstrap state can super
     };
     const sessionId = 'sess-hot-apply';
     const tracked: TrackedSession = {
-        pid: 501,
+        trackingKey: legacyPidSessionTrackingKey(501), pid: 501,
         startedBy: 'daemon',
         happySessionId: sessionId,
         spawnOptions: {
@@ -499,7 +500,7 @@ it('commits the accepted hot-apply target before stale bootstrap state can super
 it('unregisters the canonical hot-apply target when a post-registration consumer fails', async () => {
     const environment = { HAPPIER_TEST_CONNECTED_SERVICE_SELECTION_IDENTITY: 'selection-2' };
     const tracked: TrackedSession = {
-        pid: 502,
+        trackingKey: legacyPidSessionTrackingKey(502), pid: 502,
         startedBy: 'daemon',
         happySessionId: 'sess-hot-apply-rollback',
         spawnOptions: { directory: '/tmp/worktree', environmentVariables: environment },
@@ -700,12 +701,12 @@ const markSessionMarkerConnectedServiceRestartIntentMock = vi.hoisted(() => vi.f
 const clearSessionMarkerConnectedServiceRestartIntentMock = vi.hoisted(() => vi.fn(async () => {}));
 const removeSessionMarkerMock = vi.hoisted(() => vi.fn(async () => {}));
 const removeSessionMarkerIfOwnedMock = vi.hoisted(() => (
-    vi.fn<(input: { pid: number }) => Promise<boolean>>(async () => true)
+    vi.fn<(input: { trackingKey: SessionTrackingKey }) => Promise<boolean>>(async () => true)
 ));
-type ReadSessionMarkerForPid =
-    typeof import('../sessionRegistry')['readSessionMarkerForPid'];
-const readSessionMarkerForPidMock = vi.hoisted(() => (
-    vi.fn<ReadSessionMarkerForPid>(async () => null)
+type ReadSessionMarker =
+    typeof import('../sessionRegistry')['readSessionMarker'];
+const readSessionMarkerMock = vi.hoisted(() => (
+    vi.fn<ReadSessionMarker>(async () => null)
 ));
 const updateSessionMarkerActiveTurnMock = vi.hoisted(() => vi.fn(async () => true));
 const updateSessionMarkerAgentSessionStartupInstructionsMarkerMock = vi.hoisted(
@@ -1239,7 +1240,7 @@ vi.mock('../sessionRegistry', async (importOriginal) => {
     const actual = await importOriginal<typeof import('../sessionRegistry')>();
     return {
         ...actual,
-        readSessionMarkerForPid: readSessionMarkerForPidMock,
+        readSessionMarker: readSessionMarkerMock,
         markSessionMarkerConnectedServiceRestartIntent: markSessionMarkerConnectedServiceRestartIntentMock,
         clearSessionMarkerConnectedServiceRestartIntent: clearSessionMarkerConnectedServiceRestartIntentMock,
         removeSessionMarker: removeSessionMarkerMock,
@@ -1524,10 +1525,10 @@ describe('startDaemonSessionControlRuntime', () => {
             credentials: { token: 'daemon-fixture', encryption: null }, api: {} as never,
             connectedServicesMaterializationBaseDir: join(directory, 'connected-services'),
             getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-            connectedServiceRuntimeRegistry: new ConnectedServiceRuntimeRegistry(), pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
-            getApiMachineForSessions: () => null, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(), beforeShutdown: async () => {},
+            connectedServiceRuntimeRegistry: new ConnectedServiceRuntimeRegistry(), trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
+            getApiMachineForSessions: () => null, spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(), beforeShutdown: async () => {},
             onHappySessionWebhook: async () => {}, requestShutdown: () => {}, processEnv: {},
         });
         try {
@@ -1585,10 +1586,10 @@ describe('startDaemonSessionControlRuntime', () => {
             credentials: { token: 'test-token', encryption: { type: 'legacy', secret: new Uint8Array(32) } }, api: {} as never,
             connectedServicesMaterializationBaseDir: join(directory, 'connected-services'),
             getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-            connectedServiceRuntimeRegistry: new ConnectedServiceRuntimeRegistry(), pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
-            getApiMachineForSessions: () => installedMachine, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(), beforeShutdown: async () => {},
+            connectedServiceRuntimeRegistry: new ConnectedServiceRuntimeRegistry(), trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
+            getApiMachineForSessions: () => installedMachine, spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(), beforeShutdown: async () => {},
             onHappySessionWebhook: async () => {}, requestShutdown: () => {}, processEnv: {},
         });
         let releaseProvision!: () => void;
@@ -1659,7 +1660,7 @@ describe('startDaemonSessionControlRuntime', () => {
         const registry = new ConnectedServiceRuntimeRegistry();
         const runnerIdentity = await readProcessIdentityByPid(process.pid);
         if (!runnerIdentity?.processStartTimeMs || !runnerIdentity.command) throw new Error('Expected the live fixture runner identity');
-        const tracked: TrackedSession = { pid: process.ppid, sessionRunnerPid: process.pid,
+        const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(process.ppid), pid: process.ppid, sessionRunnerPid: process.pid,
             runnerProcessIdentity: { pid: process.pid, processStartTimeMs: runnerIdentity.processStartTimeMs,
                 processCommandHash: hashProcessCommand(runnerIdentity.command) },
             startedBy: 'daemon', happySessionId: 'wrapped-parent', spawnOptions: { directory: '/repo',
@@ -1673,10 +1674,10 @@ describe('startDaemonSessionControlRuntime', () => {
             credentials: { token: 'daemon-fixture', encryption: null }, api: {} as never,
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-            connectedServiceRuntimeRegistry: registry, pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-            pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
-            getApiMachineForSessions: () => null, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(), beforeShutdown: async () => {},
+            connectedServiceRuntimeRegistry: registry, trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
+            getApiMachineForSessions: () => null, spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(), beforeShutdown: async () => {},
             onHappySessionWebhook: async () => {}, requestShutdown: () => {}, processEnv: {},
         });
         try {
@@ -1725,7 +1726,7 @@ describe('startDaemonSessionControlRuntime', () => {
         const registry = new ConnectedServiceRuntimeRegistry();
         const identity = await readProcessIdentityByPid(process.pid);
         if (!identity?.processStartTimeMs || !identity.command) throw new Error('Expected the live fixture runner identity');
-        const tracked: TrackedSession = { pid: process.pid, startedBy: 'daemon', happySessionId: 'configured-acp-parent',
+        const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, startedBy: 'daemon', happySessionId: 'configured-acp-parent',
             runnerProcessIdentity: { pid: process.pid, processStartTimeMs: identity.processStartTimeMs,
                 processCommandHash: hashProcessCommand(identity.command) },
             happySessionMetadataFromLocalWebhook: createTestMetadata({ runtimeDescriptorV1: {
@@ -1737,10 +1738,10 @@ describe('startDaemonSessionControlRuntime', () => {
             credentials: { token: 'daemon-fixture', encryption: null }, api: {} as never,
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-            connectedServiceRuntimeRegistry: registry, pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-            pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
-            getApiMachineForSessions: () => null, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(), beforeShutdown: async () => {},
+            connectedServiceRuntimeRegistry: registry, trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
+            getApiMachineForSessions: () => null, spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(), beforeShutdown: async () => {},
             onHappySessionWebhook: async () => {}, requestShutdown: () => {}, processEnv: {},
         });
         try {
@@ -2232,9 +2233,9 @@ describe('startDaemonSessionControlRuntime', () => {
         const runtime = await startDaemonSessionControlRuntime({ machineId, credentials: controllerCredentials, api: {} as never,
             serverBaseUrl: serverUrl, serverId: configuration.activeServerId, connectedServicesMaterializationBaseDir: taskDir,
             getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(), pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
-            getApiMachineForSessions: () => apiMachine, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(), externalActionAccountId: 'alice', managedProviderOperationAuthority: authority,
+            trackedSessionsByKey: new Map(), spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
+            getApiMachineForSessions: () => apiMachine, spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(), externalActionAccountId: 'alice', managedProviderOperationAuthority: authority,
             resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId }),
             beforeShutdown: vi.fn(), onHappySessionWebhook: vi.fn(), requestShutdown: vi.fn(), processEnv: {} });
         onTestFinished(async () => { await runtime.stopControlServer(); });
@@ -2944,10 +2945,10 @@ describe('startDaemonSessionControlRuntime', () => {
         const runtime = await startDaemonSessionControlRuntime({ machineId: policyController.machineId, credentials, api: {} as never,
             serverBaseUrl: serverUrl, serverId: configuration.activeServerId,
             connectedServicesMaterializationBaseDir: taskDir, getConnectedServiceRefreshCoordinator: () => null,
-            getConnectedServiceQuotasCoordinator: () => null, pidToTrackedSession: new Map(), pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+            getConnectedServiceQuotasCoordinator: () => null, trackedSessionsByKey: new Map(), spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => apiMachine,
-            spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(), connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(), connectedServicesRestartRequestedSessions: new Set(),
             externalActionAccountId: machine.custodianAccountId, managedProviderOperationAuthority: authority,
             ...(policy === 'guard-cleanup-ask' ? { admissionDrain: guardAdmissionDrain } : {}),
             resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: homeId, machineId: policyController.machineId }),
@@ -3352,14 +3353,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => currentApiMachine,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -3455,14 +3456,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -3949,14 +3950,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -4098,7 +4099,7 @@ describe('startDaemonSessionControlRuntime', () => {
             profileId: string,
             credentialRevision?: string,
         ): TrackedSession => ({
-            pid,
+            trackingKey: legacyPidSessionTrackingKey(pid), pid,
             startedBy: 'daemon',
             happySessionId: `session-${profileId}`,
             spawnOptions: {
@@ -4228,19 +4229,19 @@ describe('startDaemonSessionControlRuntime', () => {
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
             connectedServiceRuntimeRegistry: runtimeRegistry,
-            pidToTrackedSession: new Map([
-                [legacyTracked.pid, legacyTracked],
-                [fabricatedRevisionTracked.pid,
+            trackedSessionsByKey: new Map([
+                [legacyTracked.trackingKey, legacyTracked],
+                [fabricatedRevisionTracked.trackingKey,
                     fabricatedRevisionTracked],
-                [revisionedTracked.pid, revisionedTracked],
+                [revisionedTracked.trackingKey, revisionedTracked],
             ]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -4510,7 +4511,7 @@ describe('startDaemonSessionControlRuntime', () => {
             release: vi.fn(async () => {}),
         }));
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(41), startedBy: 'daemon',
             pid: 41,
             happySessionId: context.sessionId,
             agentSessionStartupInstructionsMarkerV1:
@@ -4525,7 +4526,7 @@ describe('startDaemonSessionControlRuntime', () => {
             sessionId: 'session-startup-marker-only',
         };
         const markerOnlyTracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(42), startedBy: 'daemon',
             pid: 42,
             happySessionId: markerOnlyContext.sessionId,
             agentSessionStartupInstructionsMarkerV1:
@@ -4540,7 +4541,7 @@ describe('startDaemonSessionControlRuntime', () => {
             sessionId: 'session-startup-marker-mismatch',
         };
         const mismatchedTracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(43), startedBy: 'daemon',
             pid: 43,
             happySessionId: mismatchedContext.sessionId,
             agentSessionStartupInstructionsMarkerV1:
@@ -4563,18 +4564,18 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map([
-                [tracked.pid, tracked],
-                [markerOnlyTracked.pid, markerOnlyTracked],
-                [mismatchedTracked.pid, mismatchedTracked],
+            trackedSessionsByKey: new Map([
+                [tracked.trackingKey, tracked],
+                [markerOnlyTracked.trackingKey, markerOnlyTracked],
+                [mismatchedTracked.trackingKey, mismatchedTracked],
             ]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -4640,7 +4641,7 @@ describe('startDaemonSessionControlRuntime', () => {
             snapshotIdentity: 'snapshot:runner-open',
         });
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon',
             pid: runner.pid,
             happySessionId: sessionId,
             runnerAgentSourceCustodyV1: binding.sourceCustody,
@@ -4671,14 +4672,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map([[runner.pid, tracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -4744,7 +4745,7 @@ describe('startDaemonSessionControlRuntime', () => {
             expect(
                 updateSessionMarkerAgentRuntimeSessionOpenAttestationMock,
             ).toHaveBeenCalledWith({
-                pid: runner.pid,
+                trackingKey: tracked.trackingKey,
                 sessionId,
                 authorityFilePath: '/private/current-authority.json',
                 attestation: {
@@ -4820,7 +4821,7 @@ describe('startDaemonSessionControlRuntime', () => {
             },
         });
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon',
             pid: runner.pid,
             happySessionId: sessionId,
             runnerAgentSourceCustodyV1: binding.sourceCustody,
@@ -4854,14 +4855,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map([[runner.pid, tracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -5003,14 +5004,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             externalSessionHostOperationOwner,
             beforeShutdown,
             onHappySessionWebhook: vi.fn(),
@@ -5608,18 +5609,18 @@ describe('startDaemonSessionControlRuntime', () => {
                 };
             },
         );
-        const sessionAttachCleanupByPid = new Map<
-            number,
+        const sessionAttachCleanupByKey = new Map<
+            SessionTrackingKey,
             () => Promise<void>
         >([
-            [41, previousAttachCleanup],
-            [43, reusedPreviousAttachCleanup],
-            [45, changedIdentityPreviousAttachCleanup],
-            [54, piPreviousAttachCleanup],
-            [57, scopeChangedPreviousAttachCleanup],
+            [legacyPidSessionTrackingKey(41), previousAttachCleanup],
+            [legacyPidSessionTrackingKey(43), reusedPreviousAttachCleanup],
+            [legacyPidSessionTrackingKey(45), changedIdentityPreviousAttachCleanup],
+            [legacyPidSessionTrackingKey(54), piPreviousAttachCleanup],
+            [legacyPidSessionTrackingKey(57), scopeChangedPreviousAttachCleanup],
         ]);
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(41), startedBy: 'daemon',
             happySessionId: 'session-request-auth-reattach',
             pid: 41,
             reattachedFromDiskMarker: true,
@@ -5657,7 +5658,7 @@ describe('startDaemonSessionControlRuntime', () => {
             },
         };
         const piTracked: TrackedSession = {
-            ...tracked,
+            ...tracked, trackingKey: legacyPidSessionTrackingKey(54),
             pid: 54,
             happySessionId:
                 'session-pi-request-auth-reattach',
@@ -5684,7 +5685,7 @@ describe('startDaemonSessionControlRuntime', () => {
             },
         };
         const unprovableTracked: TrackedSession = {
-            ...tracked,
+            ...tracked, trackingKey: legacyPidSessionTrackingKey(42),
             pid: 42,
             happySessionId:
                 'session-request-auth-unprovable',
@@ -5711,7 +5712,7 @@ describe('startDaemonSessionControlRuntime', () => {
             processStartTimeMs: undefined,
         };
         const reusedTracked: TrackedSession = {
-            ...tracked,
+            ...tracked, trackingKey: legacyPidSessionTrackingKey(43),
             pid: 43,
             happySessionId:
                 'session-request-auth-reused-pid',
@@ -5734,7 +5735,7 @@ describe('startDaemonSessionControlRuntime', () => {
         };
         const reusedInitialPid = reusedTracked.pid;
         const changedIdentityTracked: TrackedSession = {
-            ...tracked,
+            ...tracked, trackingKey: legacyPidSessionTrackingKey(45),
             pid: 45,
             happySessionId:
                 'session-request-auth-changed-identity',
@@ -5756,7 +5757,7 @@ describe('startDaemonSessionControlRuntime', () => {
             },
         };
         const scopeChangedTracked: TrackedSession = {
-            ...tracked,
+            ...tracked, trackingKey: legacyPidSessionTrackingKey(57),
             pid: 57,
             happySessionId:
                 'session-request-auth-scope-changed',
@@ -5779,7 +5780,7 @@ describe('startDaemonSessionControlRuntime', () => {
         const cutoverProcessCommand =
             'node /Users/alice/.happier/cli-dev/versions/0.2.10/package-dist/index.mjs opencode --happy-starting-mode remote --started-by daemon';
         const cutoverTracked: TrackedSession = {
-            ...tracked,
+            ...tracked, trackingKey: legacyPidSessionTrackingKey(46),
             pid: 46,
             happySessionId:
                 'session-request-auth-source-cutover',
@@ -5807,7 +5808,7 @@ describe('startDaemonSessionControlRuntime', () => {
             },
         };
         const idlePromptCutoverTracked: TrackedSession = {
-            ...cutoverTracked,
+            ...cutoverTracked, trackingKey: legacyPidSessionTrackingKey(48),
             pid: 48,
             happySessionId:
                 'session-request-auth-idle-prompt-cutover',
@@ -5827,7 +5828,7 @@ describe('startDaemonSessionControlRuntime', () => {
             },
         };
         const absentMarkerCutoverTracked: TrackedSession = {
-            ...cutoverTracked,
+            ...cutoverTracked, trackingKey: legacyPidSessionTrackingKey(55),
             pid: 55,
             happySessionId:
                 'session-request-auth-absent-marker-cutover',
@@ -5848,7 +5849,7 @@ describe('startDaemonSessionControlRuntime', () => {
         delete absentMarkerCutoverTracked
             .reattachedInterruptedTurnId;
         const failedRespawnCutoverTracked: TrackedSession = {
-            ...cutoverTracked,
+            ...cutoverTracked, trackingKey: legacyPidSessionTrackingKey(50),
             pid: 50,
             happySessionId:
                 'session-request-auth-failed-respawn-cutover',
@@ -5868,7 +5869,7 @@ describe('startDaemonSessionControlRuntime', () => {
             },
         };
         const racingTurnCutoverTracked: TrackedSession = {
-            ...cutoverTracked,
+            ...cutoverTracked, trackingKey: legacyPidSessionTrackingKey(56),
             pid: 56,
             happySessionId:
                 'session-request-auth-racing-turn-cutover',
@@ -5889,7 +5890,7 @@ describe('startDaemonSessionControlRuntime', () => {
             },
         };
         const windowsCutoverTracked: TrackedSession = {
-            ...cutoverTracked,
+            ...cutoverTracked, trackingKey: legacyPidSessionTrackingKey(51),
             pid: 51,
             happySessionId:
                 'session-request-auth-windows-cutover',
@@ -5911,7 +5912,7 @@ describe('startDaemonSessionControlRuntime', () => {
             },
         };
         const coldResumeCutoverTracked: TrackedSession = {
-            ...cutoverTracked,
+            ...cutoverTracked, trackingKey: legacyPidSessionTrackingKey(52),
             pid: 52,
             happySessionId:
                 'session-request-auth-cold-resume-cutover',
@@ -5995,43 +5996,43 @@ describe('startDaemonSessionControlRuntime', () => {
         }
         await publishRetainedAuthority(piTracked, retainedPiBindingG);
 
-        const pidToTrackedSession =
-            new Map<number, TrackedSession>([
-                [tracked.pid, tracked],
-                [piTracked.pid, piTracked],
-                [unprovableTracked.pid, unprovableTracked],
-                [reusedTracked.pid, reusedTracked],
+        const trackedSessionsByKey =
+            new Map<SessionTrackingKey, TrackedSession>([
+                [tracked.trackingKey, tracked],
+                [piTracked.trackingKey, piTracked],
+                [unprovableTracked.trackingKey, unprovableTracked],
+                [reusedTracked.trackingKey, reusedTracked],
                 [
-                    changedIdentityTracked.pid,
+                    changedIdentityTracked.trackingKey,
                     changedIdentityTracked,
                 ],
                 [
-                    scopeChangedTracked.pid,
+                    scopeChangedTracked.trackingKey,
                     scopeChangedTracked,
                 ],
-                [cutoverTracked.pid, cutoverTracked],
+                [cutoverTracked.trackingKey, cutoverTracked],
                 [
-                    idlePromptCutoverTracked.pid,
+                    idlePromptCutoverTracked.trackingKey,
                     idlePromptCutoverTracked,
                 ],
                 [
-                    absentMarkerCutoverTracked.pid,
+                    absentMarkerCutoverTracked.trackingKey,
                     absentMarkerCutoverTracked,
                 ],
                 [
-                    failedRespawnCutoverTracked.pid,
+                    failedRespawnCutoverTracked.trackingKey,
                     failedRespawnCutoverTracked,
                 ],
                 [
-                    racingTurnCutoverTracked.pid,
+                    racingTurnCutoverTracked.trackingKey,
                     racingTurnCutoverTracked,
                 ],
                 [
-                    windowsCutoverTracked.pid,
+                    windowsCutoverTracked.trackingKey,
                     windowsCutoverTracked,
                 ],
                 [
-                    coldResumeCutoverTracked.pid,
+                    coldResumeCutoverTracked.trackingKey,
                     coldResumeCutoverTracked,
                 ],
             ]);
@@ -6075,14 +6076,14 @@ describe('startDaemonSessionControlRuntime', () => {
                         peerClass: 'revisioned_v2_v3',
                         serviceId: 'openai-codex',
                     }),
-                pidToTrackedSession,
-                pidToAwaiter: new Map(),
-                pidToSpawnResultResolver: new Map(),
-                pidToSpawnWebhookTimeout: new Map(),
+                trackedSessionsByKey,
+                spawnAwaiterByKey: new Map(),
+                spawnResultResolverByKey: new Map(),
+                spawnWebhookTimeoutByKey: new Map(),
                 getApiMachineForSessions: () => null,
-                spawnResourceCleanupByPid: new Map(),
-                sessionAttachCleanupByPid,
-                connectedServicesRestartRequestedPids: new Set(),
+                spawnResourceCleanupByKey: new Map(),
+                sessionAttachCleanupByKey,
+                connectedServicesRestartRequestedSessions: new Set(),
                 beforeShutdown,
                 onHappySessionWebhook: vi.fn(),
                 requestShutdown: vi.fn(),
@@ -6108,18 +6109,12 @@ describe('startDaemonSessionControlRuntime', () => {
             expect(stagedReusedDocument?.capability)
                 .not.toBe(reusedOldCapability);
             expect(
-                sessionAttachCleanupByPid.get(reusedTracked.pid),
+                sessionAttachCleanupByKey.get(reusedTracked.trackingKey),
             ).not.toBe(reusedPreviousAttachCleanup);
-            const promotedReusedCleanup =
-                sessionAttachCleanupByPid.get(reusedInitialPid)!;
-            pidToTrackedSession.delete(reusedInitialPid);
-            sessionAttachCleanupByPid.delete(reusedInitialPid);
+            // A PID promotion moves only the Session's pid; its key-addressed
+            // attach cleanup stays where it is.
             reusedTracked.pid = 44;
-            pidToTrackedSession.set(reusedTracked.pid, reusedTracked);
-            sessionAttachCleanupByPid.set(
-                reusedTracked.pid,
-                promotedReusedCleanup,
-            );
+            trackedSessionsByKey.set(reusedTracked.trackingKey, reusedTracked);
             resolveReusedPidIdentity({
                 pid: reusedInitialPid,
                 processStartTimeMs: 3_000,
@@ -6133,8 +6128,8 @@ describe('startDaemonSessionControlRuntime', () => {
             expect(stagedChangedIdentityDocument?.capability)
                 .not.toBe(changedIdentityOldCapability);
             expect(
-                sessionAttachCleanupByPid.get(
-                    changedIdentityTracked.pid,
+                sessionAttachCleanupByKey.get(
+                    changedIdentityTracked.trackingKey,
                 ),
             ).not.toBe(changedIdentityPreviousAttachCleanup);
             resolveChangedIdentity({
@@ -6251,7 +6246,7 @@ describe('startDaemonSessionControlRuntime', () => {
             ])).resolves.toBe('pending');
 
             const replacementCutoverTracked: TrackedSession = {
-                ...cutoverTracked,
+                ...cutoverTracked, trackingKey: legacyPidSessionTrackingKey(47),
                 pid: 47,
                 processStartTimeMs: 7_000,
                 spawnOptions: {
@@ -6273,15 +6268,16 @@ describe('startDaemonSessionControlRuntime', () => {
             delete replacementCutoverTracked.activeTurnId;
             delete replacementCutoverTracked
                 .reattachedInterruptedTurnId;
-            pidToTrackedSession.delete(cutoverTracked.pid);
-            pidToTrackedSession.set(
-                replacementCutoverTracked.pid,
+            trackedSessionsByKey.delete(cutoverTracked.trackingKey);
+            trackedSessionsByKey.set(
+                replacementCutoverTracked.trackingKey,
                 replacementCutoverTracked,
             );
             respawnOwnerInputs.at(-1)?.onRespawnSuccess?.({
                 sessionId:
                     'session-request-auth-source-cutover',
                 previousPid: cutoverTracked.pid,
+                previousTrackingKey: cutoverTracked.trackingKey,
                 result: {
                     type: 'success',
                     sessionId:
@@ -6344,7 +6340,7 @@ describe('startDaemonSessionControlRuntime', () => {
             ])).resolves.toBe('pending');
 
             const replacementIdlePromptTracked: TrackedSession = {
-                ...idlePromptCutoverTracked,
+                ...idlePromptCutoverTracked, trackingKey: legacyPidSessionTrackingKey(49),
                 pid: 49,
                 processStartTimeMs: 9_000,
                 spawnOptions: {
@@ -6366,11 +6362,11 @@ describe('startDaemonSessionControlRuntime', () => {
             delete replacementIdlePromptTracked.activeTurnId;
             delete replacementIdlePromptTracked
                 .reattachedInterruptedTurnId;
-            pidToTrackedSession.delete(
-                idlePromptCutoverTracked.pid,
+            trackedSessionsByKey.delete(
+                idlePromptCutoverTracked.trackingKey,
             );
-            pidToTrackedSession.set(
-                replacementIdlePromptTracked.pid,
+            trackedSessionsByKey.set(
+                replacementIdlePromptTracked.trackingKey,
                 replacementIdlePromptTracked,
             );
             respawnOwnerInputs.at(-1)?.onRespawnSuccess?.({
@@ -6378,6 +6374,8 @@ describe('startDaemonSessionControlRuntime', () => {
                     'session-request-auth-idle-prompt-cutover',
                 previousPid:
                     idlePromptCutoverTracked.pid,
+                previousTrackingKey:
+                    idlePromptCutoverTracked.trackingKey,
                 result: {
                     type: 'success',
                     sessionId:
@@ -6442,6 +6440,8 @@ describe('startDaemonSessionControlRuntime', () => {
                     failedRespawnCutoverTracked.happySessionId!,
                 previousPid:
                     failedRespawnCutoverTracked.pid,
+                previousTrackingKey:
+                    failedRespawnCutoverTracked.trackingKey,
                 result: {
                     type: 'success',
                     sessionId:
@@ -6505,8 +6505,8 @@ describe('startDaemonSessionControlRuntime', () => {
                 requestConnectedServiceSessionRestartSignalMock,
             ).toHaveBeenCalledTimes(4);
             expect(
-                pidToTrackedSession.get(
-                    racingTurnCutoverTracked.pid,
+                trackedSessionsByKey.get(
+                    racingTurnCutoverTracked.trackingKey,
                 ),
             ).toBe(racingTurnCutoverTracked);
 
@@ -6549,7 +6549,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 requestConnectedServiceSessionRestartSignalMock,
             ).toHaveBeenCalledTimes(5);
             const racingTurnSuccessor: TrackedSession = {
-                ...racingTurnCutoverTracked,
+                ...racingTurnCutoverTracked, trackingKey: legacyPidSessionTrackingKey(57),
                 pid: 57,
                 processStartTimeMs: 17_000,
                 spawnOptions: {
@@ -6571,11 +6571,11 @@ describe('startDaemonSessionControlRuntime', () => {
             delete racingTurnSuccessor.activeTurnId;
             delete racingTurnSuccessor
                 .reattachedInterruptedTurnId;
-            pidToTrackedSession.delete(
-                racingTurnCutoverTracked.pid,
+            trackedSessionsByKey.delete(
+                racingTurnCutoverTracked.trackingKey,
             );
-            pidToTrackedSession.set(
-                racingTurnSuccessor.pid,
+            trackedSessionsByKey.set(
+                racingTurnSuccessor.trackingKey,
                 racingTurnSuccessor,
             );
             respawnOwnerInputs.at(-1)?.onRespawnSuccess?.({
@@ -6583,6 +6583,8 @@ describe('startDaemonSessionControlRuntime', () => {
                     racingTurnCutoverTracked.happySessionId!,
                 previousPid:
                     racingTurnCutoverTracked.pid,
+                previousTrackingKey:
+                    racingTurnCutoverTracked.trackingKey,
                 result: {
                     type: 'success',
                     sessionId:
@@ -6631,11 +6633,11 @@ describe('startDaemonSessionControlRuntime', () => {
                 requestConnectedServiceSessionRestartSignalMock,
             ).toHaveBeenCalledTimes(5);
 
-            pidToTrackedSession.delete(
-                failedRespawnCutoverTracked.pid,
+            trackedSessionsByKey.delete(
+                failedRespawnCutoverTracked.trackingKey,
             );
             const failedRespawnSuccessor: TrackedSession = {
-                ...failedRespawnCutoverTracked,
+                ...failedRespawnCutoverTracked, trackingKey: legacyPidSessionTrackingKey(53),
                 pid: 53,
                 processStartTimeMs: 13_000,
                 spawnOptions: {
@@ -6658,8 +6660,8 @@ describe('startDaemonSessionControlRuntime', () => {
             delete failedRespawnSuccessor.activeTurnId;
             delete failedRespawnSuccessor
                 .reattachedInterruptedTurnId;
-            pidToTrackedSession.set(
-                failedRespawnSuccessor.pid,
+            trackedSessionsByKey.set(
+                failedRespawnSuccessor.trackingKey,
                 failedRespawnSuccessor,
             );
             await expect(
@@ -6741,8 +6743,8 @@ describe('startDaemonSessionControlRuntime', () => {
                     scopeChangedOldCapability,
                 )).toBeNull();
             expect(
-                sessionAttachCleanupByPid.get(
-                    scopeChangedTracked.pid,
+                sessionAttachCleanupByKey.get(
+                    scopeChangedTracked.trackingKey,
                 ),
             ).toBe(scopeChangedPreviousAttachCleanup);
             expect(disposePurposeLease).toHaveBeenCalledWith(
@@ -6856,20 +6858,17 @@ describe('startDaemonSessionControlRuntime', () => {
                 ?.authenticate(
                     changedIdentityOldCapability,
                 )).toBeNull();
-            expect(sessionAttachCleanupByPid.get(reusedTracked.pid))
+            expect(sessionAttachCleanupByKey.get(reusedTracked.trackingKey))
                 .toBe(reusedPreviousAttachCleanup);
-            expect(
-                sessionAttachCleanupByPid.has(reusedInitialPid),
-            ).toBe(false);
-            expect(pidToTrackedSession.get(reusedTracked.pid))
+            expect(trackedSessionsByKey.get(reusedTracked.trackingKey))
                 .toBe(reusedTracked);
-            expect(pidToTrackedSession.has(reusedInitialPid))
-                .toBe(false);
+            expect(trackedSessionsForProcess(trackedSessionsByKey, reusedInitialPid))
+                .toEqual([]);
             expect(reusedPreviousAttachCleanup)
                 .not.toHaveBeenCalled();
             expect(
-                sessionAttachCleanupByPid.get(
-                    changedIdentityTracked.pid,
+                sessionAttachCleanupByKey.get(
+                    changedIdentityTracked.trackingKey,
                 ),
             ).toBe(changedIdentityPreviousAttachCleanup);
             expect(changedIdentityPreviousAttachCleanup)
@@ -6882,10 +6881,10 @@ describe('startDaemonSessionControlRuntime', () => {
                 .toHaveBeenCalledWith(
                     'session-request-auth-changed-identity',
                 );
-            expect(pidToTrackedSession.get(tracked.pid))
+            expect(trackedSessionsByKey.get(tracked.trackingKey))
                 .toBe(tracked);
             expect(tracked.pid).toBe(41);
-            expect(pidToTrackedSession.get(piTracked.pid))
+            expect(trackedSessionsByKey.get(piTracked.trackingKey))
                 .toBe(piTracked);
             expect(piTracked.pid).toBe(54);
             expect(piTracked.processStartTimeMs).toBe(15_000);
@@ -6893,14 +6892,14 @@ describe('startDaemonSessionControlRuntime', () => {
                 .not.toHaveBeenCalled();
 
             const replacementCleanup =
-                sessionAttachCleanupByPid.get(tracked.pid);
+                sessionAttachCleanupByKey.get(tracked.trackingKey);
             const piReplacementCleanup =
-                sessionAttachCleanupByPid.get(piTracked.pid);
+                sessionAttachCleanupByKey.get(piTracked.trackingKey);
             expect(replacementCleanup)
                 .not.toBe(previousAttachCleanup);
             expect(piReplacementCleanup)
                 .not.toBe(piPreviousAttachCleanup);
-            expect(sessionAttachCleanupByPid.size).toBe(5);
+            expect(sessionAttachCleanupByKey.size).toBe(5);
             await replacementCleanup?.();
             await replacementCleanup?.();
             await piReplacementCleanup?.();
@@ -6927,7 +6926,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 ?.authenticate(
                     replacementPiDocument?.capability,
                 )).toBeNull();
-            expect(pidToTrackedSession.get(tracked.pid))
+            expect(trackedSessionsByKey.get(tracked.trackingKey))
                 .toBe(tracked);
 
             await controlInput?.beforeShutdown?.();
@@ -6991,14 +6990,14 @@ describe('startDaemonSessionControlRuntime', () => {
                 refreshConnectedServiceCredentialForQuota,
             }) as never,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -7158,14 +7157,14 @@ describe('startDaemonSessionControlRuntime', () => {
             }) as never,
             getConnectedServiceQuotasCoordinator: () => null,
             resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -7335,14 +7334,14 @@ describe('startDaemonSessionControlRuntime', () => {
             getConnectedServiceQuotasCoordinator: () => null,
             connectedServiceRuntimeRegistry: runtimeRegistry,
             resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -7469,14 +7468,14 @@ describe('startDaemonSessionControlRuntime', () => {
             }) as never,
             getConnectedServiceQuotasCoordinator: () => null,
             resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -7589,14 +7588,14 @@ describe('startDaemonSessionControlRuntime', () => {
                 recordQualifiedRequestAuthProviderBackoff,
             }) as never,
             resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -7726,14 +7725,14 @@ describe('startDaemonSessionControlRuntime', () => {
             getConnectedServiceQuotasCoordinator: () => null,
             resolveQualifiedConnectedAccountV4Support: () =>
                 support,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -7831,14 +7830,14 @@ describe('startDaemonSessionControlRuntime', () => {
             getConnectedServiceQuotasCoordinator: () => null,
             resolveQualifiedConnectedAccountV4Support: () =>
                 'advertised',
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -7916,7 +7915,7 @@ describe('startDaemonSessionControlRuntime', () => {
 
     it('uses the qualified V4 adapter for pre-turn and execution generation paths without constructing V3 coordinators', async () => {
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(7789), startedBy: 'daemon',
             happySessionId: 'sess-qualified-pre-turn',
             pid: 7789,
         };
@@ -7935,14 +7934,14 @@ describe('startDaemonSessionControlRuntime', () => {
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
             resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -8024,7 +8023,7 @@ describe('startDaemonSessionControlRuntime', () => {
         // catalog admission and auth-generation application remain real.
         const groupRead = vi.spyOn(axios, 'get').mockResolvedValue({ status: 404, data: null });
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(7790), startedBy: 'daemon',
             happySessionId: 'sess-qualified-generation-apply',
             pid: 7790,
             spawnOptions: {
@@ -8071,14 +8070,14 @@ describe('startDaemonSessionControlRuntime', () => {
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
             resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -8135,14 +8134,14 @@ describe('startDaemonSessionControlRuntime', () => {
             // This remains null during the startup window and permanently when quota automation
             // is feature-disabled or startup hydration fails.
             getConnectedServiceQuotasCoordinator: () => activeQuotaCoordinator as never,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -8450,8 +8449,8 @@ describe('startDaemonSessionControlRuntime', () => {
         removeSessionMarkerMock.mockImplementation(async () => {});
         removeSessionMarkerIfOwnedMock.mockReset();
         removeSessionMarkerIfOwnedMock.mockImplementation(async () => true);
-        readSessionMarkerForPidMock.mockReset();
-        readSessionMarkerForPidMock.mockImplementation(async () => null);
+        readSessionMarkerMock.mockReset();
+        readSessionMarkerMock.mockImplementation(async () => null);
         applyConnectedServiceAuthGenerationToTrackedSessionMock.mockReset();
         applyConnectedServiceAuthGenerationToTrackedSessionMock.mockImplementation(async () => ({
             ok: true,
@@ -8558,19 +8557,17 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => ({
                 enqueueSessionPendingByMachine,
                 registerLocalServicesRoutes: vi.fn(),
-                registerSimulatorPreviewRoutes: vi.fn(),
-                registerComputerRoutes: vi.fn(),
             } as never),
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -9071,14 +9068,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -9509,7 +9506,7 @@ describe('startDaemonSessionControlRuntime', () => {
             };
         });
         const tracked: TrackedSession = {
-            pid: 441,
+            trackingKey: legacyPidSessionTrackingKey(441), pid: 441,
             startedBy: 'daemon',
             happySessionId: sessionId,
             spawnOptions: { directory: '/workspace' } as SpawnSessionOptions,
@@ -9521,14 +9518,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -9651,7 +9648,7 @@ describe('startDaemonSessionControlRuntime', () => {
     it('does not publish canonical runner readiness before daemon-service authority refresh succeeds and leaves non-runner readiness unchanged', async () => {
         const sessionId = 'session-runner-authority-readiness';
         const tracked: TrackedSession = {
-            pid: 2_147_483_000,
+            trackingKey: legacyPidSessionTrackingKey(2_147_483_000), pid: 2_147_483_000,
             startedBy: 'daemon',
             happySessionId: sessionId,
             agentRuntimeDaemonServiceAuthorityFilePath:
@@ -9682,14 +9679,14 @@ describe('startDaemonSessionControlRuntime', () => {
                 '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook,
             requestShutdown: vi.fn(),
@@ -9758,13 +9755,13 @@ describe('startDaemonSessionControlRuntime', () => {
             });
         });
         const tracked: TrackedSession = {
-            pid: 91,
+            trackingKey: legacyPidSessionTrackingKey(91), pid: 91,
             sessionRunnerPid: 92,
             startedBy: 'daemon' as const,
             happySessionId: 'session-runner-admission',
         };
-        const pidToTrackedSession =
-            new Map([[tracked.pid, tracked]]);
+        const trackedSessionsByKey =
+            new Map([[tracked.trackingKey, tracked]]);
         const runtime = await startDaemonSessionControlRuntime({
             machineId: 'machine-1',
             credentials: {
@@ -9779,14 +9776,14 @@ describe('startDaemonSessionControlRuntime', () => {
                 '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession,
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey,
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -9811,7 +9808,7 @@ describe('startDaemonSessionControlRuntime', () => {
         ).resolves.toBe(true);
         expect(updateSessionMarkerActiveTurnMock)
             .toHaveBeenCalledWith({
-                pid: 92,
+                trackingKey: tracked.trackingKey,
                 sessionId: 'session-runner-admission',
                 activeTurnId: 'turn-exact',
                 agentRuntimeDaemonServiceActiveAdmission:
@@ -9826,7 +9823,7 @@ describe('startDaemonSessionControlRuntime', () => {
         ).resolves.toBe(true);
         expect(updateSessionMarkerActiveTurnMock)
             .toHaveBeenCalledWith({
-                pid: 92,
+                trackingKey: tracked.trackingKey,
                 sessionId: 'session-runner-admission',
                 activeTurnId: null,
                 expectedAgentRuntimeDaemonServiceActiveAdmission:
@@ -11140,7 +11137,7 @@ describe('startDaemonSessionControlRuntime', () => {
                     .agentRuntimeDaemonServiceAdmittedTurnId,
         };
         const successor: TrackedSession = {
-            pid: 91,
+            trackingKey: legacyPidSessionTrackingKey(91), pid: 91,
             sessionRunnerPid: 93,
             startedBy: 'daemon',
             happySessionId:
@@ -11150,7 +11147,7 @@ describe('startDaemonSessionControlRuntime', () => {
         };
         // A stale asynchronous callback from the observed ordinary
         // removal must never acquire authority over replacement custody.
-        pidToTrackedSession.set(successor.pid, successor);
+        trackedSessionsByKey.set(successor.trackingKey, successor);
 
         const revokedPid = 94;
         const revokedChildProcess = {
@@ -11160,7 +11157,7 @@ describe('startDaemonSessionControlRuntime', () => {
             kill: vi.fn(() => true),
         };
         const revokedTracked: TrackedSession = {
-            pid: revokedPid,
+            trackingKey: legacyPidSessionTrackingKey(revokedPid), pid: revokedPid,
             sessionRunnerPid: 95,
             startedBy: 'daemon',
             happySessionId: 'session-hard-revoked',
@@ -11209,7 +11206,7 @@ describe('startDaemonSessionControlRuntime', () => {
             'input-hard-revoked';
         revokedTracked.agentRuntimeDaemonServiceAdmittedUserMessageSeq = 22;
         revokedTracked.agentRuntimeDaemonServiceAdmittedUserMessageSeqs = [22];
-        pidToTrackedSession.set(revokedPid, revokedTracked);
+        trackedSessionsByKey.set(revokedTracked.trackingKey, revokedTracked);
         const nonTargetBinding =
             createAgentSessionRunnerFactoryBinding({
                 v: 1,
@@ -11232,7 +11229,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 loadMode: 'immutable-js',
             });
         const nonTargetTracked: TrackedSession = {
-            pid: 96,
+            trackingKey: legacyPidSessionTrackingKey(96), pid: 96,
             sessionRunnerPid: 97,
             startedBy: 'daemon',
             happySessionId: 'session-non-target-generation',
@@ -11249,7 +11246,7 @@ describe('startDaemonSessionControlRuntime', () => {
             agentRuntimeDaemonServiceAdmittedUserMessageSeq: 20,
             agentRuntimeDaemonServiceAdmittedUserMessageSeqs: [20],
         };
-        pidToTrackedSession.set(nonTargetTracked.pid, nonTargetTracked);
+        trackedSessionsByKey.set(nonTargetTracked.trackingKey, nonTargetTracked);
         // The revocation lifecycle is under test here; PID inspection is
         // the genuine OS boundary covered by the stop-session owner.
         const pidSafetyModule = await import('../pidSafety');
@@ -11257,18 +11254,18 @@ describe('startDaemonSessionControlRuntime', () => {
             pidSafetyModule,
             'isPidSafeHappySessionProcess',
         ).mockResolvedValue(true);
-        await installTrackedRunnerProcfsBoundary(revokedTracked, () => pidToTrackedSession.has(revokedPid));
+        await installTrackedRunnerProcfsBoundary(revokedTracked, () => trackedSessionsByKey.has(revokedTracked.trackingKey));
         const processKill = vi.spyOn(process, 'kill')
             .mockImplementation(((targetPid: number, signal?: number | NodeJS.Signals) => {
                 if (
                     targetPid === revokedPid
                     && signal === 'SIGTERM'
                 ) {
-                    pidToTrackedSession.delete(revokedPid);
+                    trackedSessionsByKey.delete(revokedTracked.trackingKey);
                     return true;
                 }
                 if (targetPid === revokedPid && signal === 0) {
-                    if (pidToTrackedSession.has(revokedPid)) {
+                    if (trackedSessionsByKey.has(revokedTracked.trackingKey)) {
                         return true;
                     }
                     throw Object.assign(
@@ -11283,7 +11280,7 @@ describe('startDaemonSessionControlRuntime', () => {
         const pendingMarkerRead = new Promise<null>((resolve) => {
             resolvePendingMarkerRead = () => resolve(null);
         });
-        readSessionMarkerForPidMock.mockReturnValue(pendingMarkerRead);
+        readSessionMarkerMock.mockReturnValue(pendingMarkerRead);
         listener?.({
             durableRevision: 9,
             changedPluginIds: ['plugin.runner'],
@@ -11335,7 +11332,7 @@ describe('startDaemonSessionControlRuntime', () => {
                     revokedPid,
                     'SIGTERM',
                 );
-                expect(pidToTrackedSession.has(revokedPid))
+                expect(trackedSessionsByKey.has(revokedTracked.trackingKey))
                     .toBe(false);
                 expect(revokedTracked.stopRequestedAtMs)
                     .toEqual(expect.any(Number));
@@ -11357,7 +11354,7 @@ describe('startDaemonSessionControlRuntime', () => {
             retainedAgentGeneration: binding.sourceCustody,
             admittedTurnId: 'turn-exact',
         });
-        expect.soft(pidToTrackedSession.get(successor.pid))
+        expect.soft(trackedSessionsByKey.get(successor.trackingKey))
             .toBe(successor);
         expect.soft(revokedTracked.agentRuntimeDaemonServiceCapabilityHash)
             .toBeUndefined();
@@ -11499,14 +11496,14 @@ describe('startDaemonSessionControlRuntime', () => {
                     '/tmp/connected-services',
                 getConnectedServiceRefreshCoordinator: () => null,
                 getConnectedServiceQuotasCoordinator: () => null,
-                pidToTrackedSession: new Map(),
-                pidToAwaiter: new Map(),
-                pidToSpawnResultResolver: new Map(),
-                pidToSpawnWebhookTimeout: new Map(),
+                trackedSessionsByKey: new Map(),
+                spawnAwaiterByKey: new Map(),
+                spawnResultResolverByKey: new Map(),
+                spawnWebhookTimeoutByKey: new Map(),
                 getApiMachineForSessions: () => null,
-                spawnResourceCleanupByPid: new Map(),
-                sessionAttachCleanupByPid: new Map(),
-                connectedServicesRestartRequestedPids: new Set(),
+                spawnResourceCleanupByKey: new Map(),
+                sessionAttachCleanupByKey: new Map(),
+                connectedServicesRestartRequestedSessions: new Set(),
                 beforeShutdown: vi.fn(),
                 onHappySessionWebhook: vi.fn(),
                 requestShutdown: vi.fn(),
@@ -11788,6 +11785,7 @@ describe('startDaemonSessionControlRuntime', () => {
             },
         });
         const tracked: TrackedSession = {
+            trackingKey: legacyPidSessionTrackingKey(196),
             pid: 196,
             sessionRunnerPid: 197,
             startedBy: 'daemon',
@@ -11912,10 +11910,11 @@ describe('startDaemonSessionControlRuntime', () => {
                 authority.capabilityDigest;
         }
         if (markerOnly) {
-            readSessionMarkerForPidMock.mockImplementation(async (pid) => (
-                pid === tracked.sessionRunnerPid
+            readSessionMarkerMock.mockImplementation(async (trackingKey) => (
+                trackingKey === tracked.trackingKey
                     ? {
-                        pid,
+                        trackingKey,
+                        pid: tracked.sessionRunnerPid!,
                         happySessionId: sessionId,
                         startedBy: 'daemon',
                         happyHomeDir: '/tmp/happier-test-home',
@@ -11986,16 +11985,17 @@ describe('startDaemonSessionControlRuntime', () => {
         const coexistingTracked = fenceOutcome === 'stale'
             ? {
                 ...tracked,
+                trackingKey: legacyPidSessionTrackingKey(198),
                 pid: 198,
                 sessionRunnerPid: 199,
                 processStartTimeMs: 791,
                 processCommandHash: '9'.repeat(64),
             }
             : null;
-        const pidToTrackedSession = new Map([
-            [tracked.pid, tracked],
+        const trackedSessionsByKey = new Map([
+            [tracked.trackingKey, tracked],
             ...(coexistingTracked
-                ? [[coexistingTracked.pid, coexistingTracked] as const]
+                ? [[coexistingTracked.trackingKey, coexistingTracked] as const]
                 : []),
         ]);
         const runtime = await startDaemonSessionControlRuntime({
@@ -12012,14 +12012,14 @@ describe('startDaemonSessionControlRuntime', () => {
                 '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession,
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey,
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -12036,11 +12036,11 @@ describe('startDaemonSessionControlRuntime', () => {
                         targetPid === tracked.pid
                         && signal === 'SIGTERM'
                     ) {
-                        pidToTrackedSession.delete(tracked.pid);
+                        trackedSessionsByKey.delete(tracked.trackingKey);
                         return true;
                     }
                     if (targetPid === tracked.pid && signal === 0) {
-                        if (pidToTrackedSession.has(tracked.pid)) {
+                        if (trackedSessionsByKey.has(tracked.trackingKey)) {
                             return true;
                         }
                         throw Object.assign(
@@ -12063,7 +12063,7 @@ describe('startDaemonSessionControlRuntime', () => {
             ).mockResolvedValue(true)
             : null;
         if (runnerMustStop) {
-            await installTrackedRunnerProcfsBoundary(tracked, () => pidToTrackedSession.has(tracked.pid));
+            await installTrackedRunnerProcfsBoundary(tracked, () => trackedSessionsByKey.has(tracked.trackingKey));
         }
 
         listener?.({
@@ -12150,7 +12150,7 @@ describe('startDaemonSessionControlRuntime', () => {
                     }
                     : null;
             if (successor) {
-                pidToTrackedSession.set(tracked.pid, successor);
+                trackedSessionsByKey.set(successor.trackingKey, successor);
             }
             rejectFence(fenceError);
             if (runnerMustStop) {
@@ -12161,7 +12161,7 @@ describe('startDaemonSessionControlRuntime', () => {
                     );
                     expect(tracked.stopRequestedAtMs)
                         .toEqual(expect.any(Number));
-                    expect(pidToTrackedSession.has(tracked.pid))
+                    expect(trackedSessionsByKey.has(tracked.trackingKey))
                         .toBe(false);
                 });
             } else {
@@ -12175,7 +12175,7 @@ describe('startDaemonSessionControlRuntime', () => {
                     tracked.pid,
                     'SIGTERM',
                 );
-                expect(pidToTrackedSession.get(tracked.pid))
+                expect(trackedSessionsByKey.get(tracked.trackingKey))
                     .toBe(successor);
             }
         } else if (runnerMustStop) {
@@ -12186,7 +12186,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 );
                 expect(tracked.stopRequestedAtMs)
                     .toEqual(expect.any(Number));
-                expect(pidToTrackedSession.has(tracked.pid))
+                expect(trackedSessionsByKey.has(tracked.trackingKey))
                     .toBe(false);
             });
         } else if (active) {
@@ -12212,7 +12212,7 @@ describe('startDaemonSessionControlRuntime', () => {
 
     it('keeps a validated Action bound to witness A when registry acquisition races with admission B', async () => {
         const tracked: TrackedSession = {
-            pid: 94,
+            trackingKey: legacyPidSessionTrackingKey(94), pid: 94,
             sessionRunnerPid: 95,
             startedBy: 'daemon',
             happySessionId: 'session-action-witness-race',
@@ -12231,14 +12231,14 @@ describe('startDaemonSessionControlRuntime', () => {
                 '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -12627,7 +12627,7 @@ describe('startDaemonSessionControlRuntime', () => {
             }),
         );
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(runnerPid), startedBy: 'daemon',
             pid: runnerPid,
             happySessionId: sessionId,
         };
@@ -12653,15 +12653,15 @@ describe('startDaemonSessionControlRuntime', () => {
                 getConnectedServiceRefreshCoordinator: () => null,
                 getConnectedServiceQuotasCoordinator: () => null,
                 connectedServiceRuntimeRegistry: runtimeRegistry,
-                pidToTrackedSession:
-                    new Map([[runnerPid, tracked]]),
-                pidToAwaiter: new Map(),
-                pidToSpawnResultResolver: new Map(),
-                pidToSpawnWebhookTimeout: new Map(),
+                trackedSessionsByKey:
+                    new Map([[tracked.trackingKey, tracked]]),
+                spawnAwaiterByKey: new Map(),
+                spawnResultResolverByKey: new Map(),
+                spawnWebhookTimeoutByKey: new Map(),
                 getApiMachineForSessions: () => null,
-                spawnResourceCleanupByPid: new Map(),
-                sessionAttachCleanupByPid: new Map(),
-                connectedServicesRestartRequestedPids: new Set(),
+                spawnResourceCleanupByKey: new Map(),
+                sessionAttachCleanupByKey: new Map(),
+                connectedServicesRestartRequestedSessions: new Set(),
                 beforeShutdown: vi.fn(),
                 onHappySessionWebhook: vi.fn(),
                 requestShutdown: vi.fn(),
@@ -12815,14 +12815,14 @@ describe('startDaemonSessionControlRuntime', () => {
                     getConnectedServiceRefreshCoordinator: () => null,
                     getConnectedServiceQuotasCoordinator: () => null,
                     connectedServiceRuntimeRegistry: runtimeRegistry,
-                    pidToTrackedSession: new Map(),
-                    pidToAwaiter: new Map(),
-                    pidToSpawnResultResolver: new Map(),
-                    pidToSpawnWebhookTimeout: new Map(),
+                    trackedSessionsByKey: new Map(),
+                    spawnAwaiterByKey: new Map(),
+                    spawnResultResolverByKey: new Map(),
+                    spawnWebhookTimeoutByKey: new Map(),
                     getApiMachineForSessions: () => null,
-                    spawnResourceCleanupByPid: new Map(),
-                    sessionAttachCleanupByPid: new Map(),
-                    connectedServicesRestartRequestedPids: new Set(),
+                    spawnResourceCleanupByKey: new Map(),
+                    sessionAttachCleanupByKey: new Map(),
+                    connectedServicesRestartRequestedSessions: new Set(),
                     beforeShutdown: vi.fn(),
                     onHappySessionWebhook: vi.fn(),
                     requestShutdown: vi.fn(),
@@ -12867,14 +12867,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -12928,14 +12928,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -12984,7 +12984,7 @@ describe('startDaemonSessionControlRuntime', () => {
     it('makes explicit Stop supersede automatic recovery until a fresh explicit Resume succeeds', async () => {
         const stoppedSessionId = 'session-internal-resume-stop-fence';
         const crashedSessionId = 'session-unstopped-crash';
-        const pidToTrackedSession = new Map<number, TrackedSession>();
+        const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>();
         const cancelInactiveUsageLimitRecovery = vi.fn(async () => null);
         const stageUsageLimitRecoveryMutation = vi.fn(async () => undefined);
         const cancelRuntimeAuthRecovery = vi
@@ -13031,14 +13031,14 @@ describe('startDaemonSessionControlRuntime', () => {
                     return { persisted: true, delivered: true };
                 },
             } as never,
-            pidToTrackedSession,
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey,
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -13085,7 +13085,8 @@ describe('startDaemonSessionControlRuntime', () => {
                 new Error('durable recovery store unavailable'),
             );
             await expect(runtime.stopSession(stoppedSessionId)).resolves.toEqual({ status: 'not_found' });
-            pidToTrackedSession.set(8801, {
+            trackedSessionsByKey.set(legacyPidSessionTrackingKey(8801), {
+                trackingKey: legacyPidSessionTrackingKey(8801),
                 pid: 8801,
                 startedBy: 'daemon',
                 happySessionId: stoppedSessionId,
@@ -13098,14 +13099,15 @@ describe('startDaemonSessionControlRuntime', () => {
             });
             await new Promise((resolve) => setTimeout(resolve, 100));
             expect(executeSpawnSessionRequest).not.toHaveBeenCalled();
-            expect(pidToTrackedSession.has(8801)).toBe(false);
+            expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(8801))).toBe(false);
 
             await expect(runtime.spawnSession(stoppedResumeOptions)).resolves.toEqual(
                 expect.objectContaining({ type: 'success' }),
             );
             expect(executeSpawnSessionRequest).toHaveBeenCalledTimes(1);
 
-            pidToTrackedSession.set(8802, {
+            trackedSessionsByKey.set(legacyPidSessionTrackingKey(8802), {
+                trackingKey: legacyPidSessionTrackingKey(8802),
                 pid: 8802,
                 startedBy: 'daemon',
                 happySessionId: crashedSessionId,
@@ -13126,7 +13128,7 @@ describe('startDaemonSessionControlRuntime', () => {
                     }),
                 }),
             );
-            expect(pidToTrackedSession.has(8802)).toBe(false);
+            expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(8802))).toBe(false);
         } finally {
             await runtime.stopControlServer();
             cancelRuntimeAuthRecovery.mockRestore();
@@ -13140,7 +13142,7 @@ describe('startDaemonSessionControlRuntime', () => {
         const originalChildKill = vi.fn(() => true);
         const successorChildKill = vi.fn(() => true);
         const original: TrackedSession = {
-            pid,
+            trackingKey: legacyPidSessionTrackingKey(pid), pid,
             sessionRunnerPid: 8_804,
             startedBy: 'daemon',
             happySessionId: sessionId,
@@ -13165,11 +13167,11 @@ describe('startDaemonSessionControlRuntime', () => {
             processStartTimeMs: 2_000,
             processCommandHash: 'successor-command',
         };
-        const pidToTrackedSession = new Map([[pid, original]]);
+        const trackedSessionsByKey = new Map([[original.trackingKey, original]]);
         removeRuntimeAuthFailureReportOutboxItemsForSessionMock
             .mockImplementationOnce(async (input) => {
                 expect(input.sessionId).toBe(sessionId);
-                pidToTrackedSession.set(pid, successor);
+                trackedSessionsByKey.set(successor.trackingKey, successor);
             });
         const pidSafetyModule = await import('../pidSafety');
         const pidSafetySpy = vi.spyOn(
@@ -13179,10 +13181,10 @@ describe('startDaemonSessionControlRuntime', () => {
         const killSpy = vi.spyOn(process, 'kill')
             .mockImplementation(((targetPid: number, signal?: number | NodeJS.Signals) => {
                 if (targetPid === -pid && signal === 'SIGTERM') {
-                    pidToTrackedSession.delete(pid);
+                    trackedSessionsByKey.delete(original.trackingKey);
                 }
                 if (targetPid === pid && signal === 0) {
-                    if (pidToTrackedSession.has(pid)) return true;
+                    if (trackedSessionsForProcess(trackedSessionsByKey, pid).length > 0) return true;
                     throw Object.assign(new Error('process exited'), {
                         code: 'ESRCH',
                     });
@@ -13203,14 +13205,14 @@ describe('startDaemonSessionControlRuntime', () => {
                 '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession,
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey,
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -13231,7 +13233,7 @@ describe('startDaemonSessionControlRuntime', () => {
                     processCommandHash: original.processCommandHash,
                 },
             })).resolves.toEqual({ status: 'not_found' });
-            expect(pidToTrackedSession.get(pid)).toBe(successor);
+            expect(trackedSessionsByKey.get(successor.trackingKey)).toBe(successor);
             expect(killSpy).not.toHaveBeenCalledWith(-pid, 'SIGTERM');
             expect(originalChildKill).not.toHaveBeenCalled();
             expect(successorChildKill).not.toHaveBeenCalled();
@@ -13263,6 +13265,7 @@ describe('startDaemonSessionControlRuntime', () => {
                             options.onRespawnTerminal?.({
                                 sessionId: tracked.happySessionId!,
                                 previousPid: tracked.pid,
+                                previousTrackingKey: tracked.trackingKey,
                                 reason: 'already_running',
                             });
                             return 'terminal';
@@ -13289,8 +13292,8 @@ describe('startDaemonSessionControlRuntime', () => {
             enqueueDaemonTerminalExactTurnEnd,
         };
         let activeApiMachine: typeof apiMachine | null = null;
-        const pidToTrackedSession = new Map<number, TrackedSession>();
-        const connectedServicesRestartRequestedPids = new Set<number>();
+        const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>();
+        const connectedServicesRestartRequestedSessions = new Set<SessionTrackingKey>();
         const runtime = await startDaemonSessionControlRuntime({
             machineId: 'machine-1',
             credentials: {
@@ -13301,14 +13304,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession,
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey,
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => activeApiMachine as never,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids,
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions,
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -13325,7 +13328,8 @@ describe('startDaemonSessionControlRuntime', () => {
                 backendTarget: { kind: 'backend', backendId: 'opencode', sourceKind: 'built_in' },
                 existingSessionId: 'session-crash-marker',
             } satisfies SpawnSessionOptions;
-            pidToTrackedSession.set(8911, {
+            trackedSessionsByKey.set(legacyPidSessionTrackingKey(8911), {
+                trackingKey: legacyPidSessionTrackingKey(8911),
                 pid: 8911,
                 startedBy: 'daemon',
                 happySessionId: 'session-crash-marker',
@@ -13338,16 +13342,18 @@ describe('startDaemonSessionControlRuntime', () => {
             getManagerOptions().onRespawnSuccess?.({
                 sessionId: 'session-crash-marker',
                 previousPid: 8911,
+                previousTrackingKey: legacyPidSessionTrackingKey(8911),
                 result: { type: 'success' },
             });
             await vi.waitFor(() => expect(removeSessionMarkerIfOwnedMock).toHaveBeenCalledWith(
-                expect.objectContaining({ pid: 8911, happySessionId: 'session-crash-marker' }),
+                expect.objectContaining({ trackingKey: legacyPidSessionTrackingKey(8911), happySessionId: 'session-crash-marker' }),
             ));
             expect(finalizeMachineSessionTerminal).not.toHaveBeenCalled();
 
             disposition = 'already_running';
             removeSessionMarkerIfOwnedMock.mockClear();
-            pidToTrackedSession.set(8912, {
+            trackedSessionsByKey.set(legacyPidSessionTrackingKey(8912), {
+                trackingKey: legacyPidSessionTrackingKey(8912),
                 pid: 8912,
                 startedBy: 'daemon',
                 happySessionId: 'session-recovered-live',
@@ -13355,13 +13361,13 @@ describe('startDaemonSessionControlRuntime', () => {
             });
             await runtime.onChildExited(8912, { reason: 'process-exited', code: 1, signal: null });
             await vi.waitFor(() => expect(removeSessionMarkerIfOwnedMock).toHaveBeenCalledWith(
-                expect.objectContaining({ pid: 8912, happySessionId: 'session-recovered-live' }),
+                expect.objectContaining({ trackingKey: legacyPidSessionTrackingKey(8912), happySessionId: 'session-recovered-live' }),
             ));
             expect(finalizeMachineSessionTerminal).not.toHaveBeenCalled();
 
             disposition = 'scheduled';
             const immutableTracked: TrackedSession = {
-                pid: 8915,
+                trackingKey: legacyPidSessionTrackingKey(8915), pid: 8915,
                 startedBy: 'daemon',
                 happySessionId: 'session-immutable-fence',
                 activeTurnId: 'turn-immutable',
@@ -13370,7 +13376,7 @@ describe('startDaemonSessionControlRuntime', () => {
                     existingSessionId: 'session-immutable-fence',
                 },
             };
-            pidToTrackedSession.set(8915, immutableTracked);
+            trackedSessionsByKey.set(immutableTracked.trackingKey, immutableTracked);
             captureMachineSessionTerminal.mockResolvedValueOnce({
                 v: 1,
                 status: 'captured',
@@ -13379,12 +13385,13 @@ describe('startDaemonSessionControlRuntime', () => {
             });
             enqueueDaemonTerminalExactTurnEnd.mockRejectedValueOnce(new Error('stage unavailable'));
             await runtime.onChildExited(8915, { reason: 'process-exited', code: 1, signal: null });
-            expect(pidToTrackedSession.get(8915)).toBe(immutableTracked);
+            expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(8915))).toBe(immutableTracked);
             await runtime.onChildExited(8915, { reason: 'process-exited', code: 1, signal: null });
             expect(captureMachineSessionTerminal).toHaveBeenCalledTimes(3);
             getManagerOptions().onRespawnTerminal?.({
                 sessionId: 'session-immutable-fence',
                 previousPid: 8915,
+                previousTrackingKey: legacyPidSessionTrackingKey(8915),
                 reason: 'no_restart',
             });
             await vi.waitFor(() => expect(finalizeMachineSessionTerminal).toHaveBeenCalledWith({
@@ -13407,7 +13414,8 @@ describe('startDaemonSessionControlRuntime', () => {
                     authority: { kind: 'generation' as const, publisherGeneration: '22' },
                 });
             for (const pid of [8913, 8914]) {
-                pidToTrackedSession.set(pid, {
+                trackedSessionsByKey.set(legacyPidSessionTrackingKey(pid), {
+                    trackingKey: legacyPidSessionTrackingKey(pid),
                     pid,
                     startedBy: 'daemon',
                     happySessionId: 'session-pre-webhook-cycle',
@@ -13425,6 +13433,7 @@ describe('startDaemonSessionControlRuntime', () => {
             getManagerOptions().onRespawnTerminal?.({
                 sessionId: 'session-pre-webhook-cycle',
                 previousPid: 8914,
+                previousTrackingKey: legacyPidSessionTrackingKey(8914),
                 reason: 'no_restart',
             });
             await vi.waitFor(() => expect(finalizeMachineSessionTerminal).toHaveBeenCalledWith({
@@ -13433,10 +13442,10 @@ describe('startDaemonSessionControlRuntime', () => {
             }));
             await vi.waitFor(() => {
                 expect(removeSessionMarkerIfOwnedMock).toHaveBeenCalledWith(
-                    expect.objectContaining({ pid: 8913 }),
+                    expect.objectContaining({ trackingKey: legacyPidSessionTrackingKey(8913) }),
                 );
                 expect(removeSessionMarkerIfOwnedMock).toHaveBeenCalledWith(
-                    expect.objectContaining({ pid: 8914 }),
+                    expect.objectContaining({ trackingKey: legacyPidSessionTrackingKey(8914) }),
                 );
             });
 
@@ -13455,7 +13464,8 @@ describe('startDaemonSessionControlRuntime', () => {
                     authority: { kind: 'generation' as const, publisherGeneration: '62' },
                 });
             for (const pid of [8922, 8923]) {
-                pidToTrackedSession.set(pid, {
+                trackedSessionsByKey.set(legacyPidSessionTrackingKey(pid), {
+                    trackingKey: legacyPidSessionTrackingKey(pid),
                     pid,
                     startedBy: 'daemon',
                     happySessionId: 'session-pre-webhook-success',
@@ -13475,14 +13485,15 @@ describe('startDaemonSessionControlRuntime', () => {
             getManagerOptions().onRespawnSuccess?.({
                 sessionId: 'session-pre-webhook-success',
                 previousPid: 8923,
+                previousTrackingKey: legacyPidSessionTrackingKey(8923),
                 result: { type: 'success' },
             });
             await vi.waitFor(() => {
                 expect(removeSessionMarkerIfOwnedMock).toHaveBeenCalledWith(
-                    expect.objectContaining({ pid: 8922 }),
+                    expect.objectContaining({ trackingKey: legacyPidSessionTrackingKey(8922) }),
                 );
                 expect(removeSessionMarkerIfOwnedMock).toHaveBeenCalledWith(
-                    expect.objectContaining({ pid: 8923 }),
+                    expect.objectContaining({ trackingKey: legacyPidSessionTrackingKey(8923) }),
                 );
             });
             expect(finalizeMachineSessionTerminal).toHaveBeenCalledTimes(
@@ -13493,8 +13504,8 @@ describe('startDaemonSessionControlRuntime', () => {
             const lateSuccessMarker = new Promise<void>((resolve) => {
                 releaseLateSuccessMarker = resolve;
             });
-            removeSessionMarkerIfOwnedMock.mockImplementation(async ({ pid }: { pid: number }) => {
-                if (pid === 8916) await lateSuccessMarker;
+            removeSessionMarkerIfOwnedMock.mockImplementation(async ({ trackingKey }) => {
+                if (trackingKey === legacyPidSessionTrackingKey(8916)) await lateSuccessMarker;
                 return true;
             });
             captureMachineSessionTerminal
@@ -13510,7 +13521,8 @@ describe('startDaemonSessionControlRuntime', () => {
                     sessionId: 'session-late-success',
                     authority: { kind: 'generation' as const, publisherGeneration: '42' },
                 });
-            pidToTrackedSession.set(8916, {
+            trackedSessionsByKey.set(legacyPidSessionTrackingKey(8916), {
+                trackingKey: legacyPidSessionTrackingKey(8916),
                 pid: 8916,
                 startedBy: 'daemon',
                 happySessionId: 'session-late-success',
@@ -13523,12 +13535,14 @@ describe('startDaemonSessionControlRuntime', () => {
             getManagerOptions().onRespawnSuccess?.({
                 sessionId: 'session-late-success',
                 previousPid: 8916,
+                previousTrackingKey: legacyPidSessionTrackingKey(8916),
                 result: { type: 'success' },
             });
             await vi.waitFor(() => expect(removeSessionMarkerIfOwnedMock).toHaveBeenCalledWith(
-                expect.objectContaining({ pid: 8916 }),
+                expect.objectContaining({ trackingKey: legacyPidSessionTrackingKey(8916) }),
             ));
-            pidToTrackedSession.set(8917, {
+            trackedSessionsByKey.set(legacyPidSessionTrackingKey(8917), {
+                trackingKey: legacyPidSessionTrackingKey(8917),
                 pid: 8917,
                 startedBy: 'daemon',
                 happySessionId: 'session-late-success',
@@ -13541,6 +13555,7 @@ describe('startDaemonSessionControlRuntime', () => {
             getManagerOptions().onRespawnTerminal?.({
                 sessionId: 'session-late-success',
                 previousPid: 8917,
+                previousTrackingKey: legacyPidSessionTrackingKey(8917),
                 reason: 'no_restart',
             });
             await vi.waitFor(() => expect(finalizeMachineSessionTerminal).toHaveBeenCalledWith({
@@ -13548,7 +13563,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 authority: { kind: 'generation', publisherGeneration: '42' },
             }));
             await vi.waitFor(() => expect(removeSessionMarkerIfOwnedMock).toHaveBeenCalledWith(
-                expect.objectContaining({ pid: 8917 }),
+                expect.objectContaining({ trackingKey: legacyPidSessionTrackingKey(8917) }),
             ));
             releaseLateSuccessMarker();
 
@@ -13558,8 +13573,9 @@ describe('startDaemonSessionControlRuntime', () => {
             const finalizeCountBeforeLiveReplacement = finalizeMachineSessionTerminal.mock.calls.length;
             const oldPid = 8920;
             const livePid = 8921;
-            connectedServicesRestartRequestedPids.add(oldPid);
-            pidToTrackedSession.set(oldPid, {
+            connectedServicesRestartRequestedSessions.add(legacyPidSessionTrackingKey(oldPid));
+            trackedSessionsByKey.set(legacyPidSessionTrackingKey(oldPid), {
+                trackingKey: legacyPidSessionTrackingKey(oldPid),
                 pid: oldPid,
                 startedBy: 'daemon',
                 happySessionId: 'session-live-replacement',
@@ -13569,7 +13585,8 @@ describe('startDaemonSessionControlRuntime', () => {
                     existingSessionId: 'session-live-replacement',
                 },
             });
-            pidToTrackedSession.set(livePid, {
+            trackedSessionsByKey.set(legacyPidSessionTrackingKey(livePid), {
+                trackingKey: legacyPidSessionTrackingKey(livePid),
                 pid: livePid,
                 startedBy: 'daemon',
                 happySessionId: 'session-live-replacement',
@@ -13587,7 +13604,7 @@ describe('startDaemonSessionControlRuntime', () => {
             expect(captureMachineSessionTerminal).toHaveBeenCalledTimes(captureCountBeforeLiveReplacement);
             expect(finalizeMachineSessionTerminal).toHaveBeenCalledTimes(finalizeCountBeforeLiveReplacement);
             expect(removeSessionMarkerIfOwnedMock).toHaveBeenCalledWith(
-                expect.objectContaining({ pid: oldPid, happySessionId: 'session-live-replacement' }),
+                expect.objectContaining({ trackingKey: legacyPidSessionTrackingKey(oldPid), happySessionId: 'session-live-replacement' }),
             );
             killSpy.mockRestore();
         } finally {
@@ -13610,14 +13627,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -13662,14 +13679,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             startupTerminalRecovery: {
                 disconnectedTerminalHostCandidates: [],
                 unresolvedTerminalHostSessionIds: ['session-unresolved-terminal'],
@@ -13712,9 +13729,9 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(), pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(), spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(), connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(), connectedServicesRestartRequestedSessions: new Set(),
             loadTerminalHostAdapters: async () => ({
                 tmux: {
                     kind: 'tmux', createOrAttachHost: vi.fn(), injectUserPrompt: vi.fn(), interruptTurn: vi.fn(),
@@ -13725,7 +13742,7 @@ describe('startDaemonSessionControlRuntime', () => {
             startupTerminalRecovery: {
                 disconnectedTerminalHostCandidates: [{
                     sessionId,
-                    pid: 2_147_482_999,
+                    trackingKey: legacyPidSessionTrackingKey(2_147_482_999), pid: 2_147_482_999,
                     happyHomeDir: configuration.happyHomeDir,
                     attachmentId: attachment.attachmentId,
                     handle: attachment.handle,
@@ -13776,9 +13793,9 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(), pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(), spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(), connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(), connectedServicesRestartRequestedSessions: new Set(),
             loadTerminalHostAdapters: async () => ({
                 tmux: {
                     kind: 'tmux', createOrAttachHost: vi.fn(), injectUserPrompt: vi.fn(), interruptTurn: vi.fn(),
@@ -13788,7 +13805,7 @@ describe('startDaemonSessionControlRuntime', () => {
             startupTerminalRecovery: {
                 disconnectedTerminalHostCandidates: [{
                     sessionId,
-                    pid: 2_147_483_000,
+                    trackingKey: legacyPidSessionTrackingKey(2_147_483_000), pid: 2_147_483_000,
                     happyHomeDir: configuration.happyHomeDir,
                     attachmentId: attachment.attachmentId,
                     handle: attachment.handle,
@@ -13864,10 +13881,10 @@ describe('startDaemonSessionControlRuntime', () => {
             registerSimulatorPreviewRoutes: vi.fn(),
             registerComputerRoutes: vi.fn(),
         };
-        const trackedSessions = new Map<number, TrackedSession>([[
-            trackedPid,
+        const trackedSessions = new Map<SessionTrackingKey, TrackedSession>([[
+            legacyPidSessionTrackingKey(trackedPid),
             {
-                startedBy: 'daemon',
+                trackingKey: legacyPidSessionTrackingKey(trackedPid), startedBy: 'daemon',
                 happySessionId: sessionId,
                 pid: trackedPid,
                 publishedTerminalControlServiceabilityAttachmentId: attachment.attachmentId,
@@ -13897,14 +13914,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: trackedSessions,
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: trackedSessions,
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => apiMachine as never,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             loadTerminalHostAdapters: async () => ({
                 tmux: {
                     kind: 'tmux',
@@ -13948,14 +13965,14 @@ describe('startDaemonSessionControlRuntime', () => {
                     happyHomeDir: configuration.happyHomeDir, sessionId,
                 })).resolves.toEqual(replacement);
                 expect(dispose).not.toHaveBeenCalled();
-                expect(trackedSessions.has(trackedPid)).toBe(true);
+                expect(trackedSessions.has(legacyPidSessionTrackingKey(trackedPid))).toBe(true);
             } else if (lifecycle === 'borrowed') {
-                expect(trackedSessions.has(trackedPid)).toBe(false);
+                expect(trackedSessions.has(legacyPidSessionTrackingKey(trackedPid))).toBe(false);
                 await expect(readTerminalHostAttachmentInfo({
                     happyHomeDir: configuration.happyHomeDir, sessionId,
                 })).resolves.toEqual(replacement);
                 expect(dispose).not.toHaveBeenCalled();
-                expect(removeSessionMarkerIfOwnedMock).toHaveBeenCalledWith(expect.objectContaining({ pid: trackedPid }));
+                expect(removeSessionMarkerIfOwnedMock).toHaveBeenCalledWith(expect.objectContaining({ trackingKey: legacyPidSessionTrackingKey(trackedPid) }));
                 await expect(updateSessionMetadataWithRetryMock.mock.results[0]?.value).resolves.toMatchObject({
                     metadata: {
                         terminal: {
@@ -13967,7 +13984,7 @@ describe('startDaemonSessionControlRuntime', () => {
                     },
                 });
             } else {
-                expect(trackedSessions.has(trackedPid)).toBe(false);
+                expect(trackedSessions.has(legacyPidSessionTrackingKey(trackedPid))).toBe(false);
                 await expect(runtime.stopSession(sessionId)).resolves.toEqual({ status: 'stopped' });
                 expect(dispose).toHaveBeenCalledWith(attachment.handle);
             }
@@ -13983,10 +14000,10 @@ describe('startDaemonSessionControlRuntime', () => {
     it('rejects a different handoff attempt before observing an already-missing exact runner', async () => {
         const sessionId = 'session-missing-runner-stop';
         const trackedPid = 2_147_482_997;
-        const trackedSessions = new Map<number, TrackedSession>([[
-            trackedPid,
+        const trackedSessions = new Map<SessionTrackingKey, TrackedSession>([[
+            legacyPidSessionTrackingKey(trackedPid),
             {
-                startedBy: 'daemon',
+                trackingKey: legacyPidSessionTrackingKey(trackedPid), startedBy: 'daemon',
                 happySessionId: sessionId,
                 pid: trackedPid,
                 reattachedFromDiskMarker: true,
@@ -14010,14 +14027,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: trackedSessions,
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: trackedSessions,
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             loadTerminalHostAdapters: async () => ({}),
             startupTerminalRecovery: {
                 disconnectedTerminalHostCandidates: [],
@@ -14032,11 +14049,11 @@ describe('startDaemonSessionControlRuntime', () => {
             killSpy.mockClear();
             await expect(runtime.stopRequesterSessionForHandoff(sessionId, 'different-native-nonce'))
                 .resolves.toBe('failed');
-            expect(trackedSessions.has(trackedPid)).toBe(true);
+            expect(trackedSessions.has(legacyPidSessionTrackingKey(trackedPid))).toBe(true);
             expect(killSpy).not.toHaveBeenCalled();
             await expect(runtime.stopRequesterSessionForHandoff(sessionId, 'owned-native-nonce'))
                 .resolves.toBe('stopped');
-            expect(trackedSessions.has(trackedPid)).toBe(false);
+            expect(trackedSessions.has(legacyPidSessionTrackingKey(trackedPid))).toBe(false);
             expect(killSpy).not.toHaveBeenCalledWith(trackedPid, 'SIGTERM');
             expect(killSpy).not.toHaveBeenCalledWith(-trackedPid, 'SIGTERM');
         } finally {
@@ -14059,9 +14076,9 @@ describe('startDaemonSessionControlRuntime', () => {
             },
         });
         const dispose = vi.fn(async () => undefined);
-        const trackedSessions = new Map<number, TrackedSession>([
-            [trackedPid, {
-                startedBy: 'terminal',
+        const trackedSessions = new Map<SessionTrackingKey, TrackedSession>([
+            [legacyPidSessionTrackingKey(trackedPid), {
+                trackingKey: legacyPidSessionTrackingKey(trackedPid), startedBy: 'terminal',
                 happySessionId: sessionId,
                 pid: trackedPid,
                 processCommandHash: 'hash-session-exact-live-terminal-tracked-stop',
@@ -14077,7 +14094,7 @@ describe('startDaemonSessionControlRuntime', () => {
         const killSpy = vi.spyOn(process, 'kill').mockImplementation(((targetPid: number, signal?: any) => {
             if (signal === 0) return true;
             if (targetPid === trackedPid && signal === 'SIGTERM') {
-                trackedSessions.delete(trackedPid);
+                trackedSessions.delete(legacyPidSessionTrackingKey(trackedPid));
                 return true;
             }
             return true;
@@ -14089,10 +14106,10 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: trackedSessions,
-            pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: trackedSessions,
+            spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(), connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(), connectedServicesRestartRequestedSessions: new Set(),
             loadTerminalHostAdapters: async () => ({
                 tmux: {
                     kind: 'tmux', createOrAttachHost: vi.fn(), injectUserPrompt: vi.fn(), interruptTurn: vi.fn(),
@@ -14102,7 +14119,7 @@ describe('startDaemonSessionControlRuntime', () => {
             startupTerminalRecovery: {
                 disconnectedTerminalHostCandidates: [{
                     sessionId,
-                    pid: 2_147_483_001,
+                    trackingKey: legacyPidSessionTrackingKey(2_147_483_001), pid: 2_147_483_001,
                     happyHomeDir: configuration.happyHomeDir,
                     attachmentId: attachment.attachmentId,
                     handle: attachment.handle,
@@ -14244,16 +14261,16 @@ describe('startDaemonSessionControlRuntime', () => {
             getConnectedServiceQuotasCoordinator: () => null,
             connectedServiceRuntimeRegistry: runtimeRegistry,
             resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-            pidToTrackedSession: new Map<number, TrackedSession>([
-                [1234, { startedBy: 'daemon', pid: 1234, happySessionId: 'sess_usage' }],
+            trackedSessionsByKey: new Map<SessionTrackingKey, TrackedSession>([
+                [legacyPidSessionTrackingKey(1234), { trackingKey: legacyPidSessionTrackingKey(1234), startedBy: 'daemon', pid: 1234, happySessionId: 'sess_usage' }],
             ]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -14423,11 +14440,11 @@ describe('startDaemonSessionControlRuntime', () => {
             api: { getAccountEncryptionMode: async () => 'plain' } as never,
             connectedServicesMaterializationBaseDir: '/tmp/native-allowance', getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map<number, TrackedSession>([[1234, { startedBy: 'daemon', pid: 1234, happySessionId: sessionId,
+            trackedSessionsByKey: new Map<SessionTrackingKey, TrackedSession>([[legacyPidSessionTrackingKey(1234), { trackingKey: legacyPidSessionTrackingKey(1234), startedBy: 'daemon', pid: 1234, happySessionId: sessionId,
                 spawnOptions: { directory: '/tmp/project', connectedServices: bindings, environmentVariables: environment } }]]),
-            pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
-            getApiMachineForSessions: () => null, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(), connectedServiceRuntimeRegistry: registry,
+            spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
+            getApiMachineForSessions: () => null, spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(), connectedServiceRuntimeRegistry: registry,
             resolveQualifiedConnectedAccountV4Support: () => 'advertised', beforeShutdown: async () => {}, onHappySessionWebhook: async () => {}, requestShutdown: () => {}, processEnv: {},
         });
         registry.registerTarget({ pid: 1234, sessionId, agentId: 'muse', connectedServicesBindingsRaw: bindings,
@@ -14511,11 +14528,11 @@ describe('startDaemonSessionControlRuntime', () => {
         const runtime = await startDaemonSessionControlRuntime({ machineId: 'native-proof-machine', credentials, api: api as never,
             connectedServicesMaterializationBaseDir: '/tmp/native-proof', getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => coordinator,
-            pidToTrackedSession: new Map<number, TrackedSession>([[1234, { startedBy: 'daemon', pid: 1234, happySessionId: 'native-proof-session',
+            trackedSessionsByKey: new Map<SessionTrackingKey, TrackedSession>([[legacyPidSessionTrackingKey(1234), { trackingKey: legacyPidSessionTrackingKey(1234), startedBy: 'daemon', pid: 1234, happySessionId: 'native-proof-session',
                 spawnOptions: { directory: '/tmp/project', connectedServices: bindings, environmentVariables: environment } }]]),
-            pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
-            getApiMachineForSessions: () => null, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(), connectedServiceRuntimeRegistry: registry,
+            spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
+            getApiMachineForSessions: () => null, spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(), connectedServiceRuntimeRegistry: registry,
             resolveQualifiedConnectedAccountV4Support: () => 'advertised', beforeShutdown: async () => {}, onHappySessionWebhook: async () => {}, requestShutdown: () => {}, processEnv: {},
         });
         if (!unbound) registry.registerTarget({ pid: 1234, sessionId: 'native-proof-session', agentId: 'claude',
@@ -14697,9 +14714,9 @@ describe('startDaemonSessionControlRuntime', () => {
                 resolveQuotaProbeFreshProof: (proofInput: Parameters<typeof resolveQuotaProbeFreshProof>[0]) =>
                     resolveQuotaProbeFreshProof({ ...proofInput, nowMs: 2_000 }),
             }) as never,
-            pidToTrackedSession: new Map<number, TrackedSession>([
-                [1234, {
-                    startedBy: 'daemon',
+            trackedSessionsByKey: new Map<SessionTrackingKey, TrackedSession>([
+                [legacyPidSessionTrackingKey(1234), {
+                    trackingKey: legacyPidSessionTrackingKey(1234), startedBy: 'daemon',
                     pid: 1234,
                     happySessionId: 'sess_usage_group',
                     spawnOptions: {
@@ -14724,13 +14741,13 @@ describe('startDaemonSessionControlRuntime', () => {
                     },
                 }],
             ]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             connectedServiceRuntimeRegistry: runtimeRegistry,
             resolveQualifiedConnectedAccountV4Support: () => 'advertised',
             beforeShutdown: vi.fn(),
@@ -15002,16 +15019,16 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => ({ handleAccountUsageChanged }) as never,
-            pidToTrackedSession: new Map<number, TrackedSession>([
-                [1234, { startedBy: 'daemon', pid: 1234, happySessionId: 'sess_usage_source_link' }],
+            trackedSessionsByKey: new Map<SessionTrackingKey, TrackedSession>([
+                [legacyPidSessionTrackingKey(1234), { trackingKey: legacyPidSessionTrackingKey(1234), startedBy: 'daemon', pid: 1234, happySessionId: 'sess_usage_source_link' }],
             ]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -15120,16 +15137,16 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map<number, TrackedSession>([
-                [1234, { startedBy: 'daemon', pid: 1234, happySessionId: 'sess_usage_adoption' }],
+            trackedSessionsByKey: new Map<SessionTrackingKey, TrackedSession>([
+                [legacyPidSessionTrackingKey(1234), { trackingKey: legacyPidSessionTrackingKey(1234), startedBy: 'daemon', pid: 1234, happySessionId: 'sess_usage_adoption' }],
             ]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             connectedServiceRuntimeRegistry: runtimeRegistry,
             resolveQualifiedConnectedAccountV4Support: () => 'advertised',
             beforeShutdown: vi.fn(),
@@ -15241,22 +15258,24 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => ({
                 registerLocalServicesPreviewRoutes,
                 registerLocalServicesRoutes,
-                registerComputerRoutes,
                 registerMachineAccessLossReceiver,
-                registerBrowserDiagnosticsRoutes,
-                registerBrowserRecordingRoutes,
-                registerSimulatorPreviewRoutes,
             }) as never,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            // The devices role publishes through these callbacks; the attachment cache registers
+            // them on the Machine transport as one owned set.
+            onComputerRoutesReady: registerComputerRoutes,
+            onBrowserDiagnosticsRoutesReady: registerBrowserDiagnosticsRoutes,
+            onBrowserRecordingRoutesReady: registerBrowserRecordingRoutes,
+            onSimulatorPreviewRoutesReady: registerSimulatorPreviewRoutes,
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -15437,14 +15456,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -15492,14 +15511,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -15553,14 +15572,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -15677,14 +15696,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -15797,20 +15816,16 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => ({
                 registerLocalServicesRoutes: vi.fn(),
-                registerBrowserControlRoutes,
-                registerBrowserContextRoutes,
-                registerSimulatorPreviewRoutes: vi.fn(),
-                registerComputerRoutes: vi.fn(),
             }) as never,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -15874,20 +15889,16 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => ({
                 registerLocalServicesRoutes: vi.fn(),
-                registerBrowserDiagnosticsRoutes,
-                registerBrowserRecordingRoutes,
-                registerSimulatorPreviewRoutes: vi.fn(),
-                registerComputerRoutes: vi.fn(),
             } as never),
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -15971,24 +15982,17 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => ({
                 registerLocalServicesRoutes: vi.fn(),
-                registerBrowserDiagnosticsRoutes,
-                registerBrowserRecordingRoutes: vi.fn(),
-                registerSimulatorPreviewRoutes: vi.fn(),
-                registerComputerRoutes: vi.fn(),
-                // SEAM-FINISH-2: an executable sidecar control adapter reaches the browser-control RPC
-                // wiring (`apiMachineForSessions.registerBrowserControlRoutes`). The mock must expose it
-                // or the optional-chained call throws `is not a function`.
-                registerBrowserControlRoutes: vi.fn(),
             }) as never,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            onBrowserDiagnosticsRoutesReady: registerBrowserDiagnosticsRoutes,
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -16088,24 +16092,17 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => ({
                 registerLocalServicesRoutes: vi.fn(),
-                registerBrowserDiagnosticsRoutes,
-                registerBrowserRecordingRoutes: vi.fn(),
-                registerSimulatorPreviewRoutes: vi.fn(),
-                registerComputerRoutes: vi.fn(),
-                // SEAM-FINISH-2: an executable sidecar control adapter reaches the browser-control RPC
-                // wiring (`apiMachineForSessions.registerBrowserControlRoutes`). The mock must expose it
-                // or the optional-chained call throws `is not a function`.
-                registerBrowserControlRoutes: vi.fn(),
             }) as never,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            onBrowserDiagnosticsRoutesReady: registerBrowserDiagnosticsRoutes,
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -16158,14 +16155,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -16201,14 +16198,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -16242,14 +16239,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -16306,14 +16303,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -16386,14 +16383,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -16505,14 +16502,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -16552,14 +16549,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -16606,10 +16603,10 @@ describe('startDaemonSessionControlRuntime', () => {
             credentials: { token: 'token-daemon', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
             api: {} as never, connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(), pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(), getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(), beforeShutdown: vi.fn(),
+            trackedSessionsByKey: new Map(), spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(), getApiMachineForSessions: () => null,
+            spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(), beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(), requestShutdown: vi.fn(), processEnv: {}, liveStreamCaptureRegistry,
             browserDaemonFeatureGate: fakeBrowserGate({ 'browser.sidecar': true, 'browser.automation': true }),
             browserSidecarControlAdapterFactory: () => ({ ok: true, adapter,
@@ -16660,14 +16657,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -16787,21 +16784,18 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => ({
                 registerLocalServicesPreviewRoutes: vi.fn(),
                 registerLocalServicesRoutes: vi.fn(),
-                registerBrowserDiagnosticsRoutes: vi.fn(),
-                registerBrowserRecordingRoutes,
-                registerSimulatorPreviewRoutes: vi.fn(),
-                registerComputerRoutes: vi.fn(),
             }) as never,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            onBrowserRecordingRoutesReady: registerBrowserRecordingRoutes,
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -16994,23 +16988,20 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => ({
                 registerLocalServicesPreviewRoutes: vi.fn(),
                 registerLocalServicesRoutes: vi.fn(),
-                registerBrowserControlRoutes,
-                registerBrowserDiagnosticsRoutes: vi.fn(),
-                registerBrowserRecordingRoutes,
-                registerSimulatorPreviewRoutes: vi.fn(),
-                registerComputerRoutes: vi.fn(),
                 hasConnectedClientRpcHandler: vi.fn(() => false),
             }) as never,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            onBrowserControlRoutesReady: registerBrowserControlRoutes,
+            onBrowserRecordingRoutesReady: registerBrowserRecordingRoutes,
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -17173,25 +17164,21 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => ({
                 hasConnectedClientRpcHandler,
                 callConnectedClientRpc,
                 registerMachineAccessLossReceiver: vi.fn(),
                 registerLocalServicesPreviewRoutes: vi.fn(),
                 registerLocalServicesRoutes: vi.fn(),
-                registerBrowserControlRoutes: vi.fn(),
-                registerBrowserDiagnosticsRoutes: vi.fn(),
-                registerBrowserRecordingRoutes,
-                registerSimulatorPreviewRoutes: vi.fn(),
-                registerComputerRoutes: vi.fn(),
             }) as never,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            onBrowserRecordingRoutesReady: registerBrowserRecordingRoutes,
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -17267,25 +17254,21 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => ({
                 hasConnectedClientRpcHandler,
                 callConnectedClientRpc,
                 registerMachineAccessLossReceiver: vi.fn(),
                 registerLocalServicesPreviewRoutes: vi.fn(),
                 registerLocalServicesRoutes: vi.fn(),
-                registerBrowserControlRoutes: vi.fn(),
-                registerBrowserDiagnosticsRoutes: vi.fn(),
-                registerBrowserRecordingRoutes,
-                registerSimulatorPreviewRoutes: vi.fn(),
-                registerComputerRoutes: vi.fn(),
             }) as never,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            onBrowserRecordingRoutesReady: registerBrowserRecordingRoutes,
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -17340,7 +17323,7 @@ describe('startDaemonSessionControlRuntime', () => {
         }));
 
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(9100), startedBy: 'daemon',
             pid: 9100,
             happySessionId: 'sess-hosted-web',
         };
@@ -17356,14 +17339,14 @@ describe('startDaemonSessionControlRuntime', () => {
                 connectedServicesMaterializationBaseDir: '/tmp/connected-services',
                 getConnectedServiceRefreshCoordinator: () => null,
                 getConnectedServiceQuotasCoordinator: () => null,
-                pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-                pidToAwaiter: new Map(),
-                pidToSpawnResultResolver: new Map(),
-                pidToSpawnWebhookTimeout: new Map(),
+                trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+                spawnAwaiterByKey: new Map(),
+                spawnResultResolverByKey: new Map(),
+                spawnWebhookTimeoutByKey: new Map(),
                 getApiMachineForSessions: () => null,
-                spawnResourceCleanupByPid: new Map(),
-                sessionAttachCleanupByPid: new Map(),
-                connectedServicesRestartRequestedPids: new Set(),
+                spawnResourceCleanupByKey: new Map(),
+                sessionAttachCleanupByKey: new Map(),
+                connectedServicesRestartRequestedSessions: new Set(),
                 beforeShutdown: vi.fn(),
                 onHappySessionWebhook: vi.fn(),
                 requestShutdown: vi.fn(),
@@ -17422,7 +17405,7 @@ describe('startDaemonSessionControlRuntime', () => {
         });
 
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(9101), startedBy: 'daemon',
             pid: 9101,
             happySessionId: 'sess-hosted-web-runtime-lease',
         };
@@ -17438,14 +17421,14 @@ describe('startDaemonSessionControlRuntime', () => {
                 connectedServicesMaterializationBaseDir: '/tmp/connected-services',
                 getConnectedServiceRefreshCoordinator: () => null,
                 getConnectedServiceQuotasCoordinator: () => null,
-                pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-                pidToAwaiter: new Map(),
-                pidToSpawnResultResolver: new Map(),
-                pidToSpawnWebhookTimeout: new Map(),
+                trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+                spawnAwaiterByKey: new Map(),
+                spawnResultResolverByKey: new Map(),
+                spawnWebhookTimeoutByKey: new Map(),
                 getApiMachineForSessions: () => null,
-                spawnResourceCleanupByPid: new Map(),
-                sessionAttachCleanupByPid: new Map(),
-                connectedServicesRestartRequestedPids: new Set(),
+                spawnResourceCleanupByKey: new Map(),
+                sessionAttachCleanupByKey: new Map(),
+                connectedServicesRestartRequestedSessions: new Set(),
                 beforeShutdown: vi.fn(),
                 onHappySessionWebhook: vi.fn(),
                 requestShutdown: vi.fn(),
@@ -17491,7 +17474,7 @@ describe('startDaemonSessionControlRuntime', () => {
         acquireAuthoritativePluginRuntimeRegistryLeaseMock.mockImplementationOnce(async () => await runtimeRegistryLeasePromise);
         const releaseRuntimeRegistryLease = vi.fn(async () => {});
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(9102), startedBy: 'daemon',
             pid: 9102,
             happySessionId: 'sess-hosted-web-startup-nonblocking',
         };
@@ -17506,14 +17489,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -17557,17 +17540,17 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
             onLocalServicesPreviewRoutesReady,
             onBrowserRecordingRoutesReady,
             onSimulatorPreviewRoutesReady,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -17611,7 +17594,7 @@ describe('startDaemonSessionControlRuntime', () => {
             'claude-config',
         ].join('/');
         const claudeTracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(5533), startedBy: 'daemon',
             happySessionId: 'session-claude-shared',
             pid: 5533,
             spawnOptions: {
@@ -17640,14 +17623,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map([[claudeTracked.pid, claudeTracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map([[claudeTracked.trackingKey, claudeTracked]]),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -17691,7 +17674,7 @@ describe('startDaemonSessionControlRuntime', () => {
         applyConnectedServiceAuthGenerationToTrackedSessionMock.mockClear();
         const connectedServiceRuntimeRegistry = new ConnectedServiceRuntimeRegistry();
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(7788), startedBy: 'daemon',
             happySessionId: 'sess-quota-switch',
             pid: 7788,
             spawnOptions: {
@@ -17737,14 +17720,14 @@ describe('startDaemonSessionControlRuntime', () => {
             getConnectedServiceQuotasCoordinator: () => null,
             resolveQualifiedConnectedAccountV4Support: () => 'advertised',
             connectedServiceRuntimeRegistry,
-            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -18229,9 +18212,9 @@ describe('startDaemonSessionControlRuntime', () => {
                 credentialRevision: oldCredentialRevision,
             }]),
         };
-        const trackedSessions = new Map<number, TrackedSession>([
-            [7811, {
-                startedBy: 'daemon',
+        const trackedSessions = new Map<SessionTrackingKey, TrackedSession>([
+            [legacyPidSessionTrackingKey(7811), {
+                trackingKey: legacyPidSessionTrackingKey(7811), startedBy: 'daemon',
                 happySessionId: 'sess-reattached-direct-a',
                 pid: 7811,
                 reattachedFromDiskMarker: true,
@@ -18251,8 +18234,8 @@ describe('startDaemonSessionControlRuntime', () => {
                     environmentVariables,
                 },
             }],
-            [7812, {
-                startedBy: 'daemon',
+            [legacyPidSessionTrackingKey(7812), {
+                trackingKey: legacyPidSessionTrackingKey(7812), startedBy: 'daemon',
                 happySessionId: 'sess-reattached-direct-b',
                 pid: 7812,
                 reattachedFromDiskMarker: true,
@@ -18328,14 +18311,14 @@ describe('startDaemonSessionControlRuntime', () => {
                 getConnectedServiceRefreshCoordinator: () => refreshCoordinator,
                 getConnectedServiceQuotasCoordinator: () => null,
                 connectedServiceRuntimeRegistry,
-                pidToTrackedSession: trackedSessions,
-                pidToAwaiter: new Map(),
-                pidToSpawnResultResolver: new Map(),
-                pidToSpawnWebhookTimeout: new Map(),
+                trackedSessionsByKey: trackedSessions,
+                spawnAwaiterByKey: new Map(),
+                spawnResultResolverByKey: new Map(),
+                spawnWebhookTimeoutByKey: new Map(),
                 getApiMachineForSessions: () => null,
-                spawnResourceCleanupByPid: new Map(),
-                sessionAttachCleanupByPid: new Map(),
-                connectedServicesRestartRequestedPids: new Set(),
+                spawnResourceCleanupByKey: new Map(),
+                sessionAttachCleanupByKey: new Map(),
+                connectedServicesRestartRequestedSessions: new Set(),
                 beforeShutdown: vi.fn(),
                 onHappySessionWebhook: vi.fn(),
                 requestShutdown: vi.fn(),
@@ -18427,7 +18410,7 @@ describe('startDaemonSessionControlRuntime', () => {
         const secret = new Uint8Array(32).fill(1);
         const connectedServiceRuntimeRegistry = new ConnectedServiceRuntimeRegistry();
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(pid), startedBy: 'daemon',
             happySessionId: sessionId,
             pid,
             happySessionMetadataFromLocalWebhook: {
@@ -18494,14 +18477,14 @@ describe('startDaemonSessionControlRuntime', () => {
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
             connectedServiceRuntimeRegistry,
-            pidToTrackedSession: new Map([[pid, tracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -18635,7 +18618,7 @@ describe('startDaemonSessionControlRuntime', () => {
             happyToolsDir: '/tmp/home/.happier/tools',
         };
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(pid), startedBy: 'daemon',
             happySessionId: sessionId,
             pid,
             happySessionMetadataFromLocalWebhook: happySessionMetadata,
@@ -18659,14 +18642,14 @@ describe('startDaemonSessionControlRuntime', () => {
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
             connectedServiceRuntimeRegistry,
-            pidToTrackedSession: new Map([[pid, tracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -18796,10 +18779,10 @@ describe('startDaemonSessionControlRuntime', () => {
             registerSimulatorPreviewRoutes: vi.fn(),
             registerComputerRoutes: vi.fn(),
         };
-        const pidToTrackedSession = new Map<number, TrackedSession>([[
-            pid,
+        const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[
+            legacyPidSessionTrackingKey(pid),
             {
-                startedBy: 'daemon',
+                trackingKey: legacyPidSessionTrackingKey(pid), startedBy: 'daemon',
                 happySessionId: sessionId,
                 pid,
                 processCommandHash: 'hash-direct-run-deletion',
@@ -18929,14 +18912,14 @@ describe('startDaemonSessionControlRuntime', () => {
                 getConnectedServiceRefreshCoordinator: () => refreshCoordinator as never,
                 getConnectedServiceQuotasCoordinator: () => quotasCoordinator as never,
                 connectedServiceRuntimeRegistry,
-                pidToTrackedSession,
-                pidToAwaiter: new Map(),
-                pidToSpawnResultResolver: new Map(),
-                pidToSpawnWebhookTimeout: new Map(),
+                trackedSessionsByKey,
+                spawnAwaiterByKey: new Map(),
+                spawnResultResolverByKey: new Map(),
+                spawnWebhookTimeoutByKey: new Map(),
                 getApiMachineForSessions: () => apiMachine as never,
-                spawnResourceCleanupByPid: new Map(),
-                sessionAttachCleanupByPid: new Map(),
-                connectedServicesRestartRequestedPids: new Set(),
+                spawnResourceCleanupByKey: new Map(),
+                sessionAttachCleanupByKey: new Map(),
+                connectedServicesRestartRequestedSessions: new Set(),
                 beforeShutdown: vi.fn(),
                 onHappySessionWebhook: vi.fn(),
                 requestShutdown: vi.fn(),
@@ -19002,7 +18985,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 code: 0,
                 signal: null,
             });
-            expect(pidToTrackedSession.has(pid)).toBe(false);
+            expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(pid))).toBe(false);
             expect(connectedServiceRuntimeRegistry.getRunTargetByRunKey(runId)).toBeNull();
 
             const retriedDeletion = runtime.reconcileConnectedServicesProjection({
@@ -19036,12 +19019,12 @@ describe('startDaemonSessionControlRuntime', () => {
             deviceLocalSecretKeyFile: configuration.deviceLocalSecretKeyFile };
         Object.assign(configuration, { happyHomeDir: home, deviceLocalSecretKeyFile: join(home, 'local.key') });
         onTestFinished(async () => { Object.assign(configuration, previousConfiguration); await rm(home, { recursive: true, force: true }); });
-        const tracked: TrackedSession = { pid: 9991, sessionRunnerPid: process.pid, happySessionId: 'sess-refresh-drain', startedBy: 'daemon',
+        const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(9991), pid: 9991, sessionRunnerPid: process.pid, happySessionId: 'sess-refresh-drain', startedBy: 'daemon',
             processCommand: 'node /tmp/versions/0.2.10/package-dist/index.mjs claude --happy-starting-mode remote --started-by daemon',
             processCommandHash: 'a'.repeat(64), processStartTimeMs: 100, vendorResumeId: 'thread-drain',
             spawnOptions: { directory: '/tmp/project', resume: 'thread-drain', existingSessionId: 'sess-refresh-drain',
                 backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' } } };
-        const pidToTrackedSession = new Map([[tracked.pid, tracked]]);
+        const trackedSessionsByKey = new Map([[tracked.trackingKey, tracked]]);
         const runtimeRegistry = new ConnectedServiceRuntimeRegistry();
         const childProcess = { pid: tracked.pid, exitCode: null, signalCode: null,
             kill: vi.fn(() => true) };
@@ -19101,9 +19084,9 @@ describe('startDaemonSessionControlRuntime', () => {
             api: {} as never, connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             connectedServiceRuntimeRegistry: runtimeRegistry,
             getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession, pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
-            getApiMachineForSessions: () => null, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(), beforeShutdown: vi.fn(), onHappySessionWebhook: vi.fn(), requestShutdown: vi.fn(),
+            trackedSessionsByKey, spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
+            getApiMachineForSessions: () => null, spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(), beforeShutdown: vi.fn(), onHappySessionWebhook: vi.fn(), requestShutdown: vi.fn(),
             isShuttingDown: () => shuttingDown, processEnv: { HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED: 'false',
                 ...(['child exceeds existing budget', 'replacement exceeds observer budget', 'adopted runner survives'].includes(childActivity) ? { HAPPIER_DAEMON_SESSION_RUNNER_RESTART_COMPLETION_TIMEOUT_MS: '1000' } : {}) },
         });
@@ -19315,12 +19298,12 @@ describe('startDaemonSessionControlRuntime', () => {
             await spawnMayFinish;
             return { type: 'success', sessionId: 'sess-connected-service-restart' };
         });
-        const connectedServicesRestartRequestedPids = new Set<number>([9999]);
-        const pidToTrackedSession = new Map<number, TrackedSession>([
+        const connectedServicesRestartRequestedSessions = new Set([legacyPidSessionTrackingKey(9999)]);
+        const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([
             [
-                9999,
+                legacyPidSessionTrackingKey(9999),
                 {
-                    startedBy: 'daemon',
+                    trackingKey: legacyPidSessionTrackingKey(9999), startedBy: 'daemon',
                     happySessionId: 'sess-connected-service-restart',
                     pid: 9999,
                     spawnOptions: {
@@ -19348,14 +19331,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession,
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey,
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids,
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions,
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -19368,7 +19351,7 @@ describe('startDaemonSessionControlRuntime', () => {
 
         expect(runtime.hasPendingRunnerRestarts()).toBe(true);
         await runtime.onChildExited(9999, { reason: 'process-exited', code: null, signal: 'SIGTERM' });
-        expect(connectedServicesRestartRequestedPids.has(9999)).toBe(false);
+        expect(connectedServicesRestartRequestedSessions.has(legacyPidSessionTrackingKey(9999))).toBe(false);
         expect(runtime.hasPendingRunnerRestarts()).toBe(true);
 
         await vi.waitFor(() => {
@@ -19393,18 +19376,77 @@ describe('startDaemonSessionControlRuntime', () => {
         await runtime.stopControlServer();
     });
 
+    it('respawns only the restarted Session of a session host and leaves its sibling Session alone', async () => {
+        vi.mocked(executeSpawnSessionRequest).mockClear();
+        vi.mocked(executeSpawnSessionRequest).mockImplementation(async () => ({ type: 'success', sessionId: 'sess-hosted-a' }));
+        const hostPid = 9990;
+        const hosted = (trackingKey: SessionTrackingKey, happySessionId: string): TrackedSession => ({
+            trackingKey, startedBy: 'daemon', happySessionId, pid: hostPid,
+            hostedSession: { end: vi.fn(async () => true), observed: new Promise<void>(() => {}) },
+            spawnOptions: {
+                directory: '/tmp/project',
+                backendTarget: { kind: 'backend', backendId: 'gemini', sourceKind: 'built_in' },
+            },
+        });
+        const a = hosted('session-hosted-a' as SessionTrackingKey, 'sess-hosted-a');
+        const b = hosted('session-hosted-b' as SessionTrackingKey, 'sess-hosted-b');
+        const connectedServicesRestartRequestedSessions = new Set([a.trackingKey]);
+        const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[a.trackingKey, a], [b.trackingKey, b]]);
+        const runtime = await startDaemonSessionControlRuntime({
+            machineId: 'machine-1',
+            credentials: { token: 'token-daemon', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } },
+            api: {} as never,
+            connectedServicesMaterializationBaseDir: '/tmp/connected-services',
+            getConnectedServiceRefreshCoordinator: () => null,
+            getConnectedServiceQuotasCoordinator: () => null,
+            trackedSessionsByKey,
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
+            getApiMachineForSessions: () => null,
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions,
+            beforeShutdown: vi.fn(),
+            onHappySessionWebhook: vi.fn(),
+            requestShutdown: vi.fn(),
+            // Unrequested exits are not respawned, so only a planned restart reaches the spawn.
+            processEnv: { HAPPIER_DAEMON_SESSION_RESPAWN_ENABLED: 'false', HAPPIER_DAEMON_SESSION_RESPAWN_BASE_DELAY_MS: '50',
+                HAPPIER_DAEMON_SESSION_RESPAWN_JITTER_MS: '0' },
+        });
+
+        // The host ended A (its planned restart); the host process and B live on.
+        await runtime.onChildExited(hostPid, { reason: 'process-exited', code: 0, signal: null, trackingKey: a.trackingKey });
+        expect(trackedSessionsByKey.get(b.trackingKey)).toBe(b);
+        expect(trackedSessionsByKey.has(a.trackingKey)).toBe(false);
+        expect(connectedServicesRestartRequestedSessions.has(a.trackingKey)).toBe(false);
+        await vi.waitFor(() => expect(executeSpawnSessionRequest).toHaveBeenCalledWith(expect.objectContaining({
+            options: expect.objectContaining({ existingSessionId: 'sess-hosted-a' }),
+        })));
+        await vi.waitFor(() => expect(runtime.hasPendingRunnerRestarts()).toBe(false));
+        expect(b.hostedSession!.end).not.toHaveBeenCalled();
+        expect(a.hostedSession!.end).not.toHaveBeenCalled();
+
+        // B's own unrequested end is not A's planned restart: no forced respawn for B.
+        vi.mocked(executeSpawnSessionRequest).mockClear();
+        await runtime.onChildExited(hostPid, { reason: 'process-exited', code: 1, signal: null, trackingKey: b.trackingKey });
+        expect(trackedSessionsByKey.has(b.trackingKey)).toBe(false);
+        expect(executeSpawnSessionRequest).not.toHaveBeenCalled();
+        vi.mocked(executeSpawnSessionRequest).mockReset();
+        await runtime.stopControlServer();
+    });
+
     it('preserves startup admission across wrapper promotion and revokes it on exact runner exit', async () => {
         const wrapperPid = 9997;
         const runnerPid = 9996;
-        const pidToTrackedSession = new Map<number, TrackedSession>([
+        const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([
             [
-                wrapperPid,
+                legacyPidSessionTrackingKey(wrapperPid),
                 {
-                    startedBy: 'daemon',
+                    trackingKey: legacyPidSessionTrackingKey(wrapperPid), startedBy: 'daemon',
                     happySessionId: 'sess-wrapper-promotion',
                     pid: wrapperPid,
                     sessionRunnerPid: runnerPid,
-                    spawnStartupAwaiterPid: wrapperPid,
                     spawnOptions: {
                         directory: '/tmp/project',
                         backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
@@ -19415,15 +19457,16 @@ describe('startDaemonSessionControlRuntime', () => {
         const admissionWaiter = createPersistedTakeoverAdmissionWaiter();
         const correlation = { mode: 'persisted' as const, operationId: 'operation-1', attemptId: 'attempt-1' };
         const admission = admissionWaiter.register(correlation);
-        const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
-        const pidToSpawnResultResolver = new Map<number, (result: SpawnSessionResult) => void>();
-        const pidToSpawnWebhookTimeout = new Map<number, NodeJS.Timeout>();
+        const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
+        const spawnResultResolverByKey = new Map<SessionTrackingKey, (result: SpawnSessionResult) => void>();
+        const spawnWebhookTimeoutByKey = new Map<SessionTrackingKey, NodeJS.Timeout>();
         const startup = waitForSessionWebhook({
-            pid: wrapperPid, pidToTrackedSession, pidToAwaiter, pidToSpawnResultResolver, pidToSpawnWebhookTimeout,
+            trackingKey: legacyPidSessionTrackingKey(wrapperPid),
+            pid: wrapperPid, trackedSessionsByKey, spawnAwaiterByKey, spawnResultResolverByKey, spawnWebhookTimeoutByKey,
             takeoverAdmission: admission,
             timeoutErrorMessage: 'startup timed out',
         });
-        const connectedServicesRestartRequestedPids = new Set<number>([wrapperPid]);
+        const connectedServicesRestartRequestedSessions = new Set([legacyPidSessionTrackingKey(wrapperPid)]);
         const refreshCoordinator = {
             transferPid: vi.fn(),
             unregisterPid: vi.fn(),
@@ -19453,20 +19496,19 @@ describe('startDaemonSessionControlRuntime', () => {
             getConnectedServiceRefreshCoordinator: () => refreshCoordinator as never,
             getConnectedServiceQuotasCoordinator: () => quotasCoordinator as never,
             connectedServiceRuntimeRegistry,
-            pidToTrackedSession,
-            pidToAwaiter,
-            pidToSpawnResultResolver,
-            pidToSpawnWebhookTimeout,
+            trackedSessionsByKey,
+            spawnAwaiterByKey,
+            spawnResultResolverByKey,
+            spawnWebhookTimeoutByKey,
             // Network boundary: this Session already has terminal server authority.
             getApiMachineForSessions: () => ({
                 registerLocalServicesRoutes: vi.fn(),
-                registerSimulatorPreviewRoutes: vi.fn(),
-                registerComputerRoutes: vi.fn(),
                 captureMachineSessionTerminal: async (sessionId: string) => ({ v: 1, status: 'already_inactive', sessionId }),
+                registerMachineAccessLossReceiver: () => {},
             }) as never,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids,
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions,
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -19480,25 +19522,26 @@ describe('startDaemonSessionControlRuntime', () => {
         expect(quotasCoordinator.transferPid).not.toHaveBeenCalled();
         expect(refreshCoordinator.unregisterPid).not.toHaveBeenCalled();
         expect(quotasCoordinator.unregisterPid).not.toHaveBeenCalled();
-        expect(connectedServicesRestartRequestedPids.has(wrapperPid)).toBe(false);
-        expect(connectedServicesRestartRequestedPids.has(runnerPid)).toBe(true);
-        expect(pidToTrackedSession.has(wrapperPid)).toBe(false);
-        expect(pidToTrackedSession.get(runnerPid)).toEqual(expect.objectContaining({
+        // The promoted Session keeps its tracking key, so its restart intent stays with it.
+        expect(connectedServicesRestartRequestedSessions).toEqual(new Set([legacyPidSessionTrackingKey(wrapperPid)]));
+        expect(trackedSessionsByKey.size).toBe(1);
+        expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(wrapperPid))).toEqual(expect.objectContaining({
             happySessionId: 'sess-wrapper-promotion',
             pid: runnerPid,
         }));
 
-        const promoted = pidToTrackedSession.get(runnerPid)!;
-        pidToAwaiter.get(wrapperPid)?.(promoted);
-        expect(promoted.spawnStartupAwaiterPid).toBe(wrapperPid);
+        const promoted = trackedSessionsByKey.get(legacyPidSessionTrackingKey(wrapperPid))!;
+        // The startup awaiter stays keyed by the Session across wrapper promotion.
+        expect(spawnAwaiterByKey.has(promoted.trackingKey)).toBe(true);
+        spawnAwaiterByKey.get(promoted.trackingKey)?.(promoted);
         expect(admission.readOutcome()).toBeNull();
         killSpy.mockRestore();
         await runtime.onChildExited(runnerPid, { reason: 'process-exited', code: 0, signal: null });
         await expect(startup).resolves.toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK });
         expect(admission.readOutcome()?.status).toBe('failed');
         expect(admissionWaiter.reserveRuntimeBound(correlation).status).toBe('unavailable');
-        expect(pidToSpawnResultResolver.size).toBe(0);
-        expect(pidToSpawnWebhookTimeout.size).toBe(0);
+        expect(spawnResultResolverByKey.size).toBe(0);
+        expect(spawnWebhookTimeoutByKey.size).toBe(0);
         await runtime.stopControlServer();
     });
 
@@ -19572,14 +19615,14 @@ describe('startDaemonSessionControlRuntime', () => {
             getConnectedServiceRefreshCoordinator: () => ({ marker: 'refresh-coordinator' }) as never,
             getConnectedServiceQuotasCoordinator: () => null,
             connectedServiceRuntimeRegistry: runtimeRegistry,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -19692,14 +19735,14 @@ describe('startDaemonSessionControlRuntime', () => {
             }) as never,
             getConnectedServiceQuotasCoordinator: () => null,
             connectedServiceRuntimeRegistry: runtimeRegistry,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -19778,14 +19821,14 @@ describe('startDaemonSessionControlRuntime', () => {
             getConnectedServiceRefreshCoordinator: () => ({ marker: 'refresh-coordinator' }) as never,
             getConnectedServiceQuotasCoordinator: () => null,
             connectedServiceRuntimeRegistry: runtimeRegistry,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -19856,14 +19899,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -19875,7 +19918,7 @@ describe('startDaemonSessionControlRuntime', () => {
 
     it('retains predecessor no-turn lifecycle as downstream-only compatibility', async () => {
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(75), startedBy: 'daemon',
             happySessionId: 'sess-cancelled',
             pid: 75,
             sessionRunnerPid: 76,
@@ -19894,14 +19937,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -19929,7 +19972,7 @@ describe('startDaemonSessionControlRuntime', () => {
 
     it('rejects stale exact terminal custody without downstream outbox or marker effects', async () => {
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(75), startedBy: 'daemon',
             happySessionId: 'sess-stale-terminal',
             pid: 75,
             sessionRunnerPid: 76,
@@ -19949,14 +19992,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -20003,7 +20046,7 @@ describe('startDaemonSessionControlRuntime', () => {
 
     it.each([false, true])('rejects exact custody when the authoritative marker write fails (overlapping begin: %s)', async (overlap) => {
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(77), startedBy: 'daemon',
             happySessionId: 'sess-marker-failed',
             pid: 77,
             sessionRunnerPid: 78,
@@ -20029,14 +20072,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -20104,7 +20147,7 @@ describe('startDaemonSessionControlRuntime', () => {
             credentialRevision,
         }]);
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(77), startedBy: 'daemon',
             happySessionId: 'sess-begin-custody',
             pid: 77,
             sessionRunnerPid: 78,
@@ -20163,14 +20206,14 @@ describe('startDaemonSessionControlRuntime', () => {
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
             connectedServiceRuntimeRegistry,
-            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -20213,7 +20256,7 @@ describe('startDaemonSessionControlRuntime', () => {
             },
         });
         expect(updateSessionMarkerActiveTurnMock).toHaveBeenCalledWith({
-            pid: 78,
+            trackingKey: tracked.trackingKey,
             sessionId: 'sess-begin-custody',
             activeTurnId: null,
         });
@@ -20264,7 +20307,7 @@ describe('startDaemonSessionControlRuntime', () => {
             credentialRevision: 'csr_aaaaaaaaaaaaaaaaaaaaaa',
         }]);
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(79), startedBy: 'daemon',
             happySessionId: 'sess-provider-proof-hang',
             pid: 79,
             activeTurnId: 'session-turn:exact-hang',
@@ -20300,14 +20343,14 @@ describe('startDaemonSessionControlRuntime', () => {
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
             connectedServiceRuntimeRegistry,
-            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -20347,11 +20390,11 @@ describe('startDaemonSessionControlRuntime', () => {
 
     it('does not read session detail for continuation recovery when session-started metadata has no pending recovery', async () => {
         resetFetchSessionByIdCompatMock();
-        const pidToTrackedSession = new Map<number, TrackedSession>([
+        const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([
             [
-                9999,
+                legacyPidSessionTrackingKey(9999),
                 {
-                    startedBy: 'daemon',
+                    trackingKey: legacyPidSessionTrackingKey(9999), startedBy: 'daemon',
                     happySessionId: 'sess-ordinary-attach',
                     pid: 9999,
                     spawnOptions: {
@@ -20372,14 +20415,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession,
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey,
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -20433,11 +20476,11 @@ describe('startDaemonSessionControlRuntime', () => {
             invalidateRuntimeAccountIdentityForSession: vi.fn(),
             flushInBandQuotaPersistence: vi.fn(async () => {}),
         };
-        const pidToTrackedSession = new Map<number, TrackedSession>([
+        const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([
             [
-                9191,
+                legacyPidSessionTrackingKey(9191),
                 {
-                    startedBy: 'daemon',
+                    trackingKey: legacyPidSessionTrackingKey(9191), startedBy: 'daemon',
                     happySessionId: 'sess-runtime-reconnect',
                     pid: 9191,
                     spawnOptions: {
@@ -20479,14 +20522,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => quotaCoordinator as never,
-            pidToTrackedSession,
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey,
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -20556,14 +20599,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -20665,12 +20708,12 @@ describe('startDaemonSessionControlRuntime', () => {
         fetchSessionByIdCompatMock
             .mockResolvedValueOnce(rawSession)
             .mockResolvedValueOnce(rawSession);
-        const connectedServicesRestartRequestedPids = new Set<number>([9998]);
-        const pidToTrackedSession = new Map<number, TrackedSession>([
+        const connectedServicesRestartRequestedSessions = new Set([legacyPidSessionTrackingKey(9998)]);
+        const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([
             [
-                9998,
+                legacyPidSessionTrackingKey(9998),
                 {
-                    startedBy: 'daemon',
+                    trackingKey: legacyPidSessionTrackingKey(9998), startedBy: 'daemon',
                     happySessionId: 'sess-connected-service-runtime-refresh',
                     pid: 9998,
                     vendorResumeId: 'codex-stale-thread',
@@ -20696,14 +20739,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession,
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey,
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids,
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions,
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -20766,8 +20809,8 @@ describe('startDaemonSessionControlRuntime', () => {
         fetchSessionByIdCompatMock.mockResolvedValue(null);
         const sessionId = 'managed-live-without-allocation';
         const directory = '/unproven/private-chat';
-        const pidToTrackedSession = new Map<number, TrackedSession>([[process.pid, {
-            startedBy: 'daemon', pid: process.pid, happySessionId: sessionId,
+        const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[legacyPidSessionTrackingKey(process.pid), {
+            trackingKey: legacyPidSessionTrackingKey(process.pid), startedBy: 'daemon', pid: process.pid, happySessionId: sessionId,
             ...(routingSource === 'tracked' ? {
                 happySessionMetadataFromLocalWebhook: createTestMetadata({ path: directory, sessionDirectoryV1: { v: 1, kind: 'managed' } }),
             } : {}),
@@ -20779,15 +20822,15 @@ describe('startDaemonSessionControlRuntime', () => {
             api: {} as never,
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession, pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
-            getApiMachineForSessions: () => null, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(), beforeShutdown: vi.fn(), onHappySessionWebhook: vi.fn(),
+            trackedSessionsByKey, spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
+            getApiMachineForSessions: () => null, spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(), beforeShutdown: vi.fn(), onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(), processEnv: {},
         });
         try {
             const result = await runtime.spawnSession({ directory, existingSessionId: sessionId, ...(routingSource === 'request' ? { directoryKind: 'managed' as const } : {}) });
             expect(result).toMatchObject({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING });
-            expect(pidToTrackedSession.has(process.pid)).toBe(true);
+            expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(process.pid))).toBe(true);
         } finally {
             await runtime.stopControlServer();
         }
@@ -20818,11 +20861,11 @@ describe('startDaemonSessionControlRuntime', () => {
             },
         });
         const killSpy = vi.spyOn(process, 'kill');
-        const pidToTrackedSession = new Map<number, TrackedSession>([
+        const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([
             [
-                process.pid,
+                legacyPidSessionTrackingKey(process.pid),
                 {
-                    startedBy: 'daemon',
+                    trackingKey: legacyPidSessionTrackingKey(process.pid), startedBy: 'daemon',
                     happySessionId: privateSessionId,
                     pid: process.pid,
                     spawnOptions: {
@@ -20844,14 +20887,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession,
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey,
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -20918,11 +20961,11 @@ describe('startDaemonSessionControlRuntime', () => {
             rpcErrorCode: 'RPC_METHOD_NOT_AVAILABLE',
             message: 'RPC method not available: sess-live-adopt:session.pendingQueue.wake.capability.get.v1',
         });
-        const pidToTrackedSession = new Map<number, TrackedSession>([
+        const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([
             [
-                runnerPid,
+                legacyPidSessionTrackingKey(runnerPid),
                 {
-                    startedBy: 'daemon',
+                    trackingKey: legacyPidSessionTrackingKey(runnerPid), startedBy: 'daemon',
                     happySessionId: 'sess-live-adopt',
                     pid: runnerPid,
                     childProcess: {
@@ -20951,14 +20994,14 @@ describe('startDaemonSessionControlRuntime', () => {
                 connectedServicesMaterializationBaseDir: '/tmp/connected-services',
                 getConnectedServiceRefreshCoordinator: () => null,
                 getConnectedServiceQuotasCoordinator: () => null,
-                pidToTrackedSession,
-                pidToAwaiter: new Map(),
-                pidToSpawnResultResolver: new Map(),
-                pidToSpawnWebhookTimeout: new Map(),
+                trackedSessionsByKey,
+                spawnAwaiterByKey: new Map(),
+                spawnResultResolverByKey: new Map(),
+                spawnWebhookTimeoutByKey: new Map(),
                 getApiMachineForSessions: () => null,
-                spawnResourceCleanupByPid: new Map(),
-                sessionAttachCleanupByPid: new Map(),
-                connectedServicesRestartRequestedPids: new Set(),
+                spawnResourceCleanupByKey: new Map(),
+                sessionAttachCleanupByKey: new Map(),
+                connectedServicesRestartRequestedSessions: new Set(),
                 beforeShutdown: vi.fn(),
                 onHappySessionWebhook: vi.fn(),
                 requestShutdown: vi.fn(),
@@ -21021,11 +21064,11 @@ describe('startDaemonSessionControlRuntime', () => {
         fetchSessionByIdCompatMock
             .mockResolvedValueOnce(rawSession)
             .mockResolvedValueOnce(rawSession);
-        const pidToTrackedSession = new Map<number, TrackedSession>([
+        const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([
             [
-                process.pid,
+                legacyPidSessionTrackingKey(process.pid),
                 {
-                    startedBy: 'daemon',
+                    trackingKey: legacyPidSessionTrackingKey(process.pid), startedBy: 'daemon',
                     happySessionId: 'sess-live-runtime',
                     pid: process.pid,
                     vendorResumeId: 'codex-thread-stale',
@@ -21050,14 +21093,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession,
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey,
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -21079,8 +21122,8 @@ describe('startDaemonSessionControlRuntime', () => {
             sessionId: 'sess-live-runtime',
         });
 
-        expect(pidToTrackedSession.get(process.pid)?.vendorResumeId).toBe('codex-thread-fresh');
-        expect(pidToTrackedSession.get(process.pid)?.spawnOptions).toEqual(expect.objectContaining({
+        expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(process.pid))?.vendorResumeId).toBe('codex-thread-fresh');
+        expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(process.pid))?.spawnOptions).toEqual(expect.objectContaining({
             existingSessionId: 'sess-live-runtime',
             permissionMode: 'yolo',
             permissionModeUpdatedAt: 200,
@@ -21106,7 +21149,7 @@ describe('startDaemonSessionControlRuntime', () => {
                 },
             },
         }));
-        expect(pidToTrackedSession.get(process.pid)?.spawnOptions?.resume).toBeUndefined();
+        expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(process.pid))?.spawnOptions?.resume).toBeUndefined();
         expect(executeSpawnSessionRequest).not.toHaveBeenCalled();
         expect(callSessionRpc).toHaveBeenCalledWith(expect.objectContaining({
             method: 'sess-live-runtime:session.pendingQueue.wake.v1',
@@ -21135,11 +21178,11 @@ describe('startDaemonSessionControlRuntime', () => {
             metadataVersion: 1,
         };
         fetchSessionByIdCompatMock.mockImplementation(async () => rawSession);
-        const pidToTrackedSession = new Map<number, TrackedSession>([
+        const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([
             [
-                process.pid,
+                legacyPidSessionTrackingKey(process.pid),
                 {
-                    startedBy: 'daemon',
+                    trackingKey: legacyPidSessionTrackingKey(process.pid), startedBy: 'daemon',
                     happySessionId: 'sess-live-runtime-webhook',
                     pid: process.pid,
                     vendorResumeId: 'codex-thread-stale',
@@ -21162,14 +21205,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession,
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey,
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -21184,7 +21227,7 @@ describe('startDaemonSessionControlRuntime', () => {
             type: 'success',
             sessionId: 'sess-live-runtime-webhook',
         });
-        expect(pidToTrackedSession.get(process.pid)?.vendorResumeId).toBe('codex-thread-before-webhook');
+        expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(process.pid))?.vendorResumeId).toBe('codex-thread-before-webhook');
 
         rawSession = {
             ...rawSession,
@@ -21224,12 +21267,12 @@ describe('startDaemonSessionControlRuntime', () => {
             sessionId: 'sess-live-runtime-webhook',
         });
 
-        expect(pidToTrackedSession.get(process.pid)?.vendorResumeId).toBe('codex-thread-after-webhook');
-        expect(pidToTrackedSession.get(process.pid)?.spawnOptions).toEqual(expect.objectContaining({
+        expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(process.pid))?.vendorResumeId).toBe('codex-thread-after-webhook');
+        expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(process.pid))?.spawnOptions).toEqual(expect.objectContaining({
             permissionMode: 'yolo',
             permissionModeUpdatedAt: 300,
         }));
-        expect(pidToTrackedSession.get(process.pid)?.spawnOptions?.resume).toBeUndefined();
+        expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(process.pid))?.spawnOptions?.resume).toBeUndefined();
 
         await runtime.stopControlServer();
     });
@@ -21383,14 +21426,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => quotaCoordinator as never,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -21676,14 +21719,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -21788,7 +21831,7 @@ describe('startDaemonSessionControlRuntime', () => {
             metadataVersion: 1,
         }));
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(616_161), startedBy: 'daemon',
             happySessionId: 'sess-activity-proof-only',
             pid: 616_161,
             spawnOptions: {
@@ -21824,14 +21867,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -21948,7 +21991,7 @@ describe('startDaemonSessionControlRuntime', () => {
             metadataVersion: 1,
         }));
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(717_171), startedBy: 'daemon',
             happySessionId: 'sess-claude-durable-proof-only',
             pid: 717_171,
             spawnOptions: {
@@ -21970,14 +22013,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -22076,7 +22119,7 @@ describe('startDaemonSessionControlRuntime', () => {
         requestConnectedServiceSessionRestartSignalMock.mockClear();
         applyConnectedServiceAuthGenerationToTrackedSessionMock.mockClear();
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(4242), startedBy: 'daemon',
             happySessionId: 'sess-runtime',
             pid: 4242,
             spawnOptions: {
@@ -22111,14 +22154,14 @@ describe('startDaemonSessionControlRuntime', () => {
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
             resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -22316,14 +22359,14 @@ describe('startDaemonSessionControlRuntime', () => {
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
             resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -22398,7 +22441,7 @@ describe('startDaemonSessionControlRuntime', () => {
         resolveConnectedServiceSwitchContinuityMock.mockClear();
         const piSessionFile = '/tmp/connected-services/csm_stable_switch/pi/pi-agent-dir/sessions/--tmp-project--/2026-06-01T00-00-00-000Z_pi-session-1.jsonl';
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(5151), startedBy: 'daemon',
             happySessionId: 'sess-pi-runtime',
             pid: 5151,
             spawnOptions: {
@@ -22433,14 +22476,14 @@ describe('startDaemonSessionControlRuntime', () => {
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
             resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -22557,7 +22600,7 @@ describe('startDaemonSessionControlRuntime', () => {
         applyConnectedServiceAuthGenerationToTrackedSessionMock.mockClear();
         applyConnectedServiceAuthGenerationToTrackedSessionMock.mockResolvedValueOnce(applyResult);
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(4242), startedBy: 'daemon',
             happySessionId: 'sess-runtime',
             pid: 4242,
             spawnOptions: {
@@ -22591,14 +22634,14 @@ describe('startDaemonSessionControlRuntime', () => {
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
             resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -22665,14 +22708,14 @@ describe('startDaemonSessionControlRuntime', () => {
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
             resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -22730,7 +22773,7 @@ describe('startDaemonSessionControlRuntime', () => {
         requestConnectedServiceSessionRestartSignalMock.mockClear();
         applyConnectedServiceAuthGenerationToTrackedSessionMock.mockClear();
         const tracked: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(4242), startedBy: 'daemon',
             happySessionId: 'sess-runtime',
             pid: 4242,
             processCommandHash: 'hash-sess-runtime',
@@ -22763,14 +22806,14 @@ describe('startDaemonSessionControlRuntime', () => {
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
             resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-            pidToTrackedSession: new Map([[tracked.pid, tracked]]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -22937,11 +22980,11 @@ describe('startDaemonSessionControlRuntime', () => {
                     recovery,
                 };
             });
-            const pidToTrackedSession = new Map<number, TrackedSession>([
+            const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([
                 [
-                    999_999_123,
+                    legacyPidSessionTrackingKey(999_999_123),
                     {
-                        startedBy: 'daemon',
+                        trackingKey: legacyPidSessionTrackingKey(999_999_123), startedBy: 'daemon',
                         happySessionId: 'sess-temporary-throttle',
                         pid: 999_999_123,
                         activeTurnId: 'turn-temporary-throttle',
@@ -22980,14 +23023,14 @@ describe('startDaemonSessionControlRuntime', () => {
                 connectedServicesMaterializationBaseDir: '/tmp/connected-services',
                 getConnectedServiceRefreshCoordinator: () => null,
                 getConnectedServiceQuotasCoordinator: () => null,
-                pidToTrackedSession,
-                pidToAwaiter: new Map(),
-                pidToSpawnResultResolver: new Map(),
-                pidToSpawnWebhookTimeout: new Map(),
+                trackedSessionsByKey,
+                spawnAwaiterByKey: new Map(),
+                spawnResultResolverByKey: new Map(),
+                spawnWebhookTimeoutByKey: new Map(),
                 getApiMachineForSessions: () => null,
-                spawnResourceCleanupByPid: new Map(),
-                sessionAttachCleanupByPid: new Map(),
-                connectedServicesRestartRequestedPids: new Set(),
+                spawnResourceCleanupByKey: new Map(),
+                sessionAttachCleanupByKey: new Map(),
+                connectedServicesRestartRequestedSessions: new Set(),
                 beforeShutdown: vi.fn(),
                 onHappySessionWebhook: vi.fn(),
                 requestShutdown: vi.fn(),
@@ -23029,7 +23072,7 @@ describe('startDaemonSessionControlRuntime', () => {
             });
 
             expect(executeSpawnSessionRequest).not.toHaveBeenCalled();
-            pidToTrackedSession.delete(999_999_123);
+            trackedSessionsByKey.delete(legacyPidSessionTrackingKey(999_999_123));
             expect(capturedTemporaryThrottleRecovery).not.toBeNull();
             await expect(capturedTemporaryThrottleRecovery!.wake({
                 sessionId: 'sess-temporary-throttle',
@@ -23105,11 +23148,11 @@ describe('startDaemonSessionControlRuntime', () => {
                     }],
                 ]),
             );
-            const pidToTrackedSession = new Map<number, TrackedSession>([
+            const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([
                 [
-                    999_999_124,
+                    legacyPidSessionTrackingKey(999_999_124),
                     {
-                        startedBy: 'daemon',
+                        trackingKey: legacyPidSessionTrackingKey(999_999_124), startedBy: 'daemon',
                         happySessionId: 'sess-temporary-throttle-hydrated',
                         pid: 999_999_124,
                         vendorResumeId: 'codex-thread-hydrated-stale',
@@ -23147,14 +23190,14 @@ describe('startDaemonSessionControlRuntime', () => {
                 connectedServicesMaterializationBaseDir: '/tmp/connected-services',
                 getConnectedServiceRefreshCoordinator: () => null,
                 getConnectedServiceQuotasCoordinator: () => null,
-                pidToTrackedSession,
-                pidToAwaiter: new Map(),
-                pidToSpawnResultResolver: new Map(),
-                pidToSpawnWebhookTimeout: new Map(),
+                trackedSessionsByKey,
+                spawnAwaiterByKey: new Map(),
+                spawnResultResolverByKey: new Map(),
+                spawnWebhookTimeoutByKey: new Map(),
                 getApiMachineForSessions: () => null,
-                spawnResourceCleanupByPid: new Map(),
-                sessionAttachCleanupByPid: new Map(),
-                connectedServicesRestartRequestedPids: new Set(),
+                spawnResourceCleanupByKey: new Map(),
+                sessionAttachCleanupByKey: new Map(),
+                connectedServicesRestartRequestedSessions: new Set(),
                 beforeShutdown: vi.fn(),
                 onHappySessionWebhook: vi.fn(),
                 requestShutdown: vi.fn(),
@@ -23229,11 +23272,11 @@ describe('startDaemonSessionControlRuntime', () => {
                 connectedServicesMaterializationBaseDir: '/tmp/connected-services',
                 getConnectedServiceRefreshCoordinator: () => null,
                 getConnectedServiceQuotasCoordinator: () => null,
-                pidToTrackedSession: new Map([
+                trackedSessionsByKey: new Map([
                     [
-                        999_999_125,
+                        legacyPidSessionTrackingKey(999_999_125),
                         {
-                            startedBy: 'daemon',
+                            trackingKey: legacyPidSessionTrackingKey(999_999_125), startedBy: 'daemon',
                             happySessionId: 'sess-temporary-throttle-stop',
                             pid: 999_999_125,
                             vendorResumeId: 'codex-thread-stop-stale',
@@ -23246,13 +23289,13 @@ describe('startDaemonSessionControlRuntime', () => {
                         },
                     ],
                 ]),
-                pidToAwaiter: new Map(),
-                pidToSpawnResultResolver: new Map(),
-                pidToSpawnWebhookTimeout: new Map(),
+                spawnAwaiterByKey: new Map(),
+                spawnResultResolverByKey: new Map(),
+                spawnWebhookTimeoutByKey: new Map(),
                 getApiMachineForSessions: () => null,
-                spawnResourceCleanupByPid: new Map(),
-                sessionAttachCleanupByPid: new Map(),
-                connectedServicesRestartRequestedPids: new Set(),
+                spawnResourceCleanupByKey: new Map(),
+                sessionAttachCleanupByKey: new Map(),
+                connectedServicesRestartRequestedSessions: new Set(),
                 beforeShutdown: vi.fn(),
                 onHappySessionWebhook: vi.fn(),
                 requestShutdown: vi.fn(),
@@ -23332,14 +23375,14 @@ describe('startDaemonSessionControlRuntime', () => {
                 connectedServicesMaterializationBaseDir: '/tmp/connected-services',
                 getConnectedServiceRefreshCoordinator: () => null,
                 getConnectedServiceQuotasCoordinator: () => null,
-                pidToTrackedSession: new Map(),
-                pidToAwaiter: new Map(),
-                pidToSpawnResultResolver: new Map(),
-                pidToSpawnWebhookTimeout: new Map(),
+                trackedSessionsByKey: new Map(),
+                spawnAwaiterByKey: new Map(),
+                spawnResultResolverByKey: new Map(),
+                spawnWebhookTimeoutByKey: new Map(),
                 getApiMachineForSessions: () => null,
-                spawnResourceCleanupByPid: new Map(),
-                sessionAttachCleanupByPid: new Map(),
-                connectedServicesRestartRequestedPids: new Set(),
+                spawnResourceCleanupByKey: new Map(),
+                sessionAttachCleanupByKey: new Map(),
+                connectedServicesRestartRequestedSessions: new Set(),
                 beforeShutdown: vi.fn(),
                 onHappySessionWebhook: vi.fn(),
                 requestShutdown: vi.fn(),
@@ -23404,14 +23447,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -23482,14 +23525,14 @@ describe('startDaemonSessionControlRuntime', () => {
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
             resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -23574,14 +23617,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             connectedServiceGroupHomeCleanupScheduler: {
                 cleanupPendingDeletedGroupHomes,
             },
@@ -23601,11 +23644,11 @@ describe('startDaemonSessionControlRuntime', () => {
     });
 
     it('allows native-to-connected Gemini switches through restart rematerialization', async () => {
-        const pidToTrackedSession = new Map<number, TrackedSession>([
+        const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([
             [
-                7777,
+                legacyPidSessionTrackingKey(7777),
                 {
-                    startedBy: 'daemon',
+                    trackingKey: legacyPidSessionTrackingKey(7777), startedBy: 'daemon',
                     happySessionId: 'sess-gemini',
                     pid: 7777,
                     spawnOptions: {
@@ -23644,14 +23687,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession,
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey,
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -23682,7 +23725,7 @@ describe('startDaemonSessionControlRuntime', () => {
             },
         });
 
-        expect(pidToTrackedSession.get(7777)?.spawnOptions?.connectedServices).toEqual({
+        expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(7777))?.spawnOptions?.connectedServices).toEqual({
             v: 1,
             bindingsByServiceId: {
                 gemini: { source: 'connected', selection: 'profile', profileId: 'gemini-work' },
@@ -23709,12 +23752,12 @@ describe('startDaemonSessionControlRuntime', () => {
                 metadata: await updater({ flavor: 'gemini' }),
             };
         });
-        const connectedServicesRestartRequestedPids = new Set<number>();
-        const pidToTrackedSession = new Map<number, TrackedSession>([
+        const connectedServicesRestartRequestedSessions = new Set<SessionTrackingKey>();
+        const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([
             [
-                8888,
+                legacyPidSessionTrackingKey(8888),
                 {
-                    startedBy: 'daemon',
+                    trackingKey: legacyPidSessionTrackingKey(8888), startedBy: 'daemon',
                     happySessionId: 'sess-gemini-connected',
                     pid: 8888,
                     processCommandHash: 'hash-sess-gemini-connected',
@@ -23755,14 +23798,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession,
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey,
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids,
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions,
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -23810,7 +23853,7 @@ describe('startDaemonSessionControlRuntime', () => {
         });
         expect(updateSessionMetadataWithRetryMock).toHaveBeenCalled();
         expect(calls).toContain('persist');
-        expect(connectedServicesRestartRequestedPids.has(8888)).toBe(true);
+        expect(connectedServicesRestartRequestedSessions.has(legacyPidSessionTrackingKey(8888))).toBe(true);
     });
 
     it('uses layout-v1 owner metadata for inactive connected-service auth switches', async () => {
@@ -23875,14 +23918,14 @@ describe('startDaemonSessionControlRuntime', () => {
             connectedServicesMaterializationBaseDir: '/tmp/connected-services',
             getConnectedServiceRefreshCoordinator: () => null,
             getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map(),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),

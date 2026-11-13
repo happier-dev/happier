@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { TrackedSession } from '../types';
+import { isPidPlaceholderSessionId } from '../sessionRegistry';
 
 /**
  * Daemon-issued identity of one tracked Session.
@@ -104,4 +105,25 @@ export function trackedSessionOnProcess(
     }
   }
   return trackedSessionForSingleSessionProcess(trackedSessions, pid);
+}
+
+/**
+ * After a process-addressed exit observation, the tracked Session that now owns the exited
+ * Session's custody in that process: the exited Session itself while it is still current there
+ * (nothing ended), else its successor. A Session-addressed end (one Session of a session host)
+ * has only its own successor (the same known Session id); the host's other Sessions, including
+ * other unready ones (no id, or a `PID-<pid>` placeholder), are never its replacement.
+ */
+export function trackedSessionAfterExit(
+  trackedSessions: ReadonlyTrackedSessionMap,
+  pid: number,
+  exited: TrackedSession,
+  sessionAddressed: boolean,
+): TrackedSession | null {
+  if (isCurrentTrackedSession(trackedSessions, exited) && exited.pid === pid) return exited;
+  if (!sessionAddressed) return trackedSessionForSingleSessionProcess(trackedSessions, pid) ?? null;
+  const sessionId = exited.happySessionId;
+  if (typeof sessionId !== 'string' || sessionId.length === 0 || isPidPlaceholderSessionId(sessionId)) return null;
+  return trackedSessionsForProcess(trackedSessions, pid)
+    .find(tracked => tracked !== exited && tracked.happySessionId === sessionId) ?? null;
 }

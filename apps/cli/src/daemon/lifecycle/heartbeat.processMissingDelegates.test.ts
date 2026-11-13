@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>();
@@ -63,11 +64,11 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
     const command = serializeWindowsCommandLine([executablePath, ...argv]);
     const terminal = { mode: 'windows_terminal' as const, requested: 'windows_terminal' as const, windows: { host: 'windows_terminal' as const, pid: hostPid, windowId: 'happier-test', title: 'Happier test' } };
     const tracked: TrackedSession = {
-      pid: hostPid, startedBy: 'daemon', happySessionId: 'PID-' + hostPid,
+      trackingKey: legacyPidSessionTrackingKey(hostPid), pid: hostPid, startedBy: 'daemon', happySessionId: 'PID-' + hostPid,
       windowsTerminalLaunchCustody: { executablePath, argv, correlation }, hostedTerminal: terminal, acceptedSpawnMarkerGate: Promise.resolve(true),
     };
-    const sessions = new Map([[hostPid, tracked]]);
-    const awaiters = new Map<number, (session: TrackedSession) => void>();
+    const sessions = new Map([[tracked.trackingKey, tracked]]);
+    const awaiters = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
     let tick: (() => Promise<void>) | undefined;
     // Clock adapter captures one observation without running a real interval.
     vi.spyOn(global, 'setInterval').mockImplementation((handler) => {
@@ -76,13 +77,13 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
     });
     const completion = observer === 'visible_console'
       ? waitForVisibleConsoleSessionWebhook({
-        pid: hostPid, pollMs: 1000, pidToTrackedSession: sessions, pidToAwaiter: awaiters,
-        pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+        trackingKey: tracked.trackingKey, pid: hostPid, pollMs: 1000, trackedSessionsByKey: sessions, spawnAwaiterByKey: awaiters,
+        spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
         onChildExited: (pid, exit) => onChildExited(pid, exit),
       })
       : waitForSessionWebhook({
-      pid: hostPid, pidToTrackedSession: sessions, pidToAwaiter: awaiters,
-      pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+      trackingKey: tracked.trackingKey, pid: hostPid, trackedSessionsByKey: sessions, spawnAwaiterByKey: awaiters,
+      spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
       timeoutMs: 10_000, timeoutErrorMessage: 'test startup timeout',
     });
     armSessionWebhookStartupCustody(tracked, completion, Promise.resolve());
@@ -91,16 +92,16 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
       if (pid === hostPid && signal === 0) throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
       return originalKill(pid, signal);
     });
-    const spawnResourceCleanupByPid = new Map<number, () => Promise<void>>();
-    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
+    const spawnResourceCleanupByKey = new Map();
+    const sessionAttachCleanupByKey = new Map();
     const onChildExited = createOnChildExited({
-      pidToTrackedSession: sessions, spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid, getApiMachineForSessions: () => null,
+      trackedSessionsByKey: sessions, spawnResourceCleanupByKey,
+      sessionAttachCleanupByKey, getApiMachineForSessions: () => null,
     });
     const { startDaemonHeartbeatLoop } = await import('./heartbeat');
     if (observer === 'heartbeat') startDaemonHeartbeatLoop({
-      pidToTrackedSession: sessions, spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null, onChildExited,
+      trackedSessionsByKey: sessions, spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null, onChildExited,
       controlPort: 8765,
       fileState: { pid: process.pid, httpPort: 8765, startedAt: Date.now(), startedWithCliVersion: '1.0.0', daemonLogPath: '/tmp/daemon.log' },
       currentCliVersion: '1.0.0', requestShutdown: vi.fn(), writeDaemonStateForCurrentOwner: () => true,
@@ -111,21 +112,20 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
       await tick();
       for (let turn = 0; turn < 8; turn++) await Promise.resolve();
       expect(completion.isPending()).toBe(true);
-      expect(sessions.get(hostPid)).toBe(tracked);
+      expect(sessions.get(tracked.trackingKey)).toBe(tracked);
       expect(tracked.reportMarkerCustody?.retiring).not.toBe(true);
       if (outcome === 'terminal_failure') {
         const missingObservation = onChildExited(hostPid, { reason: 'process-missing', code: null, signal: null });
         completion.settleFailure({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK, errorMessage: 'canonical cancellation' });
-        const cleanup = completeStartupCancellationCleanup({ trackedSession: tracked, pidToTrackedSession: sessions, onChildExited });
+        const cleanup = completeStartupCancellationCleanup({ trackedSession: tracked, trackedSessionsByKey: sessions, onChildExited });
         await missingObservation;
         await completion;
         await expect(cleanup).resolves.toMatchObject({ status: 'stopped' });
-        expect(sessions.has(hostPid)).toBe(false);
+        expect(sessions.has(tracked.trackingKey)).toBe(false);
       } else {
         const identity = { pid: runnerPid, processStartTimeMs: 2_000, command, executablePath };
         const report = createOnHappySessionWebhook({
-          pidToTrackedSession: sessions, pidToAwaiter: awaiters,
-          spawnResourceCleanupByPid, sessionAttachCleanupByPid,
+          trackedSessionsByKey: sessions, spawnAwaiterByKey: awaiters,
           getParentPidFn: () => null, findHappyProcessByPidFn: async () => null,
           readProcessIdentityByPidFn: async () => identity,
           readAllWindowsProcessFactsFn: async () => new Map([[runnerPid, identity]]),
@@ -141,9 +141,10 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
         });
         await report('sess-after-windows-dispatcher', createTestMetadata({ happyHomeDir: configuration.happyHomeDir, hostPid: runnerPid, startedBy: 'daemon', terminal }));
         await expect(completion).resolves.toMatchObject({ type: 'success', sessionId: 'sess-after-windows-dispatcher' });
-        expect(sessions.get(runnerPid)).toBe(tracked);
-        expect(sessions.has(hostPid)).toBe(false);
-        expect(awaiters.has(hostPid)).toBe(false);
+        // Custody stays under the Session's key across wrapper->runner promotion.
+        expect(sessions.get(tracked.trackingKey)).toBe(tracked);
+        expect(tracked.pid).toBe(runnerPid);
+        expect(awaiters.has(tracked.trackingKey)).toBe(false);
       }
     } finally {
       completion.settleFailure({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK, errorMessage: 'test cleanup' });
@@ -165,7 +166,7 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
     }) as any);
 
     const pid = 111111;
-    const pidToTrackedSession = new Map<number, any>([[pid, { pid, happySessionId: 'sess-1' }]]);
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(pid), { trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: 'sess-1' }]]);
 
     const originalKill = process.kill.bind(process);
     vi.spyOn(process, 'kill').mockImplementation(((targetPid: number, signal?: any) => {
@@ -178,14 +179,14 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
     const onChildExitedMock = vi.fn();
     const onChildExited = (targetPid: number, exit: any) => {
       onChildExitedMock(targetPid, exit);
-      pidToTrackedSession.delete(targetPid);
+      trackedSessionsByKey.delete(legacyPidSessionTrackingKey(targetPid));
     };
 
     const { startDaemonHeartbeatLoop } = await import('./heartbeat');
     startDaemonHeartbeatLoop({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       onChildExited,
       controlPort: 8765,
@@ -209,13 +210,13 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
 
     expect(onChildExitedMock).toHaveBeenCalledTimes(1);
     expect(onChildExitedMock).toHaveBeenCalledWith(pid, expect.objectContaining({ reason: 'process-missing' }));
-    expect(pidToTrackedSession.has(pid)).toBe(false);
+    expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(pid))).toBe(false);
   });
 
   it('prunes an adopted runner once the process table reports a zombie', async () => {
     const pid = 111116;
-    const tracked = { pid, happySessionId: 'sess-adopted-zombie', startedBy: 'terminal' as const };
-    const pidToTrackedSession = new Map<number, TrackedSession>([[pid, tracked]]);
+    const tracked = { trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: 'sess-adopted-zombie', startedBy: 'terminal' as const };
+    const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([[tracked.trackingKey, tracked]]);
     let tick: (() => Promise<void>) | undefined;
     vi.spyOn(global, 'setInterval').mockImplementation((handler) => {
       tick = async () => { await handler(); };
@@ -226,15 +227,15 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
       throw new Error(`unexpected process signal ${String(signal)} for ${targetPid}`);
     }) as typeof process.kill);
     const onChildExited = vi.fn(async (targetPid: number) => {
-      pidToTrackedSession.delete(targetPid);
+      trackedSessionsByKey.delete(legacyPidSessionTrackingKey(targetPid));
     });
     const readProcessRunStateFn = vi.fn(async () => 'zombie' as const);
 
     const { startDaemonHeartbeatLoop } = await import('./heartbeat');
     startDaemonHeartbeatLoop({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       onChildExited,
       pidSafetyDependencies: { readProcessRunStateFn },
@@ -260,7 +261,7 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
       pid,
       expect.objectContaining({ reason: 'process-missing' }),
     );
-    expect(pidToTrackedSession.has(pid)).toBe(false);
+    expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(pid))).toBe(false);
   });
 
   it('keeps a held child even when liveness probing fails, but prunes a reused PID exactly once', async () => {
@@ -298,20 +299,23 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
       'sess-exact-live',
     ].join(' ');
     const oldCommand = 'happier session --existing-session sess-reused';
-    const pidToTrackedSession = new Map<number, any>([
-      [samePid, {
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([
+      [legacyPidSessionTrackingKey(samePid), {
+        trackingKey: legacyPidSessionTrackingKey(samePid),
         pid: samePid,
         happySessionId: 'sess-exact-live',
         processStartTimeMs: 1_000,
         processCommandHash: hashProcessCommand(sameCommand),
       }],
-      [reusedPid, {
+      [legacyPidSessionTrackingKey(reusedPid), {
+        trackingKey: legacyPidSessionTrackingKey(reusedPid),
         pid: reusedPid,
         happySessionId: 'sess-reused',
         processStartTimeMs: 2_000,
         processCommandHash: hashProcessCommand(oldCommand),
       }],
-      [heldPid, {
+      [legacyPidSessionTrackingKey(heldPid), {
+        trackingKey: legacyPidSessionTrackingKey(heldPid),
         pid: heldPid,
         happySessionId: 'sess-held',
         startedBy: 'daemon',
@@ -336,7 +340,7 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
     const cleanupReusedPid = vi.fn(async () => undefined);
     const onChildExited = vi.fn(async (targetPid: number) => {
       await cleanupReusedPid();
-      pidToTrackedSession.delete(targetPid);
+      trackedSessionsByKey.delete(legacyPidSessionTrackingKey(targetPid));
     });
     const readProcessIdentityByPidFn = vi.fn(async (pid: number) => ({
       pid,
@@ -345,9 +349,9 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
     }));
     const { startDaemonHeartbeatLoop } = await import('./heartbeat');
     startDaemonHeartbeatLoop({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       onChildExited,
       pidSafetyDependencies: {
@@ -378,9 +382,9 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
       reusedPid,
       expect.objectContaining({ reason: 'process-missing' }),
     );
-    expect(pidToTrackedSession.has(samePid)).toBe(true);
-    expect(pidToTrackedSession.has(reusedPid)).toBe(false);
-    expect(pidToTrackedSession.has(heldPid)).toBe(true);
+    expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(samePid))).toBe(true);
+    expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(reusedPid))).toBe(false);
+    expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(heldPid))).toBe(true);
     expect(cleanupReusedPid).toHaveBeenCalledOnce();
     expect(readProcessIdentityByPidFn).toHaveBeenCalledWith(samePid);
     expect(readProcessIdentityByPidFn).toHaveBeenCalledWith(reusedPid);
@@ -403,9 +407,10 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
     const pid = 111114;
     const command =
       'happier session --existing-session sess-quiescing';
-    const pidToTrackedSession = new Map<number, any>([[
-      pid,
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[
+      legacyPidSessionTrackingKey(pid),
       {
+        trackingKey: legacyPidSessionTrackingKey(pid),
         pid,
         happySessionId: 'sess-quiescing',
         processStartTimeMs: 1_000,
@@ -445,9 +450,9 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
 
     const { startDaemonHeartbeatLoop } = await import('./heartbeat');
     startDaemonHeartbeatLoop({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       onChildExited,
       pidSafetyDependencies: {
@@ -488,7 +493,7 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
 
     expect(onChildExited).not.toHaveBeenCalled();
     expect(requestSelfRestart).not.toHaveBeenCalled();
-    expect(pidToTrackedSession.has(pid)).toBe(true);
+    expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(pid))).toBe(true);
   });
 
   it('uses a sub-minute default heartbeat interval for state freshness', async () => {
@@ -508,9 +513,9 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
 
     const { startDaemonHeartbeatLoop } = await import('./heartbeat');
     startDaemonHeartbeatLoop({
-      pidToTrackedSession: new Map(),
-      spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey: new Map(),
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       controlPort: 8765,
       fileState: {
@@ -544,8 +549,8 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
 
     const pid = 222222;
     const runnerPid = 333333;
-    const pidToTrackedSession = new Map<number, any>([
-      [pid, { pid, sessionRunnerPid: runnerPid, happySessionId: 'sess-2' }],
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([
+      [legacyPidSessionTrackingKey(pid), { trackingKey: legacyPidSessionTrackingKey(pid), pid, sessionRunnerPid: runnerPid, happySessionId: 'sess-2' }],
     ]);
 
     const originalKill = process.kill.bind(process);
@@ -560,9 +565,9 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
 
     const { startDaemonHeartbeatLoop } = await import('./heartbeat');
     startDaemonHeartbeatLoop({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       controlPort: 8765,
       fileState: {
@@ -583,11 +588,12 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
 
     await tick!();
 
+    // One marker per Session (named by its key) covers both wrapper and runner pids.
     expect(
       vi.mocked(removeSessionMarkerIfOwned).mock.calls
-        .map(([input]) => input.pid),
+        .map(([input]) => input.trackingKey),
     ).toEqual(
-      expect.arrayContaining([pid, runnerPid]),
+      expect.arrayContaining([legacyPidSessionTrackingKey(pid)]),
     );
   });
 
@@ -606,7 +612,7 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
     }) as any);
 
     const pid = 444444;
-    const pidToTrackedSession = new Map<number, any>([[pid, { pid, happySessionId: 'sess-3' }]]);
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(pid), { trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: 'sess-3' }]]);
 
     const originalKill = process.kill.bind(process);
     vi.spyOn(process, 'kill').mockImplementation(((targetPid: number, signal?: any) => {
@@ -619,14 +625,14 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
     const onChildExitedMock = vi.fn();
     const onChildExited = (targetPid: number, exit: any) => {
       onChildExitedMock(targetPid, exit);
-      pidToTrackedSession.delete(targetPid);
+      trackedSessionsByKey.delete(legacyPidSessionTrackingKey(targetPid));
     };
 
     const { startDaemonHeartbeatLoop } = await import('./heartbeat');
     startDaemonHeartbeatLoop({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       onChildExited,
       controlPort: 8765,
@@ -649,7 +655,7 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
     await tick!();
 
     expect(onChildExitedMock).not.toHaveBeenCalled();
-    expect(pidToTrackedSession.has(pid)).toBe(true);
+    expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(pid))).toBe(true);
   });
 
   it('requests shutdown when exact lock ownership is lost before heartbeat publication', async () => {
@@ -671,9 +677,9 @@ describe('startDaemonHeartbeatLoop process-missing delegation', () => {
 
     const { startDaemonHeartbeatLoop } = await import('./heartbeat');
     startDaemonHeartbeatLoop({
-      pidToTrackedSession: new Map(),
-      spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey: new Map(),
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       controlPort: 8765,
       fileState: {

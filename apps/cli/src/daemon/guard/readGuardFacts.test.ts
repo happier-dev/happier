@@ -14,6 +14,7 @@ import { createReadGuardFacts } from './readGuardFacts';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { applyDisplayTitleSessionMetadata } from '@happier-dev/agents/session/state/metadataWriters';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
 beforeAll(async () => { runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
@@ -21,7 +22,7 @@ beforeAll(async () => { runtime = await createAdmittedPluginRuntimeFixture({ con
 afterAll(async () => { await runtime?.dispose(); });
 
 async function fixture() {
-  const tracked: TrackedSession = { pid: 30, happySessionId: 's', processStartTimeMs: 1, startedBy: 'daemon',
+  const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(30), pid: 30, happySessionId: 's', processStartTimeMs: 1, startedBy: 'daemon',
     happySessionMetadataFromLocalWebhook: { path: '/project', host: 'host', homeDir: '/home/test',
       happyHomeDir: '/home/test/.happier', happyLibDir: '/opt/happier', happyToolsDir: '/home/test/.happier/tools',
       summary: { text: 'Build tests', updatedAt: 1 } } };

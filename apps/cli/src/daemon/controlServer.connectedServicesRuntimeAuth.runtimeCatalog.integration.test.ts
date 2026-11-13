@@ -9,6 +9,7 @@ import type { RuntimeAuthRecoveryScheduleResult } from './connectedServices/runt
 import { createDaemonControlApp } from './controlServer';
 import { authorizeConnectedServiceRuntimeAuthFailureSource } from './connectedServices/runtimeAuth/handleConnectedServiceRuntimeAuthFailureForSession';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY } from './connectedServices/connectedServiceChildEnvironment';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 function createScheduledRuntimeAuthRecoveryResult(
     overrides?: Partial<Extract<RuntimeAuthRecoveryScheduleResult, { status: 'scheduled' }>>,
@@ -551,7 +552,7 @@ describe('createDaemonControlApp connected-service runtime auth handling', () =>
 
     it('rejects an incomplete Codex quota source tuple before durable intake or repair', async () => {
         const children = [{
-            startedBy: 'daemon' as const,
+            trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
             pid: 111,
             happySessionId: 'sess_exact_route',
             spawnOptions: {

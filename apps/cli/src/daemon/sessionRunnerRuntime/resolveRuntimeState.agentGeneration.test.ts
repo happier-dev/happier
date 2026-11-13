@@ -5,6 +5,7 @@ import { SessionRunnerRuntimeStateV1Schema } from '@happier-dev/protocol';
 
 import { resolveSessionRunnerRuntimeState } from './resolveRuntimeState';
 import type { SessionRunnerEntrypointIdentity } from './types';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const CURRENT_CLI_IDENTITY = {
   status: 'known',
@@ -15,7 +16,7 @@ const CURRENT_CLI_IDENTITY = {
 
 function trackedRunner(): TrackedSession {
   return {
-    happySessionId: 'sess-1',
+    trackingKey: legacyPidSessionTrackingKey(123), happySessionId: 'sess-1',
     pid: 123,
     startedBy: 'daemon',
     processCommand:

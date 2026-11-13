@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { TrackedSession } from '../types';
 import { createOnChildExited } from './onChildExited';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const mocks = vi.hoisted(() => ({
   writeSessionExitReport: vi.fn(async () => '/tmp/session-exit.json'),
@@ -14,7 +15,7 @@ vi.mock('@/session/diagnostics/sessionExitReport', () => ({
 describe('createOnChildExited session exit reports', () => {
   it('records a person-requested SIGKILL as intentional rather than crash recovery', async () => {
     mocks.writeSessionExitReport.mockClear();
-    const tracked: TrackedSession = { pid: 5152, startedBy: 'daemon', happySessionId: 'session-killed',
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(5152), pid: 5152, startedBy: 'daemon', happySessionId: 'session-killed',
       activeTurnId: 'turn-killed', stopRequestedAtMs: 1234, stopRequestedReason: 'user_process_kill' };
     let crashSettlement = 0;
     let markerRetained = false;
@@ -24,9 +25,9 @@ describe('createOnChildExited session exit reports', () => {
       enqueueDaemonTerminalExactTurnEnd: async () => undefined,
       captureMachineSessionTerminal: async () => ({ v: 1 as const, status: 'already_inactive' as const, sessionId: 'session-killed' }),
     } as unknown as ApiMachineClient;
-    const sessions = new Map([[tracked.pid, tracked]]);
-    const onChildExited = createOnChildExited({ pidToTrackedSession: sessions,
-      spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+    const sessions = new Map([[tracked.trackingKey, tracked]]);
+    const onChildExited = createOnChildExited({ trackedSessionsByKey: sessions,
+      spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => apiMachine,
       removeSessionMarkerFn: async () => { markerRemoved = true; },
       beforeUnexpectedExitSettlement: () => { crashSettlement++; },
@@ -45,13 +46,13 @@ describe('createOnChildExited session exit reports', () => {
   it('persists bounded child stderr diagnostics from the observed exit', async () => {
     mocks.writeSessionExitReport.mockClear();
     const pid = 5151;
-    const tracked = { pid, startedBy: 'daemon', happySessionId: 'session-1' };
+    const tracked = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: 'session-1' };
     const apiMachine = { enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => undefined) };
 
     const onChildExited = createOnChildExited({
-      pidToTrackedSession: new Map<number, any>([[pid, tracked]]),
-      spawnResourceCleanupByPid: new Map<number, () => void>(),
-      sessionAttachCleanupByPid: new Map<number, () => Promise<void>>(),
+      trackedSessionsByKey: new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(pid), tracked]]),
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => apiMachine,
       removeSessionMarkerFn: vi.fn(async () => undefined),
     } as any);

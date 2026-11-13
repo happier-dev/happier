@@ -12,6 +12,7 @@ import {
 } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import type { TrackedSession } from '@/daemon/types';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 import type { SpawnSessionOptions } from '@/rpc/handlers/registerSessionHandlers';
 
 import type { SessionRunnerEntrypointIdentity } from '../sessionRunnerRuntime/types';
@@ -47,6 +48,7 @@ const gatewayConnectionId = ProviderConnectionIdSchema.parse('pc_gateway');
 
 function trackedSession(overrides: Partial<TrackedSession> = {}): TrackedSession {
   return {
+    trackingKey: legacyPidSessionTrackingKey(overrides.pid ?? 4242),
     startedBy: 'daemon',
     pid: 4242,
     happySessionId: 'sess-1',
@@ -137,7 +139,7 @@ describe('restartSessionRunnerOnCurrentRuntime', () => {
       tracked,
       currentIdentity: currentIdentity('0.2.11'),
       requestRestart: input => requestPlannedRunnerRestart({ ...input, deferral: { kind: 'none' },
-        restartRequestedPids: new Set(), pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+        restartRequestedSessions: new Set(), trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
         isProcessSafeToSignal: async () => true,
         prepareSignal: signal => prepareSessionRunnerRestartAdmission({ expectedPid: tracked.pid, signal,
           callRpc: async () => ({ status: 'unsupported' }) }),
@@ -159,14 +161,14 @@ describe('restartSessionRunnerOnCurrentRuntime', () => {
 
   it.each(['single', 'bulk', 'startup'] as const)('refuses %s refresh without capture authority and permits an explicit retry', async mode => {
     const tracked = trackedSession();
-    const reservations = new Set<number>();
+    const reservations = new Set<SessionTrackingKey>();
     const signals: number[] = [];
     let available = false;
     const input = {
       trackedSessions: [tracked], currentIdentity: currentIdentity('0.2.11'),
       requestRestart: async input =>
         requestPlannedRunnerRestart({ ...input, deferral: { kind: 'none' },
-          restartRequestedPids: reservations, pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+          restartRequestedSessions: reservations, trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
           isProcessSafeToSignal: async () => true,
           captureRunnerRemainder: async () => available ? { scope: 'subtree', roots: [], ownership: [] } : undefined,
           requestSignal: async request => {
@@ -199,7 +201,7 @@ describe('restartSessionRunnerOnCurrentRuntime', () => {
   });
   it('keeps final shutdown cancellation within the existing public restart response schema', async () => {
     const tracked = trackedSession();
-    const restartRequestedPids = new Set<number>();
+    const restartRequestedSessions = new Set<SessionTrackingKey>();
     let shuttingDown = false;
     let probes = 0;
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
@@ -213,8 +215,8 @@ describe('restartSessionRunnerOnCurrentRuntime', () => {
           tracked: input.tracked,
           canSignal: input.canSignal,
           deferral: { kind: 'none' },
-          restartRequestedPids,
-          pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+          restartRequestedSessions,
+          trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
           isShuttingDown: () => shuttingDown,
           isProcessSafeToSignal: async () => {
             if (++probes === 2) shuttingDown = true;
@@ -231,7 +233,7 @@ describe('restartSessionRunnerOnCurrentRuntime', () => {
       });
       expect(RestartSessionRunnerResultV1Schema.parse(result)).toEqual({ ok: false, status: 'busy', sessionId: 'sess-1' });
       expect(kill).not.toHaveBeenCalled();
-      expect(restartRequestedPids.size).toBe(0);
+      expect(restartRequestedSessions.size).toBe(0);
     } finally {
       kill.mockRestore();
     }

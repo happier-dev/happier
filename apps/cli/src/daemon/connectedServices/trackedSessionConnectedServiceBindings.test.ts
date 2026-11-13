@@ -6,9 +6,11 @@ import {
   hasTrackedConnectedServiceGroupBinding,
   resolveTrackedConnectedServiceBindingsRaw,
 } from './trackedSessionConnectedServiceBindings';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 function trackedSession(overrides: Partial<TrackedSession> = {}): TrackedSession {
   return {
+    trackingKey: legacyPidSessionTrackingKey(123),
     startedBy: 'daemon',
     happySessionId: 'sess_1',
     pid: 123,

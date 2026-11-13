@@ -4,10 +4,13 @@ import { processIdentityMatches } from '@happier-dev/cli-common/processInstance'
 import {
   promoteSessionMarkerPid,
   readExactSessionMarkerOwnership,
-  removeSessionMarkerIfOwned,
-  type SessionMarkerOwnership,
 } from '../sessionRegistry';
 import type { TrackedSession } from '../types';
+import {
+  isCurrentTrackedSession,
+  trackedSessionsForProcess,
+  type TrackedSessionMap,
+} from '@/daemon/sessions/sessionTrackingKey';
 
 function normalizeSessionId(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -22,17 +25,8 @@ export async function promoteTrackedSessionPidCustody(
     fromPid: number;
     toPid: number;
     trackedSession: TrackedSession;
-    pidToTrackedSession: Map<number, TrackedSession>;
-    spawnResourceCleanupByPid: Map<
-      number,
-      () => void | Promise<void>
-    >;
-    sessionAttachCleanupByPid: Map<
-      number,
-      () => Promise<void>
-    >;
+    trackedSessionsByKey: TrackedSessionMap;
     promoteSessionMarkerFn?: typeof promoteSessionMarkerPid;
-    removeSessionMarkerIfOwnedFn?: typeof removeSessionMarkerIfOwned;
     requireExactTargetOwnership?: boolean;
     expectedTargetProcessIdentity?: Readonly<{
       processStartTimeMs: number;
@@ -41,10 +35,6 @@ export async function promoteTrackedSessionPidCustody(
     targetMarkerAlreadyPersisted?: boolean;
     readExactTargetMarkerOwnershipFn?:
       typeof readExactSessionMarkerOwnership;
-    removeSourceMarker?: (
-      ownership: SessionMarkerOwnership,
-      isStillOwned: () => boolean,
-    ) => Promise<void>;
     onPidPromoted?: (input: Readonly<{
       fromPid: number;
       toPid: number;
@@ -56,25 +46,25 @@ export async function promoteTrackedSessionPidCustody(
     fromPid,
     toPid,
     trackedSession: tracked,
-    pidToTrackedSession,
-    spawnResourceCleanupByPid,
-    sessionAttachCleanupByPid,
+    trackedSessionsByKey,
     promoteSessionMarkerFn = promoteSessionMarkerPid,
-    removeSessionMarkerIfOwnedFn = removeSessionMarkerIfOwned,
     requireExactTargetOwnership = false,
     expectedTargetProcessIdentity,
     targetMarkerAlreadyPersisted = false,
     readExactTargetMarkerOwnershipFn =
       readExactSessionMarkerOwnership,
-    removeSourceMarker,
     onPidPromoted,
   } = params;
+  // The Session keeps its key, its one marker and its key-addressed resource
+  // cleanups; only its hosting pid moves.
+  const ownsPid = (pid: number): boolean =>
+    isCurrentTrackedSession(trackedSessionsByKey, tracked) && tracked.pid === pid;
   const inFlightPromotion =
     tracked.sessionMarkerPidPromotion;
   if (inFlightPromotion) {
     return (
       await inFlightPromotion
-      && pidToTrackedSession.get(toPid) === tracked
+      && ownsPid(toPid)
     );
   }
   let resolvePromotion!: (promoted: boolean) => void;
@@ -86,9 +76,7 @@ export async function promoteTrackedSessionPidCustody(
 
   try {
     const targetHasCustody = (): boolean =>
-      pidToTrackedSession.has(toPid)
-      || spawnResourceCleanupByPid.has(toPid)
-      || sessionAttachCleanupByPid.has(toPid);
+      trackedSessionsForProcess(trackedSessionsByKey, toPid).some((other) => other !== tracked);
     if (targetHasCustody()) {
       logger.debug(
         '[DAEMON RUN] Target PID already has custody; retaining source PID custody',
@@ -105,7 +93,7 @@ export async function promoteTrackedSessionPidCustody(
     ) {
       const exactMarker =
         await readExactTargetMarkerOwnershipFn({
-          pid: toPid,
+          trackingKey: tracked.trackingKey,
           ownership: {
             happySessionId:
               normalizeSessionId(tracked.happySessionId)
@@ -136,7 +124,11 @@ export async function promoteTrackedSessionPidCustody(
     } else {
       try {
         markerPromotion =
-          await promoteSessionMarkerFn(fromPid, toPid);
+          await promoteSessionMarkerFn({
+            trackingKey: tracked.trackingKey,
+            fromPid,
+            toPid,
+          });
       } catch (error) {
         logger.debug(
           '[DAEMON RUN] Failed to promote session marker; retaining source PID custody',
@@ -154,14 +146,12 @@ export async function promoteTrackedSessionPidCustody(
     }
 
     const rollbackTargetMarker = async (): Promise<void> => {
-      const ownership = markerPromotion?.targetMarkerOwnership;
-      if (!ownership) return;
+      if (!markerPromotion?.targetMarkerOwnership || !ownsPid(fromPid)) return;
       try {
-        await removeSessionMarkerIfOwnedFn({
-          pid: toPid,
-          ...ownership,
-          isStillOwned: () =>
-            pidToTrackedSession.get(fromPid) === tracked,
+        await promoteSessionMarkerFn({
+          trackingKey: tracked.trackingKey,
+          fromPid: toPid,
+          toPid: fromPid,
         });
       } catch (error) {
         logger.debug(
@@ -172,7 +162,7 @@ export async function promoteTrackedSessionPidCustody(
     };
 
     if (
-      pidToTrackedSession.get(fromPid) !== tracked
+      !ownsPid(fromPid)
       || targetHasCustody()
     ) {
       await rollbackTargetMarker();
@@ -212,7 +202,7 @@ export async function promoteTrackedSessionPidCustody(
     }
 
     if (
-      pidToTrackedSession.get(fromPid) !== tracked
+      !ownsPid(fromPid)
       || targetHasCustody()
     ) {
       await rollbackTargetMarker();
@@ -223,19 +213,6 @@ export async function promoteTrackedSessionPidCustody(
       return false;
     }
 
-    const spawnCleanup =
-      spawnResourceCleanupByPid.get(fromPid);
-    if (spawnCleanup) {
-      spawnResourceCleanupByPid.delete(fromPid);
-      spawnResourceCleanupByPid.set(toPid, spawnCleanup);
-    }
-    const attachCleanup =
-      sessionAttachCleanupByPid.get(fromPid);
-    if (attachCleanup) {
-      sessionAttachCleanupByPid.delete(fromPid);
-      sessionAttachCleanupByPid.set(toPid, attachCleanup);
-    }
-    pidToTrackedSession.delete(fromPid);
     const targetMarkerSessionId =
       normalizeSessionId(targetMarkerOwnership?.happySessionId);
     const currentSessionId =
@@ -251,16 +228,6 @@ export async function promoteTrackedSessionPidCustody(
         : currentSessionId;
     Object.assign(tracked, {
       pid: toPid,
-      ...(
-        tracked.spawnStartupAwaiterPid !== undefined
-        || !targetMarkerSessionId
-        || isPidPlaceholderSessionId(targetMarkerSessionId)
-          ? {
-              spawnStartupAwaiterPid:
-                tracked.spawnStartupAwaiterPid ?? fromPid,
-            }
-          : { spawnStartupAwaiterPid: undefined }
-      ),
       sessionRunnerPid: undefined,
       childProcess: undefined,
       ...(targetMarkerOwnership
@@ -275,39 +242,12 @@ export async function promoteTrackedSessionPidCustody(
           }
         : {}),
     });
-    pidToTrackedSession.set(toPid, tracked);
     onPidPromoted?.({
       fromPid,
       toPid,
       trackedSession: tracked,
     });
 
-    if (
-      markerPromotion.sourceMarkerOwnership
-      && !pidToTrackedSession.has(fromPid)
-    ) {
-      try {
-        const isStillOwned = () =>
-          pidToTrackedSession.get(toPid) === tracked;
-        if (removeSourceMarker) {
-          await removeSourceMarker(
-            markerPromotion.sourceMarkerOwnership,
-            isStillOwned,
-          );
-        } else {
-          await removeSessionMarkerIfOwnedFn({
-            pid: fromPid,
-            ...markerPromotion.sourceMarkerOwnership,
-            isStillOwned,
-          });
-        }
-      } catch (error) {
-        logger.debug(
-          '[DAEMON RUN] Failed to remove superseded source session marker after promotion',
-          error,
-        );
-      }
-    }
     promotionSucceeded = true;
     return true;
   } finally {

@@ -9,6 +9,7 @@ import { readProcessIdentityByPid } from '../processIdentity';
 import { captureExactWindowsTerminalLaunchProcess, readAllWindowsProcessFacts, type ExactWindowsProcessCancellationIdentity } from '../platform/windows/windowsProcessCustody';
 import type { ProcessCensusProcessFact } from '@/processes/census/processFacts';
 import { resolveWindowsHostedIdentity } from '../platform/windows/windowsHostedSessionRuntime';
+import { trackedSessionForSingleSessionProcess, type ReadonlyTrackedSessionMap, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 /**
  * Get the parent PID of a process.
@@ -32,10 +33,10 @@ export async function getParentPid(pid: number): Promise<number | null> {
 }
 
 export function findTrackedSessionByRunnerPid(
-  pidToTrackedSession: ReadonlyMap<number, TrackedSession>,
+  trackedSessionsByKey: ReadonlyTrackedSessionMap,
   runnerPid: number,
 ): TrackedSession | null {
-  for (const tracked of pidToTrackedSession.values()) {
+  for (const tracked of trackedSessionsByKey.values()) {
     if (tracked.sessionRunnerPid === runnerPid) return tracked;
   }
   return null;
@@ -52,7 +53,7 @@ type PendingWindowsTerminalMatch =
     }>;
 
 export async function findPendingWindowsTerminalTrackedSession(params: Readonly<{
-  pidToTrackedSession: ReadonlyMap<number, TrackedSession>;
+  trackedSessionsByKey: ReadonlyTrackedSessionMap;
   webhookPid: number;
   metadata: Metadata;
   readProcessIdentityByPidFn: typeof readProcessIdentityByPid;
@@ -64,11 +65,8 @@ export async function findPendingWindowsTerminalTrackedSession(params: Readonly<
     return { kind: 'none' };
   }
   const pending: TrackedSession[] = [];
-  for (
-    const [trackedPid, tracked]
-    of params.pidToTrackedSession.entries()
-  ) {
-    if (trackedPid === params.webhookPid) continue;
+  for (const tracked of params.trackedSessionsByKey.values()) {
+    if (tracked.pid === params.webhookPid) continue;
     if (tracked.startedBy !== 'daemon') continue;
     if (!tracked.windowsTerminalLaunchCustody) continue;
     pending.push(tracked);
@@ -158,14 +156,17 @@ export async function findPendingWindowsTerminalTrackedSession(params: Readonly<
 export async function resolveOrdinaryDaemonParentCorrelation(params: Readonly<{
   metadata: Metadata;
   pid: number;
-  pidToTrackedSession: ReadonlyMap<number, TrackedSession>;
-  pidToAwaiter: ReadonlyMap<number, unknown>;
+  trackedSessionsByKey: ReadonlyTrackedSessionMap;
+  spawnAwaiterByKey: ReadonlyMap<SessionTrackingKey, unknown>;
   getParentPidFn: (pid: number) => number | null | Promise<number | null>;
 }>) {
   const parentPid = params.metadata.startedBy === 'daemon'
     ? await params.getParentPidFn(params.pid) : null;
-  const tracked = typeof parentPid === 'number' ? params.pidToTrackedSession.get(parentPid) ?? null : null;
-  const hasAwaiter = typeof parentPid === 'number' && params.pidToAwaiter.has(parentPid);
+  // Wrapper correlation: a launcher process starts exactly one runner.
+  const tracked = typeof parentPid === 'number'
+    ? trackedSessionForSingleSessionProcess(params.trackedSessionsByKey, parentPid) ?? null
+    : null;
+  const hasAwaiter = tracked !== null && params.spawnAwaiterByKey.has(tracked.trackingKey);
   const hasChildHandle = typeof parentPid === 'number' && tracked?.childProcess?.pid === parentPid;
   return { parentPid, tracked, hasAwaiter, hasChildHandle,
     eligible: typeof parentPid === 'number' && tracked?.startedBy === 'daemon' && (hasAwaiter || hasChildHandle) };
@@ -174,15 +175,15 @@ export async function resolveOrdinaryDaemonParentCorrelation(params: Readonly<{
 export async function resolveSessionReportTrackedCorrelation(params: Readonly<{
   metadata: Metadata;
   pid: number;
-  pidToTrackedSession: ReadonlyMap<number, TrackedSession>;
-  pidToAwaiter: ReadonlyMap<number, unknown>;
+  trackedSessionsByKey: ReadonlyTrackedSessionMap;
+  spawnAwaiterByKey: ReadonlyMap<SessionTrackingKey, unknown>;
   getParentPidFn?: (pid: number) => number | null | Promise<number | null>;
   readProcessIdentityByPidFn?: typeof readProcessIdentityByPid;
   readAllWindowsProcessFactsFn?: () => Promise<ReadonlyMap<number, ProcessCensusProcessFact>>;
 }>) {
-  const direct = params.pidToTrackedSession.get(params.pid);
+  const direct = trackedSessionForSingleSessionProcess(params.trackedSessionsByKey, params.pid);
   if (direct) return { kind: 'matched' as const, tracked: direct };
-  const runner = findTrackedSessionByRunnerPid(params.pidToTrackedSession, params.pid);
+  const runner = findTrackedSessionByRunnerPid(params.trackedSessionsByKey, params.pid);
   if (runner && (!runner.windowsTerminalLaunchCustody || runner.pid === params.pid)) {
     return { kind: 'matched' as const, tracked: runner };
   }
@@ -191,7 +192,7 @@ export async function resolveSessionReportTrackedCorrelation(params: Readonly<{
   });
   if (!runner && parent.eligible && parent.tracked) return { kind: 'matched' as const, tracked: parent.tracked };
   const windows = await findPendingWindowsTerminalTrackedSession({
-    pidToTrackedSession: params.pidToTrackedSession,
+    trackedSessionsByKey: params.trackedSessionsByKey,
     webhookPid: params.pid, metadata: params.metadata,
     readProcessIdentityByPidFn: params.readProcessIdentityByPidFn ?? readProcessIdentityByPid,
     readAllWindowsProcessFactsFn: params.readAllWindowsProcessFactsFn ?? readAllWindowsProcessFacts,

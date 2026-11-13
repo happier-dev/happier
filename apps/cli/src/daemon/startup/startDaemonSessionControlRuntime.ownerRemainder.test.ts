@@ -14,6 +14,7 @@ import { createStopSession } from '../sessions/stopSession';
 import { waitForTrackedRunnerProcessesExit } from '../sessions/waitForTrackedRunnerProcessesExit';
 import { startDaemonSessionControlRuntime } from './startDaemonSessionControlRuntime';
 import { createDaemonSessionMutationCustody } from '../connectedServices/usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 // Only the private listener and Home HTTP are substituted. Root discovery,
 // requester custody recovery, census, remainder and Stop stay real.
@@ -28,7 +29,7 @@ it('settles a physically exited Stop without recovering unrelated requesters or 
     const home = await mkdtemp(join(tmpdir(), 'happier-remainder-custody-'));
     env.patch({ HAPPIER_HOME_DIR: home });
     reloadConfiguration();
-    const sessions = new Map<number, TrackedSession>();
+    const sessions = new Map<SessionTrackingKey, TrackedSession>();
     const credentials = { token: 'fixture-owner', encryption: null } satisfies StoredCredentials;
     const daemonSessionMutationCustody = createDaemonSessionMutationCustody({ credentials });
     let releaseHome!: () => void;
@@ -48,10 +49,10 @@ it('settles a physically exited Stop without recovering unrelated requesters or 
         daemonSessionMutationCustody,
         connectedServicesMaterializationBaseDir: join(home, 'connected-services'),
         getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-        pidToTrackedSession: sessions, pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(),
-        pidToSpawnWebhookTimeout: new Map(), getApiMachineForSessions: () => null,
-        spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
-        connectedServicesRestartRequestedPids: new Set(),
+        trackedSessionsByKey: sessions, spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(),
+        spawnWebhookTimeoutByKey: new Map(), getApiMachineForSessions: () => null,
+        spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
+        connectedServicesRestartRequestedSessions: new Set(),
         startupTerminalRecovery: { disconnectedTerminalHostCandidates: [], unresolvedTerminalHostSessionIds: [] },
         beforeShutdown: async () => {}, onHappySessionWebhook: async () => {}, requestShutdown: () => {},
         resolveRequesterSessionRuntimeContext: async sessionId => {
@@ -74,13 +75,14 @@ it('settles a physically exited Stop without recovering unrelated requesters or 
     // Exact absent generations are retained lifecycle facts, not running fixtures.
     for (let index = 0; index < 64; index++) {
         const pid = 2147482000 + index;
-        sessions.set(pid, { pid, happySessionId: `unrelated-${index}`, startedBy: 'daemon', processStartTimeMs: 1000 });
+        sessions.set(legacyPidSessionTrackingKey(pid), { trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: `unrelated-${index}`, startedBy: 'daemon', processStartTimeMs: 1000 });
     }
     const pid = 2147482911;
     const sessionId = 'already-exited';
-    sessions.set(pid, { pid, happySessionId: sessionId, startedBy: 'daemon', processStartTimeMs: 1000 });
+    sessions.set(legacyPidSessionTrackingKey(pid), { trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: sessionId, startedBy: 'daemon', processStartTimeMs: 1000 });
     const provisionalPid = 2147482912;
-    sessions.set(provisionalPid, {
+    sessions.set(legacyPidSessionTrackingKey(provisionalPid), {
+        trackingKey: legacyPidSessionTrackingKey(provisionalPid),
         pid: provisionalPid,
         happySessionId: `PID-${provisionalPid}`,
         startedBy: 'daemon',
@@ -95,7 +97,7 @@ it('settles a physically exited Stop without recovering unrelated requesters or 
     const read = runtime.processOwnershipRuntime.readOwners({ freshness: 'fresh' });
     const physicallyExited = async ({ trackedPids }: Readonly<{ trackedPids: readonly number[] }>) =>
         await waitForTrackedRunnerProcessesExit({ runners: trackedPids.map(pid => ({ pid })), timeoutMs: 0, pollIntervalMs: 0 });
-    const stop = createStopSession({ pidToTrackedSession: sessions, ownerRemainder: runtime.ownerRemainder,
+    const stop = createStopSession({ trackedSessionsByKey: sessions, ownerRemainder: runtime.ownerRemainder,
         areTrackedRunnersExited: physicallyExited, waitForTrackedRunnersExit: physicallyExited });
     let stopping: ReturnType<typeof stop> | undefined;
     try {

@@ -74,9 +74,9 @@ describe('startDaemonHeartbeatLoop machine-control readiness publication', () =>
     const { startDaemonHeartbeatLoop } = await import('./heartbeat');
 
     startDaemonHeartbeatLoop({
-      pidToTrackedSession: new Map(),
-      spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey: new Map(),
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => machineClient,
       controlPort: 8765,
       fileState: {

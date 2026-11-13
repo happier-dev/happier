@@ -12,6 +12,7 @@ import { createSessionLiveWorkProducer } from '@/daemon/lifecycle/sessionLiveWor
 import type { TrackedSession } from '@/daemon/types';
 import { projectMachineWorkSummary } from '@/daemon/machines/machineWorkSummary';
 import { createEmptyMachineSetupDesiredV1, type MachineSetupSourceV1 } from '@happier-dev/protocol';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -90,7 +91,7 @@ describe('daemon state publication cost contract', () => {
   it('pushes changed work facts when a second Session leaves the aggregate busy decision unchanged', async () => {
     const target = { serverId: 'home', machineId: 'work-facts', installationId: 'installation' };
     const attribution = { ...target, accountId: 'bob' };
-    let sessions: TrackedSession[] = [{ pid: 1, startedBy: 'daemon', happySessionId: 'first',
+    let sessions: TrackedSession[] = [{ trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon', happySessionId: 'first',
       requesterWorkAttributionV1: attribution }];
     // Only the Session runtime RPC boundary supplies observed work; the Session
     // producer, inventory and API publication binding all remain real.

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { TrackedSession } from '../types';
 import { createSpawnLifecycleCallbacks } from './createSpawnLifecycleCallbacks';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('createSpawnLifecycleCallbacks runtime target registration', () => {
   it('registers connected-service runtime context with the canonical runtime target', () => {
@@ -25,16 +26,16 @@ describe('createSpawnLifecycleCallbacks runtime target registration', () => {
       registerConnectedServiceRuntimeTarget,
       getSpawnResourceCleanupOnExit: () => null,
       onSpawnResourceCleanupArmed: vi.fn(),
-      spawnResourceCleanupByPid: new Map(),
+      spawnResourceCleanupByKey: new Map(),
       getSessionAttachCleanup: () => null,
       setSessionAttachCleanup: vi.fn(),
-      sessionAttachCleanupByPid: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       persistAcceptedSpawnMarker: vi.fn(async () => {}),
     });
 
-    callbacks.registerConnectedServiceSpawnTarget(1234);
+    callbacks.registerConnectedServiceSpawnTarget(1234, legacyPidSessionTrackingKey(1234));
 
-    const tracked: TrackedSession = { pid: 1234, startedBy: 'daemon' };
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(1234), pid: 1234, startedBy: 'daemon' };
     if (!callbacks.onTrackedSessionRegistered) throw new Error('Runtime target registration callback is missing');
     callbacks.onTrackedSessionRegistered(tracked);
 
@@ -42,6 +43,7 @@ describe('createSpawnLifecycleCallbacks runtime target registration', () => {
       pid: 1234,
       agentId: 'opencode',
       sessionId: 'session-spawn',
+      spawnTrackingKey: 'pid-1234',
       sessionDirectory: '/tmp/project',
       materializationKey: 'csm_spawn',
       connectedServiceMaterializationIdentityV1: {
@@ -70,10 +72,10 @@ describe('createSpawnLifecycleCallbacks runtime target registration', () => {
       await activation;
       return null;
     });
-    const spawnResourceCleanupByPid = new Map<number, () => void | Promise<void>>();
+    const spawnResourceCleanupByKey = new Map();
     const onSpawnResourceCleanupArmed = vi.fn();
     const tracked: TrackedSession = {
-      pid: 1235,
+      trackingKey: legacyPidSessionTrackingKey(1235), pid: 1235,
       startedBy: 'daemon',
     };
     const callbacks = createSpawnLifecycleCallbacks({
@@ -89,21 +91,21 @@ describe('createSpawnLifecycleCallbacks runtime target registration', () => {
       registerConnectedServiceRuntimeTarget,
       getSpawnResourceCleanupOnExit: () => cleanupOnExit,
       onSpawnResourceCleanupArmed,
-      spawnResourceCleanupByPid,
+      spawnResourceCleanupByKey,
       getSessionAttachCleanup: () => null,
       setSessionAttachCleanup: vi.fn(),
-      sessionAttachCleanupByPid: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       persistAcceptedSpawnMarker: vi.fn(async () => {}),
     });
 
     await callbacks.persistAcceptedSpawnMarker(tracked);
-    callbacks.registerConnectedServiceSpawnTarget(tracked.pid);
-    callbacks.registerSpawnResourceCleanupForPid(tracked.pid);
+    callbacks.registerConnectedServiceSpawnTarget(tracked.pid, tracked.trackingKey);
+    callbacks.registerSpawnResourceCleanupForSession(tracked.trackingKey);
 
     expect(registerConnectedServiceRefreshTarget).not.toHaveBeenCalled();
     expect(registerConnectedServiceQuotaTarget).not.toHaveBeenCalled();
     expect(registerConnectedServiceRuntimeTarget).not.toHaveBeenCalled();
-    expect(spawnResourceCleanupByPid.size).toBe(0);
+    expect(spawnResourceCleanupByKey.size).toBe(0);
 
     const readiness = tracked.activateConnectedAccountSessionBindingOnCanonicalSession;
     expect(readiness).toEqual(expect.any(Function));
@@ -127,7 +129,7 @@ describe('createSpawnLifecycleCallbacks runtime target registration', () => {
       pid: tracked.pid,
       sessionId: 'session-from-server',
     }));
-    expect(spawnResourceCleanupByPid.get(tracked.pid)).toBe(cleanupOnExit);
+    expect(spawnResourceCleanupByKey.get(tracked.trackingKey)).toBe(cleanupOnExit);
     expect(onSpawnResourceCleanupArmed).toHaveBeenCalledOnce();
     await expect(readiness?.('session-conflict')).resolves.toMatchObject({
       type: 'error',
@@ -139,10 +141,10 @@ describe('createSpawnLifecycleCallbacks runtime target registration', () => {
     expect(onSpawnResourceCleanupArmed).toHaveBeenCalledOnce();
   });
 
-  it('retires one exact PID-owned upstream authority before process disposition and retains failures', async () => {
+  it('retires one exact Session-owned upstream authority before process disposition and retains failures', async () => {
     const cleanup = vi.fn(async () => undefined);
-    const spawnResourceCleanupByPid =
-      new Map<number, () => void | Promise<void>>([[1236, cleanup]]);
+    const spawnResourceCleanupByKey =
+      new Map<SessionTrackingKey, () => void | Promise<void>>([[legacyPidSessionTrackingKey(1236), cleanup]]);
     const callbacks = createSpawnLifecycleCallbacks({
       connectedServicesBindingsRaw: { v: 1, bindingsByServiceId: {} },
       catalogAgentId: 'pi',
@@ -150,30 +152,30 @@ describe('createSpawnLifecycleCallbacks runtime target registration', () => {
       hasConnectedServiceAuth: () => false,
       getSpawnResourceCleanupOnExit: () => null,
       onSpawnResourceCleanupArmed: vi.fn(),
-      spawnResourceCleanupByPid,
+      spawnResourceCleanupByKey,
       getSessionAttachCleanup: () => null,
       setSessionAttachCleanup: vi.fn(),
-      sessionAttachCleanupByPid: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       persistAcceptedSpawnMarker: vi.fn(async () => {}),
     });
 
     await expect(
-      callbacks.cleanupSpawnResourcesForPid?.(1236),
+      callbacks.cleanupSpawnResourcesForSession?.(legacyPidSessionTrackingKey(1236)),
     ).resolves.toBe(true);
     await expect(
-      callbacks.cleanupSpawnResourcesForPid?.(1236),
+      callbacks.cleanupSpawnResourcesForSession?.(legacyPidSessionTrackingKey(1236)),
     ).resolves.toBe(true);
     expect(cleanup).toHaveBeenCalledOnce();
-    expect(spawnResourceCleanupByPid.has(1236)).toBe(false);
+    expect(spawnResourceCleanupByKey.has(legacyPidSessionTrackingKey(1236))).toBe(false);
 
     const failingCleanup = vi.fn(async () => {
       throw new Error('managed_provider_stop_unavailable');
     });
-    spawnResourceCleanupByPid.set(1237, failingCleanup);
+    spawnResourceCleanupByKey.set(legacyPidSessionTrackingKey(1237), failingCleanup);
     await expect(
-      callbacks.cleanupSpawnResourcesForPid?.(1237),
+      callbacks.cleanupSpawnResourcesForSession?.(legacyPidSessionTrackingKey(1237)),
     ).resolves.toBe(false);
-    expect(spawnResourceCleanupByPid.get(1237)).toBe(
+    expect(spawnResourceCleanupByKey.get(legacyPidSessionTrackingKey(1237))).toBe(
       failingCleanup,
     );
   });

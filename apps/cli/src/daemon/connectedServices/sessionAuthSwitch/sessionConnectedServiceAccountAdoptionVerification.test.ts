@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { createSessionConnectedServiceAccountAdoptionVerifier } from './sessionConnectedServiceAccountAdoptionVerification';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('createSessionConnectedServiceAccountAdoptionVerifier', () => {
   it('fails closed when a provider has no active-account verifier', async () => {
@@ -10,7 +11,7 @@ describe('createSessionConnectedServiceAccountAdoptionVerifier', () => {
 
     await expect(verify({
       tracked: {
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
         happySessionId: 'sess_1',
         pid: 123,
         spawnOptions: {

@@ -135,20 +135,20 @@ it.each(['direct', 'wrapped'] as const)('prepares grantee host input through rea
   h.tracked.processCommandHash = h.runner.processCommandHash;
   if (mode === 'wrapped') {
     // The launcher keeps exit custody; only the reported runner receives daemon authority.
-    h.pidToTrackedSession.clear();
+    h.trackedSessionsByKey.clear();
     h.tracked.pid = 999_123_455;
     h.tracked.processStartTimeMs = 0;
     h.tracked.processCommandHash = hashProcessCommand('fixture-wrapper');
     h.tracked.runnerProcessIdentity = { ...h.runner, processCommand: command };
-    h.pidToTrackedSession.set(h.tracked.pid, h.tracked);
+    h.trackedSessionsByKey.set(h.tracked.trackingKey, h.tracked);
   }
   const metadata = createTestMetadata({ hostPid: process.pid, hostProcessStartTimeMs: h.runner.processStartTimeMs,
     path: h.cwd, machineId: 'machine', startedBy: 'daemon', happyHomeDir: h.f.directory });
   const path = await createAgentRuntimeDaemonServiceAuthorityPath({ happyHomeDir: h.f.directory,
     publicReleaseRing: configuration.publicReleaseRing });
   h.tracked.agentRuntimeDaemonServiceAuthorityFilePath = path;
-  h.pidToAwaiter.set(h.tracked.pid, () => {});
-  await writeSessionMarker({ pid: process.pid, happySessionId: h.sessionId, startedBy: 'daemon', cwd: h.cwd,
+  h.spawnAwaiterByKey.set(h.tracked.trackingKey, () => {});
+  await writeSessionMarker({ trackingKey: h.tracked.trackingKey, pid: process.pid, happySessionId: h.sessionId, startedBy: 'daemon', cwd: h.cwd,
     processStartTimeMs: h.runner.processStartTimeMs, processCommandHash: h.runner.processCommandHash, processCommand: command,
     agentRuntimeDaemonServiceAuthorityFilePath: path });
   // The real readiness handler publishes authority before acknowledging the runner.
@@ -307,13 +307,13 @@ it.each(['before readiness', 'after readiness', 'replacement pid', 'replacement 
         return error instanceof Error ? { name: error.name, code: Reflect.get(error, 'code'), message: error.message } : null;
       });
     const pid = 999_123_456;
-    h.pidToTrackedSession.clear();
+    h.trackedSessionsByKey.clear();
     h.tracked.pid = pid;
     h.tracked.sessionRunnerPid = scenario === 'wrapped runner' ? pid + 1 : pid;
     h.tracked.runnerProcessIdentity = { pid: h.tracked.sessionRunnerPid,
       processStartTimeMs: scenario === 'wrapped runner' ? 2 : 1 };
     h.tracked.startedBy = 'terminal';
-    h.pidToTrackedSession.set(pid, h.tracked);
+    h.trackedSessionsByKey.set(h.tracked.trackingKey, h.tracked);
     if (scenario === 'after readiness') h.tracked.happySessionMetadataFromLocalWebhook = createTestMetadata({ machineId: 'machine' });
     const metadata = { machineId: 'machine', hostPid: scenario === 'replacement pid' ? pid + 2 : h.tracked.sessionRunnerPid,
       hostProcessStartTimeMs: scenario === 'replacement birth' ? 3 : scenario === 'wrapped runner' ? 2 : 1,
@@ -330,7 +330,7 @@ it.each(['before readiness', 'after readiness', 'replacement pid', 'replacement 
     await h.daemon.onChildExited(pid, { reason: 'process-exited', code: 1, signal: null });
     if (scenario === 'replacement pid' || scenario === 'replacement birth' || scenario === 'retired Account') {
       expect(patch).not.toHaveBeenCalled();
-      if (scenario === 'retired Account') expect(h.pidToTrackedSession.get(pid)).toBe(h.tracked);
+      if (scenario === 'retired Account') expect(h.trackedSessionsByKey.get(h.tracked.trackingKey)).toBe(h.tracked);
     } else {
       expect(patch.mock.calls.length, JSON.stringify(settlementFailures())).toBe(1);
       const request = SessionMetadataTuplePatchV1Schema.parse(patch.mock.calls[0]?.[1]);

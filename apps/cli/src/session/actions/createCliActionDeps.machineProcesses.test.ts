@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 import axios, { AxiosHeaders } from 'axios';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
@@ -322,7 +323,7 @@ describe('CLI machine Processes Action transport', () => {
         const kept = await executor.execute('machines.guard.idleStop.keepRunning', { machineId: 'selected', sessionId: 'no-warning' }, context);
         expect(kept).toEqual({ ok: true, result: { status: 'not_pending' } });
         assertActionOutputContract('machines.guard.idleStop.keepRunning', kept.ok ? kept.result : null);
-        observedSessions = [{ pid: 42, startedBy: 'daemon', happySessionId: 'retired-session' }];
+        observedSessions = [{ trackingKey: legacyPidSessionTrackingKey(42), pid: 42, startedBy: 'daemon', happySessionId: 'retired-session' }];
         sessionActivity.notifyChanged();
         const retiredRead = inventory.read();
         await retiredRequest.promise;

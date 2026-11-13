@@ -5,7 +5,7 @@ import { expect, it, onTestFinished, vi } from 'vitest';
 import { computePromptBundleDigestV1 } from '@happier-dev/protocol/prompts/library/promptLibraryDigests';
 import { createSkillStore, EnsureSkillSessionDirResultSchema } from '@/prompts/skills/store/skillStore';
 import { createDaemonControlApp } from './controlServer';
-import { readSessionMarkerForPid } from './sessionRegistry';
+import { listSessionMarkers, readSessionMarker } from './sessionRegistry';
 import { configuration } from '@/configuration';
 import type { TrackedSession } from './types';
 import { createOnChildExited } from './sessions/onChildExited';
@@ -26,6 +26,10 @@ import { ensureSkillSessionDirHttp } from './controlClient';
 import { SkillSessionDirControlRequestSchema } from '@/prompts/skills/store/controlRoutes';
 import { writeDaemonState } from '@/persistence';
 import * as processCensus from '@/processes/census/processCensus';
+import { legacyPidSessionTrackingKey, trackedSessionForSingleSessionProcess, trackedSessionsForProcess, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+
+// Production registration mints Session keys; these tests address the Session by its host pid.
+const markersForProcess = async (pid: number) => (await listSessionMarkers()).filter(marker => marker.pid === pid);
 
 const filesystemBoundary = vi.hoisted(() => ({
     observeWrite: undefined as ((file: Parameters<typeof import('node:fs/promises').writeFile>[0],
@@ -86,11 +90,11 @@ it('tracks foreground identity before report and removes its Session and Runs th
     const child = spawnInlineNodeTestProcess('setInterval(() => {}, 1000)');
     const childExit = once(child, 'exit');
     const pid = child.pid!;
-    const sessions = new Map<number, TrackedSession>();
+    const sessions = new Map<SessionTrackingKey, TrackedSession>();
     const skillStore = createSkillStore({ happyHomeDir, readLibraryDigests: async () => [] });
     const metadata = createTestMetadata({ path: happyHomeDir, happyHomeDir, hostPid: pid, startedBy: 'terminal' });
-    const ordinaryReport = createOnHappySessionWebhook({ pidToTrackedSession: sessions, pidToAwaiter: new Map() });
-    const app = createDaemonControlApp({ getChildren: () => [...sessions.values()], pidToTrackedSession: sessions,
+    const ordinaryReport = createOnHappySessionWebhook({ trackedSessionsByKey: sessions, spawnAwaiterByKey: new Map() });
+    const app = createDaemonControlApp({ getChildren: () => [...sessions.values()], trackedSessionsByKey: sessions,
         machineId: 'machine-one', stopSession: async () => ({ status: 'not_found' as const }),
         spawnSession: async () => ({ type: 'success' as const, sessionId: 'unused' }), requestShutdown: () => {},
         onHappySessionWebhook: ordinaryReport, controlToken: 'secret', skillStore });
@@ -101,31 +105,31 @@ it('tracks foreground identity before report and removes its Session and Runs th
                 ownerKey: 'foreground-session', items: [], nativeDisables: [], startupIdentity: { pid, metadata },
             } });
         expect(response.statusCode).toBe(200);
-        const tracked = sessions.get(pid)!;
+        const tracked = trackedSessionForSingleSessionProcess(sessions, pid)!;
         expect(tracked.happySessionId).toBe('foreground-session');
-        expect((await readSessionMarkerForPid(pid))?.happySessionId).toBe('foreground-session');
+        expect((await readSessionMarker(tracked.trackingKey))?.happySessionId).toBe('foreground-session');
         await ordinaryReport('foreground-session', metadata);
         await tracked.sessionMarkerPersistence;
-        expect(sessions.get(pid)).toBe(tracked);
+        expect(trackedSessionForSingleSessionProcess(sessions, pid)).toBe(tracked);
         const wrongResolverIdentity = await app.inject({ method: 'POST', url: '/skills/session-dir',
             headers: { 'x-happier-daemon-token': 'secret' }, payload: {
                 ownerKey: 'foreground-session/runs/run-one', items: [], nativeDisables: [],
                 startupIdentity: { pid: process.pid, metadata },
             } });
         expect(wrongResolverIdentity.statusCode).toBe(503);
-        expect(sessions.has(process.pid)).toBe(false);
+        expect(trackedSessionsForProcess(sessions, process.pid)).toEqual([]);
         const run = await app.inject({ method: 'POST', url: '/skills/session-dir',
             headers: { 'x-happier-daemon-token': 'secret' }, payload: {
                 ownerKey: 'foreground-session/runs/run-one', items: [], nativeDisables: [], startupIdentity: { pid, metadata },
             } });
         expect(run.statusCode).toBe(200);
-        expect(sessions.has(process.pid)).toBe(false);
-        const exited = createOnChildExited({ pidToTrackedSession: sessions, spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null, skillStore });
+        expect(trackedSessionsForProcess(sessions, process.pid)).toEqual([]);
+        const exited = createOnChildExited({ trackedSessionsByKey: sessions, spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null, skillStore });
         vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
         restoreInterval = () => { vi.useRealTimers(); };
-        startDaemonHeartbeatLoop({ pidToTrackedSession: sessions, spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null, onChildExited: exited,
+        startDaemonHeartbeatLoop({ trackedSessionsByKey: sessions, spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null, onChildExited: exited,
             controlPort: 8765, fileState: { pid: process.pid, httpPort: 8765, startedAt: Date.now(),
                 startedWithCliVersion: configuration.currentCliVersion, daemonLogPath: join(happyHomeDir, 'daemon.log') },
             currentCliVersion: configuration.currentCliVersion, requestShutdown: () => {}, writeDaemonStateForCurrentOwner: () => true });
@@ -146,9 +150,9 @@ it('tracks foreground identity before report and removes its Session and Runs th
 it('releases a fresh startup folder on failure before the readiness webhook', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-impl-p3b-store-startup-'));
     const pid = 424242;
-    const tracked: TrackedSession = { pid, startedBy: 'daemon', happySessionId: `PID-${pid}`,
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: `PID-${pid}`,
         spawnOptions: { directory: happyHomeDir } };
-    const sessions = new Map([[pid, tracked]]);
+    const sessions = new Map([[tracked.trackingKey, tracked]]);
     const skillStore = createSkillStore({ happyHomeDir, readLibraryDigests: async () => [] });
     let ready = false;
     const app = createDaemonControlApp({ getChildren: () => [...sessions.values()], machineId: 'machine-one',
@@ -164,8 +168,8 @@ it('releases a fresh startup folder on failure before the readiness webhook', as
         expect(result.statusCode).toBe(200);
         expect(tracked.happySessionId).toBe('fresh-session');
         expect(ready).toBe(false);
-        const exited = createOnChildExited({ pidToTrackedSession: sessions, spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null,
+        const exited = createOnChildExited({ trackedSessionsByKey: sessions, spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null,
             removeSessionMarkerFn: async () => {}, skillStore });
         await exited(pid, { reason: 'startup-failed', code: 1, signal: null });
         await expect(lstat(join(happyHomeDir, 'skills', 'sessions', 'fresh-session'))).rejects.toMatchObject({ code: 'ENOENT' });
@@ -199,11 +203,11 @@ it.each(['registered', 'untracked index parent'] as const)('does not recreate an
     const child = spawnInlineNodeTestProcess('setInterval(() => {}, 1000)');
     const childExit = once(child, 'exit');
     const pid = child.pid!;
-    const sessions = new Map<number, TrackedSession>();
+    const sessions = new Map<SessionTrackingKey, TrackedSession>();
     const skillStore = createSkillStore({ happyHomeDir, readLibraryDigests: async () => [] });
     const metadata = createTestMetadata({ path: happyHomeDir, happyHomeDir, hostPid: pid, startedBy: 'terminal' });
-    const ordinaryReport = createOnHappySessionWebhook({ pidToTrackedSession: sessions, pidToAwaiter: new Map() });
-    const app = createDaemonControlApp({ getChildren: () => [...sessions.values()], pidToTrackedSession: sessions,
+    const ordinaryReport = createOnHappySessionWebhook({ trackedSessionsByKey: sessions, spawnAwaiterByKey: new Map() });
+    const app = createDaemonControlApp({ getChildren: () => [...sessions.values()], trackedSessionsByKey: sessions,
         machineId: 'machine-one', stopSession: async () => ({ status: 'not_found' as const }),
         spawnSession: async () => ({ type: 'success' as const, sessionId: 'unused' }), requestShutdown: () => {},
         onHappySessionWebhook: ordinaryReport, controlToken: 'secret', skillStore });
@@ -246,7 +250,7 @@ it.each(['registered', 'untracked index parent'] as const)('does not recreate an
             if (body.ownerKey === 'late-parent/runs/live-run') deliveredRunIdentity = body.startupIdentity;
             if (body.ownerKey === 'late-parent/runs/pending-run') {
                 pendingRequest = body;
-                parentWasLiveWhenIssued = sessions.has(pid) && child.exitCode === null && child.signalCode === null;
+                parentWasLiveWhenIssued = trackedSessionsForProcess(sessions, pid).length > 0 && child.exitCode === null && child.signalCode === null;
                 observeIssued();
                 // Hold an actual HTTP request already emitted by the resolver,
                 // not a new synthetic request manufactured after parent exit.
@@ -268,7 +272,7 @@ it.each(['registered', 'untracked index parent'] as const)('does not recreate an
             ownerKey: 'late-parent/runs/live-run', agentId: 'test', machineId: 'machine-one', directory: happyHomeDir, home: happyHomeDir,
             credentials: { token: 'token', encryption: null }, sessionMetadata: metadata, agentHasActionChannel: true,
             contributes: { catalogEntriesById: { test: { skills: { delivery: 'session_dir', nativeDisable: 'supported', liveReload: 'supported' } } } },
-            isCurrent: () => child.exitCode === null && child.signalCode === null && sessions.get(pid)?.reportMarkerCustody?.retiring !== true,
+            isCurrent: () => child.exitCode === null && child.signalCode === null && trackedSessionForSingleSessionProcess(sessions, pid)?.reportMarkerCustody?.retiring !== true,
             accountSnapshot: { source: 'network', settings: accountSettingsParse({}), settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
                 promptLibraryCatalog: { status: 'ready', rows: [{ revision: 1, record: { key: 'skill-rules', value: { v: 1, rules: [
                     { id: 'everywhere', skillId: 'library', target: { t: 'allMachines' }, enabled: true, createdAt: 1, updatedAt: 1 },
@@ -287,20 +291,20 @@ it.each(['registered', 'untracked index parent'] as const)('does not recreate an
         expect(await readFile(join(live.delivery!.skillsRoot, 'guide', 'references', 'note.md'), 'utf8')).toBe('Run supporting file');
         expect(deliveredRunIdentity?.pid).toBe(pid);
         expect(deliveredRunIdentity?.metadata.path).toBe(metadata.path);
-        const tracked = sessions.get(pid)!;
+        const tracked = trackedSessionForSingleSessionProcess(sessions, pid)!;
         expect(tracked).toBeDefined();
         expect(tracked.happySessionId).toBe('late-parent');
         await ordinaryReport('late-parent', metadata);
         await tracked.sessionMarkerPersistence;
-        expect(sessions.get(pid)).toBe(tracked);
+        expect(trackedSessionForSingleSessionProcess(sessions, pid)).toBe(tracked);
         pending = resolveRunnerSkills({ ...input, ownerKey: 'late-parent/runs/pending-run' }, transports);
         await issued;
         expect(parentWasLiveWhenIssued).toBe(true);
-        const exited = createOnChildExited({ pidToTrackedSession: sessions,
+        const exited = createOnChildExited({ trackedSessionsByKey: sessions,
             // OS resource teardown is an external boundary. Keep retirement
             // in progress while the previously emitted request reaches HTTP.
-            spawnResourceCleanupByPid: new Map([[pid, async () => { observeCleanup(); await cleanupGate; }]]),
-            sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null, skillStore });
+            spawnResourceCleanupByKey: new Map([[tracked.trackingKey, async () => { observeCleanup(); await cleanupGate; }]]),
+            sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null, skillStore });
         child.kill(); await childExit;
         retirement = exited(pid, { reason: 'process-missing', code: null, signal: null });
         await cleanupStarted;
@@ -313,7 +317,7 @@ it.each(['registered', 'untracked index parent'] as const)('does not recreate an
         expect(pendingResponseStatus).toBe(503);
         await expect(lstat(join(parentFolder, 'runs', 'pending-run'))).rejects.toMatchObject({ code: 'ENOENT' });
         releaseCleanup(); await retirement;
-        expect(sessions.has(pid)).toBe(false);
+        expect(trackedSessionsForProcess(sessions, pid)).toEqual([]);
         await expect(lstat(parentFolder)).rejects.toMatchObject({ code: 'ENOENT' });
         // Repeat the real producer's exact payload after retirement removes
         // the tracker, not a differently shaped hand-built request.
@@ -346,26 +350,26 @@ it('does not register a dead native-materialization parent or overwrite its reta
     const child = spawnInlineNodeTestProcess('setInterval(() => {}, 1000)');
     const childExit = once(child, 'exit');
     const pid = child.pid!;
-    const sessions = new Map<number, TrackedSession>();
+    const sessions = new Map<SessionTrackingKey, TrackedSession>();
     const metadata = createTestMetadata({ path: happyHomeDir, happyHomeDir, hostPid: pid, startedBy: 'terminal' });
     try {
-        const live = await registerExternalSessionIdentity({ pidToTrackedSession: sessions, pid, sessionId: 'index-parent', metadata });
+        const live = await registerExternalSessionIdentity({ trackedSessionsByKey: sessions, pid, sessionId: 'index-parent', metadata });
         expect(live).not.toBeNull();
-        const marker = await readSessionMarkerForPid(pid);
+        const marker = await readSessionMarker(live!.trackingKey);
         expect(marker?.happySessionId).toBe('index-parent');
         expect(marker?.processStartTimeMs).toBeDefined();
-        expect(await registerExternalSessionIdentity({ pidToTrackedSession: sessions, pid, sessionId: 'index-parent',
+        expect(await registerExternalSessionIdentity({ trackedSessionsByKey: sessions, pid, sessionId: 'index-parent',
             metadata: { ...metadata, hostProcessStartTimeMs: marker!.processStartTimeMs! + 60_000 } })).toBeNull();
-        expect(await readSessionMarkerForPid(pid)).toEqual(marker);
+        expect(await readSessionMarker(live!.trackingKey)).toEqual(marker);
         child.kill(); await childExit;
-        const dead = await registerExternalSessionIdentity({ pidToTrackedSession: sessions, pid, sessionId: 'index-parent', metadata });
+        const dead = await registerExternalSessionIdentity({ trackedSessionsByKey: sessions, pid, sessionId: 'index-parent', metadata });
         expect(dead).toBeNull();
-        expect(sessions.get(pid)).toBe(live);
-        expect(await readSessionMarkerForPid(pid)).toEqual(marker);
-        const untracked = new Map<number, TrackedSession>();
-        expect(await registerExternalSessionIdentity({ pidToTrackedSession: untracked, pid, sessionId: 'index-parent', metadata })).toBeNull();
+        expect(trackedSessionForSingleSessionProcess(sessions, pid)).toBe(live);
+        expect(await readSessionMarker(live!.trackingKey)).toEqual(marker);
+        const untracked = new Map<SessionTrackingKey, TrackedSession>();
+        expect(await registerExternalSessionIdentity({ trackedSessionsByKey: untracked, pid, sessionId: 'index-parent', metadata })).toBeNull();
         expect(untracked.size).toBe(0);
-        expect(await readSessionMarkerForPid(pid)).toEqual(marker);
+        expect(await readSessionMarker(live!.trackingKey)).toEqual(marker);
     } finally {
         if (child.exitCode === null && child.signalCode === null) { child.kill(); await childExit; }
         Object.defineProperty(configuration, 'happyHomeDir', homeDescriptor);
@@ -383,7 +387,7 @@ it('keeps native registration inside exit custody while the OS observation is pe
     const child = spawnInlineNodeTestProcess('setInterval(() => {}, 1000)');
     const childExit = once(child, 'exit');
     const pid = child.pid!;
-    const sessions = new Map<number, TrackedSession>();
+    const sessions = new Map<SessionTrackingKey, TrackedSession>();
     const exitReportPath = join(happyHomeDir, 'logs', 'session-exit', `session-pending-parent-pid-${pid}.json`);
     let observeExitReportWrite!: (completion: Promise<void>) => void;
     const exitReportWrite = new Promise<{ completion: Promise<void> }>(resolve => {
@@ -410,22 +414,22 @@ it('keeps native registration inside exit custody while the OS observation is pe
             return snapshot;
         });
         restoreCensusBoundary = () => { boundary.mockRestore(); };
-        registration = registerExternalSessionIdentity({ pidToTrackedSession: sessions, pid, sessionId: 'pending-parent',
+        registration = registerExternalSessionIdentity({ trackedSessionsByKey: sessions, pid, sessionId: 'pending-parent',
             metadata: createTestMetadata({ path: happyHomeDir, happyHomeDir, hostPid: pid, startedBy: 'terminal' }) });
         await sampled;
         child.kill(); await childExit;
-        const exited = createOnChildExited({ pidToTrackedSession: sessions, spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null });
+        const exited = createOnChildExited({ trackedSessionsByKey: sessions, spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null });
         retirement = exited(pid, { reason: 'process-missing', code: null, signal: null });
         releaseSample();
         expect(await registration).toBeNull();
         await retirement;
         expect(sessions.size).toBe(0);
-        expect(await readSessionMarkerForPid(pid)).toBeNull();
+        expect(await markersForProcess(pid)).toEqual([]);
     } finally {
         releaseSample(); await registration?.catch(() => undefined); await retirement?.catch(() => undefined);
         try {
-            if (retirement && !sessions.has(pid)) await (await exitReportWrite).completion;
+            if (retirement && trackedSessionsForProcess(sessions, pid).length === 0) await (await exitReportWrite).completion;
         } finally {
             filesystemBoundary.observeWrite = undefined;
             restoreCensusBoundary();

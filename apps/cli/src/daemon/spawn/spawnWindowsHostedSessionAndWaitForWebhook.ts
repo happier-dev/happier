@@ -41,6 +41,7 @@ import {
 import {
     resolveSessionReportRetryPolicy,
 } from './sessionWebhookTimeoutPolicy';
+import { mintSessionTrackingKey, trackSession, type SessionTrackingKey, type TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonly<{
     windowsLaunchMode: 'windows_terminal' | 'console';
@@ -62,12 +63,12 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
     runnerAgentInvocationContext?: RunnerAgentInvocationContext | null;
     processEnv: NodeJS.ProcessEnv;
     happyHomeDir: string;
-    pidToTrackedSession: Map<number, TrackedSession>;
-    pidToAwaiter: Map<number, (session: TrackedSession) => void>;
-    pidToSpawnResultResolver: Map<number, (result: SpawnSessionResult) => void>;
-    pidToSpawnWebhookTimeout: Map<number, NodeJS.Timeout>;
+    trackedSessionsByKey: TrackedSessionMap;
+    spawnAwaiterByKey: Map<SessionTrackingKey, (session: TrackedSession) => void>;
+    spawnResultResolverByKey: Map<SessionTrackingKey, (result: SpawnSessionResult) => void>;
+    spawnWebhookTimeoutByKey: Map<SessionTrackingKey, NodeJS.Timeout>;
     takeoverAdmission?: PersistedTakeoverAdmissionWaitRegistration;
-    resolveCanonicalTrackedSessionId: (pid: number) => string;
+    resolveCanonicalTrackedSessionId: (trackingKey: SessionTrackingKey) => string;
     onChildExited: (pid: number, exit: ChildExit) => void | Promise<void>;
     spawnLifecycleCallbacks: SpawnLifecycleCallbacks;
     cleanupSpawnResources: () => void | Promise<void>;
@@ -104,7 +105,9 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
         const acceptedSpawnMarkerGate = new Promise<boolean>((resolve) => {
             resolveAcceptedSpawnMarker = resolve;
         });
+        const trackingKey = mintSessionTrackingKey();
         const trackedSession: TrackedSession = {
+            trackingKey,
             startedBy: 'daemon',
             happySessionId:
                 params.normalizedExistingSessionId
@@ -185,11 +188,14 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
                     try {
                         await params.spawnLifecycleCallbacks
                             .removeAcceptedSpawnMarkerIfOwned({
-                                ...acceptedTargetMarkerOwnership,
+                                trackingKey: trackedSession.trackingKey,
+                                happySessionId: acceptedTargetMarkerOwnership.happySessionId,
+                                processStartTimeMs: acceptedTargetMarkerOwnership.processStartTimeMs,
+                                processCommandHash: acceptedTargetMarkerOwnership.processCommandHash,
                                 isStillOwned: () =>
                                     [
                                         ...params
-                                            .pidToTrackedSession
+                                            .trackedSessionsByKey
                                             .values(),
                                     ].includes(
                                         trackedSession,
@@ -202,7 +208,7 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
                 const trackedCleanup =
                     await completeStartupCancellationCleanup({
                     trackedSession,
-                    pidToTrackedSession: params.pidToTrackedSession,
+                    trackedSessionsByKey: params.trackedSessionsByKey,
                     onChildExited: params.onChildExited,
                 });
                 if (trackedCleanup.status !== 'stopped') {
@@ -223,10 +229,10 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
         };
         trackedSession.cancelStartupLaunchBeforeAck =
             cancelStartupLaunch;
-        params.pidToTrackedSession.set(waitParams.pid, trackedSession);
+        trackSession(params.trackedSessionsByKey, trackedSession);
         params.spawnLifecycleCallbacks.onTrackedSessionRegistered?.(trackedSession);
-        params.spawnLifecycleCallbacks.registerSpawnResourceCleanupForPid(trackedSession.pid);
-        params.spawnLifecycleCallbacks.consumeSessionAttachCleanupForPid(trackedSession.pid);
+        params.spawnLifecycleCallbacks.registerSpawnResourceCleanupForSession(trackedSession.trackingKey);
+        params.spawnLifecycleCallbacks.consumeSessionAttachCleanupForSession(trackedSession.trackingKey);
         let acceptedSpawnMarkerPromise: Promise<void>;
         let settleUnstartedWindowsTerminalMarker:
             (() => void) | null = null;
@@ -315,30 +321,32 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
         const spawnResultPromise =
             waitParams.windowsTerminalLaunchCustody
                 ? waitForSessionWebhook({
+                    trackingKey,
                     pid: waitParams.pid,
-                    pidToAwaiter: params.pidToAwaiter,
+                    spawnAwaiterByKey: params.spawnAwaiterByKey,
                     takeoverAdmission: params.takeoverAdmission,
-                    pidToSpawnResultResolver:
-                        params.pidToSpawnResultResolver,
-                    pidToSpawnWebhookTimeout:
-                        params.pidToSpawnWebhookTimeout,
-                    pidToTrackedSession:
-                        params.pidToTrackedSession,
+                    spawnResultResolverByKey:
+                        params.spawnResultResolverByKey,
+                    spawnWebhookTimeoutByKey:
+                        params.spawnWebhookTimeoutByKey,
+                    trackedSessionsByKey:
+                        params.trackedSessionsByKey,
                     timeoutErrorMessage:
                         `Session webhook timeout for PID ${waitParams.pid}`,
                     onSuccess: commitLocalAttachment,
                 })
                 : waitForVisibleConsoleSessionWebhook({
+                    trackingKey,
                     pid: waitParams.pid,
                     pollMs,
-                    pidToAwaiter: params.pidToAwaiter,
+                    spawnAwaiterByKey: params.spawnAwaiterByKey,
                     takeoverAdmission: params.takeoverAdmission,
-                    pidToSpawnResultResolver:
-                        params.pidToSpawnResultResolver,
-                    pidToSpawnWebhookTimeout:
-                        params.pidToSpawnWebhookTimeout,
-                    pidToTrackedSession:
-                        params.pidToTrackedSession,
+                    spawnResultResolverByKey:
+                        params.spawnResultResolverByKey,
+                    spawnWebhookTimeoutByKey:
+                        params.spawnWebhookTimeoutByKey,
+                    trackedSessionsByKey:
+                        params.trackedSessionsByKey,
                     onChildExited: params.onChildExited,
                     onSuccess: commitLocalAttachment,
                 });
@@ -459,13 +467,13 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
         if (firstOutcome.type === 'marker_error') {
             const error = firstOutcome.error;
             resolveAcceptedSpawnMarker(false);
-            const timeout = params.pidToSpawnWebhookTimeout.get(waitParams.pid);
+            const timeout = params.spawnWebhookTimeoutByKey.get(trackingKey);
             if (timeout) clearTimeout(timeout);
-            params.pidToSpawnWebhookTimeout.delete(waitParams.pid);
-            params.pidToAwaiter.delete(waitParams.pid);
-            params.pidToSpawnResultResolver.delete(waitParams.pid);
+            params.spawnWebhookTimeoutByKey.delete(trackingKey);
+            params.spawnAwaiterByKey.delete(trackingKey);
+            params.spawnResultResolverByKey.delete(trackingKey);
             if (
-                [...params.pidToTrackedSession.values()].includes(
+                [...params.trackedSessionsByKey.values()].includes(
                     trackedSession,
                 )
             ) {
@@ -479,7 +487,7 @@ export async function spawnWindowsHostedSessionAndWaitForWebhook(params: Readonl
             }
             throw error;
         }
-        params.spawnLifecycleCallbacks.registerConnectedServiceSpawnTarget(trackedSession.pid);
+        params.spawnLifecycleCallbacks.registerConnectedServiceSpawnTarget(trackedSession.pid, trackedSession.trackingKey);
         trackedSession.acceptedSpawnMarkerGate = undefined;
         resolveAcceptedSpawnMarker(true);
 

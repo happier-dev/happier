@@ -8,6 +8,7 @@ import type { TrackedSession } from '@/daemon/types';
 import { configuration } from '@/configuration';
 import { registerExternalSessionIdentity } from '@/daemon/sessions/onHappySessionWebhook';
 import type { SkillUsageRecorder } from './skillUsage';
+import type { TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 export const SKILL_SESSION_DIR_PATH = '/skills/session-dir';
 export const SKILL_USAGE_PATH = '/skills/usage';
@@ -24,7 +25,7 @@ export function registerSkillControlRoutes(app: FastifyInstance, input: Readonly
     skillStore?: SkillStore;
     skillUsageRecorder?: SkillUsageRecorder;
     getChildren: () => TrackedSession[];
-    pidToTrackedSession?: Map<number, TrackedSession>;
+    trackedSessionsByKey?: TrackedSessionMap;
     requireAuth: (request: FastifyRequest, reply: FastifyReply) => Promise<void>;
     isShuttingDown: () => boolean;
 }>): void {
@@ -57,9 +58,9 @@ export function registerSkillControlRoutes(app: FastifyInstance, input: Readonly
             }
             const sessionId = content.ownerKey.split('/')[0]!;
             const correlated = await resolveSessionReportTrackedCorrelation({ metadata, pid,
-                pidToTrackedSession: new Map(input.getChildren().map(tracked => [tracked.pid, tracked])),
+                trackedSessionsByKey: new Map(input.getChildren().map(tracked => [tracked.trackingKey, tracked])),
                 // Identity binding must not claim or settle the readiness waiter.
-                pidToAwaiter: new Map(),
+                spawnAwaiterByKey: new Map(),
             });
             if (correlated.kind === 'refused') {
                 return reply.code(503).send({ errorCode: 'skills_unavailable' });
@@ -74,8 +75,8 @@ export function registerSkillControlRoutes(app: FastifyInstance, input: Readonly
                     adoptTrackedSessionRunnerIdentity(correlated.tracked, correlated.cancellationIdentity);
                 }
             } else {
-                if (!input.pidToTrackedSession) return reply.code(503).send({ errorCode: 'skills_unavailable' });
-                const tracked = await registerExternalSessionIdentity({ pidToTrackedSession: input.pidToTrackedSession, pid, sessionId, metadata });
+                if (!input.trackedSessionsByKey) return reply.code(503).send({ errorCode: 'skills_unavailable' });
+                const tracked = await registerExternalSessionIdentity({ trackedSessionsByKey: input.trackedSessionsByKey, pid, sessionId, metadata });
                 if (!tracked) {
                     return reply.code(503).send({ errorCode: 'skills_unavailable' });
                 }

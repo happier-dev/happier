@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { trackedSessionForSingleSessionProcess, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const os = vi.hoisted(() => ({ wrapperPid: 48101, runnerPid: 48102,
     wrapperStart: 1000, runnerStart: 2000, reused: false }));
@@ -49,8 +50,8 @@ describe('wrapped daemon Session startup', () => {
         const home = await mkdtemp(join(tmpdir(), 'happier-wrapped-startup-'));
         vi.stubEnv('HAPPIER_HOME_DIR', home);
         reloadConfiguration();
-        const tracked = new Map<number, TrackedSession>();
-        const awaiters = new Map<number, (session: TrackedSession) => void>();
+        const tracked = new Map<SessionTrackingKey, TrackedSession>();
+        const awaiters = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
         const deviceLocalSecretStorage = await readOrCreateDeviceLocalSecretStorage({ path: join(home, 'device-local-key.json') });
         const authorityPath = await createAgentRuntimeDaemonServiceAuthorityPath({ happyHomeDir: home, publicReleaseRing: 'stable' });
         const retained = createAgentSessionRunnerFactoryBinding({ v: 1, pluginId: 'happier.agent.claude',
@@ -63,10 +64,10 @@ describe('wrapped daemon Session startup', () => {
         const callbacks = createSpawnLifecycleCallbacks({
             catalogAgentId: 'claude', connectedServicesBindingsRaw: null, materializationKey: 'wrapped-startup',
             hasConnectedServiceAuth: () => false, getSpawnResourceCleanupOnExit: () => null,
-            onSpawnResourceCleanupArmed() {}, spawnResourceCleanupByPid: new Map(),
-            getSessionAttachCleanup: () => null, setSessionAttachCleanup() {}, sessionAttachCleanupByPid: new Map(),
+            onSpawnResourceCleanupArmed() {}, spawnResourceCleanupByKey: new Map(),
+            getSessionAttachCleanup: () => null, setSessionAttachCleanup() {}, sessionAttachCleanupByKey: new Map(),
             onTrackedSessionRegistered: () => {
-                const session = tracked.get(os.wrapperPid)!;
+                const session = trackedSessionForSingleSessionProcess(tracked, os.wrapperPid)!;
                 session.agentRuntimeDaemonServiceAuthorityFilePath = authorityPath;
                 session.runnerAgentBootstrapIdentity = { agentId: 'claude', backendId: 'claude' };
                 registered(session);
@@ -84,9 +85,9 @@ describe('wrapped daemon Session startup', () => {
             normalizedExistingSessionId: spawnOptions.existingSessionId ?? '', effectiveResume: '', directoryCreated: false,
             extraEnvForChildWithMessage: {}, processEnv: {},
             runnerLaunchOptions: { runtimeDecision: { runtime: 'node', argvPrefix: ['/fixture/runtime/versions/1.2.3/bin/happier'] } },
-            pidToTrackedSession: tracked, pidToAwaiter: awaiters,
-            pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
-            resolveCanonicalTrackedSessionId: pid => tracked.get(pid)?.happySessionId ?? '',
+            trackedSessionsByKey: tracked, spawnAwaiterByKey: awaiters,
+            spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
+            resolveCanonicalTrackedSessionId: trackingKey => tracked.get(trackingKey)?.happySessionId ?? '',
             onChildExited() {}, spawnLifecycleCallbacks: callbacks, cleanupSpawnResources() {}, logDebug() {}, warn() {},
         });
         const session = await registration;
@@ -100,7 +101,7 @@ describe('wrapped daemon Session startup', () => {
         let releaseFollowUp!: () => void;
         const followUp = new Promise<void>(resolve => { releaseFollowUp = resolve; });
         const readiness = createSessionStartupReadinessHandler({
-            onHappySessionWebhook: createOnHappySessionWebhook({ pidToTrackedSession: tracked, pidToAwaiter: awaiters,
+            onHappySessionWebhook: createOnHappySessionWebhook({ trackedSessionsByKey: tracked, spawnAwaiterByKey: awaiters,
                 deviceLocalSecretStorage, getParentPidFn: async () => os.wrapperPid, readCredentialsFn: async () => null }),
             reconcileCanonicalReadiness: async () => { await refresh(); },
             reconcileFollowUp: async () => { await followUp; }, onFollowUpError: error => followUpErrors.push(error),
@@ -150,7 +151,7 @@ describe('wrapped daemon Session startup', () => {
             expect(followUpErrors).toEqual([]);
         } finally {
             releaseFollowUp();
-            const current = tracked.get(os.wrapperPid);
+            const current = tracked.get(session.trackingKey);
             if (current?.childProcess instanceof ChildProcess) current.childProcess.emit('exit', 0, null);
             await pending;
             await app.close();

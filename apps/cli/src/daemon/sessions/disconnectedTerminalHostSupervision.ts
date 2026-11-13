@@ -18,10 +18,12 @@ import { removeSessionMarker as removeDefaultSessionMarker } from '../sessionReg
 import type { SessionRunnerServiceabilityProbe } from './isSessionRunnerActive';
 import type { ExactTerminalControlServiceabilityRetirement } from './retireTerminalControlServiceability';
 import type { TrackedSession } from '../types';
+import type { SessionTrackingKey } from './sessionTrackingKey';
 import { resolveTrackedSessionTerminalPresentation } from './resolveTrackedSessionTerminalPresentation';
 
 export type DisconnectedTerminalHostCandidate = Readonly<{
   sessionId: string;
+  trackingKey: SessionTrackingKey;
   pid: number;
   happyHomeDir: string;
   attachmentId: NonNullable<TerminalHostHandle['attachmentId']>;
@@ -115,7 +117,7 @@ export async function resolveTrackedSessionTerminalHostExitCandidate(input: Read
     terminal, hostKind: attachmentInfo.handle.kind, attachmentId: attachmentInfo.attachmentId,
   });
   if (!terminalMode) throw new Error('terminal_host_mode_unresolved_after_runner_exit');
-  return { sessionId, pid: input.pid, happyHomeDir: input.happyHomeDir,
+  return { sessionId, trackingKey: tracked.trackingKey, pid: input.pid, happyHomeDir: input.happyHomeDir,
     attachmentId: attachmentInfo.attachmentId, handle: attachmentInfo.handle, terminalMode,
     ...(tracked.spawnOptions ? { spawnOptions: tracked.spawnOptions } : {}),
     ...(tracked.happySessionMetadataFromLocalWebhook ? { metadata: tracked.happySessionMetadataFromLocalWebhook } : {}),
@@ -164,7 +166,7 @@ export async function superviseTrackedOptionalTerminalPresentation(input: Readon
   const adapters = await input.loadTerminalHostAdapters();
   if (!input.isCurrent()) return;
   await superviseDisconnectedTerminalHostCandidate({
-    candidate: { sessionId, pid: input.tracked.pid, happyHomeDir: input.happyHomeDir,
+    candidate: { sessionId, trackingKey: input.tracked.trackingKey, pid: input.tracked.pid, happyHomeDir: input.happyHomeDir,
       attachmentId: attachment.attachmentId, handle: attachment.handle,
       ...(input.tracked.spawnOptions ? { spawnOptions: input.tracked.spawnOptions } : {}),
       ...(input.tracked.happySessionMetadataFromLocalWebhook
@@ -200,7 +202,7 @@ export async function superviseDisconnectedTerminalHostCandidate(input: Readonly
   terminalHostAdapters: TerminalHostAdapters;
   readTerminalAttachmentInfo?: (input: Readonly<{ happyHomeDir: string; sessionId: string }>) => Promise<TerminalHostAttachmentInfo | null>;
   removeTerminalAttachmentInfo?: typeof removeDefaultTerminalHostAttachmentInfo;
-  removeSessionMarker?: (pid: number) => Promise<void>;
+  removeSessionMarker?: (trackingKey: SessionTrackingKey) => Promise<void>;
   isCurrent?: () => boolean;
   probeSessionServiceability?: (sessionId: string) => Promise<SessionRunnerServiceabilityProbe>;
   retireExactTerminalControlServiceability?: (input: Readonly<{
@@ -231,7 +233,7 @@ export async function superviseDisconnectedTerminalHostCandidate(input: Readonly
   let destroyOptionalClient = false;
   if (probe.status === 'alive') {
     const optionalPresentation = (await resolveTrackedSessionTerminalPresentation({
-      pid: input.candidate.pid, startedBy: 'daemon', happySessionId: input.candidate.sessionId,
+      trackingKey: input.candidate.trackingKey, pid: input.candidate.pid, startedBy: 'daemon', happySessionId: input.candidate.sessionId,
       spawnOptions: input.candidate.spawnOptions,
       happySessionMetadataFromLocalWebhook: input.candidate.metadata,
     }, current.handle.kind))?.kind === 'provider_attach';
@@ -294,6 +296,6 @@ export async function superviseDisconnectedTerminalHostCandidate(input: Readonly
   if (disposition.status !== 'retired' && (disposition.status !== 'destroyed' || disposition.descriptorRetained)) {
     return { state: 'unknown', reason: 'retirement_failed' };
   }
-  await (input.removeSessionMarker ?? removeDefaultSessionMarker)(input.candidate.pid);
+  await (input.removeSessionMarker ?? removeDefaultSessionMarker)(input.candidate.trackingKey);
   return { state: 'stopped' };
 }

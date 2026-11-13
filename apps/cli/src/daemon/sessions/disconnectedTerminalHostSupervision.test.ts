@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 import type { TerminalHostAdapter, TerminalHostHandle } from '@happier-dev/agents';
 import axios, { AxiosHeaders } from 'axios';
 import { spawn } from 'node:child_process';
@@ -44,7 +45,7 @@ function attachment() {
 describe('disconnected terminal-host supervision', () => {
   it.each(['absent', 'unreadable', 'replacement'] as const)('distinguishes missing final-exit attachment from unresolved custody: %s', async state => {
     await withConfiguredDaemonTestHome({ prefix: 'final-host-exit-' }, async ({ homeDir }) => {
-      const tracked = { pid: 999_123_456, startedBy: 'daemon' as const, happySessionId: 'session-live-1',
+      const tracked = { trackingKey: legacyPidSessionTrackingKey(999_123_456), pid: 999_123_456, startedBy: 'daemon' as const, happySessionId: 'session-live-1',
         hostedTerminal: { mode: 'tmux' as const }, publishedTerminalControlServiceabilityAttachmentId: 'old-host' };
       if (state !== 'absent') {
         await writeTerminalHostAttachmentInfo({ happyHomeDir: homeDir, sessionId: tracked.happySessionId, handle });
@@ -61,7 +62,7 @@ describe('disconnected terminal-host supervision', () => {
     await withConfiguredDaemonTestHome({ prefix: 'plain-exit-offline-' }, async ({ homeDir }) => {
       const get = vi.spyOn(axios, 'get').mockRejectedValue(Object.assign(new Error('Home unreachable'), { code: 'ECONNREFUSED' }));
       try {
-        const tracked = { pid: 999_123_456, startedBy: 'daemon' as const, happySessionId: 'plain-offline',
+        const tracked = { trackingKey: legacyPidSessionTrackingKey(999_123_456), pid: 999_123_456, startedBy: 'daemon' as const, happySessionId: 'plain-offline',
           spawnOptions: { directory: homeDir,
             backendTarget: { kind: 'backend' as const, sourceKind: 'built_in' as const, backendId: 'codex' as const },
             runtimeDescriptorV1: { v: 1 as const, agentId: 'codex', agent: { backendMode: 'acp' } } } };
@@ -99,7 +100,7 @@ describe('disconnected terminal-host supervision', () => {
           success: true, metadataLayoutVersion: 1, sharedMetadata: { version: 2 }, agentState: { version: 1 } } });
         try {
           const observe = () => superviseTrackedOptionalTerminalPresentation({
-            tracked: { pid: process.pid, startedBy: 'daemon', happySessionId: sessionId },
+            tracked: { trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, startedBy: 'daemon', happySessionId: sessionId },
             happyHomeDir: homeDir, isCurrent: () => true,
             loadTerminalHostAdapters: async () => { throw new Error('Borrowed client retirement must not dispose the shell'); },
             probeSessionServiceability: async () => { throw new Error('Native death is not controller death'); },
@@ -183,7 +184,7 @@ describe('disconnected terminal-host supervision', () => {
   it('fences an exact preserved host that lacks its attachment-bound control descriptor', async () => {
     const hostAdapter = adapter({ paneAlive: true, observedAt: 1 });
     const result = await superviseDisconnectedTerminalHostCandidate({
-      candidate: { sessionId: 'session-live-1', pid: 42, happyHomeDir: '/tmp/happy', attachmentId: handle.attachmentId, handle, controlDescriptorAvailable: false },
+      candidate: { sessionId: 'session-live-1', trackingKey: legacyPidSessionTrackingKey(42), pid: 42, happyHomeDir: '/tmp/happy', attachmentId: handle.attachmentId, handle, controlDescriptorAvailable: false },
       terminalHostAdapters: { tmux: hostAdapter },
       readTerminalAttachmentInfo: async () => attachment(),
       probeSessionServiceability: vi.fn(),
@@ -196,34 +197,34 @@ describe('disconnected terminal-host supervision', () => {
   it('retires only a positively dead exact attachment', async () => {
     const hostAdapter = adapter({ paneAlive: false, paneDead: true, observedAt: 1 });
     const removeAttachment = vi.fn(async (_input: unknown) => true);
-    const removeMarker = vi.fn(async (_pid: number) => undefined);
+    const removeMarker = vi.fn(async (_trackingKey: SessionTrackingKey) => undefined);
     const events: string[] = [];
     await expect(superviseDisconnectedTerminalHostCandidate({
-      candidate: { sessionId: 'session-live-1', pid: 42, happyHomeDir: '/tmp/happy', attachmentId: handle.attachmentId, handle },
+      candidate: { sessionId: 'session-live-1', trackingKey: legacyPidSessionTrackingKey(42), pid: 42, happyHomeDir: '/tmp/happy', attachmentId: handle.attachmentId, handle },
       terminalHostAdapters: { tmux: hostAdapter },
       readTerminalAttachmentInfo: async () => attachment(),
       removeTerminalAttachmentInfo: async (input) => {
         events.push('local');
         return await removeAttachment(input);
       },
-      removeSessionMarker: async (pid) => {
+      removeSessionMarker: async (trackingKey) => {
         events.push('marker');
-        await removeMarker(pid);
+        await removeMarker(trackingKey);
       },
       retireExactTerminalControlServiceability: async () => {
         events.push('remote');
       },
     })).resolves.toEqual({ state: 'stopped' });
     expect(removeAttachment).toHaveBeenCalled();
-    expect(removeMarker).toHaveBeenCalledWith(42);
+    expect(removeMarker).toHaveBeenCalledWith(legacyPidSessionTrackingKey(42));
     expect(events).toEqual(['remote', 'local', 'marker']);
   });
 
   it('keeps local retry identity when confirmed-dead remote retirement fails', async () => {
     const removeAttachment = vi.fn(async (_input: unknown) => true);
-    const removeMarker = vi.fn(async (_pid: number) => undefined);
+    const removeMarker = vi.fn(async (_trackingKey: SessionTrackingKey) => undefined);
     await expect(superviseDisconnectedTerminalHostCandidate({
-      candidate: { sessionId: 'session-live-1', pid: 42, happyHomeDir: '/tmp/happy', attachmentId: handle.attachmentId, handle },
+      candidate: { sessionId: 'session-live-1', trackingKey: legacyPidSessionTrackingKey(42), pid: 42, happyHomeDir: '/tmp/happy', attachmentId: handle.attachmentId, handle },
       terminalHostAdapters: { tmux: adapter({ paneAlive: false, paneDead: true, observedAt: 1 }) },
       readTerminalAttachmentInfo: async () => attachment(),
       removeTerminalAttachmentInfo: removeAttachment,
@@ -267,7 +268,7 @@ describe('disconnected terminal-host supervision', () => {
         await expect(retire()).resolves.toBe('superseded');
         const hostAdapter = adapter({ paneAlive: false, paneDead: true, observedAt: 1 });
         await expect(superviseDisconnectedTerminalHostCandidate({
-          candidate: { sessionId, pid: 42, happyHomeDir: homeDir, attachmentId: handle.attachmentId, handle },
+          candidate: { sessionId, trackingKey: legacyPidSessionTrackingKey(42), pid: 42, happyHomeDir: homeDir, attachmentId: handle.attachmentId, handle },
           terminalHostAdapters: { tmux: hostAdapter },
           retireExactTerminalControlServiceability: retire,
         })).resolves.toEqual({ state: 'stopped' });
@@ -286,12 +287,12 @@ describe('disconnected terminal-host supervision', () => {
     const hostAdapter = adapter({ paneAlive: false, probeInconclusive: true, observedAt: 1 });
     const changed = { ...attachment(), attachmentId: 'changed' as typeof handle.attachmentId };
     await expect(superviseDisconnectedTerminalHostCandidate({
-      candidate: { sessionId: 'session-live-1', pid: 42, happyHomeDir: '/tmp/happy', attachmentId: handle.attachmentId, handle },
+      candidate: { sessionId: 'session-live-1', trackingKey: legacyPidSessionTrackingKey(42), pid: 42, happyHomeDir: '/tmp/happy', attachmentId: handle.attachmentId, handle },
       terminalHostAdapters: { tmux: hostAdapter },
       readTerminalAttachmentInfo: async () => changed,
     })).resolves.toEqual({ state: 'unknown', reason: 'attachment_changed' });
     await expect(superviseDisconnectedTerminalHostCandidate({
-      candidate: { sessionId: 'session-live-1', pid: 42, happyHomeDir: '/tmp/happy', attachmentId: handle.attachmentId, handle },
+      candidate: { sessionId: 'session-live-1', trackingKey: legacyPidSessionTrackingKey(42), pid: 42, happyHomeDir: '/tmp/happy', attachmentId: handle.attachmentId, handle },
       terminalHostAdapters: { tmux: hostAdapter },
       readTerminalAttachmentInfo: async () => attachment(),
     })).resolves.toEqual({ state: 'unknown', reason: 'probe_inconclusive' });

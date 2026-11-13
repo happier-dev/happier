@@ -1,6 +1,13 @@
 import type { TrackedSession } from '../types';
 import type { ProcessRunState } from '../processRunState';
 import { waitForTrackedRunnerProcessesExit } from './waitForTrackedRunnerProcessesExit';
+import {
+  trackSession,
+  trackedSessionsForProcess,
+  type ReadonlyTrackedSessionMap,
+  type SessionTrackingKey,
+  type TrackedSessionMap,
+} from '@/daemon/sessions/sessionTrackingKey';
 
 type ExitObservation = Readonly<{
   reason: 'process-missing';
@@ -20,15 +27,15 @@ function trackedSessionMatchesExistingSessionId(trackedSession: TrackedSession, 
 
 function collectStopRequestedMatchingRunners(params: Readonly<{
   sessionId: string;
-  pidToTrackedSession: ReadonlyMap<number, TrackedSession>;
-}>): Map<number, TrackedSession> {
-  const runners = new Map<number, TrackedSession>();
-  for (const [pid, trackedSession] of params.pidToTrackedSession.entries()) {
+  trackedSessionsByKey: ReadonlyTrackedSessionMap;
+}>): TrackedSessionMap {
+  const runners = new Map<SessionTrackingKey, TrackedSession>();
+  for (const trackedSession of params.trackedSessionsByKey.values()) {
     if (!trackedSessionMatchesExistingSessionId(trackedSession, params.sessionId)) {
       continue;
     }
     if (typeof trackedSession.stopRequestedAtMs === 'number' && Number.isFinite(trackedSession.stopRequestedAtMs)) {
-      runners.set(pid, trackedSession);
+      trackSession(runners, trackedSession);
     }
   }
   return runners;
@@ -36,7 +43,7 @@ function collectStopRequestedMatchingRunners(params: Readonly<{
 
 export async function waitForExistingSessionExitIfStopRequested(params: Readonly<{
   sessionId: string;
-  pidToTrackedSession: ReadonlyMap<number, TrackedSession>;
+  trackedSessionsByKey: ReadonlyTrackedSessionMap;
   readRunState?: (pid: number) => Promise<ProcessRunState>;
   timeoutMs: number;
   pollIntervalMs: number;
@@ -47,15 +54,15 @@ export async function waitForExistingSessionExitIfStopRequested(params: Readonly
 
   const initialMatchingRunners = collectStopRequestedMatchingRunners({
     sessionId: normalizedSessionId,
-    pidToTrackedSession: params.pidToTrackedSession,
+    trackedSessionsByKey: params.trackedSessionsByKey,
   });
   if (initialMatchingRunners.size === 0) return;
   const onExitObserved = params.onExitObserved;
 
   // Serviceability is not death proof: paused or identity-unknown runners must retain custody.
   await waitForTrackedRunnerProcessesExit({
-    runners: Array.from(initialMatchingRunners, ([pid, tracked]) => ({
-      pid,
+    runners: Array.from(initialMatchingRunners.values(), (tracked) => ({
+      pid: tracked.pid,
       childProcess: tracked.childProcess,
     })),
     timeoutMs: params.timeoutMs,
@@ -63,7 +70,8 @@ export async function waitForExistingSessionExitIfStopRequested(params: Readonly
     readRunState: params.readRunState,
     onExitObserved: onExitObserved ? async (pid, exit) => {
       // A captured child's exit cannot retire a replacement at the same PID.
-      if (params.pidToTrackedSession.get(pid) !== initialMatchingRunners.get(pid)) return;
+      if (!trackedSessionsForProcess(params.trackedSessionsByKey, pid)
+        .some(tracked => initialMatchingRunners.get(tracked.trackingKey) === tracked)) return;
       await onExitObserved(pid, exit);
     } : undefined,
   });

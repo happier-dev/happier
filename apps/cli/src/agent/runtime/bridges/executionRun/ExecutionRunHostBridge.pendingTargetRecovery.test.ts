@@ -91,6 +91,7 @@ import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerE
 import type { SessionMessageContent } from '@/api/types';
 import { SessionPendingExecutionRunEnqueueByMachineRequestV2Schema, SESSION_PENDING_EXECUTION_RUN_ENQUEUE_BY_MACHINE_EVENT_V2,
 } from '@happier-dev/protocol/sessions/messages/sessionPendingExecutionRunMachineAdmissionV2';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const nativeOpen = vi.hoisted(() => vi.fn<(request: AgentSessionOpenRequest) => Promise<AgentSessionRuntime>>());
 const nativeModule = vi.hoisted(() => ({ ready: undefined as Promise<void> | undefined }));
@@ -1111,7 +1112,7 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
           },
         },
       });
-      const tracked: TrackedSession = { startedBy: 'daemon', pid: 4242, happySessionId: 'session-1',
+      const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(4242), startedBy: 'daemon', pid: 4242, happySessionId: 'session-1',
         processStartTimeMs: 1, processCommandHash: 'runner-hash', vendorResumeId: 'parent-native-thread',
         processCommand: '/runtime/cli-dev/versions/0.3.0/package-dist/index.mjs claude --happy-starting-mode remote --started-by daemon',
         spawnOptions: { directory, backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' }, resume: 'parent-native-thread' },
@@ -1131,7 +1132,7 @@ describe('ExecutionRunHostBridge pending target recovery', () => {
           tracked, currentIdentity: { status: 'known', source: 'launch_spec', comparableId: 'version:0.3.0', entrypointVersion: '0.3.0' },
           requestRestart: async input => await requestPlannedRunnerRestart({
             sessionId: input.sessionId, tracked, reason: input.reason, canSignal: input.canSignal,
-            deferral: { kind: 'none' }, restartRequestedPids: new Set(), pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+            deferral: { kind: 'none' }, restartRequestedSessions: new Set(), trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
             isProcessSafeToSignal: async () => true,
             requestSignal: request => requestConnectedServiceSessionRestartSignal({ pid: tracked.pid, delayMs: 0,
               shouldSignal: request.shouldSignal, onSignalFailure: request.onSignalFailure,

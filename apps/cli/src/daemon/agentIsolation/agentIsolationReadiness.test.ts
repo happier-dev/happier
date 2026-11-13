@@ -28,6 +28,8 @@ import { waitForExistingSessionExitIfStopRequested } from '@/daemon/sessions/wai
 import { logger } from '@/ui/logger';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { prepareRequesterNativeOperation } from './prepareNativeOperation';
+import type { SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const nativeAccount = vi.hoisted(() => ({ home: '/var/lib/happier-agent' }));
 
@@ -96,7 +98,7 @@ it.skipIf(process.platform !== 'linux').each([false, true])('settles applied eff
     nativeAccount.home = join(directory, 'native-home');
     await mkdir(nativeAccount.home, { mode: 0o700 });
     let enabled = false, metadataVersion = 1, current = true, probes = 0;
-    const trackedSessions = new Map<number, TrackedSession>();
+    const trackedSessions = new Map<SessionTrackingKey, TrackedSession>();
     let status: MachineAgentIsolationStatusV1 = { kind: 'disabled' };
     let failProbe = false, revokeDuringProbe = false, wrongChallenge = false, skipAnonymous = false, plantedLink = false;
     let missingNativeUser = false;
@@ -269,7 +271,7 @@ it.skipIf(process.platform !== 'linux').each([false, true])('settles applied eff
     vi.useFakeTimers(); await vi.advanceTimersByTimeAsync(60_000); vi.useRealTimers();
     expect(probes).toBe(1);
     status = { kind: 'applying', phase: 'runtime_replacement' };
-    trackedSessions.set(12345, { pid: 12345, startedBy: 'daemon', happySessionId: 'stopping-session', stopRequestedAtMs: 1 });
+    trackedSessions.set(legacyPidSessionTrackingKey(12345), { trackingKey: legacyPidSessionTrackingKey(12345), pid: 12345, startedBy: 'daemon', happySessionId: 'stopping-session', stopRequestedAtMs: 1 });
     // Production census + registered Apply: requested stop is not actual exit.
     await expect(apply()).resolves.toMatchObject({ status: { kind: 'applying', phase: 'runtime_replacement' } });
     expect(probes).toBe(1);
@@ -283,9 +285,9 @@ it.skipIf(process.platform !== 'linux').each([false, true])('settles applied eff
     expect(probes).toBe(1);
     const waitForRetirement = (readRunState: Parameters<typeof waitForExistingSessionExitIfStopRequested>[0]['readRunState'],
       onExitObserved: NonNullable<Parameters<typeof waitForExistingSessionExitIfStopRequested>[0]['onExitObserved']>) =>
-      waitForExistingSessionExitIfStopRequested({ sessionId: 'stopping-session', pidToTrackedSession: trackedSessions,
+      waitForExistingSessionExitIfStopRequested({ sessionId: 'stopping-session', trackedSessionsByKey: trackedSessions,
         timeoutMs: 0, pollIntervalMs: 0, readRunState, onExitObserved });
-    const retire = async (pid: number) => { trackedSessions.delete(pid); };
+    const retire = async (pid: number) => { trackedSessions.delete(legacyPidSessionTrackingKey(pid)); };
     for (const runState of ['stopped', 'servable'] as const) {
       // A paused runner or the OS owner's unknown/alive fallback retains custody.
       await waitForRetirement(async () => runState, retire);
@@ -326,7 +328,7 @@ it.skipIf(process.platform !== 'linux').each([false, true])('settles applied eff
     // one real qualification, then subsequent calls consume that held fact.
     failProbe = false;
     status = { kind: 'unavailable', code: 'provisioning_unavailable' };
-    trackedSessions.set(54321, { pid: 54321, startedBy: 'daemon', happySessionId: 'retained-live-session' });
+    trackedSessions.set(legacyPidSessionTrackingKey(54321), { trackingKey: legacyPidSessionTrackingKey(54321), pid: 54321, startedBy: 'daemon', happySessionId: 'retained-live-session' });
     const beforeSuccessorLaunch = probes;
     await expect(prepareRequesterNativeOperation({ requesterIdentity: resolveHostRequesterAgentExecutionIdentity(ownerIdentity),
       signal: context.signal, allowMemberPreparation: false,
@@ -349,7 +351,7 @@ it.skipIf(process.platform !== 'linux').each([false, true])('settles applied eff
     expect(status).toMatchObject({ kind: 'unavailable', code: 'agent_user_missing' });
     expect(probes - beforeSuccessorLaunch).toBe(1);
     missingNativeUser = false;
-    trackedSessions.delete(54321);
+    trackedSessions.delete(legacyPidSessionTrackingKey(54321));
     // Restore the classified refusal entering the existing Apply cancellation
     // control; bare successor publication is qualified by Preview itself.
     status = { kind: 'unavailable', code: 'local_admin_api_accessible' };

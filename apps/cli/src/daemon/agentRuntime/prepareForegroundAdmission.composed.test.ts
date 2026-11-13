@@ -59,8 +59,8 @@ describe('foreground admission composed real Provider authorization seam', () =>
         connectedServicesMaterializationBaseDir: join(fixture.home, 'connected-services'),
         connectedServiceRefreshCoordinator: null, connectedServiceQuotasCoordinator: null,
         connectedServiceRuntimeRegistry: new ConnectedServiceRuntimeRegistry(),
-        pidToTrackedSession: new Map(), pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(),
-        pidToSpawnWebhookTimeout: new Map(), spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+        trackedSessionsByKey: new Map(), spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(),
+        spawnWebhookTimeoutByKey: new Map(), spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
         resolveCanonicalTrackedSessionId: () => '', onChildExited: () => {}, processEnv: {},
       });
       expect(result).toEqual(buildProviderSpawnErrorResult(createProviderErrorV1('provider_secret_missing', { sourceProfileId: 'profile-1',

@@ -16,6 +16,7 @@ import { projectIdentityFreeMachineDiagnostics } from '@/diagnostics/identityFre
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 type Handler = (data: unknown, context?: RpcHandlerContext) => Promise<unknown> | unknown;
 
@@ -44,7 +45,7 @@ describe('registerMachineDiagnosticsRpcHandlers', () => {
       await writeFile(sessionLogPath, 'SESSION_BODY');
       await writeFile(join(directory, `rollout-2026-10-30T10-00-00-${vendorId}.jsonl`), 'PROVIDER_BODY');
       writeDaemonState({ pid: process.pid, httpPort: 1, startedAt: 1, startedWithCliVersion: 'fixture', daemonLogPath });
-      await writeSessionMarker({ pid: 12345, happySessionId: 'selected-session', metadata: {
+      await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(12345), pid: 12345, happySessionId: 'selected-session', metadata: {
         sessionLogPath, flavor: 'codex', codexSessionId: vendorId,
         runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { backendMode: 'appServer', providerSessionId: vendorId, homePath: providerHome } },
       } });
@@ -131,7 +132,7 @@ describe('registerMachineDiagnosticsRpcHandlers', () => {
       const identityLog = 'SELECTED_RPC_LOG_BODY accountId=owner-account-fixture accountLabel=OwnerFixture email=owner@example.invalid';
       await writeFile(path, identityLog);
       writeDaemonState({ pid: process.pid, httpPort: 1, startedAt: 1, startedWithCliVersion: 'fixture', daemonLogPath: path });
-      await writeSessionMarker({ pid: 12345, happySessionId: 'selected-session', metadata: { sessionLogPath: path } });
+      await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(12345), pid: 12345, happySessionId: 'selected-session', metadata: { sessionLogPath: path } });
       const manager = createRpcHandlerManager();
       registerMachineDiagnosticsRpcHandlers({ rpcHandlerManager: manager as unknown as RpcHandlerManager,
         filesystemEffectAdmission: createFilesystemEffectAdmission({

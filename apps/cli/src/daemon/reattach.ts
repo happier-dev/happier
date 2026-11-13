@@ -30,6 +30,7 @@ import {
   processCommandContainsPathFragment,
 } from '@/subprocess/processCommandPathMatch';
 import type { DeviceLocalSecretStorage } from './deviceLocalSecretStorage';
+import { mintSessionTrackingKey, trackSession, trackedSessionsForProcess, type TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 const LIVE_RECOVERABLE_HAPPY_SESSION_PROCESS_TYPES = new Set([
   'daemon-spawned-session',
@@ -141,7 +142,7 @@ export function hasAuthorityRestorationMarker(marker: DaemonSessionMarker): bool
 export function adoptSessionsFromMarkers(params: {
   markers: DaemonSessionMarker[];
   happyProcesses: HappyProcessInfo[];
-  pidToTrackedSession: Map<number, TrackedSession>;
+  trackedSessionsByKey: TrackedSessionMap;
   credentials?: StoredCredentials | null;
   deviceLocalSecretStorage?: DeviceLocalSecretStorage;
   processIdentityByPid: ReadonlyMap<number, LocalServiceProcessFact>;
@@ -163,7 +164,7 @@ export function adoptSessionsFromMarkers(params: {
       .map((marker) => marker.happySessionId),
   );
   const adoptedSessionIds = new Set(
-    [...params.pidToTrackedSession.values()]
+    [...params.trackedSessionsByKey.values()]
       .map((tracked) => tracked.happySessionId)
       .filter((sessionId): sessionId is string => !!sessionId),
   );
@@ -235,7 +236,7 @@ export function adoptSessionsFromMarkers(params: {
           : undefined
       );
 
-    if (params.pidToTrackedSession.has(marker.pid)) continue;
+    if (params.trackedSessionsByKey.has(marker.trackingKey)) continue;
     const currentCommand = happyPidToCommand.get(marker.pid);
     if (!currentCommand) {
       continue;
@@ -288,7 +289,7 @@ export function adoptSessionsFromMarkers(params: {
       }
     }
 
-    params.pidToTrackedSession.set(marker.pid, buildTrackedSessionFromMarker({
+    params.trackedSessionsByKey.set(marker.trackingKey, buildTrackedSessionFromMarker({
       marker,
       startedByFallback: 'reattached',
       ...(spawnOptions ? { spawnOptions } : {}),
@@ -310,7 +311,7 @@ export function adoptSessionsFromMarkers(params: {
 export async function adoptLiveDaemonSessionsFromProcesses(params: Readonly<{
   happyProcesses: HappyProcessInfo[];
   markedPids: ReadonlySet<number>;
-  pidToTrackedSession: Map<number, TrackedSession>;
+  trackedSessionsByKey: TrackedSessionMap;
   readProcessIdentityByPidFn?: typeof readProcessIdentityByPid;
 }>): Promise<number> {
   let adopted = 0;
@@ -323,7 +324,7 @@ export async function adoptLiveDaemonSessionsFromProcesses(params: Readonly<{
     if (params.markedPids.has(proc.pid)) {
       continue;
     }
-    if (params.pidToTrackedSession.has(proc.pid)) {
+    if (trackedSessionsForProcess(params.trackedSessionsByKey, proc.pid).length > 0) {
       continue;
     }
     if (typeof proc.command !== 'string' || proc.command.trim().length === 0) {
@@ -345,7 +346,9 @@ export async function adoptLiveDaemonSessionsFromProcesses(params: Readonly<{
     const happySessionId = `PID-${proc.pid}`;
     const processCommandHash = hashProcessCommand(processIdentity.command);
     const processStartTimeMs = processIdentity.processStartTimeMs;
-    params.pidToTrackedSession.set(proc.pid, {
+    const trackingKey = mintSessionTrackingKey();
+    trackSession(params.trackedSessionsByKey, {
+      trackingKey,
       startedBy: 'daemon',
       happySessionId,
       pid: proc.pid,
@@ -355,6 +358,7 @@ export async function adoptLiveDaemonSessionsFromProcesses(params: Readonly<{
     adopted++;
 
     await writeSessionMarker({
+      trackingKey,
       pid: proc.pid,
       happySessionId,
       startedBy: 'daemon',

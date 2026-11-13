@@ -20,6 +20,8 @@ import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { HAPPIER_SESSION_STARTUP_SPAWN_NONCE_ENV_KEY } from '@/session/runtime/control/sessionControlEnvironment';
 import type { SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
+import type { SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 // The Home's typed no-effect refusal when Session sharing is off. It must
 // reach the Action as that reason, never as an update requirement.
@@ -80,10 +82,10 @@ describe('initial access terminal refusal through API, daemon HTTP, waiter and A
           response.end(JSON.stringify({ error: 'unexpected_test_request' }));
         }
       });
-      const tracked = new Map<number, TrackedSession>();
-      const awaiters = new Map<number, (session: TrackedSession) => void>();
-      const resolvers = new Map<number, (result: SpawnSessionResult) => void>();
-      const timeouts = new Map<number, NodeJS.Timeout>();
+      const tracked = new Map<SessionTrackingKey, TrackedSession>();
+      const awaiters = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
+      const resolvers = new Map<SessionTrackingKey, (result: SpawnSessionResult) => void>();
+      const timeouts = new Map<SessionTrackingKey, NodeJS.Timeout>();
       let startupError: unknown;
       let startup: Promise<void> | undefined;
       let observedNonce = '';
@@ -95,15 +97,15 @@ describe('initial access terminal refusal through API, daemon HTTP, waiter and A
         stopSession: async () => ({ status: 'not_found' }),
         requestShutdown: () => {},
         onHappySessionWebhook: () => { throw new Error('Refused creation must not report a Session'); },
-        onSessionStartupFailure: createOnDaemonSessionStartupFailure({ pidToTrackedSession: tracked, pidToAwaiter: awaiters }),
+        onSessionStartupFailure: createOnDaemonSessionStartupFailure({ trackedSessionsByKey: tracked, spawnAwaiterByKey: awaiters }),
         spawnSession: async (options) => {
           spawnCount += 1;
           observedNonce = options.spawnNonce ?? '';
           const pid = process.pid;
-          tracked.set(pid, { pid, startedBy: 'daemon', happySessionId: `PID-${pid}`, spawnOptions: options });
+          tracked.set(legacyPidSessionTrackingKey(pid), { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: `PID-${pid}`, spawnOptions: options });
           const pending = waitForSessionWebhook({
-            pid, pidToAwaiter: awaiters, pidToTrackedSession: tracked,
-            pidToSpawnResultResolver: resolvers, pidToSpawnWebhookTimeout: timeouts,
+            trackingKey: legacyPidSessionTrackingKey(pid), pid, spawnAwaiterByKey: awaiters, trackedSessionsByKey: tracked,
+            spawnResultResolverByKey: resolvers, spawnWebhookTimeoutByKey: timeouts,
             timeoutMs: 2_000, timeoutErrorMessage: 'Terminal creation refusal was lost',
           });
           // Substitute only process creation: run the child bootstrap in this

@@ -14,12 +14,13 @@ import { configuration } from '@/configuration';
 import { recoverSessionHandoffPrepareTargetJobsAfterRestart } from '@/session/handoff/prepare/sessionHandoffPrepareTargetJobStore';
 
 import type { TrackedSession } from '../types';
-import { cleanupPidSessionResources } from '../sessions/cleanupPidSessionResources';
+import { cleanupSessionResources, type SessionAttachCleanupByKey, type SpawnResourceCleanupByKey } from '../sessions/cleanupSessionResources';
 import { createOnChildExited } from '../sessions/onChildExited';
 import { classifyTrackedSessionProcessPresence } from '../sessions/isSessionRunnerActive';
 import { readProcessRunState } from '../processRunState';
 import { requestDaemonSelfRestart } from './requestDaemonSelfRestart';
 import type { ManagedActivityInventory } from './managedActivity';
+import { isCurrentTrackedSession, trackedSessionsForProcess, type SessionTrackingKey, type TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 type RequestDaemonSelfRestart = typeof requestDaemonSelfRestart;
 
@@ -39,9 +40,9 @@ function parseNonNegativeInt(rawValue: string | undefined, fallback: number): nu
 }
 
 export function startDaemonHeartbeatLoop(params: Readonly<{
-  pidToTrackedSession: Map<number, TrackedSession>;
-  spawnResourceCleanupByPid: Map<number, () => void | Promise<void>>;
-  sessionAttachCleanupByPid: Map<number, () => Promise<void>>;
+  trackedSessionsByKey: TrackedSessionMap;
+  spawnResourceCleanupByKey: SpawnResourceCleanupByKey;
+  sessionAttachCleanupByKey: SessionAttachCleanupByKey;
   getApiMachineForSessions: () => ApiMachineClient | null;
   onChildExited?: (
     pid: number,
@@ -66,9 +67,9 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
   writeDaemonStateForCurrentOwner: (state: DaemonLocallyPersistedState) => boolean;
 }>): NodeJS.Timeout {
   const {
-    pidToTrackedSession,
-    spawnResourceCleanupByPid,
-    sessionAttachCleanupByPid,
+    trackedSessionsByKey,
+    spawnResourceCleanupByKey,
+    sessionAttachCleanupByKey,
     getApiMachineForSessions,
     onChildExited,
     pidSafetyDependencies,
@@ -84,14 +85,14 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
   const onChildExitedForPrune =
     onChildExited ??
     createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid,
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey,
+      sessionAttachCleanupByKey,
       getApiMachineForSessions,
     });
 
   const observeHealthySession = async (tracked: TrackedSession): Promise<void> => {
-    if (pidToTrackedSession.get(tracked.pid) === tracked
+    if (isCurrentTrackedSession(trackedSessionsByKey, tracked)
       && isShuttingDown?.() !== true
       && typeof tracked.stopRequestedAtMs !== 'number'
       && tracked.reportMarkerCustody?.retiring !== true) {
@@ -170,7 +171,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
 
       // One process-table sample serves this tick's tracked runner observations.
       // Node child handles remain authoritative and require no census.
-      const observedPids = [...pidToTrackedSession.values()].flatMap(tracked => {
+      const observedPids = [...trackedSessionsByKey.values()].flatMap(tracked => {
         const child = tracked.childProcess;
         if (!tracked.windowsTerminalLaunchCustody && tracked.startedBy === 'daemon'
           && child?.pid === tracked.pid && child.exitCode === null && child.signalCode === null) return [];
@@ -183,7 +184,8 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
       const readRunState: typeof readProcessRunState = pidSafetyDependencies?.readProcessRunStateFn
         ?? (async pid => readProcessRunState(pid, { observedProcess: observations.get(pid) ?? null }));
       // Prune stale sessions
-      for (const [pid, tracked] of pidToTrackedSession.entries()) {
+      for (const tracked of trackedSessionsByKey.values()) {
+        const pid = tracked.pid;
         // The child handle remains authoritative until Node reports its exit.
         // A process-table observation can race that notification.
         if (tracked.windowsTerminalLaunchCustody) {
@@ -193,7 +195,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
             readProcessIdentityByPid: readIdentity,
           });
           if (isShuttingDown?.() === true) return;
-          if (pidToTrackedSession.get(pid) !== tracked) continue;
+          if (!isCurrentTrackedSession(trackedSessionsByKey, tracked)) continue;
           if (presence === 'absent') {
             await onChildExitedForPrune(pid, { reason: 'process-missing', code: null, signal: null });
           } else if (presence === 'present') {
@@ -215,7 +217,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
         }
         const runState = await readRunState(pid).catch(() => null);
         if (isShuttingDown?.() === true) return;
-        if (pidToTrackedSession.get(pid) !== tracked) continue;
+        if (!isCurrentTrackedSession(trackedSessionsByKey, tracked)) continue;
         if (runState === 'dead' || runState === 'zombie') {
           logger.debug(`[DAEMON RUN] Removing stale session with PID ${pid} (run state: ${runState})`);
           await onChildExitedForPrune(pid, { reason: 'process-missing', code: null, signal: null });
@@ -235,7 +237,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
           continue;
         }
         const processIdentity = await readIdentity(pid).catch(() => null);
-        const currentTracked = pidToTrackedSession.get(pid);
+        const currentTracked = trackedSessionsByKey.get(tracked.trackingKey);
         if (
           currentTracked !== tracked
           || currentTracked.processStartTimeMs !== expectedProcessStartTimeMs
@@ -272,7 +274,7 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
           terminalTtlMs: executionRunTerminalTtlMs,
           isPidAlive: isPidPresent,
           isPidSafeHappyProcess: async (pid) => {
-            if (pidToTrackedSession.has(pid)) return true;
+            if (trackedSessionsForProcess(trackedSessionsByKey, pid).length > 0) return true;
             const proc = await findHappyProcessByPid(pid);
             return Boolean(proc);
           },
@@ -281,22 +283,20 @@ export function startDaemonHeartbeatLoop(params: Readonly<{
         logger.debug('[DAEMON RUN] Failed to gc execution run markers', error);
       }
 
-      // Cleanup any spawn resources for sessions no longer tracked (e.g. stopSession removed them).
-      const cleanupPidMapIfUntracked = async (map: Map<number, unknown>) => {
-        for (const [pid] of map.entries()) {
-          if (pidToTrackedSession.has(pid)) continue;
-          if (!isPidPresent(pid)) {
-            await cleanupPidSessionResources({
-              pid,
-              spawnResourceCleanupByPid,
-              sessionAttachCleanupByPid,
-            });
-          }
+      // Cleanup any spawn resources for Sessions no longer tracked.
+      const cleanupKeyMapIfUntracked = async (map: ReadonlyMap<SessionTrackingKey, unknown>) => {
+        for (const trackingKey of [...map.keys()]) {
+          if (trackedSessionsByKey.has(trackingKey)) continue;
+          await cleanupSessionResources({
+            trackingKey,
+            spawnResourceCleanupByKey,
+            sessionAttachCleanupByKey,
+          });
         }
       };
 
-      await cleanupPidMapIfUntracked(spawnResourceCleanupByPid);
-      await cleanupPidMapIfUntracked(sessionAttachCleanupByPid);
+      await cleanupKeyMapIfUntracked(spawnResourceCleanupByKey);
+      await cleanupKeyMapIfUntracked(sessionAttachCleanupByKey);
 
       // Check if daemon needs update
       // If version on disk is different from the one in package.json - we need to restart

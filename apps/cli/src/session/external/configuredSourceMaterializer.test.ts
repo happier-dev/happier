@@ -75,6 +75,7 @@ import {
   resolveConfiguredExternalSessionFollowTarget as resolveConfiguredExternalSessionFollowTargetOwner,
   type ConfiguredExternalSessionSourceAccountProjection,
 } from './configuredSourceMaterializer';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const testAgentOccurrence = (agentId: string) => Object.freeze({
   occurrenceId: `${agentId}:test-occurrence`,
@@ -1469,7 +1470,7 @@ describe('configured external-session source materializer', () => {
     registerSessionProviderInputAdmissionRpc({ consumer, rpcHandlerRegistrar: {
       registerHandler: (method, handler) => { handlers.set(method, handler); },
     } });
-    const tracked: TrackedSession = { pid: 42, startedBy: 'daemon', happySessionId: 'claude-activity' };
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(42), pid: 42, startedBy: 'daemon', happySessionId: 'claude-activity' };
     const liveWork = createSessionLiveWorkProducer({ readSessions: () => [tracked],
       readActivity: () => requestSessionInputLiveWork({ callRpc: async (method, request) => handlers.get(method)!(request) }),
     });

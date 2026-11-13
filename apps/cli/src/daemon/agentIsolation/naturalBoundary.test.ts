@@ -4,6 +4,7 @@ import { createActionOperationStore } from '@/daemon/actionOperations/actionOper
 import { createManagedActivityInventory } from '@/daemon/lifecycle/managedActivity';
 import { createSessionLiveWorkProducer } from '@/daemon/lifecycle/sessionLiveWorkProducer';
 import { waitForRequesterMachineNaturalBoundary } from './naturalBoundary';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const requester = { serverId: 'saved-home-profile', accountId: 'member-a', machineId: 'machine', installationId: 'installation' };
 
@@ -24,7 +25,7 @@ function fixture() {
 
 describe('requester retirement natural-boundary composition', () => {
     it('retains native authority for a hosted idle Session until actual exit removes it, while settled Action receipts do not block', async () => {
-        let tracked = [{ pid: 42, startedBy: 'daemon' as const, happySessionId: 'hosted-session', requesterWorkAttributionV1: requester }];
+        let tracked = [{ trackingKey: legacyPidSessionTrackingKey(42), pid: 42, startedBy: 'daemon' as const, happySessionId: 'hosted-session', requesterWorkAttributionV1: requester }];
         let sessionReads = 0;
         const sessions = createSessionLiveWorkProducer({ readSessions: () => tracked, readActivity: async () => {
             sessionReads++;

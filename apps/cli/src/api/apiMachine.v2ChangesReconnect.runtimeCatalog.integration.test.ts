@@ -105,6 +105,7 @@ import {
     subscribePluginAccountCollectionWatchInvalidation,
     subscribePluginAccountSettingsWatchInvalidation,
 } from '@/plugins/runtime/context/pluginAccountSettingsChangeBroker';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const { claudeProvenanceReplaceCount } = vi.hoisted(() => ({
     claudeProvenanceReplaceCount: { current: 0 },
@@ -2408,7 +2409,7 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
         const trackedLaunch = { directory: tempRoot,
             environmentVariables: { [descriptor.nativeHome.environmentKey]: materializedRoot,
                 [HAPPIER_CONNECTED_SERVICE_TARGET_MATERIALIZED_ROOT_ENV_KEY]: materializedRoot } };
-        const restartRequestedPids = new Set<number>();
+        const restartRequestedSessions = new Set<SessionTrackingKey>();
         const runtime = await startDaemonSessionControlRuntime({
             machineId: machine.id,
             serverId: 'server-v2-reconnect',
@@ -2430,19 +2431,19 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             getConnectedServiceQuotasCoordinator: () => null,
             connectedServiceRuntimeRegistry: runtimeRegistry,
             resolveQualifiedConnectedAccountV4Support: () => 'advertised',
-            pidToTrackedSession: new Map([
-                [7101, { pid: 7101, startedBy: 'daemon', happySessionId: 'sess-shared-a',
+            trackedSessionsByKey: new Map([
+                [legacyPidSessionTrackingKey(7101), { trackingKey: legacyPidSessionTrackingKey(7101), pid: 7101, startedBy: 'daemon', happySessionId: 'sess-shared-a',
                     happySessionMetadataFromLocalWebhook: createTestMetadata({ flavor: 'claude' }), spawnOptions: trackedLaunch }],
-                [7102, { pid: 7102, startedBy: 'daemon', happySessionId: 'sess-shared-b',
+                [legacyPidSessionTrackingKey(7102), { trackingKey: legacyPidSessionTrackingKey(7102), pid: 7102, startedBy: 'daemon', happySessionId: 'sess-shared-b',
                     happySessionMetadataFromLocalWebhook: createTestMetadata({ flavor: 'claude' }), spawnOptions: trackedLaunch }],
             ]),
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(),
-            sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: restartRequestedPids,
+            spawnResourceCleanupByKey: new Map(),
+            sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: restartRequestedSessions,
             beforeShutdown: vi.fn(),
             onHappySessionWebhook: vi.fn(),
             requestShutdown: vi.fn(),
@@ -2606,7 +2607,7 @@ describe('ApiMachineClient /v2/changes reconnect', () => {
             expect(projectionOutcomes).toEqual(expect.arrayContaining([{ status: 'converged' }]));
             expect(writeAccountChangesCursor).toHaveBeenCalledTimes(1);
             expect(writeAccountChangesCursor).toHaveBeenCalledWith('acc-1', 3);
-            expect(restartRequestedPids).toEqual(new Set());
+            expect(restartRequestedSessions).toEqual(new Set());
             expect(runtimeRegistry.listTargets().map(({ pid, sessionId, connectedServicesBindingsRaw }) =>
                 ({ pid, sessionId, connectedServicesBindingsRaw }))).toEqual([
                 { pid: 7101, sessionId: 'sess-shared-a', connectedServicesBindingsRaw: retainedBindings },

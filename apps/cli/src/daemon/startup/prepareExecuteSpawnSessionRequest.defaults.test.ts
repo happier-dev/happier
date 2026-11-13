@@ -93,8 +93,8 @@ function execute(options: SpawnSessionOptions) {
     connectedServicesMaterializationBaseDir: configuration.happyHomeDir,
     connectedServiceRefreshCoordinator: null, connectedServiceQuotasCoordinator: null,
     connectedServiceRuntimeRegistry: new ConnectedServiceRuntimeRegistry(),
-    pidToTrackedSession: new Map(), pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(),
-    pidToSpawnWebhookTimeout: new Map(), spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+    trackedSessionsByKey: new Map(), spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(),
+    spawnWebhookTimeoutByKey: new Map(), spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
     resolveCanonicalTrackedSessionId: () => '', onChildExited: () => {},
   }));
 }

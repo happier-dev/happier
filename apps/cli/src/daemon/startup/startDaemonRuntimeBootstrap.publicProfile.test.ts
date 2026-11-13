@@ -43,7 +43,7 @@ describe('native public-profile bootstrap composition', () => {
       startupSource: 'manual' as const, serviceLabel: undefined, daemonLogPath: '/tmp/daemon.log', controlToken: 'control',
       publishDaemonState: () => true, happyHomeDir: '/tmp/profile-bootstrap-home', activeServerDir: '/tmp/profile-bootstrap-server',
       filesystemAccessPolicy: { kind: 'osUser' as const }, publicReleaseChannel: 'dev' as const,
-      connectedServicesRestartRequestedPids: new Set<number>(), pidToTrackedSession: new Map(),
+      connectedServicesRestartRequestedSessions: new Set(), trackedSessionsByKey: new Map(),
       connectedServiceAuthGroupPreTurnSwitchCoordinator: { ...healthSwitchContext, switchBeforeTurn: unsupported, applyCommittedGeneration: unsupported, applyCredentialUpdate: unsupported },
       connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
       providerAccountUsageStore: createProviderAccountUsageStore(),

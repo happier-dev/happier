@@ -5,6 +5,7 @@ import { createManagedActivityInventory } from '../lifecycle/managedActivity';
 import { createActionOperationStore } from '../actionOperations/actionOperationStore';
 import { createSessionLiveWorkProducer } from '../lifecycle/sessionLiveWorkProducer';
 import type { TrackedSession } from '../types';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const target = { serverId: 'home', machineId: 'machine', installationId: 'installation' };
 const attribution = { ...target, accountId: 'bob' };
@@ -25,7 +26,7 @@ describe('projectMachineWorkSummary', () => {
         ] });
     });
     it('counts an idle hosted Session while retention is idle, then removes it when its tracked process retires', async () => {
-        let sessions: TrackedSession[] = [{ pid: 1, startedBy: 'daemon', happySessionId: 'private-session', requesterWorkAttributionV1: attribution }];
+        let sessions: TrackedSession[] = [{ trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon', happySessionId: 'private-session', requesterWorkAttributionV1: attribution }];
         let agents: 'active' | 'settled' = 'settled';
         let attention: 'active' | 'settled' = 'settled';
         const producer = createSessionLiveWorkProducer({ readSessions: () => sessions,

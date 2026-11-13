@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => ({
     bindAgentExternalSessionsManagedEndpoint: vi.fn(),
     managedEndpointRead: vi.fn(),
     updateSessionMarkerRunnerManagedProviderAuthority: vi.fn(),
+    findSessionMarkerTrackingKey: vi.fn(async ({ pid }: { pid: number }) => `pid-${pid}`),
     attachExactRunnerRetainedPluginGenerations: vi.fn(),
     readCurrentPluginImmutableGenerationIntegrityCurrentness: vi.fn(),
     readPrivateBearerFile: vi.fn(),
@@ -51,6 +52,7 @@ vi.mock('@/daemon/agentRuntime/sessionBridgeAuthorization', () => ({
 vi.mock('@/daemon/sessionRegistry', () => ({
     updateSessionMarkerRunnerManagedProviderAuthority:
         mocks.updateSessionMarkerRunnerManagedProviderAuthority,
+    findSessionMarkerTrackingKey: mocks.findSessionMarkerTrackingKey,
 }));
 vi.mock('@/plugins/store/registry/generationCustodyRetirement', () => ({
     attachExactRunnerRetainedPluginGenerations:
@@ -1285,6 +1287,7 @@ describe('runner Agent session runtime source', () => {
         expect(
             mocks.updateSessionMarkerRunnerManagedProviderAuthority,
         ).toHaveBeenCalledWith({
+            trackingKey: `pid-${process.pid}`,
             pid: process.pid,
             sessionId: 'session-1',
             processCommandHash: 'a'.repeat(64),
@@ -1362,6 +1365,7 @@ describe('runner Agent session runtime source', () => {
         expect(
             mocks.updateSessionMarkerRunnerManagedProviderAuthority,
         ).toHaveBeenLastCalledWith({
+            trackingKey: `pid-${process.pid}`,
             pid: process.pid,
             sessionId: 'session-1',
             processCommandHash: 'a'.repeat(64),

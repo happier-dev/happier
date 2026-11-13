@@ -265,12 +265,12 @@ describe('createDaemonMachineBootstrapRuntime', () => {
       // The failed handoff cleared the routing projection. Existing attempt
       // cleanup has not reached Api.shutdown because its peer stop is pending.
       attemptCleanup = retireMachineSyncRuntimeAttempt({ apiMachine, automationWorker: null,
-        memoryWorker: null, voiceInferenceWorker: null, machineConnectionStateCleanup: null,
+        roleActivations: null, machineConnectionStateCleanup: null,
         disposeInactiveSessionUsageLimitRecovery: null, stopMachineIrohAcceptor: async () => await peerStopped,
         stopPeerMediationLoopbackServer: async () => {},
       });
       const beforeShutdown = createBeforeShutdownDrain({ admissionDrain,
-        pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+        spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
         shutdownSpawnDrainGraceMs: 0, shutdownSpawnDrainPollMs: 10, getApiMachineForSessions: () => null,
         // Final shutdown consumes the same retained bootstrap owner, not the
         // cleared session-routing projection.

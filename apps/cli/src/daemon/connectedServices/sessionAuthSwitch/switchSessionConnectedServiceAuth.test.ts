@@ -21,6 +21,7 @@ import { CODEX_PLUGIN } from '@happier-dev/plugins-codex/manifest';
 import type { AgentConnectedAccountLaunchContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 
 import type { TrackedSession } from '@/daemon/types';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 import { HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY, readConnectedServiceChildSelectionsFromEnv } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
 import { requestPlannedRunnerRestart } from '@/daemon/plannedRunnerRestart/requestPlannedRunnerRestart';
 import { isPidSafeHappySessionProcess } from '@/daemon/pidSafety';
@@ -61,6 +62,7 @@ import { createRecoveryIntentFileStore } from '../recoveryScheduler/recoveryInte
 import { createConnectedServiceContinuationHandler } from '../continuation/switchRecovery';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { resolveSharedStateRequiredSwitchContinuity } from './sharedStateContinuity';
+import { resolveTrackedSessionRunnerActivity } from '@/daemon/sessionRunnerRuntime/resolveRuntimeState';
 
 let catalogRuntime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
 beforeAll(async () => {
@@ -141,6 +143,7 @@ type SwitchInputWithVerification = SwitchInputWithPostSwitchRecovery & Readonly<
 
 function trackedSession(overrides: Partial<TrackedSession> = {}): TrackedSession {
   return {
+    trackingKey: legacyPidSessionTrackingKey(overrides.pid ?? 123),
     startedBy: 'daemon',
     happySessionId: 'sess_1',
     pid: 123,
@@ -389,6 +392,66 @@ function expectMaterializationIdentity(value: unknown): ConnectedServiceMaterial
 }
 
 describe('switchSessionConnectedServiceAuth', () => {
+  it('keeps an approved switch armed through the turn boundary without holding its own restart', async () => {
+    const tracked = trackedSession({ activeTurnId: 'turn-1', processCommandHash: 'hash', processStartTimeMs: 123 });
+    const events: unknown[] = [];
+    const writes: ConnectedServiceBindingsV2[] = [];
+    const queue = createConnectedServiceSwitchDeferralQueue({ disableDeferral: false, emitSessionEvent: async (_, event) => { events.push(event); } });
+    queue.recordTurnLifecycleEvent({ sessionId: 'sess_1', event: 'task_started' });
+    // The approved Action remains in flight until its restart completes (r1110f).
+    const operations = [{ method: 'approved-switch', activeForMs: 1,
+      sessionEffect: { sessionId: 'sess_1', actionId: 'session.connected_services_auth.set' } }];
+    let replacementOptions: TrackedSession['spawnOptions'];
+    let completeRestart!: (value: RestartSessionRunnerCompletion) => void;
+    const completion = new Promise<RestartSessionRunnerCompletion>(resolve => { completeRestart = resolve; });
+    const respawn = createSessionRunnerRespawnManager({ enabled: true, maxRestarts: 2,
+      baseDelayMs: 50, maxDelayMs: 50, jitterMs: 0, isSessionAlreadyRunning: () => false,
+      spawnSession: async options => { replacementOptions = options; return { type: 'success', sessionId: 'sess_1' }; },
+      onRespawnSuccess: () => completeRestart({ ok: true }),
+      onRespawnTerminal: () => completeRestart({ ok: false, status: 'spawn_failed' }),
+      random: () => 0, logDebug: () => {}, logWarn: () => {},
+    });
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    try {
+      const pending = switchSessionConnectedServiceAuth({ core: createCore(),
+        postSwitchVerificationMode: testOnlyPostSwitchVerificationBypass(), getChildren: () => [tracked],
+        api: { listConnectedServiceProfiles: async () => ({ serviceId: 'happier.agent.claude/anthropic',
+          profiles: [{ profileId: 'new-profile', status: 'connected' }] }), getConnectedServiceAuthGroup: async () => null },
+        resolveContinuity: async () => ({ mode: 'restart_rematerialize' }),
+        persistSessionBindings: async ({ normalizedBindings }) => { writes.push(normalizedBindings); },
+        restartSession: child => requestPlannedRunnerRestart({ sessionId: 'sess_1', tracked: child,
+          deferral: { kind: 'connected_service_switch', source: 'manual', policy: 'defer_until_turn_boundary',
+            target: { serviceId: 'happier.agent.claude/anthropic', profileId: 'new-profile', groupId: '', generation: 0 }, turnDeferralQueue: queue },
+          restartRequestedSessions: new Set(), trackedSessionsByKey: new Map([[child.trackingKey, child]]),
+          completion: { hasPending: () => false, join: () => null,
+            create: () => ({ promise: completion, start: () => {}, cancel: () => {} }) },
+          isProcessSafeToSignal: async () => true,
+          canSignal: () => resolveTrackedSessionRunnerActivity(child, operations, 'session.connected_services_auth.set')?.reasonCode ?? true,
+          requestSignal: async request => {
+            const result = await requestConnectedServiceSessionRestartSignal({ pid: child.pid, delayMs: 0,
+              shouldSignal: request.shouldSignal, onSignalFailure: request.onSignalFailure });
+            if (result.status === 'requested') respawn.handleUnexpectedExit(child,
+              { reason: 'process-exit', code: 143, signal: 'SIGTERM' }, { forceRestart: true, restartReason: 'connected_service_switch' });
+            return result;
+          },
+        }),
+        hotApply: async () => { throw new Error('restart continuity'); }, registerHotApplyTargets: () => {}, emitSessionEvent: () => {},
+        request: { sessionId: 'sess_1', agentId: 'claude', bindings: bindings('new-profile') },
+      });
+      await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({ type: 'connected_service_account_switch_deferred' })));
+      expect(kill).not.toHaveBeenCalled();
+      expect(writes).toEqual([bindings('new-profile')]);
+      delete tracked.activeTurnId;
+      queue.recordTurnLifecycleEvent({ sessionId: 'sess_1', event: 'assistant_message_end' });
+      const result = await pending;
+      expect(result, JSON.stringify(result)).toMatchObject({ ok: true, action: 'restart_requested' });
+      expect(kill).toHaveBeenCalledExactlyOnceWith(tracked.pid, 'SIGTERM');
+      expect(writes).toEqual([bindings('new-profile')]);
+      // The replacement/next prompt consumes these persisted spawn bindings.
+      expect(tracked.spawnOptions?.connectedServices).toEqual(bindings('new-profile'));
+      expect(replacementOptions?.connectedServices).toEqual(bindings('new-profile'));
+    } finally { await queue.cancelAll('daemon_shutdown'); kill.mockRestore(); }
+  });
   it('applies every committed group revision through one native effect when binding intent is unchanged', async () => {
     const serviceIds = ['happier.agent.claude/anthropic', 'happier.agent.claude/claude-subscription'] as const;
     const selectedBindings: ConnectedServiceBindingsV2 = { v: 2, bindingsByServiceId: Object.fromEntries(
@@ -629,7 +692,7 @@ describe('switchSessionConnectedServiceAuth', () => {
     tracked.spawnOptions = { ...tracked.spawnOptions!, connectedServices: previousBindings };
     const previousSpawnOptions = tracked.spawnOptions;
     const profileId = 'new-profile';
-    const restartRequestedPids = new Set<number>();
+    const restartRequestedSessions = new Set<SessionTrackingKey>();
     let deferred!: () => void;
     const pendingBoundary = new Promise<void>(resolve => { deferred = resolve; });
     const queue = createConnectedServiceSwitchDeferralQueue({ disableDeferral: false,
@@ -657,7 +720,7 @@ describe('switchSessionConnectedServiceAuth', () => {
         fromBindingsRaw: context.previousBindings, toBindings: context.normalizedBindings, accountSettings: null,
       }),
       restartSession: child => requestPlannedRunnerRestart({ sessionId: 'sess_1', tracked: child,
-        restartRequestedPids, pidToTrackedSession: new Map([[child.pid, child]]),
+        restartRequestedSessions, trackedSessionsByKey: new Map([[child.trackingKey, child]]),
         deferral: { kind: 'connected_service_switch', source: mode === 'manual' ? 'manual' : 'automatic',
           policy: 'defer_until_turn_boundary', turnDeferralQueue: queue,
           target: { serviceId: 'happier.agent.claude/anthropic', profileId, groupId: 'work', generation: 4 } },
@@ -690,7 +753,7 @@ describe('switchSessionConnectedServiceAuth', () => {
         diagnostics: { failurePhase: mode === 'rollback_failed' ? 'reconciliation' : 'restart',
           restartRefusalReason: 'runner_identity_changed', retryable: false } });
       expect(signals).not.toHaveBeenCalled();
-      expect(restartRequestedPids.size).toBe(0);
+      expect(restartRequestedSessions.size).toBe(0);
       expect(tracked.spawnOptions).toBe(previousSpawnOptions);
       if (mode !== 'rematerialize' && mode !== 'rollback_failed') expect(persisted.at(-1)).toEqual(previousBindings);
     } finally {
@@ -735,8 +798,8 @@ describe('switchSessionConnectedServiceAuth', () => {
         metadata: { scopes: [] },
       }) }));
     const restarts: number[] = [];
-    const trackedByPid = new Map([[tracked.pid, tracked]]);
-    const restartRequestedPids = new Set<number>();
+    const trackedByPid = new Map([[tracked.trackingKey, tracked]]);
+    const restartRequestedSessions = new Set<SessionTrackingKey>();
     const handoff = createVersionRuntimeRefreshAttemptHandoff<RestartSessionRunnerCompletion>({ timeoutMs: null,
       timeoutCompletion: { ok: false, status: 'partial_failure' },
       supersededCompletion: { ok: false, status: 'partial_failure' },
@@ -751,19 +814,19 @@ describe('switchSessionConnectedServiceAuth', () => {
       isSessionAlreadyRunning: sessionId => [...trackedByPid.values()].some(child => child.happySessionId === sessionId),
       // This is the OS spawn boundary. Observe the actual respawn owner's options.
       spawnSession: async options => {
-        successor = { startedBy: 'daemon', happySessionId: 'sess_1', pid: tracked.pid + 1,
+        successor = { trackingKey: legacyPidSessionTrackingKey(tracked.pid + 1), startedBy: 'daemon', happySessionId: 'sess_1', pid: tracked.pid + 1,
           processStartTimeMs: 2, processCommandHash: 'b'.repeat(64), spawnOptions: options };
         tracked = successor;
-        trackedByPid.set(tracked.pid, tracked);
+        trackedByPid.set(tracked.trackingKey, tracked);
         return { type: 'success', sessionId: tracked.happySessionId };
       },
-      onRespawnSuccess: ({ sessionId, previousPid }) => {
-        restartRequestedPids.delete(previousPid);
+      onRespawnSuccess: ({ sessionId, previousPid, previousTrackingKey }) => {
+        restartRequestedSessions.delete(previousTrackingKey);
         handoff.settle(sessionId, previousPid, { ok: true });
         resolveSuccessor();
       },
-      onRespawnTerminal: ({ sessionId, previousPid }) => {
-        restartRequestedPids.delete(previousPid);
+      onRespawnTerminal: ({ sessionId, previousPid, previousTrackingKey }) => {
+        restartRequestedSessions.delete(previousTrackingKey);
         handoff.settle(sessionId, previousPid, { ok: false, status: 'spawn_failed' });
       },
       random: () => 0, logDebug: () => {}, logWarn: () => {},
@@ -796,7 +859,7 @@ describe('switchSessionConnectedServiceAuth', () => {
       }),
       restartSession: async child => await requestPlannedRunnerRestart({
         sessionId: 'sess_1', tracked: child, reason: 'account_changed', deferral: { kind: 'none' },
-        restartRequestedPids, pidToTrackedSession: trackedByPid,
+        restartRequestedSessions, trackedSessionsByKey: trackedByPid,
         completion: {
           hasPending: () => handoff.has('sess_1', child.pid),
           join: () => handoff.join({ sessionId: 'sess_1', previousPid: child.pid, tracked: child,
@@ -820,7 +883,7 @@ describe('switchSessionConnectedServiceAuth', () => {
           const result = await requestConnectedServiceSessionRestartSignal({ pid: child.pid, delayMs: 0,
             shouldSignal: request.shouldSignal, onSignalFailure: request.onSignalFailure });
           if (result.status === 'requested') {
-            trackedByPid.delete(child.pid);
+            trackedByPid.delete(child.trackingKey);
             respawn.handleUnexpectedExit(child, { reason: 'process-exit', code: 143, signal: 'SIGTERM' },
               { forceRestart: true, restartReason: 'account_changed' });
           }
@@ -886,7 +949,7 @@ describe('switchSessionConnectedServiceAuth', () => {
         expect(declined).toEqual({ status: 'failed', errorCode: 'restart_failed' });
         expect(restarts).toEqual([]);
         expect(tracked.spawnOptions).toBe(originalSpawnOptions);
-        expect(restartRequestedPids.size).toBe(0);
+        expect(restartRequestedSessions.size).toBe(0);
         expect(successor).toBeUndefined();
         signalAllowed = true;
         expect(await notify()).toEqual({ status: 'restart_requested' });

@@ -36,6 +36,7 @@ import {
   RUNNER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_TRANSITION_CODE,
   resolveCurrentAgentRuntimeDaemonTurnContributions,
 } from './agentRuntimeDaemonServiceAuthorityClient';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const roots: string[] = [];
 const processIdentityMock = vi.hoisted(() => vi.fn());
@@ -103,7 +104,7 @@ describe('current Agent runtime daemon service authority client', () => {
     expect(issue).toMatchObject({ code, source });
     const childProcess = new ChildProcess();
     Object.defineProperty(childProcess, 'exitCode', { value: 1 });
-    const tracked: TrackedSession = { startedBy: 'daemon', pid: runner.pid, happySessionId: authority.sessionId,
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon', pid: runner.pid, happySessionId: authority.sessionId,
       runnerProcessIdentity: runner, processStartTimeMs: runner.processStartTimeMs,
       processCommandHash: runner.processCommandHash, childProcess };
     const observed = await awaitTrackedRunnerAgentSessionOpen({ sessionId: authority.sessionId,

@@ -10,6 +10,7 @@ import { ConnectedServiceAuthGroupSwitchCoordinator, InMemoryConnectedServiceAut
 import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2 } from '../accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { buildConnectedServiceAuthGroupObservedFailureMemberState } from '../accountGroups/runtimeState/buildConnectedServiceAuthGroupObservedFailureMemberState';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 import type { SessionRuntimeIssueV1, SessionUsageLimitRecoveryV1 } from '@happier-dev/protocol';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
@@ -81,7 +82,7 @@ describe('continueSessionAfterUsageLimitReset', () => {
       latestTurnStatusObservedAt: 100 });
     const revisionA = 'csr_aaaaaaaaaaaaaaaaaaaaaa';
     const revisionB = 'csr_bbbbbbbbbbbbbbbbbbbbbb';
-    const tracked: TrackedSession = { startedBy: 'daemon', happySessionId: sessionId, pid: 123,
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon', happySessionId: sessionId, pid: 123,
       activeTurnId: 'interrupted-turn', ...(projection === 'predecessor' ? { reattachedFromDiskMarker: true } : {}),
       spawnOptions: { directory, backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' }, connectedServices: {
         v: 2, bindingsByServiceId: { [serviceId]: { source: 'connected', selection: 'group', groupId: 'pool', profileId: 'A' } },

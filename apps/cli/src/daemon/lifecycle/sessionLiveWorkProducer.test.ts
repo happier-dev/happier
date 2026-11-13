@@ -12,13 +12,14 @@ import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionResult } from '@/session/sh
 import { buildSessionAgentActivityHeadline } from '@happier-dev/protocol/sessions/work/agentActivity/agentActivityHeadlineBuild';
 import type { AgentState } from '@/api/types';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('live Session producer at the host input RPC boundary', () => {
   it.each([
     { locationMachineId: 'machine', expectedWorkspacePath: '/repos/project', expectedIdle: false },
     { locationMachineId: 'replaced-machine', expectedWorkspacePath: '/agent/repo', expectedIdle: true },
   ])('uses the published same-machine workspace mapping for $locationMachineId', async ({ locationMachineId, expectedWorkspacePath, expectedIdle }) => {
-    const tracked: TrackedSession = { pid: 1, startedBy: 'daemon', happySessionId: 'session',
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon', happySessionId: 'session',
       requesterWorkAttributionV1: { serverId: 'home', accountId: 'owner', machineId: 'machine', installationId: 'installation' },
       happySessionMetadataFromLocalWebhook: createTestMetadata({ path: '/agent/repo', host: 'host', machineId: 'machine',
         sessionWorkspaceLocationV1: { v: 1, machineId: locationMachineId, agentPath: '/agent/repo', machinePath: '/repos/project' } }),
@@ -52,7 +53,7 @@ describe('live Session producer at the host input RPC boundary', () => {
     registerSessionProviderInputAdmissionRpc({ consumer, rpcHandlerRegistrar: {
       registerHandler: (method, handler) => { handlers.set(method, handler); },
     } });
-    const tracked: TrackedSession = { pid: 1, startedBy: 'daemon', happySessionId: 'session', spawnOptions: { directory: '/repo' } };
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon', happySessionId: 'session', spawnOptions: { directory: '/repo' } };
     const source = createSessionLiveWorkProducer({ readSessions: () => [tracked], readActivity: () =>
       requestSessionInputLiveWork({ callRpc: async (method, request) => handlers.get(method)!(request) }),
     });
@@ -106,7 +107,7 @@ describe('live Session producer at the host input RPC boundary', () => {
       registerHandler: (method, handler) => { handlers.set(method, handler); },
     } });
     const attribution = { serverId: 'home', accountId: 'requester', machineId: 'machine', installationId: 'installation' };
-    const tracked: TrackedSession = { pid: 1, startedBy: 'daemon', happySessionId: 'session', requesterWorkAttributionV1: attribution };
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon', happySessionId: 'session', requesterWorkAttributionV1: attribution };
     const source = createSessionLiveWorkProducer({ readSessions: () => [tracked], readActivity: async () =>
       requestSessionInputLiveWork({ callRpc: async (method, request) => handlers.get(method)!(request) }),
     });
@@ -128,7 +129,7 @@ describe('live Session producer at the host input RPC boundary', () => {
   });
 
   it('rereads only the Session whose runner reported a change, while explicit confirmations still read every runner', async () => {
-    const sessions: TrackedSession[] = ['s1', 's2', 's3'].map((id, index) => ({ pid: index + 1, startedBy: 'daemon', happySessionId: id }));
+    const sessions: TrackedSession[] = ['s1', 's2', 's3'].map((id, index) => ({ trackingKey: legacyPidSessionTrackingKey(index + 1), pid: index + 1, startedBy: 'daemon', happySessionId: id }));
     const reads: string[] = [];
     let s2Input: 'active' | 'settled' = 'settled';
     const source = createSessionLiveWorkProducer({ readSessions: () => sessions, readActivity: async tracked => {
@@ -162,7 +163,7 @@ describe('live Session producer at the host input RPC boundary', () => {
   });
 
   it('keeps unreported startup and failed live transport unknown even when activeTurnId is absent', async () => {
-    const tracked: TrackedSession = { pid: 1, startedBy: 'daemon', happySessionId: 'session' };
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon', happySessionId: 'session' };
     const source = createSessionLiveWorkProducer({ readSessions: () => [tracked], readActivity: async () => { throw new Error('unreachable'); } });
     await expect(source.read()).resolves.toMatchObject({ coverage: 'unknown', items: [
       { category: 'session', state: 'unknown' }, { category: 'input', state: 'unknown' },
@@ -173,7 +174,7 @@ describe('live Session producer at the host input RPC boundary', () => {
   });
 
   it('does not apply a reply after its exact tracked process has been retired', async () => {
-    const tracked: TrackedSession = { pid: 1, startedBy: 'daemon', happySessionId: 'session' };
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon', happySessionId: 'session' };
     let sessions = [tracked];
     const source = createSessionLiveWorkProducer({ readSessions: () => sessions, readActivity: async () => {
       sessions = [];
@@ -183,8 +184,8 @@ describe('live Session producer at the host input RPC boundary', () => {
   });
 
   it('keeps a process replacement arriving during the read unknown until its own live query succeeds', async () => {
-    const original: TrackedSession = { pid: 1, startedBy: 'daemon', happySessionId: 'session' };
-    const replacement: TrackedSession = { pid: 2, startedBy: 'daemon', happySessionId: 'session' };
+    const original: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon', happySessionId: 'session' };
+    const replacement: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(2), pid: 2, startedBy: 'daemon', happySessionId: 'session' };
     let sessions = [original];
     const source = createSessionLiveWorkProducer({ readSessions: () => sessions, readActivity: async () => {
       sessions = [replacement];

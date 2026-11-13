@@ -1,4 +1,5 @@
 import { CustodySchema, CustodyStoredReadSchema, type RequesterSessionCredentialBinding, requesterSessionCredentialPath, requesterSessionCredentialDirectory, requesterSessionCredentialFilePrefix } from './requesterSessionCustody';
+import type { ReadonlyTrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 export { REQUESTER_SESSION_CREDENTIAL_FILE_ENV, REQUESTER_SESSION_ID_ENV, type RequesterSessionCredentialBinding, requesterSessionCredentialPath, readRequesterSessionCredentialsForChild } from './requesterSessionCustody';
 import { readRequesterHomeWithinActionLifetime, rethrowRequesterHomeReadFailure } from './requesterCurrentness';
 
@@ -149,17 +150,17 @@ export type ResolveRequesterSessionRuntimeContext = (
 
 /** The daemon's one tracked/recovered requester selection and publication owner. */
 export function createRequesterSessionRuntimeContextResolver(input: Readonly<{
-  trackedSessions: ReadonlyMap<number, TrackedSession>;
+  trackedSessions: ReadonlyTrackedSessionMap;
   getCreateRuntime(): ((bootstrap: AdmittedRequesterSessionBootstrap, signal?: AbortSignal) => Promise<RequesterSessionRuntimeContext | null>) | null;
   recoverBootstrap(input: Readonly<{ sessionId: string; attribution?: RequesterWorkAttributionV1; tracked: boolean; signal?: AbortSignal;
     onRecoveryRefused?: (refusal: RequesterSessionRecoveryRefusal) => Promise<void> }>): Promise<AdmittedRequesterSessionBootstrap | null>;
 }>): ResolveRequesterSessionRuntimeContext {
-  const pidToTrackedSession = input.trackedSessions;
+  const trackedSessionsByKey = input.trackedSessions;
   return async (sessionId, attribution, signal, onPreparationRefused) => {
     if (signal?.aborted) return null;
     // Exited runners no longer lend requester authority. Inactive operations
     // still recover their own temporary context through the same custody path.
-    const tracked = [...pidToTrackedSession.values()].find(candidate => candidate.happySessionId === sessionId
+    const tracked = [...trackedSessionsByKey.values()].find(candidate => candidate.happySessionId === sessionId
       && candidate.reportMarkerCustody?.retiring !== true);
     const context = tracked?.requesterSessionRuntimeContext;
     if (!context && !input.getCreateRuntime()) return null;
@@ -176,7 +177,7 @@ export function createRequesterSessionRuntimeContextResolver(input: Readonly<{
       const currentStamp = tracked?.requesterWorkAttributionV1 ?? tracked?.spawnOptions?.requesterWorkAttributionV1;
       return tracked !== undefined && tracked.requesterSessionRuntimeContext === expected
         && tracked.reportMarkerCustody?.retiring !== true
-        && [...pidToTrackedSession.values()].some(candidate => candidate === tracked && candidate.happySessionId === sessionId)
+        && [...trackedSessionsByKey.values()].some(candidate => candidate === tracked && candidate.happySessionId === sessionId)
         && (!currentStamp || isDeepStrictEqual(currentStamp, stamp));
     };
     if (context) {
@@ -198,7 +199,7 @@ export function createRequesterSessionRuntimeContextResolver(input: Readonly<{
     const recovered = await createRequesterRuntime(bootstrap, signal);
     if (!recovered) { bootstrap.savedSecretOperationContext.withdrawCatalog(); return null; }
     if (tracked) {
-      const stillTracked = tracked.reportMarkerCustody?.retiring !== true && [...pidToTrackedSession.values()].some(candidate => candidate === tracked
+      const stillTracked = tracked.reportMarkerCustody?.retiring !== true && [...trackedSessionsByKey.values()].some(candidate => candidate === tracked
         && candidate.happySessionId === sessionId);
       if (!stillTracked) { await recovered.dispose(); return null; }
       const incumbent = tracked.requesterSessionRuntimeContext;
@@ -216,7 +217,7 @@ export function createRequesterSessionRuntimeContextResolver(input: Readonly<{
       tracked.requesterSessionRuntimeContext = recovered;
       tracked.requesterWorkAttributionV1 = stamp;
       if (context) await releaseUnretainedRequesterSessionRuntimeContext(context,
-        [...pidToTrackedSession.values()].map(candidate => candidate.requesterSessionRuntimeContext));
+        [...trackedSessionsByKey.values()].map(candidate => candidate.requesterSessionRuntimeContext));
     }
     return recovered;
   };

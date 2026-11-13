@@ -71,6 +71,7 @@ import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportD
 import { resolveTrackedSessionRunnerActivity } from '@/daemon/sessionRunnerRuntime/resolveRuntimeState';
 import { requestPlannedRunnerRestart } from '@/daemon/plannedRunnerRestart/requestPlannedRunnerRestart';
 import type { TrackedSession } from '@/daemon/types';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 // Reuse the composed journey's UI platform setup before loading the real producer.
 // Runtime URLs keep UI-only platform declarations out of CLI compilation.
 await import(new URL('../../../../ui/sources/dev/vitestSetup.ts', import.meta.url).href);
@@ -537,11 +538,11 @@ describe('SCM generation through real host admission', () => {
                         const intentInput = ExecutionRunScmDiffSummaryInputV1Schema.parse(startRequest.intentInput);
                         // The actual Machine Action is still awaiting its real
                         // Socket.IO Start. No Run exists at this boundary yet.
-                        const tracked: TrackedSession = { pid: 4242, startedBy: 'daemon', happySessionId: sessionId,
+                        const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(4242), pid: 4242, startedBy: 'daemon', happySessionId: sessionId,
                             processStartTimeMs: 1, processCommandHash: 'fixture' };
                         const signals: number[] = [];
                         expect(await requestPlannedRunnerRestart({ sessionId, tracked, deferral: { kind: 'none' },
-                            restartRequestedPids: new Set(), pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+                            restartRequestedSessions: new Set(), trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
                             isProcessSafeToSignal: async () => true,
                             canSignal: () => resolveTrackedSessionRunnerActivity(tracked, machine.manager.getActiveHandlerExecutions())?.reasonCode ?? true,
                             requestSignal: async request => {

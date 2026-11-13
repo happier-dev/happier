@@ -18,6 +18,7 @@ import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ScmDiffSummaryResultRevisionHint } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 // Source-only composition: loopback HTTP and the actual Follow dispatcher do
 // not launch the packaged CLI or require native-runtime build preparation.
@@ -65,7 +66,7 @@ describe('private Session activity invalidation', () => {
       signal: new AbortController().signal, isCurrent: async () => true, subscribeInvalidation: () => () => {},
       resolveSourceKeyContext: async () => null, isPersonalCurrent: () => false, dispatchPersonal: async () => {} });
     const app = createDaemonControlApp({
-      getChildren: () => [{ pid: 1, startedBy: 'daemon', happySessionId: 'source' }], machineId: 'machine',
+      getChildren: () => [{ trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon', happySessionId: 'source' }], machineId: 'machine',
       stopSession: async () => ({ status: 'not_found' }), spawnSession: async () => ({ type: 'success', sessionId: 'source' }),
       requestShutdown: () => {}, onHappySessionWebhook: () => {}, controlToken: 'token',
       onSessionActivityChanged: async (_sessionId, occurrence) => {
@@ -121,7 +122,7 @@ describe('private Session activity invalidation', () => {
       signal: new AbortController().signal, isCurrent: async () => true, subscribeInvalidation: () => () => {},
       resolveSourceKeyContext: async () => null, isPersonalCurrent: () => false, dispatchPersonal: async () => {} });
     const app = createDaemonControlApp({
-      getChildren: () => [{ pid: 1, startedBy: 'daemon', happySessionId: 'source' }], machineId: 'machine',
+      getChildren: () => [{ trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon', happySessionId: 'source' }], machineId: 'machine',
       stopSession: async () => ({ status: 'not_found' }), spawnSession: async () => ({ type: 'success', sessionId: 'source' }),
       requestShutdown: () => {}, onHappySessionWebhook: () => {}, controlToken: 'token',
       onSessionActivityChanged: async (_sessionId, occurrence) => {
@@ -194,7 +195,7 @@ describe('private Session activity invalidation', () => {
   });
   it('returns only the captured source contribution through the authenticated closed response', async () => {
     const app = createDaemonControlApp({
-      getChildren: () => [{ pid: 1, startedBy: 'daemon', happySessionId: 'session' }], machineId: 'machine',
+      getChildren: () => [{ trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon', happySessionId: 'session' }], machineId: 'machine',
       stopSession: async () => ({ status: 'not_found' }), spawnSession: async () => ({ type: 'success', sessionId: 'session' }),
       requestShutdown: () => {}, onHappySessionWebhook: () => {}, controlToken: 'token',
       onSessionActivityChanged: async () => ({ personalFollow: { sourceSessionId: 'session',
@@ -228,7 +229,7 @@ describe('private Session activity invalidation', () => {
     const changed: string[] = [];
     const drain = createDaemonAdmissionDrain();
     const app = createDaemonControlApp({
-      getChildren: () => [{ pid: 1, startedBy: 'daemon', happySessionId: 'session' }], machineId: 'machine',
+      getChildren: () => [{ trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon', happySessionId: 'session' }], machineId: 'machine',
       stopSession: async () => ({ status: 'not_found' }),
       spawnSession: async () => ({ type: 'success', sessionId: 'session' }), requestShutdown: () => {},
       onHappySessionWebhook: () => {}, controlToken: 'token', admissionDrain: drain,

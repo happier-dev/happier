@@ -17,6 +17,7 @@ import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClie
 import type { TrackedSession } from '../types';
 import { admitRequesterSessionBootstrap } from './requesterSessionCredentials';
 import { createRequesterSessionRuntimeContext } from './createRequesterSessionRuntimeContext';
+import type { SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 it('publishes one requester inventory invalidation per Account change and no currentness cycles during settled five-minute windows', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'happier-requester-idle-'));
@@ -72,7 +73,7 @@ it('publishes one requester inventory invalidation per Account change and no cur
   const invalidations = () => diagnostic.mock.calls.filter(([event]) => event === '[ConnectedAccounts] inventory invalidated').length;
   try {
     const registry = new ConnectedServiceRuntimeRegistry();
-    const trackedSessions = new Map<number, TrackedSession>();
+    const trackedSessions = new Map<SessionTrackingKey, TrackedSession>();
     host = await createRequesterSessionControlRuntimeFixture({ happyHomeDir: directory, activeServerDir: directory,
       serverId: 'idle-home', serverHttpBaseUrl: home, machineId: 'machine', custodianAccountId: 'alice',
       connectedServicesMaterializationBaseDir: join(directory, 'materialized'),
@@ -94,7 +95,7 @@ it('publishes one requester inventory invalidation per Account change and no cur
       coordinatorInput: { machineId: 'machine', machineIdProvider: () => 'machine', runtimeId: 'idle-runtime', happyHomeDir: directory,
         logger: { debug() {}, info() {}, warn() {} }, processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '1',
           HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED: '1', HAPPIER_CONNECTED_SERVICES_QUOTAS_DISCOVERY_ENABLED: '0' },
-        pidToTrackedSession: trackedSessions, connectedServiceRuntimeRegistry: registry,
+        trackedSessionsByKey: trackedSessions, connectedServiceRuntimeRegistry: registry,
         connectedServiceAuthGroupPreTurnSwitchCoordinator: host.runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator } });
     if (!runtime) throw new Error('Requester runtime unavailable');
     await settle();

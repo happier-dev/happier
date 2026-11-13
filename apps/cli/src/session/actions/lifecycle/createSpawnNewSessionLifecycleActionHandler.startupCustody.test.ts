@@ -26,6 +26,7 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { createExternalContributionFixtures, createLease, createNativeAgentRuntimeSessionPlanFixture, createNativeSessionClientTestPort, createSessionHostServiceOwners } from '@/agent/runtime/registry/engineRegistry/nativeAgentSession.testkit';
 import { buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('Session startup operation custody', () => {
   it.each([
@@ -48,7 +49,7 @@ describe('Session startup operation custody', () => {
         immutableGenerationId: `sha256:${'1'.repeat(64)}`, installSource: 'localPath' },
       locator: { module: './runtime.mjs', export: 'createRuntime', runtimeApiVersion: 1 },
       normalizedModulePath: '/immutable/acme/runtime.mjs', loadMode: 'immutable-js' });
-    const tracked: TrackedSession = { ...runner, startedBy: 'daemon', happySessionId: sessionId, childProcess: child,
+    const tracked: TrackedSession = { ...runner, trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon', happySessionId: sessionId, childProcess: child,
       runnerAgentSourceCustodyV1: binding.sourceCustody,
       agentRuntimeDaemonServiceAuthorityFilePath: '/fixture/construction-authority' };
     const failureCause = { ...(code === 'agent_startup_failed' ? { code } : {}), phase: 'client_start',
@@ -91,7 +92,7 @@ describe('Session startup operation custody', () => {
         } as never)).rejects.toBeDefined();
         return { type: 'success', sessionId };
       },
-      stopSession: createStopSession({ pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+      stopSession: createStopSession({ trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
         areTrackedRunnersExited: async () => true, waitForTrackedRunnersExit: async () => true,
         readHostAttachmentState: async () => ({ status: 'absent' }), readTerminalAttachmentInfo: async () => null }),
     }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ ...input,
@@ -121,7 +122,7 @@ describe('Session startup operation custody', () => {
     // Only the OS exit and retained diagnostic read are substituted boundaries.
     const child = new ChildProcess();
     Object.defineProperty(child, 'exitCode', { value: 1 });
-    const tracked: TrackedSession = { pid: 4321, processStartTimeMs: 1000, startedBy: 'daemon',
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(4321), pid: 4321, processStartTimeMs: 1000, startedBy: 'daemon',
       happySessionId: 'project-environment-startup', childProcess: child,
       agentRuntimeDaemonServiceAuthorityFilePath: '/fixture/environment-authority' };
     const failureCause = { code, retryable: false, phase: 'client_start',
@@ -164,7 +165,7 @@ describe('Session startup operation custody', () => {
     const child = spawn(process.execPath, ['-e', 'process.stdin.resume()'], { stdio: ['pipe', 'ignore', 'ignore'] });
     const exited = once(child, 'exit');
     const sessionId = 'voice-home-carrier';
-    const tracked: TrackedSession = { pid: child.pid!, startedBy: 'daemon', happySessionId: sessionId,
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(child.pid!), pid: child.pid!, startedBy: 'daemon', happySessionId: sessionId,
       childProcess: child, agentRuntimeDaemonServiceAuthorityFilePath: '/fixture/carrier-authority' };
     const operations = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'account',
       generateOperationId: () => 'carrier-startup', supportsCoreCancellation: () => true });
@@ -217,15 +218,15 @@ describe('Session startup operation custody', () => {
       locator: { module: './runtime.mjs', export: 'createRuntime', runtimeApiVersion: 1 },
       normalizedModulePath: '/immutable/acme/runtime.mjs', loadMode: 'immutable-js' });
     const runner = { pid: 41001001, processStartTimeMs: 1000, processCommandHash: 'a'.repeat(64) };
-    const refused: TrackedSession = { ...runner, startedBy: 'daemon', happySessionId: sessionId,
+    const refused: TrackedSession = { ...runner, trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon', happySessionId: sessionId,
       runnerAgentSourceCustodyV1: binding.sourceCustody,
       agentRuntimeDaemonServiceAuthorityFilePath: '/fixture/refused-authority' };
-    const replacement: TrackedSession = { pid: 41001002, processStartTimeMs: 2000, startedBy: 'daemon',
+    const replacement: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(41001002), pid: 41001002, processStartTimeMs: 2000, startedBy: 'daemon',
       happySessionId: sessionId, agentRuntimeDaemonServiceAuthorityFilePath: '/fixture/replacement-authority' };
-    const tracked = new Map([[refused.pid, refused]]);
+    const tracked = new Map([[refused.trackingKey, refused]]);
     const selected: number[][] = [];
     const retired: number[] = [];
-    const physical = createStopSession({ pidToTrackedSession: tracked,
+    const physical = createStopSession({ trackedSessionsByKey: tracked,
       // OS liveness/exit and terminal files are boundaries; no actual PID is signalled.
       areTrackedRunnersExited: async ({ trackedPids }) => { selected.push([...trackedPids]); return true; },
       waitForTrackedRunnersExit: async ({ trackedPids }) => {
@@ -254,7 +255,7 @@ describe('Session startup operation custody', () => {
     }, awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ ...input, getTrackedSessions: () => {
       const rows = [...tracked.values()];
       // Replacement registration or a mis-bound mutable birth occurs after observation, before Stop selection.
-      if (scenario === 'replacement') queueMicrotask(() => { tracked.clear(); tracked.set(replacement.pid, replacement); });
+      if (scenario === 'replacement') queueMicrotask(() => { tracked.clear(); tracked.set(replacement.trackingKey, replacement); });
       if (scenario === 'changed-birth') queueMicrotask(() => { refused.processStartTimeMs = 2000; });
       return rows;
     } }) });
@@ -277,7 +278,7 @@ describe('Session startup operation custody', () => {
   it('joins refused-child retirement before failing the original startup operation', async () => {
     const operations = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'account',
       generateOperationId: () => 'refused-startup', supportsCoreCancellation: () => true });
-    const tracked: TrackedSession = { pid: 103, startedBy: 'daemon', happySessionId: 'refused-child',
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(103), pid: 103, startedBy: 'daemon', happySessionId: 'refused-child',
       agentRuntimeDaemonServiceAuthorityFilePath: '/private/refused-authority.json',
       agentRuntimeDaemonServiceSessionOpenAttestation: AgentRuntimeDaemonServiceSessionOpenAttestationV1Schema.parse({
         request: { kind: 'create', sessionId: 'refused-child', cwd: '/project' }, providerSessionId: null,
@@ -327,15 +328,15 @@ describe('Session startup operation custody', () => {
         locator: { module: './runtime.mjs', export: 'createRuntime', runtimeApiVersion: 1 },
         normalizedModulePath: '/immutable/acme/runtime.mjs', loadMode: 'immutable-js' });
       const runner = { pid: 41001001, processStartTimeMs: 1000, processCommandHash: 'a'.repeat(64) };
-      const refused: TrackedSession = { ...runner, startedBy: 'daemon', happySessionId: sessionId,
+      const refused: TrackedSession = { ...runner, trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon', happySessionId: sessionId,
         runnerAgentSourceCustodyV1: binding.sourceCustody, agentRuntimeDaemonServiceAuthorityFilePath: '/fixture/p-authority' };
-      const replacement: TrackedSession = { pid: 41001002, processStartTimeMs: 2000, startedBy: 'daemon',
+      const replacement: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(41001002), pid: 41001002, processStartTimeMs: 2000, startedBy: 'daemon',
         happySessionId: sessionId, agentRuntimeDaemonServiceAuthorityFilePath: '/fixture/q-authority' };
-      const tracked = new Map([[refused.pid, refused]]);
+      const tracked = new Map([[refused.trackingKey, refused]]);
       const selected: number[][] = [];
       const retired: number[] = [];
       const exitOperationStates: (string | undefined)[] = [];
-      const physical = createStopSession({ pidToTrackedSession: tracked,
+      const physical = createStopSession({ trackedSessionsByKey: tracked,
         // OS liveness/exit and terminal files are boundaries; no fake PID is signalled.
         areTrackedRunnersExited: async ({ trackedPids }) => { selected.push([...trackedPids]); return true; },
         waitForTrackedRunnersExit: async ({ trackedPids }) => {
@@ -398,7 +399,7 @@ describe('Session startup operation custody', () => {
                   inheritedForkOverrides: { spawn: {}, metadata: {} }, spawnSession, stopSession,
                   awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ ...input, getTrackedSessions: () => {
                     const observed = [...tracked.values()];
-                    if (scenario === 'replacement') queueMicrotask(() => { tracked.clear(); tracked.set(replacement.pid, replacement); });
+                    if (scenario === 'replacement') queueMicrotask(() => { tracked.clear(); tracked.set(replacement.trackingKey, replacement); });
                     if (scenario === 'changed-birth') queueMicrotask(() => { refused.processStartTimeMs = 2000; });
                     return observed;
                   } }),
@@ -432,7 +433,7 @@ describe('Session startup operation custody', () => {
   it('keeps native-fork runner exit cleanup inside its own open owner after requester startup', async () => {
     const operations = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'account',
       generateOperationId: () => 'native-fork-startup', supportsCoreCancellation: () => true });
-    const tracked: TrackedSession = { pid: 102, startedBy: 'daemon', happySessionId: 'native-fork-child',
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(102), pid: 102, startedBy: 'daemon', happySessionId: 'native-fork-child',
       agentRuntimeDaemonServiceAuthorityFilePath: '/private/native-fork-authority.json' };
     const runtimeDescriptorV1 = { v: 1 as const, agentId: 'acme-agent', agent: { providerSessionId: 'provider-parent' } };
     const parentMetadata = projectCurrentAgentSessionView({ runtimeDescriptorV1 }, { agentId: 'acme-agent',
@@ -501,7 +502,7 @@ describe('Session startup operation custody', () => {
   it('keeps the same original operation for a cold fork child spawned by the requester lifecycle', async () => {
     const operations = createHostActionOperationRuntime({ machineId: 'machine', resolveAccountId: async () => 'account',
       generateOperationId: () => 'fork-startup', supportsCoreCancellation: () => true });
-    const tracked: TrackedSession = { pid: 101, startedBy: 'daemon', happySessionId: 'fork-child',
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(101), pid: 101, startedBy: 'daemon', happySessionId: 'fork-child',
       agentRuntimeDaemonServiceAuthorityFilePath: '/private/fork-authority.json' };
     let captured: SpawnSessionOptions | undefined;
     const response = operations.observeExecution({ actionId: 'session.fork', input: { requestId: 'fork-original' },
@@ -528,7 +529,7 @@ describe('Session startup operation custody', () => {
     const operations = createHostActionOperationRuntime({ serverId: 'home', machineId: scope.machineId,
       resolveAccountId: async () => scope.accountId, generateOperationId: () => 'original-startup',
       supportsCoreCancellation: () => true });
-    const tracked: TrackedSession = { pid: 100, startedBy: 'daemon', happySessionId: 'session-child',
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(100), pid: 100, startedBy: 'daemon', happySessionId: 'session-child',
       agentRuntimeDaemonServiceAuthorityFilePath: '/private/authority.json' };
     const trackedSessions = [tracked];
     const startupInput = { creationKey: 'same-creation', executionTarget: { serverId: 'home', machineId: scope.machineId },

@@ -6,24 +6,26 @@ import { logger } from '@/ui/logger';
 import type { ChildExit } from './onChildExited';
 import type { TrackedSession } from '../types';
 import { waitForSessionWebhook, type SessionWebhookCompletion } from '../spawn/waitForSessionWebhook';
+import { trackedSessionsForProcess, type SessionTrackingKey, type TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 export function waitForVisibleConsoleSessionWebhook(params: Readonly<{
+  trackingKey: SessionTrackingKey;
   pid: number;
   pollMs: number;
-  pidToAwaiter: Map<number, (session: TrackedSession) => void>;
-  pidToSpawnResultResolver: Map<number, (result: SpawnSessionResult) => void>;
-  pidToSpawnWebhookTimeout: Map<number, ReturnType<typeof setTimeout>>;
+  spawnAwaiterByKey: Map<SessionTrackingKey, (session: TrackedSession) => void>;
+  spawnResultResolverByKey: Map<SessionTrackingKey, (result: SpawnSessionResult) => void>;
+  spawnWebhookTimeoutByKey: Map<SessionTrackingKey, ReturnType<typeof setTimeout>>;
   takeoverAdmission?: PersistedTakeoverAdmissionWaitRegistration;
-  pidToTrackedSession?: Map<number, TrackedSession>;
+  trackedSessionsByKey?: TrackedSessionMap;
   onChildExited: (pid: number, exit: ChildExit) => void | Promise<void>;
   onSuccess?: (session: TrackedSession) => void | Promise<void>;
 }>): SessionWebhookCompletion {
-  const { pid, pollMs, pidToAwaiter, pidToSpawnResultResolver, pidToSpawnWebhookTimeout, onChildExited } = params;
+  const { pid, pollMs, spawnAwaiterByKey, spawnResultResolverByKey, spawnWebhookTimeoutByKey, onChildExited } = params;
   let interval: ReturnType<typeof setInterval> | undefined;
   const completion = waitForSessionWebhook({
-    pid, pidToAwaiter, takeoverAdmission: params.takeoverAdmission,
-    pidToSpawnResultResolver, pidToSpawnWebhookTimeout,
-    pidToTrackedSession: params.pidToTrackedSession, onSuccess: params.onSuccess,
+    trackingKey: params.trackingKey, pid, spawnAwaiterByKey, takeoverAdmission: params.takeoverAdmission,
+    spawnResultResolverByKey, spawnWebhookTimeoutByKey,
+    trackedSessionsByKey: params.trackedSessionsByKey, onSuccess: params.onSuccess,
     timeoutErrorMessage: `Session webhook timeout for PID ${pid}`,
     onTimeout: () => { if (interval) clearInterval(interval); },
   });
@@ -45,7 +47,7 @@ export function waitForVisibleConsoleSessionWebhook(params: Readonly<{
       } finally {
         // The exit owner settles startup custody and transfers or retires tracking.
         // A missing launcher alone is not an observed runner exit.
-        if (params.pidToTrackedSession && !params.pidToTrackedSession.has(completion.getCurrentPid())) {
+        if (params.trackedSessionsByKey && trackedSessionsForProcess(params.trackedSessionsByKey, completion.getCurrentPid()).length === 0) {
           if (interval) clearInterval(interval);
         } else {
           exitObserved = false;

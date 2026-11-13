@@ -18,6 +18,7 @@ import type {
 } from '../agentRuntime/sessionBridgeAuthorization';
 import type { SpawnLifecycleCallbacks } from './createSpawnLifecycleCallbacks';
 import { spawnRegularProcessAndWaitForWebhook } from './spawnRegularProcessAndWaitForWebhook';
+import type { DaemonSessionHost } from '../sessionHost/daemonSessionHost';
 import { spawnTmuxHostedSessionAndWaitForWebhook } from './spawnTmuxHostedSessionAndWaitForWebhook';
 import { spawnAdapterHostedSessionAndWaitForWebhook } from './spawnAdapterHostedSessionAndWaitForWebhook';
 import { spawnWindowsHostedSessionAndWaitForWebhook } from './spawnWindowsHostedSessionAndWaitForWebhook';
@@ -37,6 +38,7 @@ import { isBun } from '@/utils/runtime';
 import { resolveLiveRunnerSnapshotFingerprints } from '../sessionRunnerRuntime/resolveLiveRunnerSnapshotFingerprints';
 import type { BackendExecutionSurfaces } from '@/agent/runtime/registry/engineRegistry';
 import type { SpawnFailureLimitsReader } from '@/processes/spawnFailure/classifySpawnFailure';
+import type { SessionTrackingKey, TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 function resolveSourceDevWorkspaceNamesForBackendTarget(
   target: BackendTargetRefV2 | undefined,
@@ -73,12 +75,12 @@ export async function routeSpawnModeAndWaitForWebhook(input: Readonly<{
   runnerAgentInvocationContext?: RunnerAgentInvocationContext | null;
   processEnv: NodeJS.ProcessEnv;
   happyHomeDir: string;
-  pidToTrackedSession: Map<number, TrackedSession>;
-  pidToAwaiter: Map<number, (session: TrackedSession) => void>;
-  pidToSpawnResultResolver: Map<number, (result: SpawnSessionResult) => void>;
-  pidToSpawnWebhookTimeout: Map<number, NodeJS.Timeout>;
+  trackedSessionsByKey: TrackedSessionMap;
+  spawnAwaiterByKey: Map<SessionTrackingKey, (session: TrackedSession) => void>;
+  spawnResultResolverByKey: Map<SessionTrackingKey, (result: SpawnSessionResult) => void>;
+  spawnWebhookTimeoutByKey: Map<SessionTrackingKey, NodeJS.Timeout>;
   takeoverAdmission?: PersistedTakeoverAdmissionWaitRegistration;
-  resolveCanonicalTrackedSessionId: (pid: number) => string;
+  resolveCanonicalTrackedSessionId: (trackingKey: SessionTrackingKey) => string;
   onChildExited: (pid: number, exit: ChildExit) => void | Promise<void>;
   spawnLifecycleCallbacks: SpawnLifecycleCallbacks;
   cleanupSpawnResources: () => void | Promise<void>;
@@ -90,6 +92,11 @@ export async function routeSpawnModeAndWaitForWebhook(input: Readonly<{
   onUntrackedHostedChild: () => void;
   readSpawnFailureLimits?: SpawnFailureLimitsReader;
   memoryHighBytes?: number | null;
+  /**
+   * Placement: the daemon's session host when multi-Session hosting is enabled. Only a headless
+   * Session joins it; TTY-bound launches (tmux, Windows terminal, adapter hosts) keep their own process.
+   */
+  sessionHost?: DaemonSessionHost;
 }>): Promise<SpawnSessionResult> {
   // This child is the custodian controller, before native Agent UID delegation.
   // Keep its physical cwd accessible; the Session carries its admitted directory
@@ -180,7 +187,7 @@ export async function routeSpawnModeAndWaitForWebhook(input: Readonly<{
     };
   }
 
-  const liveRunnerSnapshotFingerprints = resolveLiveRunnerSnapshotFingerprints(params.pidToTrackedSession.values());
+  const liveRunnerSnapshotFingerprints = resolveLiveRunnerSnapshotFingerprints(params.trackedSessionsByKey.values());
   if (isRuntimeBackedHappyCliSubprocess(params.processEnv)) {
     await ensureJavaScriptRuntimeExecutable({
       isBunRuntime: isBun(),
@@ -217,11 +224,11 @@ export async function routeSpawnModeAndWaitForWebhook(input: Readonly<{
     runnerAgentSessionBootstrapAuthorization:
       params.runnerAgentSessionBootstrapAuthorization,
     runnerAgentInvocationContext: params.runnerAgentInvocationContext,
-    pidToTrackedSession: params.pidToTrackedSession,
-    pidToAwaiter: params.pidToAwaiter,
+    trackedSessionsByKey: params.trackedSessionsByKey,
+    spawnAwaiterByKey: params.spawnAwaiterByKey,
     takeoverAdmission: params.takeoverAdmission,
-    pidToSpawnResultResolver: params.pidToSpawnResultResolver,
-    pidToSpawnWebhookTimeout: params.pidToSpawnWebhookTimeout,
+    spawnResultResolverByKey: params.spawnResultResolverByKey,
+    spawnWebhookTimeoutByKey: params.spawnWebhookTimeoutByKey,
     resolveCanonicalTrackedSessionId: params.resolveCanonicalTrackedSessionId,
     onChildExited: params.onChildExited,
     spawnLifecycleCallbacks: params.spawnLifecycleCallbacks,
@@ -286,10 +293,10 @@ export async function routeSpawnModeAndWaitForWebhook(input: Readonly<{
     runnerAgentInvocationContext: params.runnerAgentInvocationContext,
     processEnv: params.processEnv,
     happyHomeDir: params.happyHomeDir,
-    pidToTrackedSession: params.pidToTrackedSession,
-    pidToAwaiter: params.pidToAwaiter,
-    pidToSpawnResultResolver: params.pidToSpawnResultResolver,
-    pidToSpawnWebhookTimeout: params.pidToSpawnWebhookTimeout,
+    trackedSessionsByKey: params.trackedSessionsByKey,
+    spawnAwaiterByKey: params.spawnAwaiterByKey,
+    spawnResultResolverByKey: params.spawnResultResolverByKey,
+    spawnWebhookTimeoutByKey: params.spawnWebhookTimeoutByKey,
     takeoverAdmission: params.takeoverAdmission,
     onChildExited: params.onChildExited,
     spawnLifecycleCallbacks: params.spawnLifecycleCallbacks,
@@ -344,11 +351,11 @@ export async function routeSpawnModeAndWaitForWebhook(input: Readonly<{
       runnerAgentInvocationContext: params.runnerAgentInvocationContext,
       processEnv: params.processEnv,
       happyHomeDir: params.happyHomeDir,
-      pidToTrackedSession: params.pidToTrackedSession,
-      pidToAwaiter: params.pidToAwaiter,
+      trackedSessionsByKey: params.trackedSessionsByKey,
+      spawnAwaiterByKey: params.spawnAwaiterByKey,
       takeoverAdmission: params.takeoverAdmission,
-      pidToSpawnResultResolver: params.pidToSpawnResultResolver,
-      pidToSpawnWebhookTimeout: params.pidToSpawnWebhookTimeout,
+      spawnResultResolverByKey: params.spawnResultResolverByKey,
+      spawnWebhookTimeoutByKey: params.spawnWebhookTimeoutByKey,
       resolveCanonicalTrackedSessionId: params.resolveCanonicalTrackedSessionId,
       onChildExited: params.onChildExited,
       spawnLifecycleCallbacks: params.spawnLifecycleCallbacks,
@@ -362,6 +369,7 @@ export async function routeSpawnModeAndWaitForWebhook(input: Readonly<{
   }
 
   return await spawnRegularProcessAndWaitForWebhook({
+    ...(params.sessionHost ? { sessionHost: params.sessionHost } : {}),
     memoryHighBytes: params.memoryHighBytes,
     args,
     directory: params.directory,
@@ -379,11 +387,11 @@ export async function routeSpawnModeAndWaitForWebhook(input: Readonly<{
       params.runnerAgentSessionBootstrapAuthorization,
     runnerAgentInvocationContext: params.runnerAgentInvocationContext,
     processEnv: params.processEnv,
-    pidToTrackedSession: params.pidToTrackedSession,
-    pidToAwaiter: params.pidToAwaiter,
+    trackedSessionsByKey: params.trackedSessionsByKey,
+    spawnAwaiterByKey: params.spawnAwaiterByKey,
     takeoverAdmission: params.takeoverAdmission,
-    pidToSpawnResultResolver: params.pidToSpawnResultResolver,
-    pidToSpawnWebhookTimeout: params.pidToSpawnWebhookTimeout,
+    spawnResultResolverByKey: params.spawnResultResolverByKey,
+    spawnWebhookTimeoutByKey: params.spawnWebhookTimeoutByKey,
     resolveCanonicalTrackedSessionId: params.resolveCanonicalTrackedSessionId,
     onChildExited: params.onChildExited,
     spawnLifecycleCallbacks: params.spawnLifecycleCallbacks,

@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import {
+  trackedSessionsForProcess,
+  untrackSession,
+  type SessionTrackingKey,
+  type TrackedSessionMap,
+} from '@/daemon/sessions/sessionTrackingKey';
+import type { TrackedSession } from '@/daemon/types';
+
 const mocks = vi.hoisted(() => ({
   spawnInTmux: vi.fn(),
   killWindow: vi.fn(async () => true),
@@ -36,8 +44,17 @@ vi.mock('@/terminal/attachment/terminalAttachmentInfo', async (importOriginal) =
   };
 });
 
+// Production spawns mint the Session key; tests find the Session by its process.
+function trackedFor(input: Readonly<{ trackedSessionsByKey: TrackedSessionMap }>, pid: number): TrackedSession | undefined {
+  return trackedSessionsForProcess(input.trackedSessionsByKey, pid)[0];
+}
+
+function trackingKeyFor(input: Readonly<{ trackedSessionsByKey: TrackedSessionMap }>, pid: number): SessionTrackingKey | undefined {
+  return trackedFor(input, pid)?.trackingKey;
+}
+
 function params() {
-  const pidToTrackedSession = new Map();
+  const trackedSessionsByKey: TrackedSessionMap = new Map();
   return {
     terminalRequest: {
       requested: 'tmux' as const,
@@ -52,19 +69,19 @@ function params() {
     sessionControlArgs: [],
     directoryCreated: false,
     extraEnvForChildWithMessage: {},
-    pidToTrackedSession,
-    pidToAwaiter: new Map(),
-    pidToSpawnResultResolver: new Map(),
-    pidToSpawnWebhookTimeout: new Map(),
+    trackedSessionsByKey,
+    spawnAwaiterByKey: new Map(),
+    spawnResultResolverByKey: new Map(),
+    spawnWebhookTimeoutByKey: new Map(),
     resolveCanonicalTrackedSessionId: () => 'session-a',
     onChildExited: vi.fn(async (pid: number) => {
-      pidToTrackedSession.delete(pid);
+      for (const tracked of trackedSessionsForProcess(trackedSessionsByKey, pid)) untrackSession(trackedSessionsByKey, tracked);
     }),
     spawnLifecycleCallbacks: {
       registerConnectedServiceSpawnTarget: vi.fn(),
-      registerSpawnResourceCleanupForPid: vi.fn(),
-      cleanupSpawnResourcesForPid: vi.fn(async () => true),
-      consumeSessionAttachCleanupForPid: vi.fn(),
+      registerSpawnResourceCleanupForSession: vi.fn(),
+      cleanupSpawnResourcesForSession: vi.fn(async () => true),
+      consumeSessionAttachCleanupForSession: vi.fn(),
       cleanupPendingSessionAttach: vi.fn(async () => {}),
       persistAcceptedSpawnMarker: vi.fn(async () => {}),
       removeAcceptedSpawnMarkerIfOwned:
@@ -131,9 +148,9 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
     )).spawnTmuxHostedSessionAndWaitForWebhook(input);
 
     await vi.waitFor(() => {
-      expect(input.pidToAwaiter.has(4242)).toBe(true);
+      expect(input.spawnAwaiterByKey.has(trackingKeyFor(input, 4242))).toBe(true);
     });
-    const tracked = input.pidToTrackedSession.get(4242)!;
+    const tracked = trackedFor(input, 4242)!;
     expect(tracked).toMatchObject({
       agentRuntimeDaemonServiceAuthorityFilePath:
         '/private/runner-authority.json',
@@ -150,7 +167,7 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
     expect(JSON.stringify(tracked)).not.toContain(
       'must-not-become-daemon-authority',
     );
-    input.pidToAwaiter.get(4242)?.({
+    input.spawnAwaiterByKey.get(trackingKeyFor(input, 4242))?.({
       ...tracked,
       happySessionId: 'session-4242',
     });
@@ -260,19 +277,19 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
     const { spawnTmuxHostedSessionAndWaitForWebhook } = await import('./spawnTmuxHostedSessionAndWaitForWebhook');
 
     const pending = spawnTmuxHostedSessionAndWaitForWebhook(input);
-    await vi.waitFor(() => expect(input.pidToAwaiter.has(4242)).toBe(true));
-    const tracked = input.pidToTrackedSession.get(4242);
+    await vi.waitFor(() => expect(input.spawnAwaiterByKey.has(trackingKeyFor(input, 4242))).toBe(true));
+    const tracked = trackedFor(input, 4242);
     expect(tracked).toMatchObject({ pid: 4242, tmuxSessionId: 'happy:@7' });
     expect(mocks.spawnInTmux.mock.calls.at(-1)?.[1]?.windowName).toMatch(
       /^happy-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}-codex$/u,
     );
-    input.pidToAwaiter.get(4242)?.({ ...tracked!, happySessionId: 'session-a' });
+    input.spawnAwaiterByKey.get(trackingKeyFor(input, 4242))?.({ ...tracked!, happySessionId: 'session-a' });
 
     await expect(pending).resolves.toMatchObject({
       spawnResult: { type: 'success', sessionId: 'session-a' },
     });
-    expect(input.spawnLifecycleCallbacks.registerSpawnResourceCleanupForPid).toHaveBeenCalledWith(4242);
-    expect(input.spawnLifecycleCallbacks.consumeSessionAttachCleanupForPid).toHaveBeenCalledWith(4242);
+    expect(input.spawnLifecycleCallbacks.registerSpawnResourceCleanupForSession).toHaveBeenCalledWith(tracked!.trackingKey);
+    expect(input.spawnLifecycleCallbacks.consumeSessionAttachCleanupForSession).toHaveBeenCalledWith(tracked!.trackingKey);
     expect(input.spawnLifecycleCallbacks.persistAcceptedSpawnMarker).toHaveBeenCalledWith(tracked);
     expect(mocks.writeTerminalHostAttachmentInfo).toHaveBeenCalledWith({
       happyHomeDir: expect.any(String),
@@ -307,12 +324,12 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
     const { spawnTmuxHostedSessionAndWaitForWebhook } = await import('./spawnTmuxHostedSessionAndWaitForWebhook');
 
     const pending = spawnTmuxHostedSessionAndWaitForWebhook(input);
-    await vi.waitFor(() => expect(input.pidToAwaiter.has(4243)).toBe(true));
-    const tracked = input.pidToTrackedSession.get(4243);
+    await vi.waitFor(() => expect(input.spawnAwaiterByKey.has(trackingKeyFor(input, 4243))).toBe(true));
+    const tracked = trackedFor(input, 4243);
     expect(tracked?.acceptedSpawnMarkerGate).toEqual(expect.any(Promise));
 
     resolveMarker();
-    input.pidToAwaiter.get(4243)?.({
+    input.spawnAwaiterByKey.get(trackingKeyFor(input, 4243))?.({
       ...tracked!,
       happySessionId: 'session-early',
     });
@@ -337,9 +354,9 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
     const { spawnTmuxHostedSessionAndWaitForWebhook } = await import('./spawnTmuxHostedSessionAndWaitForWebhook');
 
     const pending = spawnTmuxHostedSessionAndWaitForWebhook(input);
-    await vi.waitFor(() => expect(input.pidToAwaiter.has(4260)).toBe(true));
-    const tracked = input.pidToTrackedSession.get(4260)!;
-    input.pidToAwaiter.get(4260)?.({ ...tracked, happySessionId: 'session-binding-failure' });
+    await vi.waitFor(() => expect(input.spawnAwaiterByKey.has(trackingKeyFor(input, 4260))).toBe(true));
+    const tracked = trackedFor(input, 4260)!;
+    input.spawnAwaiterByKey.get(trackingKeyFor(input, 4260))?.({ ...tracked, happySessionId: 'session-binding-failure' });
 
     await expect(pending).resolves.toMatchObject({
       spawnResult: {
@@ -349,7 +366,7 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
       },
     });
     expect(mocks.killWindow).toHaveBeenCalledWith('happy:@7');
-    expect(input.pidToTrackedSession.has(4260)).toBe(false);
+    expect(trackedFor(input, 4260)).toBeUndefined();
   });
 
   it('cancels exact tmux custody when marker publication fails before ACK', async () => {
@@ -387,7 +404,7 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
         reason: 'startup-cancelled-before-ack',
       }),
     );
-    expect(input.pidToTrackedSession.has(4244)).toBe(false);
+    expect(trackedFor(input, 4244)).toBeUndefined();
   });
 
   it('retires the exact tmux startup owner when canonical readiness is refused', async () => {
@@ -407,8 +424,8 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
     const pending = spawnTmuxHostedSessionAndWaitForWebhook({
       ...input,
     });
-    await vi.waitFor(() => expect(input.pidToAwaiter.has(4245)).toBe(true));
-    const tracked = input.pidToTrackedSession.get(4245);
+    await vi.waitFor(() => expect(input.spawnAwaiterByKey.has(trackingKeyFor(input, 4245))).toBe(true));
+    const tracked = trackedFor(input, 4245);
     expect(tracked).toBeDefined();
     Object.assign(tracked!, {
       happySessionId: 'session-readiness-refused',
@@ -418,7 +435,7 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
         errorMessage: 'managed_provider_request_auth_activation_failed',
       },
     });
-    input.pidToAwaiter.get(4245)?.(tracked!);
+    input.spawnAwaiterByKey.get(trackingKeyFor(input, 4245))?.(tracked!);
 
     await expect(pending).resolves.toMatchObject({
       spawnResult: {
@@ -437,7 +454,7 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
       mocks.killWindow.mock.invocationCallOrder[0]!,
     );
     expect(input.onChildExited).toHaveBeenCalledOnce();
-    expect(input.pidToTrackedSession.has(4245)).toBe(false);
+    expect(trackedFor(input, 4245)).toBeUndefined();
   });
 
   it('retains tmux custody when exact window absence cannot be verified', async () => {
@@ -457,8 +474,8 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
       await import('./spawnTmuxHostedSessionAndWaitForWebhook');
 
     const pending = spawnTmuxHostedSessionAndWaitForWebhook(input);
-    await vi.waitFor(() => expect(input.pidToAwaiter.has(pid)).toBe(true));
-    const tracked = input.pidToTrackedSession.get(pid)!;
+    await vi.waitFor(() => expect(input.spawnAwaiterByKey.has(trackingKeyFor(input, pid))).toBe(true));
+    const tracked = trackedFor(input, pid)!;
     Object.assign(tracked, {
       spawnStartupReadinessFailure: {
         type: 'error',
@@ -466,7 +483,7 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
         errorMessage: 'managed_provider_request_auth_activation_failed',
       },
     });
-    input.pidToAwaiter.get(pid)?.(tracked);
+    input.spawnAwaiterByKey.get(trackingKeyFor(input, pid))?.(tracked);
 
     await expect(pending).resolves.toMatchObject({
       spawnResult: {
@@ -477,7 +494,7 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
       },
     });
     expect(input.onChildExited).not.toHaveBeenCalled();
-    expect(input.pidToTrackedSession.get(pid)).toBe(tracked);
+    expect(trackedFor(input, pid)).toBe(tracked);
   });
 
   it('retires the same tracked object at its promoted runner PID after tmux disposal', async () => {
@@ -498,10 +515,9 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
 
     const pending = spawnTmuxHostedSessionAndWaitForWebhook(input);
     await vi.waitFor(() => {
-      expect(input.pidToAwaiter.has(wrapperPid)).toBe(true);
+      expect(input.spawnAwaiterByKey.has(trackingKeyFor(input, wrapperPid))).toBe(true);
     });
-    const tracked = input.pidToTrackedSession.get(wrapperPid)!;
-    input.pidToTrackedSession.delete(wrapperPid);
+    const tracked = trackedFor(input, wrapperPid)!;
     Object.assign(tracked, {
       pid: runnerPid,
       happySessionId: 'session-promoted-before-cancel',
@@ -511,8 +527,8 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
         errorMessage: 'managed_provider_request_auth_activation_failed',
       },
     });
-    input.pidToTrackedSession.set(runnerPid, tracked);
-    input.pidToAwaiter.get(wrapperPid)?.(tracked);
+    // Promotion rewrites the Session's pid in place; its key and awaiter stay.
+    input.spawnAwaiterByKey.get(tracked.trackingKey)?.(tracked);
 
     await expect(pending).resolves.toMatchObject({
       spawnResult: {
@@ -529,6 +545,6 @@ describe('spawnTmuxHostedSessionAndWaitForWebhook', () => {
         reason: 'startup-cancelled-before-ack',
       }),
     );
-    expect([...input.pidToTrackedSession.values()]).not.toContain(tracked);
+    expect([...input.trackedSessionsByKey.values()]).not.toContain(tracked);
   });
 });

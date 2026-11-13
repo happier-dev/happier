@@ -13,6 +13,7 @@ import { logger } from '@/ui/logger';
 import { createDaemonSessionMutationCustody } from '../connectedServices/usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody';
 import type { TrackedSession } from '../types';
 import { startDaemonSessionControlRuntime } from './startDaemonSessionControlRuntime';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const launches = vi.hoisted(() => vi.fn(() => { throw new Error('Unexpected OS process launch'); }));
 // The listener and OS subprocess launch are external boundaries. Never launch a
@@ -42,7 +43,7 @@ it.each(['custodian', 'foreign-requester'] as const)('checks the retained startu
     const sessionId = 'session-startup-dependency-' + account;
     const pid = 2147482911;
     const tracked: TrackedSession = {
-        pid, startedBy: 'daemon', happySessionId: sessionId, processStartTimeMs: 1000,
+        trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: sessionId, processStartTimeMs: 1000,
         spawnOptions: { directory: home, existingSessionId: sessionId },
         happySessionMetadataFromLocalWebhook: createTestMetadata({ hostPid: pid, flavor: 'claude', happyHomeDir: home }),
         ...(account === 'foreign-requester' ? { requesterWorkAttributionV1: {
@@ -50,7 +51,7 @@ it.each(['custodian', 'foreign-requester'] as const)('checks the retained startu
             machineId: 'machine-startup-failure', installationId: 'foreign-installation',
         } } : {}),
     };
-    const trackedSessions = new Map([[pid, tracked]]);
+    const trackedSessions = new Map([[legacyPidSessionTrackingKey(pid), tracked]]);
     const sessionResponse = V2SessionByIdResponseSchema.parse({ session: {
         id: sessionId, seq: 1, createdAt: 1000, updatedAt: 1100, active: false, activeAt: 1000,
         metadata: '', metadataVersion: 0, agentState: null, agentStateVersion: 0, dataEncryptionKey: null,
@@ -74,10 +75,10 @@ it.each(['custodian', 'foreign-requester'] as const)('checks the retained startu
         connectedServicesMaterializationBaseDir: join(home, 'connected-services'),
         api: {} as never,
         getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-        pidToTrackedSession: trackedSessions, pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(),
-        pidToSpawnWebhookTimeout: new Map(), getApiMachineForSessions: () => null,
-        spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
-        connectedServicesRestartRequestedPids: new Set(),
+        trackedSessionsByKey: trackedSessions, spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(),
+        spawnWebhookTimeoutByKey: new Map(), getApiMachineForSessions: () => null,
+        spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
+        connectedServicesRestartRequestedSessions: new Set(),
         startupTerminalRecovery: { disconnectedTerminalHostCandidates: [], unresolvedTerminalHostSessionIds: [] },
         beforeShutdown: async () => {}, onHappySessionWebhook: async () => {}, requestShutdown: () => {},
         processEnv: { HAPPIER_DAEMON_SESSION_RESPAWN_BASE_DELAY_MS: '50', HAPPIER_DAEMON_SESSION_RESPAWN_MAX_DELAY_MS: '50',
@@ -86,7 +87,7 @@ it.each(['custodian', 'foreign-requester'] as const)('checks the retained startu
     try {
         launches.mockClear();
         await runtime.onChildExited(pid, { reason: 'process-exited', code: 1, signal: null });
-        expect(trackedSessions.has(pid)).toBe(false);
+        expect(trackedSessions.has(legacyPidSessionTrackingKey(pid))).toBe(false);
         if (account === 'custodian') {
             await vi.waitFor(() => expect(warnings.mock.calls.some(([message]) => (
                 message === `[DAEMON RUN] Respawn suppressed for session ${sessionId} (startup dependency: profile_missing)`

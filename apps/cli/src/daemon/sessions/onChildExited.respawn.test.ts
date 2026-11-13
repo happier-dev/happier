@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createOnChildExited } from './onChildExited';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 async function drainAsyncWork(cycles = 3): Promise<void> {
   for (let index = 0; index < cycles; index += 1) {
@@ -11,22 +12,55 @@ async function drainAsyncWork(cycles = 3): Promise<void> {
 }
 
 describe('createOnChildExited', () => {
+  it.each(['staging fails', 'respawn owner takes it'] as const)('settles a spared held Agent within the exit observation (%s)', async (path) => {
+    const pid = 131;
+    const tracked = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: 'cspare1', activeTurnId: 'turn-9' };
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(pid), tracked]]);
+    const order: string[] = [];
+    const held = { role: 'primary', socketPath: '/tmp/h.sock', holderPid: 9001, agentPid: 9002 };
+    const ends: unknown[] = [];
+    const staged: (string | null)[] = [];
+    const onChildExited = createOnChildExited({
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
+      getApiMachineForSessions: () => ({ enqueueDaemonTerminalExactTurnEnd: async () => undefined }),
+      ownerRemainder: { end: async (_owner: unknown, _capture: unknown, options: unknown) => { ends.push(options); return { status: 'complete', outcomes: [] }; } },
+      spareHeldAgent: async () => ({ held, turnId: 'turn-9', handOff: () => { order.push('handOff'); }, abandon: async () => { order.push('abandon'); } }),
+      stageObservedExitFn: vi.fn(async ({ trackedSession }: any) => {
+        staged.push(trackedSession.activeTurnId ?? null);
+        if (path === 'staging fails') throw new Error('disk unavailable');
+      }),
+      beforeUnexpectedExitSettlement: async () => undefined,
+      onUnexpectedExit: vi.fn(async () => { order.push('respawn'); }),
+      shouldPreserveSessionMarkerOnExit: () => false,
+    } as any);
+
+    await onChildExited(pid, { reason: 'process-exited', code: 1, signal: null });
+
+    expect(ends).toEqual([{ spare: [held.holderPid] }]);
+    // The exit does not end the turn the spared Agent is still answering.
+    expect(staged).toEqual([null]);
+    // Every way out of the observation settles the spare: handed over, or ended.
+    expect(order).toEqual(path === 'staging fails' ? ['abandon'] : ['handOff', 'respawn', 'abandon']);
+  });
+
   it('does not register disconnected terminal recovery after an owned startup launch was cancelled before acknowledgement', async () => {
     const pid = 121;
     const tracked = {
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       startedBy: 'daemon',
       happySessionId: `PID-${pid}`,
     };
-    const pidToTrackedSession = new Map<number, any>([[pid, tracked]]);
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(pid), tracked]]);
     const onFinalTrackedSessionExitStaged = vi.fn(async () => {
       throw new Error('startup terminal has already been disposed');
     });
     const removeSessionMarkerFn = vi.fn(async () => undefined);
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid: new Map<number, () => void>(),
-      sessionAttachCleanupByPid: new Map<number, () => Promise<void>>(),
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       removeSessionMarkerFn,
       stageObservedExitFn: vi.fn(async () => undefined),
@@ -40,18 +74,18 @@ describe('createOnChildExited', () => {
     });
 
     expect(onFinalTrackedSessionExitStaged).not.toHaveBeenCalled();
-    expect(pidToTrackedSession.has(pid)).toBe(false);
+    expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(pid))).toBe(false);
   });
 
   it('cleans a PID-only pre-webhook exit without session recovery or respawn', async () => {
     const pid = 120;
     const tracked = {
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       startedBy: 'daemon',
       happySessionId: `PID-${pid}`,
       hostedTerminal: { mode: 'herdr' },
     };
-    const pidToTrackedSession = new Map<number, any>([[pid, tracked]]);
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(pid), tracked]]);
     const removeSessionMarkerFn = vi.fn(async () => undefined);
     const beforeUnexpectedExitSettlement = vi.fn(async () => undefined);
     const onUnexpectedExit = vi.fn(async () => undefined);
@@ -59,9 +93,9 @@ describe('createOnChildExited', () => {
       throw new Error('PID-only sessions have no terminal attachment');
     });
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid: new Map<number, () => void>(),
-      sessionAttachCleanupByPid: new Map<number, () => Promise<void>>(),
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       removeSessionMarkerFn,
       beforeUnexpectedExitSettlement,
@@ -79,28 +113,28 @@ describe('createOnChildExited', () => {
     expect(beforeUnexpectedExitSettlement).not.toHaveBeenCalled();
     expect(onUnexpectedExit).not.toHaveBeenCalled();
     expect(onFinalTrackedSessionExitStaged).not.toHaveBeenCalled();
-    expect(removeSessionMarkerFn).toHaveBeenCalledWith(pid);
-    expect(pidToTrackedSession.has(pid)).toBe(false);
+    expect(removeSessionMarkerFn).toHaveBeenCalledWith(legacyPidSessionTrackingKey(pid));
+    expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(pid))).toBe(false);
   });
 
   it('retains startup tracking, marker evidence, and cleanup custody when exact launch cleanup fails', async () => {
     const pid = 122;
     const tracked = {
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       startedBy: 'daemon',
       happySessionId: `PID-${pid}`,
     };
     const cleanup = vi.fn(async () => {
       throw new Error('managed_provider_stop_unavailable');
     });
-    const pidToTrackedSession = new Map<number, any>([[pid, tracked]]);
-    const spawnResourceCleanupByPid =
-      new Map<number, () => void | Promise<void>>([[pid, cleanup]]);
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(pid), tracked]]);
+    const spawnResourceCleanupByKey =
+      new Map<SessionTrackingKey, () => void | Promise<void>>([[legacyPidSessionTrackingKey(pid), cleanup]]);
     const removeSessionMarkerFn = vi.fn(async () => undefined);
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey,
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       removeSessionMarkerFn,
     } as any);
@@ -112,18 +146,18 @@ describe('createOnChildExited', () => {
     });
 
     expect(cleanup).toHaveBeenCalledOnce();
-    expect(pidToTrackedSession.get(pid)).toBe(tracked);
-    expect(spawnResourceCleanupByPid.get(pid)).toBe(cleanup);
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(pid))).toBe(tracked);
+    expect(spawnResourceCleanupByKey.get(legacyPidSessionTrackingKey(pid))).toBe(cleanup);
     expect(removeSessionMarkerFn).not.toHaveBeenCalled();
   });
 
   it('retains marker and tracked custody until the exact terminal row is durably staged', async () => {
     const pid = 123;
-    const tracked = { pid, startedBy: 'daemon', happySessionId: 'session-1', activeTurnId: 'turn-1' };
+    const tracked = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: 'session-1', activeTurnId: 'turn-1' };
 
-    const pidToTrackedSession = new Map<number, any>([[pid, tracked]]);
-    const spawnResourceCleanupByPid = new Map<number, () => void>();
-    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(pid), tracked]]);
+    const spawnResourceCleanupByKey = new Map();
+    const sessionAttachCleanupByKey = new Map();
     let accept!: () => void;
     const apiMachine = {
       enqueueDaemonTerminalExactTurnEnd: vi.fn(() => new Promise<void>((resolve) => { accept = resolve; })),
@@ -132,9 +166,9 @@ describe('createOnChildExited', () => {
     const removeSessionMarkerFn = vi.fn(async () => undefined);
 
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid,
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey,
+      sessionAttachCleanupByKey,
       getApiMachineForSessions: () => apiMachine,
       removeSessionMarkerFn,
     } as any);
@@ -155,50 +189,50 @@ describe('createOnChildExited', () => {
       observedAt: expect.any(Number),
     }));
     expect(apiMachine.enqueueDaemonTerminalExactTurnEnd).toHaveBeenCalledTimes(1);
-    expect(pidToTrackedSession.has(pid)).toBe(true);
+    expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(pid))).toBe(true);
     expect(removeSessionMarkerFn).not.toHaveBeenCalled();
 
     accept();
     await Promise.all([firstObservation, heartbeatObservation]);
-    await vi.waitFor(() => expect(pidToTrackedSession.has(pid)).toBe(false));
-    expect(removeSessionMarkerFn).toHaveBeenCalledWith(pid);
+    await vi.waitFor(() => expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(pid))).toBe(false));
+    expect(removeSessionMarkerFn).toHaveBeenCalledWith(legacyPidSessionTrackingKey(pid));
   });
 
   it('does not clean replacement custody when the PID owner changes during durable exit staging', async () => {
     const pid = 125;
-    const oldTracked = { pid, startedBy: 'daemon', happySessionId: 'session-old', activeTurnId: 'turn-old' };
-    const replacementTracked = { pid, startedBy: 'daemon', happySessionId: 'session-replacement', activeTurnId: 'turn-new' };
+    const oldTracked = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: 'session-old', activeTurnId: 'turn-old' };
+    const replacementTracked = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: 'session-replacement', activeTurnId: 'turn-new' };
     const oldSpawnCleanup = vi.fn();
     const oldAttachCleanup = vi.fn(async () => undefined);
     const replacementSpawnCleanup = vi.fn();
     const replacementAttachCleanup = vi.fn(async () => undefined);
-    const pidToTrackedSession = new Map<number, any>([[pid, oldTracked]]);
-    const spawnResourceCleanupByPid = new Map<number, () => void>([[pid, oldSpawnCleanup]]);
-    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>([[pid, oldAttachCleanup]]);
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(pid), oldTracked]]);
+    const spawnResourceCleanupByKey = new Map<SessionTrackingKey, () => void>([[legacyPidSessionTrackingKey(pid), oldSpawnCleanup]]);
+    const sessionAttachCleanupByKey = new Map<SessionTrackingKey, () => Promise<void>>([[legacyPidSessionTrackingKey(pid), oldAttachCleanup]]);
     let accept!: () => void;
     const apiMachine = {
       enqueueDaemonTerminalExactTurnEnd: vi.fn(() => new Promise<void>((resolve) => { accept = resolve; })),
     };
     const removeSessionMarkerFn = vi.fn(async () => undefined);
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid,
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey,
+      sessionAttachCleanupByKey,
       getApiMachineForSessions: () => apiMachine,
       removeSessionMarkerFn,
     } as any);
 
     const observation = onChildExited(pid, { reason: 'process-exited', code: 1, signal: null });
     await vi.waitFor(() => expect(apiMachine.enqueueDaemonTerminalExactTurnEnd).toHaveBeenCalledTimes(1));
-    pidToTrackedSession.set(pid, replacementTracked);
-    spawnResourceCleanupByPid.set(pid, replacementSpawnCleanup);
-    sessionAttachCleanupByPid.set(pid, replacementAttachCleanup);
+    trackedSessionsByKey.set(legacyPidSessionTrackingKey(pid), replacementTracked);
+    spawnResourceCleanupByKey.set(legacyPidSessionTrackingKey(pid), replacementSpawnCleanup);
+    sessionAttachCleanupByKey.set(legacyPidSessionTrackingKey(pid), replacementAttachCleanup);
     accept();
     await observation;
 
-    expect(pidToTrackedSession.get(pid)).toBe(replacementTracked);
-    expect(spawnResourceCleanupByPid.get(pid)).toBe(replacementSpawnCleanup);
-    expect(sessionAttachCleanupByPid.get(pid)).toBe(replacementAttachCleanup);
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(pid))).toBe(replacementTracked);
+    expect(spawnResourceCleanupByKey.get(legacyPidSessionTrackingKey(pid))).toBe(replacementSpawnCleanup);
+    expect(sessionAttachCleanupByKey.get(legacyPidSessionTrackingKey(pid))).toBe(replacementAttachCleanup);
     expect(replacementSpawnCleanup).not.toHaveBeenCalled();
     expect(replacementAttachCleanup).not.toHaveBeenCalled();
     expect(removeSessionMarkerFn).not.toHaveBeenCalled();
@@ -206,8 +240,8 @@ describe('createOnChildExited', () => {
 
   it('does not consume replacement cleanup registered while old cleanup is awaiting', async () => {
     const pid = 126;
-    const oldTracked = { pid, startedBy: 'daemon', happySessionId: 'session-old' };
-    const replacementTracked = { pid, startedBy: 'daemon', happySessionId: 'session-replacement' };
+    const oldTracked = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: 'session-old' };
+    const replacementTracked = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: 'session-replacement' };
     let releaseOldSpawnCleanup!: () => void;
     const oldSpawnCleanup = vi.fn(() => new Promise<void>((resolve) => {
       releaseOldSpawnCleanup = resolve;
@@ -215,74 +249,37 @@ describe('createOnChildExited', () => {
     const oldAttachCleanup = vi.fn(async () => undefined);
     const replacementSpawnCleanup = vi.fn();
     const replacementAttachCleanup = vi.fn(async () => undefined);
-    const pidToTrackedSession = new Map<number, any>([[pid, oldTracked]]);
-    const spawnResourceCleanupByPid = new Map<number, () => void | Promise<void>>([[pid, oldSpawnCleanup]]);
-    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>([[pid, oldAttachCleanup]]);
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(pid), oldTracked]]);
+    const spawnResourceCleanupByKey = new Map<SessionTrackingKey, () => void | Promise<void>>([[legacyPidSessionTrackingKey(pid), oldSpawnCleanup]]);
+    const sessionAttachCleanupByKey = new Map<SessionTrackingKey, () => Promise<void>>([[legacyPidSessionTrackingKey(pid), oldAttachCleanup]]);
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid,
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey,
+      sessionAttachCleanupByKey,
       getApiMachineForSessions: () => null,
       removeSessionMarkerFn: vi.fn(async () => undefined),
     } as any);
 
     const observation = onChildExited(pid, { reason: 'process-exited', code: 1, signal: null });
     await vi.waitFor(() => expect(oldSpawnCleanup).toHaveBeenCalledTimes(1));
-    pidToTrackedSession.set(pid, replacementTracked);
-    spawnResourceCleanupByPid.set(pid, replacementSpawnCleanup);
-    sessionAttachCleanupByPid.set(pid, replacementAttachCleanup);
+    trackedSessionsByKey.set(legacyPidSessionTrackingKey(pid), replacementTracked);
+    spawnResourceCleanupByKey.set(legacyPidSessionTrackingKey(pid), replacementSpawnCleanup);
+    sessionAttachCleanupByKey.set(legacyPidSessionTrackingKey(pid), replacementAttachCleanup);
     releaseOldSpawnCleanup();
     await observation;
 
-    expect(pidToTrackedSession.get(pid)).toBe(replacementTracked);
-    expect(spawnResourceCleanupByPid.get(pid)).toBe(replacementSpawnCleanup);
-    expect(sessionAttachCleanupByPid.get(pid)).toBe(replacementAttachCleanup);
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(pid))).toBe(replacementTracked);
+    expect(spawnResourceCleanupByKey.get(legacyPidSessionTrackingKey(pid))).toBe(replacementSpawnCleanup);
+    expect(sessionAttachCleanupByKey.get(legacyPidSessionTrackingKey(pid))).toBe(replacementAttachCleanup);
     expect(oldAttachCleanup).not.toHaveBeenCalled();
     expect(replacementSpawnCleanup).not.toHaveBeenCalled();
     expect(replacementAttachCleanup).not.toHaveBeenCalled();
   });
 
-  it('does not delete replacement custody when an untracked observation cleanup overlaps PID reuse', async () => {
-    const pid = 127;
-    const replacementTracked = { pid, startedBy: 'daemon', happySessionId: 'session-replacement' };
-    let releaseOldSpawnCleanup!: () => void;
-    const oldSpawnCleanup = vi.fn(() => new Promise<void>((resolve) => {
-      releaseOldSpawnCleanup = resolve;
-    }));
-    const replacementSpawnCleanup = vi.fn();
-    const replacementAttachCleanup = vi.fn(async () => undefined);
-    const pidToTrackedSession = new Map<number, any>();
-    const spawnResourceCleanupByPid = new Map<number, () => void | Promise<void>>([[pid, oldSpawnCleanup]]);
-    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
-    const removeSessionMarkerFn = vi.fn(async () => undefined);
-    const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid,
-      getApiMachineForSessions: () => null,
-      removeSessionMarkerFn,
-    } as any);
-
-    const observation = onChildExited(pid, { reason: 'process-missing', code: null, signal: null });
-    await vi.waitFor(() => expect(oldSpawnCleanup).toHaveBeenCalledTimes(1));
-    pidToTrackedSession.set(pid, replacementTracked);
-    spawnResourceCleanupByPid.set(pid, replacementSpawnCleanup);
-    sessionAttachCleanupByPid.set(pid, replacementAttachCleanup);
-    releaseOldSpawnCleanup();
-    await observation;
-
-    expect(pidToTrackedSession.get(pid)).toBe(replacementTracked);
-    expect(spawnResourceCleanupByPid.get(pid)).toBe(replacementSpawnCleanup);
-    expect(sessionAttachCleanupByPid.get(pid)).toBe(replacementAttachCleanup);
-    expect(replacementSpawnCleanup).not.toHaveBeenCalled();
-    expect(replacementAttachCleanup).not.toHaveBeenCalled();
-    expect(removeSessionMarkerFn).not.toHaveBeenCalled();
-  });
-
   it('fences and finalizes a no-turn final exit before releasing its marker custody', async () => {
     const pid = 124;
-    const pidToTrackedSession = new Map<number, any>([[pid, {
-      pid,
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(pid), {
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       startedBy: 'daemon',
       happySessionId: 'session-2',
     }]]);
@@ -303,9 +300,9 @@ describe('createOnChildExited', () => {
     };
     const removeSessionMarkerFn = vi.fn(async () => undefined);
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => apiMachine,
       removeSessionMarkerFn,
     } as any);
@@ -318,19 +315,19 @@ describe('createOnChildExited', () => {
       authority: { kind: 'generation', publisherGeneration: '7' },
     });
     expect(apiMachine.enqueueDaemonTerminalExactTurnEnd).not.toHaveBeenCalled();
-    expect(pidToTrackedSession.has(pid)).toBe(true);
+    expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(pid))).toBe(true);
     expect(removeSessionMarkerFn).not.toHaveBeenCalled();
 
     releaseFinalize();
     await observation;
-    expect(pidToTrackedSession.has(pid)).toBe(false);
-    expect(removeSessionMarkerFn).toHaveBeenCalledWith(pid);
+    expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(pid))).toBe(false);
+    expect(removeSessionMarkerFn).toHaveBeenCalledWith(legacyPidSessionTrackingKey(pid));
   });
 
   it.each([undefined, 'turn-capture-rejected'])('retains final-exit custody when terminal capture transiently fails (turn %s)', async (activeTurnId) => {
     const pid = 126;
-    const tracked = { pid, startedBy: 'daemon' as const, happySessionId: 'session-capture-rejected', activeTurnId };
-    const pidToTrackedSession = new Map<number, any>([[pid, tracked]]);
+    const tracked = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon' as const, happySessionId: 'session-capture-rejected', activeTurnId };
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(pid), tracked]]);
     const apiMachine = {
       enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => undefined),
       captureMachineSessionTerminal: vi.fn(async () => ({
@@ -347,9 +344,9 @@ describe('createOnChildExited', () => {
     };
     const removeSessionMarkerFn = vi.fn(async () => undefined);
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => apiMachine,
       removeSessionMarkerFn,
     } as any);
@@ -359,7 +356,7 @@ describe('createOnChildExited', () => {
     expect(apiMachine.captureMachineSessionTerminal).toHaveBeenCalledWith('session-capture-rejected');
     expect(apiMachine.finalizeMachineSessionTerminal).not.toHaveBeenCalled();
     expect(apiMachine.enqueueDaemonTerminalExactTurnEnd).not.toHaveBeenCalled();
-    expect(pidToTrackedSession.get(pid)).toBe(tracked);
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(pid))).toBe(tracked);
     expect(removeSessionMarkerFn).not.toHaveBeenCalled();
   });
 
@@ -367,16 +364,16 @@ describe('createOnChildExited', () => {
     const obsoletePid = 123;
     const livePid = 456;
     const obsolete = {
-      pid: obsoletePid,
+      trackingKey: legacyPidSessionTrackingKey(obsoletePid), pid: obsoletePid,
       startedBy: 'daemon',
       happySessionId: 'session-1',
       activeTurnId: 'obsolete-turn',
     };
-    const replacement = { pid: livePid, startedBy: 'daemon', happySessionId: 'session-1' };
+    const replacement = { trackingKey: legacyPidSessionTrackingKey(livePid), pid: livePid, startedBy: 'daemon', happySessionId: 'session-1' };
 
-    const pidToTrackedSession = new Map<number, any>([
-      [obsoletePid, obsolete],
-      [livePid, replacement],
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([
+      [legacyPidSessionTrackingKey(obsoletePid), obsolete],
+      [legacyPidSessionTrackingKey(livePid), replacement],
     ]);
     const apiMachine = { enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => undefined) };
     const originalKill = process.kill.bind(process);
@@ -388,9 +385,9 @@ describe('createOnChildExited', () => {
     const removeSessionMarkerFn = vi.fn(async () => undefined);
     const beforeUnexpectedExitSettlement = vi.fn();
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid: new Map<number, () => void>(),
-      sessionAttachCleanupByPid: new Map<number, () => Promise<void>>(),
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => apiMachine,
       removeSessionMarkerFn,
       beforeUnexpectedExitSettlement,
@@ -408,7 +405,7 @@ describe('createOnChildExited', () => {
       observedAt: expect.any(Number),
     }));
     expect(beforeUnexpectedExitSettlement).not.toHaveBeenCalled();
-    expect(removeSessionMarkerFn).toHaveBeenCalledWith(obsoletePid);
+    expect(removeSessionMarkerFn).toHaveBeenCalledWith(legacyPidSessionTrackingKey(obsoletePid));
     killSpy.mockRestore();
   });
 
@@ -416,13 +413,13 @@ describe('createOnChildExited', () => {
     const wrapperPid = 123;
     const runnerPid = 456;
     const tracked = {
-      pid: wrapperPid,
+      trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid,
       startedBy: 'daemon',
       happySessionId: 'session-1',
       sessionRunnerPid: runnerPid,
     };
 
-    const pidToTrackedSession = new Map<number, any>([[wrapperPid, tracked]]);
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(wrapperPid), tracked]]);
     const apiMachine = {
       enqueueSessionEndMutation: vi.fn(),
       enqueueSessionTurnSettlementMutation: vi.fn(),
@@ -436,9 +433,9 @@ describe('createOnChildExited', () => {
     }) as any);
 
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid: new Map<number, () => void>(),
-      sessionAttachCleanupByPid: new Map<number, () => Promise<void>>(),
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => apiMachine,
       removeSessionMarkerFn: vi.fn(async () => {}),
       promoteSessionMarkerFn: vi.fn(async () => ({
@@ -456,15 +453,15 @@ describe('createOnChildExited', () => {
   it('authors no terminal row for an obsolete pid without an exact turn when another live pid owns the session', async () => {
     const obsoletePid = 123;
     const livePid = 456;
-    const obsolete = { pid: obsoletePid, startedBy: 'daemon', happySessionId: 'session-1' };
-    const replacement = { pid: livePid, startedBy: 'daemon', happySessionId: 'session-1' };
+    const obsolete = { trackingKey: legacyPidSessionTrackingKey(obsoletePid), pid: obsoletePid, startedBy: 'daemon', happySessionId: 'session-1' };
+    const replacement = { trackingKey: legacyPidSessionTrackingKey(livePid), pid: livePid, startedBy: 'daemon', happySessionId: 'session-1' };
 
-    const pidToTrackedSession = new Map<number, any>([
-      [obsoletePid, obsolete],
-      [livePid, replacement],
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([
+      [legacyPidSessionTrackingKey(obsoletePid), obsolete],
+      [legacyPidSessionTrackingKey(livePid), replacement],
     ]);
-    const spawnResourceCleanupByPid = new Map<number, () => void>();
-    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
+    const spawnResourceCleanupByKey = new Map();
+    const sessionAttachCleanupByKey = new Map();
     const apiMachine = { enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => undefined) };
     const onUnexpectedExit = vi.fn();
     const originalKill = process.kill.bind(process);
@@ -476,9 +473,9 @@ describe('createOnChildExited', () => {
     }) as any);
 
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid,
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey,
+      sessionAttachCleanupByKey,
       getApiMachineForSessions: () => apiMachine,
       onUnexpectedExit,
     } as any);
@@ -487,8 +484,8 @@ describe('createOnChildExited', () => {
 
     expect(apiMachine.enqueueDaemonTerminalExactTurnEnd).not.toHaveBeenCalled();
     expect(onUnexpectedExit).not.toHaveBeenCalled();
-    expect(pidToTrackedSession.has(obsoletePid)).toBe(false);
-    expect(pidToTrackedSession.get(livePid)).toEqual(expect.objectContaining({
+    expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(obsoletePid))).toBe(false);
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(livePid))).toEqual(expect.objectContaining({
       happySessionId: 'session-1',
     }));
     killSpy.mockRestore();
@@ -496,18 +493,18 @@ describe('createOnChildExited', () => {
 
   it('invokes onUnexpectedExit hook for non-zero exits with a known session id', async () => {
     const pid = 123;
-    const tracked = { pid, startedBy: 'daemon', happySessionId: 'session-1' };
+    const tracked = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: 'session-1' };
 
-    const pidToTrackedSession = new Map<number, any>([[pid, tracked]]);
-    const spawnResourceCleanupByPid = new Map<number, () => void>();
-    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(pid), tracked]]);
+    const spawnResourceCleanupByKey = new Map();
+    const sessionAttachCleanupByKey = new Map();
 
     const onUnexpectedExit = vi.fn();
 
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid,
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey,
+      sessionAttachCleanupByKey,
       getApiMachineForSessions: () => null,
       onUnexpectedExit,
     } as any);
@@ -526,7 +523,7 @@ describe('createOnChildExited', () => {
   it('retires the managed services an unexpectedly exited runner owned before respawning it', async () => {
     const pid = 129;
     const order: string[] = [];
-    const tracked = { pid, startedBy: 'daemon', happySessionId: 'session-orphan' };
+    const tracked = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: 'session-orphan' };
     const retireSessionRunnerOwnedManagedServices = vi.fn(async () => {
       order.push('retire');
     });
@@ -535,9 +532,9 @@ describe('createOnChildExited', () => {
     });
 
     const onChildExited = createOnChildExited({
-      pidToTrackedSession: new Map<number, any>([[pid, tracked]]),
-      spawnResourceCleanupByPid: new Map<number, () => void>(),
-      sessionAttachCleanupByPid: new Map<number, () => Promise<void>>(),
+      trackedSessionsByKey: new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(pid), tracked]]),
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       retireSessionRunnerOwnedManagedServices,
       onUnexpectedExit,
@@ -564,12 +561,12 @@ describe('createOnChildExited', () => {
     }) as any);
 
     const onChildExited = createOnChildExited({
-      pidToTrackedSession: new Map<number, any>([
-        [obsoletePid, { pid: obsoletePid, startedBy: 'daemon', happySessionId: 'session-shared' }],
-        [livePid, { pid: livePid, startedBy: 'daemon', happySessionId: 'session-shared' }],
+      trackedSessionsByKey: new Map<SessionTrackingKey, any>([
+        [legacyPidSessionTrackingKey(obsoletePid), { trackingKey: legacyPidSessionTrackingKey(obsoletePid), pid: obsoletePid, startedBy: 'daemon', happySessionId: 'session-shared' }],
+        [legacyPidSessionTrackingKey(livePid), { trackingKey: legacyPidSessionTrackingKey(livePid), pid: livePid, startedBy: 'daemon', happySessionId: 'session-shared' }],
       ]),
-      spawnResourceCleanupByPid: new Map<number, () => void>(),
-      sessionAttachCleanupByPid: new Map<number, () => Promise<void>>(),
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => ({
         enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => undefined),
       }),
@@ -586,7 +583,7 @@ describe('createOnChildExited', () => {
     const pid = 126;
     const calls: string[] = [];
     const tracked = {
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       startedBy: 'daemon',
       happySessionId: 'session-fenced',
       activeTurnId: 'turn-fenced',
@@ -598,9 +595,9 @@ describe('createOnChildExited', () => {
       calls.push('staged');
     });
     const onChildExited = createOnChildExited({
-      pidToTrackedSession: new Map<number, any>([[pid, tracked]]),
-      spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey: new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(pid), tracked]]),
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       beforeUnexpectedExitSettlement: vi.fn(async () => { calls.push('captured'); }),
       onUnexpectedExit: vi.fn(async () => { calls.push('scheduled'); }),
@@ -618,14 +615,14 @@ describe('createOnChildExited', () => {
 
   it('invokes onUnexpectedExit for a pre-webhook exit even when no non-zero status is available', async () => {
     const pid = 124;
-    const tracked = { pid, startedBy: 'daemon', happySessionId: 'session-pre-webhook' };
+    const tracked = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: 'session-pre-webhook' };
 
-    const pidToTrackedSession = new Map<number, any>([[pid, tracked]]);
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(pid), tracked]]);
     const onUnexpectedExit = vi.fn();
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid: new Map<number, () => void>(),
-      sessionAttachCleanupByPid: new Map<number, () => Promise<void>>(),
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       onUnexpectedExit,
     } as any);
@@ -644,18 +641,18 @@ describe('createOnChildExited', () => {
 
   it('invokes onUnexpectedExit hook for process-missing with a known session id', async () => {
     const pid = 123;
-    const tracked = { pid, startedBy: 'daemon', happySessionId: 'session-1' };
+    const tracked = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: 'session-1' };
 
-    const pidToTrackedSession = new Map<number, any>([[pid, tracked]]);
-    const spawnResourceCleanupByPid = new Map<number, () => void>();
-    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(pid), tracked]]);
+    const spawnResourceCleanupByKey = new Map();
+    const sessionAttachCleanupByKey = new Map();
 
     const onUnexpectedExit = vi.fn();
 
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid,
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey,
+      sessionAttachCleanupByKey,
       getApiMachineForSessions: () => null,
       onUnexpectedExit,
     } as any);
@@ -667,18 +664,18 @@ describe('createOnChildExited', () => {
 
   it('does not invoke onUnexpectedExit hook for SIGTERM', async () => {
     const pid = 123;
-    const tracked = { pid, startedBy: 'daemon', happySessionId: 'session-1' };
+    const tracked = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: 'session-1' };
 
-    const pidToTrackedSession = new Map<number, any>([[pid, tracked]]);
-    const spawnResourceCleanupByPid = new Map<number, () => void>();
-    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(pid), tracked]]);
+    const spawnResourceCleanupByKey = new Map();
+    const sessionAttachCleanupByKey = new Map();
 
     const onUnexpectedExit = vi.fn();
 
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid,
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey,
+      sessionAttachCleanupByKey,
       getApiMachineForSessions: () => null,
       onUnexpectedExit,
     } as any);
@@ -690,18 +687,18 @@ describe('createOnChildExited', () => {
 
   it('invokes onUnexpectedExit hook for SIGTERM when override marks it unexpected', async () => {
     const pid = 123;
-    const tracked = { pid, startedBy: 'daemon', happySessionId: 'session-1' };
+    const tracked = { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'daemon', happySessionId: 'session-1' };
 
-    const pidToTrackedSession = new Map<number, any>([[pid, tracked]]);
-    const spawnResourceCleanupByPid = new Map<number, () => void>();
-    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(pid), tracked]]);
+    const spawnResourceCleanupByKey = new Map();
+    const sessionAttachCleanupByKey = new Map();
 
     const onUnexpectedExit = vi.fn();
 
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid,
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey,
+      sessionAttachCleanupByKey,
       getApiMachineForSessions: () => null,
       onUnexpectedExit,
       isExitUnexpectedOverride: () => true,
@@ -712,14 +709,14 @@ describe('createOnChildExited', () => {
     expect(onUnexpectedExit).toHaveBeenCalledTimes(1);
   });
 
-  it('removes the wrapper session marker when runner pid is known', async () => {
+  it('promotes the Session marker in place instead of removing a wrapper marker when runner pid is known', async () => {
     const wrapperPid = 123;
     const runnerPid = 456;
-    const tracked = { pid: wrapperPid, startedBy: 'daemon', happySessionId: 'session-1', sessionRunnerPid: runnerPid };
+    const tracked = { trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid, startedBy: 'daemon', happySessionId: 'session-1', sessionRunnerPid: runnerPid };
 
-    const pidToTrackedSession = new Map<number, any>([[wrapperPid, tracked]]);
-    const spawnResourceCleanupByPid = new Map<number, () => void>();
-    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(wrapperPid), tracked]]);
+    const spawnResourceCleanupByKey = new Map();
+    const sessionAttachCleanupByKey = new Map();
 
     const removeSessionMarkerFn = vi.fn(async () => {});
     const originalKill = process.kill.bind(process);
@@ -731,9 +728,9 @@ describe('createOnChildExited', () => {
     }) as any);
 
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid,
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey,
+      sessionAttachCleanupByKey,
       getApiMachineForSessions: () => null,
       removeSessionMarkerFn,
       promoteSessionMarkerFn: vi.fn(async () => ({
@@ -744,8 +741,7 @@ describe('createOnChildExited', () => {
     onChildExited(wrapperPid, { reason: 'process-exited', code: 0, signal: null });
     await drainAsyncWork();
 
-    expect(removeSessionMarkerFn).toHaveBeenCalledWith(wrapperPid);
-    expect(removeSessionMarkerFn).not.toHaveBeenCalledWith(runnerPid);
+    expect(removeSessionMarkerFn).not.toHaveBeenCalled();
     killSpy.mockRestore();
   });
 
@@ -753,15 +749,15 @@ describe('createOnChildExited', () => {
     const wrapperPid = 123;
     const runnerPid = 456;
     const tracked = {
-      pid: wrapperPid,
+      trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid,
       startedBy: 'daemon',
       happySessionId: 'session-1',
       sessionRunnerPid: runnerPid,
     };
 
-    const pidToTrackedSession = new Map<number, any>([[wrapperPid, tracked]]);
-    const spawnResourceCleanupByPid = new Map<number, () => void>();
-    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(wrapperPid), tracked]]);
+    const spawnResourceCleanupByKey = new Map();
+    const sessionAttachCleanupByKey = new Map();
 
     const removeSessionMarkerFn = vi.fn(async () => {});
     const promoteSessionMarkerFn = vi.fn(async () => ({
@@ -776,9 +772,9 @@ describe('createOnChildExited', () => {
     }) as any);
 
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid,
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey,
+      sessionAttachCleanupByKey,
       getApiMachineForSessions: () => null,
       removeSessionMarkerFn,
       promoteSessionMarkerFn,
@@ -787,17 +783,16 @@ describe('createOnChildExited', () => {
     onChildExited(wrapperPid, { reason: 'process-exited', code: 0, signal: null });
     await drainAsyncWork();
 
-    expect(pidToTrackedSession.has(wrapperPid)).toBe(false);
-    expect(pidToTrackedSession.get(runnerPid)).toMatchObject({
+    // The Session keeps its key; only its hosting pid moves to the runner.
+    expect([...trackedSessionsByKey.keys()]).toEqual([tracked.trackingKey]);
+    expect(trackedSessionsByKey.get(tracked.trackingKey)).toMatchObject({
       pid: runnerPid,
       startedBy: 'daemon',
       happySessionId: 'session-1',
     });
-    expect(pidToTrackedSession.get(runnerPid)?.sessionRunnerPid).toBeUndefined();
-    expect(promoteSessionMarkerFn).toHaveBeenCalledWith(wrapperPid, runnerPid);
-    expect(promoteSessionMarkerFn.mock.invocationCallOrder[0]).toBeLessThan(removeSessionMarkerFn.mock.invocationCallOrder[0]);
-    expect(removeSessionMarkerFn).toHaveBeenCalledWith(wrapperPid);
-    expect(removeSessionMarkerFn).not.toHaveBeenCalledWith(runnerPid);
+    expect(trackedSessionsByKey.get(tracked.trackingKey)?.sessionRunnerPid).toBeUndefined();
+    expect(promoteSessionMarkerFn).toHaveBeenCalledWith({ trackingKey: tracked.trackingKey, fromPid: wrapperPid, toPid: runnerPid });
+    expect(removeSessionMarkerFn).not.toHaveBeenCalled();
     killSpy.mockRestore();
   });
 
@@ -805,13 +800,13 @@ describe('createOnChildExited', () => {
     const wrapperPid = 123;
     const runnerPid = 456;
     const tracked = {
-      pid: wrapperPid,
+      trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid,
       startedBy: 'daemon',
       happySessionId: 'session-old',
       sessionRunnerPid: runnerPid,
     };
     const replacement = {
-      pid: runnerPid,
+      trackingKey: legacyPidSessionTrackingKey(runnerPid), pid: runnerPid,
       startedBy: 'daemon',
       happySessionId: 'session-replacement',
     };
@@ -819,9 +814,9 @@ describe('createOnChildExited', () => {
     const wrapperAttachCleanup = vi.fn(async () => undefined);
     const replacementSpawnCleanup = vi.fn();
     const replacementAttachCleanup = vi.fn(async () => undefined);
-    const pidToTrackedSession = new Map<number, any>([[wrapperPid, tracked]]);
-    const spawnResourceCleanupByPid = new Map<number, () => void>([[wrapperPid, wrapperSpawnCleanup]]);
-    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>([[wrapperPid, wrapperAttachCleanup]]);
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(wrapperPid), tracked]]);
+    const spawnResourceCleanupByKey = new Map<SessionTrackingKey, () => void>([[legacyPidSessionTrackingKey(wrapperPid), wrapperSpawnCleanup]]);
+    const sessionAttachCleanupByKey = new Map<SessionTrackingKey, () => Promise<void>>([[legacyPidSessionTrackingKey(wrapperPid), wrapperAttachCleanup]]);
     let completePromotion!: (promotion: {
       sourceMarkerOwnership: { happySessionId: string };
     }) => void;
@@ -838,9 +833,9 @@ describe('createOnChildExited', () => {
       return originalKill(targetPid, signal as any);
     }) as any);
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid,
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey,
+      sessionAttachCleanupByKey,
       getApiMachineForSessions: () => null,
       removeSessionMarkerFn,
       promoteSessionMarkerFn,
@@ -849,20 +844,20 @@ describe('createOnChildExited', () => {
 
     const observation = onChildExited(wrapperPid, { reason: 'process-exited', code: 0, signal: null });
     await vi.waitFor(() => expect(promoteSessionMarkerFn).toHaveBeenCalledTimes(1));
-    pidToTrackedSession.set(runnerPid, replacement);
-    spawnResourceCleanupByPid.set(runnerPid, replacementSpawnCleanup);
-    sessionAttachCleanupByPid.set(runnerPid, replacementAttachCleanup);
+    trackedSessionsByKey.set(legacyPidSessionTrackingKey(runnerPid), replacement);
+    spawnResourceCleanupByKey.set(legacyPidSessionTrackingKey(runnerPid), replacementSpawnCleanup);
+    sessionAttachCleanupByKey.set(legacyPidSessionTrackingKey(runnerPid), replacementAttachCleanup);
     completePromotion({
       sourceMarkerOwnership: { happySessionId: 'session-old' },
     });
     await observation;
 
-    expect(pidToTrackedSession.get(wrapperPid)).toBe(tracked);
-    expect(pidToTrackedSession.get(runnerPid)).toBe(replacement);
-    expect(spawnResourceCleanupByPid.get(wrapperPid)).toBe(wrapperSpawnCleanup);
-    expect(spawnResourceCleanupByPid.get(runnerPid)).toBe(replacementSpawnCleanup);
-    expect(sessionAttachCleanupByPid.get(wrapperPid)).toBe(wrapperAttachCleanup);
-    expect(sessionAttachCleanupByPid.get(runnerPid)).toBe(replacementAttachCleanup);
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(wrapperPid))).toBe(tracked);
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(runnerPid))).toBe(replacement);
+    expect(spawnResourceCleanupByKey.get(legacyPidSessionTrackingKey(wrapperPid))).toBe(wrapperSpawnCleanup);
+    expect(spawnResourceCleanupByKey.get(legacyPidSessionTrackingKey(runnerPid))).toBe(replacementSpawnCleanup);
+    expect(sessionAttachCleanupByKey.get(legacyPidSessionTrackingKey(wrapperPid))).toBe(wrapperAttachCleanup);
+    expect(sessionAttachCleanupByKey.get(legacyPidSessionTrackingKey(runnerPid))).toBe(replacementAttachCleanup);
     expect(removeSessionMarkerFn).not.toHaveBeenCalled();
     expect(onPidPromoted).not.toHaveBeenCalled();
     killSpy.mockRestore();
@@ -872,15 +867,15 @@ describe('createOnChildExited', () => {
     const wrapperPid = 123;
     const runnerPid = 456;
     const tracked = {
-      pid: wrapperPid,
+      trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid,
       startedBy: 'daemon',
       happySessionId: 'session-1',
       sessionRunnerPid: runnerPid,
     };
 
-    const pidToTrackedSession = new Map<number, any>([[wrapperPid, tracked]]);
-    const spawnResourceCleanupByPid = new Map<number, () => void>();
-    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(wrapperPid), tracked]]);
+    const spawnResourceCleanupByKey = new Map();
+    const sessionAttachCleanupByKey = new Map();
 
     const removeSessionMarkerFn = vi.fn(async () => {});
     const promoteSessionMarkerFn = vi.fn(async () => {
@@ -895,9 +890,9 @@ describe('createOnChildExited', () => {
     }) as any);
 
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid,
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey,
+      sessionAttachCleanupByKey,
       getApiMachineForSessions: () => null,
       removeSessionMarkerFn,
       promoteSessionMarkerFn,
@@ -906,11 +901,11 @@ describe('createOnChildExited', () => {
     onChildExited(wrapperPid, { reason: 'process-exited', code: 0, signal: null });
     await drainAsyncWork();
 
-    expect(promoteSessionMarkerFn).toHaveBeenCalledWith(wrapperPid, runnerPid);
-    expect(removeSessionMarkerFn).not.toHaveBeenCalledWith(wrapperPid);
-    expect(removeSessionMarkerFn).not.toHaveBeenCalledWith(runnerPid);
-    expect(pidToTrackedSession.get(wrapperPid)).toBe(tracked);
-    expect(pidToTrackedSession.has(runnerPid)).toBe(false);
+    expect(promoteSessionMarkerFn).toHaveBeenCalledWith({ trackingKey: tracked.trackingKey, fromPid: wrapperPid, toPid: runnerPid });
+    expect(removeSessionMarkerFn).not.toHaveBeenCalled();
+    expect(trackedSessionsByKey.get(tracked.trackingKey)).toBe(tracked);
+    expect(tracked.pid).toBe(wrapperPid);
+    expect(trackedSessionsByKey.size).toBe(1);
     killSpy.mockRestore();
   });
 
@@ -918,15 +913,15 @@ describe('createOnChildExited', () => {
     const wrapperPid = 123;
     const runnerPid = 456;
     const tracked = {
-      pid: wrapperPid,
+      trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid,
       startedBy: 'daemon',
       happySessionId: 'session-1',
       sessionRunnerPid: runnerPid,
     };
 
-    const pidToTrackedSession = new Map<number, any>([[wrapperPid, tracked]]);
-    const spawnResourceCleanupByPid = new Map<number, () => void>();
-    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(wrapperPid), tracked]]);
+    const spawnResourceCleanupByKey = new Map();
+    const sessionAttachCleanupByKey = new Map();
     const apiMachine = {
       enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => undefined),
       captureMachineSessionTerminal: vi.fn(async () => ({
@@ -953,9 +948,9 @@ describe('createOnChildExited', () => {
     }) as any);
 
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid,
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey,
+      sessionAttachCleanupByKey,
       getApiMachineForSessions: () => apiMachine,
       removeSessionMarkerFn,
       promoteSessionMarkerFn,
@@ -965,28 +960,26 @@ describe('createOnChildExited', () => {
 
     expect(promoteSessionMarkerFn).not.toHaveBeenCalled();
     expect(apiMachine.enqueueDaemonTerminalExactTurnEnd).not.toHaveBeenCalled();
-    expect(pidToTrackedSession.has(wrapperPid)).toBe(false);
-    expect(pidToTrackedSession.has(runnerPid)).toBe(false);
-    expect(removeSessionMarkerFn).toHaveBeenCalledWith(wrapperPid);
-    expect(removeSessionMarkerFn).toHaveBeenCalledWith(runnerPid);
+    expect(trackedSessionsByKey.size).toBe(0);
+    expect(removeSessionMarkerFn).toHaveBeenCalledWith(tracked.trackingKey);
     killSpy.mockRestore();
   });
 
   it('preserves a stopped session marker when the lifecycle owner marks it durable', async () => {
     const pid = 321;
     const tracked = {
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       startedBy: 'daemon',
       happySessionId: 'session-preserve-marker',
     };
 
-    const pidToTrackedSession = new Map<number, any>([[pid, tracked]]);
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(pid), tracked]]);
     const removeSessionMarkerFn = vi.fn(async () => {});
 
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid: new Map<number, () => void>(),
-      sessionAttachCleanupByPid: new Map<number, () => Promise<void>>(),
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => ({
         enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => undefined),
         captureMachineSessionTerminal: vi.fn(async () => ({
@@ -1009,28 +1002,28 @@ describe('createOnChildExited', () => {
     onChildExited(pid, { reason: 'process-exited', code: 0, signal: 'SIGTERM' });
     await drainAsyncWork();
 
-    expect(pidToTrackedSession.has(pid)).toBe(false);
-    expect(removeSessionMarkerFn).not.toHaveBeenCalledWith(pid);
+    expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(pid))).toBe(false);
+    expect(removeSessionMarkerFn).not.toHaveBeenCalledWith(legacyPidSessionTrackingKey(pid));
   });
 
   it('hands a final tracked exit to terminal-host recovery only after durable exit staging', async () => {
     const pid = 322;
     const tracked = {
-      pid,
+      trackingKey: legacyPidSessionTrackingKey(pid), pid,
       startedBy: 'daemon',
       happySessionId: 'session-register-terminal-host',
     };
     const events: string[] = [];
-    const pidToTrackedSession = new Map<number, any>([[pid, tracked]]);
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(pid), tracked]]);
     const removeSessionMarkerFn = vi.fn(async () => {});
     const onFinalTrackedSessionExitStaged = vi.fn(async () => {
       events.push('register-terminal-host');
     });
 
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid: new Map<number, () => void>(),
-      sessionAttachCleanupByPid: new Map<number, () => Promise<void>>(),
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => ({
         enqueueDaemonTerminalExactTurnEnd: vi.fn(async () => undefined),
         captureMachineSessionTerminal: vi.fn(async () => ({
@@ -1063,14 +1056,14 @@ describe('createOnChildExited', () => {
       observedAt: expect.any(Number),
     });
     expect(removeSessionMarkerFn).not.toHaveBeenCalled();
-    expect(pidToTrackedSession.has(pid)).toBe(false);
+    expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(pid))).toBe(false);
   });
 
   it('transfers PID-owned cleanup and notifies promotion listeners when a live runner replaces the wrapper', async () => {
     const wrapperPid = 123;
     const runnerPid = 456;
     const tracked = {
-      pid: wrapperPid,
+      trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid,
       startedBy: 'daemon',
       happySessionId: 'session-1',
       sessionRunnerPid: runnerPid,
@@ -1080,11 +1073,11 @@ describe('createOnChildExited', () => {
       childProcess: { pid: wrapperPid },
     };
 
-    const pidToTrackedSession = new Map<number, any>([[wrapperPid, tracked]]);
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([[legacyPidSessionTrackingKey(wrapperPid), tracked]]);
     const spawnCleanup = vi.fn();
     const attachCleanup = vi.fn(async () => {});
-    const spawnResourceCleanupByPid = new Map<number, () => void>([[wrapperPid, spawnCleanup]]);
-    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>([[wrapperPid, attachCleanup]]);
+    const spawnResourceCleanupByKey = new Map<SessionTrackingKey, () => void>([[legacyPidSessionTrackingKey(wrapperPid), spawnCleanup]]);
+    const sessionAttachCleanupByKey = new Map<SessionTrackingKey, () => Promise<void>>([[legacyPidSessionTrackingKey(wrapperPid), attachCleanup]]);
     const onPidPromoted = vi.fn();
 
     const originalKill = process.kill.bind(process);
@@ -1096,9 +1089,9 @@ describe('createOnChildExited', () => {
     }) as any);
 
     const onChildExited = createOnChildExited({
-      pidToTrackedSession,
-      spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid,
+      trackedSessionsByKey,
+      spawnResourceCleanupByKey,
+      sessionAttachCleanupByKey,
       getApiMachineForSessions: () => null,
       removeSessionMarkerFn: vi.fn(async () => {}),
       promoteSessionMarkerFn: vi.fn(async () => ({
@@ -1118,11 +1111,10 @@ describe('createOnChildExited', () => {
       { reason: 'process-exited', code: 0, signal: null },
     );
 
-    expect(spawnResourceCleanupByPid.has(wrapperPid)).toBe(false);
-    expect(spawnResourceCleanupByPid.get(runnerPid)).toBe(spawnCleanup);
-    expect(sessionAttachCleanupByPid.has(wrapperPid)).toBe(false);
-    expect(sessionAttachCleanupByPid.get(runnerPid)).toBe(attachCleanup);
-    expect(pidToTrackedSession.get(runnerPid)).toEqual(expect.objectContaining({
+    // The Session keeps its key across the promotion, so its resources stay put.
+    expect([...spawnResourceCleanupByKey.entries()]).toEqual([[tracked.trackingKey, spawnCleanup]]);
+    expect([...sessionAttachCleanupByKey.entries()]).toEqual([[tracked.trackingKey, attachCleanup]]);
+    expect(trackedSessionsByKey.get(tracked.trackingKey)).toEqual(expect.objectContaining({
       pid: runnerPid,
       happySessionId: 'session-1',
       sessionRunnerPid: undefined,

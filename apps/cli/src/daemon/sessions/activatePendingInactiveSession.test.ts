@@ -19,6 +19,7 @@ import { createMachineVitalsSampler } from '../vitals/createMachineVitalsSampler
 import { createMinuteHistoryStore } from '../vitals/history/minuteHistoryStore';
 import { createMachineResourceSummary } from '../resources/machineResourceSummary';
 import type { SpawnFailureV1 } from '@happier-dev/protocol/machines/processes/spawnFailureV1';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 type ResumeOptions = Parameters<Parameters<typeof activatePendingInactiveSession>[0]['spawnSessionForInternalResume']>[0];
 
 vi.mock('@/session/transport/http/sessionsHttp', () => ({
@@ -176,13 +177,13 @@ describe('activatePendingInactiveSession', () => {
         executionAuthorization: { provenance: 'user_request', requestId: 'pending-after-ui-death', requestedAt: 10 } });
       const { createGuardSessionRestoration } = await import('../guard/sessionRestoration');
       const restoration = createGuardSessionRestoration({ activity, nowMs: () => now });
-      await restoration.onSessionRunnerStarted({ pid: 42, happySessionId: 'session-1', startedBy: 'daemon',
+      await restoration.onSessionRunnerStarted({ trackingKey: legacyPidSessionTrackingKey(42), pid: 42, happySessionId: 'session-1', startedBy: 'daemon',
         requesterWorkAttributionV1: { ...attribution, accountId: 'other' } });
       expect((await activity.read('guard-stop'))?.undoneAt).toBeUndefined();
       now++;
-      await restoration.onSessionRunnerStarted({ pid: 42, happySessionId: 'session-1', startedBy: 'daemon', requesterWorkAttributionV1: attribution });
+      await restoration.onSessionRunnerStarted({ trackingKey: legacyPidSessionTrackingKey(42), pid: 42, happySessionId: 'session-1', startedBy: 'daemon', requesterWorkAttributionV1: attribution });
       expect((await activity.read('guard-stop'))?.undoneAt).toBe(now);
-      await restoration.onSessionRunnerStarted({ pid: 42, happySessionId: 'session-1', startedBy: 'daemon', requesterWorkAttributionV1: attribution });
+      await restoration.onSessionRunnerStarted({ trackingKey: legacyPidSessionTrackingKey(42), pid: 42, happySessionId: 'session-1', startedBy: 'daemon', requesterWorkAttributionV1: attribution });
       expect((await activity.list({ range: 'today' })).entries.filter(row => row.kind === 'start_failed')).toHaveLength(1);
     } finally { summary.stop(); await sampler.stop(); await rm(directory, { recursive: true, force: true }); }
   });

@@ -8,11 +8,12 @@ import { configuration } from '@/configuration';
 import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
 import { createDaemonSessionClientDurableMutationOutbox, createRuntimeSessionClientDurableMutationOutbox } from '@/api/session/client/transport/mutations/createSessionClientDurableMutationOutbox';
 import { resolveSessionClientDurableMutationJournalPaths } from '@/api/session/client/transport/mutations/sessionClientDurableMutationPersistence';
-import { writeSessionMarker, readSessionMarkerForPid, removeSessionMarker } from '../sessionRegistry';
+import { writeSessionMarker, readSessionMarker, removeSessionMarker } from '../sessionRegistry';
 import { withConfiguredDaemonTestHome } from '../testkit/fakeDaemonLifecycle.testkit';
 import type { TrackedSession } from '../types';
 import { applyTrackedSessionTurnLifecycle } from './applyTrackedSessionTurnLifecycle';
 import { stageObservedExit } from './stageObservedExit';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 vi.mock('node:fs/promises', async () => {
     const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises');
@@ -29,7 +30,7 @@ describe('observed exit across local admission and Home turn start', () => {
         await withConfiguredDaemonTestHome({ prefix: 'observed-exit-start-' }, async () => {
             const sessionId = 'observed-exit-session';
             const turnId = 'native-turn-incarnation-1';
-            const tracked: TrackedSession = { pid: process.pid, startedBy: 'daemon', happySessionId: sessionId };
+            const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, startedBy: 'daemon', happySessionId: sessionId };
             const homeTurns = new Set<string>();
             const requests: Array<{ action: string; turnId?: string }> = [];
             // HTTP is the system boundary. Both custody owners, marker writes,
@@ -57,7 +58,7 @@ describe('observed exit across local admission and Home turn start', () => {
             });
             const daemon = createDaemon();
             try {
-                await writeSessionMarker({ pid: tracked.pid, happySessionId: sessionId, startedBy: 'daemon' });
+                await writeSessionMarker({ trackingKey: tracked.trackingKey, pid: tracked.pid, happySessionId: sessionId, startedBy: 'daemon' });
                 await Promise.all([runtime.awaitReady(), daemon.awaitReady()]);
                 // Input admission owns an exact local identity before the native
                 // Agent starts. That authority is deliberately not a Home begin.
@@ -116,10 +117,10 @@ describe('observed exit across local admission and Home turn start', () => {
                     });
                     await expect(readFile(paths.queuePath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
                 }
-                expect((await readSessionMarkerForPid(tracked.pid))?.activeTurnId).toBe(markerFailure === 'persistent' ? undefined : turnId);
+                expect((await readSessionMarker(tracked.trackingKey))?.activeTurnId).toBe(markerFailure === 'persistent' ? undefined : turnId);
                 await stageObservedExit({ trackedSession: tracked, observedAt: 200,
                     enqueueExactTurnEnd: mutation => daemon.enqueueExactTurnEnd(mutation),
-                    releaseMarkerEvidence: async ({ markerPid }) => { await removeSessionMarker(markerPid); },
+                    releaseMarkerEvidence: async () => { await removeSessionMarker(tracked.trackingKey); },
                 });
                 await daemon.flush('flush');
                 expect(requests).toEqual([

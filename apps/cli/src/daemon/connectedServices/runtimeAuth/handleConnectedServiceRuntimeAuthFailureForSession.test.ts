@@ -17,6 +17,7 @@ import { ConnectedServiceAuthGroupGenerationConsumer } from '../accountGroups/ge
 import { buildConnectedServiceAuthGroupCommittedGenerationFact } from '../sessionAuthSwitch/connectedServiceAuthSwitchOutcome';
 import { settleSupersedingRuntimeAuthGenerationForSource } from './supersedingGeneration';
 import { RuntimeAuthRecoveryScheduler } from './RuntimeAuthRecoveryScheduler';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
   it.each(['plan', 'usage_limit', 'rate_limit'] as const)('does not replay model-scoped %s as account recovery', async kind => {
@@ -46,7 +47,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
         ['A', 'scheduler_retry', false],
     ] as const)('admits predecessor failure %s from %s with coordinator available=%s once', async (failedProfile, recoveryInvocationSource, coordinatorAvailable) => {
         const serviceId = 'happier.agent.codex/openai-codex';
-        const tracked = { startedBy: 'daemon' as const, pid: 100, happySessionId: 'legacy-report', spawnOptions: {
+        const tracked = { trackingKey: legacyPidSessionTrackingKey(100), startedBy: 'daemon' as const, pid: 100, happySessionId: 'legacy-report', spawnOptions: {
             directory: '/project', environmentVariables: { [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([
                 { kind: 'group', serviceId, groupId: 'pool', activeProfileId: 'A', fallbackProfileId: 'A', generation: 1 },
             ]) },
@@ -118,7 +119,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
             }, applyGeneration: async () => ({ ok: true, mode: 'spawn_next_turn' }),
         });
         const result = await handleConnectedServiceRuntimeAuthFailureForSession({
-            getChildren: () => [{ startedBy: 'daemon', pid: 101, happySessionId: 'unqualified', spawnOptions: {
+            getChildren: () => [{ trackingKey: legacyPidSessionTrackingKey(101), startedBy: 'daemon', pid: 101, happySessionId: 'unqualified', spawnOptions: {
                 directory: '/project', environmentVariables: { [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([
                     { kind: 'group', serviceId, groupId: 'pool', activeProfileId: 'B', fallbackProfileId: 'B', generation: 2 },
                 ]) },
@@ -191,7 +192,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
         const scheduler = new RuntimeAuthRecoveryScheduler({ nowMs: () => 1_000, jitterMs: () => 0,
             recover: async input => {
                 recovered = await handleConnectedServiceRuntimeAuthFailureForSession({ ...input,
-                    getChildren: () => [{ startedBy: 'daemon', happySessionId: 'stopped', pid: 123 }], switchCoordinator: coordinator,
+                    getChildren: () => [{ trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon', happySessionId: 'stopped', pid: 123 }], switchCoordinator: coordinator,
                     resolveRegisteredRuntimeAuthFailureSource: async () => ({ serviceId, groupId: 'team', profileId: ordinary ? 'A' : 'B',
                         generation: ordinary ? 1 : 2, credentialRevision: ordinary ? revisionA : revisionB }),
                     resolveCurrentRuntimeAuthFailureSource: scenario === 'predecessor'
@@ -243,7 +244,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
         } finally { scheduler.dispose(); }
     });
     it('declines an unattributed native-login failure without creating account recovery', async () => {
-        const tracked = { startedBy: 'daemon' as const, pid: 112, happySessionId: 'native-session',
+        const tracked = { trackingKey: legacyPidSessionTrackingKey(112), startedBy: 'daemon' as const, pid: 112, happySessionId: 'native-session',
             spawnOptions: { directory: '/project' } };
         await expect(authorizeConnectedServiceRuntimeAuthFailureSource({ getChildren: () => [tracked],
             sessionId: tracked.happySessionId, classification: { kind: 'usage_limit',
@@ -260,7 +261,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
             resetsAtMs: null, planType: null, rateLimits: null, source: 'structured_provider_error',
         };
         await expect(authorizeConnectedServiceRuntimeAuthFailureSource({
-            getChildren: () => [{ startedBy: 'daemon', pid: 123, happySessionId: 'session-context', spawnOptions: { directory: '/project' } }],
+            getChildren: () => [{ trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon', pid: 123, happySessionId: 'session-context', spawnOptions: { directory: '/project' } }],
             sessionId: 'session-context', classification,
             resolveProviderQualifiedRuntimeAuthFailureSource: async ({ classification }) => await resolveRuntimeAuthFailureSourceProfile({
                 classification, getGroupMembers: async () => [{ profileId: 'launch' }, { profileId: 'other' }],
@@ -271,7 +272,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
     it.each([false, true])('routes unattributed native failure through the registered pool without blaming its current member (provider evidence=%s)', async (modern) => {
         const serviceId = 'happier.agent.claude/claude-subscription';
-        const tracked = { startedBy: 'daemon' as const, pid: 111, happySessionId: 'session', spawnOptions: {
+        const tracked = { trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const, pid: 111, happySessionId: 'session', spawnOptions: {
             directory: '/project', environmentVariables: { [HAPPIER_CONNECTED_SERVICE_SELECTIONS_ENV_KEY]: JSON.stringify([
                 { kind: 'group', serviceId, groupId: 'pool', activeProfileId: 'old', fallbackProfileId: 'old', generation: 1 },
             ]) },
@@ -306,7 +307,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
     });
     it('authorizes a provider-qualified shared-auth failure from the live group member instead of stale launch metadata', async () => {
         const tracked = {
-            startedBy: 'daemon' as const,
+            trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
             pid: 111,
             happySessionId: 'sess_provider_qualified_shared_auth',
             spawnOptions: { directory: '/tmp/project', environmentVariables: {} },
@@ -356,7 +357,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
     ) => {
         const result = await authorizeConnectedServiceRuntimeAuthFailureSource({
             getChildren: () => [{
-                startedBy: 'daemon' as const,
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
                 pid: 111,
                 happySessionId: 'sess_capability',
                 spawnOptions: { directory: '/tmp/project', environmentVariables: {} },
@@ -382,7 +383,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
     it('authorizes an exact quota report from a reattached live runtime when spawn selections are absent', async () => {
         const result = await authorizeConnectedServiceRuntimeAuthFailureSource({
             getChildren: () => [{
-                startedBy: 'daemon' as const,
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
                 pid: 111,
                 happySessionId: 'sess_reattached_exact_runtime',
                 reattachedFromDiskMarker: true,
@@ -416,7 +417,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
     it('authorizes a hot-applied tracked quota report from the registered exact binding when the auxiliary probe is unavailable', async () => {
         const tracked = {
-            startedBy: 'daemon' as const,
+            trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
             pid: 111,
             happySessionId: 'sess_hot_applied_exact_runtime',
             spawnOptions: {
@@ -490,7 +491,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
         }));
         const result = await authorizeConnectedServiceRuntimeAuthFailureSource({
             getChildren: () => [{
-                startedBy: 'daemon' as const,
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
                 pid: 111,
                 happySessionId: 'sess_registered_mismatch',
                 spawnOptions: { directory: '/tmp/project', environmentVariables: {} },
@@ -538,7 +539,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
         const result = await authorizeConnectedServiceRuntimeAuthFailureSource({
             getChildren: () => [{
-                startedBy: 'daemon' as const,
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
                 pid: 111,
                 happySessionId: 'sess_exact_current_disproves_registry',
                 spawnOptions: { directory: '/tmp/project', environmentVariables: {} },
@@ -585,7 +586,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
         const result = await authorizeConnectedServiceRuntimeAuthFailureSource({
             getChildren: () => [{
-                startedBy: 'daemon' as const,
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
                 pid: 111,
                 happySessionId: 'sess_stale_bootstrap',
                 reattachedFromDiskMarker: true,
@@ -629,7 +630,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
     it('propagates unavailable registered runtime truth so the existing report outbox retains custody', async () => {
         await expect(authorizeConnectedServiceRuntimeAuthFailureSource({
             getChildren: () => [{
-                startedBy: 'daemon' as const,
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
                 pid: 111,
                 happySessionId: 'sess_registry_unavailable',
                 spawnOptions: { directory: '/tmp/project', environmentVariables: {} },
@@ -654,7 +655,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
     it('authorizes a complete hot-applied credential failure from the exact live binding', async () => {
         const tracked = {
-            startedBy: 'daemon' as const,
+            trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
             pid: 111,
             happySessionId: 'sess_hot_applied_auth_expired',
             spawnOptions: {
@@ -713,7 +714,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
     it('keeps an actionful exact-identity credential failure passive without current-source authorization', async () => {
         const result = await authorizeConnectedServiceRuntimeAuthFailureSource({
             getChildren: () => [{
-                startedBy: 'daemon' as const,
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
                 pid: 111,
                 happySessionId: 'sess_reattached_auth_expired',
                 reattachedFromDiskMarker: true,
@@ -757,7 +758,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
         }));
         const result = await authorizeConnectedServiceRuntimeAuthFailureSource({
             getChildren: () => [{
-                startedBy: 'daemon' as const,
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
                 pid: 111,
                 happySessionId: 'sess_reattached_predecessor',
                 reattachedFromDiskMarker: true,
@@ -798,7 +799,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
         const result = await authorizeConnectedServiceRuntimeAuthFailureSource({
             getChildren: () => [{
-                startedBy: 'daemon' as const,
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
                 pid: 111,
                 happySessionId: 'sess_predecessor_generation',
                 reattachedFromDiskMarker: true,
@@ -857,7 +858,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
         await handleConnectedServiceRuntimeAuthFailureForSession({
             getChildren: () => [{
-                startedBy: 'daemon' as const,
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
                 pid: 111,
                 happySessionId: 'sess_scheduler_reattached_predecessor',
                 reattachedFromDiskMarker: true,
@@ -928,7 +929,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
     ) => {
         const result = await authorizeConnectedServiceRuntimeAuthFailureSource({
             getChildren: () => [{
-                startedBy: 'daemon' as const,
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
                 pid: 111,
                 happySessionId: 'sess_newer_registered_generation',
                 spawnOptions: { directory: '/tmp/project', environmentVariables: {} },
@@ -976,7 +977,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
     it('supersedes a late report without continuation when an exact newer group target is already adopted', async () => {
         const tracked = {
-            startedBy: 'daemon' as const,
+            trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
             pid: 111,
             happySessionId: 'sess_adopted_newer_target',
             spawnOptions: { directory: '/tmp/project', environmentVariables: {} },
@@ -1023,7 +1024,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
     it('continues a scheduled recovery on the refreshed revision of the same profile without attributing the old failure to it', async () => {
         const tracked = {
-            startedBy: 'daemon' as const,
+            trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
             pid: 111,
             happySessionId: 'sess_scheduled_same_profile_refresh',
             spawnOptions: { directory: '/tmp/project', environmentVariables: {} },
@@ -1100,7 +1101,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
         const refreshConnectedServiceCredentialForRuntimeAuthFailure = vi.fn();
         const result = await handleConnectedServiceRuntimeAuthFailureForSession({
             getChildren: () => [{
-                startedBy: 'daemon' as const,
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
                 pid: 111,
                 happySessionId: 'sess_exact_tuple',
                 spawnOptions: {
@@ -1173,7 +1174,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
         }));
         const continueAfterRuntimeAuthSwitch = vi.fn(async (_input: { serviceIds: ReadonlySet<string> }) => {});
         const trackedSession = {
-            startedBy: 'daemon' as const,
+            trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
             pid: 111,
             happySessionId: 'sess_claude_group',
             spawnOptions: {
@@ -1280,7 +1281,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
         await expect(handleConnectedServiceRuntimeAuthFailureForSession({
             getChildren: () => [{
-                startedBy: 'daemon' as const,
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
                 pid: 111,
                 happySessionId: 'sess_codex_group',
                 spawnOptions: {
@@ -1351,7 +1352,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
         await expect(handleConnectedServiceRuntimeAuthFailureForSession({
             getChildren: () => [{
-                startedBy: 'daemon' as const,
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
                 pid: 111,
                 happySessionId: 'sess_claude_group',
                 spawnOptions: {
@@ -1428,7 +1429,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
         await expect(handleConnectedServiceRuntimeAuthFailureForSession({
             getChildren: () => [{
-                startedBy: 'daemon' as const,
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
                 pid: 111,
                 happySessionId: 'sess_codex_exhausted',
                 spawnOptions: {
@@ -1534,7 +1535,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
         };
         const input = {
             getChildren: () => [{
-                startedBy: 'daemon' as const,
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
                 pid: 111,
                 happySessionId: 'sess_claude_group',
                 spawnOptions: {
@@ -1606,7 +1607,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
         await expect(handleConnectedServiceRuntimeAuthFailureForSession({
             getChildren: () => [{
-                startedBy: 'daemon',
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon',
                 pid: 111,
                 happySessionId: 'sess_changed_account',
                 spawnOptions: {
@@ -1664,7 +1665,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
         await expect(handleConnectedServiceRuntimeAuthFailureForSession({
             getChildren: () => [{
-                startedBy: 'daemon',
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon',
                 pid: 111,
                 happySessionId: 'sess_1',
                 spawnOptions: {
@@ -1750,7 +1751,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
         await expect(handleConnectedServiceRuntimeAuthFailureForSession({
             getChildren: () => [{
-                startedBy: 'daemon',
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon',
                 pid: 111,
                 happySessionId: 'sess_1',
                 spawnOptions: {
@@ -1817,7 +1818,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
         await expect(handleConnectedServiceRuntimeAuthFailureForSession({
             getChildren: () => [{
-                startedBy: 'daemon',
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon',
                 pid: 111,
                 happySessionId: 'sess_1',
                 spawnOptions: {
@@ -1873,7 +1874,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
         }));
         const restartSession = vi.fn(async () => {});
         const trackedSession = {
-            startedBy: 'daemon' as const,
+            trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const,
             pid: 111,
             happySessionId: 'sess_1',
             spawnOptions: {
@@ -1933,7 +1934,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
         await expect(handleConnectedServiceRuntimeAuthFailureForSession({
             getChildren: () => [{
-                startedBy: 'daemon',
+                trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
                 happySessionId: 'sess_1',
                 pid: 123,
                 spawnOptions: {
@@ -1983,7 +1984,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
             mode: 'spawn_next_turn' as const,
         }));
         const trackedSession = {
-            startedBy: 'daemon' as const,
+            trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon' as const,
             happySessionId: 'sess_1',
             pid: 123,
             spawnOptions: {
@@ -2038,7 +2039,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
         await expect(handleConnectedServiceRuntimeAuthFailureForSession({
             getChildren: () => [{
-                startedBy: 'daemon',
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon',
                 pid: 111,
                 happySessionId: 'sess_1',
                 spawnOptions: {
@@ -2161,7 +2162,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
         await expect(handleConnectedServiceRuntimeAuthFailureForSession({
             getChildren: () => [{
-                startedBy: 'daemon',
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon',
                 pid: 111,
                 happySessionId: 'sess_1',
                 happySessionMetadataFromLocalWebhook: {
@@ -2228,7 +2229,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
         await expect(handleConnectedServiceRuntimeAuthFailureForSession({
             getChildren: () => [{
-                startedBy: 'daemon',
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon',
                 pid: 111,
                 happySessionId: 'sess_1',
                 happySessionMetadataFromLocalWebhook: {
@@ -2314,7 +2315,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
         await expect(handleConnectedServiceRuntimeAuthFailureForSession({
             getChildren: () => [{
-                startedBy: 'daemon',
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon',
                 pid: 111,
                 happySessionId: 'sess_1',
                 spawnOptions: {
@@ -2387,7 +2388,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
         await expect(handleConnectedServiceRuntimeAuthFailureForSession({
             getChildren: () => [{
-                startedBy: 'daemon',
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon',
                 pid: 111,
                 happySessionId: 'sess_same_failed_account',
                 spawnOptions: {
@@ -2461,7 +2462,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
         await expect(handleConnectedServiceRuntimeAuthFailureForSession({
             getChildren: () => [{
-                startedBy: 'daemon',
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon',
                 pid: 111,
                 happySessionId: 'sess_1',
                 spawnOptions: {
@@ -2531,7 +2532,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
         await expect(handleConnectedServiceRuntimeAuthFailureForSession({
             getChildren: () => [{
-                startedBy: 'daemon',
+                trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon',
                 pid: 111,
                 happySessionId: 'sess_1',
                 spawnOptions: {
@@ -2643,7 +2644,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
 
         await expect(handleConnectedServiceRuntimeAuthFailureForSession({
             getChildren: () => [{
-                startedBy: 'daemon',
+                trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
                 happySessionId: 'sess_1',
                 pid: 123,
                 spawnOptions: {
@@ -2746,7 +2747,7 @@ describe('handleConnectedServiceRuntimeAuthFailureForSession', () => {
         await expect(handleConnectedServiceRuntimeAuthFailureForSession({
             ...legacyRecoveryMetadata,
             getChildren: () => [{
-                startedBy: 'daemon',
+                trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon',
                 happySessionId: 'sess_1',
                 pid: 123,
                 spawnOptions: {

@@ -10,11 +10,13 @@ import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
 import { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeRegistry/registry';
 import { createOnChildExited } from '../sessions/onChildExited';
+import type { SpawnResourceCleanupByKey } from '../sessions/cleanupSessionResources';
 import { createRequesterSessionControlRuntimeFixture } from '../testkit/requesterSessionControlRuntimeFixture';
 import type { TrackedSession } from '../types';
 import { createRequesterSessionRuntimeContext } from './createRequesterSessionRuntimeContext';
 import { admitRequesterSessionBootstrap, createRequesterSessionRuntimeContextResolver,
   type AdmittedRequesterSessionBootstrap } from './requesterSessionCredentials';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 it.each(['before_exit', 'during_exit', 'before_cleanup_registration', 'collision_during_exit', 'shared_live_replacement', 'shared_retiring_replacement', 'shared_predecessor_recovery'] as const)(
   'retires current requester custody across %s',
@@ -66,7 +68,7 @@ it.each(['before_exit', 'during_exit', 'before_cleanup_registration', 'collision
     let retainedPredecessor: Awaited<ReturnType<typeof createRequesterSessionRuntimeContext>> = null;
     try {
       const registry = new ConnectedServiceRuntimeRegistry();
-      const trackedSessions = new Map<number, TrackedSession>();
+      const trackedSessions = new Map<SessionTrackingKey, TrackedSession>();
       host = await createRequesterSessionControlRuntimeFixture({ happyHomeDir: directory, activeServerDir: directory,
         serverId: 'bob-home', serverHttpBaseUrl: 'https://bob-home.test', machineId: 'machine', custodianAccountId: 'alice',
         credentials: { token: 'alice', encryption: null }, connectedServicesMaterializationBaseDir: join(directory, 'materialized'),
@@ -103,7 +105,7 @@ it.each(['before_exit', 'during_exit', 'before_cleanup_registration', 'collision
           coordinatorInput: { machineId: 'machine', machineIdProvider: () => 'machine', runtimeId: 'runtime', happyHomeDir: directory,
             logger: { debug() {}, info() {}, warn() {} },
             processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '0', HAPPIER_CONNECTED_SERVICES_QUOTAS_ENABLED: '0' },
-            pidToTrackedSession: trackedSessions, connectedServiceRuntimeRegistry: registry,
+            trackedSessionsByKey: trackedSessions, connectedServiceRuntimeRegistry: registry,
             connectedServiceAuthGroupPreTurnSwitchCoordinator: switchCoordinator },
         });
         if (!runtime) throw new Error('Missing real requester runtime');
@@ -132,20 +134,21 @@ it.each(['before_exit', 'during_exit', 'before_cleanup_registration', 'collision
       });
       const pid = child.pid;
       if (pid === undefined) throw new Error('Missing fixture process identity');
-      const tracked: TrackedSession = { pid, happySessionId: 'bob-session', startedBy: 'daemon',
+      const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: 'bob-session', startedBy: 'daemon',
         requesterSessionRuntimeContext: initialRequester };
-      trackedSessions.set(pid, tracked);
+      trackedSessions.set(tracked.trackingKey, tracked);
       const transferred = launchScope.transfer();
       if (!transferred && !retainsInitial) throw new Error('Missing real launch resource custody');
-      const spawnCleanupByPid = transferred ? new Map([[pid, transferred]]) : new Map<number, () => void | Promise<void>>();
-      const onChildExited = createOnChildExited({ pidToTrackedSession: trackedSessions,
-        spawnResourceCleanupByPid: spawnCleanupByPid, sessionAttachCleanupByPid: new Map(),
+      const spawnCleanupByKey: SpawnResourceCleanupByKey = transferred ? new Map([[tracked.trackingKey, transferred]]) : new Map();
+      const onChildExited = createOnChildExited({ trackedSessionsByKey: trackedSessions,
+        spawnResourceCleanupByKey: spawnCleanupByKey, sessionAttachCleanupByKey: new Map(),
         getApiMachineForSessions: () => null });
       const exit = await exited;
       expect(exit.code).toBe(1);
       if (replacement === 'shared_predecessor_recovery') {
         retainedPredecessor = initialRequester;
-        trackedSessions.set(process.pid, { pid: process.pid, happySessionId: 'bob-session', startedBy: 'terminal',
+        trackedSessions.set(legacyPidSessionTrackingKey(process.pid), { trackingKey: legacyPidSessionTrackingKey(process.pid),
+          pid: process.pid, happySessionId: 'bob-session', startedBy: 'terminal',
           requesterSessionRuntimeContext: initialRequester });
         initialAdmissionAvailable = false;
         const resolveRequester = createRequesterSessionRuntimeContextResolver({ trackedSessions,
@@ -171,7 +174,8 @@ it.each(['before_exit', 'during_exit', 'before_cleanup_registration', 'collision
       if (replacement === 'shared_live_replacement') {
         // Foreground adoption can lend the same requester to a distinct live
         // tracked PID. The actual test process is its OS presence witness.
-        trackedSessions.set(process.pid, { pid: process.pid, happySessionId: 'bob-session', startedBy: 'terminal',
+        trackedSessions.set(legacyPidSessionTrackingKey(process.pid), { trackingKey: legacyPidSessionTrackingKey(process.pid),
+          pid: process.pid, happySessionId: 'bob-session', startedBy: 'terminal',
           requesterSessionRuntimeContext: requester });
       }
       if (replacement === 'shared_retiring_replacement') {
@@ -182,9 +186,9 @@ it.each(['before_exit', 'during_exit', 'before_cleanup_registration', 'collision
         });
         const replacementPid = replacementChild.pid;
         if (replacementPid === undefined) throw new Error('Missing replacement fixture process identity');
-        const replacementTracked: TrackedSession = { pid: replacementPid, happySessionId: 'bob-session', startedBy: 'terminal',
+        const replacementTracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(replacementPid), pid: replacementPid, happySessionId: 'bob-session', startedBy: 'terminal',
           requesterSessionRuntimeContext: requester };
-        trackedSessions.set(replacementPid, replacementTracked);
+        trackedSessions.set(replacementTracked.trackingKey, replacementTracked);
         const replacementScope = createProviderLaunchResourceScope();
         replacementScope.register(async () => {
           await axios.get('https://bob-home.test/exit-cleanup-barrier');
@@ -193,7 +197,7 @@ it.each(['before_exit', 'during_exit', 'before_cleanup_registration', 'collision
         });
         const replacementCleanup = replacementScope.transfer();
         if (!replacementCleanup) throw new Error('Missing replacement fixture cleanup');
-        spawnCleanupByPid.set(replacementPid, replacementCleanup);
+        spawnCleanupByKey.set(replacementTracked.trackingKey, replacementCleanup);
         const observedReplacementExit = await replacementExit;
         expect(observedReplacementExit.code).toBe(1);
         pendingReplacementExit = onChildExited(replacementPid, { reason: 'process-exited', ...observedReplacementExit });
@@ -217,7 +221,7 @@ it.each(['before_exit', 'during_exit', 'before_cleanup_registration', 'collision
       pendingExit = onChildExited(pid, { reason: 'process-exited', ...exit });
       if (replacement === 'during_exit' || replacement === 'collision_during_exit') {
         await exitCleanupEntered;
-        expect(trackedSessions.get(pid)).toBe(tracked);
+        expect(trackedSessions.get(tracked.trackingKey)).toBe(tracked);
         if (replacement === 'during_exit') {
           expect(tracked.requesterSessionRuntimeContext).toBe(initialRequester);
           tracked.requesterSessionRuntimeContext = requester;

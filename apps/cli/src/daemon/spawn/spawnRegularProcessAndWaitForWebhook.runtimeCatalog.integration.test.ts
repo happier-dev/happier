@@ -78,6 +78,14 @@ import { isSessionSpawnBrokerUnavailable } from '@happier-dev/protocol/spawnSess
 import { activatePendingInactiveSession } from '@/daemon/sessions/activatePendingInactiveSession';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { logger } from '@/ui/logger';
+import {
+  legacyPidSessionTrackingKey,
+  trackedSessionForSingleSessionProcess,
+  trackedSessionsForProcess,
+  type ReadonlyTrackedSessionMap,
+  type SessionTrackingKey,
+  type TrackedSessionMap,
+} from '@/daemon/sessions/sessionTrackingKey';
 
 const mocks = vi.hoisted(() => ({
   spawnHappyCLI: vi.fn(),
@@ -114,6 +122,35 @@ vi.mock('node:fs/promises', async (importOriginal) => ({
   writeFile: mocks.writeFile,
 }));
 
+/**
+ * Production spawns mint each Session's tracking key. This map also remembers
+ * the key every launched process was tracked under, so a test can still
+ * address that Session's waiter maps after its tracking entry is gone.
+ */
+class LaunchRecordingTrackedSessionMap extends Map<SessionTrackingKey, TrackedSession> {
+  readonly keyByPid = new Map<number, SessionTrackingKey>();
+
+  override set(key: SessionTrackingKey, tracked: TrackedSession): this {
+    this.keyByPid?.set(tracked.pid, key);
+    return super.set(key, tracked);
+  }
+}
+
+function trackedForPid(trackedSessionsByKey: ReadonlyTrackedSessionMap, pid: number): TrackedSession | undefined {
+  return trackedSessionForSingleSessionProcess(trackedSessionsByKey, pid);
+}
+
+function sessionKeyForPid(params: { trackedSessionsByKey: TrackedSessionMap }, pid: number): SessionTrackingKey {
+  const key = trackedForPid(params.trackedSessionsByKey, pid)?.trackingKey
+    ?? (params.trackedSessionsByKey instanceof LaunchRecordingTrackedSessionMap ? params.trackedSessionsByKey.keyByPid.get(pid) : undefined);
+  if (!key) throw new Error(`No Session was tracked for pid ${pid}`);
+  return key;
+}
+
+function untrackProcess(params: { trackedSessionsByKey: TrackedSessionMap }, pid: number): void {
+  for (const tracked of trackedSessionsForProcess(params.trackedSessionsByKey, pid)) params.trackedSessionsByKey.delete(tracked.trackingKey);
+}
+
 function createFakeChildProcess(pid: number) {
   const child = new EventEmitter() as EventEmitter & {
     pid: number;
@@ -143,17 +180,17 @@ function createParams() {
       HAPPIER_DAEMON_STARTUP_SOURCE: 'manual',
       HAPPIER_DAEMON_SPAWNED_CHILD_OOM_SCORE_ADJ: '321',
     },
-    pidToTrackedSession: new Map(),
-    pidToAwaiter: new Map(),
-    pidToSpawnResultResolver: new Map(),
-    pidToSpawnWebhookTimeout: new Map(),
+    trackedSessionsByKey: new LaunchRecordingTrackedSessionMap() as TrackedSessionMap,
+    spawnAwaiterByKey: new Map(),
+    spawnResultResolverByKey: new Map(),
+    spawnWebhookTimeoutByKey: new Map(),
     resolveCanonicalTrackedSessionId: vi.fn(() => 'session-1'),
     onChildExited: vi.fn(),
     spawnLifecycleCallbacks: {
       registerConnectedServiceSpawnTarget: vi.fn(),
-      registerSpawnResourceCleanupForPid: vi.fn(),
-      cleanupSpawnResourcesForPid: vi.fn(async () => true),
-      consumeSessionAttachCleanupForPid: vi.fn(),
+      registerSpawnResourceCleanupForSession: vi.fn(),
+      cleanupSpawnResourcesForSession: vi.fn(async () => true),
+      consumeSessionAttachCleanupForSession: vi.fn(),
       cleanupPendingSessionAttach: vi.fn(async () => {}),
       persistAcceptedSpawnMarker:
         vi.fn(async (_tracked: TrackedSession) => {}),
@@ -171,9 +208,9 @@ function withCanonicalChildExitOwner(
   removeSessionMarkerFn: NonNullable<Parameters<typeof createOnChildExited>[0]['removeSessionMarkerFn']> = async () => {},
 ) {
   const onChildExited = createOnChildExited({
-    pidToTrackedSession: params.pidToTrackedSession,
-    spawnResourceCleanupByPid: new Map(),
-    sessionAttachCleanupByPid: new Map(),
+    trackedSessionsByKey: params.trackedSessionsByKey,
+    spawnResourceCleanupByKey: new Map(),
+    sessionAttachCleanupByKey: new Map(),
     getApiMachineForSessions: () => null,
     // Marker IO is the persistent-system boundary; retirement and startup
     // settlement execute through the real canonical owner beneath this spy.
@@ -323,24 +360,24 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
           const exited = once(child, 'exit');
           const pid = child.pid!;
           mocks.spawnHappyCLI.mockReturnValueOnce(child);
-          const pidToTrackedSession = new Map<number, TrackedSession>();
-          const spawnResourceCleanupByPid = new Map<number, () => void | Promise<void>>();
-          const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
+          const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>();
+          const spawnResourceCleanupByKey = new Map();
+          const sessionAttachCleanupByKey = new Map();
           const onChildExited = createOnChildExited({
-            pidToTrackedSession, spawnResourceCleanupByPid, sessionAttachCleanupByPid,
+            trackedSessionsByKey, spawnResourceCleanupByKey, sessionAttachCleanupByKey,
             getApiMachineForSessions: () => null,
           });
           const spawnLifecycleCallbacks = createSpawnLifecycleCallbacks({
             connectedServicesBindingsRaw: null, catalogAgentId: null, materializationKey: '',
             hasConnectedServiceAuth: () => false,
             getSpawnResourceCleanupOnExit: () => null, onSpawnResourceCleanupArmed: () => {},
-            spawnResourceCleanupByPid,
+            spawnResourceCleanupByKey,
             getSessionAttachCleanup: () => null, setSessionAttachCleanup: () => {},
-            sessionAttachCleanupByPid,
+            sessionAttachCleanupByKey,
             persistAcceptedSpawnMarker: (trackedSession) => persistAcceptedSpawnMarker({ trackedSession, deviceLocalSecretStorage }),
           });
           const params = {
-            ...createParams(), args: [agentId], directory: homeDir, pidToTrackedSession, onChildExited, spawnLifecycleCallbacks,
+            ...createParams(), args: [agentId], directory: homeDir, trackedSessionsByKey, onChildExited, spawnLifecycleCallbacks,
             options: { directory: homeDir, runtimeDescriptorV1: { v: 1 as const, agentId, agent: { backendMode } } },
             trackedSpawnOptions: {
               directory: homeDir,
@@ -405,14 +442,14 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
               effectiveBackendTargetV2: params.trackedSpawnOptions.backendTarget,
               happyHomeDir: homeDir, onUntrackedHostedChild: () => {},
             });
-            await vi.waitFor(() => expect(params.pidToAwaiter.has(pid)).toBe(true)).catch(async () => {
+            await vi.waitFor(() => expect(params.spawnAwaiterByKey.has(sessionKeyForPid(params, pid))).toBe(true)).catch(async () => {
               const result = await pending;
               expect(api.requests.filter(request => request.method === 'layout.apply')).toEqual([]);
               expect(result).toEqual({ type: 'success', sessionId: 'session-1' });
             });
-            const tracked = pidToTrackedSession.get(pid)!;
+            const tracked = trackedForPid(trackedSessionsByKey, pid)!;
             // Network webhook boundary: the pre-session PID placeholder is sufficient for this spawn-custody assertion.
-            params.pidToAwaiter.get(pid)?.({ ...tracked });
+            params.spawnAwaiterByKey.get(sessionKeyForPid(params, pid))?.({ ...tracked });
             await pending;
             enterPhase('bootstrap metadata');
             expect(api.requests.filter(request => request.method === 'layout.apply')).toEqual([]);
@@ -473,7 +510,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
               });
               if (attachment.version !== 2) throw new Error('The actual owned descriptor was not written');
               const candidate = {
-                sessionId: 'session-1', pid, happyHomeDir: homeDir,
+                sessionId: 'session-1', trackingKey: tracked.trackingKey, pid, happyHomeDir: homeDir,
                 attachmentId: attachment.attachmentId, handle: attachment.handle,
                 spawnOptions: { ...tracked.spawnOptions, directory: homeDir, backendTarget: params.trackedSpawnOptions.backendTarget,
                   runtimeDescriptorV1: selected.runtimeDescriptorV1,
@@ -484,7 +521,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                 // selection and the metadata producer above remain canonical.
                 const observed: TrackedSession = { ...tracked, happySessionId: 'session-1',
                   spawnOptions: candidate.spawnOptions, happySessionMetadataFromLocalWebhook: captured.metadata };
-                pidToTrackedSession.set(pid, observed);
+                trackedSessionsByKey.set(tracked.trackingKey, observed);
                 api.panes.delete('managed');
                 const rawSession = createSessionRecordFixture({ id: 'session-1', encryptionMode: 'plain',
                   metadataLayoutVersion: 0, metadataVersion: 4,
@@ -536,7 +573,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                     actionTimeoutMs: HERDR_ACTION_TIMEOUT_MS, startupTimeoutMs: HERDR_STARTUP_TIMEOUT_MS });
                   const currentCliVersion = resolveComparableCliVersion({ fallbackVersion: '0.3.0', projectRootPath: projectPath() });
                   const heartbeatParams = {
-                    pidToTrackedSession, spawnResourceCleanupByPid, sessionAttachCleanupByPid,
+                    trackedSessionsByKey, spawnResourceCleanupByKey, sessionAttachCleanupByKey,
                     getApiMachineForSessions: () => null, onChildExited,
                     controlPort: address.port, fileState: { pid: process.pid, httpPort: address.port,
                       startedAt: Date.now(), startedWithCliVersion: currentCliVersion,
@@ -545,10 +582,10 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                     requestShutdown: () => { throw new Error('The owned current heartbeat cannot require shutdown'); },
                     writeDaemonStateForCurrentOwner: (state: Parameters<typeof writeDaemonStateForLockOwner>[1]) => writeDaemonStateForLockOwner(lock, state),
                     onTrackedSessionHealthy: (current: TrackedSession) => superviseTrackedOptionalTerminalPresentation({
-                      tracked: current, isCurrent: () => pidToTrackedSession.get(pid) === current, happyHomeDir: homeDir,
+                      tracked: current, isCurrent: () => trackedSessionsByKey.get(tracked.trackingKey) === current, happyHomeDir: homeDir,
                       loadTerminalHostAdapters: async () => ({ herdr: hostAdapter }),
                       probeSessionServiceability: (sessionId) => probeSessionRunnerServiceability({ sessionId,
-                        trackedSessions: pidToTrackedSession.values(),
+                        trackedSessions: trackedSessionsByKey.values(),
                         probeCapability: async () => { throw new Error('Positive-dead presenter retirement does not call native control'); } }),
                       retireExactTerminalControlServiceability: (fact) => retireExactTerminalControlServiceability({
                         credentials: { token: 'fixture-token', encryption: null }, sessionId: fact.sessionId,
@@ -569,29 +606,29 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                   expect(child.exitCode).toBeNull();
                   expect(child.signalCode).toBeNull();
                   expect(process.kill(pid, 0)).toBe(true);
-                  expect(pidToTrackedSession.get(pid)).toBe(observed);
+                  expect(trackedSessionsByKey.get(tracked.trackingKey)).toBe(observed);
                   expect((await listSessionMarkers()).some((current) => current.pid === pid)).toBe(true);
                   const markerBeforeStop = (await listSessionMarkers()).find(current => current.pid === pid);
                   expect(observed.processStartTimeMs).toBeTypeOf('number');
                   expect(markerBeforeStop?.processStartTimeMs).toBe(observed.processStartTimeMs);
                   if (typeof observed.processStartTimeMs !== 'number') throw new Error('The accepted marker lacks its real OS generation');
-                  const stop = createStopSession({ pidToTrackedSession,
+                  const stop = createStopSession({ trackedSessionsByKey,
                     areTrackedRunnersExited: ({ trackedPids }) => waitForTrackedRunnerProcessesExit({
                       runners: trackedPids.map(pid => ({ pid })), timeoutMs: 0, pollIntervalMs: 0 }),
                     waitForTrackedRunnersExit: ({ trackedPids }) => waitForTrackedRunnerProcessesExit({
                       runners: trackedPids.map(pid => ({ pid })), timeoutMs: configuration.daemonSpawnExistingSessionWaitForExitMs,
                       pollIntervalMs: configuration.daemonSpawnExistingSessionWaitForExitPollIntervalMs, onExitObserved: onChildExited }),
                   });
-                  pidToTrackedSession.set(pid, { ...observed, processStartTimeMs: observed.processStartTimeMs + 1 });
+                  trackedSessionsByKey.set(tracked.trackingKey, { ...observed, processStartTimeMs: observed.processStartTimeMs + 1 });
                   expect(await stop('session-1')).toEqual({ status: 'incomplete', reason: requestedHost === 'plain'
                     ? 'runner_signal_incomplete' : 'missing_attachment_identity' });
                   expect(process.kill(pid, 0)).toBe(true);
                   if (requestedHost !== 'plain') {
-                    pidToTrackedSession.set(pid, { ...observed, startedBy: 'terminal' });
+                    trackedSessionsByKey.set(tracked.trackingKey, { ...observed, startedBy: 'terminal' });
                     expect(await stop('session-1')).toEqual({ status: 'incomplete', reason: 'missing_attachment_identity' });
                     expect(process.kill(pid, 0)).toBe(true);
                   }
-                  pidToTrackedSession.set(pid, observed);
+                  trackedSessionsByKey.set(tracked.trackingKey, observed);
                   // Hold only the genuine procfs read; a replacement tracked
                   // object cannot inherit the earlier absent-presenter proof.
                   const fsBoundary = await import('node:fs/promises');
@@ -610,7 +647,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                   const replacedStop = stop('session-1');
                   try {
                     await vi.waitFor(() => expect(readStarted).toBe(true));
-                    pidToTrackedSession.set(pid, { ...observed });
+                    trackedSessionsByKey.set(tracked.trackingKey, { ...observed });
                     releaseRead();
                     expect(await replacedStop).toEqual({ status: 'incomplete', reason: requestedHost === 'plain'
                       ? 'runner_signal_incomplete' : 'missing_attachment_identity' });
@@ -621,7 +658,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                     finally {
                       readSpy.mockRestore();
                       releaseHeldRead = undefined;
-                      pidToTrackedSession.set(pid, observed);
+                      trackedSessionsByKey.set(tracked.trackingKey, observed);
                     }
                   }
                   enterPhase('positive Stop');
@@ -671,10 +708,10 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                   } },
                   happySessionMetadataFromLocalWebhook: { ...captured.metadata, terminal: hostedTerminal },
                 };
-                pidToTrackedSession.set(pid, observed);
+                trackedSessionsByKey.set(tracked.trackingKey, observed);
                 await removeTerminalHostAttachmentInfo({ happyHomeDir: homeDir, sessionId: 'session-1',
                   expectedAttachmentId: attachment.attachmentId });
-                expect(await createStopSession({ pidToTrackedSession })('session-1')).toEqual({ status: 'incomplete', reason: 'missing_attachment_identity' });
+                expect(await createStopSession({ trackedSessionsByKey })('session-1')).toEqual({ status: 'incomplete', reason: 'missing_attachment_identity' });
                 expect(child.exitCode).toBeNull();
                 expect(child.signalCode).toBeNull();
               }
@@ -739,13 +776,13 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                   const normalPid = normalChild.pid;
                   if (!normalPid) throw new Error('The owned normal-exit child did not spawn');
                   const normalTracked: TrackedSession = {
-                    pid: normalPid, startedBy: 'daemon', childProcess: normalChild,
+                    trackingKey: legacyPidSessionTrackingKey(normalPid), pid: normalPid, startedBy: 'daemon', childProcess: normalChild,
                     happySessionId: 'session-1', spawnOptions: candidate.spawnOptions,
                     happySessionMetadataFromLocalWebhook: captured.metadata,
                     publishedTerminalControlServiceabilityAttachmentId: attachment.attachmentId,
                     publishedTerminalControlServiceabilityAttachmentLifecycle: 'owned',
                   };
-                  pidToTrackedSession.set(normalPid, normalTracked);
+                  trackedSessionsByKey.set(normalTracked.trackingKey, normalTracked);
                   await persistAcceptedSpawnMarker({ trackedSession: normalTracked, deviceLocalSecretStorage });
                   expect((await listSessionMarkers()).some(marker => marker.pid === normalPid)).toBe(true);
                   const machineSocket = createApiSessionSocketStub({ connected: true, emitWithAck: async (event) => {
@@ -767,7 +804,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                   await vi.waitFor(() => expect(mocks.io).toHaveBeenCalled());
                   enterPhase('normal-exit durable staging');
                   const normalOnChildExited = createOnChildExited({
-                    pidToTrackedSession, spawnResourceCleanupByPid, sessionAttachCleanupByPid,
+                    trackedSessionsByKey, spawnResourceCleanupByKey, sessionAttachCleanupByKey,
                     getApiMachineForSessions: () => machine ?? null,
                     shouldPreserveSessionMarkerOnExit: ({ trackedSession }) => shouldRetainTrackedTerminalHostExitMarker({
                       tracked: trackedSession, happyHomeDir: homeDir,
@@ -776,7 +813,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
                   normalChild.kill('SIGTERM');
                   expect(await normalExit).toEqual([0, null]);
                   await normalOnChildExited(normalPid, { reason: 'process-exited', code: 0, signal: null });
-                  expect(pidToTrackedSession.has(normalPid)).toBe(false);
+                  expect(trackedSessionsByKey.has(normalTracked.trackingKey)).toBe(false);
                   expect((await listSessionMarkers()).some(marker => marker.pid === normalPid)).toBe(false);
                 } finally {
                   try { await machine?.shutdown(); }
@@ -860,9 +897,9 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     });
 
     await vi.waitFor(() => {
-      expect(params.pidToAwaiter.has(4242)).toBe(true);
+      expect(params.spawnAwaiterByKey.has(sessionKeyForPid(params, 4242))).toBe(true);
     });
-    const tracked = params.pidToTrackedSession.get(4242)!;
+    const tracked = trackedForPid(params.trackedSessionsByKey, 4242)!;
     expect(tracked).toMatchObject({
       agentRuntimeDaemonServiceAuthorityFilePath:
         '/private/runner-authority.json',
@@ -879,7 +916,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     expect(JSON.stringify(tracked)).not.toContain(
       'must-not-become-daemon-authority',
     );
-    params.pidToAwaiter.get(4242)?.({
+    params.spawnAwaiterByKey.get(sessionKeyForPid(params, 4242))?.({
       ...tracked,
       happySessionId: 'session-4242',
     });
@@ -956,8 +993,8 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     const { spawnRegularProcessAndWaitForWebhook } = await import('./spawnRegularProcessAndWaitForWebhook');
     const { createOnHappySessionWebhook } = await import('../sessions/onHappySessionWebhook');
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession: params.pidToTrackedSession,
-      pidToAwaiter: params.pidToAwaiter,
+      trackedSessionsByKey: params.trackedSessionsByKey,
+      spawnAwaiterByKey: params.spawnAwaiterByKey,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn,
       readCredentialsFn: async () => null,
@@ -967,18 +1004,18 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     const pending = spawnRegularProcessAndWaitForWebhook(params);
 
     await vi.waitFor(() => expect(params.spawnLifecycleCallbacks.persistAcceptedSpawnMarker).toHaveBeenCalledTimes(1));
-    expect(params.pidToTrackedSession.get(4243)).toEqual(expect.objectContaining({
-      pid: 4243,
+    expect(trackedForPid(params.trackedSessionsByKey, 4243)).toEqual(expect.objectContaining({
+      trackingKey: expect.stringMatching(/^session-/), pid: 4243,
       startedBy: 'daemon',
     }));
-    expect(params.pidToAwaiter.has(4243)).toBe(true);
+    expect(params.spawnAwaiterByKey.has(sessionKeyForPid(params, 4243))).toBe(true);
 
     const webhookReadiness = onWebhook('session-4243', {
       hostPid: 4243,
       path: '/tmp/happier-project',
       startedBy: 'daemon',
     } as Metadata);
-    expect(params.pidToTrackedSession.get(4243)).toEqual(expect.objectContaining({
+    expect(trackedForPid(params.trackedSessionsByKey, 4243)).toEqual(expect.objectContaining({
       happySessionId: 'session-4243',
     }));
     expect(onTrackedSessionReady).not.toHaveBeenCalled();
@@ -991,9 +1028,9 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     expect(onTrackedSessionReady).toHaveBeenCalledTimes(1);
     await vi.waitFor(() => expect(onTrackedSessionReported).toHaveBeenCalledTimes(1));
     await vi.waitFor(() => expect(writeSessionMarkerFn).toHaveBeenCalledTimes(1));
-    expect(params.pidToAwaiter.has(4243)).toBe(false);
-    expect(params.pidToSpawnResultResolver.has(4243)).toBe(false);
-    expect(params.pidToSpawnWebhookTimeout.has(4243)).toBe(false);
+    expect(params.spawnAwaiterByKey.has(sessionKeyForPid(params, 4243))).toBe(false);
+    expect(params.spawnResultResolverByKey.has(sessionKeyForPid(params, 4243))).toBe(false);
+    expect(params.spawnWebhookTimeoutByKey.has(sessionKeyForPid(params, 4243))).toBe(false);
   });
 
   it('keeps one startup owner when canonical activation pauses across wrapper promotion', async () => {
@@ -1030,9 +1067,9 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     const { createOnChildExited } =
       await import('../sessions/onChildExited');
     const onChildExited = createOnChildExited({
-      pidToTrackedSession: params.pidToTrackedSession,
-      spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey: params.trackedSessionsByKey,
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       promoteSessionMarkerFn,
       removeSessionMarkerFn: vi.fn(async () => undefined),
@@ -1041,8 +1078,8 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
       await import('../sessions/onHappySessionWebhook');
     const writeSessionMarkerFn = vi.fn(async () => undefined);
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession: params.pidToTrackedSession,
-      pidToAwaiter: params.pidToAwaiter,
+      trackedSessionsByKey: params.trackedSessionsByKey,
+      spawnAwaiterByKey: params.spawnAwaiterByKey,
       getParentPidFn: () => wrapperPid,
       findHappyProcessByPidFn: async () => null,
       readProcessIdentityByPidFn: async () => ({
@@ -1067,7 +1104,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     let originalTrackedSession: TrackedSession | undefined;
     await vi.waitFor(() => {
       originalTrackedSession =
-        params.pidToTrackedSession.get(wrapperPid);
+        trackedForPid(params.trackedSessionsByKey, wrapperPid);
       expect(originalTrackedSession).toBeDefined();
     });
     await onWebhook(
@@ -1090,7 +1127,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
 
     child.emit('exit', 0, null);
     await vi.waitFor(() => {
-      expect(params.pidToTrackedSession.get(runnerPid))
+      expect(trackedForPid(params.trackedSessionsByKey, runnerPid))
         .toBe(originalTrackedSession);
       expect(promoteSessionMarkerFn).toHaveBeenCalledOnce();
     });
@@ -1107,10 +1144,10 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
         happySessionId: `PID-${runnerPid}`,
       }),
     );
-    expect(params.pidToTrackedSession.has(wrapperPid)).toBe(false);
-    expect(params.pidToAwaiter).toHaveLength(0);
-    expect(params.pidToSpawnResultResolver).toHaveLength(0);
-    expect(params.pidToSpawnWebhookTimeout).toHaveLength(0);
+    expect(Boolean(trackedForPid(params.trackedSessionsByKey, wrapperPid))).toBe(false);
+    expect(params.spawnAwaiterByKey).toHaveLength(0);
+    expect(params.spawnResultResolverByKey).toHaveLength(0);
+    expect(params.spawnWebhookTimeoutByKey).toHaveLength(0);
     killSpy.mockRestore();
   });
 
@@ -1142,9 +1179,9 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     const { createOnChildExited } =
       await import('../sessions/onChildExited');
     const onChildExited = createOnChildExited({
-      pidToTrackedSession: params.pidToTrackedSession,
-      spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey: params.trackedSessionsByKey,
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       promoteSessionMarkerFn,
       removeSessionMarkerFn: vi.fn(async () => undefined),
@@ -1156,8 +1193,8 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     const { createOnHappySessionWebhook } =
       await import('../sessions/onHappySessionWebhook');
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession: params.pidToTrackedSession,
-      pidToAwaiter: params.pidToAwaiter,
+      trackedSessionsByKey: params.trackedSessionsByKey,
+      spawnAwaiterByKey: params.spawnAwaiterByKey,
       getParentPidFn: () => wrapperPid,
       findHappyProcessByPidFn: async () => null,
       readProcessIdentityByPidFn: async () => ({
@@ -1180,7 +1217,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
       onChildExited,
     });
     await vi.waitFor(() => {
-      expect(params.pidToAwaiter.has(wrapperPid)).toBe(true);
+      expect(params.spawnAwaiterByKey.has(sessionKeyForPid(params, wrapperPid))).toBe(true);
     });
     await onWebhook(
       `PID-${runnerPid}`,
@@ -1194,13 +1231,13 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     child.emit('exit', 0, null);
     releaseMarker();
     await vi.waitFor(() => {
-      expect(params.pidToTrackedSession.get(wrapperPid)?.runnerProcessIdentity?.pid).toBe(runnerPid);
+      expect(trackedForPid(params.trackedSessionsByKey, wrapperPid)?.runnerProcessIdentity?.pid).toBe(runnerPid);
     });
     // The existing heartbeat repeats missing-wrapper observations after a held
     // report captures its runner generation; startup keeps the same exit owner.
     await onChildExited(wrapperPid, { reason: 'process-missing', code: null, signal: null });
     await vi.waitFor(() => {
-      expect(params.pidToTrackedSession.get(runnerPid))
+      expect(trackedForPid(params.trackedSessionsByKey, runnerPid))
         .toBeDefined();
     });
     await onWebhook(
@@ -1216,8 +1253,8 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
       type: 'success',
       sessionId: 'session-after-early-wrapper-exit',
     });
-    expect(params.pidToTrackedSession.has(wrapperPid)).toBe(false);
-    expect(params.pidToTrackedSession.get(runnerPid))
+    expect(Boolean(trackedForPid(params.trackedSessionsByKey, wrapperPid))).toBe(false);
+    expect(trackedForPid(params.trackedSessionsByKey, runnerPid))
       .toEqual(expect.objectContaining({
         pid: runnerPid,
         happySessionId: 'session-after-early-wrapper-exit',
@@ -1235,9 +1272,9 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     const replacementLifecycleCleanup = vi.fn();
     const lifecycleCleanupByPid = new Map<number, () => void>();
     params.onChildExited.mockImplementation(async (pid) => {
-      params.pidToTrackedSession.delete(pid);
-      params.pidToAwaiter.delete(pid);
-      params.pidToSpawnResultResolver.delete(pid);
+      untrackProcess(params, pid);
+      params.spawnAwaiterByKey.delete(sessionKeyForPid(params, pid));
+      params.spawnResultResolverByKey.delete(sessionKeyForPid(params, pid));
       const cleanup = lifecycleCleanupByPid.get(pid);
       lifecycleCleanupByPid.delete(pid);
       cleanup?.();
@@ -1251,8 +1288,8 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     const { spawnRegularProcessAndWaitForWebhook } = await import('./spawnRegularProcessAndWaitForWebhook');
     const { createOnHappySessionWebhook } = await import('../sessions/onHappySessionWebhook');
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession: params.pidToTrackedSession,
-      pidToAwaiter: params.pidToAwaiter,
+      trackedSessionsByKey: params.trackedSessionsByKey,
+      spawnAwaiterByKey: params.spawnAwaiterByKey,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn,
       readCredentialsFn: async () => null,
@@ -1271,17 +1308,17 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     expect(writeSessionMarkerFn).not.toHaveBeenCalled();
 
     const replacementTracked = {
-      pid: 4250,
+      trackingKey: sessionKeyForPid(params, 4250), pid: 4250,
       startedBy: 'daemon',
       happySessionId: 'PID-4250',
     };
     const replacementAwaiter = vi.fn();
     const replacementResolver = vi.fn();
     const replacementTimeout = setTimeout(() => {}, 60_000);
-    params.pidToTrackedSession.set(4250, replacementTracked);
-    params.pidToAwaiter.set(4250, replacementAwaiter);
-    params.pidToSpawnResultResolver.set(4250, replacementResolver);
-    params.pidToSpawnWebhookTimeout.set(4250, replacementTimeout);
+    params.trackedSessionsByKey.set(sessionKeyForPid(params, 4250), replacementTracked);
+    params.spawnAwaiterByKey.set(sessionKeyForPid(params, 4250), replacementAwaiter);
+    params.spawnResultResolverByKey.set(sessionKeyForPid(params, 4250), replacementResolver);
+    params.spawnWebhookTimeoutByKey.set(sessionKeyForPid(params, 4250), replacementTimeout);
     lifecycleCleanupByPid.set(4250, replacementLifecycleCleanup);
 
     releaseMarker();
@@ -1296,15 +1333,15 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
 
     expect(onTrackedSessionReported).not.toHaveBeenCalled();
     expect(writeSessionMarkerFn).not.toHaveBeenCalled();
-    expect(params.spawnLifecycleCallbacks.consumeSessionAttachCleanupForPid).toHaveBeenCalledWith(4250);
+    expect(params.spawnLifecycleCallbacks.consumeSessionAttachCleanupForSession).toHaveBeenCalledWith(sessionKeyForPid(params, 4250));
     expect(params.spawnLifecycleCallbacks.registerConnectedServiceSpawnTarget).not.toHaveBeenCalled();
-    expect(params.spawnLifecycleCallbacks.registerSpawnResourceCleanupForPid).toHaveBeenCalledWith(4250);
+    expect(params.spawnLifecycleCallbacks.registerSpawnResourceCleanupForSession).toHaveBeenCalledWith(sessionKeyForPid(params, 4250));
     expect(params.onChildExited).not.toHaveBeenCalled();
     expect(child.kill).not.toHaveBeenCalled();
-    expect(params.pidToTrackedSession.get(4250)).toBe(replacementTracked);
-    expect(params.pidToAwaiter.get(4250)).toBe(replacementAwaiter);
-    expect(params.pidToSpawnResultResolver.get(4250)).toBe(replacementResolver);
-    expect(params.pidToSpawnWebhookTimeout.get(4250)).toBe(replacementTimeout);
+    expect(trackedForPid(params.trackedSessionsByKey, 4250)).toBe(replacementTracked);
+    expect(params.spawnAwaiterByKey.get(sessionKeyForPid(params, 4250))).toBe(replacementAwaiter);
+    expect(params.spawnResultResolverByKey.get(sessionKeyForPid(params, 4250))).toBe(replacementResolver);
+    expect(params.spawnWebhookTimeoutByKey.get(sessionKeyForPid(params, 4250))).toBe(replacementTimeout);
     expect(replacementAwaiter).not.toHaveBeenCalled();
     expect(replacementResolver).not.toHaveBeenCalled();
 
@@ -1313,10 +1350,10 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     await Promise.resolve();
 
     expect(params.onChildExited).not.toHaveBeenCalled();
-    expect(params.pidToTrackedSession.get(4250)).toBe(replacementTracked);
-    expect(params.pidToAwaiter.get(4250)).toBe(replacementAwaiter);
-    expect(params.pidToSpawnResultResolver.get(4250)).toBe(replacementResolver);
-    expect(params.pidToSpawnWebhookTimeout.get(4250)).toBe(replacementTimeout);
+    expect(trackedForPid(params.trackedSessionsByKey, 4250)).toBe(replacementTracked);
+    expect(params.spawnAwaiterByKey.get(sessionKeyForPid(params, 4250))).toBe(replacementAwaiter);
+    expect(params.spawnResultResolverByKey.get(sessionKeyForPid(params, 4250))).toBe(replacementResolver);
+    expect(params.spawnWebhookTimeoutByKey.get(sessionKeyForPid(params, 4250))).toBe(replacementTimeout);
     expect(lifecycleCleanupByPid.get(4250)).toBe(replacementLifecycleCleanup);
     expect(replacementLifecycleCleanup).not.toHaveBeenCalled();
     clearTimeout(replacementTimeout);
@@ -1347,7 +1384,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
 
     releaseMarker();
 
-    await vi.waitFor(() => expect(params.pidToTrackedSession.has(4244)).toBe(false));
+    await vi.waitFor(() => expect(Boolean(trackedForPid(params.trackedSessionsByKey, 4244))).toBe(false));
     expect(params.onChildExited).toHaveBeenCalledOnce();
     expect(markerPresent).toBe(false);
     expect(params.onChildExited).toHaveBeenCalledWith(4244, expect.objectContaining({
@@ -1389,7 +1426,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     expect(flushStreamingSanitizer).not.toHaveBeenCalled();
     releaseMarker();
 
-    await vi.waitFor(() => expect(params.pidToAwaiter.has(4245)).toBe(true));
+    await vi.waitFor(() => expect(params.spawnAwaiterByKey.has(sessionKeyForPid(params, 4245))).toBe(true));
     expect(params.onChildExited).not.toHaveBeenCalled();
     child.emit('exit', 1, null);
 
@@ -1410,7 +1447,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     mocks.spawnHappyCLI.mockReturnValueOnce(child);
     const params = createParams();
     params.onChildExited.mockImplementationOnce(async (pid) => {
-      params.pidToTrackedSession.delete(pid);
+      untrackProcess(params, pid);
     });
     let rejectMarker!: (error: Error) => void;
     params.spawnLifecycleCallbacks.persistAcceptedSpawnMarker.mockImplementationOnce(
@@ -1424,8 +1461,8 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     const { spawnRegularProcessAndWaitForWebhook } = await import('./spawnRegularProcessAndWaitForWebhook');
     const { createOnHappySessionWebhook } = await import('../sessions/onHappySessionWebhook');
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession: params.pidToTrackedSession,
-      pidToAwaiter: params.pidToAwaiter,
+      trackedSessionsByKey: params.trackedSessionsByKey,
+      spawnAwaiterByKey: params.spawnAwaiterByKey,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn,
       readCredentialsFn: async () => null,
@@ -1442,7 +1479,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
       startedBy: 'daemon',
     } as Metadata);
     const failedMarkerWebhookFailure = expect(failedMarkerWebhookReadiness).rejects.toThrow('spawn custody');
-    expect(params.pidToTrackedSession.get(4246)).toEqual(expect.objectContaining({
+    expect(trackedForPid(params.trackedSessionsByKey, 4246)).toEqual(expect.objectContaining({
       happySessionId: 'session-4246',
     }));
     expect(params.onChildExited).not.toHaveBeenCalled();
@@ -1455,10 +1492,10 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     expect(child.kill).not.toHaveBeenCalled();
     expect(params.cleanupSpawnResources).toHaveBeenCalledOnce();
     expect(params.spawnLifecycleCallbacks.cleanupPendingSessionAttach).not.toHaveBeenCalled();
-    expect(params.pidToTrackedSession.has(4246)).toBe(false);
-    expect(params.pidToAwaiter.has(4246)).toBe(false);
-    expect(params.pidToSpawnResultResolver.has(4246)).toBe(false);
-    expect(params.pidToSpawnWebhookTimeout.has(4246)).toBe(false);
+    expect(Boolean(trackedForPid(params.trackedSessionsByKey, 4246))).toBe(false);
+    expect(params.spawnAwaiterByKey.has(sessionKeyForPid(params, 4246))).toBe(false);
+    expect(params.spawnResultResolverByKey.has(sessionKeyForPid(params, 4246))).toBe(false);
+    expect(params.spawnWebhookTimeoutByKey.has(sessionKeyForPid(params, 4246))).toBe(false);
     expect(params.onChildExited).toHaveBeenCalledOnce();
     expect(onTrackedSessionReported).not.toHaveBeenCalled();
     expect(writeSessionMarkerFn).not.toHaveBeenCalled();
@@ -1468,11 +1505,11 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
       path: '/tmp/happier-project',
       startedBy: 'daemon',
     } as Metadata)).resolves.toBeUndefined();
-    expect(params.pidToTrackedSession.has(4246)).toBe(false);
+    expect(Boolean(trackedForPid(params.trackedSessionsByKey, 4246))).toBe(false);
     child.emit('exit', null, 'SIGTERM');
     await Promise.resolve();
     expect(params.onChildExited).toHaveBeenCalledOnce();
-    expect(params.pidToTrackedSession.has(4246)).toBe(false);
+    expect(Boolean(trackedForPid(params.trackedSessionsByKey, 4246))).toBe(false);
   });
 
   it('cancels its superseded webhook timeout when marker rejection preserves replacement custody', async () => {
@@ -1496,10 +1533,10 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     const pending = spawnRegularProcessAndWaitForWebhook(params);
     await markerStarted;
     expect(params.spawnLifecycleCallbacks.persistAcceptedSpawnMarker).toHaveBeenCalledTimes(1);
-    expect(params.pidToSpawnWebhookTimeout.has(4247)).toBe(true);
+    expect(params.spawnWebhookTimeoutByKey.has(sessionKeyForPid(params, 4247))).toBe(true);
 
     const replacementTracked = {
-      pid: 4247,
+      trackingKey: sessionKeyForPid(params, 4247), pid: 4247,
       startedBy: 'daemon',
       happySessionId: 'PID-4247',
       childProcess: replacementChild,
@@ -1508,17 +1545,17 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     const replacementResolver = vi.fn();
     const replacementTimeoutCallback = vi.fn();
     const replacementTimeout = setTimeout(replacementTimeoutCallback, 1_000);
-    params.pidToTrackedSession.set(4247, replacementTracked);
-    params.pidToAwaiter.set(4247, replacementAwaiter);
-    params.pidToSpawnResultResolver.set(4247, replacementResolver);
-    params.pidToSpawnWebhookTimeout.set(4247, replacementTimeout);
+    params.trackedSessionsByKey.set(sessionKeyForPid(params, 4247), replacementTracked);
+    params.spawnAwaiterByKey.set(sessionKeyForPid(params, 4247), replacementAwaiter);
+    params.spawnResultResolverByKey.set(sessionKeyForPid(params, 4247), replacementResolver);
+    params.spawnWebhookTimeoutByKey.set(sessionKeyForPid(params, 4247), replacementTimeout);
 
     await vi.advanceTimersByTimeAsync(50);
 
-    expect(params.pidToTrackedSession.get(4247)).toBe(replacementTracked);
-    expect(params.pidToAwaiter.get(4247)).toBe(replacementAwaiter);
-    expect(params.pidToSpawnResultResolver.get(4247)).toBe(replacementResolver);
-    expect(params.pidToSpawnWebhookTimeout.get(4247)).toBe(replacementTimeout);
+    expect(trackedForPid(params.trackedSessionsByKey, 4247)).toBe(replacementTracked);
+    expect(params.spawnAwaiterByKey.get(sessionKeyForPid(params, 4247))).toBe(replacementAwaiter);
+    expect(params.spawnResultResolverByKey.get(sessionKeyForPid(params, 4247))).toBe(replacementResolver);
+    expect(params.spawnWebhookTimeoutByKey.get(sessionKeyForPid(params, 4247))).toBe(replacementTimeout);
     expect(replacementTracked).not.toHaveProperty('sessionWebhookTimedOutAtMs');
     expect(replacementAwaiter).not.toHaveBeenCalled();
     expect(replacementResolver).not.toHaveBeenCalled();
@@ -1531,10 +1568,10 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     rejectMarker(new Error('marker write rejected after replacement'));
     await expect(pending).rejects.toThrow('marker write rejected after replacement');
     expect(child.kill).not.toHaveBeenCalled();
-    expect(params.pidToTrackedSession.get(4247)).toBe(replacementTracked);
-    expect(params.pidToAwaiter.get(4247)).toBe(replacementAwaiter);
-    expect(params.pidToSpawnResultResolver.get(4247)).toBe(replacementResolver);
-    expect(params.pidToSpawnWebhookTimeout.get(4247)).toBe(replacementTimeout);
+    expect(trackedForPid(params.trackedSessionsByKey, 4247)).toBe(replacementTracked);
+    expect(params.spawnAwaiterByKey.get(sessionKeyForPid(params, 4247))).toBe(replacementAwaiter);
+    expect(params.spawnResultResolverByKey.get(sessionKeyForPid(params, 4247))).toBe(replacementResolver);
+    expect(params.spawnWebhookTimeoutByKey.get(sessionKeyForPid(params, 4247))).toBe(replacementTimeout);
     expect(replacementTracked).not.toHaveProperty('sessionWebhookTimedOutAtMs');
     expect(replacementAwaiter).not.toHaveBeenCalled();
     expect(replacementResolver).not.toHaveBeenCalled();
@@ -1555,7 +1592,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     );
     const oldAttachCleanup = vi.fn(async () => {});
     const replacementAttachCleanup = vi.fn(async () => {});
-    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
+    const sessionAttachCleanupByKey = new Map();
     let pendingAttachCleanup: (() => Promise<void>) | null = oldAttachCleanup;
     const { createSpawnLifecycleCallbacks } = await import('./createSpawnLifecycleCallbacks');
     const realSpawnLifecycleCallbacks = createSpawnLifecycleCallbacks({
@@ -1565,28 +1602,28 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
       hasConnectedServiceAuth: () => false,
       getSpawnResourceCleanupOnExit: () => null,
       onSpawnResourceCleanupArmed: vi.fn(),
-      spawnResourceCleanupByPid: new Map(),
+      spawnResourceCleanupByKey: new Map(),
       getSessionAttachCleanup: () => pendingAttachCleanup,
       setSessionAttachCleanup: (cleanup) => {
         pendingAttachCleanup = cleanup;
       },
-      sessionAttachCleanupByPid,
+      sessionAttachCleanupByKey,
       persistAcceptedSpawnMarker,
     });
-    const consumeSessionAttachCleanupForPid = vi.fn(
-      realSpawnLifecycleCallbacks.consumeSessionAttachCleanupForPid,
+    const consumeSessionAttachCleanupForSession = vi.fn(
+      realSpawnLifecycleCallbacks.consumeSessionAttachCleanupForSession,
     );
     const registerConnectedServiceSpawnTarget = vi.fn(
       realSpawnLifecycleCallbacks.registerConnectedServiceSpawnTarget,
     );
-    const registerSpawnResourceCleanupForPid = vi.fn(
-      realSpawnLifecycleCallbacks.registerSpawnResourceCleanupForPid,
+    const registerSpawnResourceCleanupForSession = vi.fn(
+      realSpawnLifecycleCallbacks.registerSpawnResourceCleanupForSession,
     );
     const spawnLifecycleCallbacks = {
       ...realSpawnLifecycleCallbacks,
-      consumeSessionAttachCleanupForPid,
+      consumeSessionAttachCleanupForSession,
       registerConnectedServiceSpawnTarget,
-      registerSpawnResourceCleanupForPid,
+      registerSpawnResourceCleanupForSession,
     };
     const params = {
       ...createParams(),
@@ -1597,25 +1634,25 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     await vi.waitFor(() => expect(persistAcceptedSpawnMarker).toHaveBeenCalledTimes(1));
 
     const replacementTracked = {
-      pid: 4248,
+      trackingKey: sessionKeyForPid(params, 4248), pid: 4248,
       startedBy: 'daemon',
       happySessionId: 'PID-4248',
     };
     const replacementAwaiter = vi.fn();
     const replacementResolver = vi.fn();
     const replacementTimeout = setTimeout(() => {}, 60_000);
-    params.pidToTrackedSession.set(4248, replacementTracked);
-    params.pidToAwaiter.set(4248, replacementAwaiter);
-    params.pidToSpawnResultResolver.set(4248, replacementResolver);
-    params.pidToSpawnWebhookTimeout.set(4248, replacementTimeout);
-    sessionAttachCleanupByPid.set(4248, replacementAttachCleanup);
+    params.trackedSessionsByKey.set(sessionKeyForPid(params, 4248), replacementTracked);
+    params.spawnAwaiterByKey.set(sessionKeyForPid(params, 4248), replacementAwaiter);
+    params.spawnResultResolverByKey.set(sessionKeyForPid(params, 4248), replacementResolver);
+    params.spawnWebhookTimeoutByKey.set(sessionKeyForPid(params, 4248), replacementTimeout);
+    sessionAttachCleanupByKey.set(sessionKeyForPid(params, 4248), replacementAttachCleanup);
 
     child.emit('exit', 1, null);
 
-    expect(params.pidToTrackedSession.get(4248)).toBe(replacementTracked);
-    expect(params.pidToAwaiter.get(4248)).toBe(replacementAwaiter);
-    expect(params.pidToSpawnResultResolver.get(4248)).toBe(replacementResolver);
-    expect(params.pidToSpawnWebhookTimeout.get(4248)).toBe(replacementTimeout);
+    expect(trackedForPid(params.trackedSessionsByKey, 4248)).toBe(replacementTracked);
+    expect(params.spawnAwaiterByKey.get(sessionKeyForPid(params, 4248))).toBe(replacementAwaiter);
+    expect(params.spawnResultResolverByKey.get(sessionKeyForPid(params, 4248))).toBe(replacementResolver);
+    expect(params.spawnWebhookTimeoutByKey.get(sessionKeyForPid(params, 4248))).toBe(replacementTimeout);
     expect(replacementAwaiter).not.toHaveBeenCalled();
     expect(replacementResolver).not.toHaveBeenCalled();
 
@@ -1627,14 +1664,14 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
       errorDetail: expect.objectContaining({ kind: 'launch_error', code: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK }),
     });
     expect(params.onChildExited).not.toHaveBeenCalled();
-    expect(params.pidToTrackedSession.get(4248)).toBe(replacementTracked);
-    expect(params.pidToAwaiter.get(4248)).toBe(replacementAwaiter);
-    expect(params.pidToSpawnResultResolver.get(4248)).toBe(replacementResolver);
-    expect(params.pidToSpawnWebhookTimeout.get(4248)).toBe(replacementTimeout);
-    expect(sessionAttachCleanupByPid.get(4248)).toBe(replacementAttachCleanup);
-    expect(consumeSessionAttachCleanupForPid).toHaveBeenCalledWith(4248);
+    expect(trackedForPid(params.trackedSessionsByKey, 4248)).toBe(replacementTracked);
+    expect(params.spawnAwaiterByKey.get(sessionKeyForPid(params, 4248))).toBe(replacementAwaiter);
+    expect(params.spawnResultResolverByKey.get(sessionKeyForPid(params, 4248))).toBe(replacementResolver);
+    expect(params.spawnWebhookTimeoutByKey.get(sessionKeyForPid(params, 4248))).toBe(replacementTimeout);
+    expect(sessionAttachCleanupByKey.get(sessionKeyForPid(params, 4248))).toBe(replacementAttachCleanup);
+    expect(consumeSessionAttachCleanupForSession).toHaveBeenCalledWith(sessionKeyForPid(params, 4248));
     expect(registerConnectedServiceSpawnTarget).not.toHaveBeenCalled();
-    expect(registerSpawnResourceCleanupForPid).toHaveBeenCalledWith(4248);
+    expect(registerSpawnResourceCleanupForSession).toHaveBeenCalledWith(sessionKeyForPid(params, 4248));
     expect(oldAttachCleanup).not.toHaveBeenCalled();
     expect(replacementAttachCleanup).not.toHaveBeenCalled();
     clearTimeout(replacementTimeout);
@@ -1648,21 +1685,21 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     const { spawnRegularProcessAndWaitForWebhook } = await import('./spawnRegularProcessAndWaitForWebhook');
     const pending = spawnRegularProcessAndWaitForWebhook(params);
     await vi.waitFor(() => {
-      expect(params.spawnLifecycleCallbacks.registerSpawnResourceCleanupForPid).toHaveBeenCalledWith(4249);
+      expect(params.spawnLifecycleCallbacks.registerSpawnResourceCleanupForSession).toHaveBeenCalledWith(sessionKeyForPid(params, 4249));
     });
 
     const replacementTracked = {
-      pid: 4249,
+      trackingKey: sessionKeyForPid(params, 4249), pid: 4249,
       startedBy: 'daemon',
       happySessionId: 'PID-4249',
     };
     const replacementAwaiter = vi.fn();
     const replacementResolver = vi.fn();
     const replacementTimeout = setTimeout(() => {}, 60_000);
-    params.pidToTrackedSession.set(4249, replacementTracked);
-    params.pidToAwaiter.set(4249, replacementAwaiter);
-    params.pidToSpawnResultResolver.set(4249, replacementResolver);
-    params.pidToSpawnWebhookTimeout.set(4249, replacementTimeout);
+    params.trackedSessionsByKey.set(sessionKeyForPid(params, 4249), replacementTracked);
+    params.spawnAwaiterByKey.set(sessionKeyForPid(params, 4249), replacementAwaiter);
+    params.spawnResultResolverByKey.set(sessionKeyForPid(params, 4249), replacementResolver);
+    params.spawnWebhookTimeoutByKey.set(sessionKeyForPid(params, 4249), replacementTimeout);
 
     child.emit('exit', 1, null);
 
@@ -1673,10 +1710,10 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
       errorDetail: expect.objectContaining({ kind: 'launch_error', code: SPAWN_SESSION_ERROR_CODES.CHILD_EXITED_BEFORE_WEBHOOK }),
     });
     expect(params.onChildExited).not.toHaveBeenCalled();
-    expect(params.pidToTrackedSession.get(4249)).toBe(replacementTracked);
-    expect(params.pidToAwaiter.get(4249)).toBe(replacementAwaiter);
-    expect(params.pidToSpawnResultResolver.get(4249)).toBe(replacementResolver);
-    expect(params.pidToSpawnWebhookTimeout.get(4249)).toBe(replacementTimeout);
+    expect(trackedForPid(params.trackedSessionsByKey, 4249)).toBe(replacementTracked);
+    expect(params.spawnAwaiterByKey.get(sessionKeyForPid(params, 4249))).toBe(replacementAwaiter);
+    expect(params.spawnResultResolverByKey.get(sessionKeyForPid(params, 4249))).toBe(replacementResolver);
+    expect(params.spawnWebhookTimeoutByKey.get(sessionKeyForPid(params, 4249))).toBe(replacementTimeout);
     expect(replacementAwaiter).not.toHaveBeenCalled();
     expect(replacementResolver).not.toHaveBeenCalled();
     clearTimeout(replacementTimeout);
@@ -1779,7 +1816,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     if (early) params.spawnLifecycleCallbacks.persistAcceptedSpawnMarker.mockImplementationOnce(() => markerHeld);
     const pending = spawnRegularProcessAndWaitForWebhook(params);
     await vi.waitFor(() => expect(params.spawnLifecycleCallbacks.persistAcceptedSpawnMarker).toHaveBeenCalledOnce());
-    if (!early) await vi.waitFor(() => expect(params.pidToSpawnResultResolver.has(5150)).toBe(true));
+    if (!early) await vi.waitFor(() => expect(params.spawnResultResolverByKey.has(sessionKeyForPid(params, 5150))).toBe(true));
     expect(child.stderr.listenerCount('data')).toBe(1);
     const privateValue = randomUUID();
     const missingBasename = early ? '缺少.js' : 'nacl-fast.js';
@@ -1809,7 +1846,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     expect(serialized).toContain('[REDACTED]');
     if (result.type !== 'error' || !('launchError' in result) || !result.launchError?.childExit?.stderrHead) throw new Error('Expected launch detail');
     expect(Buffer.byteLength(result.launchError.childExit.stderrHead, 'utf8')).toBeLessThanOrEqual(2_048);
-    expect(params.pidToSpawnResultResolver.size).toBe(0);
+    expect(params.spawnResultResolverByKey.size).toBe(0);
   });
 
   it.each([
@@ -1820,7 +1857,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     mocks.spawnHappyCLI.mockReturnValueOnce(child);
     const params = withCanonicalChildExitOwner(createParams());
     const pending = spawnRegularProcessAndWaitForWebhook(params);
-    await vi.waitFor(() => expect(params.pidToSpawnResultResolver.has(5154)).toBe(true));
+    await vi.waitFor(() => expect(params.spawnResultResolverByKey.has(sessionKeyForPid(params, 5154))).toBe(true));
     child.stderr.emit('data', 'startup warning\n'.repeat(5000));
     const failureCause = { code, phase: 'client_start' as const, failureReason };
     const output = vi.spyOn(console, 'error').mockImplementation((...values: unknown[]) => {
@@ -1850,7 +1887,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     }));
     expect(result).toMatchObject({ type: 'error', code: 'spawn_failed', launchError: { failureCause } });
     expect(JSON.stringify(result)).not.toMatch(/PRIVATE_|member B|shared happier-agent/);
-    expect(params.pidToSpawnResultResolver.size).toBe(0);
+    expect(params.spawnResultResolverByKey.size).toBe(0);
   });
 
   it.each([
@@ -1862,7 +1899,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     mocks.spawnHappyCLI.mockReturnValueOnce(child);
     const params = withCanonicalChildExitOwner(createParams());
     const pending = spawnRegularProcessAndWaitForWebhook(params);
-    await vi.waitFor(() => expect(params.pidToSpawnResultResolver.has(5155)).toBe(true));
+    await vi.waitFor(() => expect(params.spawnResultResolverByKey.has(sessionKeyForPid(params, 5155))).toBe(true));
     const output = vi.spyOn(console, 'error').mockImplementation((...values: unknown[]) => {
       const record = `${values.join(' ')}\n`;
       const split = Math.floor(record.length / 2);
@@ -1891,7 +1928,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
         } }),
       } },
     });
-    expect(params.pidToSpawnResultResolver.size).toBe(0);
+    expect(params.spawnResultResolverByKey.size).toBe(0);
   });
 
   it.each(['broker_unavailable', 'resource_forbidden', 'resource_unavailable'] as const)('preserves %s from runner construction through pre-webhook exit classification', async code => {
@@ -1899,7 +1936,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     mocks.spawnHappyCLI.mockReturnValueOnce(child);
     const params = withCanonicalChildExitOwner(createParams());
     const pending = spawnRegularProcessAndWaitForWebhook(params);
-    await vi.waitFor(() => expect(params.pidToSpawnResultResolver.has(5156)).toBe(true));
+    await vi.waitFor(() => expect(params.spawnResultResolverByKey.has(sessionKeyForPid(params, 5156))).toBe(true));
     const output = vi.spyOn(console, 'error').mockImplementation((...values: unknown[]) => {
       const record = `${values.join(' ')}\n`;
       const split = Math.floor(record.length / 2);
@@ -1958,7 +1995,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     expect(result).toMatchObject({ type: 'error', code: 'spawn_failed', launchError: { code,
       failureCause: { code, phase: 'authentication', failureReason: 'unknown' } } });
     expect(isSessionSpawnBrokerUnavailable(response)).toBe(code === 'broker_unavailable');
-    expect(params.pidToSpawnResultResolver.size).toBe(0);
+    expect(params.spawnResultResolverByKey.size).toBe(0);
   });
 
   it('observes a real child exit through stderr capture and strict daemon-to-Action projection', async () => {
@@ -1970,7 +2007,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     const params = withCanonicalChildExitOwner(createParams());
     try {
       const pending = spawnRegularProcessAndWaitForWebhook(params);
-      await vi.waitFor(() => expect(params.pidToSpawnResultResolver.has(child.pid!)).toBe(true));
+      await vi.waitFor(() => expect(params.spawnResultResolverByKey.has(sessionKeyForPid(params, child.pid!))).toBe(true));
       child.stdin!.end('go\n');
       const failure = await pending;
       if (failure.type !== 'error') throw new Error('Expected real child startup failure');
@@ -1980,7 +2017,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
       }))).toMatchObject({ type: 'error', code: 'spawn_failed', retryable: true,
         launchError: { childExit: { code: 23, signal: null, stderrHead: 'startup runtime unavailable' } },
       });
-      expect(params.pidToSpawnResultResolver.size).toBe(0);
+      expect(params.spawnResultResolverByKey.size).toBe(0);
     } finally {
       if (child.exitCode === null && child.signalCode === null) child.kill();
       await closed;
@@ -1994,7 +2031,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     const { spawnRegularProcessAndWaitForWebhook } = await import('./spawnRegularProcessAndWaitForWebhook');
     const params = createParams();
     params.onChildExited.mockImplementation(async (pid) => {
-      params.pidToTrackedSession.delete(pid);
+      untrackProcess(params, pid);
     });
 
     const resultPromise = spawnRegularProcessAndWaitForWebhook(params);
@@ -2042,7 +2079,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     const { spawnRegularProcessAndWaitForWebhook } = await import('./spawnRegularProcessAndWaitForWebhook');
     const params = createParams();
     params.onChildExited.mockImplementation(async (pid) => {
-      params.pidToTrackedSession.delete(pid);
+      untrackProcess(params, pid);
     });
     let tracked: TrackedSession | undefined;
     params.spawnLifecycleCallbacks.persistAcceptedSpawnMarker.mockImplementationOnce(async (session) => {
@@ -2089,7 +2126,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
         'startup_retirement_incomplete:exit_cleanup_incomplete',
     });
     expect(params.onChildExited).toHaveBeenCalledOnce();
-    expect(params.pidToTrackedSession.get(6264)).toEqual(
+    expect(trackedForPid(params.trackedSessionsByKey, 6264)).toEqual(
       expect.objectContaining({ pid: 6264 }),
     );
   });
@@ -2109,7 +2146,7 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     const markerStarted = new Promise<void>((resolve) => { announceMarker = resolve; });
     const params = createParams();
     params.onChildExited.mockImplementation(async (pid) => {
-      params.pidToTrackedSession.delete(pid);
+      untrackProcess(params, pid);
     });
     params.spawnLifecycleCallbacks.persistAcceptedSpawnMarker
       .mockImplementationOnce(async (tracked) => {
@@ -2127,8 +2164,8 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     const { createOnHappySessionWebhook } =
       await import('../sessions/onHappySessionWebhook');
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession: params.pidToTrackedSession,
-      pidToAwaiter: params.pidToAwaiter,
+      trackedSessionsByKey: params.trackedSessionsByKey,
+      spawnAwaiterByKey: params.spawnAwaiterByKey,
       findHappyProcessByPidFn: async () => null,
       writeSessionMarkerFn: vi.fn(async () => undefined),
       onTrackedSessionReady,
@@ -2138,8 +2175,8 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
       ...params,
     });
     await markerStarted;
-    expect(params.pidToAwaiter.has(6263)).toBe(true);
-    const tracked = params.pidToTrackedSession.get(6263);
+    expect(params.spawnAwaiterByKey.has(sessionKeyForPid(params, 6263))).toBe(true);
+    const tracked = trackedForPid(params.trackedSessionsByKey, 6263);
     expect(tracked).toBeDefined();
     const canonicalWebhook = onWebhook(
       'session-6263',
@@ -2164,9 +2201,9 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
       'custody changed',
     );
     expect(onTrackedSessionReady).not.toHaveBeenCalled();
-    expect(params.pidToAwaiter).toHaveLength(0);
-    expect(params.pidToSpawnResultResolver).toHaveLength(0);
-    expect(params.pidToSpawnWebhookTimeout).toHaveLength(0);
+    expect(params.spawnAwaiterByKey).toHaveLength(0);
+    expect(params.spawnResultResolverByKey).toHaveLength(0);
+    expect(params.spawnWebhookTimeoutByKey).toHaveLength(0);
   });
 
   it('applies the spawned child OOM score adjustment after a PID is available', async () => {
@@ -2178,10 +2215,10 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     await vi.waitFor(() => {
       expect(mocks.writeFile).toHaveBeenCalledWith('/proc/4242/oom_score_adj', '321\n', 'utf8');
     });
-    const awaiter = params.pidToAwaiter.get(4242);
+    const awaiter = params.spawnAwaiterByKey.get(sessionKeyForPid(params, 4242));
     expect(awaiter).toBeDefined();
     awaiter?.({
-      startedBy: 'daemon',
+      trackingKey: sessionKeyForPid(params, 4242), startedBy: 'daemon',
       pid: 4242,
       happySessionId: 'session-1',
       spawnOptions: params.trackedSpawnOptions,
@@ -2223,10 +2260,10 @@ describe('spawnRegularProcessAndWaitForWebhook', () => {
     expect(launchOptions?.env?.HAPPIER_HOME_DIR).toBe('/tmp/daemon-happier-home');
     expect(launchOptions?.env?.HAPPIER_SERVER_URL).toBe('https://daemon.example.test');
 
-    const awaiter = params.pidToAwaiter.get(4242);
+    const awaiter = params.spawnAwaiterByKey.get(sessionKeyForPid(params, 4242));
     expect(awaiter).toBeDefined();
     awaiter?.({
-      startedBy: 'daemon',
+      trackingKey: sessionKeyForPid(params, 4242), startedBy: 'daemon',
       pid: 4242,
       happySessionId: 'session-1',
       spawnOptions: params.trackedSpawnOptions,

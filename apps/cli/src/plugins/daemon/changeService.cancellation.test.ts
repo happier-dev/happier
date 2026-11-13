@@ -101,7 +101,7 @@ describe('plugin change cancellation through real path preparation', () => {
         invalidateProjection = projection.invalidateProjection;
         const shutdown = createBeforeShutdownDrain({
             admissionDrain: drain,
-            pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+            spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
             shutdownSpawnDrainGraceMs: 0, shutdownSpawnDrainPollMs: 10,
             getApiMachineForSessions: () => null,
             buildUnexpectedSpawnResult: errorMessage => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage }),

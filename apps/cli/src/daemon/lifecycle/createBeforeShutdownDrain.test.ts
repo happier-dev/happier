@@ -11,6 +11,7 @@ import { createVersionRuntimeRefreshAttemptHandoff } from '../plannedRunnerResta
 import { createBeforeShutdownDrain } from './createBeforeShutdownDrain';
 import { createDaemonAdmissionDrain } from './admissionDrain';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('createBeforeShutdownDrain', () => {
     it('drains an already-signalled refresh before a replacement enters the spawn map', async () => {
@@ -18,10 +19,10 @@ describe('createBeforeShutdownDrain', () => {
         const handoff = createVersionRuntimeRefreshAttemptHandoff({ timeoutMs: 60_000,
             timeoutCompletion: 'timeout', supersededCompletion: 'superseded', cancelledCompletion: 'cancelled' });
         const attempt = handoff.create({ sessionId: 'session', previousPid: 42,
-            tracked: { pid: 42, startedBy: 'daemon', happySessionId: 'session' } });
+            tracked: { trackingKey: legacyPidSessionTrackingKey(42), pid: 42, startedBy: 'daemon', happySessionId: 'session' } });
         let finished = false;
         const beforeShutdown = createBeforeShutdownDrain({
-            pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+            spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
             shutdownSpawnDrainGraceMs: 100, shutdownSpawnDrainPollMs: 10,
             getApiMachineForSessions: () => null, hasPendingRunnerRestarts: () => handoff.hasPending(),
             buildUnexpectedSpawnResult: (errorMessage) => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage }),
@@ -78,8 +79,8 @@ describe('createBeforeShutdownDrain', () => {
             const apiMachine = { awaitPendingRpcRequests: async () => undefined };
             const params = {
                 admissionDrain,
-                pidToAwaiter: new Map<number, unknown>(),
-                pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+                spawnAwaiterByKey: new Map<SessionTrackingKey, unknown>(),
+                spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
                 shutdownSpawnDrainGraceMs: shutdownPath === 'rpc-grace-expired' ? 0 : 100,
                 shutdownSpawnDrainPollMs: 10,
                 getApiMachineForSessions: () => {
@@ -128,7 +129,7 @@ describe('createBeforeShutdownDrain', () => {
         const disposal: string[] = [];
         const beforeShutdown = createBeforeShutdownDrain({
             admissionDrain,
-            pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+            spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
             shutdownSpawnDrainGraceMs: 0, shutdownSpawnDrainPollMs: 10,
             getApiMachineForSessions: () => null,
             buildUnexpectedSpawnResult: (errorMessage) => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED, errorMessage }),
@@ -156,14 +157,14 @@ describe('createBeforeShutdownDrain', () => {
             events.push('resolve');
         });
         const beforeShutdown = createBeforeShutdownDrain({
-            pidToAwaiter: new Map([[pid, {}]]),
-            pidToSpawnResultResolver:
-                new Map([[pid, resolveSpawn]]),
-            pidToSpawnWebhookTimeout: new Map(),
-            pidToTrackedSession: new Map([[
-                pid,
+            spawnAwaiterByKey: new Map([[legacyPidSessionTrackingKey(pid), {}]]),
+            spawnResultResolverByKey:
+                new Map([[legacyPidSessionTrackingKey(pid), resolveSpawn]]),
+            spawnWebhookTimeoutByKey: new Map(),
+            trackedSessionsByKey: new Map([[
+                legacyPidSessionTrackingKey(pid),
                 {
-                    pid,
+                    trackingKey: legacyPidSessionTrackingKey(pid), pid,
                     startedBy: 'daemon',
                     happySessionId: `PID-${pid}`,
                     cancelStartupLaunchBeforeAck,
@@ -200,14 +201,14 @@ describe('createBeforeShutdownDrain', () => {
         const pid = 44_002;
         const resolveSpawn = vi.fn();
         const beforeShutdown = createBeforeShutdownDrain({
-            pidToAwaiter: new Map([[pid, {}]]),
-            pidToSpawnResultResolver:
-                new Map([[pid, resolveSpawn]]),
-            pidToSpawnWebhookTimeout: new Map(),
-            pidToTrackedSession: new Map([[
-                pid,
+            spawnAwaiterByKey: new Map([[legacyPidSessionTrackingKey(pid), {}]]),
+            spawnResultResolverByKey:
+                new Map([[legacyPidSessionTrackingKey(pid), resolveSpawn]]),
+            spawnWebhookTimeoutByKey: new Map(),
+            trackedSessionsByKey: new Map([[
+                legacyPidSessionTrackingKey(pid),
                 {
-                    pid,
+                    trackingKey: legacyPidSessionTrackingKey(pid), pid,
                     startedBy: 'daemon',
                     happySessionId: `PID-${pid}`,
                     cancelStartupLaunchBeforeAck: async () => ({
@@ -285,14 +286,14 @@ describe('createBeforeShutdownDrain', () => {
 
         const resolveSpawn = vi.fn();
         const beforeShutdown = createBeforeShutdownDrain({
-            pidToAwaiter: new Map([[pid, {}]]),
-            pidToSpawnResultResolver:
-                new Map([[pid, resolveSpawn]]),
-            pidToSpawnWebhookTimeout: new Map(),
-            pidToTrackedSession: new Map([[
-                pid,
+            spawnAwaiterByKey: new Map([[legacyPidSessionTrackingKey(pid), {}]]),
+            spawnResultResolverByKey:
+                new Map([[legacyPidSessionTrackingKey(pid), resolveSpawn]]),
+            spawnWebhookTimeoutByKey: new Map(),
+            trackedSessionsByKey: new Map([[
+                legacyPidSessionTrackingKey(pid),
                 {
-                    pid,
+                    trackingKey: legacyPidSessionTrackingKey(pid), pid,
                     startedBy: 'daemon',
                     happySessionId: `PID-${pid}`,
                     cancelStartupLaunchBeforeAck: async () => {
@@ -330,9 +331,9 @@ describe('createBeforeShutdownDrain', () => {
             })),
         };
         const beforeShutdown = createBeforeShutdownDrain({
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             shutdownSpawnDrainGraceMs: 1_000,
             shutdownSpawnDrainPollMs: 10,
             getApiMachineForSessions: () => apiMachineForSessions,
@@ -359,12 +360,39 @@ describe('createBeforeShutdownDrain', () => {
         expect(settled).toBe(true);
     });
 
+    it('still retires the plugin runtime and background work when finite execution retirement fails', async () => {
+        const drainBackgroundServerWork = vi.fn(async () => {});
+        const disposePluginRuntimeRegistry = vi.fn(async () => {});
+        const retirementFailure = new Error('finite retirement failed');
+        const beforeShutdown = createBeforeShutdownDrain({
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
+            shutdownSpawnDrainGraceMs: 100,
+            shutdownSpawnDrainPollMs: 10,
+            getApiMachineForSessions: () => null,
+            buildUnexpectedSpawnResult: () => ({
+                type: 'error',
+                errorCode: SPAWN_SESSION_ERROR_CODES.UNEXPECTED,
+                errorMessage: 'unexpected',
+            }),
+            retireFiniteExecution: async () => { throw retirementFailure; },
+            drainBackgroundServerWork,
+            disposePluginRuntimeRegistry,
+        });
+
+        await expect(beforeShutdown()).rejects.toBe(retirementFailure);
+
+        expect(drainBackgroundServerWork).toHaveBeenCalledTimes(1);
+        expect(disposePluginRuntimeRegistry).toHaveBeenCalledTimes(1);
+    });
+
     it('runs background server-work drains even when no spawn or RPC work is pending', async () => {
         const drainBackgroundServerWork = vi.fn(async () => {});
         const beforeShutdown = createBeforeShutdownDrain({
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             shutdownSpawnDrainGraceMs: 100,
             shutdownSpawnDrainPollMs: 10,
             getApiMachineForSessions: () => null,
@@ -389,9 +417,9 @@ describe('createBeforeShutdownDrain', () => {
             }),
         };
         const beforeShutdown = createBeforeShutdownDrain({
-            pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(),
+            spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(),
             shutdownSpawnDrainGraceMs: 100,
             shutdownSpawnDrainPollMs: 10,
             getApiMachineForSessions: () => apiMachineForSessions,

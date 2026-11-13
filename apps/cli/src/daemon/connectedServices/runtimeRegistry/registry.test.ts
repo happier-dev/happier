@@ -285,13 +285,16 @@ describe('ConnectedServiceRuntimeRegistry', () => {
     expect(view.adoptExactCredentialRevisionForTarget({ ...credentialUpdate, target: registry.getByPid(101)! })).toBeNull();
     expect(view.adoptExactCredentialRevisionForRun({ ...credentialUpdate, runKey: 'alice-run',
       target: registry.getRunTargetByRunKey('alice-run')! })).toBeNull();
-    expect(() => view.registerTarget({ pid: 101, sessionId: 'bob' })).toThrow('connected_service_runtime_requester_scope_mismatch');
     expect(() => view.registerRunTarget({ pid: 202, sessionId: 'bob', runKey: 'alice-run' })).toThrow('connected_service_runtime_requester_scope_mismatch');
     expect(() => view.updateTarget({ pid: 202, sessionId: 'alice' })).toThrow('connected_service_runtime_requester_scope_mismatch');
     expect(registry.getByPid(101)?.sessionId).toBe('alice');
     expect(registry.getRunTargetByRunKey('alice-run')?.sessionId).toBe('alice');
     expect(registry.getByPid(202)?.sessionId).toBe('bob');
     expect(registry.getByPid(101)?.activeBindings[0]?.credentialRevision).toBe('csr_aaaaaaaaaaaaaaaaaaaaaa');
+    // A Session target is keyed by its Session: bob landing on alice's process never replaces hers.
+    view.registerTarget({ pid: 101, sessionId: 'bob' });
+    expect(registry.getBySessionId('alice')).toMatchObject({ pid: 101, sessionId: 'alice' });
+    expect(registry.getBySessionId('bob')?.pid).toBe(101);
   });
 
   it('resolves execution-run targets by exact run key even when they share a runner pid', () => {
@@ -603,6 +606,73 @@ describe('ConnectedServiceRuntimeRegistry', () => {
     registry.unregisterRunKey('run_abc');
     expect(registry.listRefreshTargets().map((target) => target.materializationKey)).toEqual(['session-mat']);
     expect(registry.getByPid(123)?.materializationKey).toBe('session-mat');
+  });
+
+  it('keeps a separate target for each Session hosted by one process and ends only the ended Session', () => {
+    const registry = new ConnectedServiceRuntimeRegistry();
+    const hostPid = 777;
+    const connected = { agentId: 'codex', connectedServicesBindingsRaw: connectedBindings,
+      connectedServiceSelectionsEnvRaw: connectedSelections };
+    registry.registerTarget({ ...connected, pid: hostPid, sessionId: 'hosted-a', materializationKey: 'mat-a' });
+    registry.registerTarget({ ...connected, pid: hostPid, sessionId: 'hosted-b', materializationKey: 'mat-b' });
+
+    expect(registry.listTargets().map((target) => target.sessionId).sort()).toEqual(['hosted-a', 'hosted-b']);
+    expect(registry.getBySessionId('hosted-a')).toMatchObject({ pid: hostPid, materializationKey: 'mat-a' });
+    expect(registry.getBySessionId('hosted-b')).toMatchObject({ pid: hostPid, materializationKey: 'mat-b' });
+    // The host pid alone never picks one of its Sessions.
+    expect(registry.getByPid(hostPid)).toBeNull();
+    expect(registry.readAppliedSessionBindings({ runnerPid: hostPid, sessionId: 'hosted-a', agentId: 'codex' }).status)
+      .toBe('applied');
+    // Adopting a Session id at the host never re-keys another Session's target.
+    expect(registry.adoptSessionId({ pid: hostPid, sessionId: 'hosted-c' })).toBeNull();
+    // A fresh hosted Session's sessionless bootstrap is adopted into its own Session target.
+    registry.registerTarget({ ...connected, pid: hostPid, materializationKey: 'mat-c' });
+    expect(registry.adoptSessionId({ pid: hostPid, sessionId: 'hosted-c' })?.materializationKey).toBe('mat-c');
+    expect(registry.listTargets().map((target) => target.sessionId).sort()).toEqual(['hosted-a', 'hosted-b', 'hosted-c']);
+
+    // One hosted Session ends while the host keeps running.
+    expect(registry.unregisterTarget(registry.getSessionTarget(hostPid, 'hosted-a')!)?.sessionId).toBe('hosted-a');
+    expect(registry.getBySessionId('hosted-a')).toBeNull();
+    expect(registry.getSessionTarget(hostPid, 'hosted-b')?.materializationKey).toBe('mat-b');
+    expect(registry.listRefreshTargets().map((target) => target.materializationKey).sort()).toEqual(['mat-b', 'mat-c']);
+
+    // The host process exits: every Session target it hosted ends.
+    registry.unregisterPid(hostPid);
+    expect(registry.listTargets()).toEqual([]);
+  });
+
+  it('keeps each concurrent fresh hosted spawn bootstrap under its own tracking key until it adopts its own Session', () => {
+    const registry = new ConnectedServiceRuntimeRegistry();
+    const hostPid = 778;
+    const connected = { agentId: 'codex', connectedServicesBindingsRaw: connectedBindings,
+      connectedServiceSelectionsEnvRaw: connectedSelections };
+    registry.registerTarget({ ...connected, pid: hostPid, spawnTrackingKey: 'session-spawn-a', materializationKey: 'mat-a' });
+    registry.registerTarget({ ...connected, pid: hostPid, spawnTrackingKey: 'session-spawn-b', materializationKey: 'mat-b' });
+    registry.registerTarget({ ...connected, pid: hostPid, spawnTrackingKey: 'session-spawn-c', materializationKey: 'mat-c' });
+    expect(registry.listTargets().map((target) => target.materializationKey).sort()).toEqual(['mat-a', 'mat-b', 'mat-c']);
+
+    // Readiness order differs from spawn order: each Session adopts only its own bootstrap.
+    expect(registry.adoptSessionId({ pid: hostPid, sessionId: 'hosted-b', spawnTrackingKey: 'session-spawn-b' })?.materializationKey)
+      .toBe('mat-b');
+    expect(registry.adoptSessionId({ pid: hostPid, sessionId: 'hosted-a', spawnTrackingKey: 'session-spawn-a' })?.materializationKey)
+      .toBe('mat-a');
+    expect(registry.getBySessionId('hosted-a')?.materializationKey).toBe('mat-a');
+    expect(registry.getBySessionId('hosted-b')?.materializationKey).toBe('mat-b');
+
+    // A Session that registers its own target (hot apply) before adoption supersedes only its own bootstrap.
+    registry.registerTarget({ ...connected, pid: hostPid, spawnTrackingKey: 'session-spawn-d', materializationKey: 'mat-d' });
+    registry.registerTarget({ ...connected, pid: hostPid, sessionId: 'hosted-d', spawnTrackingKey: 'session-spawn-d',
+      materializationKey: 'mat-d-applied' });
+    expect(registry.getSessionTarget(hostPid, undefined, 'session-spawn-d')).toBeNull();
+    expect(registry.getBySessionId('hosted-d')?.materializationKey).toBe('mat-d-applied');
+    expect(registry.adoptSessionId({ pid: hostPid, sessionId: 'hosted-d', spawnTrackingKey: 'session-spawn-d' })).toBeNull();
+    registry.unregisterTarget(registry.getBySessionId('hosted-d')!);
+
+    // Spawn c's Session exits before it is adopted: only its own bootstrap ends.
+    const pendingC = registry.getSessionTarget(hostPid, undefined, 'session-spawn-c');
+    expect(pendingC?.materializationKey).toBe('mat-c');
+    registry.unregisterTarget(pendingC!);
+    expect(registry.listTargets().map((target) => target.sessionId).sort()).toEqual(['hosted-a', 'hosted-b']);
   });
 
   it('drops execution-run targets bound to a runner pid when that pid unregisters or transfers', () => {

@@ -23,6 +23,7 @@ import { prepareExecuteSpawnSessionRequest } from '../startup/prepareExecuteSpaw
 import { evaluateSessionEligibility } from './sessionEligibility';
 import type { TrackedSession } from '../types';
 import { sessionStop } from './actuators/sessionStop';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 let fixture: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
 beforeAll(async () => { fixture = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
@@ -101,7 +102,7 @@ it.skipIf(process.platform === 'win32')('persists fresh Codex native identity, a
         const options = buildInactiveSessionResumeSpawnOptions({ sessionId, rawSession, metadata: persisted });
         expect(options).toMatchObject({ existingSessionId: sessionId, runtimeDescriptorV1: metadata.runtimeDescriptorV1 });
         if (!options) throw new Error('Persisted native open is not resumable');
-        const tracked: TrackedSession = { pid: 42, happySessionId: sessionId, startedBy: 'daemon' };
+        const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(42), pid: 42, happySessionId: sessionId, startedBy: 'daemon' };
         const resume = { sessionId, rawSession, metadata: persisted };
         const inventory = { coverage: 'complete' as const, items: (['session', 'input', 'agents', 'attention'] as const).map(category => ({
           category, ownerRef: tracked, attribution: { kind: 'unknown' as const }, state: 'settled' as const, settledAt: 20,
@@ -161,7 +162,7 @@ it.skipIf(process.platform === 'win32')('persists fresh Codex native identity, a
 });
 
 it('keeps a descriptor-less Codex Session that inactive admission cannot resume', async () => {
-  const tracked: TrackedSession = { pid: 42, happySessionId: 'session-1', startedBy: 'daemon' };
+  const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(42), pid: 42, happySessionId: 'session-1', startedBy: 'daemon' };
   const resume = { sessionId: 'session-1', rawSession: { machineId: 'machine-1', path: '/project' },
     metadata: { machineId: 'machine-1', path: '/project', flavor: 'codex', codexSessionId: 'native-1' } };
   const inventory = { coverage: 'complete' as const, items: (['session', 'input', 'agents', 'attention'] as const).map(category => ({

@@ -7,6 +7,7 @@ import {
 import {
   authorizeTrackedRunnerAgentDaemonServiceOperation,
 } from './authorizeTrackedRunnerAgentDaemonServiceOperation';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const binding = createAgentSessionRunnerFactoryBinding({
   v: 1,
@@ -48,7 +49,7 @@ const witness = {
 
 function tracked(): TrackedSession {
   return {
-    pid: 41,
+    trackingKey: legacyPidSessionTrackingKey(41), pid: 41,
     sessionRunnerPid: 42,
     startedBy: 'daemon',
     happySessionId: 'session-1',

@@ -9,6 +9,8 @@ export const SessionStartedSuccessReportSchema = z.strictObject({
     sessionId: z.string(),
     metadata: z.custom<Metadata>(),
     sessionCreationOutcome: z.optional(SessionCreationOutcomeSchema),
+    /** The tracking key its daemon spawn handed the Session; correlates a Session hosted with others. */
+    trackingKey: z.optional(z.string().check(z.minLength(1), z.maxLength(200))),
     persistedTakeoverAdmission: z.optional(z.strictObject({
         mode: z.enum(['persisted', 'external_linked']),
         operationId: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),

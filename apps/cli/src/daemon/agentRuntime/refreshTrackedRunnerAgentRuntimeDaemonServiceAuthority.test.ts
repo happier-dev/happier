@@ -31,6 +31,7 @@ import {
 import {
   refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority,
 } from './refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const attachRunnerRetainedPluginGenerations = async (
   input: Readonly<{ attach: () => Promise<boolean> }>,
@@ -271,7 +272,7 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority', () => {
       });
       const authorityPath = await createAgentRuntimeDaemonServiceAuthorityPath({ happyHomeDir, publicReleaseRing: 'stable' });
       const tracked: TrackedSession = {
-        startedBy: 'daemon', pid: 4201, sessionRunnerPid: 4202,
+        trackingKey: legacyPidSessionTrackingKey(4201), startedBy: 'daemon', pid: 4201, sessionRunnerPid: 4202,
         runnerProcessIdentity: { pid: 4202, processStartTimeMs: 12_346, processCommandHash },
         happySessionId: 'session-a', processCommandHash, processStartTimeMs: 12_346,
         agentRuntimeDaemonServiceAuthorityFilePath: authorityPath,
@@ -397,7 +398,7 @@ describe('refreshTrackedRunnerAgentRuntimeDaemonServiceAuthority', () => {
           httpPort: 3210,
           sessionId: 'session-mismatch',
           tracked: {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(4201), startedBy: 'daemon',
             pid: 4201,
             sessionRunnerPid: 4202,
             runnerProcessIdentity: { pid: 4202, processStartTimeMs: 12_346, processCommandHash: commandHash },

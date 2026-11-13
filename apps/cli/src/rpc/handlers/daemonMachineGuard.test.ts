@@ -55,6 +55,7 @@ import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
 import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/socketRpc';
 import { registerMachineTerminalRpcHandlers } from '@/api/machine/rpcHandlers.terminal';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const identity = { serverId: 'home', machineId: 'machine', installationId: 'install', custodianAccountId: 'owner' };
 const now = Date.UTC(2026, 9, 10, 12);
@@ -154,7 +155,7 @@ async function setup(useDefaultApiOwner = false, withCeilingOwner = false,
   };
   const ceilingWrites: Array<{ unit: string; bytes: number | null }> = [];
   if (withCeilingOwner) {
-    const tracked: TrackedSession = { pid: 42, happySessionId: 'session', startedBy: 'daemon', processStartTimeMs: 20 };
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(42), pid: 42, happySessionId: 'session', startedBy: 'daemon', processStartTimeMs: 20 };
     const unit = createHappierLinuxScopeName('v1.0123456789ab.session.session')!;
     const ceiling = createSessionMemoryCeiling({ activeServerDir: directory, capability: { status: 'available' }, activityLog: activity, readPolicy,
       readSessions: async () => [{ tracked, root: { owner: { kind: 'session', sessionId: 'session' }, pid: 42,

@@ -44,6 +44,7 @@ import { createOnChildExited } from './onChildExited';
 import { createStopSession } from './stopSession';
 import { retireExactTerminalControlServiceability } from './retireTerminalControlServiceability';
 import { projectMachineRpcTransportAcknowledgement } from '@/api/machine/projectMachineRpcTransportAcknowledgement';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe.skipIf(process.platform !== 'linux')('plain runner Stop retirement through Home publication', () => {
     let database: LightSqliteHarness;
@@ -117,11 +118,11 @@ describe.skipIf(process.platform !== 'linux')('plain runner Stop retirement thro
                             turnId: exactTurnId, observedAt } })).toMatchObject({ ok: true, didApply: true });
                 }
             }
-            const tracked: TrackedSession = { pid, childProcess: child, startedBy: 'daemon', happySessionId: session.id,
+            const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid), pid, childProcess: child, startedBy: 'daemon', happySessionId: session.id,
                 ...(exactTurnId ? { activeTurnId: exactTurnId } : {}),
                 processStartTimeMs: identity.processStartTimeMs, stopRequestedAtMs: Date.now(),
                 spawnOptions: { directory: database.baseDir } };
-            const sessions = new Map([[pid, tracked]]);
+            const sessions = new Map([[legacyPidSessionTrackingKey(pid), tracked]]);
             // Replace only the socket carrier. The registered Machine handlers, authority
             // capture, SQLite close and post-commit publication are production owners.
             const machineSocket = createFakeSocket({ data: { clientType: 'machine-scoped', machineId } });
@@ -145,11 +146,11 @@ describe.skipIf(process.platform !== 'linux')('plain runner Stop retirement thro
                         receipt: { decision: wiring === 'bound-terminal-turn' ? 'duplicate-terminal' : 'applied' } });
                 },
             } satisfies Pick<ApiMachineClient, 'captureMachineSessionTerminal' | 'finalizeMachineSessionTerminal' | 'enqueueDaemonTerminalExactTurnEnd'>;
-            const onExit = createOnChildExited({ pidToTrackedSession: sessions, spawnResourceCleanupByPid: new Map(),
-                sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => machine as ApiMachineClient,
+            const onExit = createOnChildExited({ trackedSessionsByKey: sessions, spawnResourceCleanupByKey: new Map(),
+                sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => machine as ApiMachineClient,
                 removeSessionMarkerFn: async () => undefined });
             let retirementFailure: string | null = null;
-            const stop = createStopSession({ pidToTrackedSession: sessions,
+            const stop = createStopSession({ trackedSessionsByKey: sessions,
                 readHostAttachmentState: async () => ({ status: 'absent' }), readTerminalAttachmentInfo: async () => null,
                 waitForTrackedRunnersExit: async () => {
                     const [code, signal] = await exited;

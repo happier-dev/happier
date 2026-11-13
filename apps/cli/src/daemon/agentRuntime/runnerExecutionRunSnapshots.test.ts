@@ -15,6 +15,7 @@ import { createRunnerExecutionRunSnapshots } from './runnerExecutionRunSnapshots
 import { assertExecutionRunStructuredOutputModelAllowed } from '@/agent/runtime/bridges/executionRun/structuredOutputAdmission';
 import { resolvePluginContributes } from '@/plugins/projection/registry/resolvePluginContributions';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('runner execution-run snapshot SCM preparation', () => {
   it('reads declared model variants through one retained snapshot and refuses unavailable configured targets', async () => {
@@ -49,7 +50,7 @@ describe('runner execution-run snapshot SCM preparation', () => {
       sessionId: 'model-session', runner: { pid: 123, processStartTimeMs: 1,
         processCommandHash: 'a'.repeat(64), snapshotIdentity: 'model-snapshot' }, retainedAgent,
       invocationContext: { cwd: runtime.happyHomeDir, environment: {}, providerBindingActive: false },
-      trackedSession: { pid: 123, startedBy: 'daemon', happySessionId: 'model-session' },
+      trackedSession: { trackingKey: legacyPidSessionTrackingKey(123), pid: 123, startedBy: 'daemon', happySessionId: 'model-session' },
       isCurrent: async () => true,
     };
     let modelAccountReads = 0;
@@ -131,7 +132,7 @@ describe('runner execution-run snapshot SCM preparation', () => {
       sessionId: 'commit-session', runner: { pid: 123, processStartTimeMs: 1,
         processCommandHash: 'a'.repeat(64), snapshotIdentity: 'commit-snapshot' }, retainedAgent,
       invocationContext: { cwd: repository.rootPath, environment: {}, providerBindingActive: false },
-      trackedSession: { pid: 123, startedBy: 'daemon', happySessionId: 'commit-session' },
+      trackedSession: { trackingKey: legacyPidSessionTrackingKey(123), pid: 123, startedBy: 'daemon', happySessionId: 'commit-session' },
       isCurrent: async () => true,
     };
     const dispatch = async (operation: unknown, snapshotId?: string, activeContext = context) => {
@@ -221,7 +222,7 @@ describe('runner execution-run snapshot SCM preparation', () => {
       sessionId: 'review-session', runner: { pid: 123, processStartTimeMs: 1,
         processCommandHash: 'a'.repeat(64), snapshotIdentity: 'review-snapshot' }, retainedAgent,
       invocationContext: { cwd, environment: {}, providerBindingActive: false },
-      trackedSession: { pid: 123, startedBy: 'daemon', happySessionId: 'review-session' },
+      trackedSession: { trackingKey: legacyPidSessionTrackingKey(123), pid: 123, startedBy: 'daemon', happySessionId: 'review-session' },
       isCurrent: async () => true,
     };
     const dispatch = async (operation: unknown, snapshotId?: string, activeContext = context) => {

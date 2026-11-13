@@ -27,6 +27,7 @@ import {
     readAgentRuntimeDaemonServiceAuthorityForVerifiedMarker,
     removeAgentRuntimeDaemonServiceAuthorityIfOwned,
 } from './sessionBridgeAuthorization';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 async function prepareAttestedRunnerBinding(happyHomeDir: string) {
     const pluginId = 'acme.runner-integrity';
@@ -162,7 +163,7 @@ describe('hard-revoked Runner Agent authority', () => {
                 publicReleaseRing: 'stable',
             });
             const tracked: TrackedSession = {
-                startedBy: 'daemon',
+                trackingKey: legacyPidSessionTrackingKey(4201), startedBy: 'daemon',
                 pid: 4201,
                 sessionRunnerPid: 4202,
                 runnerProcessIdentity: { pid: 4202, processStartTimeMs: 22_345, processCommandHash },
@@ -259,7 +260,7 @@ describe('hard-revoked Runner Agent authority', () => {
                 publicReleaseRing: 'stable',
             });
             const tracked: TrackedSession = {
-                startedBy: 'daemon',
+                trackingKey: legacyPidSessionTrackingKey(4301), startedBy: 'daemon',
                 pid: 4301,
                 sessionRunnerPid: 4302,
                 runnerProcessIdentity: { pid: 4302, processStartTimeMs: 32_345, processCommandHash },
@@ -365,7 +366,7 @@ describe('hard-revoked Runner Agent authority', () => {
                 publicReleaseRing: 'stable',
             });
             const tracked: TrackedSession = {
-                startedBy: 'daemon',
+                trackingKey: legacyPidSessionTrackingKey(4101), startedBy: 'daemon',
                 pid: 4101,
                 sessionRunnerPid: 4102,
                 runnerProcessIdentity: { pid: 4102, processStartTimeMs: 12_345, processCommandHash },
@@ -500,7 +501,7 @@ describe('hard-revoked Runner Agent authority', () => {
                 processStartTimeMs: 52_345,
             });
             const daemonATracked: TrackedSession = {
-                startedBy: 'daemon',
+                trackingKey: legacyPidSessionTrackingKey(4401), startedBy: 'daemon',
                 pid: 4401,
                 sessionRunnerPid: 4402,
                 runnerProcessIdentity: { pid: 4402, processStartTimeMs: 52_345, processCommandHash },
@@ -539,7 +540,7 @@ describe('hard-revoked Runner Agent authority', () => {
             // reconstructs only non-secret marker facts and must intersect G
             // direct retained-Agent authority with the retained P hard-revocation revision.
             const daemonBTracked: TrackedSession = {
-                startedBy: 'daemon',
+                trackingKey: legacyPidSessionTrackingKey(4401), startedBy: 'daemon',
                 pid: 4401,
                 sessionRunnerPid: 4402,
                 runnerProcessIdentity: { pid: 4402, processStartTimeMs: 52_345, processCommandHash },

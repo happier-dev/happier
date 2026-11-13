@@ -9,6 +9,7 @@ import { reloadConfiguration } from '@/configuration';
 // Load the real CLI graph during collection, not inside each timed stop operation.
 // Configuration has an explicit reload boundary for the per-test Happier home.
 import './requestSessionStop';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const {
   fetchSessionByIdCompatMock,
@@ -516,9 +517,9 @@ describe('requestSessionStop', () => {
     const markerPid = 12350;
     const processCommandHash = 'a'.repeat(64);
     await configureExactTransportAmbiguousHost({ sessionId, attachmentId: 'attachment-daemon-marker-cleanup' });
-    const { readSessionMarkerForPid, writeSessionMarker } = await import('@/daemon/sessionRegistry');
+    const { readSessionMarker, writeSessionMarker } = await import('@/daemon/sessionRegistry');
     await writeSessionMarker({
-      pid: markerPid,
+      trackingKey: legacyPidSessionTrackingKey(markerPid), pid: markerPid,
       happySessionId: sessionId,
       startedBy: 'daemon',
       processCommandHash,
@@ -537,7 +538,7 @@ describe('requestSessionStop', () => {
       idOrPrefix: sessionId,
     })).resolves.toEqual({ ok: true, sessionId, stopped: true });
 
-    await expect(readSessionMarkerForPid(markerPid)).resolves.toBeNull();
+    await expect(readSessionMarker(legacyPidSessionTrackingKey(markerPid))).resolves.toBeNull();
   });
 
   it.each(['not_found', 'transport_ambiguous'] as const)(

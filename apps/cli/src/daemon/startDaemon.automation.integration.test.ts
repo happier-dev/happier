@@ -3,6 +3,7 @@ import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DaemonState } from '@/api/types';
 import { projectPath } from '@/projectPath';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 type ShutdownSource = 'happier-app' | 'happier-cli' | 'os-signal' | 'exception';
 type BuildHappyCliSubprocessLaunchSpec = typeof import('@/utils/spawnHappyCLI').buildHappyCliSubprocessLaunchSpec;
@@ -1669,7 +1670,7 @@ describe('startDaemon automation wiring (integration)', () => {
         orphanedDeadDaemonSessions: [
           {
             sessionId: 'sess-orphaned-6480',
-            pid: 6480,
+            trackingKey: legacyPidSessionTrackingKey(6480), pid: 6480,
             activeTurnId: 'turn-exact-orphan',
           },
         ],

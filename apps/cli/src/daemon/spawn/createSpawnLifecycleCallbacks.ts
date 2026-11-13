@@ -7,7 +7,10 @@ import type {
 } from '../types';
 import {
   retireUpstreamAuthorityBeforeProcessStop,
-} from '../sessions/cleanupPidSessionResources';
+  type SessionAttachCleanupByKey,
+  type SpawnResourceCleanupByKey,
+} from '../sessions/cleanupSessionResources';
+import type { SessionTrackingKey } from '../sessions/sessionTrackingKey';
 import { removeSessionMarkerIfOwned } from '../sessionRegistry';
 import type { ConnectedServiceMaterializedStateObservationBinding } from '../connectedServices/materialization/materializer';
 import type { AgentLaunchMaterialization } from '../agentIsolation/agentLaunchMaterials';
@@ -29,18 +32,19 @@ export type SpawnLifecycleCallbacks = Readonly<{
   ) => Promise<void>;
   removeAcceptedSpawnMarkerIfOwned: (
     ownership: Readonly<{
-      pid: number;
+      trackingKey: SessionTrackingKey;
       happySessionId: string;
       processStartTimeMs: number;
       processCommandHash: string;
       isStillOwned: () => boolean;
     }>,
   ) => Promise<boolean>;
-  consumeSessionAttachCleanupForPid: (pid: number) => void;
+  consumeSessionAttachCleanupForSession: (trackingKey: SessionTrackingKey) => void;
   cleanupPendingSessionAttach: () => Promise<void>;
-  registerSpawnResourceCleanupForPid: (pid: number) => void;
-  cleanupSpawnResourcesForPid?: (pid: number) => Promise<boolean>;
-  registerConnectedServiceSpawnTarget: (pid: number) => void;
+  registerSpawnResourceCleanupForSession: (trackingKey: SessionTrackingKey) => void;
+  cleanupSpawnResourcesForSession?: (trackingKey: SessionTrackingKey) => Promise<boolean>;
+  /** Registers the accepted spawn's targets: `spawnTrackingKey` keeps them apart until the Session id is known. */
+  registerConnectedServiceSpawnTarget: (pid: number, spawnTrackingKey: SessionTrackingKey) => void;
 }>;
 
 export function createSpawnLifecycleCallbacks<
@@ -65,12 +69,14 @@ export function createSpawnLifecycleCallbacks<
     pid: number;
     agentId: CatalogAgentId | null;
     sessionId?: string;
+    spawnTrackingKey?: string;
     connectedServicesBindingsRaw: ConnectedServicesBindingsRaw;
     materializationKey: string;
   }>) => void;
   registerConnectedServiceQuotaTarget?: (target: Readonly<{
     pid: number;
     sessionId?: string;
+    spawnTrackingKey?: string;
     connectedServicesBindingsRaw: ConnectedServicesBindingsRaw;
     connectedServiceSelectionsEnvRaw?: string;
   }>) => void;
@@ -79,6 +85,7 @@ export function createSpawnLifecycleCallbacks<
     pid: number;
     agentId: CatalogAgentId | null;
     sessionId?: string;
+    spawnTrackingKey?: string;
     sessionDirectory?: string;
     connectedServicesBindingsRaw: ConnectedServicesBindingsRaw;
     connectedServiceSelectionsEnv?: Readonly<Record<string, string>>;
@@ -88,12 +95,12 @@ export function createSpawnLifecycleCallbacks<
   }>) => void;
   getSpawnResourceCleanupOnExit: () => SpawnResourceCleanup | null;
   onSpawnResourceCleanupArmed: () => void;
-  onTrackedSessionRegistered?: () => void;
+  onTrackedSessionRegistered?: (trackedSession: Readonly<Pick<TrackedSession, 'pid' | 'childProcess'>>) => void;
   projectSetupOperation?: TrackedSession['projectSetupOperation'];
-  spawnResourceCleanupByPid: Map<number, SpawnResourceCleanup>;
+  spawnResourceCleanupByKey: SpawnResourceCleanupByKey;
   getSessionAttachCleanup: () => SessionAttachCleanup | null;
   setSessionAttachCleanup: (cleanup: SessionAttachCleanup | null) => void;
-  sessionAttachCleanupByPid: Map<number, SessionAttachCleanup>;
+  sessionAttachCleanupByKey: SessionAttachCleanupByKey;
   persistAcceptedSpawnMarker: (
     trackedSession: TrackedSession,
     options?: Readonly<{
@@ -107,6 +114,7 @@ export function createSpawnLifecycleCallbacks<
 }>): SpawnLifecycleCallbacks {
   const registerConnectedServiceSpawnTargetNow = (
     pid: number,
+    spawnTrackingKey: SessionTrackingKey,
     canonicalSessionId?: string,
   ): void => {
     if (!params.hasConnectedServiceAuth() || !params.connectedServicesBindingsRaw) {
@@ -120,6 +128,7 @@ export function createSpawnLifecycleCallbacks<
       pid,
       agentId: params.catalogAgentId,
       ...(sessionId ? { sessionId } : {}),
+      spawnTrackingKey,
       connectedServicesBindingsRaw: params.connectedServicesBindingsRaw,
       ...(typeof params.connectedServiceSelectionsEnvRaw === 'string'
         ? { connectedServiceSelectionsEnvRaw: params.connectedServiceSelectionsEnvRaw }
@@ -129,6 +138,7 @@ export function createSpawnLifecycleCallbacks<
     params.registerConnectedServiceQuotaTarget?.({
       pid,
       ...(sessionId ? { sessionId } : {}),
+      spawnTrackingKey,
       connectedServicesBindingsRaw: params.connectedServicesBindingsRaw,
       ...(typeof params.connectedServiceSelectionsEnvRaw === 'string'
         ? { connectedServiceSelectionsEnvRaw: params.connectedServiceSelectionsEnvRaw }
@@ -139,6 +149,7 @@ export function createSpawnLifecycleCallbacks<
       pid,
       agentId: params.catalogAgentId,
       ...(sessionId ? { sessionId } : {}),
+      spawnTrackingKey,
       ...(typeof params.sessionDirectory === 'string' && params.sessionDirectory.trim().length > 0
         ? { sessionDirectory: params.sessionDirectory.trim() }
         : {}),
@@ -156,39 +167,39 @@ export function createSpawnLifecycleCallbacks<
     });
   };
 
-  const registerSpawnResourceCleanupForPidNow = (pid: number): void => {
+  const registerSpawnResourceCleanupForSessionNow = (trackingKey: SessionTrackingKey): void => {
     const cleanupOnExit = params.getSpawnResourceCleanupOnExit();
     if (!cleanupOnExit) {
       return;
     }
-    params.spawnResourceCleanupByPid.set(pid, cleanupOnExit);
+    params.spawnResourceCleanupByKey.set(trackingKey, cleanupOnExit);
     params.onSpawnResourceCleanupArmed();
   };
   const defersConnectedAccountSessionBinding =
     typeof params.activateConnectedAccountSessionBindingOnCanonicalSession === 'function';
-  const registerConnectedServiceSpawnTarget = (pid: number): void => {
+  const registerConnectedServiceSpawnTarget = (pid: number, spawnTrackingKey: SessionTrackingKey): void => {
     if (defersConnectedAccountSessionBinding) return;
-    registerConnectedServiceSpawnTargetNow(pid);
+    registerConnectedServiceSpawnTargetNow(pid, spawnTrackingKey);
   };
-  const registerSpawnResourceCleanupForPid = (pid: number): void => {
+  const registerSpawnResourceCleanupForSession = (trackingKey: SessionTrackingKey): void => {
     if (defersConnectedAccountSessionBinding) return;
-    registerSpawnResourceCleanupForPidNow(pid);
+    registerSpawnResourceCleanupForSessionNow(trackingKey);
   };
-  const cleanupSpawnResourcesForPid = async (
-    pid: number,
+  const cleanupSpawnResourcesForSession = async (
+    trackingKey: SessionTrackingKey,
   ): Promise<boolean> =>
     await retireUpstreamAuthorityBeforeProcessStop({
-      pid,
-      spawnResourceCleanupByPid:
-        params.spawnResourceCleanupByPid,
+      trackingKey,
+      spawnResourceCleanupByKey:
+        params.spawnResourceCleanupByKey,
     });
 
-  const consumeSessionAttachCleanupForPid = (pid: number): void => {
+  const consumeSessionAttachCleanupForSession = (trackingKey: SessionTrackingKey): void => {
     const cleanup = params.getSessionAttachCleanup();
     if (!cleanup) {
       return;
     }
-    params.sessionAttachCleanupByPid.set(pid, cleanup);
+    params.sessionAttachCleanupByKey.set(trackingKey, cleanup);
     params.setSessionAttachCleanup(null);
   };
 
@@ -207,7 +218,7 @@ export function createSpawnLifecycleCallbacks<
       if (params.materializedStateObservationBinding) {
         trackedSession.materializedStateObservationBinding = params.materializedStateObservationBinding;
       }
-      params.onTrackedSessionRegistered?.();
+      params.onTrackedSessionRegistered?.(trackedSession);
     },
     persistAcceptedSpawnMarker: async (trackedSession, options) => {
       if (params.activateConnectedAccountSessionBindingOnCanonicalSession) {
@@ -259,9 +270,10 @@ export function createSpawnLifecycleCallbacks<
               }
               registerConnectedServiceSpawnTargetNow(
                 trackedSession.pid,
+                trackedSession.trackingKey,
                 normalizedSessionId,
               );
-              registerSpawnResourceCleanupForPidNow(trackedSession.pid);
+              registerSpawnResourceCleanupForSessionNow(trackedSession.trackingKey);
               return null;
             })();
             return await activationPromise;
@@ -274,10 +286,10 @@ export function createSpawnLifecycleCallbacks<
     },
     removeAcceptedSpawnMarkerIfOwned:
       removeSessionMarkerIfOwned,
-    consumeSessionAttachCleanupForPid,
+    consumeSessionAttachCleanupForSession,
     cleanupPendingSessionAttach,
-    registerSpawnResourceCleanupForPid,
-    cleanupSpawnResourcesForPid,
+    registerSpawnResourceCleanupForSession,
+    cleanupSpawnResourcesForSession,
     registerConnectedServiceSpawnTarget,
   };
 }

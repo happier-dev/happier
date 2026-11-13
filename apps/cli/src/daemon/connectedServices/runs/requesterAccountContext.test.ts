@@ -45,7 +45,7 @@ it('borrows the admitted guest Account without retiring its Workflow bootstrap w
         connectedServicesMaterializationBaseDir: join(directory, 'materialized'), resolveQualifiedConnectedAccountV4Support: () => 'indeterminate',
         coordinatorInput: { machineId: 'machine', machineIdProvider: () => 'machine', runtimeId: 'runtime', happyHomeDir: directory,
           logger: { debug() {}, info() {}, warn() {} }, processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '0',
-            HAPPIER_CONNECTED_SERVICES_QUOTAS_ENABLED: '0' }, pidToTrackedSession: new Map(), connectedServiceRuntimeRegistry: registry,
+            HAPPIER_CONNECTED_SERVICES_QUOTAS_ENABLED: '0' }, trackedSessionsByKey: new Map(), connectedServiceRuntimeRegistry: registry,
           connectedServiceAuthGroupPreTurnSwitchCoordinator: coordinator } }),
     });
     const first = await access.resolve(null, prepared.admitted);

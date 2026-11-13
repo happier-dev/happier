@@ -9,6 +9,7 @@ import type { DaemonPluginDevelopmentRootsOwner } from '@/plugins/daemon/develop
 import { createSpawnHappyCliEnvScope, publishPinnedRunnerSnapshotFixture } from '@/testkit/process/spawnHappyCliHarness';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { SESSION_REQUESTED_DIRECTORY_ENV } from '@/agent/runtime/resolveRequestedSessionDirectory';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const mocks = vi.hoisted(() => ({
   prepareSourceDevSharedDepsForHappyCliSpawn: vi.fn(),
@@ -105,16 +106,16 @@ function createParams() {
     extraEnvForChildWithMessage: { [SESSION_REQUESTED_DIRECTORY_ENV]: '/tmp/happier-project' },
     processEnv,
     happyHomeDir: '/tmp/happier-home',
-    pidToTrackedSession: new Map(),
-    pidToAwaiter: new Map(),
-    pidToSpawnResultResolver: new Map(),
-    pidToSpawnWebhookTimeout: new Map(),
+    trackedSessionsByKey: new Map(),
+    spawnAwaiterByKey: new Map(),
+    spawnResultResolverByKey: new Map(),
+    spawnWebhookTimeoutByKey: new Map(),
     resolveCanonicalTrackedSessionId: vi.fn(() => 'session-1'),
     onChildExited: vi.fn(),
     spawnLifecycleCallbacks: {
       registerConnectedServiceSpawnTarget: vi.fn(),
-      registerSpawnResourceCleanupForPid: vi.fn(),
-      consumeSessionAttachCleanupForPid: vi.fn(),
+      registerSpawnResourceCleanupForSession: vi.fn(),
+      consumeSessionAttachCleanupForSession: vi.fn(),
       cleanupPendingSessionAttach: vi.fn(async () => {}),
       persistAcceptedSpawnMarker: vi.fn(async () => {}),
       removeAcceptedSpawnMarkerIfOwned:
@@ -463,17 +464,17 @@ describe('routeSpawnModeAndWaitForWebhook', () => {
 
   it('threads one live-runner retention decision through tmux, regular/cgroup, and Windows launch owners', async () => {
     const tracked = {
-      pid: 42,
+      trackingKey: legacyPidSessionTrackingKey(42), pid: 42,
       startedBy: 'daemon',
       processCommand: 'node /repo/apps/cli/.runner-snapshots/live-old/index.mjs opencode',
     };
     const params = createParams();
-    const pidToTrackedSession = new Map([[42, tracked]]);
+    const trackedSessionsByKey = new Map([[tracked.trackingKey, tracked]]);
     const { routeSpawnModeAndWaitForWebhook } = await import('./routeSpawnModeAndWaitForWebhook');
 
     await routeSpawnModeAndWaitForWebhook({
       ...params,
-      pidToTrackedSession,
+      trackedSessionsByKey,
     } as Parameters<typeof routeSpawnModeAndWaitForWebhook>[0]);
     const tmuxOptions = mocks.spawnTmuxHostedSessionAndWaitForWebhook.mock.calls.at(-1)?.[0]?.runnerLaunchOptions;
     const regularOptions = mocks.spawnRegularProcessAndWaitForWebhook.mock.calls.at(-1)?.[0]?.runnerLaunchOptions;
@@ -483,7 +484,7 @@ describe('routeSpawnModeAndWaitForWebhook', () => {
     mocks.resolveWindowsRemoteSessionConsoleMode.mockReturnValueOnce('console');
     await routeSpawnModeAndWaitForWebhook({
       ...params,
-      pidToTrackedSession,
+      trackedSessionsByKey,
     } as Parameters<typeof routeSpawnModeAndWaitForWebhook>[0]);
     const windowsOptions = mocks.spawnWindowsHostedSessionAndWaitForWebhook.mock.calls.at(-1)?.[0]?.runnerLaunchOptions;
     expect(windowsOptions).toEqual(tmuxOptions);

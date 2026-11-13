@@ -16,9 +16,10 @@ import { hashProcessCommand, processIdentityMatches } from '@happier-dev/cli-com
 import { readProcessIdentityByPid } from '../processIdentity';
 import { readProcessRunState } from '../processRunState';
 import { adoptTrackedSessionRunnerIdentity, bindTrackedSessionIdentity, resolveSessionReportTrackedCorrelation } from '../sessions/sessionReportCorrelation';
+import { isCurrentTrackedSession, type ReadonlyTrackedSessionMap, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 type PendingSessionStartup = Readonly<{
-  pidToAwaiter: ReadonlyMap<number, unknown>;
+  spawnAwaiterByKey: ReadonlyMap<SessionTrackingKey, unknown>;
   machineId: string;
   happyHomeDir: string;
   readSessionMetadata: (sessionId: string) => Promise<Metadata | null>;
@@ -28,19 +29,19 @@ type PendingSessionStartup = Readonly<{
 }>;
 
 function isPendingStartup(tracked: TrackedSession, params: Readonly<{
-  pidToTrackedSession: ReadonlyMap<number, TrackedSession>;
+  trackedSessionsByKey: ReadonlyTrackedSessionMap;
   pendingSessionStartup?: PendingSessionStartup;
 }>): boolean {
   return tracked.startedBy === 'daemon'
-    && params.pidToTrackedSession.get(tracked.pid) === tracked
-    && params.pendingSessionStartup?.pidToAwaiter.has(tracked.spawnStartupAwaiterPid ?? tracked.pid) === true
+    && isCurrentTrackedSession(params.trackedSessionsByKey, tracked)
+    && params.pendingSessionStartup?.spawnAwaiterByKey.has(tracked.trackingKey) === true
     && !tracked.reportMarkerCustody?.retiring
     && tracked.sessionWebhookTimedOutAtMs === undefined
     && !tracked.spawnStartupReadinessFailure;
 }
 
 function isUnboundPendingStartup(tracked: TrackedSession, params: Readonly<{
-  pidToTrackedSession: ReadonlyMap<number, TrackedSession>;
+  trackedSessionsByKey: ReadonlyTrackedSessionMap;
   pendingSessionStartup?: PendingSessionStartup;
 }>): boolean {
   return isPendingStartup(tracked, params)
@@ -51,18 +52,18 @@ function isUnboundPendingStartup(tracked: TrackedSession, params: Readonly<{
 
 async function associatePendingFreshStartup(params: Readonly<{
   sessionId: string;
-  pidToTrackedSession: ReadonlyMap<number, TrackedSession>;
+  trackedSessionsByKey: ReadonlyTrackedSessionMap;
   pendingSessionStartup?: PendingSessionStartup;
   logWarn: (message: string, payload?: unknown) => void;
 }>): Promise<SessionRunnerPresenceProbe | null> {
   const startup = params.pendingSessionStartup;
   const isUnbound = (tracked: TrackedSession) => isUnboundPendingStartup(tracked, params);
-  if (!startup || ![...params.pidToTrackedSession.values()].some(isUnbound)) return null;
+  if (!startup || ![...params.trackedSessionsByKey.values()].some(isUnbound)) return null;
   let metadata: Metadata | null;
   try {
     metadata = await startup.readSessionMetadata(params.sessionId);
   } catch {
-    if (![...params.pidToTrackedSession.values()].some(isUnbound)) return null;
+    if (![...params.trackedSessionsByKey.values()].some(isUnbound)) return null;
     params.logWarn('[DAEMON RUN] Existing-session startup metadata unavailable; refusing duplicate launch');
     return { state: 'runner_unknown', reason: 'runner_presence_unproven' };
   }
@@ -71,8 +72,8 @@ async function associatePendingFreshStartup(params: Readonly<{
     || !Number.isInteger(metadata.hostPid) || (metadata.hostPid ?? 0) <= 0) return null;
   const readIdentity = startup.readProcessIdentityByPid ?? readProcessIdentityByPid;
   const correlation = await resolveSessionReportTrackedCorrelation({
-    metadata, pid: metadata.hostPid!, pidToTrackedSession: params.pidToTrackedSession,
-    pidToAwaiter: startup.pidToAwaiter, readProcessIdentityByPidFn: readIdentity,
+    metadata, pid: metadata.hostPid!, trackedSessionsByKey: params.trackedSessionsByKey,
+    spawnAwaiterByKey: startup.spawnAwaiterByKey, readProcessIdentityByPidFn: readIdentity,
     readAllWindowsProcessFactsFn: startup.readAllWindowsProcessFactsFn,
   });
   if (correlation.kind === 'refused') return { state: 'runner_unknown', reason: 'runner_presence_unproven' };
@@ -129,7 +130,7 @@ function sleep(delayMs: number): Promise<void> {
 export async function resolveExistingSessionSpawnPreGate(params: Readonly<{
   existingSessionId: string | undefined;
   providerConversation?: Readonly<{ backendTarget: BackendTargetRefV2; resumeId: string }>;
-  pidToTrackedSession: ReadonlyMap<number, TrackedSession>;
+  trackedSessionsByKey: ReadonlyTrackedSessionMap;
   probeSessionRunnerPresence: (sessionId: string) => Promise<SessionRunnerPresenceProbe>;
   waitForExitTimeoutMs: number;
   waitForExitPollIntervalMs: number;
@@ -142,7 +143,7 @@ export async function resolveExistingSessionSpawnPreGate(params: Readonly<{
   const conversation = params.providerConversation;
   if (conversation?.resumeId) {
     const targetKey = buildBackendTargetKeyV2(conversation.backendTarget);
-    for (const tracked of params.pidToTrackedSession.values()) {
+    for (const tracked of params.trackedSessionsByKey.values()) {
       const siblingId = tracked.happySessionId ?? tracked.spawnOptions?.existingSessionId;
       if (!siblingId || siblingId === normalizedExistingSessionId) continue;
       // Terminal registration can precede the provider-id metadata report.
@@ -165,7 +166,7 @@ export async function resolveExistingSessionSpawnPreGate(params: Readonly<{
     return { shortCircuitResult: null };
   }
 
-  const restartUnavailable = Array.from(params.pidToTrackedSession.values())
+  const restartUnavailable = Array.from(params.trackedSessionsByKey.values())
     .some((tracked) => (
       tracked.happySessionId?.trim() === normalizedExistingSessionId
       && tracked.agentRuntimeRunnerRestartDisposition
@@ -204,10 +205,10 @@ export async function resolveExistingSessionSpawnPreGate(params: Readonly<{
   };
   let initialPresence = await probeExistingSessionPresence();
   if (initialPresence.state === 'runner_absent'
-    && [...params.pidToTrackedSession.values()].some((tracked) => isUnboundPendingStartup(tracked, params))) {
+    && [...params.trackedSessionsByKey.values()].some((tracked) => isUnboundPendingStartup(tracked, params))) {
     try {
       const associated = await associatePendingFreshStartup({
-        sessionId: normalizedExistingSessionId, pidToTrackedSession: params.pidToTrackedSession,
+        sessionId: normalizedExistingSessionId, trackedSessionsByKey: params.trackedSessionsByKey,
         pendingSessionStartup: params.pendingSessionStartup, logWarn: params.logWarn,
       });
       initialPresence = associated?.state === 'runner_unknown' ? associated : await probeExistingSessionPresence();
@@ -218,7 +219,7 @@ export async function resolveExistingSessionSpawnPreGate(params: Readonly<{
   }
   if (initialPresence.state === 'runner_unknown') return refuseUnknownPresence();
   if (initialPresence.state === 'runner_absent') return { shortCircuitResult: null };
-  const pendingAccepted = [...params.pidToTrackedSession.values()].some((tracked) =>
+  const pendingAccepted = [...params.trackedSessionsByKey.values()].some((tracked) =>
     isPendingStartup(tracked, params)
     && (tracked.happySessionId?.trim() === normalizedExistingSessionId
       || tracked.spawnOptions?.existingSessionId?.trim() === normalizedExistingSessionId)
@@ -233,7 +234,7 @@ export async function resolveExistingSessionSpawnPreGate(params: Readonly<{
     try {
       await waitForExistingSessionExitIfStopRequested({
         sessionId: normalizedExistingSessionId,
-        pidToTrackedSession: params.pidToTrackedSession,
+        trackedSessionsByKey: params.trackedSessionsByKey,
         timeoutMs: remainingWaitMs(),
         pollIntervalMs: params.waitForExitPollIntervalMs,
       });

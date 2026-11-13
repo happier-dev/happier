@@ -12,6 +12,7 @@ import { readRetainedPlainRunnerExitMarker, retireExactTerminalControlServiceabi
 import { recoverStrandedTerminalControlServiceability } from './recoverStrandedTerminalControlServiceability';
 import { writeSessionMarker } from '../sessionRegistry';
 import type { TrackedSession } from '../types';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('retireExactTerminalControlServiceability', () => {
     beforeEach(() => {
@@ -21,14 +22,14 @@ describe('retireExactTerminalControlServiceability', () => {
     it.each(['exact', 'missing', 'other PID'] as const)('requires the executable birth for wrapped exit-marker recovery (%s)', async witness => {
         await withConfiguredDaemonTestHome({ prefix: 'wrapped-exit-marker-' }, async ({ homeDir }) => {
             const runnerPid = 999_123_456;
-            const tracked: TrackedSession = { pid: runnerPid + 1, sessionRunnerPid: runnerPid,
+            const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(runnerPid + 1), pid: runnerPid + 1, sessionRunnerPid: runnerPid,
                 startedBy: 'daemon', happySessionId: 'wrapped-exit', processStartTimeMs: 100,
                 ...(witness === 'missing' ? {} : { runnerProcessIdentity: {
                     pid: witness === 'exact' ? runnerPid : runnerPid + 2,
                     processStartTimeMs: witness === 'exact' ? 200 : 100, processCommandHash: 'a'.repeat(64),
                 } }),
             };
-            await writeSessionMarker({ pid: runnerPid, happySessionId: 'wrapped-exit',
+            await writeSessionMarker({ trackingKey: tracked.trackingKey, pid: runnerPid, happySessionId: 'wrapped-exit',
                 startedBy: 'daemon', processStartTimeMs: witness === 'exact' ? 200 : 100 });
             const marker = await readRetainedPlainRunnerExitMarker(tracked);
             if (witness === 'exact') expect(marker).toMatchObject({ pid: runnerPid, processStartTimeMs: 200 });
@@ -40,7 +41,7 @@ describe('retireExactTerminalControlServiceability', () => {
         await withConfiguredDaemonTestHome({ prefix: 'wrapped-retirement-' }, async () => {
             const pid = 999_123_456;
             const sessionId = 'wrapped-retirement';
-            const tracked: TrackedSession = { pid: pid + 1, sessionRunnerPid: pid, startedBy: 'daemon',
+            const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid + 1), pid: pid + 1, sessionRunnerPid: pid, startedBy: 'daemon',
                 happySessionId: sessionId, processStartTimeMs: 100,
                 runnerProcessIdentity: { pid, processStartTimeMs: 200, processCommandHash: 'a'.repeat(64) } };
             vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200,

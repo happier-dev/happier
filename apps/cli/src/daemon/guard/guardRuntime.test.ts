@@ -32,6 +32,7 @@ import { listHappierProcessRoots } from '../processes/roots/listHappierProcessRo
 import { parseProcessOwnerTag } from '@/processes/ownerTag';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
 beforeAll(async () => { runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
@@ -69,9 +70,9 @@ describe('memory guard episode on the incumbent minute sampler', () => {
       } } });
     const summary = createMachineResourceSummary({ sampler, nowMs: Date.now, readNearlyFull: () => null, onError: error => { throw error; } });
     const activity = await createActivityLog({ activeServerDir: directory, nowMs: Date.now, resourceSummary: summary });
-    const tracked: TrackedSession = { pid: 10, happySessionId: 's', startedBy: 'daemon' };
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(10), pid: 10, happySessionId: 's', startedBy: 'daemon' };
     const sessions: TrackedSession[] = [tracked, ...Array.from({ length: sessionCount - 1 }, (_, index) => ({
-      pid: 11 + index, happySessionId: `s${index + 2}`, startedBy: 'daemon' }))];
+      trackingKey: legacyPidSessionTrackingKey(11 + index), pid: 11 + index, happySessionId: `s${index + 2}`, startedBy: 'daemon' }))];
     let working = false;
     let otherSessionWorking = false;
     let draft: SessionDraftPresence = { status: 'absent' };
@@ -85,7 +86,7 @@ describe('memory guard episode on the incumbent minute sampler', () => {
     let duringActivityRead: (() => void | Promise<void>) | undefined;
     let duringNativeRead: ((signal?: AbortSignal) => Promise<void>) | undefined;
     const errors: unknown[] = [];
-    const background: TrackedSession = { pid: 30, happySessionId: 'background', startedBy: 'daemon', spawnOptions: { directory: '/project' } };
+    const background: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(30), pid: 30, happySessionId: 'background', startedBy: 'daemon', spawnOptions: { directory: '/project' } };
     // Session live-work RPC boundary shared by aggregate and exact-target owners.
     const readActivity: Parameters<typeof createSessionLiveWorkProducer>[0]['readActivity'] = async session => {
       activityReads++; await duringActivityRead?.();
@@ -519,7 +520,7 @@ describe('memory guard episode on the incumbent minute sampler', () => {
     try {
       const restoration = createGuardSessionRestoration({ activity: fixture.activity, nowMs: Date.now });
       for (let index = 0; index < 5; index++) await restoration.onSessionRunnerStarted({
-        pid: 40 + index, happySessionId: `fresh-${index}`, startedBy: 'daemon', requesterWorkAttributionV1: attribution,
+        trackingKey: legacyPidSessionTrackingKey(40 + index), pid: 40 + index, happySessionId: `fresh-${index}`, startedBy: 'daemon', requesterWorkAttributionV1: attribution,
       });
       expect(journalReads).toBe(0);
       expect((await fixture.activity.list({ range: 'today' })).entries.map(row => row.id)).toEqual(['unrelated']);
@@ -529,7 +530,7 @@ describe('memory guard episode on the incumbent minute sampler', () => {
     const fixture = await setup('session', rule === 'memory');
     try {
       const attribution = { serverId: 'home', accountId: 'owner', machineId: 'm', installationId: 'installation' };
-      const restored: TrackedSession = { pid: 40, happySessionId: 's', startedBy: 'daemon', requesterWorkAttributionV1: attribution,
+      const restored: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(40), pid: 40, happySessionId: 's', startedBy: 'daemon', requesterWorkAttributionV1: attribution,
         happySessionMetadataFromLocalWebhook: { path: '/project', host: 'host', homeDir: '/home/test', happyHomeDir: '/home/test/.happier',
           happyLibDir: '/opt/happier', happyToolsDir: '/home/test/.happier/tools' } };
       const restoration = createGuardSessionRestoration({ activity: fixture.activity, nowMs: Date.now });
@@ -567,7 +568,7 @@ describe('memory guard episode on the incumbent minute sampler', () => {
         kind: 'start_failed', ref: 'prior-stop', failure: { reason: 'no_ptys' }, nextStep: 'close_idle_terminals',
       }));
       expect((await fixture.activity.read('prior-stop'))?.undoneAt).toBeUndefined();
-      await restoration.onSessionRunnerStarted({ pid: 40, happySessionId: 'stopped', startedBy: 'daemon', requesterWorkAttributionV1: attribution,
+      await restoration.onSessionRunnerStarted({ trackingKey: legacyPidSessionTrackingKey(40), pid: 40, happySessionId: 'stopped', startedBy: 'daemon', requesterWorkAttributionV1: attribution,
         happySessionMetadataFromLocalWebhook: { path: '/project', host: 'host', homeDir: '/home/test', happyHomeDir: '/home/test/.happier',
           happyLibDir: '/opt/happier', happyToolsDir: '/home/test/.happier/tools', sessionGuardStateV1: { v: 1, kind: 'stopped', at: 0, rule: 'idle_sessions' } } });
       expect((await fixture.activity.read('prior-stop'))?.undoneAt).toBe(0);

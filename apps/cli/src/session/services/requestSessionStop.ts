@@ -42,6 +42,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { randomUUID } from 'node:crypto';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { readSessionMetadataMutationFailureCodeV1, type SessionMetadataMutationFailureCodeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import type { SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 type RequestSessionStopResult = (
   | (Readonly<{ ok: true }> & SessionStopCommandResult)
@@ -249,7 +250,7 @@ async function stopSessionViaMarkersBestEffort(params: Readonly<{
     path: configuration.deviceLocalSecretKeyFile,
   }).catch(() => null);
 
-  const pidToTrackedSession = new Map<number, TrackedSession>(
+  const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>(
     markers.map((marker) => {
       let spawnOptions: ReturnType<typeof buildSpawnSessionOptionsFromRespawnDescriptorV1> | undefined;
       if (marker.respawn) {
@@ -265,7 +266,7 @@ async function stopSessionViaMarkersBestEffort(params: Readonly<{
         }
       }
       return [
-        marker.pid,
+        marker.trackingKey,
         buildTrackedSessionFromMarker({
           marker,
           startedByFallback: 'terminal',
@@ -277,7 +278,7 @@ async function stopSessionViaMarkersBestEffort(params: Readonly<{
   let terminalHostAdapterInventoryPromise: ReturnType<typeof createDefaultTerminalHostAdapterInventory> | null = null;
 
   return await createStopSession({
-    pidToTrackedSession,
+    trackedSessionsByKey,
     requireTerminalTopologyProof: true,
     ...(params.expectedTerminalAttachmentId
       ? { expectedTerminalAttachmentId: params.expectedTerminalAttachmentId }
@@ -334,7 +335,7 @@ async function cleanupStoppedSessionMarkersBestEffort(sessionId: string): Promis
   await Promise.all(
     markers
       .filter((marker) => marker.happySessionId === sessionId)
-      .map((marker) => removeSessionMarkerIfOwned({ pid: marker.pid, happySessionId: marker.happySessionId,
+      .map((marker) => removeSessionMarkerIfOwned({ trackingKey: marker.trackingKey, happySessionId: marker.happySessionId,
         processStartTimeMs: marker.processStartTimeMs, processCommandHash: marker.processCommandHash,
       }).catch(() => undefined)),
   );

@@ -19,6 +19,7 @@ import { startDaemonConnectedServiceRuntime } from './startDaemonRuntimeBootstra
 import { createRequesterSessionControlRuntimeFixture } from '../testkit/requesterSessionControlRuntimeFixture';
 import { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeRegistry/registry';
 import type { TrackedSession } from '../types';
+import type { SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('qualified Connected Account deadline composition', () => {
   it.each(['both', 'health-only', 'quota-only', 'demanded-quota'] as const)('prepares one initial pair for coincident health and quota despite nonoverlapping startup preparation (%s)', async mode => {
@@ -90,7 +91,7 @@ describe('qualified Connected Account deadline composition', () => {
         limit_window_seconds: 18_000 } } }));
     const phases = vi.spyOn(logger, 'infoFile');
     const registry = new ConnectedServiceRuntimeRegistry();
-    const trackedSessions = new Map<number, TrackedSession>();
+    const trackedSessions = new Map<SessionTrackingKey, TrackedSession>();
     const startupFailures: string[] = [];
     let control: Awaited<ReturnType<typeof createRequesterSessionControlRuntimeFixture>> | undefined;
     let runtime: Awaited<ReturnType<typeof startDaemonConnectedServiceRuntime>> | undefined;
@@ -116,7 +117,7 @@ describe('qualified Connected Account deadline composition', () => {
               HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: mode === 'quota-only' ? 'false' : 'true',
               ...(mode === 'health-only' ? { HAPPIER_BUILD_FEATURES_DENY: 'connectedServices.quotas' } : {}),
             },
-            pidToTrackedSession: trackedSessions, connectedServiceQuotaFetcherDescriptors: [],
+            trackedSessionsByKey: trackedSessions, connectedServiceQuotaFetcherDescriptors: [],
             connectedServiceRuntimeRegistry: registry,
             connectedServiceAuthGroupPreTurnSwitchCoordinator: control!.runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator,
             connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),

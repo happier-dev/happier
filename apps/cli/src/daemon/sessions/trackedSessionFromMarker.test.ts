@@ -3,11 +3,12 @@ import { describe, expect, it } from 'vitest';
 import { buildTrackedSessionFromMarker, readTrackedSessionMaterializedStateObservationBinding } from './trackedSessionFromMarker';
 import type { DaemonSessionMarker } from '../sessionRegistry';
 import type { TrackedSession } from '../types';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('buildTrackedSessionFromMarker', () => {
   it('restores the non-secret invocation context for an exact daemon runner marker', () => {
     const marker = {
-      pid: 123,
+      trackingKey: legacyPidSessionTrackingKey(123), pid: 123,
       happySessionId: 'session-1',
       happyHomeDir: '/tmp/happier',
       createdAt: 1,
@@ -35,11 +36,11 @@ describe('buildTrackedSessionFromMarker', () => {
       nativeHomeRoot: '/private/native-home',
       entries: [{ entryPath: 'projects', sourceEntryRoot: '/native/projects', materializedEntryPath: '/private/native-home/projects' }],
     };
-    const tracked: TrackedSession = { startedBy: 'daemon', pid: 123, happySessionId: 'session-1', materializedStateObservationBinding: binding };
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon', pid: 123, happySessionId: 'session-1', materializedStateObservationBinding: binding };
     expect(readTrackedSessionMaterializedStateObservationBinding([tracked], 'session-1')).toBe(binding);
     expect(readTrackedSessionMaterializedStateObservationBinding([tracked], '')).toBeNull();
     expect(readTrackedSessionMaterializedStateObservationBinding([tracked], 'other-session')).toBeNull();
-    expect(readTrackedSessionMaterializedStateObservationBinding([tracked, { ...tracked, pid: 456 }], 'session-1')).toBeNull();
+    expect(readTrackedSessionMaterializedStateObservationBinding([tracked, { ...tracked, trackingKey: legacyPidSessionTrackingKey(456), pid: 456 }], 'session-1')).toBeNull();
     expect(readTrackedSessionMaterializedStateObservationBinding([{ ...tracked, materializedStateObservationBinding: undefined }], 'session-1')).toBeNull();
     tracked.reportMarkerCustody = { pending: Promise.resolve(), retiring: true };
     expect(readTrackedSessionMaterializedStateObservationBinding([tracked], 'session-1')).toBeNull();

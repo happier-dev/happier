@@ -3,6 +3,7 @@ import type { SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { logger } from '@/ui/logger';
 import type { TrackedSession } from '../types';
 import type { DaemonAdmissionDrain } from './admissionDrain';
+import type { SessionTrackingKey, TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 type SpawnResultResolver = (result: SpawnSessionResult) => void;
 type PendingRpcDrainApiMachine = Pick<ApiMachineClient, 'awaitPendingRpcRequests'>;
@@ -10,10 +11,10 @@ type PendingRpcDrainApiMachine = Pick<ApiMachineClient, 'awaitPendingRpcRequests
 export type CreateBeforeShutdownDrainParams = Readonly<{
     admissionDrain?: DaemonAdmissionDrain;
     hasPendingRunnerRestarts?: () => boolean;
-    pidToAwaiter: Map<number, unknown>;
-    pidToSpawnResultResolver: Map<number, SpawnResultResolver>;
-    pidToSpawnWebhookTimeout: Map<number, NodeJS.Timeout>;
-    pidToTrackedSession?: Map<number, TrackedSession>;
+    spawnAwaiterByKey: Map<SessionTrackingKey, unknown>;
+    spawnResultResolverByKey: Map<SessionTrackingKey, SpawnResultResolver>;
+    spawnWebhookTimeoutByKey: Map<SessionTrackingKey, NodeJS.Timeout>;
+    trackedSessionsByKey?: TrackedSessionMap;
     shutdownSpawnDrainGraceMs: number;
     shutdownSpawnDrainPollMs: number;
     getApiMachineForSessions: () => PendingRpcDrainApiMachine | null;
@@ -47,9 +48,14 @@ async function drainBackgroundServerWorkBestEffort(params: CreateBeforeShutdownD
 async function drainFinalRuntimeWork(params: CreateBeforeShutdownDrainParams): Promise<void> {
     // Early accepted finite work is no longer a pending RPC. Keep its native
     // owner and observation/Stop transports alive until actual settlement.
-    await params.retireFiniteExecution?.();
-    await drainBackgroundServerWorkBestEffort(params);
-    await disposePluginRuntimeRegistryBestEffort(params);
+    // A failed retirement still rejects to its caller, but must not skip the
+    // final disposals: plugin managed services run detached and would outlive us.
+    try {
+        await params.retireFiniteExecution?.();
+    } finally {
+        await drainBackgroundServerWorkBestEffort(params);
+        await disposePluginRuntimeRegistryBestEffort(params);
+    }
 }
 
 export function createBeforeShutdownDrain(
@@ -61,7 +67,7 @@ export function createBeforeShutdownDrain(
         params.admissionDrain?.beginShutdown();
         if (beforeShutdownOnce) return await beforeShutdownOnce;
         beforeShutdownOnce = (async () => {
-            const initialInFlightSpawns = params.pidToAwaiter.size;
+            const initialInFlightSpawns = params.spawnAwaiterByKey.size;
             const hasPendingRunnerRestarts = () => params.hasPendingRunnerRestarts?.() === true;
             const hasPendingRpcRequests = params.getApiMachineForSessions() !== null;
             if (initialInFlightSpawns === 0 && !hasPendingRunnerRestarts() && !hasPendingRpcRequests) {
@@ -78,7 +84,7 @@ export function createBeforeShutdownDrain(
             });
 
             const start = Date.now();
-            while ((params.pidToAwaiter.size > 0 || hasPendingRunnerRestarts()) && Date.now() - start < params.shutdownSpawnDrainGraceMs) {
+            while ((params.spawnAwaiterByKey.size > 0 || hasPendingRunnerRestarts()) && Date.now() - start < params.shutdownSpawnDrainGraceMs) {
                 // eslint-disable-next-line no-await-in-loop
                 await new Promise((resolve) => setTimeout(resolve, params.shutdownSpawnDrainPollMs));
             }
@@ -88,7 +94,7 @@ export function createBeforeShutdownDrain(
                     graceMs: params.shutdownSpawnDrainGraceMs,
                 });
             }
-            const remaining = params.pidToAwaiter.size;
+            const remaining = params.spawnAwaiterByKey.size;
             if (remaining === 0) {
                 logger.debug('[DAEMON RUN] In-flight spawn(s) drained; checking pending RPC requests');
             } else {
@@ -98,24 +104,16 @@ export function createBeforeShutdownDrain(
                     graceMs: params.shutdownSpawnDrainGraceMs,
                 });
 
-                for (const timeout of params.pidToSpawnWebhookTimeout.values()) {
+                for (const timeout of params.spawnWebhookTimeoutByKey.values()) {
                     clearTimeout(timeout);
                 }
 
                 for (
-                    const [awaiterPid, resolveSpawnResult]
-                    of params.pidToSpawnResultResolver.entries()
+                    const [awaiterKey, resolveSpawnResult]
+                    of params.spawnResultResolverByKey.entries()
                 ) {
                     const tracked =
-                        params.pidToTrackedSession?.get(awaiterPid)
-                        ?? Array.from(
-                            params.pidToTrackedSession?.values()
-                            ?? [],
-                        ).find(
-                            (candidate) =>
-                                candidate.spawnStartupAwaiterPid
-                                === awaiterPid,
-                        );
+                        params.trackedSessionsByKey?.get(awaiterKey);
                     let retirementIncomplete = false;
                     const cancel =
                         tracked?.cancelStartupLaunchBeforeAck;
@@ -140,9 +138,9 @@ export function createBeforeShutdownDrain(
                     );
                 }
 
-                params.pidToAwaiter.clear();
-                params.pidToSpawnResultResolver.clear();
-                params.pidToSpawnWebhookTimeout.clear();
+                params.spawnAwaiterByKey.clear();
+                params.spawnResultResolverByKey.clear();
+                params.spawnWebhookTimeoutByKey.clear();
             }
 
             const apiMachineForSessions = params.getApiMachineForSessions();

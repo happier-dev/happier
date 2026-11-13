@@ -15,6 +15,7 @@ import {
     type SessionUsageLimitRecoveryV1,
 } from '@happier-dev/protocol';
 import type { ManagedConnectionState, ManagedConnectionPhase } from '@happier-dev/connection-supervisor';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const usageLimitRecoveryMutationCustodyMocks = vi.hoisted(() => {
     const handle = {
@@ -84,7 +85,7 @@ import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accou
 import { createDirectTransferServerLifecycle } from '@/machines/transfer/directTransferServerLifecycle';
 import { reserveEphemeralPort } from '@/testkit/http/portUtils';
 import { withConfiguredDaemonTestHome } from '../testkit/fakeDaemonLifecycle.testkit';
-import { readSessionMarkerForPid, writeSessionMarker } from '../sessionRegistry';
+import { readSessionMarker, writeSessionMarker } from '../sessionRegistry';
 import { createRequesterSessionCredentialCustody } from '../sessionEncryption/requesterSessionCredentials';
 import { access } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
@@ -3253,7 +3254,7 @@ describe('bootstrapMachineSyncRuntime', () => {
                 const child = spawn(process.execPath, ['-e', "process.send('ready'); setInterval(() => {}, 1000)"],
                     { stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
                 successorState.exited = once(child, 'exit');
-                successorState.tracked = { pid: child.pid!, childProcess: child, startedBy: 'daemon', happySessionId: 'startup-orphan' };
+                successorState.tracked = { trackingKey: legacyPidSessionTrackingKey(child.pid!), pid: child.pid!, childProcess: child, startedBy: 'daemon', happySessionId: 'startup-orphan' };
                 await once(child, 'message');
                 const identity = await readProcessIdentityByPid(child.pid!);
                 if (!identity) throw new Error('Successor process identity unavailable');
@@ -3362,12 +3363,12 @@ describe('bootstrapMachineSyncRuntime', () => {
         expect(stopSessionForRemoval).toHaveBeenCalledWith('deleted-session');
         // This obligation appears after bootstrap; reconnect must discover the
         // canonical marker rather than relying on the initial in-memory list.
-        await writeSessionMarker({ pid, happySessionId: 'startup-orphan', startedBy: 'daemon', processStartTimeMs,
+        await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: 'startup-orphan', startedBy: 'daemon', processStartTimeMs,
             ...(requesterCustody ? { requesterWorkAttributionV1: attribution } : {}) });
         expect(captureMachineSessionTerminal).not.toHaveBeenCalled();
         await onConnect();
         expect(orphanSessionActive).toBe(true);
-        expect(await readSessionMarkerForPid(pid)).not.toBeNull();
+        expect(await readSessionMarker(legacyPidSessionTrackingKey(pid))).not.toBeNull();
         publicationQuiescing = true;
         await result.resumeMachineConnectionPublications();
         expect(captureMachineSessionTerminal).toHaveBeenCalledTimes(1);
@@ -3375,7 +3376,7 @@ describe('bootstrapMachineSyncRuntime', () => {
         await result.resumeMachineConnectionPublications();
         expect(orphanSessionActive).toBe(principal === 'withdrawn-requester-successor');
         expect(controlRetired).toBe(principal === 'owner');
-        expect(await readSessionMarkerForPid(pid)).toBeNull();
+        expect(await readSessionMarker(legacyPidSessionTrackingKey(pid))).toBeNull();
         if (requesterCustody) {
             // Orphan recovery does not own requester credential lifetime.
             await expect(access(requesterCustody.path)).resolves.toBeUndefined();

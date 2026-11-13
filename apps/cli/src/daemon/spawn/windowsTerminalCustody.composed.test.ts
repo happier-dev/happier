@@ -10,6 +10,13 @@ import type { Metadata } from '@/api/types';
 import type { TrackedSession } from '../types';
 import type { SpawnLifecycleCallbacks } from './createSpawnLifecycleCallbacks';
 import { readOrCreateDeviceLocalSecretStorage } from '../deviceLocalSecretStorage';
+import {
+  legacyPidSessionTrackingKey,
+  trackedSessionForSingleSessionProcess,
+  trackedSessionsForProcess,
+  untrackSession,
+  type SessionTrackingKey,
+} from '@/daemon/sessions/sessionTrackingKey';
 
 describe('Windows Terminal exact Agent custody composition', () => {
   const originalHome = process.env.HAPPIER_HOME_DIR;
@@ -166,16 +173,16 @@ describe('Windows Terminal exact Agent custody composition', () => {
     const { captureExactWindowsTerminalLaunchProcess } =
       await import('../platform/windows/windowsProcessCustody');
 
-    const pidToTrackedSession =
-      new Map<number, TrackedSession>();
-    const pidToAwaiter =
-      new Map<number, (tracked: TrackedSession) => void>();
-    const pidToSpawnResultResolver = new Map();
-    const pidToSpawnWebhookTimeout = new Map();
-    const spawnResourceCleanupByPid =
-      new Map<number, () => void | Promise<void>>();
-    const sessionAttachCleanupByPid =
-      new Map<number, () => Promise<void>>();
+    const trackedSessionsByKey =
+      new Map<SessionTrackingKey, TrackedSession>();
+    const spawnAwaiterByKey =
+      new Map<SessionTrackingKey, (tracked: TrackedSession) => void>();
+    const spawnResultResolverByKey = new Map();
+    const spawnWebhookTimeoutByKey = new Map();
+    const spawnResourceCleanupByKey =
+      new Map();
+    const sessionAttachCleanupByKey =
+      new Map();
     let persistedMarkerCustody: Readonly<{
       pid: number;
       ownership: Readonly<{
@@ -240,12 +247,12 @@ describe('Windows Terminal exact Agent custody composition', () => {
       removeAcceptedSpawnMarkerIfOwned:
         removeSessionMarkerIfOwned,
       registerConnectedServiceSpawnTarget: vi.fn(),
-      registerSpawnResourceCleanupForPid: (pid) => {
-        spawnResourceCleanupByPid.set(pid, vi.fn());
+      registerSpawnResourceCleanupForSession: (trackingKey) => {
+        spawnResourceCleanupByKey.set(trackingKey, vi.fn());
       },
-      consumeSessionAttachCleanupForPid: (pid) => {
-        sessionAttachCleanupByPid.set(
-          pid,
+      consumeSessionAttachCleanupForSession: (trackingKey) => {
+        sessionAttachCleanupByKey.set(
+          trackingKey,
           vi.fn(async () => undefined),
         );
       },
@@ -289,10 +296,10 @@ describe('Windows Terminal exact Agent custody composition', () => {
             binaryPath,
         },
         happyHomeDir: configuration.happyHomeDir,
-        pidToTrackedSession,
-        pidToAwaiter,
-        pidToSpawnResultResolver,
-        pidToSpawnWebhookTimeout,
+        trackedSessionsByKey,
+        spawnAwaiterByKey,
+        spawnResultResolverByKey,
+        spawnWebhookTimeoutByKey,
         resolveCanonicalTrackedSessionId: () =>
           'session-wt-composed',
         onChildExited: vi.fn(),
@@ -303,10 +310,10 @@ describe('Windows Terminal exact Agent custody composition', () => {
       });
 
     await vi.waitFor(() => {
-      expect(pidToTrackedSession.has(8_888)).toBe(true);
+      expect(trackedSessionForSingleSessionProcess(trackedSessionsByKey, 8_888)).toBeDefined();
       expect(dispatchers).toHaveLength(1);
     });
-    const tracked = pidToTrackedSession.get(8_888)!;
+    const tracked = trackedSessionForSingleSessionProcess(trackedSessionsByKey, 8_888)!;
     const launched = tracked.windowsTerminalLaunchCustody!;
     expect(launched.argv).toEqual(expect.arrayContaining(['--resume', nativeResumeId]));
     agentExecutablePath = launched.executablePath;
@@ -315,10 +322,8 @@ describe('Windows Terminal exact Agent custody composition', () => {
       ...launched.argv,
     ]);
     const onWebhook = createOnHappySessionWebhook({
-      pidToTrackedSession,
-      pidToAwaiter,
-      spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid,
+      trackedSessionsByKey,
+      spawnAwaiterByKey,
       getParentPidFn: (pid) =>
         pid === 7_772 ? 7_771 : null,
       readProcessIdentityByPidFn: readAgentIdentity,
@@ -363,12 +368,12 @@ describe('Windows Terminal exact Agent custody composition', () => {
       .activateConnectedAccountSessionBindingOnCanonicalSession =
         activate;
     const unrelatedTracked: TrackedSession = {
-      pid: 7_771,
+      trackingKey: legacyPidSessionTrackingKey(7_771), pid: 7_771,
       startedBy: 'daemon',
     };
     const unrelatedAwaiter = vi.fn();
-    pidToTrackedSession.set(7_771, unrelatedTracked);
-    pidToAwaiter.set(7_771, unrelatedAwaiter);
+    trackedSessionsByKey.set(unrelatedTracked.trackingKey, unrelatedTracked);
+    spawnAwaiterByKey.set(unrelatedTracked.trackingKey, unrelatedAwaiter);
     const metadata: Metadata = {
       path: nativeRoot,
       host: 'windows-host',
@@ -388,9 +393,9 @@ describe('Windows Terminal exact Agent custody composition', () => {
         setTimeout(() => {
           reject(new Error(
             `Placeholder webhook stalled: tracked=${[
-              ...pidToTrackedSession.keys(),
+              ...trackedSessionsByKey.keys(),
             ].join(',')}, awaiters=${[
-              ...pidToAwaiter.keys(),
+              ...spawnAwaiterByKey.keys(),
             ].join(',')}`,
           ));
         }, 5_000);
@@ -417,7 +422,7 @@ describe('Windows Terminal exact Agent custody composition', () => {
         setTimeout(() => {
           reject(new Error(
             `Webhook stalled: pidKeys=${[
-              ...pidToTrackedSession.keys(),
+              ...trackedSessionsByKey.keys(),
             ].join(',')}, persisted=${
               persistedMarkerCustody ? 'yes' : 'no'
             }`,
@@ -429,20 +434,20 @@ describe('Windows Terminal exact Agent custody composition', () => {
       unrelatedTracked,
     );
     expect(unrelatedTracked.sessionRunnerPid).toBe(7_772);
-    pidToTrackedSession.delete(7_771);
+    trackedSessionsByKey.delete(unrelatedTracked.trackingKey);
     const spawnResult = await Promise.race([
       spawnPromise,
       new Promise<never>((_resolve, reject) => {
         setTimeout(() => {
           reject(new Error(
             `Spawn result stalled: tracked=${[
-              ...pidToTrackedSession.keys(),
+              ...trackedSessionsByKey.keys(),
             ].join(',')}, awaiters=${[
-              ...pidToAwaiter.keys(),
+              ...spawnAwaiterByKey.keys(),
             ].join(',')}, resolvers=${[
-              ...pidToSpawnResultResolver.keys(),
+              ...spawnResultResolverByKey.keys(),
             ].join(',')}, timeouts=${[
-              ...pidToSpawnWebhookTimeout.keys(),
+              ...spawnWebhookTimeoutByKey.keys(),
             ].join(',')}`,
           ));
         }, 5_000);
@@ -456,11 +461,14 @@ describe('Windows Terminal exact Agent custody composition', () => {
     expect(activate).toHaveBeenCalledWith(
       'session-wt-composed',
     );
-    expect(pidToTrackedSession.has(8_888)).toBe(false);
-    expect(pidToTrackedSession.get(9_999)).toBe(tracked);
+    // The Session keeps its key; only its hosting pid moved to the agent.
+    expect(trackedSessionsForProcess(trackedSessionsByKey, 8_888)).toHaveLength(0);
+    expect(trackedSessionsByKey.get(tracked.trackingKey)).toBe(tracked);
+    expect(tracked.pid).toBe(9_999);
     const markers = await listSessionMarkers();
     expect(markers).toHaveLength(1);
     expect(markers[0]).toEqual(expect.objectContaining({
+      trackingKey: tracked.trackingKey,
       pid: 9_999,
       happySessionId: 'session-wt-composed',
       processStartTimeMs: 2_000,
@@ -470,8 +478,12 @@ describe('Windows Terminal exact Agent custody composition', () => {
     }));
     dispatchers[0]!.stdout?.emit('data', Buffer.from('8889\n'));
     dispatchers[0]!.emit('close', 0, null);
+    // Readiness starts the ordinary report-marker write detached; exit
+    // retirement awaits it before removing the marker, so this hand-rolled
+    // retirement must too.
+    await tracked.reportMarkerCustody?.pending;
     await removeSessionMarkerIfOwned({
-      pid: markers[0]!.pid,
+      trackingKey: markers[0]!.trackingKey,
       happySessionId:
         markers[0]!.happySessionId,
       processCommandHash:
@@ -480,9 +492,9 @@ describe('Windows Terminal exact Agent custody composition', () => {
         markers[0]!.processStartTimeMs,
       isStillOwned: () => true,
     });
-    pidToTrackedSession.delete(9_999);
-    spawnResourceCleanupByPid.delete(9_999);
-    sessionAttachCleanupByPid.delete(9_999);
+    untrackSession(trackedSessionsByKey, tracked);
+    spawnResourceCleanupByKey.delete(tracked.trackingKey);
+    sessionAttachCleanupByKey.delete(tracked.trackingKey);
     persistedMarkerCustody = null;
 
     let releaseMarkerPersistence!: () => void;
@@ -499,7 +511,9 @@ describe('Windows Terminal exact Agent custody composition', () => {
     );
     const timeoutOnChildExited = vi.fn(
       async (pid: number) => {
-        pidToTrackedSession.delete(pid);
+        for (const hosted of trackedSessionsForProcess(trackedSessionsByKey, pid)) {
+          untrackSession(trackedSessionsByKey, hosted);
+        }
       },
     );
     const timeoutSpawnPromise =
@@ -537,10 +551,10 @@ describe('Windows Terminal exact Agent custody composition', () => {
             binaryPath,
         },
         happyHomeDir: configuration.happyHomeDir,
-        pidToTrackedSession,
-        pidToAwaiter,
-        pidToSpawnResultResolver,
-        pidToSpawnWebhookTimeout,
+        trackedSessionsByKey,
+        spawnAwaiterByKey,
+        spawnResultResolverByKey,
+        spawnWebhookTimeoutByKey,
         resolveCanonicalTrackedSessionId: () =>
           'session-wt-timeout-composed',
         onChildExited: timeoutOnChildExited,
@@ -571,13 +585,13 @@ describe('Windows Terminal exact Agent custody composition', () => {
         },
       });
     await vi.waitFor(() => {
-      expect(pidToTrackedSession.has(8_888))
-        .toBe(true);
-      expect(pidToSpawnResultResolver.get(8_888))
+      const hosted = trackedSessionForSingleSessionProcess(trackedSessionsByKey, 8_888);
+      expect(hosted).toBeDefined();
+      expect(spawnResultResolverByKey.get(hosted!.trackingKey))
         .toEqual(expect.any(Function));
     });
     const timeoutTracked =
-      pidToTrackedSession.get(8_888)!;
+      trackedSessionForSingleSessionProcess(trackedSessionsByKey, 8_888)!;
     const timeoutLaunched = timeoutTracked.windowsTerminalLaunchCustody!;
     agentExecutablePath = timeoutLaunched.executablePath;
     agentCommand = serializeWindowsCommandLine([
@@ -613,7 +627,7 @@ describe('Windows Terminal exact Agent custody composition', () => {
     });
     timeoutTracked.sessionWebhookTimedOutAtMs =
       Date.now();
-    pidToSpawnResultResolver.get(8_888)?.({
+    spawnResultResolverByKey.get(timeoutTracked.trackingKey)?.({
       type: 'error',
       errorCode: 'SESSION_WEBHOOK_TIMEOUT',
       errorMessage:
@@ -633,7 +647,7 @@ describe('Windows Terminal exact Agent custody composition', () => {
       .toHaveBeenCalledOnce();
     expect(timeoutOnChildExited)
       .toHaveBeenCalledOnce();
-    expect(pidToTrackedSession.has(8_888))
+    expect(trackedSessionsByKey.has(timeoutTracked.trackingKey))
       .toBe(false);
     expect(await listSessionMarkers())
       .toHaveLength(0);

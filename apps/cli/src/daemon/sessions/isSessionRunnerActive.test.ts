@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { TrackedSession } from '../types';
 import { isSessionRunnerActive, probeSessionRunnerPresence, probeSessionRunnerServiceability, resolveSessionRunnerResumeDecision } from './isSessionRunnerActive';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('probeSessionRunnerServiceability', () => {
   it('waits for a live runner whose exact controls fail during resume', () => {
@@ -16,7 +17,7 @@ describe('probeSessionRunnerServiceability', () => {
   });
 
   it('retains live process presence when exact-session controls are unservable', async () => {
-    const tracked: TrackedSession = { startedBy: 'daemon', pid: 456, happySessionId: 'sess_1' };
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(456), startedBy: 'daemon', pid: 456, happySessionId: 'sess_1' };
     await expect(probeSessionRunnerServiceability({
       sessionId: 'sess_1', trackedSessions: [tracked],
       readProcessRunState: async () => 'servable',
@@ -26,7 +27,7 @@ describe('probeSessionRunnerServiceability', () => {
   });
 
   it('does not prove runner absence from a stopped process or unreadable runner lock', async () => {
-    const tracked: TrackedSession = { startedBy: 'daemon', pid: 456, happySessionId: 'sess_1' };
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(456), startedBy: 'daemon', pid: 456, happySessionId: 'sess_1' };
     await expect(probeSessionRunnerServiceability({
       sessionId: 'sess_1', trackedSessions: [tracked],
       readProcessRunState: async () => 'stopped',
@@ -97,7 +98,7 @@ describe('probeSessionRunnerServiceability', () => {
 describe('isSessionRunnerActive', () => {
   it.each(['state', 'identity'] as const)('fences a newer runner report received during the OS %s read', async (read) => {
     const tracked: TrackedSession = {
-      pid: 456, sessionRunnerPid: 457, startedBy: 'daemon', happySessionId: 'sess-overlap',
+      trackingKey: legacyPidSessionTrackingKey(456), pid: 456, sessionRunnerPid: 457, startedBy: 'daemon', happySessionId: 'sess-overlap',
       runnerProcessIdentity: { pid: 457, processStartTimeMs: 2000, processCommandHash: 'a'.repeat(64) },
     };
     let releaseRead!: () => void;
@@ -127,7 +128,7 @@ describe('isSessionRunnerActive', () => {
     const wrapperPid = 456;
     const runnerPid = 457;
     const tracked: TrackedSession = {
-      pid: wrapperPid, sessionRunnerPid: runnerPid, startedBy: 'daemon', happySessionId: 'sess-wrapper',
+      trackingKey: legacyPidSessionTrackingKey(wrapperPid), pid: wrapperPid, sessionRunnerPid: runnerPid, startedBy: 'daemon', happySessionId: 'sess-wrapper',
       processStartTimeMs: 1000,
       ...(evidence === 'unpaired' ? {} : {
         runnerProcessIdentity: { pid: evidence === 'previous_runner' ? 458 : runnerPid, processStartTimeMs: 2000, processCommandHash: 'a'.repeat(64) },
@@ -224,7 +225,7 @@ describe('isSessionRunnerActive', () => {
 
   it('treats a tracked session PID as active when it matches the session id', async () => {
     const tracked: TrackedSession = {
-      startedBy: 'daemon',
+      trackingKey: legacyPidSessionTrackingKey(456), startedBy: 'daemon',
       pid: 456,
       happySessionId: 'sess_1',
     };
@@ -239,7 +240,7 @@ describe('isSessionRunnerActive', () => {
 
   it('does not treat command drift as PID reuse for a legacy tracked session', async () => {
     const tracked: TrackedSession = {
-      startedBy: 'daemon',
+      trackingKey: legacyPidSessionTrackingKey(456), startedBy: 'daemon',
       pid: 456,
       happySessionId: 'sess_1',
       processCommandHash: 'a'.repeat(64),
@@ -255,7 +256,7 @@ describe('isSessionRunnerActive', () => {
 
   it('treats a tracked session PID as inactive when process generation proves PID reuse', async () => {
     const tracked: TrackedSession = {
-      startedBy: 'daemon', pid: 456, happySessionId: 'sess_1', processStartTimeMs: 1_000,
+      trackingKey: legacyPidSessionTrackingKey(456), startedBy: 'daemon', pid: 456, happySessionId: 'sess_1', processStartTimeMs: 1_000,
     };
     const res = await isSessionRunnerActive({
       sessionId: 'sess_1', trackedSessions: [tracked],
@@ -268,7 +269,7 @@ describe('isSessionRunnerActive', () => {
 
   it('treats a STOPPED tracked session PID as inactive even with a live child handle', async () => {
     const tracked: TrackedSession = {
-      startedBy: 'daemon',
+      trackingKey: legacyPidSessionTrackingKey(456), startedBy: 'daemon',
       pid: 456,
       happySessionId: 'sess_1',
       // Boundary fixture: only `pid` is read from the ChildProcess handle in this path.

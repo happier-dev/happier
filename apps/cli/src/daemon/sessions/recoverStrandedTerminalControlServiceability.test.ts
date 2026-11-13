@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 import type { TerminalHostAdapter } from '@happier-dev/agents';
 import axios from 'axios';
 import { withConfiguredDaemonTestHome } from '../testkit/fakeDaemonLifecycle.testkit';
@@ -75,7 +76,7 @@ describe('recoverStrandedTerminalControlServiceability', () => {
         const metadata = state === 'unproven' ? base : await retireObservedSessionRunnerMetadata({
           metadata: { ...base, hostPid: 999_123_456, hostProcessStartTimeMs: 1, lifecycleState: 'running' },
           expectedRunner: { pid: 999_123_456, startTimeMs: 1 },
-          trackedSession: { pid: 999_123_456, startedBy: 'daemon' }, sessionId: 'session-1', happyHomeDir: homeDir,
+          trackedSession: { trackingKey: legacyPidSessionTrackingKey(999_123_456), pid: 999_123_456, startedBy: 'daemon' }, sessionId: 'session-1', happyHomeDir: homeDir,
         });
         const input = params({ evaluateLiveness: async () => ({ paneAlive: false, observedAt: 1 }), metadata });
         const raw = await input.fetchSession();
@@ -107,7 +108,7 @@ describe('recoverStrandedTerminalControlServiceability', () => {
             sharedMetadata: { version: 2 }, agentState: { version: 1 } } };
         });
         let retirementFailure = '';
-        const stop = createStopSession({ pidToTrackedSession: new Map(),
+        const stop = createStopSession({ trackedSessionsByKey: new Map(),
           recoverStrandedTerminalControlServiceability: recovery => recoverStrandedTerminalControlServiceability({
             ...input, ...recovery, fetchSession: async () => raw,
             retireExactTerminalControlServiceability: retirement => retireExactTerminalControlServiceability({

@@ -4,19 +4,20 @@ import { describe, expect, it } from 'vitest';
 
 import { createDaemonSessionHandoffMetadataBridge } from './createDaemonSessionHandoffMetadataBridge';
 import type { TrackedSession } from '../types';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('createDaemonSessionHandoffMetadataBridge', () => {
     it('resolves an attachment directory only for an exact currently hosted Happier Session', async () => {
         const tracked: TrackedSession = {
-            startedBy: 'daemon', pid: 301, happySessionId: 'session-a', vendorResumeId: 'vendor-a',
+            trackingKey: legacyPidSessionTrackingKey(301), startedBy: 'daemon', pid: 301, happySessionId: 'session-a', vendorResumeId: 'vendor-a',
             spawnOptions: {
                 directory: '/repo-session-a',
                 backendTarget: { kind: 'backend', backendId: 'claude', sourceKind: 'built_in' },
                 transcriptStorage: 'direct',
             },
         };
-        const pidToTrackedSession = new Map([[tracked.pid, tracked]]);
-        const bridge = createDaemonSessionHandoffMetadataBridge({ pidToTrackedSession, getMachineId: () => 'machine-a' });
+        const trackedSessionsByKey = new Map([[tracked.trackingKey, tracked]]);
+        const bridge = createDaemonSessionHandoffMetadataBridge({ trackedSessionsByKey, getMachineId: () => 'machine-a' });
         expect(bridge).toHaveProperty('resolveHostedSessionWorkingDirectory');
         // This owner gains the exact Session-only resolver before transfer consumers use it.
         const resolveDirectory = (bridge as unknown as Readonly<{
@@ -25,14 +26,14 @@ describe('createDaemonSessionHandoffMetadataBridge', () => {
         await expect(resolveDirectory('session-a')).resolves.toBe('/repo-session-a');
         await expect(resolveDirectory('vendor-a')).resolves.toBeNull();
         await expect(resolveDirectory('foreign-session')).resolves.toBeNull();
-        pidToTrackedSession.delete(tracked.pid);
+        trackedSessionsByKey.delete(legacyPidSessionTrackingKey(tracked.pid));
         await expect(resolveDirectory('session-a')).resolves.toBeNull();
     });
 
     it('reads the current machine id when loading current tracked-session metadata', async () => {
         let currentMachineId = 'machine-initial';
         const trackedSession: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(101), startedBy: 'daemon',
             pid: 101,
             happySessionId: 'sess-live-machine',
             vendorResumeId: 'vendor-live-machine',
@@ -52,7 +53,7 @@ describe('createDaemonSessionHandoffMetadataBridge', () => {
         };
 
         const bridge = createDaemonSessionHandoffMetadataBridge({
-            pidToTrackedSession: new Map([[trackedSession.pid, trackedSession]]),
+            trackedSessionsByKey: new Map([[trackedSession.trackingKey, trackedSession]]),
             getMachineId: () => currentMachineId,
         });
 
@@ -73,7 +74,7 @@ describe('createDaemonSessionHandoffMetadataBridge', () => {
         const opaqueVendorResumeId = ' provider-only-session\n';
         const opaqueSpawnResumeId = '\tspawn-only-session ';
         const providerOnlySession: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(202), startedBy: 'daemon',
             pid: 202,
             vendorResumeId: opaqueVendorResumeId,
             spawnOptions: {
@@ -91,7 +92,7 @@ describe('createDaemonSessionHandoffMetadataBridge', () => {
             },
         };
         const happierIdentifiedSession: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(203), startedBy: 'daemon',
             pid: 203,
             happySessionId: 'happier-session-id',
             happySessionMetadataFromLocalWebhook: {
@@ -106,7 +107,7 @@ describe('createDaemonSessionHandoffMetadataBridge', () => {
             },
         };
         const spawnResumeOnlySession: TrackedSession = {
-            startedBy: 'daemon',
+            trackingKey: legacyPidSessionTrackingKey(204), startedBy: 'daemon',
             pid: 204,
             spawnOptions: {
                 directory: '/repo-spawn-resume-only',
@@ -124,10 +125,10 @@ describe('createDaemonSessionHandoffMetadataBridge', () => {
             },
         };
         const bridge = createDaemonSessionHandoffMetadataBridge({
-            pidToTrackedSession: new Map([
-                [providerOnlySession.pid, providerOnlySession],
-                [happierIdentifiedSession.pid, happierIdentifiedSession],
-                [spawnResumeOnlySession.pid, spawnResumeOnlySession],
+            trackedSessionsByKey: new Map([
+                [providerOnlySession.trackingKey, providerOnlySession],
+                [happierIdentifiedSession.trackingKey, happierIdentifiedSession],
+                [spawnResumeOnlySession.trackingKey, spawnResumeOnlySession],
             ]),
             getMachineId: () => 'machine-current',
         });

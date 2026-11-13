@@ -16,6 +16,7 @@ import type { TrackedSession } from '../types';
 import { formatProcessOwnerTag, resolveProcessOwnerScopeKey } from '@/processes/ownerTag';
 import { spawn } from 'node:child_process';
 import { createHappierLinuxScopeName } from '../platform/linux/systemdUserResourceGovernor';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 it.skipIf(process.platform !== 'linux')('ends a fully departed owner without re-reading the whole machine to terminate nothing', async () => {
     const scope = '123456789abc';
@@ -80,9 +81,9 @@ it.skipIf(process.platform !== 'linux').each([
         childIdentity = { pid: child.pid, start: child.start };
         expect(child.ppid).not.toBe(parent.pid);
         expect(child.ownerTag).toBe(evidence === 'marker' ? ownerTag : undefined);
-        const tracked: TrackedSession = { pid: root.pid, processStartTimeMs: root.start.startTimeMs,
+        const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(root.pid), pid: root.pid, processStartTimeMs: root.start.startTimeMs,
             happySessionId: owner.sessionId, startedBy: 'daemon', childProcess: parent, linuxLaunchUnit: unit };
-        const sessions = new Map([[root.pid, tracked]]);
+        const sessions = new Map([[tracked.trackingKey, tracked]]);
         const runtime = createProcessOwnershipRuntime({ daemonScopeKey: scope, censusDependencies,
             listRoots: snapshot => listHappierProcessRoots({ snapshot, daemonScopeKey: scope,
                 trackedSessions: sessions.values(), endedRoots: retained }) });
@@ -91,7 +92,7 @@ it.skipIf(process.platform !== 'linux').each([
             retainEndedRoots: roots => { retained.push(...roots); }, firstPass: leftBehind.firstPass,
             systemBoundary: { censusDependencies,
                 kill: (pid, signal) => signalDenied && pid === childPid ? true : nativeKill(pid, signal) } });
-        const stop = createStopSession({ pidToTrackedSession: sessions, ownerRemainder: remainder,
+        const stop = createStopSession({ trackedSessionsByKey: sessions, ownerRemainder: remainder,
             readHostAttachmentState: async () => ({ status: 'absent' }),
             areTrackedRunnersExited: async () => parent.exitCode !== null || parent.signalCode !== null,
             waitForTrackedRunnersExit: async () => waitForProcessExit(root.pid, { timeoutMs: 2000 }) });
@@ -279,9 +280,9 @@ it.each(['exit', 'stop'] as const)('retires a Run-tagged native child with its c
             const result = await remainder.end(owner, captured);
             expect(result.outcomes).toContainEqual(expect.objectContaining({ pid: childPid, outcome: 'ended' }));
         } else {
-            const tracked: TrackedSession = { pid: native.pid, processStartTimeMs: native.start.startTimeMs,
+            const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(native.pid), pid: native.pid, processStartTimeMs: native.start.startTimeMs,
                 happySessionId: owner.sessionId, startedBy: 'daemon', ownerRemainderCapture: captured };
-            const stop = createStopSession({ pidToTrackedSession: new Map([[native.pid, tracked]]), ownerRemainder: remainder,
+            const stop = createStopSession({ trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]), ownerRemainder: remainder,
                 areTrackedRunnersExited: async () => true, waitForTrackedRunnersExit: async () => true });
             expect(await stop(owner.sessionId)).toEqual({ status: 'stopped' });
         }
@@ -300,9 +301,9 @@ it('keeps the Stop receipt incomplete when a captured child actually survives bo
     const initial = await readProcessCensus({ freshness: 'fresh', scope: 'all' });
     if (initial.status !== 'ok') throw new Error('Native census unavailable');
     const root = initial.rows.find(row => row.pid === parent.pid)!;
-    const tracked: TrackedSession = { pid: root.pid, processStartTimeMs: root.start.startTimeMs,
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(root.pid), pid: root.pid, processStartTimeMs: root.start.startTimeMs,
         happySessionId: sessionId, startedBy: 'daemon', childProcess: parent };
-    const sessions = new Map([[root.pid, tracked]]);
+    const sessions = new Map([[tracked.trackingKey, tracked]]);
     const runtime = createProcessOwnershipRuntime({ daemonScopeKey: '123456789abc',
         listRoots: snapshot => listHappierProcessRoots({ snapshot, trackedSessions: sessions.values() }) });
     const leftBehind = createLeftBehindPass({ processOwnershipRuntime: runtime });
@@ -322,7 +323,7 @@ it('keeps the Stop receipt incomplete when a captured child actually survives bo
         expect(nativeKill(childPid, 0)).toBe(true);
         const physicallyExited = async ({ trackedPids }: Readonly<{ trackedPids: readonly number[] }>) =>
             await waitForTrackedRunnerProcessesExit({ runners: trackedPids.map(pid => ({ pid })), timeoutMs: 0, pollIntervalMs: 0 });
-        const stop = createStopSession({ pidToTrackedSession: sessions, ownerRemainder: remainder,
+        const stop = createStopSession({ trackedSessionsByKey: sessions, ownerRemainder: remainder,
             areTrackedRunnersExited: physicallyExited, waitForTrackedRunnersExit: physicallyExited });
         await expect(stop(sessionId)).resolves.toMatchObject({ status: 'incomplete', reason: 'runner_signal_incomplete' });
     } finally {
@@ -616,3 +617,52 @@ it.each(['root', 'member', 'member_at_signal'] as const)('refuses a fence whose 
     expect(signals).toEqual([]);
     expect(rows.has(4100)).toBe(true);
 });
+
+it.skipIf(process.platform !== 'linux')('spares a crashed runner\'s held Agent tree while ending the rest of the owner, then ends it on the next end', async () => {
+    const scope = '123456789abc';
+    const owner = { kind: 'session', sessionId: `held-spare-${randomUUID()}` } as const;
+    const ownerTag = `v1.${scope}.session.${owner.sessionId}`;
+    // The runner leaves two owner-tagged trees: a holder with its Agent child, and an ordinary leftover.
+    const runner = spawn(process.execPath, ['-e', `
+        const { spawn } = require('node:child_process');
+        const env = { ...process.env, HAPPIER_PROCESS_OWNER: ${JSON.stringify(ownerTag)} };
+        const holder = spawn(process.execPath, ['-e', "const a = require('node:child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' }); process.stdout.write(String(a.pid) + '\\\\n'); setTimeout(() => {}, 60000)"],
+            { detached: true, stdio: ['ignore', 'pipe', 'ignore'], env });
+        const leftover = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { detached: true, stdio: 'ignore', env });
+        holder.stdout.once('data', agent => { process.stdout.write(JSON.stringify({ holder: holder.pid, agent: Number(String(agent).trim()), leftover: leftover.pid }) + '\\n'); holder.unref(); leftover.unref(); });
+    `], { stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, HAPPIER_PROCESS_OWNER: ownerTag } });
+    const line = await new Promise<string>(resolve => runner.stdout.once('data', chunk => resolve(String(chunk))));
+    const pids = JSON.parse(line) as { holder: number; agent: number; leftover: number };
+    const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    let leftBehind: ReturnType<typeof createLeftBehindPass> | undefined;
+    try {
+        const initial = await readProcessCensus({ freshness: 'fresh', scope: 'all' });
+        if (initial.status !== 'ok') throw new Error('Native census unavailable');
+        const root = initial.rows.find(row => row.pid === runner.pid)!;
+        const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(root.pid), pid: root.pid, processStartTimeMs: root.start.startTimeMs,
+            happySessionId: owner.sessionId, startedBy: 'daemon', childProcess: runner };
+        const sessions = new Map([[tracked.trackingKey, tracked]]);
+        const retained: HappierProcessRoot[] = [];
+        const runtime = createProcessOwnershipRuntime({ daemonScopeKey: scope,
+            listRoots: snapshot => listHappierProcessRoots({ snapshot, daemonScopeKey: scope,
+                trackedSessions: sessions.values(), endedRoots: retained }) });
+        leftBehind = createLeftBehindPass({ processOwnershipRuntime: runtime });
+        const remainder = createEndOwnerRemainder({ processOwnershipRuntime: runtime, daemonScopeKey: scope,
+            retainEndedRoots: roots => { retained.push(...roots); }, firstPass: leftBehind.firstPass });
+        // The runner crashes; its exit observation ends the owner remainder (onChildExited).
+        const capture = await remainder.capture(owner);
+        runner.kill('SIGKILL');
+        await once(runner, 'exit');
+        // Runner exit with a live held Agent: the leftover ends, the holder tree stays.
+        expect((await remainder.end(owner, capture, { spare: [pids.holder] })).status).toBe('complete');
+        expect(await waitForProcessExit(pids.leftover, { timeoutMs: 3000 })).toBe(true);
+        expect([alive(pids.holder), alive(pids.agent)]).toEqual([true, true]);
+        // Give-up (no respawn, Stop, startup failure): the next end has nothing spared.
+        expect((await remainder.end(owner)).status).toBe('complete');
+        expect(await waitForProcessExit(pids.holder, { timeoutMs: 3000 })).toBe(true);
+        expect(await waitForProcessExit(pids.agent, { timeoutMs: 3000 })).toBe(true);
+    } finally {
+        leftBehind?.dispose();
+        for (const pid of Object.values(pids)) { try { process.kill(pid, 'SIGKILL'); } catch { /* already ended */ } }
+    }
+}, 60_000);

@@ -6,9 +6,10 @@ import type { SessionHandoffLocalMetadataSource } from '@/session/handoff/metada
 
 import { buildHandoffSessionMetadataFromTrackedSession } from './buildHandoffSessionMetadataFromTrackedSession';
 import type { TrackedSession } from '../types';
+import type { TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 function resolveTrackedSessionForHandoff(
-  pidToTrackedSession: Map<number, TrackedSession>,
+  trackedSessionsByKey: TrackedSessionMap,
   sessionId: string,
   allowProviderResumeIds = true,
 ): TrackedSession | null {
@@ -18,7 +19,7 @@ function resolveTrackedSessionForHandoff(
   }
   const happierSessionId = sessionId.trim();
 
-  for (const trackedSession of pidToTrackedSession.values()) {
+  for (const trackedSession of trackedSessionsByKey.values()) {
     const trackedHappierSessionId = trackedSession.happySessionId?.trim() ?? '';
     if (trackedHappierSessionId && trackedHappierSessionId === happierSessionId) {
       return trackedSession;
@@ -37,12 +38,12 @@ function resolveTrackedSessionForHandoff(
 }
 
 export function createResolveHostedSessionWorkingDirectory(params: Readonly<{
-  pidToTrackedSession: Map<number, TrackedSession>;
+  trackedSessionsByKey: TrackedSessionMap;
   getMachineId: () => string;
 }>): (sessionId: string) => Promise<string | null> {
   const fallbackHomeDir = os.homedir();
   return async (sessionId) => {
-    const trackedSession = resolveTrackedSessionForHandoff(params.pidToTrackedSession, sessionId, false);
+    const trackedSession = resolveTrackedSessionForHandoff(params.trackedSessionsByKey, sessionId, false);
     if (!trackedSession) return null;
     const machineId = params.getMachineId();
     const metadata = await buildHandoffSessionMetadataFromTrackedSession({ trackedSession, machineId, fallbackHomeDir });
@@ -56,13 +57,13 @@ export function createResolveHostedSessionWorkingDirectory(params: Readonly<{
 }
 
 export function createLoadLocalSessionMetadataForHandoff(params: Readonly<{
-  pidToTrackedSession: Map<number, TrackedSession>;
+  trackedSessionsByKey: TrackedSessionMap;
   getMachineId: () => string;
 }>): (sessionId: string) => Promise<SessionHandoffLocalMetadataSource | null> {
   const fallbackHomeDir = os.homedir();
 
   return async (sessionId: string): Promise<SessionHandoffLocalMetadataSource | null> => {
-    const trackedSession = resolveTrackedSessionForHandoff(params.pidToTrackedSession, sessionId);
+    const trackedSession = resolveTrackedSessionForHandoff(params.trackedSessionsByKey, sessionId);
     if (!trackedSession) {
       return null;
     }

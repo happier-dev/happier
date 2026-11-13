@@ -12,6 +12,7 @@ import {
   awaitTrackedRunnerAgentSessionOpen,
   recordTrackedRunnerAgentSessionOpenAttestation,
 } from './runnerAgentSessionOpenAttestation';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 function createFixture() {
   const runner = {
@@ -40,7 +41,7 @@ function createFixture() {
     loadMode: 'immutable-js',
   });
   const tracked: TrackedSession = {
-    startedBy: 'daemon',
+    trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon',
     pid: runner.pid,
     happySessionId: 'session-child',
     runnerAgentSourceCustodyV1: binding.sourceCustody,
@@ -284,7 +285,7 @@ describe('runner-owned Agent session-open attestation', () => {
       providerSessionId: null,
     });
     expect(updateMarker).toHaveBeenCalledOnce();
-    expect(updateMarker).toHaveBeenCalledWith(expect.objectContaining({ pid: runner.pid }));
+    expect(updateMarker).toHaveBeenCalledWith(expect.objectContaining({ trackingKey: tracked.trackingKey }));
     await expect(awaitTrackedRunnerAgentSessionOpen({
       getTrackedSessions: () => [tracked],
       sessionId: 'session-child',
@@ -331,7 +332,7 @@ describe('runner-owned Agent session-open attestation', () => {
       providerSessionId: 'provider-child',
     });
     expect(updateMarker).toHaveBeenCalledWith({
-      pid: 4321,
+      trackingKey: legacyPidSessionTrackingKey(4321),
       sessionId: 'session-child',
       authorityFilePath: '/private/current-authority.json',
       attestation,
@@ -392,7 +393,7 @@ describe('runner-owned Agent session-open attestation', () => {
       providerSessionId: 'provider-child',
     });
     expect(updateMarker).toHaveBeenCalledWith({
-      pid: runner.pid,
+      trackingKey: legacyPidSessionTrackingKey(runner.pid),
       sessionId: request.sessionId,
       authorityFilePath: '/private/current-authority.json',
       attestation: {

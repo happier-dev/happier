@@ -12,6 +12,7 @@ import {
   type ConnectedServiceRetainedMaterializationKeysResult,
   type ConnectedServiceRetainedMaterializedHomeSanitizer,
 } from './ConnectedServiceMaterializedHomeCleanupScheduler';
+import type { ReadonlyTrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 function readIdentityId(identity: ConnectedServiceMaterializationIdentityV1 | null): string | null {
   const id = typeof identity?.id === 'string' ? identity.id.trim() : '';
@@ -36,7 +37,7 @@ export async function isConnectedServiceMaterializedHomeRetainedOnExit(input: Re
 export function createConnectedServiceMaterializedHomeCleanupScheduler(params: Readonly<{
   baseDir: string;
   isolationBaseDir?: string;
-  pidToTrackedSession: ReadonlyMap<number, TrackedSession>;
+  trackedSessionsByKey: ReadonlyTrackedSessionMap;
   nowMs?: () => number;
   getRetainedMaterializationKeys?: () => Promise<ConnectedServiceRetainedMaterializationKeysResult> | ConnectedServiceRetainedMaterializationKeysResult;
   sanitizeRetainedMaterializedHome?: ConnectedServiceRetainedMaterializedHomeSanitizer;
@@ -52,7 +53,7 @@ export function createConnectedServiceMaterializedHomeCleanupScheduler(params: R
       : {}),
     getLiveMaterializationKeys: () => {
       const keys: string[] = [];
-      for (const tracked of params.pidToTrackedSession.values()) {
+      for (const tracked of params.trackedSessionsByKey.values()) {
         const key = readTrackedMaterializationKey(tracked);
         if (key) keys.push(key);
       }

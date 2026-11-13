@@ -6,6 +6,7 @@ import type { TrackedSession } from '@/daemon/types';
 import { spawnInlineNodeParentWithChild, waitForProcessExit } from '@/testkit/process/spawn';
 
 import { createOnHappySessionWebhook } from './onHappySessionWebhook';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 function createMetadata(pid: number, startedBy: 'daemon' | 'terminal'): Metadata {
   return {
@@ -35,15 +36,15 @@ describe('createOnHappySessionWebhook (PPID correlation)', () => {
     }
 
     try {
-      const pidToTrackedSession = new Map<number, TrackedSession>([
-        [wrapperPid, { startedBy: 'daemon', pid: wrapperPid }],
+      const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>([
+        [legacyPidSessionTrackingKey(wrapperPid), { trackingKey: legacyPidSessionTrackingKey(wrapperPid), startedBy: 'daemon', pid: wrapperPid }],
       ]);
       const awaiter = vi.fn();
-      const pidToAwaiter = new Map<number, (session: TrackedSession) => void>([[wrapperPid, awaiter]]);
+      const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>([[legacyPidSessionTrackingKey(wrapperPid), awaiter]]);
 
       const onWebhook = createOnHappySessionWebhook({
-        pidToTrackedSession,
-        pidToAwaiter,
+        trackedSessionsByKey,
+        spawnAwaiterByKey,
         findHappyProcessByPidFn: async () => null,
         writeSessionMarkerFn: async () => {},
       });
@@ -51,8 +52,8 @@ describe('createOnHappySessionWebhook (PPID correlation)', () => {
       await onWebhook('session-child-1', createMetadata(childPid, 'daemon'));
 
       expect(awaiter).toHaveBeenCalledTimes(1);
-      expect(pidToAwaiter.has(wrapperPid)).toBe(false);
-      expect(pidToTrackedSession.get(wrapperPid)?.happySessionId).toBe('session-child-1');
+      expect(spawnAwaiterByKey.has(legacyPidSessionTrackingKey(wrapperPid))).toBe(false);
+      expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(wrapperPid))?.happySessionId).toBe('session-child-1');
     } finally {
       try {
         process.kill(childPid, 'SIGKILL');

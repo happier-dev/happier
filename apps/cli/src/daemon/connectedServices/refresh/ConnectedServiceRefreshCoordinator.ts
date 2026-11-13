@@ -795,6 +795,7 @@ export class ConnectedServiceRefreshCoordinator {
     /** Absent for a configured backend target, which has no catalog Agent identity. */
     agentId: CatalogAgentId | null;
     sessionId?: string | null;
+    spawnTrackingKey?: string;
     materializationKey: string;
     connectedServicesBindingsRaw: unknown;
     connectedServiceSelectionsEnv?: Pick<NodeJS.ProcessEnv, string> | null;
@@ -806,6 +807,7 @@ export class ConnectedServiceRefreshCoordinator {
       sessionId: typeof params.sessionId === 'string' && params.sessionId.trim().length > 0
         ? params.sessionId.trim()
         : null,
+      ...(params.spawnTrackingKey ? { spawnTrackingKey: params.spawnTrackingKey } : {}),
       materializationKey: params.materializationKey,
       connectedServicesBindingsRaw: params.connectedServicesBindingsRaw,
       ...(params.connectedServiceSelectionsEnv

@@ -38,6 +38,7 @@ import {
 } from './clearTrackedRunnerAgentDaemonServiceAdmission';
 import { resolveTrackedSessionRunnerIdentity } from '../sessions/sessionReportCorrelation';
 import type { ConnectedServiceMaterializedStateObservationBinding } from '../connectedServices/materialization/materializer';
+import { trackedSessionForSingleSessionProcess, type ReadonlyTrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 function clearPromotedAuthorityIfExact(input: Readonly<{
   tracked: TrackedSession;
@@ -81,7 +82,7 @@ export async function promoteForegroundDaemonServiceAuthority(input: Readonly<{
   publicReleaseRing: Parameters<
     typeof readAgentRuntimeDaemonServiceAuthorityForVerifiedMarker
   >[0]['publicReleaseRing'];
-  trackedSessions: ReadonlyMap<number, TrackedSession>;
+  trackedSessions: ReadonlyTrackedSessionMap;
   canonicalSessionId: string;
   foregroundPid: number;
   authorityFilePath: string;
@@ -108,7 +109,7 @@ export async function promoteForegroundDaemonServiceAuthority(input: Readonly<{
   ) => Promise<boolean>;
 }>): Promise<boolean> {
   const tracked =
-    input.trackedSessions.get(input.foregroundPid)
+    trackedSessionForSingleSessionProcess(input.trackedSessions, input.foregroundPid)
     ?? [...input.trackedSessions.values()].find((candidate) =>
       candidate.happySessionId === input.canonicalSessionId
       && (
@@ -226,6 +227,7 @@ export async function promoteForegroundDaemonServiceAuthority(input: Readonly<{
       ?? clearSessionMarkerAgentRuntimeDaemonServicePromotionIfOwned
     )({
       pid: input.foregroundPid,
+      trackingKey: tracked.trackingKey,
       sessionId: input.canonicalSessionId,
       processCommandHash: runner.processCommandHash,
       processStartTimeMs: runner.processStartTimeMs,
@@ -265,6 +267,7 @@ export async function promoteForegroundDaemonServiceAuthority(input: Readonly<{
     ?? updateSessionMarkerAgentRuntimeDaemonServiceAuthorityPath
   )({
     pid: input.foregroundPid,
+    trackingKey: tracked.trackingKey,
     sessionId: input.canonicalSessionId,
     processCommandHash: runner.processCommandHash,
     processStartTimeMs: runner.processStartTimeMs,
@@ -309,6 +312,7 @@ export async function promoteForegroundDaemonServiceAuthority(input: Readonly<{
         ?? updateSessionMarkerRunnerAgentSourceCustody
       )({
         pid: input.foregroundPid,
+        trackingKey: tracked.trackingKey,
         sessionId: input.canonicalSessionId,
         processCommandHash: runner.processCommandHash,
         processStartTimeMs: runner.processStartTimeMs,
@@ -323,6 +327,7 @@ export async function promoteForegroundDaemonServiceAuthority(input: Readonly<{
         ?? updateSessionMarkerRunnerManagedDependencyRetention
       )({
         pid: input.foregroundPid,
+        trackingKey: tracked.trackingKey,
         sessionId: input.canonicalSessionId,
         processCommandHash: runner.processCommandHash,
         processStartTimeMs: runner.processStartTimeMs,

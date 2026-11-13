@@ -48,6 +48,7 @@ import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorizatio
 import { registerDaemonMachineGuardRpcHandlers } from '@/rpc/handlers/daemonMachineGuard';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/socketRpc';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
 beforeAll(async () => { runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
@@ -160,7 +161,7 @@ describe('daemon Guard composition at the real minute, Activity and summary owne
         }); await sampler.start(); cleanup.push(() => sampler.stop());
         const summary = createMachineResourceSummary({ sampler, nowMs: Date.now, readNearlyFull: () => null,
             onError: error => { throw error; } }); cleanup.push(() => summary.stop());
-        const workspaceSession: TrackedSession = { pid: idleSession ? 1001 : 2001, happySessionId: 'workspace-session',
+        const workspaceSession: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(idleSession ? 1001 : 2001), pid: idleSession ? 1001 : 2001, happySessionId: 'workspace-session',
             processStartTimeMs: 123450, startedBy: 'daemon', spawnOptions: { directory: '/project/nested' },
             ...(recipientAccountId ? { requesterWorkAttributionV1: { ...target, accountId: recipientAccountId } } : {}) };
         const sessionProducer = createSessionLiveWorkProducer({

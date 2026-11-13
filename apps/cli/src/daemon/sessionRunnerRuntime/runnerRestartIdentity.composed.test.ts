@@ -6,6 +6,7 @@ import type { SessionProviderBindingMetadataV1 } from '@happier-dev/protocol/pro
 import { installSessionOpsNetworkBoundary } from '../../../../ui/sources/dev/testkit/harness/sessionOpsNetworkBoundary';
 import type { TrackedSession } from '../types';
 import { hashProcessCommand } from '../sessionRegistry';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 vi.mock('../../../../ui/sources/modal', async () =>
   (await import('../../../../ui/sources/dev/testkit/mocks/modal')).createModalModuleMock().module);
@@ -91,7 +92,7 @@ describe('wrapped runner status → UI provider restart → daemon signal custod
       displaySnapshot: { providerName: 'Gateway', connectionName: 'Work' } };
     const missingLauncherBirth = change === 'missing launcher birth' || change === 'missing launcher custody';
     const missingRunnerBirth = change === 'missing runner birth' || change === 'missing runner birth replaced';
-    const tracked: TrackedSession = { pid: 4242, startedBy: 'daemon', happySessionId: 's1',
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(4242), pid: 4242, startedBy: 'daemon', happySessionId: 's1',
       processCommandHash: change === 'missing launcher custody' ? undefined : hashProcessCommand('source-launcher'),
       processStartTimeMs: missingLauncherBirth ? undefined : 100, processCommand: 'source-launcher',
       spawnOptions: { directory: '/work', resume: 'thread-1', providerBindingMetadataV1: launchBinding,
@@ -123,7 +124,7 @@ describe('wrapped runner status → UI provider restart → daemon signal custod
           requestRestart: input => {
             recoveryOptions = input.transientSpawnOptions;
             return requestPlannedRunnerRestart({ ...input, deferral: { kind: 'none' },
-            restartRequestedPids: new Set(), pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+            restartRequestedSessions: new Set(), trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
             isProcessSafeToSignal: params => isPidSafeHappySessionProcess(params, { readProcessIdentityByPidFn: readIdentity }),
             captureRunnerRemainder: async () => {
               if (change === 'reused at signal') childBirth++;

@@ -44,8 +44,11 @@ import { logger } from '@/ui/logger';
 import { configuration } from '@/configuration';
 import { executeScmDiffSummaryClear } from '@happier-dev/protocol/scm';
 import { createScmReviewedMarksRecordPort } from '@happier-dev/protocol/scm/reviewedMarks';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const BACKEND_TARGET = { kind: 'backend' as const, backendId: 'codex', sourceKind: 'built_in' as const };
+/** The Session Agent changedRepository signs in: Auto stays on the Session's own Agent. */
+const READY_SESSION_TARGET = { kind: 'backend' as const, backendId: 'claude', sourceKind: 'built_in' as const };
 
 describe('executeScmDiffSummaryAction', () => {
     const directories: string[] = [];
@@ -462,12 +465,12 @@ describe('executeScmDiffSummaryAction', () => {
             }),
         });
         registerScmHandlers(rpc, fixture.rootPath, { machineId: 'generation-machine', actionExecutor: executor });
-        const tracked: TrackedSession = { pid: 4242, startedBy: 'daemon', happySessionId: sessionId,
+        const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(4242), pid: 4242, startedBy: 'daemon', happySessionId: sessionId,
             processStartTimeMs: 1, processCommandHash: 'fixture' };
-        const trackedSessions = new Map([[tracked.pid, tracked]]);
+        const trackedSessions = new Map([[tracked.trackingKey, tracked]]);
         const signals: number[] = [];
         const restart = () => requestPlannedRunnerRestart({ sessionId, tracked, deferral: { kind: 'none' },
-            restartRequestedPids: new Set(), pidToTrackedSession: trackedSessions,
+            restartRequestedSessions: new Set(), trackedSessionsByKey: trackedSessions,
             isProcessSafeToSignal: async () => true,
             canSignal: () => resolveTrackedSessionRunnerActivity(tracked, rpc.getActiveHandlerExecutions())?.reasonCode ?? true,
             requestSignal: async request => {

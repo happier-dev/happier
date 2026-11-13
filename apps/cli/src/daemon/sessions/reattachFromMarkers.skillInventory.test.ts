@@ -13,7 +13,7 @@ it('reports a malformed retained runner marker as unknown inventory rather than 
         const marker = join(home, 'tmp', 'daemon-sessions.preview', 'pid-424242.json');
         await mkdir(dirname(marker), { recursive: true });
         await writeFile(marker, '{unreadable');
-        const result = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession: new Map() });
+        const result = await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey: new Map() });
         expect(result.inventoryReliable).toBe(false);
     } finally {
         vi.unstubAllEnvs(); reloadConfiguration();

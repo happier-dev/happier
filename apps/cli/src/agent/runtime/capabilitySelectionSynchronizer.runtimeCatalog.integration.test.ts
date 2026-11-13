@@ -54,7 +54,7 @@ describe('capability refresh during real Run admission', () => {
                 ? { kind: 'connected_service_switch', source: 'automatic', policy: 'defer_until_idle',
                   target: { serviceId: 'fixture', profileId: 'profile', groupId: 'group', generation: 2 }, turnDeferralQueue: queue }
                 : { kind: 'none' },
-              restartRequestedPids: new Set(), pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+              restartRequestedSessions: new Set(), trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
               isProcessSafeToSignal: async () => {
                 if (!creating) {
                   armed = true;
@@ -159,8 +159,8 @@ describe('capability refresh during real Run admission', () => {
           const tracked = trackedSessions.find(child => child.happySessionId === session.sessionId && child.pid === process.pid);
           if (!tracked) throw new Error('Missing daemon-tracked fixture Session');
           const result = await requestPlannedRunnerRestart({ sessionId: session.sessionId, tracked,
-            reason: 'capability_selection_change', deferral: { kind: 'none' }, restartRequestedPids: new Set(),
-            pidToTrackedSession: new Map([[tracked.pid, tracked]]), isProcessSafeToSignal: async () => true,
+            reason: 'capability_selection_change', deferral: { kind: 'none' }, restartRequestedSessions: new Set(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]), isProcessSafeToSignal: async () => true,
             prepareSignal: async () => {
               gateEntered();
               return await prepareSessionRunnerRestartAdmission({ expectedPid: tracked.pid, signal: restartSignal,

@@ -27,6 +27,7 @@ import { createMachineVitalsReader } from '../../vitals/createMachineVitalsReade
 import { createMinuteHistoryStore } from '../../vitals/history/minuteHistoryStore';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
 beforeAll(async () => { runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
@@ -45,7 +46,7 @@ async function fixture() {
   const actions: unknown[] = [];
   const log = await createActivityLog({ activeServerDir: dir, nowMs: () => now,
     resourceSummary: { reportAutomaticAction: action => { actions.push(action); } } });
-  const tracked: TrackedSession = { pid: 42, happySessionId: 'session', startedBy: 'daemon', processStartTimeMs: 20 };
+  const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(42), pid: 42, happySessionId: 'session', startedBy: 'daemon', processStartTimeMs: 20 };
   const unit = createHappierLinuxScopeName('v1.0123456789ab.session.session')!;
   tracked.linuxLaunchUnit = unit;
   let target: SessionMemoryCeilingTarget = { tracked, root: { owner: { kind: 'session', sessionId: 'session' }, pid: 42,

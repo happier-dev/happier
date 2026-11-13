@@ -31,6 +31,8 @@ import { ConnectedServiceRuntimeRegistry } from '@/daemon/connectedServices/runt
 import { admitRequesterSessionBootstrap, type RequesterSessionRuntimeContext } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { createRequesterSessionRuntimeContext } from '@/daemon/sessionEncryption/createRequesterSessionRuntimeContext';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import type { SpawnResourceCleanupByKey } from '@/daemon/sessions/cleanupSessionResources';
 
 const boundary = vi.hoisted(() => ({ control: null as Parameters<typeof startDaemonControlServer>[0] | null,
   resolveRunAuthority: null as ((request: SessionExecutionRunBrokerAuthorityRequestV1, signal?: AbortSignal) => SessionExecutionRunBrokerAuthorityResponseV1 | Promise<SessionExecutionRunBrokerAuthorityResponseV1>) | null,
@@ -93,7 +95,7 @@ export type AttachedManagedRunFixture = Readonly<{
   dispatchRequest(request: unknown, signal?: AbortSignal): Promise<AgentRuntimeDaemonServiceResponseV1>;
   context: AgentRuntimeDaemonServiceDispatchContext;
   tracked: TrackedSession;
-  spawnResourceCleanupByPid: Map<number, () => void | Promise<void>>;
+  spawnResourceCleanupByKey: SpawnResourceCleanupByKey;
   capabilityCleanupFilesystem: Readonly<{ refuse(): void; restore(): void; readBlockedPaths(): string[] }>;
   resolveRunReportPolicy: ReturnType<typeof createSessionRunReportPolicyReader>;
   requester: RequesterSessionRuntimeContext | null;
@@ -163,12 +165,12 @@ export async function createAttachedManagedRunFixture(input: Readonly<{ director
       modelSettingsMutation: async (): Promise<never> => { throw new Error('No settings mutation'); } });
     const retainedAgent = fixture.lease.registry.agentRuntimesByAgentId.get(fixture.agentId)?.sessionRunnerFactoryBinding;
     if (!retainedAgent) throw new Error('Expected genuine retained Agent');
-    const tracked: TrackedSession = { pid: process.pid, sessionRunnerPid: process.pid, startedBy: 'daemon', happySessionId: 'parent-session',
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, sessionRunnerPid: process.pid, startedBy: 'daemon', happySessionId: 'parent-session',
       spawnOptions: { directory: fixture.happyHomeDir, backendTarget: { kind: 'backend', backendId: fixture.agentId } },
       runnerAgentInvocationContext: { cwd: fixture.happyHomeDir, environment: {}, providerBindingActive: false },
       runnerAgentBootstrapIdentity: { agentId: fixture.agentId, backendId: fixture.agentId } };
-    const pidToTrackedSession = new Map([[tracked.pid, tracked]]);
-    const spawnResourceCleanupByPid = new Map<number, () => void | Promise<void>>();
+    const trackedSessionsByKey = new Map([[tracked.trackingKey, tracked]]);
+    const spawnResourceCleanupByKey: SpawnResourceCleanupByKey = new Map();
     const connectedServiceRuntimeRegistry = new ConnectedServiceRuntimeRegistry();
     preparationPhase = 'daemon control composition';
     daemon = await startDaemonSessionControlRuntime({ machineId: fixture.machineId, serverId: 'home', serverBaseUrl: 'https://home.test',
@@ -208,9 +210,9 @@ export async function createAttachedManagedRunFixture(input: Readonly<{ director
         stageTranscriptEvent: async () => ({ persisted: true, delivered: true }) },
       connectedServicesMaterializationBaseDir: join(fixture.happyHomeDir, 'connected-services'),
       getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-      pidToTrackedSession, pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
-      getApiMachineForSessions: () => null, spawnResourceCleanupByPid, sessionAttachCleanupByPid: new Map(),
-      connectedServicesRestartRequestedPids: new Set(), beforeShutdown: async () => {}, onHappySessionWebhook: async () => {},
+      trackedSessionsByKey, spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
+      getApiMachineForSessions: () => null, spawnResourceCleanupByKey, sessionAttachCleanupByKey: new Map(),
+      connectedServicesRestartRequestedSessions: new Set(), beforeShutdown: async () => {}, onHappySessionWebhook: async () => {},
       requestShutdown: () => {}, processEnv: { NODE_ENV: 'test' } });
     if (input.issuedRequester) {
       preparationPhase = 'requester bootstrap';
@@ -262,7 +264,7 @@ export async function createAttachedManagedRunFixture(input: Readonly<{ director
           machineId: fixture.machineId, machineIdProvider: () => fixture.machineId, runtimeId: 'issued-runtime', happyHomeDir: fixture.happyHomeDir,
           logger: { debug: () => {}, info: () => {}, warn: () => {} }, processEnv: { NODE_ENV: 'test',
             HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '0', HAPPIER_CONNECTED_SERVICES_QUOTAS_ENABLED: '0' },
-          pidToTrackedSession, connectedServiceRuntimeRegistry,
+          trackedSessionsByKey, connectedServiceRuntimeRegistry,
           connectedServiceAuthGroupPreTurnSwitchCoordinator: daemon.connectedServiceAuthGroupPreTurnSwitchCoordinator,
         } });
       if (!requester) throw new Error('Expected actual issued requester runtime');
@@ -276,7 +278,7 @@ export async function createAttachedManagedRunFixture(input: Readonly<{ director
     const runner = { pid: process.pid, processStartTimeMs: 1, processCommandHash: 'a'.repeat(64), snapshotIdentity: 'fixture-runner' };
     const context: Parameters<AgentRuntimeDaemonServiceRoutes['dispatch']>[1] = { sessionId: 'parent-session', runner, retainedAgent,
       invocationContext: tracked.runnerAgentInvocationContext!, trackedSession: tracked,
-      isCurrent: async () => pidToTrackedSession.get(tracked.pid) === tracked, signal };
+      isCurrent: async () => trackedSessionsByKey.get(tracked.trackingKey) === tracked, signal };
     const dispatchRequest = async (request: unknown, signal?: AbortSignal) => await service.dispatch(AgentRuntimeDaemonServiceRequestV1Schema.parse(request),
       signal ? { ...context, signal } : context);
     const dispatch = async (operation: unknown) => await dispatchRequest({ v: 1,
@@ -284,7 +286,7 @@ export async function createAttachedManagedRunFixture(input: Readonly<{ director
     const proof = { executionRunId: 'run-private', executionRunOccurrenceId: 'run-occurrence', agentId: fixture.agentId, modelId: 'example',
       runtimeBindingBasis: basis, expectedAccountSettingsScopeKey: requester?.readAccountSettingsSnapshot().scopeKey ?? snapshot.scopeKey };
     return { directory, fixture, runtime: daemon, control: boundary.control, attempt: authorization.attempt, authorization: authorization.attempt.authorization, credentials, snapshot, proof,
-      dispatch, dispatchRequest, context, tracked, spawnResourceCleanupByPid,
+      dispatch, dispatchRequest, context, tracked, spawnResourceCleanupByKey,
       capabilityCleanupFilesystem: {
         refuse: () => { boundary.refusedCapabilityRoot = join(directory, 'request-auth'); },
         restore: () => { boundary.refusedCapabilityRoot = ''; },

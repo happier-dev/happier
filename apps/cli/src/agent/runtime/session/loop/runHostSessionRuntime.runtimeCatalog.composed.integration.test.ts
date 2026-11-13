@@ -209,6 +209,7 @@ import {
   CONNECTED_SERVICE_APPLIED_PARENT_SELECTION_PATH,
   ConnectedServiceAppliedParentSelectionRequestSchema,
 } from '@/daemon/connectedServices/runs/materializeContract';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 vi.mock('@/api/session/client/transport/initializeSessionClientConnection', async importOriginal => {
   const actual = await importOriginal<typeof import('@/api/session/client/transport/initializeSessionClientConnection')>();
@@ -8663,7 +8664,7 @@ describe('runHostSessionRuntime', () => {
     try {
       const exitCode = reportSessionRunnerFailure(failure);
       expect(exitCode).toBe(1);
-      expect(manager.handleUnexpectedExit({ startedBy: 'daemon', pid: 111, happySessionId: harness.session.sessionId,
+      expect(manager.handleUnexpectedExit({ trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon', pid: 111, happySessionId: harness.session.sessionId,
         processStartTimeMs: 0, spawnOptions: { directory: '/tmp' } }, { reason: 'process-exit', code: exitCode, signal: null })).toBe('scheduled');
       await resumed.promise;
       expect(respawnedSessionIds).toEqual([harness.session.sessionId]);
@@ -11642,7 +11643,7 @@ describe('runHostSessionRuntime', () => {
         spawnSession: async () => { await start(); respawned = true; return { type: 'success' }; },
         onRespawnSuccess: () => recovery.resolve(),
         onRespawnTerminal: ({ reason }) => { terminal.push(reason); recovery.resolve(); }, random: () => 0, logDebug: () => {}, logWarn: () => {} });
-      manager.handleUnexpectedExit({ startedBy: 'daemon', pid: 111, happySessionId: 'session-1', processStartTimeMs: 0,
+      manager.handleUnexpectedExit({ trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon', pid: 111, happySessionId: 'session-1', processStartTimeMs: 0,
         spawnOptions: { directory: '/tmp' } }, { reason: 'process-exit', code: resolveSessionRunnerFailureExitCode(failureError), signal: null });
       await recovery.promise;
       if (status === 503) {

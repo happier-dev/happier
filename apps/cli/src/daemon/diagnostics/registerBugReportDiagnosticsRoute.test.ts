@@ -11,6 +11,7 @@ import { writeSessionMarker } from '@/daemon/sessionRegistry';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { registerBugReportDiagnosticsRoute } from './registerBugReportDiagnosticsRoute';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('local owner bug report diagnostics transport', () => {
   it('requires the owner token and invokes the admitted provider contribution for exactly the selected session', async () => {
@@ -21,7 +22,7 @@ describe('local owner bug report diagnostics transport', () => {
       await mkdir(directory, { recursive: true });
       await writeFile(join(directory, `rollout-2026-10-30T10-00-00-${vendorId}.jsonl`), 'SELECTED_PROVIDER_BODY');
       await writeFile(join(directory, 'unrelated.jsonl'), 'UNRELATED_PROVIDER_BODY');
-      await writeSessionMarker({ pid: 12345, happySessionId: 'selected-session', metadata: {
+      await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(12345), pid: 12345, happySessionId: 'selected-session', metadata: {
         flavor: 'codex', codexSessionId: vendorId,
         runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: { backendMode: 'appServer', providerSessionId: vendorId, homePath: providerHome } },
       } });

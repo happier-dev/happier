@@ -18,6 +18,7 @@ import { createEndOwnerRemainder } from '../processes/endOwnerRemainder';
 import { createLeftBehindPass } from '../processes/leftBehind/leftBehindPass';
 import type { HappierProcessRoot } from '../processes/ownership/types';
 import { createSessionStopOperationBarrier } from './sessionStopOperationBarrier';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe.skipIf(process.platform === 'win32')('native Session process Action intent', () => {
   it('lets the custodian kill a guest session through the real Action owner while actual exit retirement preserves final verification', async () => {
@@ -35,10 +36,10 @@ describe.skipIf(process.platform === 'win32')('native Session process Action int
     const capture = await captureProcessTree({ pid: root.pid! });
     if (capture.status !== 'ok') throw new Error(`fixture capture unavailable: ${capture.reason}`);
     const rootIdentity = capture.capturedTargets.find(row => row.pid === root.pid)!;
-    const tracked: TrackedSession = { pid: rootIdentity.pid, processStartTimeMs: rootIdentity.start.startTimeMs,
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(rootIdentity.pid), pid: rootIdentity.pid, processStartTimeMs: rootIdentity.start.startTimeMs,
       childProcess: root, startedBy: 'daemon', happySessionId: sessionId, activeTurnId: 'native-guest-turn',
       vendorResumeId: 'native-guest-vendor', spawnOptions: { directory: process.cwd() } };
-    const sessions = new Map([[tracked.pid, tracked]]);
+    const sessions = new Map([[tracked.trackingKey, tracked]]);
     let endedRoots: readonly HappierProcessRoot[] = [];
     const daemonScopeKey = resolveProcessOwnerScopeKey(configuration.happyHomeDir);
     const ownership = createProcessOwnershipRuntime({ daemonScopeKey,
@@ -58,17 +59,17 @@ describe.skipIf(process.platform === 'win32')('native Session process Action int
       captureMachineSessionTerminal: async () => ({ v: 1, status: 'already_inactive', sessionId } as const),
       finalizeMachineSessionTerminal: async () => { throw new Error('Inactive Session must not request terminal finalization'); },
     } satisfies Pick<ApiMachineClient, 'enqueueDaemonTerminalExactTurnEnd' | 'captureMachineSessionTerminal' | 'finalizeMachineSessionTerminal'>;
-    const onExit = createOnChildExited({ pidToTrackedSession: sessions, ownerRemainder, spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => machine,
+    const onExit = createOnChildExited({ trackedSessionsByKey: sessions, ownerRemainder, spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => machine,
       removeSessionMarkerFn: async () => undefined,
       onUnexpectedExit: (row, exit) => { respawn.handleUnexpectedExit(row, exit); } });
     const retirement = rootExit.then(async ([code, signal]) => {
       await onExit(tracked.pid, { reason: 'process-exited', code, signal });
     });
-    const lifecycle = createSessionProcessActionLifecycle({ pidToTrackedSession: sessions,
+    const lifecycle = createSessionProcessActionLifecycle({ trackedSessionsByKey: sessions,
       registerPhysicalStopEffect: createSessionStopOperationBarrier().registerPhysicalStopEffect,
       markStopRequested: respawn.markStopRequested, prepareStopIntent: async () => {},
-      stopSession: createStopSession({ pidToTrackedSession: sessions }) });
+      stopSession: createStopSession({ trackedSessionsByKey: sessions }) });
     const actions = createProcessActionExecutor({ ownership, leftBehind,
       requesterForOwner: owner => owner.kind === 'session' ? { accountId: 'guest' } : { accountId: 'custodian' },
       allProcessesVisible: () => false, prepareKill: lifecycle.prepareKill });
@@ -109,19 +110,19 @@ describe.skipIf(process.platform === 'win32')('native Session process Action int
     const runner = capture.capturedTargets.find(row => row.pid === runnerPid);
     const rootIdentity = capture.capturedTargets.find(row => row.pid === root.pid)!;
     if (!runner) throw new Error('native runner identity not captured');
-    const tracked: TrackedSession = { pid: runner.pid, processStartTimeMs: runner.start.startTimeMs,
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(runner.pid), pid: runner.pid, processStartTimeMs: runner.start.startTimeMs,
       startedBy: 'daemon', happySessionId: 'native-action-session', vendorResumeId: 'vendor-native',
       spawnOptions: { directory: process.cwd() } };
-    const sessions = new Map([[tracked.pid, tracked]]);
+    const sessions = new Map([[tracked.trackingKey, tracked]]);
     let spawned = 0;
     const respawn = createSessionRunnerRespawnManager({ enabled: true, maxRestarts: 2,
       baseDelayMs: 0, maxDelayMs: 0, jitterMs: 0, random: () => 0,
       isSessionAlreadyRunning: () => false, spawnSession: async () => { spawned++; return { type: 'success' }; },
       logDebug: () => {}, logWarn: () => {} });
-    const lifecycle = createSessionProcessActionLifecycle({ pidToTrackedSession: sessions,
+    const lifecycle = createSessionProcessActionLifecycle({ trackedSessionsByKey: sessions,
       registerPhysicalStopEffect: createSessionStopOperationBarrier().registerPhysicalStopEffect,
       markStopRequested: respawn.markStopRequested, prepareStopIntent: async () => {},
-      stopSession: createStopSession({ pidToTrackedSession: sessions }) });
+      stopSession: createStopSession({ trackedSessionsByKey: sessions }) });
     try {
       const stamp = await lifecycle.prepareKill({ targets: capture.capturedTargets });
       if (!stamp) throw new Error('native generation binding refused');

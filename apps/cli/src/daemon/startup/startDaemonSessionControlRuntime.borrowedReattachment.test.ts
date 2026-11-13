@@ -7,7 +7,7 @@ import { projectSessionOwnerCompatibilityViewV1 } from '@happier-dev/protocol';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createDeferred } from '@/testkit/async/deferred';
-import { readSessionMarkerForPid, writeSessionMarker } from '../sessionRegistry';
+import { readSessionMarker, writeSessionMarker } from '../sessionRegistry';
 import { buildTrackedSessionFromMarker } from '../sessions/trackedSessionFromMarker';
 import {
     readTerminalHostAttachmentInfo,
@@ -24,6 +24,7 @@ import { publishReportedTerminalControlServiceability } from './publishReportedT
 import { startDaemonControlServer } from '../controlServer';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
 import type { TrackedSession } from '../types';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const boundary = vi.hoisted(() => ({
     metadata: {} as Record<string, unknown>,
@@ -100,7 +101,7 @@ describe('startup borrowed-terminal reattachment', () => {
         envScope.patch({ HAPPIER_HOME_DIR: fixtureHome });
         reloadConfiguration();
         const pid = 2_147_482_910;
-        const tracked: TrackedSession = { pid, happySessionId: 'guest-process-stop', startedBy: 'daemon', processStartTimeMs: 100 };
+        const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: 'guest-process-stop', startedBy: 'daemon', processStartTimeMs: 100 };
         const stage = vi.fn(async () => {});
         const runtime = await startDaemonSessionControlRuntime({
             machineId: 'machine-guest-process-stop', serverId: configuration.activeServerId,
@@ -111,10 +112,10 @@ describe('startup borrowed-terminal reattachment', () => {
                 stageTranscriptEvent: async () => ({ persisted: true, delivered: false }), stage },
             connectedServicesMaterializationBaseDir: join(fixtureHome, 'connected-services'),
             getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: new Map([[pid, tracked]]), pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(),
-            pidToSpawnWebhookTimeout: new Map(), getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]), spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(),
+            spawnWebhookTimeoutByKey: new Map(), getApiMachineForSessions: () => null,
+            spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             startupTerminalRecovery: { disconnectedTerminalHostCandidates: [], unresolvedTerminalHostSessionIds: [] },
             beforeShutdown: async () => {}, onHappySessionWebhook: async () => {}, requestShutdown: () => {}, processEnv: {},
         });
@@ -166,10 +167,10 @@ describe('startup borrowed-terminal reattachment', () => {
                     happyLibDir: '/tmp/lib', happyToolsDir: '/tmp/tools', terminal };
                 boundary.metadata = metadata;
                 boundary.version = 1;
-                await writeSessionMarker({ pid, happySessionId: sessionId, startedBy: 'terminal', metadata });
-                const marker = await readSessionMarkerForPid(pid);
+                await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: sessionId, startedBy: 'terminal', metadata });
+                const marker = await readSessionMarker(legacyPidSessionTrackingKey(pid));
                 expect(marker).not.toBeNull();
-                const trackedSessions = new Map([[pid, buildTrackedSessionFromMarker({ marker: marker!,
+                const trackedSessions = new Map([[legacyPidSessionTrackingKey(pid), buildTrackedSessionFromMarker({ marker: marker!,
                     startedByFallback: 'reattached', reattachedFromDiskMarker: true })]]);
                 const runtime = await startDaemonSessionControlRuntime({
                     machineId: 'machine-retained-hooks', serverId: configuration.activeServerId,
@@ -180,10 +181,10 @@ describe('startup borrowed-terminal reattachment', () => {
                         stageTranscriptEvent: async () => ({ persisted: true, delivered: false }), stage: async () => {} },
                     connectedServicesMaterializationBaseDir: join(fixtureHome, 'connected-services'),
                     getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-                    pidToTrackedSession: trackedSessions, pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(),
-                    pidToSpawnWebhookTimeout: new Map(), getApiMachineForSessions: () => null,
-                    spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
-                    connectedServicesRestartRequestedPids: new Set(),
+                    trackedSessionsByKey: trackedSessions, spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(),
+                    spawnWebhookTimeoutByKey: new Map(), getApiMachineForSessions: () => null,
+                    spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
+                    connectedServicesRestartRequestedSessions: new Set(),
                     loadTerminalHostAdapters: async () => ({ herdr: createHerdrTerminalHostAdapter({
                         binary: '/fixture/herdr', sessionName: 'work', actionTimeoutMs: 1000, startupTimeoutMs: 1000,
                     }) }),
@@ -197,16 +198,16 @@ describe('startup borrowed-terminal reattachment', () => {
                     await expect(routes?.getSnapshot({ projection: 'managed_bindings', scope: 'workspace', workspaceRoot: '/unmounted-project' }))
                         .rejects.toMatchObject({ code: 'project_service_bindings_unavailable' });
                     await runtime.onChildExited(pid, { reason: 'process-exited', code: 1, signal: null });
-                    expect(trackedSessions.has(pid)).toBe(false);
+                    expect(trackedSessions.has(legacyPidSessionTrackingKey(pid))).toBe(false);
                     await hookRemoval.completion;
-                    await expect(readFile(secretFile, 'utf8')).resolves.toBe('retained-provider-secret');
+                    await expect(readFile(secretFile, 'utf8')).resolves.toBe(retainedSecret);
                     const replacement = await hooks.startServer({ providerId: 'claude', sessionId,
-                        lifecycle: { kind: 'session', sessionId }, sessionHookSecret: 'proposed-new-secret' });
+                        lifecycle: { kind: 'session', sessionId } });
                     try {
                         expect(replacement.port).toBe(oldPort);
                         expect(replacement.sessionHookSecretFile).toBe(secretFile);
                         const response = await fetch(`http://127.0.0.1:${replacement.port}/hook/session-start`, {
-                            method: 'POST', headers: { 'Content-Type': 'application/json', 'x-happier-hook-secret': 'retained-provider-secret' },
+                            method: 'POST', headers: { 'Content-Type': 'application/json', 'x-happier-hook-secret': retainedSecret },
                             body: JSON.stringify({ session_id: 'same-native-provider-id' }),
                         });
                         expect(response.status).toBe(200);
@@ -241,16 +242,16 @@ describe('startup borrowed-terminal reattachment', () => {
         };
         boundary.metadata = metadata;
         boundary.version = 1;
-        await writeSessionMarker({ pid, happySessionId: sessionId, startedBy: 'terminal', metadata });
-        const marker = await readSessionMarkerForPid(pid);
+        await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: sessionId, startedBy: 'terminal', metadata });
+        const marker = await readSessionMarker(legacyPidSessionTrackingKey(pid));
         expect(marker).not.toBeNull();
-        const trackedSessions = new Map([[pid, buildTrackedSessionFromMarker({
+        const trackedSessions = new Map([[legacyPidSessionTrackingKey(pid), buildTrackedSessionFromMarker({
             marker: marker!, startedByFallback: 'reattached', reattachedFromDiskMarker: true,
         })]]);
         // The canonical reported-attachment producer captures borrowed custody
         // while the exact descriptor still exists. Disk markers alone do not.
         await publishReportedTerminalControlServiceability({
-            tracked: trackedSessions.get(pid)!,
+            tracked: trackedSessions.get(legacyPidSessionTrackingKey(pid))!,
             readTerminalAttachmentInfo: async (id) => await readTerminalHostAttachmentInfo({ happyHomeDir: fixtureHome, sessionId: id }),
             probeSessionRunnerServiceability: async () => { throw new Error('Published serviceability needs no additional probe'); },
             publishSessionRunnerControlServiceability: async () => { throw new Error('Published serviceability needs no additional write'); },
@@ -264,11 +265,11 @@ describe('startup borrowed-terminal reattachment', () => {
             daemonSessionMutationCustody: { stageTranscriptMessage: async () => { throw new Error('Unexpected recording attachment in this fixture'); }, stageTranscriptEvent: async () => ({ persisted: true, delivered: false }), stage: async () => {} },
             connectedServicesMaterializationBaseDir: join(fixtureHome, 'connected-services'),
             getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-            pidToTrackedSession: trackedSessions, pidToAwaiter: new Map(),
-            pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+            trackedSessionsByKey: trackedSessions, spawnAwaiterByKey: new Map(),
+            spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
             getApiMachineForSessions: () => null,
-            spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
-            connectedServicesRestartRequestedPids: new Set(),
+            spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
+            connectedServicesRestartRequestedSessions: new Set(),
             loadTerminalHostAdapters: async () => ({ tmux: {
                 kind: 'tmux', createOrAttachHost: vi.fn(), injectUserPrompt: vi.fn(), interruptTurn: vi.fn(),
                 evaluateLiveness: async () => ({ paneAlive: true, observedAt: 1 }), dispose,
@@ -313,9 +314,9 @@ describe('startup borrowed-terminal reattachment', () => {
             else expect(boundary.metadata).toMatchObject({ terminal: { controlServiceabilityV1: {
                 attachmentId: attachment.attachmentId, retired: true, state: 'unknown', reason: 'attachment_retired',
             } } });
-            expect(await readSessionMarkerForPid(pid)).toBeNull();
+            expect(await readSessionMarker(legacyPidSessionTrackingKey(pid))).toBeNull();
             expect(await readTerminalHostAttachmentInfo({ happyHomeDir: fixtureHome, sessionId })).toEqual(replacement);
-            expect(trackedSessions.has(pid)).toBe(false);
+            expect(trackedSessions.has(legacyPidSessionTrackingKey(pid))).toBe(false);
             expect(dispose).not.toHaveBeenCalled();
         } finally {
             await runtime.stopControlServer();

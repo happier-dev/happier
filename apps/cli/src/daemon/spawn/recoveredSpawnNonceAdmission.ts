@@ -2,11 +2,17 @@ import { processIdentityMatches } from '@happier-dev/cli-common/processInstance'
 import type { SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { readTerminalAttachmentInfo, readTerminalHostAttachmentState, terminalMetadataMatchesHostHandle } from '@/terminal/attachment/terminalAttachmentInfo';
 import { windowsHostedAttachmentMatchesRunner } from '../platform/windows/windowsHostedSessionRuntime';
-import { readSessionMarkerForPid } from '../sessionRegistry';
+import { findSessionMarkerTrackingKey, readSessionMarker } from '../sessionRegistry';
 import { isCanonicalSpawnSessionId } from '../sessions/isCanonicalSpawnSessionId';
 import { resolveTrackedSessionRunnerIdentity } from '../sessions/sessionReportCorrelation';
 import type { SessionRunnerServiceabilityProbe } from '../sessions/isSessionRunnerActive';
 import type { TrackedSession } from '../types';
+
+/** The marker the runner holds for this Session, addressed by its tracking key. */
+async function readRunnerSessionMarker(pid: number, sessionId: string) {
+  const trackingKey = await findSessionMarkerTrackingKey({ pid, sessionId });
+  return trackingKey ? readSessionMarker(trackingKey) : null;
+}
 
 export type RecoveredSpawnNonceAdmissionResult =
   | Readonly<{ type: 'not_found' }>
@@ -46,7 +52,7 @@ export async function resolveRecoveredSpawnNonceAdmission(input: Readonly<{
       && tracked.sessionWebhookTimedOutAtMs === undefined);
   };
   if (!isCanonicalSpawnSessionId(sessionId) || !stillAdmissible()) return { type: 'pending' };
-  const marker = await readSessionMarkerForPid(runnerPid);
+  const marker = await readRunnerSessionMarker(runnerPid, sessionId);
   if (!marker || marker.startedBy !== 'daemon' || marker.happySessionId !== sessionId
     || marker.respawn?.spawnNonce?.trim() !== nonce
     || !processIdentityMatches(processIdentity, marker)
@@ -86,7 +92,7 @@ export async function resolveRecoveredSpawnNonceAdmission(input: Readonly<{
   if (probe.state !== 'runner_present' || probe.control.state !== 'servable' || !stillAdmissible()) {
     return { type: 'pending' };
   }
-  const currentMarker = await readSessionMarkerForPid(runnerPid);
+  const currentMarker = await readRunnerSessionMarker(runnerPid, sessionId);
   if (!currentMarker || currentMarker.startedBy !== 'daemon' || currentMarker.happySessionId !== sessionId
     || currentMarker.respawn?.spawnNonce?.trim() !== nonce
     || !processIdentityMatches(processIdentity, currentMarker)

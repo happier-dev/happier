@@ -112,6 +112,7 @@ import { createResolveHostedSessionWorkingDirectory } from '../sessions/createLo
 import { startPublicProfileRefresh } from '../account/publicProfileRefresh';
 import { sanitizeConnectedServiceDiagnosticError } from '../connectedServices/runtimeAuth/sanitizeConnectedServiceDiagnosticString';
 import type { SingleFlightIntervalLoopHandle } from '../lifecycle/singleFlightIntervalLoop';
+import { trackedSessionOnProcess, type SessionTrackingKey, type TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 /** Retained daemon logs carry redacted summaries, never the raw tick error (its message and response can hold credentials and local paths). */
 function summarizeConnectedServiceTickError(error: unknown): Readonly<{ error: string; causes?: readonly string[] }> {
@@ -168,8 +169,8 @@ export type StartDaemonRuntimeBootstrapParams = Readonly<{
   publicReleaseChannel: NonNullable<DaemonState['publicReleaseChannel']>;
   isDaemonQuiescing?: () => boolean;
   admissionDrain?: DaemonAdmissionDrain;
-  connectedServicesRestartRequestedPids: Set<number>;
-  pidToTrackedSession: Map<number, TrackedSession>;
+  connectedServicesRestartRequestedSessions: Set<SessionTrackingKey>;
+  trackedSessionsByKey: TrackedSessionMap;
   qualifiedConnectedAccountEstablishedRuntimeOwner?: Pick<
     QualifiedConnectedAccountEstablishedRuntimeOwner,
     'invokeWithReceipt' | 'invokeScheduledWithReceipts' | 'readQuotaSourceSnapshot'
@@ -277,7 +278,7 @@ export async function startDaemonRuntimeBootstrap(
     admissionDrain: params.admissionDrain,
     attachmentUpload: {
       resolveSessionWorkingDirectory: createResolveHostedSessionWorkingDirectory({
-        pidToTrackedSession: params.pidToTrackedSession,
+        trackedSessionsByKey: params.trackedSessionsByKey,
         getMachineId: params.machineIdProvider,
       }),
     },
@@ -431,7 +432,7 @@ export async function startDaemonRuntimeBootstrap(
 export async function startDaemonConnectedServiceRuntime(
   params: Pick<StartDaemonRuntimeBootstrapParams,
     'activeServerDir' | 'api' | 'credentials' | 'secretSources' | 'machineId' | 'machineIdProvider' | 'runtimeId'
-    | 'happyHomeDir' | 'logger' | 'processEnv' | 'pidToTrackedSession' | 'isDaemonQuiescing'
+    | 'happyHomeDir' | 'logger' | 'processEnv' | 'trackedSessionsByKey' | 'isDaemonQuiescing'
     | 'connectedServiceAuthGroupPreTurnSwitchCoordinator' | 'connectedServicePredictiveSwitchGuard'
     | 'connectedServiceQuotaFetcherDescriptors' | 'connectedServiceRuntimeQuotaSnapshots'
     | 'connectedServiceRuntimeRegistry' | 'consumeCommittedAuthGroupGeneration'
@@ -498,7 +499,7 @@ export async function startDaemonConnectedServiceRuntime(
       const sessionIds = resolveConnectedServiceRefreshSessionIds({
         affectedTargets: event.affectedTargets,
         registry: connectedServiceRuntimeRegistry,
-        trackedSessions: params.pidToTrackedSession,
+        trackedSessions: params.trackedSessionsByKey,
       });
       for (const sessionId of sessionIds) {
         if (params.isAccountRuntimeCurrent && !await params.isAccountRuntimeCurrent(event.signal)) {
@@ -622,7 +623,7 @@ export async function startDaemonConnectedServiceRuntime(
         const notificationTargets = affectedTargets.length > 0
           ? affectedTargets.map((target) => ({
             sessionId: target.sessionId,
-            tracked: params.pidToTrackedSession.get(target.pid) ?? null,
+            tracked: trackedSessionOnProcess(params.trackedSessionsByKey, target.pid, target.sessionId) ?? null,
           }))
           : [{
             sessionId: `connected-service:${diagnostic.serviceId}:${diagnostic.profileId}`,
@@ -788,7 +789,7 @@ export async function startDaemonConnectedServiceRuntime(
       accountUsageStore: params.providerAccountUsageStore,
       runtimeRegistry: connectedServiceRuntimeRegistry,
       resolveRequiredModelIds: input => resolveGroupRequiredModelIds({ ...input,
-        targets: connectedServiceRuntimeRegistry.listTargets(), trackedSessions: params.pidToTrackedSession.values() }),
+        targets: connectedServiceRuntimeRegistry.listTargets(), trackedSessions: params.trackedSessionsByKey.values() }),
       ...(params.qualifiedConnectedAccountEstablishedRuntimeOwner
         && params.resolveQualifiedConnectedAccountPeerClass
         && params.listScheduledQualifiedConnectedAccounts

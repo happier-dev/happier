@@ -67,6 +67,19 @@ function normalizeString(value: unknown): string | null {
   return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
 }
 
+type SessionTargetKeyFields = Readonly<{ pid: number; sessionId: string | null; spawnTrackingKey?: string }>;
+
+/**
+ * A Session target is keyed by its Session: a session host runs several Sessions in one process,
+ * so the pid is a liveness field, never the identity. Before the runner reports its Session id,
+ * a spawn's bootstrap target is keyed by the spawn's SessionTrackingKey (or, for a writer that has
+ * none, by its process) until `adoptSessionId`.
+ */
+function sessionTargetKey(target: SessionTargetKeyFields): string {
+  if (target.sessionId) return `session\0${target.sessionId}`;
+  return target.spawnTrackingKey ? `spawn\0${target.spawnTrackingKey}` : `process\0${target.pid}`;
+}
+
 function buildTargetFingerprint(target: Omit<ConnectedServiceRuntimeTarget, 'revision'>): string {
   // Selected bytes follow the materialization lease by reference. Do not
   // serialize credentials again on every passive process/metadata arrival.
@@ -136,15 +149,14 @@ function buildExactGroupApplicationSelectionEnv(
 }
 
 export class ConnectedServiceRuntimeRegistry {
-  private readonly targetsByPid: Map<number, IndexedTarget>;
+  private readonly sessionTargetsByKey: Map<string, IndexedTarget>;
   // Only an owned group application carries recipient lineage across its bookkeeping.
   private readonly exactApplicationLineageByTarget: WeakMap<ConnectedServiceRuntimeTarget, object>;
   private readonly providerObservationTimes: WeakMap<ConnectedServiceRuntimeTarget, ReadonlyMap<string, number>>;
-  private readonly pidBySessionId: Map<string, number>;
   private readonly targetRegistrationListeners: Set<ConnectedServiceRuntimeTargetRegistrationListener>;
-  // Execution-run targets live in a SEPARATE keyspace: a run shares its RUNNER's pid with the
-  // session target, so keying runs by pid would clobber the session registration (and releasing
-  // a run would deregister the session). Run targets are keyed by their stable run key, carry
+  // Execution-run targets live in a SEPARATE keyspace: a run shares its RUNNER's pid with its
+  // Session target, so keying runs like Sessions would clobber the Session registration (and
+  // releasing a run would deregister the Session). Run targets are keyed by their stable run key, carry
   // the runner pid for liveness semantics, and are included in the distribution views
   // (listTargets/listRefreshTargets/listQuotaTargets) so refresh + quota coverage applies to
   // materialized run roots exactly like session roots.
@@ -155,10 +167,9 @@ export class ConnectedServiceRuntimeRegistry {
     private readonly ownsRequesterTarget?: (target: ConnectedServiceRuntimeTarget) => boolean,
     private readonly requesterScope?: Pick<RequesterWorkAttributionV1, 'serverId' | 'accountId'>,
   ) {
-    this.targetsByPid = backing?.targetsByPid ?? new Map();
+    this.sessionTargetsByKey = backing?.sessionTargetsByKey ?? new Map();
     this.exactApplicationLineageByTarget = backing?.exactApplicationLineageByTarget ?? new WeakMap();
     this.providerObservationTimes = backing?.providerObservationTimes ?? new WeakMap();
-    this.pidBySessionId = backing?.pidBySessionId ?? new Map();
     this.targetRegistrationListeners = backing?.targetRegistrationListeners ?? new Set();
     this.runTargetsByRunKey = backing?.runTargetsByRunKey ?? new Map();
   }
@@ -188,13 +199,20 @@ export class ConnectedServiceRuntimeRegistry {
     input: ConnectedServiceRuntimeTargetInput,
     options?: ConnectedServiceRuntimeTargetRegistrationOptions,
   ): ConnectedServiceRuntimeRegisteredTarget {
-    const existing = this.getIndexedByPid(input.pid);
+    const sessionId = normalizeString(input.sessionId);
+    // A Session's registration addresses its own target (moving it when the Session reattached
+    // under another pid); a sessionless spawn bootstrap addresses its process's bootstrap slot
+    // until `adoptSessionId`. Neither ever lands on another Session hosted by the same process.
+    const spawnTrackingKey = normalizeString(input.spawnTrackingKey) ?? undefined;
+    const ownBootstrap = spawnTrackingKey ? this.getIndexedBootstrap(input.pid, spawnTrackingKey) : null;
+    const existing = sessionId
+      ? this.getIndexedSessionTarget(input.pid, sessionId) ?? ownBootstrap
+      : this.getIndexedBootstrap(input.pid, spawnTrackingKey);
     const applicationTarget = options?.groupApplicationTarget;
     if (applicationTarget && (!this.exactApplicationLineageByTarget.has(applicationTarget) || existing?.target !== applicationTarget
       || input.sessionId !== applicationTarget.sessionId || input.agentId !== applicationTarget.agentId)) {
       throw new Error('credential_revision_superseded');
     }
-    const sessionId = normalizeString(input.sessionId);
     const currentForSession = sessionId ? this.getBySessionId(sessionId) : null;
     const patch = options?.source === 'bootstrap' && currentForSession
       ? {
@@ -210,6 +228,8 @@ export class ConnectedServiceRuntimeRegistry {
         }
       : input;
     const target = this.writeTarget(input.pid, patch, existing?.target ?? null);
+    // The Session's current target supersedes its own spawn bootstrap.
+    if (sessionId && ownBootstrap && ownBootstrap !== existing) this.unregisterTarget(ownBootstrap.target);
     if (applicationTarget) this.carryGroupApplicationLineage(applicationTarget, target);
     if (target !== existing?.target) this.notifyTargetRegistration(target);
     return this.withRegisteredBindings(target);
@@ -226,7 +246,7 @@ export class ConnectedServiceRuntimeRegistry {
     }
     // Wrapper launchers retain the registry target; accepted runner identity
     // comes from the daemon's canonical tracked Session, never from a new alias table.
-    const target = this.getByPid(runtimeIdentity?.pid ?? input.runnerPid);
+    const target = this.getIndexedSessionTarget(runtimeIdentity?.pid ?? input.runnerPid, input.sessionId)?.target;
     if (!target || target.sessionId !== input.sessionId || target.agentId !== input.agentId) return { status: 'unavailable' };
     const parsed = ConnectedServiceBindingsV2IngressSchema.safeParse(target.connectedServicesBindingsRaw);
     if (!parsed.success) return { status: 'unavailable' };
@@ -274,8 +294,11 @@ export class ConnectedServiceRuntimeRegistry {
     return existing.target;
   }
 
+  /** Updates the named Session's target on that process, else the process's only target. */
   public updateTarget(input: ConnectedServiceRuntimeTargetUpdate): ConnectedServiceRuntimeTarget | null {
-    const existing = this.getIndexedByPid(input.pid);
+    const sessionId = normalizeString(input.sessionId);
+    const existing = (sessionId ? this.getIndexedSessionTarget(input.pid, sessionId) : null)
+      ?? this.getIndexedForProcess(input.pid);
     if (!existing) return null;
     const target = this.writeTarget(input.pid, input, existing.target);
     if (input.connectedServicesBindingsRaw === null) this.exactApplicationLineageByTarget.delete(target);
@@ -289,7 +312,7 @@ export class ConnectedServiceRuntimeRegistry {
     if (!this.isInRequesterScope(target)) return null;
     const runEntry = [...this.runTargetsByRunKey.entries()].find(([, entry]) => this.isInRequesterScope(entry.target)
       && this.matchesCurrentTargetProjection(entry.target, target));
-    const indexed = runEntry?.[1] ?? this.getIndexedByPid(target.pid);
+    const indexed = runEntry?.[1] ?? this.getIndexedAtKey(target);
     if (!indexed || !this.matchesCurrentTargetProjection(indexed.target, target)) return null;
     const patch = { pid: target.pid, agentLaunchMaterials: material ?? null };
     const next = runEntry ? this.buildStandaloneTarget(patch, indexed.target).target : this.writeTarget(target.pid, patch, indexed.target);
@@ -298,11 +321,33 @@ export class ConnectedServiceRuntimeRegistry {
     return next;
   }
 
-  public adoptSessionId(input: Readonly<{ pid: number; sessionId?: string | null }>): ConnectedServiceRuntimeTarget | null {
-    return this.updateTarget({
-      pid: input.pid,
-      sessionId: input.sessionId ?? null,
-    });
+  /**
+   * Gives a spawn's target its reported canonical Session id: that spawn's own sessionless bootstrap
+   * (by its tracking key, else the process slot of a writer without one), or, when the caller's
+   * tracked custody proves the process hosts only this Session, the target its spawn registered
+   * under another id. Another Session or spawn hosted by the process is never re-keyed.
+   */
+  public adoptSessionId(input: Readonly<{
+    pid: number;
+    sessionId?: string | null;
+    spawnTrackingKey?: string;
+    soleSessionOfProcess?: boolean;
+  }>): ConnectedServiceRuntimeTarget | null {
+    const sessionId = normalizeString(input.sessionId);
+    if (!sessionId) return null;
+    if (this.getBySessionId(sessionId)) {
+      // The Session already registered its own target: its spawn bootstrap is superseded.
+      const ownBootstrap = input.spawnTrackingKey ? this.getIndexedBootstrap(input.pid, input.spawnTrackingKey) : null;
+      if (ownBootstrap) this.unregisterTarget(ownBootstrap.target);
+      return null;
+    }
+    const adoptable = (input.spawnTrackingKey ? this.getIndexedBootstrap(input.pid, input.spawnTrackingKey) : null)
+      ?? this.getIndexedProcessSlot(input.pid)
+      ?? (input.soleSessionOfProcess === true ? this.getIndexedForProcess(input.pid) : null);
+    if (!adoptable) return null;
+    const target = this.writeTarget(input.pid, { pid: input.pid, sessionId }, adoptable.target);
+    if (target !== adoptable.target) this.notifyTargetRegistration(target);
+    return target;
   }
 
   private carryGroupApplicationLineage(previous: ConnectedServiceRuntimeTarget, current: ConnectedServiceRuntimeTarget): void {
@@ -312,7 +357,7 @@ export class ConnectedServiceRuntimeRegistry {
   }
 
   public withdrawSessionGroupApplicationBindings(target: ConnectedServiceRuntimeTarget): ConnectedServiceRuntimeTarget | null {
-    if (this.getByPid(target.pid) !== target || !target.sessionId) return null;
+    if (this.getIndexedAtKey(target)?.target !== target || !target.sessionId) return null;
     const withdrawn = this.writeTarget(target.pid, { pid: target.pid, connectedServicesBindingsRaw: null }, target);
     this.carryGroupApplicationLineage(target, withdrawn);
     if (withdrawn !== target) this.notifyTargetRegistration(withdrawn);
@@ -407,8 +452,8 @@ export class ConnectedServiceRuntimeRegistry {
 
   public resolveExactSessionGroupApplicationTarget(target: ConnectedServiceRuntimeTarget): ConnectedServiceRuntimeTarget | null {
     if (!this.isInRequesterScope(target)) return null;
-    const current = this.getByPid(target.pid);
-    if (!current || current.sessionId !== target.sessionId) return null;
+    const current = this.getIndexedAtKey(target)?.target;
+    if (!current || current.pid !== target.pid || current.sessionId !== target.sessionId) return null;
     if (current === target) return current;
     const lineage = this.exactApplicationLineageByTarget.get(target);
     return lineage !== undefined && lineage === this.exactApplicationLineageByTarget.get(current)
@@ -416,62 +461,95 @@ export class ConnectedServiceRuntimeRegistry {
       : null;
   }
 
+  /** The process exited: every Session target and run target it hosted ends with it. */
   public unregisterPid(pidRaw: number): ConnectedServiceRuntimeTarget | null {
     const pid = normalizePid(pidRaw);
     if (pid === null) return null;
     // A dead runner's execution runs are dead too: drop run targets bound to this pid.
     this.dropRunTargetsForPid(pid);
-    const existing = this.getIndexedByPid(pid);
-    if (!existing) return null;
-    this.targetsByPid.delete(pid);
-    this.deleteSessionIndex(existing.target);
-    return existing.target;
+    const hosted = this.listIndexedSessionTargetsForProcess(pid);
+    for (const [key] of hosted) this.sessionTargetsByKey.delete(key);
+    return hosted[0]?.[1].target ?? null;
   }
 
+  /** One Session ended while its process may keep hosting others: drop exactly its current target. */
+  public unregisterTarget(target: ConnectedServiceRuntimeTarget): ConnectedServiceRuntimeTarget | null {
+    const key = sessionTargetKey(target);
+    const current = this.sessionTargetsByKey.get(key);
+    if (current?.target !== target || !this.isInRequesterScope(target)) return null;
+    this.sessionTargetsByKey.delete(key);
+    return target;
+  }
+
+  /** A wrapper→runner promotion moves the process's targets to the runner pid. */
   public transferPid(fromPidRaw: number, toPidRaw: number): ConnectedServiceRuntimeTarget | null {
     const fromPid = normalizePid(fromPidRaw);
     const toPid = normalizePid(toPidRaw);
     if (fromPid === null || toPid === null) return null;
-    const existing = this.getIndexedByPid(fromPid);
-    if (!existing) return null;
-    if (fromPid === toPid) return existing.target;
-    const replaced = this.targetsByPid.get(toPid);
-    if (replaced && !this.isInRequesterScope(replaced.target)) return null;
-    const nextBase = {
+    const moving = this.listIndexedSessionTargetsForProcess(fromPid);
+    if (moving.length === 0) return null;
+    if (fromPid === toPid) return moving[0]![1].target;
+    const nextTargets = moving.map(([key, existing]) => ({ key, existing, nextBase: {
       ...existing.target,
       pid: toPid,
       revision: existing.target.revision + 1,
-    };
-    if (!this.isInRequesterScope(nextBase)) return null;
+    } }));
+    // The runner now owns `toPid`: any target still recorded there belongs to a gone process.
+    const replacedKeys: string[] = [];
+    for (const [key, entry] of this.sessionTargetsByKey) {
+      if (entry.target.pid !== toPid) continue;
+      if (!this.isInRequesterScope(entry.target)) return null;
+      replacedKeys.push(key);
+    }
+    if (nextTargets.some(({ nextBase }) => !this.isInRequesterScope(nextBase))) return null;
     // A respawned runner does not carry its old process's runs; resumed runs re-materialize
     // and re-register under the new runner pid.
     this.dropRunTargetsForPid(fromPid);
-
-    if (replaced) {
-      this.deleteSessionIndex(replaced.target);
+    for (const key of replacedKeys) this.sessionTargetsByKey.delete(key);
+    for (const { key } of nextTargets) this.sessionTargetsByKey.delete(key);
+    let first: ConnectedServiceRuntimeTarget | null = null;
+    for (const { existing, nextBase } of nextTargets) {
+      const next = nextBase as ConnectedServiceRuntimeTarget;
+      const observations = this.providerObservationTimes.get(existing.target);
+      if (observations) this.providerObservationTimes.set(next, observations);
+      this.sessionTargetsByKey.set(sessionTargetKey(next), { target: next, fingerprint: buildTargetFingerprint(omitRevision(next)) });
+      this.notifyTargetRegistration(next);
+      first ??= next;
     }
-
-    const fingerprint = buildTargetFingerprint(omitRevision(nextBase));
-    this.targetsByPid.delete(fromPid);
-    this.deleteSessionIndex(existing.target);
-    const next = nextBase as ConnectedServiceRuntimeTarget;
-    const observations = this.providerObservationTimes.get(existing.target);
-    if (observations) this.providerObservationTimes.set(next, observations);
-    this.targetsByPid.set(toPid, { target: next, fingerprint });
-    this.indexSession(next);
-    this.notifyTargetRegistration(next);
-    return next;
+    return first;
   }
 
+  /** The process's only target (its pending bootstrap first); null when it hosts several Sessions. */
   public getByPid(pidRaw: number): ConnectedServiceRuntimeTarget | null {
-    return this.getIndexedByPid(pidRaw)?.target ?? null;
+    return this.getIndexedForProcess(pidRaw)?.target ?? null;
+  }
+
+  /**
+   * The target of one Session on one process: its own Session target, else its spawn's own
+   * not-yet-adopted bootstrap, else, for a process whose only target is an unattributed bootstrap,
+   * that bootstrap. Never another Session's or another spawn's target.
+   */
+  public getSessionTarget(
+    pidRaw: number,
+    sessionIdRaw: string | null | undefined,
+    spawnTrackingKey?: string,
+  ): ConnectedServiceRuntimeTarget | null {
+    const sessionId = normalizeString(sessionIdRaw);
+    const own = (sessionId ? this.getIndexedSessionTarget(pidRaw, sessionId) : null)
+      ?? (spawnTrackingKey ? this.getIndexedBootstrap(pidRaw, spawnTrackingKey) : null);
+    if (own) return own.target;
+    const pid = normalizePid(pidRaw);
+    if (pid === null) return null;
+    const hosted = this.listIndexedSessionTargetsForProcess(pid);
+    const lone = hosted.length === 1 ? hosted[0]![1].target : null;
+    return lone && !lone.sessionId && !lone.spawnTrackingKey ? lone : null;
   }
 
   public getBySessionId(sessionIdRaw: string): ConnectedServiceRuntimeTarget | null {
     const sessionId = normalizeString(sessionIdRaw);
     if (!sessionId) return null;
-    const pid = this.pidBySessionId.get(sessionId);
-    return typeof pid === 'number' ? this.getByPid(pid) : null;
+    const indexed = this.sessionTargetsByKey.get(sessionTargetKey({ pid: 0, sessionId }));
+    return indexed && this.isInRequesterScope(indexed.target) ? indexed.target : null;
   }
 
   public getRunTargetByRunKey(runKeyRaw: string): ConnectedServiceRuntimeTarget | null {
@@ -501,13 +579,13 @@ export class ConnectedServiceRuntimeRegistry {
   }>): ConnectedServiceRuntimeTarget | null {
     if (!this.isInRequesterScope(input.target)) return null;
     const runEntry = [...this.runTargetsByRunKey.entries()].find(([, entry]) => entry.target === input.target);
-    const indexed = runEntry?.[1] ?? this.getIndexedByPid(input.target.pid);
+    const indexed = runEntry?.[1] ?? this.getIndexedAtKey(input.target);
     if (!indexed || indexed.target !== input.target) return null;
     const next = this.buildExactCredentialRevisionTarget(input);
     if (!next) return null;
     if (next.target === input.target) return input.target;
     if (runEntry) this.runTargetsByRunKey.set(runEntry[0], next);
-    else this.targetsByPid.set(input.target.pid, next);
+    else this.sessionTargetsByKey.set(sessionTargetKey(input.target), next);
     this.notifyTargetRegistration(next.target);
     return next.target;
   }
@@ -578,7 +656,7 @@ export class ConnectedServiceRuntimeRegistry {
   }
 
   public isSessionTarget(target: ConnectedServiceRuntimeTarget): boolean {
-    const current = this.getIndexedByPid(target.pid)?.target;
+    const current = this.getIndexedAtKey(target)?.target;
     return Boolean(current && this.matchesCurrentTargetProjection(current, target));
   }
 
@@ -593,7 +671,7 @@ export class ConnectedServiceRuntimeRegistry {
 
   public listTargets(): ReadonlyArray<ConnectedServiceRuntimeTarget> {
     return [
-      ...Array.from(this.targetsByPid.values()).map((entry) => entry.target),
+      ...Array.from(this.sessionTargetsByKey.values()).map((entry) => entry.target),
       ...Array.from(this.runTargetsByRunKey.values()).map((entry) => entry.target),
     ].filter((target) => this.isInRequesterScope(target)).sort((left, right) => left.pid - right.pid);
   }
@@ -630,11 +708,47 @@ export class ConnectedServiceRuntimeRegistry {
     });
   }
 
-  private getIndexedByPid(pidRaw: number): IndexedTarget | null {
+  private getIndexedAtKey(target: SessionTargetKeyFields): IndexedTarget | null {
+    const indexed = this.sessionTargetsByKey.get(sessionTargetKey(target));
+    return indexed && this.isInRequesterScope(indexed.target) ? indexed : null;
+  }
+
+  /** The named Session's target, only while it runs in that process. */
+  private getIndexedSessionTarget(pidRaw: number, sessionId: string): IndexedTarget | null {
     const pid = normalizePid(pidRaw);
     if (pid === null) return null;
-    const indexed = this.targetsByPid.get(pid);
-    return indexed && this.isInRequesterScope(indexed.target) ? indexed : null;
+    const indexed = this.getIndexedAtKey({ pid, sessionId });
+    return indexed?.target.pid === pid ? indexed : null;
+  }
+
+  private getIndexedProcessSlot(pidRaw: number): IndexedTarget | null {
+    return this.getIndexedBootstrap(pidRaw, undefined);
+  }
+
+  /** A spawn's sessionless bootstrap on that process: by its tracking key, else the process slot. */
+  private getIndexedBootstrap(pidRaw: number, spawnTrackingKey: string | undefined): IndexedTarget | null {
+    const pid = normalizePid(pidRaw);
+    if (pid === null) return null;
+    const indexed = this.getIndexedAtKey({ pid, sessionId: null, ...(spawnTrackingKey ? { spawnTrackingKey } : {}) });
+    return indexed?.target.pid === pid ? indexed : null;
+  }
+
+  /** The process's pending bootstrap, else its only Session target; never one of several. */
+  private getIndexedForProcess(pidRaw: number): IndexedTarget | null {
+    const pid = normalizePid(pidRaw);
+    if (pid === null) return null;
+    const bootstrap = this.getIndexedProcessSlot(pid);
+    if (bootstrap) return bootstrap;
+    const hosted = this.listIndexedSessionTargetsForProcess(pid);
+    return hosted.length === 1 ? hosted[0]![1] : null;
+  }
+
+  private listIndexedSessionTargetsForProcess(pid: number): Array<[string, IndexedTarget]> {
+    const hosted: Array<[string, IndexedTarget]> = [];
+    for (const entry of this.sessionTargetsByKey) {
+      if (entry[1].target.pid === pid && this.isInRequesterScope(entry[1].target)) hosted.push(entry);
+    }
+    return hosted;
   }
 
   private dropRunTargetsForPid(pid: number): void {
@@ -671,6 +785,7 @@ export class ConnectedServiceRuntimeRegistry {
           ? ConnectedServiceMaterializationIdentityV1Schema.parse(patch.connectedServiceMaterializationIdentityV1)
           : null)
       : previous?.connectedServiceMaterializationIdentityV1 ?? null;
+    const spawnTrackingKey = normalizeString(patch.spawnTrackingKey) ?? previous?.spawnTrackingKey;
     const sessionDirectory = patch.sessionDirectory !== undefined
       ? normalizeString(patch.sessionDirectory)
       : previous?.sessionDirectory ?? null;
@@ -717,6 +832,7 @@ export class ConnectedServiceRuntimeRegistry {
       pid,
       agentId,
       sessionId,
+      ...(spawnTrackingKey ? { spawnTrackingKey } : {}),
       connectedServicesBindingsRaw,
       connectedServiceSelectionsEnv,
       connectedServiceSelections,
@@ -757,26 +873,26 @@ export class ConnectedServiceRuntimeRegistry {
   private writeTarget(
     pidRaw: number,
     patch: ConnectedServiceRuntimeTargetInput | ConnectedServiceRuntimeTargetUpdate,
-    previousAtPid: ConnectedServiceRuntimeTarget | null,
+    previousAtSlot: ConnectedServiceRuntimeTarget | null,
     options: Readonly<{ activeBindings?: ConnectedServiceRuntimeTarget['activeBindings']; preserveObservedBindings?: boolean }> = {},
   ): ConnectedServiceRuntimeTarget {
     const pid = normalizePid(pidRaw) ?? 0;
-    const incumbent = this.targetsByPid.get(pid);
-    if (incumbent) this.assertRequesterScope(incumbent.target);
-    const provisionalSessionId = patch.sessionId !== undefined
+    if (previousAtSlot) this.assertRequesterScope(previousAtSlot);
+    const sessionId = patch.sessionId !== undefined
       ? normalizeString(patch.sessionId)
-      : previousAtPid?.sessionId ?? null;
-    const previousSessionPid = provisionalSessionId ? this.pidBySessionId.get(provisionalSessionId) : undefined;
-    const previousForSameSession = typeof previousSessionPid === 'number' && previousSessionPid !== pid
-      ? this.targetsByPid.get(previousSessionPid)?.target ?? null
-      : null;
-    const previous = previousAtPid ?? previousForSameSession;
-    if (previousForSameSession) this.assertRequesterScope(previousForSameSession);
+      : previousAtSlot?.sessionId ?? null;
+    const spawnTrackingKey = normalizeString(patch.spawnTrackingKey) ?? previousAtSlot?.spawnTrackingKey;
+    const key = sessionTargetKey({ pid, sessionId, ...(spawnTrackingKey ? { spawnTrackingKey } : {}) });
+    // The same Session reattached under another pid, or the slot this write lands in.
+    const incumbent = this.sessionTargetsByKey.get(key)?.target ?? null;
+    if (incumbent) this.assertRequesterScope(incumbent);
+    const previous = previousAtSlot ?? incumbent;
     const { base, fingerprint } = this.composeTargetBase(pid, patch, previous, options);
     this.assertRequesterScope({ ...base, revision: (previous?.revision ?? 0) + 1 });
     if (previous) {
-      const previousIndexed = this.targetsByPid.get(previous.pid);
-      if (previousIndexed?.fingerprint === fingerprint && previous.agentLaunchMaterials === base.agentLaunchMaterials) {
+      const previousIndexed = this.sessionTargetsByKey.get(sessionTargetKey(previous));
+      if (previousIndexed?.target === previous && previousIndexed.fingerprint === fingerprint
+        && previous.agentLaunchMaterials === base.agentLaunchMaterials) {
         return previous;
       }
     }
@@ -786,28 +902,14 @@ export class ConnectedServiceRuntimeRegistry {
       revision: (previous?.revision ?? 0) + 1,
     };
     this.providerObservationTimes.set(next, new Map(previous ? this.providerObservationTimes.get(previous) : undefined));
-    if (previousAtPid) {
-      this.deleteSessionIndex(previousAtPid);
+    if (previous) {
+      const previousKey = sessionTargetKey(previous);
+      if (previousKey !== key && this.sessionTargetsByKey.get(previousKey)?.target === previous) {
+        this.sessionTargetsByKey.delete(previousKey);
+      }
     }
-    if (previousForSameSession) {
-      this.targetsByPid.delete(previousForSameSession.pid);
-      this.deleteSessionIndex(previousForSameSession);
-    }
-    this.targetsByPid.set(pid, { target: next, fingerprint });
-    this.indexSession(next);
+    this.sessionTargetsByKey.set(key, { target: next, fingerprint });
     return next;
-  }
-
-  private deleteSessionIndex(target: ConnectedServiceRuntimeTarget): void {
-    if (!target.sessionId) return;
-    if (this.pidBySessionId.get(target.sessionId) === target.pid) {
-      this.pidBySessionId.delete(target.sessionId);
-    }
-  }
-
-  private indexSession(target: ConnectedServiceRuntimeTarget): void {
-    if (!target.sessionId) return;
-    this.pidBySessionId.set(target.sessionId, target.pid);
   }
 
   private withRegisteredBindings(target: ConnectedServiceRuntimeTarget): ConnectedServiceRuntimeRegisteredTarget {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDaemonControlApp } from './controlServer';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const headers = { 'Content-Type': 'application/json', 'x-happier-daemon-token': 'test-token' };
 
@@ -9,7 +10,7 @@ describe('spawn nonce terminal wait', () => {
     let release!: () => void;
     const recovery = new Promise<void>((resolve) => { release = resolve; });
     const resolveRecoveredSpawnNonce = vi.fn(async () => { await recovery; return { type: 'pending' as const }; });
-    const children = [{ startedBy: 'daemon', pid: 124, happySessionId: 'PID-124', spawnOptions: { directory: '/tmp', spawnNonce: 'recovery-race' } }];
+    const children = [{ trackingKey: legacyPidSessionTrackingKey(124), startedBy: 'daemon', pid: 124, happySessionId: 'PID-124', spawnOptions: { directory: '/tmp', spawnNonce: 'recovery-race' } }];
     const app = createDaemonControlApp({
       getChildren: () => children, machineId: 'machine-local', controlToken: 'test-token', spawnSession: vi.fn(),
       resolveRecoveredSpawnNonce, stopSession: async () => ({ status: 'not_found' }), requestShutdown: () => {},
@@ -29,7 +30,7 @@ describe('spawn nonce terminal wait', () => {
 
   it('keeps one concurrent HTTP waiter alive when another reaches its deadline', async () => {
     vi.stubEnv('HAPPIER_DAEMON_SPAWN_NONCE_PENDING_TTL_MS', '25');
-    const children = [{ startedBy: 'daemon', pid: 125, happySessionId: 'PID-125', spawnOptions: { directory: '/tmp', spawnNonce: 'concurrent' } }];
+    const children = [{ trackingKey: legacyPidSessionTrackingKey(125), startedBy: 'daemon', pid: 125, happySessionId: 'PID-125', spawnOptions: { directory: '/tmp', spawnNonce: 'concurrent' } }];
     const app = createDaemonControlApp({
       getChildren: () => children, machineId: 'machine-local', controlToken: 'test-token', spawnSession: vi.fn(),
       stopSession: async () => ({ status: 'not_found' }), requestShutdown: () => {},
@@ -99,7 +100,7 @@ describe('spawn nonce terminal wait', () => {
 
   it('returns the current pending snapshot only when the caller deadline expires', async () => {
     const app = createDaemonControlApp({
-      getChildren: () => [{ startedBy: 'daemon', pid: 123, spawnOptions: { directory: '/tmp', spawnNonce: 'pending' } }],
+      getChildren: () => [{ trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon', pid: 123, spawnOptions: { directory: '/tmp', spawnNonce: 'pending' } }],
       machineId: 'machine-local', controlToken: 'test-token', spawnSession: vi.fn(),
       stopSession: async () => ({ status: 'not_found' }), requestShutdown: () => {}, onHappySessionWebhook: () => {},
     });
@@ -113,7 +114,7 @@ describe('spawn nonce terminal wait', () => {
   });
 
   it('rejoins recovered admission after control-server restart and settles on readiness', async () => {
-    const children = [{ startedBy: 'daemon', pid: 124, happySessionId: 'PID-124', spawnOptions: { directory: '/tmp', spawnNonce: 'recovered' } }];
+    const children = [{ trackingKey: legacyPidSessionTrackingKey(124), startedBy: 'daemon', pid: 124, happySessionId: 'PID-124', spawnOptions: { directory: '/tmp', spawnNonce: 'recovered' } }];
     const makeApp = () => createDaemonControlApp({
       getChildren: () => children, machineId: 'machine-local', controlToken: 'test-token', spawnSession: vi.fn(),
       resolveRecoveredSpawnNonce: async () => ({ type: 'pending' }),

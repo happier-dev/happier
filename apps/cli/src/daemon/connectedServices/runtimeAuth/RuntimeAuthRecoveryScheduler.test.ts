@@ -12,6 +12,7 @@ import { DEFAULT_USAGE_LIMIT_RECOVERY_BACKOFF_MS } from './resolveRuntimeAuthRec
 import type { RuntimeAuthRecoveryIntent } from './RuntimeAuthRecoveryScheduler';
 import type { RecoveryIntentFileStore } from '../recoveryScheduler/recoveryIntentFileStore';
 import { createPredecessorCompatibleRuntimeAuthRecoveryStore } from './predecessorRuntimeAuthRecoveryStore';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 type RuntimeAuthRecoveryModule = Readonly<{
   RuntimeAuthRecoveryScheduler: new (deps: {
@@ -231,7 +232,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       applyGeneration: async () => ({ ok: true, mode: 'hot_apply' }),
     });
     const handlerDeps = {
-      getChildren: () => [{ startedBy: 'daemon' as const, happySessionId: sessionId, pid: 123 }],
+      getChildren: () => [{ trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon' as const, happySessionId: sessionId, pid: 123 }],
       switchCoordinator: coordinator,
       resolveRegisteredRuntimeAuthFailureSource: async () => {
         if (!current.activeProfileId) throw new Error('Expected an active registered profile');
@@ -383,7 +384,7 @@ describe('RuntimeAuthRecoveryScheduler', () => {
       recover: async input => {
         recovered = await handleConnectedServiceRuntimeAuthFailureForSession({ ...input,
           recoveryInvocationSource: 'scheduler_retry',
-          getChildren: () => [{ startedBy: 'daemon', happySessionId: 'quota-recheck', pid: 123 }],
+          getChildren: () => [{ trackingKey: legacyPidSessionTrackingKey(123), startedBy: 'daemon', happySessionId: 'quota-recheck', pid: 123 }],
           switchCoordinator: coordinator,
           resolveRegisteredRuntimeAuthFailureSource: async () => ({ serviceId, groupId: 'team', profileId: 'backup', generation: 2,
             credentialRevision: 'csr_bbbbbbbbbbbbbbbbbbbbbb' }),

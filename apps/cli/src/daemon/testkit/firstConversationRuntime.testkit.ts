@@ -46,7 +46,7 @@ export async function runInstalledFirstConversationRuntime(input: Readonly<{
     path: authorityFilePath, sessionId: h.sessionId, runner: h.runner, retainedAgent: h.retainedAgent, httpPort: 43129 });
   h.tracked.agentRuntimeDaemonServiceAuthorityFilePath = authorityFilePath;
   if (input.control) h.tracked.agentRuntimeDaemonServiceCapabilityHash = authority.capabilityDigest;
-  await writeSessionMarker({ pid: h.runner.pid, happySessionId: h.sessionId, startedBy: 'daemon', cwd: h.cwd,
+  await writeSessionMarker({ trackingKey: h.tracked.trackingKey, pid: h.runner.pid, happySessionId: h.sessionId, startedBy: 'daemon', cwd: h.cwd,
     processStartTimeMs: h.runner.processStartTimeMs, processCommandHash: h.runner.processCommandHash,
     runnerAgentSourceCustodyV1: h.retainedAgent.sourceCustody, agentRuntimeDaemonServiceAuthorityFilePath: authorityFilePath });
   const readDaemonHttp = daemonControlHttp.readDaemonControlHttpResponse;

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import fastify from 'fastify';
 import { expect, it, vi } from 'vitest';
 import type { TrackedSession } from '@/daemon/types';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 it('authorizes only the external Agent state roots actually materialized for this Session, including marker adoption', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'observation-materialized-state-')));
@@ -14,7 +15,7 @@ it('authorizes only the external Agent state roots actually materialized for thi
     const { materializeConnectedServicesForSpawn } = await import('@/daemon/connectedServices/materialize/materializeConnectedServicesForSpawn');
     const { createConnectedAccountPurposeBindingOwner } = await import('@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner');
     const { resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn } = await import('@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn');
-    const { readSessionMarkerForPid } = await import('@/daemon/sessionRegistry');
+    const { readSessionMarker } = await import('@/daemon/sessionRegistry');
     const { createSpawnLifecycleCallbacks } = await import('@/daemon/spawn/createSpawnLifecycleCallbacks');
     const { persistAcceptedSpawnMarker } = await import('@/daemon/spawn/persistAcceptedSpawnMarker');
     const { readOrCreateDeviceLocalSecretStorage } = await import('@/daemon/deviceLocalSecretStorage');
@@ -121,21 +122,21 @@ it('authorizes only the external Agent state roots actually materialized for thi
         expect(await realpath(join(home, 'state'))).toBe(await realpath(join(nativeHome, 'state')));
         const sessionId = 'owned-session';
         const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(root, 'fixture-secret.key') });
-        const live: TrackedSession = { pid: process.pid, startedBy: 'daemon', happySessionId: sessionId,
+        const live: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, startedBy: 'daemon', happySessionId: sessionId,
             spawnOptions: { directory: root, backendTarget: { kind: 'backend', backendId: agentId, sourceKind: 'built_in' } } };
         const callbacks = createSpawnLifecycleCallbacks({
             connectedServicesBindingsRaw: null, catalogAgentId: null, materializationKey: 'owned-session',
             materializedStateObservationBinding: binding, hasConnectedServiceAuth: () => false,
             getSpawnResourceCleanupOnExit: () => null, onSpawnResourceCleanupArmed: () => {},
-            spawnResourceCleanupByPid: new Map(), getSessionAttachCleanup: () => null,
-            setSessionAttachCleanup: () => {}, sessionAttachCleanupByPid: new Map(),
+            spawnResourceCleanupByKey: new Map(), getSessionAttachCleanup: () => null,
+            setSessionAttachCleanup: () => {}, sessionAttachCleanupByKey: new Map(),
             persistAcceptedSpawnMarker: async tracked => {
                 await persistAcceptedSpawnMarker({ trackedSession: tracked, deviceLocalSecretStorage: storage });
             },
         });
         callbacks.onTrackedSessionRegistered?.(live);
         await callbacks.persistAcceptedSpawnMarker?.(live);
-        const marker = await readSessionMarkerForPid(process.pid);
+        const marker = await readSessionMarker(live.trackingKey);
         if (!marker) throw new Error('Owned marker unavailable');
         expect(marker.processStartTimeMs).toBe(live.processStartTimeMs);
         const adopted = buildTrackedSessionFromMarker({ marker, startedByFallback: 'daemon', reattachedFromDiskMarker: true });

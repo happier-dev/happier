@@ -96,6 +96,7 @@ import type { RpcHandler } from '@/api/rpc/types';
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, parseExternalActionDaemonDispatchResultV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { ManagedPendingActivationFailureRequestV1Schema, PendingActivationAuthorizationV1Schema } from '@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const approvalWire = vi.hoisted(() => ({ sockets: [] as Array<{ update(value: unknown): void }>,
     registrations: new Map<string, { deliver(packet: unknown, acknowledge: (value: unknown) => void): void }>(),
@@ -890,7 +891,7 @@ describe('daemon managed Machine Action factory', () => {
             sourceCustody: { kind: 'managed', immutableGenerationId: 'generation-a', installSource: 'localPath' },
             locator: { module: './runtime.mjs', export: 'createRuntime', runtimeApiVersion: 1 }, normalizedModulePath: 'runtime.mjs', loadMode: 'immutable-js' });
         const runner = { pid: 42, processStartTimeMs: 123, processCommandHash: '5'.repeat(64), snapshotIdentity: 'fixture' };
-        const tracked: TrackedSession = { pid: 41, sessionRunnerPid: runner.pid, startedBy: 'daemon', happySessionId: sessionId,
+        const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(41), pid: 41, sessionRunnerPid: runner.pid, startedBy: 'daemon', happySessionId: sessionId,
             runnerProcessIdentity: runner,
             processStartTimeMs: runner.processStartTimeMs, processCommandHash: runner.processCommandHash, runnerAgentSourceCustodyV1: retained.sourceCustody,
             activeTurnId: 'turn', agentRuntimeDaemonServiceAdmittedTurnId: 'turn', agentRuntimeDaemonServiceAdmittedInputId: 'input',

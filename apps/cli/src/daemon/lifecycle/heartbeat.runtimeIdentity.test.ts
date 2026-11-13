@@ -69,9 +69,9 @@ describe('startDaemonHeartbeatLoop daemon state republication', () => {
     const { startDaemonHeartbeatLoop } = await import('./heartbeat');
 
     startDaemonHeartbeatLoop({
-      pidToTrackedSession: new Map(),
-      spawnResourceCleanupByPid: new Map(),
-      sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey: new Map(),
+      spawnResourceCleanupByKey: new Map(),
+      sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null,
       controlPort: 8765,
       fileState: {

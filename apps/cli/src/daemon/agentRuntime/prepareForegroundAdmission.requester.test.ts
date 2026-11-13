@@ -23,13 +23,14 @@ import { ConnectedServiceRuntimeRegistry } from '../connectedServices/runtimeReg
 import { fetchServerFeaturesSnapshot, readServerIdentityIdFromFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { resolveQualifiedConnectedAccountAtomicV4Negotiation } from '@/api/client/qualifiedConnectedAccountApi';
 import { promoteForegroundDaemonServiceAuthority } from './promoteForegroundDaemonServiceAuthority';
-import { readSessionMarkerForPid, writeSessionMarker } from '../sessionRegistry';
+import { readSessionMarker, writeSessionMarker } from '../sessionRegistry';
 import type { TrackedSession } from '../types';
 import { resolveAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/requireAgentCliLaunchSpec';
 import { ProfileRecordV1Schema, sealProfileRecordContentV1 } from '@happier-dev/protocol/profiles/profileRecordV1';
 import { ACCOUNT_SECURITY_PATH_V1, AccountSecurityGetResponseV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
 import { createRequesterSessionControlRuntimeFixture } from '../testkit/requesterSessionControlRuntimeFixture';
 import { artifactListResponse } from '@/testkit/http/artifactHome';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('foreground requester Account admission through protected custody', () => {
   it('claims Bob Profile material without publishing Bob as Alice, and refuses disposed custody or a revoked new admission', async () => {
@@ -200,7 +201,7 @@ describe('foreground requester Account admission through protected custody', () 
         const pending = await fixture.prepare({ ...request, attemptId: 'lost-grant-attempt' }, dependencies);
         expect(pending.ok).toBe(true);
         if (!pending.ok) throw new Error('Current Bob foreground preparation failed');
-        const trackedSessions = new Map<number, TrackedSession>();
+        const trackedSessions = new Map<SessionTrackingKey, TrackedSession>();
         // The runtime owns its bootstrap; foreground preparation keeps its independent acquisition current.
         const runtimeBootstrap = await resolveRequesterSessionBootstrapFromCustody({ happyHomeDir: fixture.home,
           serverId: attribution.serverId, sessionId, serverHttpBaseUrl: origin, expectedAttribution: attribution,
@@ -223,16 +224,16 @@ describe('foreground requester Account admission through protected custody', () 
               machineId: 'machine-1', machineIdProvider: () => 'machine-1', runtimeId: 'foreground-runtime', happyHomeDir: fixture.home,
               logger: { debug: () => {}, info: () => {}, warn: () => {} }, processEnv: {
                 HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: '0', HAPPIER_CONNECTED_SERVICES_QUOTAS_ENABLED: '0' },
-              pidToTrackedSession: trackedSessions, connectedServiceRuntimeRegistry: runtimeRegistry,
+              trackedSessionsByKey: trackedSessions, connectedServiceRuntimeRegistry: runtimeRegistry,
               connectedServiceAuthGroupPreTurnSwitchCoordinator: host.runtime.connectedServiceAuthGroupPreTurnSwitchCoordinator,
             } });
           if (!runtime) throw new Error('Real requester runtime unavailable');
-          const tracked: TrackedSession = { pid: fixture.foregroundPid, happySessionId: sessionId,
+          const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(fixture.foregroundPid), pid: fixture.foregroundPid, happySessionId: sessionId,
             startedBy: 'happy directly - likely by user from terminal',
             processStartTimeMs: claim.authority.runner.processStartTimeMs,
             processCommandHash: claim.authority.runner.processCommandHash };
-          trackedSessions.set(tracked.pid, tracked);
-          await writeSessionMarker({ pid: tracked.pid, happySessionId: sessionId, startedBy: 'terminal',
+          trackedSessions.set(tracked.trackingKey, tracked);
+          await writeSessionMarker({ trackingKey: tracked.trackingKey, pid: tracked.pid, happySessionId: sessionId, startedBy: 'terminal',
             processStartTimeMs: tracked.processStartTimeMs, processCommandHash: tracked.processCommandHash });
           const promotion = { happyHomeDir: fixture.home, publicReleaseRing: configuration.publicReleaseRing,
             trackedSessions, canonicalSessionId: sessionId, foregroundPid: fixture.foregroundPid,
@@ -243,7 +244,7 @@ describe('foreground requester Account admission through protected custody', () 
           expect(await promoteForegroundDaemonServiceAuthority(promotion)).toBe(true);
           expect(tracked.requesterSessionRuntimeContext).toBe(runtime);
           expect(tracked.requesterWorkAttributionV1).toEqual(attribution);
-          const promotedMarker = await readSessionMarkerForPid(tracked.pid);
+          const promotedMarker = await readSessionMarker(tracked.trackingKey);
           expect(promotedMarker).toMatchObject({ happySessionId: sessionId,
             agentRuntimeDaemonServiceAuthorityFilePath: promotion.authorityFilePath,
             requesterWorkAttributionV1: attribution });

@@ -16,6 +16,7 @@ import { createDaemonSessionMutationCustody } from '../connectedServices/usageLi
 import { startDaemonControlServer } from '../controlServer';
 import type { TrackedSession } from '../types';
 import { commitConnectedServiceHotApplyRuntimeTarget, startDaemonSessionControlRuntime } from './startDaemonSessionControlRuntime';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 // Replace only the loopback HTTP listener; startup and generation owners stay real.
 vi.mock('@/daemon/controlServer', () => ({
@@ -46,7 +47,7 @@ it.each(['settlement', 'replacement', 'unbind'] as const)('commits group hot app
     }
     const beforeCommit = registry.getByPid(501);
     const commit = commitConnectedServiceHotApplyRuntimeTarget({
-        tracked: { pid: 501, happySessionId: 'group-applying', startedBy: 'daemon' },
+        tracked: { trackingKey: legacyPidSessionTrackingKey(501), pid: 501, happySessionId: 'group-applying', startedBy: 'daemon' },
         groupApplicationTarget: applying, agentId: 'codex', registry,
         materializationIdentity: { v: 1, id: 'csm_group_apply', createdAt: 111 },
         acceptedConnectedServicesBindingsRaw: bindings, acceptedConnectedServiceSelectionsEnv: {},
@@ -73,17 +74,17 @@ it.each(['retained', 'removed'] as const)('skips connected credential reconcilia
     const activeSessionId = 'session-active-connected-auth';
     const metadata = createTestMetadata({ hostPid: retiredPid, startedBy: 'daemon', happyHomeDir: home });
     const retired: TrackedSession = {
-        pid: retiredPid, startedBy: 'daemon', happySessionId: retiredSessionId,
+        trackingKey: legacyPidSessionTrackingKey(retiredPid), pid: retiredPid, startedBy: 'daemon', happySessionId: retiredSessionId,
         happySessionMetadataFromLocalWebhook: metadata,
         // The exit owner marks this before disposing the Session purpose lease,
         // while durable exit settlement may still retain the tracked entry.
         reportMarkerCustody: { pending: Promise.resolve(), retiring: true },
     };
     const active: TrackedSession = {
-        pid: activePid, startedBy: 'daemon', happySessionId: activeSessionId,
+        trackingKey: legacyPidSessionTrackingKey(activePid), pid: activePid, startedBy: 'daemon', happySessionId: activeSessionId,
         happySessionMetadataFromLocalWebhook: { ...metadata, hostPid: activePid },
     };
-    const trackedSessions = new Map([[retiredPid, retired], [activePid, active]]);
+    const trackedSessions = new Map([[legacyPidSessionTrackingKey(retiredPid), retired], [legacyPidSessionTrackingKey(activePid), active]]);
     const credentials = { token: 'fixture-daemon', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(1) } } satisfies StoredCredentials;
     const mutationCustody = createDaemonSessionMutationCustody({ credentials });
     // The machine transport is a network boundary. Its terminal receipt lets
@@ -101,10 +102,10 @@ it.each(['retained', 'removed'] as const)('skips connected credential reconcilia
         connectedServiceRuntimeRegistry: registry,
         connectedServicesMaterializationBaseDir: join(home, 'connected-services'),
         getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-        pidToTrackedSession: trackedSessions, pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(),
-        pidToSpawnWebhookTimeout: new Map(), getApiMachineForSessions: () => reportingExit ? machine : null,
-        spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
-        connectedServicesRestartRequestedPids: new Set(),
+        trackedSessionsByKey: trackedSessions, spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(),
+        spawnWebhookTimeoutByKey: new Map(), getApiMachineForSessions: () => reportingExit ? machine : null,
+        spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
+        connectedServicesRestartRequestedSessions: new Set(),
         startupTerminalRecovery: { disconnectedTerminalHostCandidates: [], unresolvedTerminalHostSessionIds: [] },
         beforeShutdown: async () => {}, onHappySessionWebhook: async () => {}, requestShutdown: () => {}, processEnv: {},
     });
@@ -138,7 +139,7 @@ it.each(['retained', 'removed'] as const)('skips connected credential reconcilia
             },
         });
         register(retiredPid, retiredSessionId);
-        if (tracking === 'removed') trackedSessions.delete(retiredPid);
+        if (tracking === 'removed') trackedSessions.delete(legacyPidSessionTrackingKey(retiredPid));
         const control = vi.mocked(startDaemonControlServer).mock.calls.at(-1)?.[0];
         const mcpClosed = await control!.agentRuntimeDaemonServices!.dispatch(AgentRuntimeDaemonServiceRequestV1Schema.parse({
             v: 1,
@@ -186,7 +187,7 @@ it.each(['retained', 'removed'] as const)('skips connected credential reconcilia
         await expect(runtime.onChildExited(activePid, {
             reason: 'process-exited', code: 0, signal: null,
         })).resolves.toBeUndefined();
-        expect(trackedSessions.has(activePid)).toBe(false);
+        expect(trackedSessions.has(legacyPidSessionTrackingKey(activePid))).toBe(false);
         expect(registry.getByPid(activePid)).toBeNull();
     } finally {
         await runtime.stopControlServer();

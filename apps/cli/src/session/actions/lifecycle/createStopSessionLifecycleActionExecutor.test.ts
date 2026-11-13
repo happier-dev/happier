@@ -13,7 +13,7 @@ describe('createMachineSessionStopLifecycleActionExecutor', () => {
     'keeps pre-runner Stop refusal typed through the real lifecycle owner (%s)', async currentMachineId => {
       const credentials = { token: 'token', encryption: null };
       const stopSession = createStopSession({
-        pidToTrackedSession: new Map(),
+        trackedSessionsByKey: new Map(),
         // Files and Home are boundaries. The Session exists before runner birth;
         // no process identity or terminal descriptor has been published yet.
         readHostAttachmentState: async () => ({ status: 'absent' }),
@@ -58,7 +58,7 @@ it.each([true, false])('records only the originating Stop context through the re
   const diagnostic = vi.spyOn(logger, 'infoFile');
   try {
     const executor = createMachineSessionStopLifecycleActionExecutor({ stopSession: createStopSession({
-      pidToTrackedSession: new Map(), readHostAttachmentState: async () => ({ status: 'absent' }),
+      trackedSessionsByKey: new Map(), readHostAttachmentState: async () => ({ status: 'absent' }),
       readTerminalAttachmentInfo: async () => null,
     }) });
     const context = known ? { surface: 'agent' as const, authority: 'account_automation' as const,

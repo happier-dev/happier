@@ -16,6 +16,7 @@ import { HostTerminalTranscriptFollowAdmissionError } from '@/agent/runtime/sess
 import { resolveSessionRunnerFailureExitCode } from '@/cli/resolveSessionRunnerFailureExitCode';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 type RespawnOptionsResolver = (input: Readonly<{
   sessionId: string;
@@ -38,7 +39,7 @@ describe('createSessionRunnerRespawnManager', () => {
     const handoff = createVersionRuntimeRefreshAttemptHandoff<RestartSessionRunnerCompletion>({
       timeoutMs: null, timeoutCompletion: failure, supersededCompletion: failure, cancelledCompletion: failure,
     });
-    const tracked: TrackedSession = { startedBy: 'daemon', pid: 111, happySessionId: 'signed-out',
+    const tracked: TrackedSession = { startedBy: 'daemon', trackingKey: legacyPidSessionTrackingKey(111), pid: 111, happySessionId: 'signed-out',
       processCommandHash: 'runner-command', processStartTimeMs: 100,
       spawnOptions: { directory: '/repo', resume: 'vendor-session' } };
     const target = { sessionId: 'signed-out', previousPid: tracked.pid, tracked };
@@ -52,7 +53,7 @@ describe('createSessionRunnerRespawnManager', () => {
       logDebug: () => {}, logWarn: () => {} });
     let settled = false;
     const restart = requestPlannedRunnerRestart({ sessionId: target.sessionId, tracked,
-      deferral: { kind: 'none' }, restartRequestedPids: new Set(), pidToTrackedSession: new Map([[111, tracked]]),
+      deferral: { kind: 'none' }, restartRequestedSessions: new Set(), trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
       isProcessSafeToSignal: async () => true,
       completion: { hasPending: () => handoff.hasPending(), join: () => handoff.join(target), create: () => handoff.create(target) },
       requestSignal: async request => {
@@ -89,7 +90,7 @@ describe('createSessionRunnerRespawnManager', () => {
         baseDelayMs: 1_000, maxDelayMs: 32_000, jitterMs: 0, random: () => 0,
         isSessionAlreadyRunning: () => false, spawnSession, onRespawnTerminal: terminal,
         logDebug: () => {}, logWarn: () => {} });
-      const tracked: TrackedSession = { startedBy: 'daemon', pid: 111, happySessionId: 'person-held',
+      const tracked: TrackedSession = { startedBy: 'daemon', trackingKey: legacyPidSessionTrackingKey(111), pid: 111, happySessionId: 'person-held',
         vendorResumeId: 'native', spawnOptions: { directory: '/repo' } };
       expect(manager.handleUnexpectedExit(tracked, { reason: 'process-missing', code: null, signal: null })).toBe('scheduled');
       // Covers the observed live 1+2+4+8+16+32 s schedule several times over.
@@ -110,7 +111,7 @@ describe('createSessionRunnerRespawnManager', () => {
         isSessionAlreadyRunning: () => false, spawnSession, readStartupFailure,
         random: () => 0, logDebug: () => {}, logWarn: () => {} });
       const error = Object.assign(new Error('private binding context'), createProviderErrorV1('provider_compatibility_unverified'));
-      const tracked: TrackedSession = { startedBy: 'daemon', pid: 111, happySessionId: 'unconfirmed-provider',
+      const tracked: TrackedSession = { startedBy: 'daemon', trackingKey: legacyPidSessionTrackingKey(111), pid: 111, happySessionId: 'unconfirmed-provider',
         spawnOptions: { directory: '/repo' } };
       expect(manager.handleUnexpectedExit(tracked, { reason: 'process-exit', code: resolveSessionRunnerFailureExitCode(error), signal: null })).toBe('terminal');
       await vi.runAllTimersAsync();
@@ -124,7 +125,7 @@ describe('createSessionRunnerRespawnManager', () => {
   });
   it.each(['scheduled', 'retry', 'preflight'] as const)('settles the exact predecessor refresh when Stop retires a %s respawn', async phase => {
     vi.useFakeTimers();
-    const tracked: TrackedSession = { startedBy: 'daemon', pid: 111, happySessionId: 'stopped-refresh',
+    const tracked: TrackedSession = { startedBy: 'daemon', trackingKey: legacyPidSessionTrackingKey(111), pid: 111, happySessionId: 'stopped-refresh',
       vendorResumeId: 'native', spawnOptions: { directory: '/repo' } };
     const handoff = createVersionRuntimeRefreshAttemptHandoff({ timeoutMs: null,
       timeoutCompletion: 'timeout', supersededCompletion: 'superseded', cancelledCompletion: 'cancelled' });
@@ -167,7 +168,7 @@ describe('createSessionRunnerRespawnManager', () => {
       isSessionAlreadyRunning: async () => false, spawnSession,
       random: () => 0, logDebug: () => {}, logWarn: () => {},
     });
-    const tracked: TrackedSession = { startedBy: 'daemon', pid: 111, happySessionId: 'planned-session',
+    const tracked: TrackedSession = { startedBy: 'daemon', trackingKey: legacyPidSessionTrackingKey(111), pid: 111, happySessionId: 'planned-session',
       vendorResumeId: 'vendor-session', spawnOptions: { directory: '/repo' } };
     try {
       expect(manager.handleUnexpectedExit(tracked, { reason: 'process-exit', code: 0, signal: null },
@@ -202,12 +203,12 @@ describe('createSessionRunnerRespawnManager', () => {
         details: { cause: { code: 'project_requester_credentials_unavailable', stage: 'dispatch' } } });
       const exitCode = resolveSessionRunnerFailureExitCode(error);
       expect(exitCode).toBe(79);
-      const tracked: TrackedSession = { startedBy: 'daemon', pid: 111, happySessionId: 'requester-refusal',
+      const tracked: TrackedSession = { startedBy: 'daemon', trackingKey: legacyPidSessionTrackingKey(111), pid: 111, happySessionId: 'requester-refusal',
         spawnOptions: { directory: '/repo' } };
       expect(manager.handleUnexpectedExit(tracked, { reason: 'process-exit', code: exitCode, signal: null })).toBe('terminal');
       await vi.runAllTimersAsync();
       expect(spawnSession).not.toHaveBeenCalled();
-      expect(terminal).toHaveBeenCalledWith({ sessionId: 'requester-refusal', previousPid: 111,
+      expect(terminal).toHaveBeenCalledWith({ sessionId: 'requester-refusal', previousPid: 111, previousTrackingKey: legacyPidSessionTrackingKey(111),
         reason: 'terminal_follow_admission_failed' });
       manager.prepareFreshExplicitResumeAdmission('requester-refusal').complete();
       expect(manager.prepareAutomaticResumeAdmission('requester-refusal')()).toBe(true);
@@ -238,11 +239,11 @@ describe('createSessionRunnerRespawnManager', () => {
       if (phase === 'bind') {
         // A terminal replacement failure also retires an already scheduled crash cycle.
         manager.handleUnexpectedExit({
-          startedBy: 'daemon', pid: 100, happySessionId: 'follow-admission', spawnOptions: { directory: '/repo' },
+          trackingKey: legacyPidSessionTrackingKey(100), startedBy: 'daemon', pid: 100, happySessionId: 'follow-admission', spawnOptions: { directory: '/repo' },
         }, { reason: 'process-exit', code: 1, signal: null });
       }
       const disposition = manager.handleUnexpectedExit({
-        startedBy: 'daemon', pid: 111, happySessionId: 'follow-admission', spawnOptions: { directory: '/repo' },
+        trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon', pid: 111, happySessionId: 'follow-admission', spawnOptions: { directory: '/repo' },
       }, { reason: 'process-exit', code, signal: null });
       expect(disposition).toBe(phase === 'bind' ? 'terminal' : 'scheduled');
       await vi.advanceTimersByTimeAsync(50);
@@ -250,13 +251,13 @@ describe('createSessionRunnerRespawnManager', () => {
         expect(code).not.toBe(1);
         expect(spawnSession).not.toHaveBeenCalled();
         expect(terminal).toHaveBeenCalledWith({
-          sessionId: 'follow-admission', previousPid: 111, reason: 'terminal_follow_admission_failed',
+          sessionId: 'follow-admission', previousPid: 111, previousTrackingKey: legacyPidSessionTrackingKey(111), reason: 'terminal_follow_admission_failed',
         });
         // An explicit later start is independent of the terminal automatic cycle.
         manager.prepareFreshExplicitResumeAdmission('follow-admission').complete();
         expect(manager.prepareAutomaticResumeAdmission('follow-admission')()).toBe(true);
         expect(manager.handleUnexpectedExit({
-          startedBy: 'daemon', pid: 222, happySessionId: 'follow-admission', spawnOptions: { directory: '/repo' },
+          trackingKey: legacyPidSessionTrackingKey(222), startedBy: 'daemon', pid: 222, happySessionId: 'follow-admission', spawnOptions: { directory: '/repo' },
         }, { reason: 'process-exit', code: 1, signal: null })).toBe('scheduled');
         await vi.advanceTimersByTimeAsync(50);
         expect(spawnSession).toHaveBeenCalledOnce();
@@ -336,7 +337,7 @@ describe('createSessionRunnerRespawnManager', () => {
           },
           random: () => 0, logDebug: () => {}, logWarn: () => {},
         });
-        manager.handleUnexpectedExit({ startedBy: 'daemon', pid: 111, happySessionId: 'prepared-runner',
+        manager.handleUnexpectedExit({ trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon', pid: 111, happySessionId: 'prepared-runner',
           spawnOptions: { directory: '/repo', beforeSessionRunnerLaunch: upstreamLaunchAdmission } },
         { reason: 'process-exit', code: 1, signal: null });
         await vi.advanceTimersByTimeAsync(50);
@@ -370,13 +371,13 @@ describe('createSessionRunnerRespawnManager', () => {
         // Home transport returns the retained issue for this exact exited runner.
         readStartupFailure: async () => issue,
       });
-      const tracked: TrackedSession = { startedBy: 'daemon', pid: 111,
+      const tracked: TrackedSession = { startedBy: 'daemon', trackingKey: legacyPidSessionTrackingKey(111), pid: 111,
         happySessionId: 'startup-failed', processStartTimeMs: 1_000,
         spawnOptions: { directory: '/repo' } };
       expect(manager.handleUnexpectedExit(tracked, { reason: 'process-exit', code: 1, signal: null })).toBe('scheduled');
       await vi.advanceTimersByTimeAsync(60_000);
       expect(spawnSession).not.toHaveBeenCalled();
-      expect(onRespawnTerminal).toHaveBeenCalledWith({ sessionId: 'startup-failed', previousPid: 111,
+      expect(onRespawnTerminal).toHaveBeenCalledWith({ sessionId: 'startup-failed', previousPid: 111, previousTrackingKey: legacyPidSessionTrackingKey(111),
         reason: 'startup_dependency_failure', detail: 'profile_missing' });
 
       // Unavailable transport is transient; keep ordinary crash recovery reachable.
@@ -420,7 +421,7 @@ describe('createSessionRunnerRespawnManager', () => {
         isSessionAlreadyRunning: async () => false, readStartupFailure: () => pendingRead,
         spawnSession, random: () => 0, logDebug: () => {}, logWarn: () => {},
       });
-      manager.handleUnexpectedExit({ startedBy: 'daemon', pid: 111, happySessionId: 'pending-home-read',
+      manager.handleUnexpectedExit({ trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon', pid: 111, happySessionId: 'pending-home-read',
         spawnOptions: { directory: '/repo' } }, { reason: 'process-exit', code: 1, signal: null });
       await vi.advanceTimersByTimeAsync(50);
       manager.markStopRequested('pending-home-read', { reason: 'daemon_stop_session', requestedAtMs: 100 });
@@ -443,7 +444,7 @@ describe('createSessionRunnerRespawnManager', () => {
         isSessionAlreadyRunning: async () => false, readStartupFailure: () => pendingRead,
         spawnSession, random: () => 0, logDebug: () => {}, logWarn: () => {},
       });
-      manager.handleUnexpectedExit({ startedBy: 'daemon', pid: 111, happySessionId: 'resume-during-read',
+      manager.handleUnexpectedExit({ trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon', pid: 111, happySessionId: 'resume-during-read',
         spawnOptions: { directory: '/repo' } }, { reason: 'process-exit', code: 1, signal: null });
       await vi.advanceTimersByTimeAsync(50);
       manager.markStopRequested('resume-during-read', { reason: 'daemon_stop_session', requestedAtMs: 100 });
@@ -466,7 +467,7 @@ describe('createSessionRunnerRespawnManager', () => {
       random: () => 0, logDebug: () => {}, logWarn: () => {},
     });
     const tracked: TrackedSession = {
-      startedBy: 'daemon', pid: 111, happySessionId: 'managed-session',
+      startedBy: 'daemon', trackingKey: legacyPidSessionTrackingKey(111), pid: 111, happySessionId: 'managed-session',
       spawnOptions: {
         directory: '/private/chat', directoryKind: 'managed', approvedNewDirectoryCreation: true,
         freshSessionCreation: true, managedDirectorySeed: { sourceSessionId: 'source', sourcePath: '/private/source' },
@@ -502,7 +503,7 @@ describe('createSessionRunnerRespawnManager', () => {
 
     const tracked: TrackedSession = {
       startedBy: 'daemon',
-      pid: 111,
+      trackingKey: legacyPidSessionTrackingKey(111), pid: 111,
       happySessionId: 'sess-1',
       spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, resume: 'vendor-sess-1' } as any,
     };
@@ -542,7 +543,7 @@ describe('createSessionRunnerRespawnManager', () => {
 
     const tracked: TrackedSession = {
       startedBy: 'daemon',
-      pid: 111,
+      trackingKey: legacyPidSessionTrackingKey(111), pid: 111,
       happySessionId: 'sess-2',
       vendorResumeId: 'vendor-sess-2',
       spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'codex' } } as any,
@@ -583,7 +584,7 @@ describe('createSessionRunnerRespawnManager', () => {
 
     const tracked: TrackedSession = {
       startedBy: 'daemon',
-      pid: 111,
+      trackingKey: legacyPidSessionTrackingKey(111), pid: 111,
       happySessionId: 'sess-opaque',
       vendorResumeId: opaqueVendorResumeId,
       spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'codex' } } as any,
@@ -617,7 +618,7 @@ describe('createSessionRunnerRespawnManager', () => {
 
     const tracked: TrackedSession = {
       startedBy: 'daemon',
-      pid: 111,
+      trackingKey: legacyPidSessionTrackingKey(111), pid: 111,
       happySessionId: 'sess-opaque-2',
       spawnOptions: {
         directory: '/tmp',
@@ -653,7 +654,7 @@ describe('createSessionRunnerRespawnManager', () => {
     });
     const tracked: TrackedSession = {
       startedBy: 'daemon',
-      pid: 111,
+      trackingKey: legacyPidSessionTrackingKey(111), pid: 111,
       happySessionId: 'sess-continuation-unreachable',
       vendorResumeId: 'provider-thread',
       spawnOptions: {
@@ -671,7 +672,7 @@ describe('createSessionRunnerRespawnManager', () => {
     expect(spawnSession).not.toHaveBeenCalled();
     expect(onRespawnTerminal).toHaveBeenCalledWith({
       sessionId: 'sess-continuation-unreachable',
-      previousPid: 111,
+      previousPid: 111, previousTrackingKey: legacyPidSessionTrackingKey(111),
       reason: 'continuation_unreachable',
     });
   });
@@ -703,7 +704,7 @@ describe('createSessionRunnerRespawnManager', () => {
     });
 
     const tracked = {
-      startedBy: 'daemon',
+      trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon',
       pid: 111,
       happySessionId: 'global-voice-session',
       vendorResumeId: 'codex-thread',
@@ -778,7 +779,7 @@ describe('createSessionRunnerRespawnManager', () => {
 
     const tracked: TrackedSession = {
       startedBy: 'daemon',
-      pid: 111,
+      trackingKey: legacyPidSessionTrackingKey(111), pid: 111,
       happySessionId: 'sess-snapshot',
       vendorResumeId: 'vendor-snapshot',
       spawnOptions: {
@@ -827,7 +828,7 @@ describe('createSessionRunnerRespawnManager', () => {
 
     const tracked: TrackedSession = {
       startedBy: 'daemon',
-      pid: 111,
+      trackingKey: legacyPidSessionTrackingKey(111), pid: 111,
       happySessionId: 'sess-3',
       spawnOptions: {
         directory: '/tmp',
@@ -862,7 +863,7 @@ describe('createSessionRunnerRespawnManager', () => {
 
     const tracked: TrackedSession = {
       startedBy: 'user-session',
-      pid: 111,
+      trackingKey: legacyPidSessionTrackingKey(111), pid: 111,
       happySessionId: 'sess-user',
       spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'claude' } } as any,
     };
@@ -892,7 +893,7 @@ describe('createSessionRunnerRespawnManager', () => {
 
     const tracked: TrackedSession = {
       startedBy: 'daemon',
-      pid: 111,
+      trackingKey: legacyPidSessionTrackingKey(111), pid: 111,
       happySessionId: 'sess-connected-service-restart',
       spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, resume: 'codex-thread' } as any,
     };
@@ -930,7 +931,7 @@ describe('createSessionRunnerRespawnManager', () => {
 
     const tracked: TrackedSession = {
       startedBy: 'daemon',
-      pid: 111,
+      trackingKey: legacyPidSessionTrackingKey(111), pid: 111,
       happySessionId: 'sess-connected-service-immediate-restart',
       spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, resume: 'claude-thread' } as any,
     };
@@ -971,7 +972,7 @@ describe('createSessionRunnerRespawnManager', () => {
 
     const tracked: TrackedSession = {
       startedBy: 'daemon',
-      pid: 111,
+      trackingKey: legacyPidSessionTrackingKey(111), pid: 111,
       happySessionId: 'sess-1',
       spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'claude' } } as any,
     };
@@ -1002,7 +1003,7 @@ describe('createSessionRunnerRespawnManager', () => {
 
     const tracked: TrackedSession = {
       startedBy: 'daemon',
-      pid: 111,
+      trackingKey: legacyPidSessionTrackingKey(111), pid: 111,
       happySessionId: 'sess-1',
       spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'claude' } } as any,
     };
@@ -1033,7 +1034,7 @@ describe('createSessionRunnerRespawnManager', () => {
     });
     const tracked: TrackedSession = {
       startedBy: 'daemon',
-      pid: 112,
+      trackingKey: legacyPidSessionTrackingKey(112), pid: 112,
       happySessionId: 'sess-stop-race',
       spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'codex' } } as any,
     };
@@ -1087,7 +1088,7 @@ describe('createSessionRunnerRespawnManager', () => {
 
     const tracked: TrackedSession = {
       startedBy: 'daemon',
-      pid: 111,
+      trackingKey: legacyPidSessionTrackingKey(111), pid: 111,
       happySessionId: 'sess-stop-during-running-preflight',
       spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'claude' } } as any,
     };
@@ -1140,7 +1141,7 @@ describe('createSessionRunnerRespawnManager', () => {
 
     const tracked: TrackedSession = {
       startedBy: 'daemon',
-      pid: 111,
+      trackingKey: legacyPidSessionTrackingKey(111), pid: 111,
       happySessionId: 'sess-stop-during-options',
       spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'claude' } } as any,
     };
@@ -1186,7 +1187,7 @@ describe('createSessionRunnerRespawnManager', () => {
 
     const tracked: TrackedSession = {
       startedBy: 'daemon',
-      pid: 111,
+      trackingKey: legacyPidSessionTrackingKey(111), pid: 111,
       happySessionId: 'sess-1',
       spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'claude' } } as any,
     };
@@ -1224,7 +1225,7 @@ describe('createSessionRunnerRespawnManager', () => {
 
     const tracked: TrackedSession = {
       startedBy: 'daemon',
-      pid: 111,
+      trackingKey: legacyPidSessionTrackingKey(111), pid: 111,
       happySessionId: 'sess-1',
       spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'claude' } } as any,
     };
@@ -1260,7 +1261,7 @@ describe('createSessionRunnerRespawnManager', () => {
 
     const tracked: TrackedSession = {
       startedBy: 'daemon',
-      pid: 111,
+      trackingKey: legacyPidSessionTrackingKey(111), pid: 111,
       happySessionId: 'sess-stop-retry-gap',
       spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'codex' } } as any,
     };
@@ -1306,7 +1307,7 @@ describe('createSessionRunnerRespawnManager', () => {
 
     const tracked: TrackedSession = {
       startedBy: 'daemon',
-      pid: 111,
+      trackingKey: legacyPidSessionTrackingKey(111), pid: 111,
       happySessionId: 'sess-resume-not-supported',
       spawnOptions: {
         directory: '/tmp',
@@ -1326,7 +1327,7 @@ describe('createSessionRunnerRespawnManager', () => {
     expect(onRespawnTerminal).toHaveBeenCalledTimes(1);
     expect(onRespawnTerminal).toHaveBeenCalledWith({
       sessionId: 'sess-resume-not-supported',
-      previousPid: 111,
+      previousPid: 111, previousTrackingKey: legacyPidSessionTrackingKey(111),
       reason: 'resume_not_supported',
       detail: SPAWN_SESSION_ERROR_CODES.RESUME_NOT_SUPPORTED,
     });
@@ -1359,7 +1360,7 @@ describe('createSessionRunnerRespawnManager', () => {
     });
 
     const tracked = (pid: number): TrackedSession => ({
-      startedBy: 'daemon',
+      trackingKey: legacyPidSessionTrackingKey(pid), startedBy: 'daemon',
       pid,
       happySessionId: 'sess-pre-webhook-exit',
       spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'codex' } } as any,
@@ -1400,7 +1401,7 @@ describe('createSessionRunnerRespawnManager', () => {
     });
 
     const tracked = (pid: number): TrackedSession => ({
-      startedBy: 'daemon',
+      trackingKey: legacyPidSessionTrackingKey(pid), startedBy: 'daemon',
       pid,
       happySessionId: 'sess-quick-crash',
       spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'codex' } } as any,
@@ -1448,7 +1449,7 @@ describe('createSessionRunnerRespawnManager', () => {
     });
 
     const tracked = (pid: number): TrackedSession => ({
-      startedBy: 'daemon',
+      trackingKey: legacyPidSessionTrackingKey(pid), startedBy: 'daemon',
       pid,
       happySessionId: 'sess-stable',
       spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'codex' } } as any,
@@ -1487,7 +1488,7 @@ describe('createSessionRunnerRespawnManager', () => {
     });
 
     const tracked = (pid: number): TrackedSession => ({
-      startedBy: 'daemon',
+      trackingKey: legacyPidSessionTrackingKey(pid), startedBy: 'daemon',
       pid,
       happySessionId: 'sess-stopped',
       spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'codex' } } as any,
@@ -1532,7 +1533,7 @@ describe('createSessionRunnerRespawnManager', () => {
 
     const tracked: TrackedSession = {
       startedBy: 'daemon',
-      pid: 111,
+      trackingKey: legacyPidSessionTrackingKey(111), pid: 111,
       happySessionId: 'sess-stale-auth',
       spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'codex' } } as any,
     };
@@ -1572,7 +1573,7 @@ describe('createSessionRunnerRespawnManager', () => {
 
     const tracked: TrackedSession = {
       startedBy: 'daemon',
-      pid: 111,
+      trackingKey: legacyPidSessionTrackingKey(111), pid: 111,
       happySessionId: 'sess-preflight-retry',
       spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'claude' } } as any,
     };
@@ -1611,7 +1612,7 @@ describe('createSessionRunnerRespawnManager', () => {
 
     const tracked: TrackedSession = {
       startedBy: 'daemon',
-      pid: 111,
+      trackingKey: legacyPidSessionTrackingKey(111), pid: 111,
       happySessionId: 'sess-preflight-exhausted',
       spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'claude' } } as any,
     };
@@ -1632,7 +1633,7 @@ describe('createSessionRunnerRespawnManager intended-restart storms (RR-2 cross-
   function createTracked(): TrackedSession {
     return {
       startedBy: 'daemon',
-      pid: 111,
+      trackingKey: legacyPidSessionTrackingKey(111), pid: 111,
       happySessionId: 'sess-storm',
       spawnOptions: { directory: '/tmp', backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, resume: 'vendor-1' } as any,
     } as TrackedSession;

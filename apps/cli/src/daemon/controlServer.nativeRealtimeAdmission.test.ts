@@ -14,6 +14,7 @@ import type { TrackedSession } from './types';
 import { createDaemonAdmissionDrain } from './lifecycle/admissionDrain';
 import { applyTrackedSessionTurnLifecycle } from './sessions/applyTrackedSessionTurnLifecycle';
 import { writeSessionMarker, removeSessionMarker } from './sessionRegistry';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const capabilityA = 'A'.repeat(43);
 
@@ -51,7 +52,7 @@ describe('daemon native Realtime input admission', () => {
       happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
       path: authorityPath, sessionId, runner, retainedAgent, httpPort: 46_010,
       capability: capabilityA, readPluginHardRevocationRevision: async () => 0 });
-    const tracked: TrackedSession = { startedBy: 'daemon', pid: runner.pid, sessionRunnerPid: runner.pid,
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon', pid: runner.pid, sessionRunnerPid: runner.pid,
       happySessionId: sessionId, processStartTimeMs: runner.processStartTimeMs, processCommandHash: runner.processCommandHash,
       agentRuntimeDaemonServiceAuthorityFilePath: authorityPath, agentRuntimeDaemonServiceCapabilityHash: authority.capabilityDigest,
       runnerAgentSourceCustodyV1: retainedAgent.sourceCustody,
@@ -77,7 +78,7 @@ describe('daemon native Realtime input admission', () => {
         operation: { kind: 'connected_account.identity.observe', observation } } });
     let releaseDrain = () => {};
     try {
-      await writeSessionMarker({ pid: runner.pid, happySessionId: sessionId, startedBy: 'daemon', cwd: '/workspace' });
+      await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(runner.pid), pid: runner.pid, happySessionId: sessionId, startedBy: 'daemon', cwd: '/workspace' });
       const idle = await send();
       expect(idle.statusCode).toBe(200);
       expect(AgentRuntimeDaemonServiceResponseV1Schema.parse(idle.json())).toEqual({ ok: true,
@@ -96,7 +97,7 @@ describe('daemon native Realtime input admission', () => {
     } finally {
       releaseDrain();
       await app.close();
-      await removeSessionMarker(runner.pid);
+      await removeSessionMarker(legacyPidSessionTrackingKey(runner.pid));
       await removeAgentRuntimeDaemonServiceAuthorityIfOwned({
         happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
         path: authorityPath, capabilityDigest: authority.capabilityDigest });
@@ -114,7 +115,7 @@ describe('daemon native Realtime input admission', () => {
       happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
       path: authorityPath, sessionId, runner, retainedAgent, httpPort: 46_009,
       capability: capabilityA, readPluginHardRevocationRevision: async () => 0 });
-    const tracked: TrackedSession = { startedBy: 'daemon', pid: runner.pid, sessionRunnerPid: runner.pid,
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon', pid: runner.pid, sessionRunnerPid: runner.pid,
       happySessionId: sessionId, processStartTimeMs: runner.processStartTimeMs, processCommandHash: runner.processCommandHash,
       agentRuntimeDaemonServiceAuthorityFilePath: authorityPath, agentRuntimeDaemonServiceCapabilityHash: authority.capabilityDigest,
       runnerAgentSourceCustodyV1: retainedAgent.sourceCustody,
@@ -154,7 +155,7 @@ describe('daemon native Realtime input admission', () => {
         nativeRealtimeAdmission: admission, workDepth: 0,
         agentStartCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 } } };
     try {
-      await writeSessionMarker({ pid: runner.pid, happySessionId: sessionId, startedBy: 'daemon', cwd: '/workspace' });
+      await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(runner.pid), pid: runner.pid, happySessionId: sessionId, startedBy: 'daemon', cwd: '/workspace' });
       expect((await send(action)).statusCode).toBe(403);
       const admitted = await send({ kind: 'native_realtime.input.admit', admission });
       expect(admitted.statusCode).toBe(200);
@@ -198,7 +199,7 @@ describe('daemon native Realtime input admission', () => {
       expect((await send(action)).statusCode).toBe(403);
       await send({ kind: 'native_realtime.input.admit', admission: { ...admission, attemptId: 'attempt-2' } });
       expect((await send(action)).statusCode).toBe(403);
-    } finally { releaseDrain(); home.mockRestore(); await app.close(); await removeSessionMarker(runner.pid);
+    } finally { releaseDrain(); home.mockRestore(); await app.close(); await removeSessionMarker(legacyPidSessionTrackingKey(runner.pid));
       await removeAgentRuntimeDaemonServiceAuthorityIfOwned({
       happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
       path: authorityPath, capabilityDigest: authority.capabilityDigest }); }

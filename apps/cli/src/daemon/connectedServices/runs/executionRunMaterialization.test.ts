@@ -31,6 +31,11 @@ import {
 import { createExecutionRunConnectedServicesBridge } from './executionRunMaterialization';
 import type { CreateExecutionRunConnectedServicesBridgeDeps } from './executionRunMaterialization';
 import { createAdoptedExecutionRunRootCleanup } from './createAdoptedExecutionRunRootCleanup';
+import { createExecutionRunConnectedServicesRunnerIdentityCapture } from './runnerIdentity';
+import { configuration } from '@/configuration';
+import type { TrackedSession } from '@/daemon/types';
+import { retainExecutionRunState } from '@/daemon/executionRunRegistry';
+import { mintSessionTrackingKey, type TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 import { resolveConnectedServiceMaterializedRootDir } from '../materialize/resolveConnectedServiceMaterializedRootDir';
 import { logger } from '@/ui/logger';
 import { ConnectedServiceQuotasCoordinator } from '../quotas/ConnectedServiceQuotasCoordinator';
@@ -830,6 +835,44 @@ describe('createExecutionRunConnectedServicesBridge', () => {
             activationId: result.activationId,
         }))
             .resolves.toEqual({ ok: true, released: false });
+    });
+
+    it('keeps a hosted Session\'s Run authority when another Session of the same host ends', async () => {
+        // Two Sessions in one session host share its pid; each Run belongs to the Session that started it.
+        const hostPid = 4242;
+        const home = await mkdtemp(join(tmpdir(), 'happier-hosted-run-authority-'));
+        const originalHome = Object.getOwnPropertyDescriptor(configuration, 'happyHomeDir')!;
+        Object.defineProperty(configuration, 'happyHomeDir', { ...originalHome, value: home });
+        try {
+            const hosted = (sessionId: string): TrackedSession => ({
+                trackingKey: mintSessionTrackingKey(), pid: hostPid, sessionRunnerPid: hostPid,
+                processStartTimeMs: 1, startedBy: 'daemon', happySessionId: sessionId,
+            });
+            const sessionA = hosted('session-a');
+            const sessionB = hosted('session-b');
+            const trackedSessionsByKey: TrackedSessionMap = new Map([sessionA, sessionB].map(tracked => [tracked.trackingKey, tracked]));
+            await retainExecutionRunState({ runId: 'run_abc', callId: 'call', sidechainId: 'side', sessionId: 'session-b', depth: 0,
+                intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex', instructions: 'Review',
+                permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
+                status: 'running', startedAtMs: 1 });
+            const { bridge, unregisterRunTargets, cleanupOnExit } = createBridge({
+                captureRunnerIdentity: createExecutionRunConnectedServicesRunnerIdentityCapture({
+                    machineId: 'machine-test', trackedSessionsByKey, getApiMachineForSessions: () => null, isCurrent: () => true,
+                }),
+            });
+            const result = await bridge.materialize({ ...MATERIALIZE_INPUT, runnerPid: hostPid, activationId: randomUUID() });
+            expect(result.ok).toBe(true);
+
+            await bridge.releaseForRunnerExit({ runnerPid: hostPid, runnerIdentity: sessionA });
+            expect(unregisterRunTargets).not.toHaveBeenCalled();
+            expect(cleanupOnExit).not.toHaveBeenCalled();
+
+            await bridge.releaseForRunnerExit({ runnerPid: hostPid, runnerIdentity: sessionB });
+            expect(cleanupOnExit).toHaveBeenCalledOnce();
+        } finally {
+            Object.defineProperty(configuration, 'happyHomeDir', originalHome);
+            await rm(home, { recursive: true, force: true });
+        }
     });
 
     it('waits for a resolve-pending exited runner attempt and cleans its root and contribution lease', async () => {

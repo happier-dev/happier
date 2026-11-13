@@ -88,6 +88,7 @@ export function buildTrackedSessionFromMarker(params: Readonly<{
       ...(marker.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: marker.requesterWorkAttributionV1 } : {}),
     } } : {}),
     ...(params.vendorResumeId ? { vendorResumeId: params.vendorResumeId } : {}),
+    ...(marker.heldAgentsV1?.length ? { heldAgentsV1: marker.heldAgentsV1 } : {}),
     ...(marker.agentRuntimeDaemonServiceAuthorityFilePath
       ? {
           agentRuntimeDaemonServiceAuthorityFilePath:
@@ -135,6 +136,7 @@ export function buildTrackedSessionFromMarker(params: Readonly<{
             marker.agentRuntimeDaemonServiceSessionOpenAttestation,
         }
       : {}),
+    trackingKey: marker.trackingKey,
     pid: marker.pid,
     ...(processCommandHash ? { processCommandHash } : {}),
     ...(processStartTimeMs !== undefined ? { processStartTimeMs } : {}),

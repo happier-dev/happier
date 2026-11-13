@@ -13,6 +13,7 @@ import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import type { TrackedSession } from '@/daemon/types';
 import { attemptNativeForkOpen } from './attemptNativeForkOpen';
 import type { ForkBackendResolution, ForkSpawnSession } from './forkLifecycleTypes';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const boundary = vi.hoisted(() => ({ create: vi.fn() }));
 // The Session socket is a network boundary; fork recovery and observation stay real.
@@ -49,7 +50,7 @@ it.each([
     // and the retained-runner observer are the same owners used by ordinary launch.
     const childProcess = new ChildProcess();
     Object.defineProperty(childProcess, 'exitCode', { value: 1 });
-    const tracked: TrackedSession = { pid: 123, startedBy: 'daemon', happySessionId: childSessionId,
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(123), pid: 123, startedBy: 'daemon', happySessionId: childSessionId,
         processStartTimeMs: 100, processCommandHash: 'a'.repeat(64), childProcess };
     const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'codex',
         error: new PluginError({ code, message: 'PRIVATE_RUNTIME', details: { failureCause: {

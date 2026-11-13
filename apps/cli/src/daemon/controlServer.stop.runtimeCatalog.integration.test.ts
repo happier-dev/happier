@@ -14,6 +14,7 @@ import {
   resetActiveAccountSettingsSnapshotForTests,
   setActiveAccountSettingsSnapshot,
 } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -99,7 +100,7 @@ describe('daemon control server: /stop', () => {
   it('marks only an explicit session Stop, not daemon shutdown cleanup', async () => {
     const intents: Array<string | undefined> = [];
     const app = createDaemonControlApp({
-      getChildren: () => [{ startedBy: 'daemon', pid: 111, happySessionId: 'sess-1' }],
+      getChildren: () => [{ trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon', pid: 111, happySessionId: 'sess-1' }],
       machineId: 'machine_local',
       stopSession: async (_sessionId, intent) => { intents.push(intent); return { status: 'stopped' as const }; },
       spawnSession: async () => ({ type: 'success' as const, sessionId: 'happy-test-123' }),
@@ -125,7 +126,7 @@ describe('daemon control server: /stop', () => {
     const responseClosed = createDeferred<void>();
     const requestShutdown = vi.fn();
     const app = createDaemonControlApp({
-      getChildren: () => [{ startedBy: 'daemon', pid: 111, happySessionId: 'sess-1' }],
+      getChildren: () => [{ trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon', pid: 111, happySessionId: 'sess-1' }],
       machineId: 'machine_local',
       stopSession: async () => { cleanupStarted.resolve(); await releaseCleanup.promise; return { status: 'stopped' as const }; },
       spawnSession: async () => ({ type: 'success' as const, sessionId: 'unused' }),
@@ -155,7 +156,7 @@ describe('daemon control server: /stop', () => {
     const barrier = createDeferred<void>();
 
     const appParams = {
-      getChildren: () => [{ startedBy: 'daemon', pid: 111, happySessionId: 'sess-1' }],
+      getChildren: () => [{ trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon', pid: 111, happySessionId: 'sess-1' }],
       machineId: 'machine_local',
       stopSession: async (sessionId: string) => {
         calls.push(`stop:${sessionId}`);
@@ -357,9 +358,9 @@ describe('daemon control server: /stop', () => {
 
     const app = createDaemonControlApp({
       getChildren: () => [
-        { startedBy: 'daemon', pid: 111, happySessionId: 'sess-1' },
-        { startedBy: 'daemon', pid: 222 },
-        { startedBy: 'terminal', pid: 333, happySessionId: 'sess-3' },
+        { trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon', pid: 111, happySessionId: 'sess-1' },
+        { trackingKey: legacyPidSessionTrackingKey(222), startedBy: 'daemon', pid: 222 },
+        { trackingKey: legacyPidSessionTrackingKey(333), startedBy: 'terminal', pid: 333, happySessionId: 'sess-3' },
       ],
       machineId: 'machine_local',
       stopSession: async (sessionId) => {
@@ -408,9 +409,9 @@ describe('daemon control server: /stop', () => {
     if (!child.pid) throw new Error('test runner has no PID');
     const identity = await readProcessIdentityByPid(child.pid);
     if (identity?.processStartTimeMs === undefined) throw new Error('test runner has no process identity');
-    const tracked = { startedBy: 'daemon' as const, pid: child.pid, happySessionId: 'unconfirmed-exit', childProcess: child,
+    const tracked = { trackingKey: legacyPidSessionTrackingKey(child.pid), startedBy: 'daemon' as const, pid: child.pid, happySessionId: 'unconfirmed-exit', childProcess: child,
       processStartTimeMs: identity.processStartTimeMs };
-    const runners = new Map([[child.pid, tracked]]);
+    const runners = new Map([[tracked.trackingKey, tracked]]);
     const requestShutdown = vi.fn();
     const requestSelfRestart = vi.fn(async () => {});
     const kill = process.kill.bind(process);
@@ -420,7 +421,7 @@ describe('daemon control server: /stop', () => {
       return kill(pid, signal);
     });
     const stopSession = createStopSession({
-      pidToTrackedSession: runners,
+      trackedSessionsByKey: runners,
       // The filesystem boundary has no terminal attachment for this owned child.
       readHostAttachmentState: async () => ({ status: 'absent' }),
       waitForTrackedRunnersExit: async ({ trackedPids }) => await waitForTrackedRunnerProcessesExit({
@@ -470,7 +471,7 @@ describe('daemon control server: /stop', () => {
 
   it('prepares tracked sessions before stopping them during daemon shutdown', async () => {
     const calls: string[] = [];
-    const child = { startedBy: 'daemon' as const, pid: 111, happySessionId: 'sess-1' };
+    const child = { trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon' as const, pid: 111, happySessionId: 'sess-1' };
 
     const app = createDaemonControlApp({
       getChildren: () => [child],
@@ -519,7 +520,7 @@ describe('daemon control server: /stop', () => {
     const calls: string[] = [];
 
     const app = createDaemonControlApp({
-      getChildren: () => [{ startedBy: 'daemon', pid: 111, happySessionId: 'sess-1' }],
+      getChildren: () => [{ trackingKey: legacyPidSessionTrackingKey(111), startedBy: 'daemon', pid: 111, happySessionId: 'sess-1' }],
       machineId: 'machine_local',
       stopSession: async (sessionId) => {
         calls.push(`stop:${sessionId}`);

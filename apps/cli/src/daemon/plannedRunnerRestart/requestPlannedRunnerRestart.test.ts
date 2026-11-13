@@ -16,10 +16,11 @@ import { createSessionRunnerRestartAdmission, prepareSessionRunnerRestartAdmissi
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { adoptTrackedSessionRunnerIdentity } from '../sessions/sessionReportCorrelation';
 import { isPidSafeHappySessionProcess } from '../pidSafety';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 function makeTracked(overrides: Partial<TrackedSession> = {}): TrackedSession {
   return {
-    pid: 4242,
+    trackingKey: legacyPidSessionTrackingKey(4242), pid: 4242,
     happySessionId: 'sess-1',
     startedBy: 'daemon',
     processCommandHash: 'hash-1',
@@ -40,7 +41,7 @@ describe('requestPlannedRunnerRestart', () => {
     let childBirth = runner.processStartTimeMs;
     try {
       const result = await requestPlannedRunnerRestart({ sessionId: 'sess-1', tracked,
-        deferral: { kind: 'none' }, restartRequestedPids: new Set(), pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+        deferral: { kind: 'none' }, restartRequestedSessions: new Set(), trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
         isProcessSafeToSignal: params => isPidSafeHappySessionProcess(params, {
           readProcessIdentityByPidFn: async pid => { reads.push(pid); return { pid, command: 'fixture',
             processStartTimeMs: pid === tracked.pid ? tracked.processStartTimeMs : childBirth }; },
@@ -71,7 +72,7 @@ describe('requestPlannedRunnerRestart', () => {
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
     try {
       await expect(requestPlannedRunnerRestart({ sessionId: 'session', tracked, deferral: { kind: 'none' },
-        restartRequestedPids: new Set(), pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+        restartRequestedSessions: new Set(), trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
         isProcessSafeToSignal: async () => true,
         prepareSignal: signal => prepareSessionRunnerRestartAdmission({ expectedPid: tracked.pid, signal,
           callRpc: (request, signal) => admission(request, AbortSignal.any([signal!, connection.signal])) }),
@@ -90,7 +91,7 @@ describe('requestPlannedRunnerRestart', () => {
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
     try {
       await expect(requestPlannedRunnerRestart({ sessionId: 'session', tracked, deferral: { kind: 'none' },
-        restartRequestedPids: new Set(), pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+        restartRequestedSessions: new Set(), trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
         isProcessSafeToSignal: async () => true,
         prepareSignal: signal => prepareSessionRunnerRestartAdmission({ expectedPid: tracked.pid, signal,
           callRpc: (request, signal) => admission(request, signal) }),
@@ -104,19 +105,19 @@ describe('requestPlannedRunnerRestart', () => {
   });
   it('captures the retiring generation after child work settles and revalidates it before signaling', async () => {
     const tracked = makeTracked();
-    const trackedByPid = new Map([[tracked.pid, tracked]]);
+    const trackedByPid = new Map([[tracked.trackingKey, tracked]]);
     let childIdle = false;
     let capturedAfterIdle = false;
     let signaled = false;
     const result = await requestPlannedRunnerRestart({ sessionId: 'sess-1', tracked,
-      deferral: { kind: 'none' }, restartRequestedPids: new Set(), pidToTrackedSession: trackedByPid,
+      deferral: { kind: 'none' }, restartRequestedSessions: new Set(), trackedSessionsByKey: trackedByPid,
       isProcessSafeToSignal: async () => true,
       canSignal: () => { childIdle = true; return true; },
       captureRunnerRemainder: async () => {
         capturedAfterIdle = childIdle;
         // Capture can suspend on the OS. A replaced runner cannot inherit the
         // previous generation's signal authority after it returns.
-        trackedByPid.set(tracked.pid, { ...tracked });
+        trackedByPid.set(legacyPidSessionTrackingKey(tracked.pid), { ...tracked });
         return { scope: 'subtree', roots: [], ownership: [] };
       },
       requestSignal: async request => {
@@ -133,7 +134,7 @@ describe('requestPlannedRunnerRestart', () => {
     let nativeActive = false;
     let signaled = false;
     const result = await requestPlannedRunnerRestart({ sessionId: 'sess-1', tracked,
-      deferral: { kind: 'none' }, restartRequestedPids: new Set(), pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+      deferral: { kind: 'none' }, restartRequestedSessions: new Set(), trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
       isProcessSafeToSignal: async () => true,
       canSignal: () => nativeActive ? 'turn_in_progress' : true,
       captureRunnerRemainder: async () => {
@@ -150,7 +151,7 @@ describe('requestPlannedRunnerRestart', () => {
   });
   it.each(['none', 'connected_service_switch'] as const)('does not signal after shutdown begins during the final process probe (%s)', async (kind) => {
     const tracked = makeTracked();
-    const restartRequestedPids = new Set<number>();
+    const restartRequestedSessions = new Set<SessionTrackingKey>();
     const handoff = createVersionRuntimeRefreshAttemptHandoff<RestartSessionRunnerCompletion>({
       timeoutMs: 60_000, timeoutCompletion: { ok: false, status: 'partial_failure' },
       supersededCompletion: { ok: false, status: 'partial_failure' },
@@ -162,10 +163,10 @@ describe('requestPlannedRunnerRestart', () => {
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
     const queue = createConnectedServiceSwitchDeferralQueue({ disableDeferral: false });
     try {
-      const request: RequestPlannedRunnerRestartParams = { sessionId: 'sess-1', tracked, restartRequestedPids,
+      const request: RequestPlannedRunnerRestartParams = { sessionId: 'sess-1', tracked, restartRequestedSessions,
         completion: { hasPending: () => handoff.has('sess-1', tracked.pid),
           join: () => handoff.join(target), create: () => handoff.create(target) },
-        pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+        trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
         deferral: kind === 'none' ? { kind } : { kind, source: 'automatic' as const,
           policy: 'defer_until_turn_boundary' as const, target: { serviceId: 'svc', profileId: 'p', groupId: 'g', generation: 2 }, turnDeferralQueue: queue },
         isShuttingDown: () => shuttingDown,
@@ -177,18 +178,18 @@ describe('requestPlannedRunnerRestart', () => {
       };
       await expect(requestPlannedRunnerRestart(request)).resolves.toEqual({ signaled: false, notSignaledReason: 'shutting_down' });
       expect(kill).not.toHaveBeenCalled();
-      expect(restartRequestedPids.size).toBe(0);
+      expect(restartRequestedSessions.size).toBe(0);
       expect(handoff.hasPending()).toBe(false);
     } finally { kill.mockRestore(); await queue.cancelAll('daemon_shutdown'); }
   });
 
   it('reserves the tracked pid before signaling and leaves respawn reservation for requested signal', async () => {
     const tracked = makeTracked();
-    const restartRequestedPids = new Set<number>();
-    const pidToTrackedSession = new Map([[tracked.pid, tracked]]);
+    const restartRequestedSessions = new Set<SessionTrackingKey>();
+    const trackedSessionsByKey = new Map([[tracked.trackingKey, tracked]]);
     const isProcessSafeToSignal = vi.fn(async () => true);
     const requestSignal = vi.fn(async (input) => {
-      expect(restartRequestedPids.has(tracked.pid)).toBe(true);
+      expect(restartRequestedSessions.has(tracked.trackingKey)).toBe(true);
       await expect(input.shouldSignal()).resolves.toBe(true);
       return { status: 'requested' as const };
     });
@@ -197,8 +198,8 @@ describe('requestPlannedRunnerRestart', () => {
       sessionId: 'sess-1',
       tracked,
       deferral: { kind: 'none' },
-      restartRequestedPids,
-      pidToTrackedSession,
+      restartRequestedSessions,
+      trackedSessionsByKey,
       requestSignal,
       isProcessSafeToSignal,
     })).resolves.toEqual({ signaled: true });
@@ -209,35 +210,35 @@ describe('requestPlannedRunnerRestart', () => {
       expectedProcessStartTimeMs: 12_345,
     });
     expect(requestSignal).toHaveBeenCalledTimes(1);
-    expect(restartRequestedPids.has(tracked.pid)).toBe(true);
+    expect(restartRequestedSessions.has(tracked.trackingKey)).toBe(true);
   });
 
   it('refuses an overlapping restart already reserved for the same tracked pid', async () => {
     const tracked = makeTracked();
-    const restartRequestedPids = new Set<number>([tracked.pid]);
+    const restartRequestedSessions = new Set([tracked.trackingKey]);
     const requestSignal = vi.fn();
 
     await expect(requestPlannedRunnerRestart({
       sessionId: 'sess-1',
       tracked,
       deferral: { kind: 'none' },
-      restartRequestedPids,
-      pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+      restartRequestedSessions,
+      trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
       requestSignal,
     })).resolves.toEqual({ signaled: false, notSignaledReason: 'restart_already_running' });
 
     expect(requestSignal).not.toHaveBeenCalled();
-    expect(restartRequestedPids).toEqual(new Set([tracked.pid]));
+    expect(restartRequestedSessions).toEqual(new Set([tracked.trackingKey]));
   });
 
   it('clears reservation and reports no signal when ownership changes before signal', async () => {
     const tracked = makeTracked();
     const replacement = makeTracked({ pid: tracked.pid, happySessionId: 'sess-1' });
-    const restartRequestedPids = new Set<number>();
-    const pidToTrackedSession = new Map([[tracked.pid, tracked]]);
-    const clearRestartIntentForPid = vi.fn();
+    const restartRequestedSessions = new Set<SessionTrackingKey>();
+    const trackedSessionsByKey = new Map([[tracked.trackingKey, tracked]]);
+    const clearRestartIntent = vi.fn();
     const requestSignal = vi.fn(async (input) => {
-      pidToTrackedSession.set(tracked.pid, replacement);
+      trackedSessionsByKey.set(legacyPidSessionTrackingKey(tracked.pid), replacement);
       await expect(input.shouldSignal()).resolves.toBe(false);
       return { status: 'skipped_stale_owner' as const };
     });
@@ -246,14 +247,14 @@ describe('requestPlannedRunnerRestart', () => {
       sessionId: 'sess-1',
       tracked,
       deferral: { kind: 'none' },
-      restartRequestedPids,
-      pidToTrackedSession,
+      restartRequestedSessions,
+      trackedSessionsByKey,
       requestSignal,
-      clearRestartIntentForPid,
+      clearRestartIntent,
     })).resolves.toEqual({ signaled: false, notSignaledReason: 'stale_owner' });
 
-    expect(restartRequestedPids.has(tracked.pid)).toBe(false);
-    expect(clearRestartIntentForPid).toHaveBeenCalledWith(tracked.pid, expect.stringContaining('stale'));
+    expect(restartRequestedSessions.has(tracked.trackingKey)).toBe(false);
+    expect(clearRestartIntent).toHaveBeenCalledWith(tracked.trackingKey, expect.stringContaining('stale'));
   });
 
   it('passes exact command and process birth identity to the final PID safety check', async () => {
@@ -261,9 +262,9 @@ describe('requestPlannedRunnerRestart', () => {
       processCommandHash: 'hash-1',
       processStartTimeMs: 12_345,
     });
-    const restartRequestedPids = new Set<number>();
-    const pidToTrackedSession = new Map([[tracked.pid, tracked]]);
-    const clearRestartIntentForPid = vi.fn();
+    const restartRequestedSessions = new Set<SessionTrackingKey>();
+    const trackedSessionsByKey = new Map([[tracked.trackingKey, tracked]]);
+    const clearRestartIntent = vi.fn();
     const isProcessSafeToSignal = vi.fn(async () => false);
     const requestSignal = vi.fn(async (input) => {
       await expect(input.shouldSignal()).resolves.toBe(false);
@@ -274,10 +275,10 @@ describe('requestPlannedRunnerRestart', () => {
       sessionId: 'sess-1',
       tracked,
       deferral: { kind: 'none' },
-      restartRequestedPids,
-      pidToTrackedSession,
+      restartRequestedSessions,
+      trackedSessionsByKey,
       requestSignal,
-      clearRestartIntentForPid,
+      clearRestartIntent,
       isProcessSafeToSignal,
     })).resolves.toEqual({ signaled: false, notSignaledReason: 'unsafe_process' });
 
@@ -286,8 +287,8 @@ describe('requestPlannedRunnerRestart', () => {
       expectedProcessCommandHash: 'hash-1',
       expectedProcessStartTimeMs: 12_345,
     });
-    expect(restartRequestedPids.has(tracked.pid)).toBe(false);
-    expect(clearRestartIntentForPid).toHaveBeenCalledWith(tracked.pid, expect.stringContaining('stale'));
+    expect(restartRequestedSessions.has(tracked.trackingKey)).toBe(false);
+    expect(clearRestartIntent).toHaveBeenCalledWith(tracked.trackingKey, expect.stringContaining('stale'));
   });
 
   it.each([
@@ -297,7 +298,7 @@ describe('requestPlannedRunnerRestart', () => {
     'does not reserve or enter the signal primitive with %s',
     async (_label, overrides) => {
       const tracked = makeTracked(overrides);
-      const restartRequestedPids = new Set<number>();
+      const restartRequestedSessions = new Set<SessionTrackingKey>();
       const requestSignal = vi.fn(async () => ({
         status: 'requested' as const,
       }));
@@ -307,8 +308,8 @@ describe('requestPlannedRunnerRestart', () => {
         sessionId: 'sess-1',
         tracked,
         deferral: { kind: 'none' },
-        restartRequestedPids,
-        pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+        restartRequestedSessions,
+        trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
         requestSignal,
         isProcessSafeToSignal,
       })).resolves.toEqual({
@@ -318,7 +319,7 @@ describe('requestPlannedRunnerRestart', () => {
 
       expect(requestSignal).not.toHaveBeenCalled();
       expect(isProcessSafeToSignal).not.toHaveBeenCalled();
-      expect(restartRequestedPids).toEqual(new Set());
+      expect(restartRequestedSessions).toEqual(new Set());
     },
   );
 
@@ -332,8 +333,8 @@ describe('requestPlannedRunnerRestart', () => {
       sessionId: 'sess-1',
       tracked,
       deferral: { kind: 'none' },
-      restartRequestedPids: new Set<number>(),
-      pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+      restartRequestedSessions: new Set<SessionTrackingKey>(),
+      trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
       requestSignal,
       isProcessSafeToSignal,
     })).resolves.toEqual({ signaled: true });
@@ -349,7 +350,7 @@ describe('requestPlannedRunnerRestart', () => {
       processCommandHash: 'hash-1',
       processStartTimeMs: 12_345,
     });
-    const restartRequestedPids = new Set<number>();
+    const restartRequestedSessions = new Set<SessionTrackingKey>();
     const isProcessSafeToSignal = vi.fn(async () => true);
     const requestSignal = vi.fn(async (input) => {
       tracked.processCommandHash = 'hash-replacement';
@@ -364,8 +365,8 @@ describe('requestPlannedRunnerRestart', () => {
       sessionId: 'sess-1',
       tracked,
       deferral: { kind: 'none' },
-      restartRequestedPids,
-      pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+      restartRequestedSessions,
+      trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
       requestSignal,
       isProcessSafeToSignal,
     })).resolves.toEqual({
@@ -375,12 +376,12 @@ describe('requestPlannedRunnerRestart', () => {
 
     expect(requestSignal).toHaveBeenCalledOnce();
     expect(isProcessSafeToSignal).not.toHaveBeenCalled();
-    expect(restartRequestedPids).toEqual(new Set());
+    expect(restartRequestedSessions).toEqual(new Set());
   });
 
   it('rechecks the tracked witness after a successful asynchronous signal gate', async () => {
     const tracked = makeTracked();
-    const restartRequestedPids = new Set<number>();
+    const restartRequestedSessions = new Set<SessionTrackingKey>();
     const isProcessSafeToSignal = vi.fn(async () => true);
     const canSignal = vi.fn(async () => {
       tracked.processCommandHash = 'hash-replacement';
@@ -398,8 +399,8 @@ describe('requestPlannedRunnerRestart', () => {
       sessionId: 'sess-1',
       tracked,
       deferral: { kind: 'none' },
-      restartRequestedPids,
-      pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+      restartRequestedSessions,
+      trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
       requestSignal,
       canSignal,
       isProcessSafeToSignal,
@@ -410,12 +411,12 @@ describe('requestPlannedRunnerRestart', () => {
 
     expect(canSignal).toHaveBeenCalledOnce();
     expect(isProcessSafeToSignal).toHaveBeenCalledOnce();
-    expect(restartRequestedPids).toEqual(new Set());
+    expect(restartRequestedSessions).toEqual(new Set());
   });
 
   it('repeats the live OS witness as the last check after a successful asynchronous signal gate', async () => {
     const tracked = makeTracked();
-    const restartRequestedPids = new Set<number>();
+    const restartRequestedSessions = new Set<SessionTrackingKey>();
     const events: string[] = [];
     const isProcessSafeToSignal = vi.fn()
       .mockImplementationOnce(async () => {
@@ -442,8 +443,8 @@ describe('requestPlannedRunnerRestart', () => {
       sessionId: 'sess-1',
       tracked,
       deferral: { kind: 'none' },
-      restartRequestedPids,
-      pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+      restartRequestedSessions,
+      trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
       requestSignal,
       canSignal,
       isProcessSafeToSignal,
@@ -458,13 +459,13 @@ describe('requestPlannedRunnerRestart', () => {
       'final_os_witness',
       'blocked',
     ]);
-    expect(restartRequestedPids).toEqual(new Set());
+    expect(restartRequestedSessions).toEqual(new Set());
   });
 
   it('clears reservation and reports no signal when activity starts before signal', async () => {
     const tracked = makeTracked();
-    const restartRequestedPids = new Set<number>();
-    const pidToTrackedSession = new Map([[tracked.pid, tracked]]);
+    const restartRequestedSessions = new Set<SessionTrackingKey>();
+    const trackedSessionsByKey = new Map([[tracked.trackingKey, tracked]]);
     const canSignal = vi.fn(async () => false);
     const requestSignal = vi.fn(async (input) => {
       await expect(input.shouldSignal()).resolves.toBe(false);
@@ -475,8 +476,8 @@ describe('requestPlannedRunnerRestart', () => {
       sessionId: 'sess-1',
       tracked,
       deferral: { kind: 'none' },
-      restartRequestedPids,
-      pidToTrackedSession,
+      restartRequestedSessions,
+      trackedSessionsByKey,
       requestSignal,
       canSignal,
       isProcessSafeToSignal: async () => true,
@@ -484,13 +485,13 @@ describe('requestPlannedRunnerRestart', () => {
 
     expect(canSignal).toHaveBeenCalledTimes(1);
     expect(requestSignal).toHaveBeenCalledTimes(1);
-    expect(restartRequestedPids.has(tracked.pid)).toBe(false);
+    expect(restartRequestedSessions.has(tracked.trackingKey)).toBe(false);
   });
 
   it('preserves exact disabled reason when activity gate blocks before signal', async () => {
     const tracked = makeTracked();
-    const restartRequestedPids = new Set<number>();
-    const pidToTrackedSession = new Map([[tracked.pid, tracked]]);
+    const restartRequestedSessions = new Set<SessionTrackingKey>();
+    const trackedSessionsByKey = new Map([[tracked.trackingKey, tracked]]);
     const canSignal = vi.fn(async () => 'approval_pending' as const);
     const requestSignal = vi.fn(async (input) => {
       await expect(input.shouldSignal()).resolves.toBe(false);
@@ -501,8 +502,8 @@ describe('requestPlannedRunnerRestart', () => {
       sessionId: 'sess-1',
       tracked,
       deferral: { kind: 'none' },
-      restartRequestedPids,
-      pidToTrackedSession,
+      restartRequestedSessions,
+      trackedSessionsByKey,
       requestSignal,
       canSignal,
       isProcessSafeToSignal: async () => true,
@@ -510,13 +511,13 @@ describe('requestPlannedRunnerRestart', () => {
 
     expect(canSignal).toHaveBeenCalledTimes(1);
     expect(requestSignal).toHaveBeenCalledTimes(1);
-    expect(restartRequestedPids.has(tracked.pid)).toBe(false);
+    expect(restartRequestedSessions.has(tracked.trackingKey)).toBe(false);
   });
 
   it('observes an already-missing process once and keeps the forced-respawn reservation', async () => {
     const tracked = makeTracked();
-    const restartRequestedPids = new Set<number>();
-    const pidToTrackedSession = new Map([[tracked.pid, tracked]]);
+    const restartRequestedSessions = new Set<SessionTrackingKey>();
+    const trackedSessionsByKey = new Map([[tracked.trackingKey, tracked]]);
     const observeProcessMissing = vi.fn();
     const requestSignal = vi.fn(async (input) => {
       input.onProcessAlreadyMissing();
@@ -527,21 +528,21 @@ describe('requestPlannedRunnerRestart', () => {
       sessionId: 'sess-1',
       tracked,
       deferral: { kind: 'none' },
-      restartRequestedPids,
-      pidToTrackedSession,
+      restartRequestedSessions,
+      trackedSessionsByKey,
       requestSignal,
       observeProcessMissing,
     })).resolves.toEqual({ signaled: true });
 
     expect(observeProcessMissing).toHaveBeenCalledTimes(1);
     expect(observeProcessMissing).toHaveBeenCalledWith(tracked);
-    expect(restartRequestedPids.has(tracked.pid)).toBe(true);
+    expect(restartRequestedSessions.has(tracked.trackingKey)).toBe(true);
   });
 
   it('returns no signal for superseded deferred switches', async () => {
     const tracked = makeTracked();
-    const restartRequestedPids = new Set<number>();
-    const pidToTrackedSession = new Map([[tracked.pid, tracked]]);
+    const restartRequestedSessions = new Set<SessionTrackingKey>();
+    const trackedSessionsByKey = new Map([[tracked.trackingKey, tracked]]);
     const requestSignal = vi.fn();
 
     await expect(requestPlannedRunnerRestart({
@@ -561,13 +562,13 @@ describe('requestPlannedRunnerRestart', () => {
           },
         },
       },
-      restartRequestedPids,
-      pidToTrackedSession,
+      restartRequestedSessions,
+      trackedSessionsByKey,
       requestSignal,
     })).resolves.toEqual({ signaled: false, notSignaledReason: 'superseded' });
 
     expect(requestSignal).not.toHaveBeenCalled();
-    expect(restartRequestedPids.size).toBe(0);
+    expect(restartRequestedSessions.size).toBe(0);
   });
   it('reports an emitted restart signal as signaled even when the deferred completion event cannot be admitted', async () => {
     // POST-EFFECT SETTLEMENT (composition of the real deferral queue with the restart primitive):
@@ -576,8 +577,8 @@ describe('requestPlannedRunnerRestart', () => {
     // answers that by restoring pre-effect bindings and spawn options over a runner that is already
     // dying. The signal is irreversible, so the result must stay `signaled: true`.
     const tracked = makeTracked();
-    const restartRequestedPids = new Set<number>();
-    const pidToTrackedSession = new Map([[tracked.pid, tracked]]);
+    const restartRequestedSessions = new Set<SessionTrackingKey>();
+    const trackedSessionsByKey = new Map([[tracked.trackingKey, tracked]]);
     const requestSignal = vi.fn(async () => ({ status: 'requested' as const }));
     const turnDeferralQueue = createConnectedServiceSwitchDeferralQueue({
       disableDeferral: false,
@@ -599,8 +600,8 @@ describe('requestPlannedRunnerRestart', () => {
         target: { serviceId: 'svc', profileId: 'profile', groupId: 'group', generation: 2 },
         turnDeferralQueue,
       },
-      restartRequestedPids,
-      pidToTrackedSession,
+      restartRequestedSessions,
+      trackedSessionsByKey,
       requestSignal,
       isProcessSafeToSignal: async () => true,
     });
@@ -625,7 +626,7 @@ describe('requestPlannedRunnerRestart shared refresh completion', () => {
     const failure = { ok: false, status: 'partial_failure', diagnostics: { respawnTerminalReason: 'runner_retirement_unobserved' } } as const;
     let observed = false;
     const request = requestPlannedRunnerRestart({ sessionId: 'sess-1', tracked, deferral: { kind: 'none' },
-      restartRequestedPids: new Set(), pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+      restartRequestedSessions: new Set(), trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
       completion: { hasPending: () => handoff.hasPending(), join: () => handoff.join(target),
         create: () => { const attempt = handoff.create(target); return { ...attempt, retire: () => attempt.settle(failure) }; } },
       isProcessSafeToSignal: async () => true,
@@ -656,7 +657,7 @@ describe('requestPlannedRunnerRestart shared refresh completion', () => {
     vi.useFakeTimers();
     const tracked = makeTracked();
     const handoff = makeHandoff();
-    const restartRequestedPids = new Set<number>();
+    const restartRequestedSessions = new Set<SessionTrackingKey>();
     let releaseChild!: () => void;
     let childObserved = false;
     const childSettled = new Promise<void>(resolve => { releaseChild = resolve; });
@@ -664,7 +665,7 @@ describe('requestPlannedRunnerRestart shared refresh completion', () => {
     const target = { sessionId: 'sess-1', previousPid: tracked.pid, tracked };
     const request: RequestPlannedRunnerRestartParams = {
       sessionId: 'sess-1', tracked, deferral: { kind: 'none' },
-      restartRequestedPids, pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+      restartRequestedSessions, trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
       isProcessSafeToSignal: async () => true,
       completion: { hasPending: () => handoff.has('sess-1', tracked.pid),
         join: () => handoff.join(target), create: () => handoff.create(target) },
@@ -709,8 +710,8 @@ describe('requestPlannedRunnerRestart shared refresh completion', () => {
   it('joins equivalent requests without replacing the original completion or signaling again', async () => {
     const tracked = makeTracked();
     const handoff = makeHandoff();
-    const restartRequestedPids = new Set<number>();
-    const pidToTrackedSession = new Map([[tracked.pid, tracked]]);
+    const restartRequestedSessions = new Set<SessionTrackingKey>();
+    const trackedSessionsByKey = new Map([[tracked.trackingKey, tracked]]);
     let signaled = false;
     const requestSignal = vi.fn(async (input: PlannedRunnerRestartSignalRequest) => {
       signaled = await input.shouldSignal();
@@ -724,7 +725,7 @@ describe('requestPlannedRunnerRestart shared refresh completion', () => {
     };
     const request = {
       sessionId: 'sess-1', tracked, deferral: { kind: 'none' as const },
-      restartRequestedPids, pidToTrackedSession, requestSignal,
+      restartRequestedSessions, trackedSessionsByKey, requestSignal,
       isProcessSafeToSignal: async () => true, completion,
     };
     const first = requestPlannedRunnerRestart(request);
@@ -736,21 +737,21 @@ describe('requestPlannedRunnerRestart shared refresh completion', () => {
 
     await expect(first).resolves.toEqual({ signaled: true, completion: outcome });
     await expect(replay).resolves.toEqual({ signaled: true, completion: outcome });
-    expect(restartRequestedPids.has(tracked.pid)).toBe(true);
+    expect(restartRequestedSessions.has(tracked.trackingKey)).toBe(true);
   });
 
   it('keeps differing transient spawn targets busy without cancelling the accepted request', async () => {
     const tracked = makeTracked();
     const handoff = makeHandoff();
-    const restartRequestedPids = new Set<number>();
-    const pidToTrackedSession = new Map([[tracked.pid, tracked]]);
+    const restartRequestedSessions = new Set<SessionTrackingKey>();
+    const trackedSessionsByKey = new Map([[tracked.trackingKey, tracked]]);
     const requestSignal = vi.fn(async (input: PlannedRunnerRestartSignalRequest) => ({
       status: await input.shouldSignal() ? 'requested' as const : 'skipped_stale_owner' as const,
     }));
     const originalTarget = { sessionId: 'sess-1', previousPid: tracked.pid, tracked, transientSpawnOptions: tracked.spawnOptions };
     const request = {
       sessionId: 'sess-1', tracked, deferral: { kind: 'none' as const },
-      restartRequestedPids, pidToTrackedSession, requestSignal,
+      restartRequestedSessions, trackedSessionsByKey, requestSignal,
       isProcessSafeToSignal: async () => true,
     };
     const first = requestPlannedRunnerRestart({ ...request, completion: {
@@ -768,20 +769,20 @@ describe('requestPlannedRunnerRestart shared refresh completion', () => {
     const outcome = { ok: true } as const;
     handoff.settle('sess-1', tracked.pid, outcome);
     await expect(first).resolves.toEqual({ signaled: true, completion: outcome });
-    expect(restartRequestedPids.has(tracked.pid)).toBe(true);
+    expect(restartRequestedSessions.has(tracked.trackingKey)).toBe(true);
   });
 
   it('retains the original completion and reservation when a deferred auth switch overlaps it', async () => {
     const tracked = makeTracked();
     const handoff = makeHandoff();
-    const restartRequestedPids = new Set<number>();
-    const pidToTrackedSession = new Map([[tracked.pid, tracked]]);
+    const restartRequestedSessions = new Set<SessionTrackingKey>();
+    const trackedSessionsByKey = new Map([[tracked.trackingKey, tracked]]);
     const requestSignal = vi.fn(async (input: PlannedRunnerRestartSignalRequest) => ({
       status: await input.shouldSignal() ? 'requested' as const : 'skipped_stale_owner' as const,
     }));
     const target = { sessionId: 'sess-1', previousPid: tracked.pid, tracked };
     const request = {
-      sessionId: 'sess-1', tracked, restartRequestedPids, pidToTrackedSession, requestSignal,
+      sessionId: 'sess-1', tracked, restartRequestedSessions, trackedSessionsByKey, requestSignal,
       isProcessSafeToSignal: async () => true,
     };
     const first = requestPlannedRunnerRestart({ ...request, deferral: { kind: 'none' }, completion: {
@@ -801,7 +802,7 @@ describe('requestPlannedRunnerRestart shared refresh completion', () => {
     handoff.settle('sess-1', tracked.pid, outcome);
     await expect(first).resolves.toEqual({ signaled: true, completion: outcome });
     expect(requestSignal).toHaveBeenCalledOnce();
-    expect(restartRequestedPids.has(tracked.pid)).toBe(true);
+    expect(restartRequestedSessions.has(tracked.trackingKey)).toBe(true);
   });
 
   it('observes a slow adopted runner through physical exit for the refresh completion lifetime', async () => {
@@ -813,7 +814,7 @@ describe('requestPlannedRunnerRestart shared refresh completion', () => {
       const target = { sessionId: 'sess-1', previousPid: tracked.pid, tracked };
       const result = requestPlannedRunnerRestart({
         sessionId: 'sess-1', tracked, deferral: { kind: 'none' },
-        restartRequestedPids: new Set<number>(), pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+        restartRequestedSessions: new Set<SessionTrackingKey>(), trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
         isProcessSafeToSignal: async () => true,
         requestSignal: async (input) => ({
           status: await input.shouldSignal() ? 'requested' : 'skipped_stale_owner',
@@ -845,16 +846,16 @@ describe('requestPlannedRunnerRestart shared refresh completion', () => {
 describe('requestPlannedRunnerRestart selected deferral outcome', () => {
   it('reports the selected signal to same-target callers even when retirement precedes their continuation', async () => {
     const tracked = makeTracked();
-    const restartRequestedPids = new Set<number>();
-    const pidToTrackedSession = new Map([[tracked.pid, tracked]]);
+    const restartRequestedSessions = new Set<SessionTrackingKey>();
+    const trackedSessionsByKey = new Map([[tracked.trackingKey, tracked]]);
     const turnDeferralQueue = createConnectedServiceSwitchDeferralQueue({ disableDeferral: false });
     const requestSignal = vi.fn(async () => {
       // The real exit/respawn owner can retire the reservation before deferred callers resume.
-      restartRequestedPids.delete(tracked.pid);
+      restartRequestedSessions.delete(tracked.trackingKey);
       return { status: 'requested' as const };
     });
     const request = {
-      sessionId: 'sess-1', tracked, restartRequestedPids, pidToTrackedSession,
+      sessionId: 'sess-1', tracked, restartRequestedSessions, trackedSessionsByKey,
       isProcessSafeToSignal: async () => true, requestSignal,
       deferral: {
         kind: 'connected_service_switch' as const, source: 'manual' as const,
@@ -881,8 +882,8 @@ describe('requestPlannedRunnerRestart selected deferral outcome', () => {
     });
     turnDeferralQueue.recordTurnLifecycleEvent({ sessionId: 'sess-1', event: 'prompt_or_steer' });
     const result = requestPlannedRunnerRestart({
-      sessionId: 'sess-1', tracked, restartRequestedPids: new Set<number>(),
-      pidToTrackedSession: new Map([[tracked.pid, tracked]]), requestSignal,
+      sessionId: 'sess-1', tracked, restartRequestedSessions: new Set<SessionTrackingKey>(),
+      trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]), requestSignal,
       isProcessSafeToSignal: async () => true,
       deferral: {
         kind: 'connected_service_switch', source: 'manual', policy: 'defer_until_turn_boundary',
@@ -901,14 +902,14 @@ describe('requestPlannedRunnerRestart cancelled signal admission', () => {
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
     try {
       const tracked = makeTracked();
-      const restartRequestedPids = new Set<number>();
+      const restartRequestedSessions = new Set<SessionTrackingKey>();
       const queue = createConnectedServiceSwitchDeferralQueue({ disableDeferral: false });
       let release!: () => void;
       const held = new Promise<void>((resolve) => { release = resolve; });
       queue.recordTurnLifecycleEvent({ sessionId: 'sess-1', event: 'prompt_or_steer' });
       const result = requestPlannedRunnerRestart({
-        sessionId: 'sess-1', tracked, restartRequestedPids,
-        pidToTrackedSession: new Map([[tracked.pid, tracked]]),
+        sessionId: 'sess-1', tracked, restartRequestedSessions,
+        trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
         deferral: { kind: 'connected_service_switch', source: 'manual', policy: 'defer_until_turn_boundary',
           target: { serviceId: 'svc', profileId: 'profile', groupId: 'group', generation: 2 }, turnDeferralQueue: queue },
         isProcessSafeToSignal: async () => {
@@ -930,7 +931,7 @@ describe('requestPlannedRunnerRestart cancelled signal admission', () => {
       await vi.advanceTimersByTimeAsync(1_000);
       await queue.cancelAll('daemon_shutdown');
       await rejected;
-      expect(restartRequestedPids.has(tracked.pid)).toBe(false);
+      expect(restartRequestedSessions.has(tracked.trackingKey)).toBe(false);
       release();
       await vi.advanceTimersByTimeAsync(500);
       expect(kill).not.toHaveBeenCalled();
@@ -939,5 +940,43 @@ describe('requestPlannedRunnerRestart cancelled signal admission', () => {
       kill.mockRestore();
       vi.useRealTimers();
     }
+  });
+});
+
+describe('requestPlannedRunnerRestart for Sessions of one session host', () => {
+  it('ends only the restarted Session through its host handle and keeps restart custody per Session', async () => {
+    const hostPid = 4242;
+    const hosted = (key: string, sessionId: string) => {
+      const end = vi.fn(async () => true);
+      const tracked = makeTracked({ trackingKey: key as TrackedSession['trackingKey'], happySessionId: sessionId,
+        hostedSession: { end, observed: new Promise<void>(() => {}) } });
+      return { tracked, end };
+    };
+    const a = hosted('session-a', 'sess-a');
+    const b = hosted('session-b', 'sess-b');
+    const trackedSessionsByKey = new Map([[a.tracked.trackingKey, a.tracked], [b.tracked.trackingKey, b.tracked]]);
+    const reservations = new Set<SessionTrackingKey>();
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    const restart = (tracked: TrackedSession) => requestPlannedRunnerRestart({
+      sessionId: tracked.happySessionId!, tracked, deferral: { kind: 'none' },
+      restartRequestedSessions: reservations, trackedSessionsByKey,
+      isProcessSafeToSignal: async () => true,
+      requestSignal: request => requestConnectedServiceSessionRestartSignal({
+        pid: request.tracked.pid, delayMs: 0, preferProcessGroup: true, hostedSession: request.tracked.hostedSession,
+        shouldSignal: request.shouldSignal, onSignalFailure: request.onSignalFailure,
+        onProcessAlreadyMissing: request.onProcessAlreadyMissing,
+      }),
+    });
+    try {
+      expect(a.tracked.pid).toBe(hostPid);
+      await expect(restart(a.tracked)).resolves.toEqual({ signaled: true });
+      expect(a.end).toHaveBeenCalledTimes(1);
+      expect(b.end).not.toHaveBeenCalled();
+      // A's retained restart custody (held until its respawn settles) is not B's.
+      await expect(restart(b.tracked)).resolves.toEqual({ signaled: true });
+      expect(b.end).toHaveBeenCalledTimes(1);
+      expect(a.end).toHaveBeenCalledTimes(1);
+      expect(kill).not.toHaveBeenCalled();
+    } finally { kill.mockRestore(); }
   });
 });

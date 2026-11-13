@@ -13,6 +13,7 @@ import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createAgentInstallJobOwner } from './agentInstallJobOwner';
 import type { TrackedSession } from '@/daemon/types';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const os = vi.hoisted(() => ({ directory: '', home: '', workspace: '', capture: '', dispatch: [] as { args: readonly string[]; env: unknown }[] }));
 // Only native filesystem metadata and sudo are substituted. Binding reads,
@@ -66,7 +67,7 @@ test.skipIf(process.platform !== 'linux').each([{ role: 'use', accountId: 'membe
     readMember: input => boundary.members.read(input),
     prepareMember: () => { throw new Error('Install must not provision or repair native users'); },
   };
-  const session: TrackedSession = { pid: process.pid, startedBy: 'daemon',
+  const session: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, startedBy: 'daemon',
     requesterWorkAttributionV1: { ...requester.requester, accountId: 'other-account' },
     spawnOptions: { directory, runtimeDescriptorV1: { v: 1, agentId: 'fixture', agent: {} } } };
   const owner = createAgentInstallJobOwner({ accountId: 'custodian', readTrackedSessions: () => [session],

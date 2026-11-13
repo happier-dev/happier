@@ -167,12 +167,13 @@ describe('requestSessionStop machine transport', () => {
       const decoded = await socketRpcCodec.decodeRequestParams(content, request.params, request.method);
       if (boundary.mode === 'no_runtime') {
         const executor = createMachineSessionStopLifecycleActionExecutor({ stopSession: createStopSession({
-          pidToTrackedSession: new Map(),
+          trackedSessionsByKey: new Map(),
           readHostAttachmentState: async () => ({ status: 'absent' }),
           readTerminalAttachmentInfo: async () => null,
         }) });
         const outcome = await executor.execute('session.stop', decoded.params);
         if (!outcome.ok) throw new Error(outcome.errorCode);
+        afterPhysicalStop?.();
         callback?.({ ok: true, result: await socketRpcCodec.encodeResponse(content, outcome.result, decoded.callId) });
         return;
       }

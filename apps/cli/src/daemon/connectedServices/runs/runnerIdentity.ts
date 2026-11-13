@@ -7,13 +7,14 @@ import { processGenerationMatches, readProcessIdentityByPid } from '@/daemon/pro
 import { findTrackedSessionByRunnerPid, resolveTrackedSessionRunnerIdentity } from '@/daemon/sessions/sessionReportCorrelation';
 import { normalizeOptionalString } from '../sessionAuthSwitch/targets';
 import type { CreateExecutionRunConnectedServicesBridgeDeps } from './executionRunMaterialization';
+import { trackedSessionOnProcess, type TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 /** One identity owner for Session runners and in-daemon detached Runs. */
 export function createExecutionRunConnectedServicesRunnerIdentityCapture(params: Readonly<{
   machineId: string;
   serverId?: string;
   externalActionAccountId?: string;
-  pidToTrackedSession: Map<number, TrackedSession>;
+  trackedSessionsByKey: TrackedSessionMap;
   getApiMachineForSessions(): ApiMachineClient | null;
   isCurrent(): boolean;
 }>): CreateExecutionRunConnectedServicesBridgeDeps['captureRunnerIdentity'] {
@@ -47,19 +48,21 @@ export function createExecutionRunConnectedServicesRunnerIdentityCapture(params:
           isCurrent: () => params.isCurrent() && (!requester || requester.isCurrent()) && (!resume || resume.isCurrent()) });
       }
     }
-    const resolveTracked = () => params.pidToTrackedSession.get(runnerPid)
-      ?? findTrackedSessionByRunnerPid(params.pidToTrackedSession, runnerPid);
+    // A Run belongs to the Session that started it: its retained record (or the caller) names that
+    // Session. One process may host several Sessions, so its pid alone never picks the Session.
+    const record = runId === undefined ? null : await readRetainedExecutionRunRecord(runId).catch(() => null);
+    if (runId !== undefined && (!record || record.state.runId !== runId)) return null;
+    const runSessionId = record ? normalizeOptionalString(record.state.sessionId) : expectedParentSessionId;
+    if (record && (!runSessionId || (expectedParentSessionId !== undefined && runSessionId !== expectedParentSessionId))) return null;
+    const resolveTracked = () => trackedSessionOnProcess(params.trackedSessionsByKey, runnerPid, runSessionId)
+      ?? (runSessionId === undefined ? findTrackedSessionByRunnerPid(params.trackedSessionsByKey, runnerPid) : undefined);
     const tracked = resolveTracked();
     if (!tracked) return null;
     const parentSessionId = normalizeOptionalString(tracked.happySessionId);
-    if (!parentSessionId || (expectedParentSessionId !== undefined && parentSessionId !== expectedParentSessionId)) return null;
+    if (!parentSessionId || (runSessionId !== undefined && parentSessionId !== runSessionId)) return null;
     const runnerIdentity = resolveTrackedSessionRunnerIdentity(tracked);
     const runnerStartTimeMs = runnerIdentity?.processStartTimeMs;
-    if (runId !== undefined) {
-      const record = await readRetainedExecutionRunRecord(runId).catch(() => null);
-      if (!record || record.state.runId !== runId || record.state.sessionId !== parentSessionId
-        || !runnerIdentity || runnerIdentity.pid !== runnerPid) return null;
-    }
+    if (runId !== undefined && (!runnerIdentity || runnerIdentity.pid !== runnerPid)) return null;
     return Object.freeze({ identity: tracked, parentSessionId,
       isCurrent: () => {
         const currentRunner = resolveTrackedSessionRunnerIdentity(tracked);

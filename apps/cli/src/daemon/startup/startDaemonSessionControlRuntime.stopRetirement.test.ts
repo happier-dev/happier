@@ -14,6 +14,7 @@ import type { TrackedSession } from '../types';
 import { resolveRequesterSessionBootstrapFromCustody } from '../sessionEncryption/requesterSessionCredentials';
 import { createDaemonSessionMutationCustody } from '../connectedServices/usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody';
 import { startDaemonSessionControlRuntime } from './startDaemonSessionControlRuntime';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 // Home HTTP is external; control HTTP, Stop, metadata authority, serialization,
 // currentness and lifecycle retirement remain real.
 afterEach(() => vi.restoreAllMocks());
@@ -37,7 +38,7 @@ it.each([
         signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
       throw new Error(`No additional launch preparation: ${path}`);
     });
-    const tracked: TrackedSession = { pid: 111, happySessionId: 'planned-session', startedBy: 'daemon',
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(111), pid: 111, happySessionId: 'planned-session', startedBy: 'daemon',
       spawnOptions: { directory: homeDir } };
     const runtime = await startDaemonSessionControlRuntime({
       machineId: 'machine', serverId: configuration.activeServerId, serverBaseUrl: configuration.apiServerUrl,
@@ -45,10 +46,10 @@ it.each([
       daemonSessionMutationCustody: custody,
       connectedServicesMaterializationBaseDir: join(homeDir, 'connected-services'),
       getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-      pidToTrackedSession: new Map([[tracked.pid, tracked]]), pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(),
-      pidToSpawnWebhookTimeout: new Map(), getApiMachineForSessions: () => null,
-      spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
-      connectedServicesRestartRequestedPids: new Set([tracked.pid]),
+      trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]), spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(),
+      spawnWebhookTimeoutByKey: new Map(), getApiMachineForSessions: () => null,
+      spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
+      connectedServicesRestartRequestedSessions: new Set([tracked.trackingKey]),
       startupTerminalRecovery: { disconnectedTerminalHostCandidates: [], unresolvedTerminalHostSessionIds: [] },
       beforeShutdown: async () => {}, onHappySessionWebhook: async () => {}, requestShutdown: () => {}, processEnv: {},
     });
@@ -64,7 +65,7 @@ it.each([
 
 it.each(['owner', 'explicit-owner', 'explicit-intent-refused', 'foreign-account', 'other-home', 'other-machine'] as const)('retires a stopped %s runner using only its own Account authority', async wiring => {
   await withConfiguredDaemonTestHome({ prefix: 'stop-retirement-' }, async ({ homeDir }) => {
-    const sessions = new Map<number, TrackedSession>();
+    const sessions = new Map<SessionTrackingKey, TrackedSession>();
     const credentials = { token: 'fixture-owner', encryption: null } satisfies StoredCredentials;
     const daemonSessionMutationCustody = createDaemonSessionMutationCustody({ credentials });
     let releaseProfile!: () => void;
@@ -106,10 +107,10 @@ it.each(['owner', 'explicit-owner', 'explicit-intent-refused', 'foreign-account'
       daemonSessionMutationCustody,
       connectedServicesMaterializationBaseDir: join(homeDir, 'connected-services'),
       getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-      pidToTrackedSession: sessions, pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(),
-      pidToSpawnWebhookTimeout: new Map(), getApiMachineForSessions: () => null,
-      spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
-      connectedServicesRestartRequestedPids: new Set(),
+      trackedSessionsByKey: sessions, spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(),
+      spawnWebhookTimeoutByKey: new Map(), getApiMachineForSessions: () => null,
+      spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
+      connectedServicesRestartRequestedSessions: new Set(),
       startupTerminalRecovery: { disconnectedTerminalHostCandidates: [], unresolvedTerminalHostSessionIds: [] },
       beforeShutdown: async () => {}, onHappySessionWebhook: async () => {}, requestShutdown: () => {},
       resolveRequesterSessionRuntimeContext: async (sessionId, attribution) => {
@@ -137,14 +138,14 @@ it.each(['owner', 'explicit-owner', 'explicit-intent-refused', 'foreign-account'
         metadataVersion: 1, metadata: JSON.stringify({ machineId: 'machine', path: homeDir, hostPid: pid,
           hostProcessStartTimeMs: identity.processStartTimeMs, terminal: { mode: 'plain', controlServiceabilityV1: {
             v: 1, attachmentId: 'departed-runner', state: 'servable', observedAt: 1 } } }) });
-      const tracked: TrackedSession = { pid, childProcess: child, happySessionId: sessionId, startedBy: 'daemon',
+      const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid), pid, childProcess: child, happySessionId: sessionId, startedBy: 'daemon',
         processStartTimeMs: identity.processStartTimeMs, processCommandHash: hashProcessCommand(identity.command),
         requesterWorkAttributionV1: { accountId: wiring === 'foreign-account' ? 'foreign' : 'owner',
           serverId: wiring === 'other-home' ? 'foreign-home' : configuration.activeServerId,
           machineId: wiring === 'other-machine' ? 'foreign-machine' : 'machine',
           installationId: 'installation' }, spawnOptions: { directory: homeDir } };
-      sessions.set(pid, tracked);
-      await writeSessionMarker({ pid, happySessionId: sessionId, startedBy: 'daemon',
+      sessions.set(tracked.trackingKey, tracked);
+      await writeSessionMarker({ trackingKey: tracked.trackingKey, pid, happySessionId: sessionId, startedBy: 'daemon',
         processStartTimeMs: identity.processStartTimeMs, processCommandHash: hashProcessCommand(identity.command) });
       const explicit = wiring === 'explicit-owner' || wiring === 'explicit-intent-refused';
       if (!explicit) {

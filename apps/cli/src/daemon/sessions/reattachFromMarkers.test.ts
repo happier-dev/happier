@@ -23,6 +23,7 @@ import type {
   TerminalHostAttachmentReadState,
 } from '@/terminal/attachment/terminalAttachmentInfo';
 import { resolveRequestAuthSourceCutoverRequirement } from '../plannedRunnerRestart/requestAuthSourceCutover';
+import { legacyPidSessionTrackingKey, trackedSessionsForProcess, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const terminalHostAttachmentMocks = vi.hoisted(() => ({
   read: vi.fn<() => Promise<TerminalHostAttachmentInfo | null>>(async () => null),
@@ -150,7 +151,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       const incompleteCommand =
         'happier codex --happy-starting-mode remote --started-by daemon --existing-session session-startup-incomplete';
       const exactMarker = {
-        pid: 43_301,
+        trackingKey: legacyPidSessionTrackingKey(43_301), pid: 43_301,
         happySessionId: 'session-startup-exact',
         happyHomeDir: '/tmp/happy',
         createdAt: 1,
@@ -171,7 +172,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
         },
       };
       const incompleteMarker = {
-        pid: 43_302,
+        trackingKey: legacyPidSessionTrackingKey(43_302), pid: 43_302,
         happySessionId: 'session-startup-incomplete',
         happyHomeDir: '/tmp/happy',
         createdAt: 1,
@@ -217,18 +218,18 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       );
       vi.spyOn(process, 'kill').mockImplementation(() => true as never);
 
-      const pidToTrackedSession = new Map<number, any>();
+      const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
       await reattachTrackedSessionsFromMarkers({
-        pidToTrackedSession,
+        trackedSessionsByKey,
         readProcessIdentityByPidFn: (pid) => readObservedLinuxProcess(
           pid, pid === exactMarker.pid ? exactCommand : incompleteCommand,
         ),
       });
 
       const exactTracked =
-        pidToTrackedSession.get(exactMarker.pid);
+        trackedSessionsByKey.get(legacyPidSessionTrackingKey(exactMarker.pid));
       const incompleteTracked =
-        pidToTrackedSession.get(incompleteMarker.pid);
+        trackedSessionsByKey.get(legacyPidSessionTrackingKey(incompleteMarker.pid));
       expect(exactTracked).toEqual(expect.objectContaining({
         happySessionId: exactMarker.happySessionId,
         agentSessionStartupInstructionsMarkerV1:
@@ -324,7 +325,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
 
   it('returns orphaned dead daemon sessions when removing dead markers', async () => {
     const marker = {
-      pid: 43210,
+      trackingKey: legacyPidSessionTrackingKey(43210), pid: 43210,
       happySessionId: 'session-123',
       happyHomeDir: '/tmp/happy',
       createdAt: 1,
@@ -341,34 +342,34 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
     });
 
-    const pidToTrackedSession = new Map<number, any>();
-    const result = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
+    const result = await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey });
 
     expect(result).toEqual({
       inventoryReliable: true,
       orphanedDeadDaemonSessions: [
         {
           sessionId: 'session-123',
-          pid: 43210,
+          trackingKey: legacyPidSessionTrackingKey(43210), pid: 43210,
           activeTurnId: 'turn-exact-reattach',
           processCommandHash: 'a'.repeat(64),
         },
       ],
       connectedServiceRestartIntents: [],
     });
-    expect(removeSessionMarker).not.toHaveBeenCalledWith(43210);
+    expect(removeSessionMarker).not.toHaveBeenCalledWith(legacyPidSessionTrackingKey(43210));
     expect(adoptSessionsFromMarkers).toHaveBeenCalledWith({
       markers: [],
       happyProcesses: [],
       processIdentityByPid: new Map(),
-      pidToTrackedSession,
+      trackedSessionsByKey,
       credentials: undefined,
     });
   });
 
   it('preserves legacy terminal topology as explicitly unresolved during cold startup', async () => {
     const marker = {
-      pid: 43214,
+      trackingKey: legacyPidSessionTrackingKey(43214), pid: 43214,
       happySessionId: 'session-live-terminal-dead-runner',
       happyHomeDir: '/tmp/happy',
       createdAt: 1,
@@ -413,7 +414,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     });
 
     const result = await reattachTrackedSessionsFromMarkers({
-      pidToTrackedSession: new Map(),
+      trackedSessionsByKey: new Map(),
       terminalHostAdapters: { tmux: adapter },
     } as Parameters<typeof reattachTrackedSessionsFromMarkers>[0] & {
       terminalHostAdapters: { tmux: TerminalHostAdapter };
@@ -435,7 +436,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
 
   it('preserves unreadable terminal topology as explicitly unresolved without orphan cleanup', async () => {
     const marker = {
-      pid: 43216,
+      trackingKey: legacyPidSessionTrackingKey(43216), pid: 43216,
       happySessionId: 'session-unreadable-terminal',
       happyHomeDir: '/tmp/happy',
       createdAt: 1,
@@ -449,7 +450,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
     });
 
-    const result = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession: new Map() });
+    const result = await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey: new Map() });
 
     expect(result).toEqual({
       inventoryReliable: false,
@@ -462,7 +463,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
 
   it('reconstructs an exact V2 terminal host independently from plugin control availability', async () => {
     const marker = {
-      pid: 43217,
+      trackingKey: legacyPidSessionTrackingKey(43217), pid: 43217,
       happySessionId: 'session-exact-terminal',
       happyHomeDir: '/tmp/happy',
       createdAt: 1,
@@ -501,14 +502,14 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
     });
 
-    const result = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession: new Map() });
+    const result = await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey: new Map() });
 
     expect(result).toEqual({
       inventoryReliable: true,
       orphanedDeadDaemonSessions: [],
       disconnectedTerminalHostCandidates: [{
         sessionId: marker.happySessionId,
-        pid: marker.pid,
+        trackingKey: legacyPidSessionTrackingKey(marker.pid), pid: marker.pid,
         happyHomeDir: marker.happyHomeDir,
         attachmentId,
         handle,
@@ -523,7 +524,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
 
   it('binds the marker-authored actual Windows mode to a disconnected host candidate', async () => {
     const marker = {
-      pid: 43218,
+      trackingKey: legacyPidSessionTrackingKey(43218), pid: 43218,
       happySessionId: 'session-exact-windows-terminal',
       happyHomeDir: '/tmp/happy',
       createdAt: 1,
@@ -563,7 +564,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
     });
 
-    const result = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession: new Map() });
+    const result = await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey: new Map() });
 
     expect(result.disconnectedTerminalHostCandidates).toEqual([expect.objectContaining({
       sessionId: marker.happySessionId,
@@ -575,7 +576,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
 
   it('keeps a disconnected Windows host unresolved when marker mode evidence names a replaced attachment', async () => {
     const marker = {
-      pid: 43219,
+      trackingKey: legacyPidSessionTrackingKey(43219), pid: 43219,
       happySessionId: 'session-stale-windows-terminal',
       happyHomeDir: '/tmp/happy',
       createdAt: 1,
@@ -613,7 +614,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
     });
 
-    const result = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession: new Map() });
+    const result = await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey: new Map() });
 
     expect(result).toEqual({
       inventoryReliable: false,
@@ -626,7 +627,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
 
   it('retains dead-runner marker evidence without waiting on terminal liveness during cold startup', async () => {
     const marker = {
-      pid: 43215,
+      trackingKey: legacyPidSessionTrackingKey(43215), pid: 43215,
       happySessionId: 'session-inconclusive-terminal',
       happyHomeDir: '/tmp/happy',
       createdAt: 1,
@@ -673,25 +674,25 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     });
 
     const result = await reattachTrackedSessionsFromMarkers({
-      pidToTrackedSession: new Map(),
+      trackedSessionsByKey: new Map(),
       terminalHostAdapters: { zellij: adapter },
     });
 
     expect(adapter.evaluateLiveness).not.toHaveBeenCalled();
     expect(result).toEqual({
       inventoryReliable: true,
-      orphanedDeadDaemonSessions: [{ sessionId: marker.happySessionId, pid: marker.pid }],
+      orphanedDeadDaemonSessions: [{ sessionId: marker.happySessionId, trackingKey: legacyPidSessionTrackingKey(marker.pid), pid: marker.pid }],
       connectedServiceRestartIntents: [],
     });
     expect(adapter.dispose).not.toHaveBeenCalled();
-    expect(removeSessionMarker).not.toHaveBeenCalledWith(marker.pid);
+    expect(removeSessionMarker).not.toHaveBeenCalledWith(marker.trackingKey);
     expect(terminalHostAttachmentMocks.remove).not.toHaveBeenCalled();
     expect(sessionHookArtifactMocks.disposeSession).not.toHaveBeenCalled();
   });
 
   it('reports a dead runner as orphan while retaining marker evidence for terminal publication', async () => {
     const marker = {
-      pid: 43216,
+      trackingKey: legacyPidSessionTrackingKey(43216), pid: 43216,
       happySessionId: 'session-dead-terminal',
       happyHomeDir: '/tmp/happy',
       createdAt: 1,
@@ -735,22 +736,22 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     });
 
     const result = await reattachTrackedSessionsFromMarkers({
-      pidToTrackedSession: new Map(),
+      trackedSessionsByKey: new Map(),
       terminalHostAdapters: { tmux: adapter },
     });
 
-    expect(result.orphanedDeadDaemonSessions).toEqual([{ sessionId: marker.happySessionId, pid: marker.pid }]);
+    expect(result.orphanedDeadDaemonSessions).toEqual([{ sessionId: marker.happySessionId, trackingKey: legacyPidSessionTrackingKey(marker.pid), pid: marker.pid }]);
     expect(adapter.evaluateLiveness).not.toHaveBeenCalled();
     expect(adapter.dispose).not.toHaveBeenCalled();
     expect(terminalHostAttachmentMocks.remove).not.toHaveBeenCalled();
     expect(sessionHookArtifactMocks.disposeSession).not.toHaveBeenCalled();
     expect(terminalHostAttachmentMocks.disposeSession).not.toHaveBeenCalled();
-    expect(removeSessionMarker).not.toHaveBeenCalledWith(marker.pid);
+    expect(removeSessionMarker).not.toHaveBeenCalledWith(marker.trackingKey);
   });
 
   it('retains a dead OpenCode daemon marker as orphan evidence without returning a startup restart intent', async () => {
     const marker = {
-      pid: 43211,
+      trackingKey: legacyPidSessionTrackingKey(43211), pid: 43211,
       happySessionId: 'session-opencode-dead',
       happyHomeDir: '/tmp/happy',
       createdAt: 1,
@@ -772,33 +773,33 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
     });
 
-    const pidToTrackedSession = new Map<number, any>();
-    const result = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
+    const result = await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey });
 
-    expect(pidToTrackedSession.size).toBe(0);
+    expect(trackedSessionsByKey.size).toBe(0);
     expect(result.orphanedDeadDaemonSessions).toEqual([
       {
         sessionId: 'session-opencode-dead',
-        pid: 43211,
+        trackingKey: legacyPidSessionTrackingKey(43211), pid: 43211,
         processCommandHash: 'a'.repeat(64),
       },
     ]);
     expect((result as {
       sessionRestartIntents?: unknown;
     }).sessionRestartIntents).toBeUndefined();
-    expect(removeSessionMarker).not.toHaveBeenCalledWith(43211);
+    expect(removeSessionMarker).not.toHaveBeenCalledWith(legacyPidSessionTrackingKey(43211));
     expect(adoptSessionsFromMarkers).toHaveBeenCalledWith({
       markers: [],
       happyProcesses: [],
       processIdentityByPid: new Map(),
-      pidToTrackedSession,
+      trackedSessionsByKey,
       credentials: undefined,
     });
   });
 
   it('retains every duplicate dead OpenCode daemon marker for downstream release', async () => {
     const firstMarker = {
-      pid: 43212,
+      trackingKey: legacyPidSessionTrackingKey(43212), pid: 43212,
       happySessionId: 'session-opencode-duplicate-dead',
       happyHomeDir: '/tmp/happy',
       createdAt: 1,
@@ -815,6 +816,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     };
     const secondMarker = {
       ...firstMarker,
+      trackingKey: legacyPidSessionTrackingKey(43213),
       pid: 43213,
       updatedAt: 2,
       respawn: {
@@ -829,31 +831,31 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
     });
 
-    const pidToTrackedSession = new Map<number, any>();
-    const result = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
+    const result = await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey });
 
     expect(result.orphanedDeadDaemonSessions).toEqual([
       expect.objectContaining({
         sessionId: 'session-opencode-duplicate-dead',
-        pid: 43212,
+        trackingKey: legacyPidSessionTrackingKey(43212), pid: 43212,
       }),
       expect.objectContaining({
         sessionId: 'session-opencode-duplicate-dead',
-        pid: 43213,
+        trackingKey: legacyPidSessionTrackingKey(43213), pid: 43213,
       }),
     ]);
     const sessionRestartIntents = (result as {
       sessionRestartIntents?: ReadonlyArray<Record<string, unknown>>;
     }).sessionRestartIntents;
     expect(sessionRestartIntents).toBeUndefined();
-    expect(removeSessionMarker).not.toHaveBeenCalledWith(43212);
-    expect(removeSessionMarker).not.toHaveBeenCalledWith(43213);
+    expect(removeSessionMarker).not.toHaveBeenCalledWith(legacyPidSessionTrackingKey(43212));
+    expect(removeSessionMarker).not.toHaveBeenCalledWith(legacyPidSessionTrackingKey(43213));
   });
 
   it('retains dead marker evidence without a startup restart intent when the same OpenCode session has a recovered live owner', async () => {
     vi.mocked(listSessionMarkers).mockResolvedValue([
       {
-        pid: 11113,
+        trackingKey: legacyPidSessionTrackingKey(11113), pid: 11113,
         happySessionId: 'session-opencode-live-owner',
         happyHomeDir: '/tmp/happy',
         createdAt: 1,
@@ -869,7 +871,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
         },
       } as any,
       {
-        pid: 22223,
+        trackingKey: legacyPidSessionTrackingKey(22223), pid: 22223,
         happySessionId: 'session-opencode-live-owner',
         happyHomeDir: '/tmp/happy',
         createdAt: 1,
@@ -894,21 +896,21 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       return true;
     });
 
-    const pidToTrackedSession = new Map<number, any>();
-    const result = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
+    const result = await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey });
 
     expect(result.orphanedDeadDaemonSessions).toEqual([
       expect.objectContaining({
         sessionId: 'session-opencode-live-owner',
-        pid: 11113,
+        trackingKey: legacyPidSessionTrackingKey(11113), pid: 11113,
         recoveredLiveSession: true,
       }),
     ]);
     expect((result as {
       sessionRestartIntents?: unknown;
     }).sessionRestartIntents).toBeUndefined();
-    expect(removeSessionMarker).not.toHaveBeenCalledWith(11113);
-    expect(pidToTrackedSession.get(22223)).toEqual(expect.objectContaining({
+    expect(removeSessionMarker).not.toHaveBeenCalledWith(legacyPidSessionTrackingKey(11113));
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(22223))).toEqual(expect.objectContaining({
       happySessionId: 'session-opencode-live-owner',
       vendorResumeId: 'opencode-live-owner-thread',
     }));
@@ -916,7 +918,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
 
   it('reattaches a live marker and clears a stale connected-service restart intent', async () => {
     const marker = {
-      pid: 43210,
+      trackingKey: legacyPidSessionTrackingKey(43210), pid: 43210,
       happySessionId: 'session-live-restart',
       happyHomeDir: '/tmp/happy',
       createdAt: 1,
@@ -948,10 +950,10 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     ]);
     vi.spyOn(process, 'kill').mockImplementation(() => true);
 
-    const pidToTrackedSession = new Map<number, any>();
-    const result = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
+    const result = await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey });
 
-    expect(pidToTrackedSession.get(43210)).toEqual(expect.objectContaining({
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(43210))).toEqual(expect.objectContaining({
       happySessionId: 'session-live-restart',
       pid: 43210,
       vendorResumeId: 'claude-vendor-session',
@@ -959,13 +961,13 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     }));
     expect(result.connectedServiceRestartIntents).toEqual([]);
     expect(result.recoveredLiveSessionIds).toEqual(['session-live-restart']);
-    expect(clearSessionMarkerConnectedServiceRestartIntent).toHaveBeenCalledWith(43210);
-    expect(removeSessionMarker).not.toHaveBeenCalledWith(43210);
+    expect(clearSessionMarkerConnectedServiceRestartIntent).toHaveBeenCalledWith(legacyPidSessionTrackingKey(43210));
+    expect(removeSessionMarker).not.toHaveBeenCalledWith(legacyPidSessionTrackingKey(43210));
   });
 
   it('retains a dead connected-service restart marker for downstream release without returning respawn inputs', async () => {
     const marker = {
-      pid: 43211,
+      trackingKey: legacyPidSessionTrackingKey(43211), pid: 43211,
       happySessionId: 'session-restart',
       happyHomeDir: '/tmp/happy',
       createdAt: 1,
@@ -991,26 +993,26 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
     });
 
-    const pidToTrackedSession = new Map<number, any>();
-    const result = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
+    const result = await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey });
 
     expect(result).toEqual({
       inventoryReliable: true,
       orphanedDeadDaemonSessions: [
         {
           sessionId: 'session-restart',
-          pid: 43211,
+          trackingKey: legacyPidSessionTrackingKey(43211), pid: 43211,
           processCommandHash: 'a'.repeat(64),
         },
       ],
       connectedServiceRestartIntents: [],
     });
-    expect(removeSessionMarker).not.toHaveBeenCalledWith(43211);
+    expect(removeSessionMarker).not.toHaveBeenCalledWith(legacyPidSessionTrackingKey(43211));
   });
 
   it('retains a dead connected-service restart marker when resume is only in marker metadata', async () => {
     const marker = {
-      pid: 43212,
+      trackingKey: legacyPidSessionTrackingKey(43212), pid: 43212,
       happySessionId: 'session-metadata-restart',
       happyHomeDir: '/tmp/happy',
       createdAt: 1,
@@ -1039,26 +1041,26 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
     });
 
-    const pidToTrackedSession = new Map<number, any>();
-    const result = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
+    const result = await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey });
 
     expect(result).toEqual({
       inventoryReliable: true,
       orphanedDeadDaemonSessions: [
         {
           sessionId: 'session-metadata-restart',
-          pid: 43212,
+          trackingKey: legacyPidSessionTrackingKey(43212), pid: 43212,
           processCommandHash: 'b'.repeat(64),
         },
       ],
       connectedServiceRestartIntents: [],
     });
-    expect(removeSessionMarker).not.toHaveBeenCalledWith(43212);
+    expect(removeSessionMarker).not.toHaveBeenCalledWith(legacyPidSessionTrackingKey(43212));
   });
 
   it('retains a dead connected-service restart marker when only existingSessionId is resumable', async () => {
     const marker = {
-      pid: 43214,
+      trackingKey: legacyPidSessionTrackingKey(43214), pid: 43214,
       happySessionId: 'session-existing-session-restart',
       happyHomeDir: '/tmp/happy',
       createdAt: 1,
@@ -1084,26 +1086,26 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
     });
 
-    const pidToTrackedSession = new Map<number, any>();
-    const result = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
+    const result = await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey });
 
     expect(result).toEqual({
       inventoryReliable: true,
       orphanedDeadDaemonSessions: [
         {
           sessionId: 'session-existing-session-restart',
-          pid: 43214,
+          trackingKey: legacyPidSessionTrackingKey(43214), pid: 43214,
           processCommandHash: 'd'.repeat(64),
         },
       ],
       connectedServiceRestartIntents: [],
     });
-    expect(removeSessionMarker).not.toHaveBeenCalledWith(43214);
+    expect(removeSessionMarker).not.toHaveBeenCalledWith(legacyPidSessionTrackingKey(43214));
   });
 
   it('retains a dead resumable terminal-injection marker as orphan evidence instead of replaying startup restart', async () => {
     const marker = {
-      pid: 43213,
+      trackingKey: legacyPidSessionTrackingKey(43213), pid: 43213,
       happySessionId: 'session-terminal-restart',
       happyHomeDir: '/tmp/happy',
       createdAt: 1,
@@ -1125,27 +1127,27 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' });
     });
 
-    const pidToTrackedSession = new Map<number, any>();
-    const result = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
+    const result = await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey });
 
     expect(result).toEqual({
       inventoryReliable: true,
       orphanedDeadDaemonSessions: [
         {
           sessionId: 'session-terminal-restart',
-          pid: 43213,
+          trackingKey: legacyPidSessionTrackingKey(43213), pid: 43213,
           processCommandHash: 'c'.repeat(64),
         },
       ],
       connectedServiceRestartIntents: [],
     });
-    expect(removeSessionMarker).not.toHaveBeenCalledWith(43213);
+    expect(removeSessionMarker).not.toHaveBeenCalledWith(legacyPidSessionTrackingKey(43213));
   });
 
   it('reattaches a live resumable terminal-injection marker without replaying startup restart', async () => {
     vi.mocked(listSessionMarkers).mockResolvedValue([
       {
-        pid: 43214,
+        trackingKey: legacyPidSessionTrackingKey(43214), pid: 43214,
         happySessionId: 'session-terminal-live',
         happyHomeDir: '/tmp/happy',
         createdAt: 1,
@@ -1158,11 +1160,11 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     mockHappyProcessesForDiscovery([]);
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
 
-    const pidToTrackedSession = new Map<number, any>([
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>([
       [
-        43214,
+        legacyPidSessionTrackingKey(43214),
         {
-          startedBy: 'daemon',
+          trackingKey: legacyPidSessionTrackingKey(43214), startedBy: 'daemon',
           happySessionId: 'session-terminal-live',
           pid: 43214,
           spawnOptions: {
@@ -1174,7 +1176,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
         },
       ],
     ]);
-    const result = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    const result = await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey });
 
     expect(result).toEqual({
       inventoryReliable: true,
@@ -1200,9 +1202,9 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       } as any,
     ]);
 
-    const pidToTrackedSession = new Map<number, any>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
     const result = await reattachTrackedSessionsFromMarkers({
-      pidToTrackedSession,
+      trackedSessionsByKey,
       readProcessIdentityByPidFn: (pid) => readObservedLinuxProcess(pid,
         '/home/guest/.happier/cli-preview/current/happier opencode --happy-starting-mode remote --started-by daemon --resume vendor-1 --existing-session session-123'),
     });
@@ -1213,8 +1215,10 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       recoveredLiveSessionIds: ['session-123'],
       connectedServiceRestartIntents: [],
     });
-    expect(pidToTrackedSession.get(54321)).toMatchObject({
-      pid: 54321,
+    // A markerless recovered Session is minted a fresh tracking key.
+    const recovered = trackedSessionsForProcess(trackedSessionsByKey, 54321)[0];
+    expect(recovered).toMatchObject({
+      trackingKey: expect.stringMatching(/^session-/), pid: 54321,
       startedBy: 'daemon',
       happySessionId: 'session-123',
       vendorResumeId: 'vendor-1',
@@ -1223,7 +1227,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     });
     expect(writeSessionMarker).toHaveBeenCalledWith(
       {
-        pid: 54321,
+        trackingKey: recovered!.trackingKey, pid: 54321,
         happySessionId: 'session-123',
         startedBy: 'daemon',
         processStartTimeMs: 190,
@@ -1241,7 +1245,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       '/home/guest/.happier/cli-preview/current/happier opencode --happy-starting-mode remote --started-by daemon --resume vendor-1 --existing-session session-123';
     vi.mocked(listSessionMarkers).mockResolvedValue([
       {
-        pid: 12345,
+        trackingKey: legacyPidSessionTrackingKey(12345), pid: 12345,
         happySessionId: 'session-123',
         happyHomeDir: '/tmp/happy',
         createdAt: 1,
@@ -1260,9 +1264,9 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     ]);
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
 
-    const pidToTrackedSession = new Map<number, any>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
     await reattachTrackedSessionsFromMarkers({
-      pidToTrackedSession,
+      trackedSessionsByKey,
       readProcessIdentityByPidFn: vi.fn(async () => ({
         pid: 12345,
         ppid: 1,
@@ -1272,9 +1276,9 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       })),
     });
 
-    expect(pidToTrackedSession.get(12345)).toEqual(
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(12345))).toEqual(
       expect.objectContaining({
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(12345), startedBy: 'daemon',
         happySessionId: 'session-123',
         pid: 12345,
         vendorResumeId: 'vendor-1',
@@ -1292,7 +1296,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       }),
     );
     expect(writeSessionMarker).toHaveBeenCalledWith({
-      pid: 12345,
+      trackingKey: legacyPidSessionTrackingKey(12345), pid: 12345,
       happySessionId: 'session-123',
       startedBy: 'daemon',
       cwd: '/tmp/project',
@@ -1314,7 +1318,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
   it('recovers a live marker through PID-specific lookup when bulk discovery misses it', async () => {
     vi.mocked(listSessionMarkers).mockResolvedValue([
       {
-        pid: 12347,
+        trackingKey: legacyPidSessionTrackingKey(12347), pid: 12347,
         happySessionId: 'session-pid-specific',
         happyHomeDir: '/tmp/happy',
         createdAt: 1,
@@ -1333,13 +1337,13 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     } as any);
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
 
-    const pidToTrackedSession = new Map<number, any>();
-    await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
+    await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey });
 
     expect(findHappyProcessByPid).toHaveBeenCalledWith(12347);
-    expect(pidToTrackedSession.get(12347)).toEqual(
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(12347))).toEqual(
       expect.objectContaining({
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(12347), startedBy: 'daemon',
         happySessionId: 'session-pid-specific',
         pid: 12347,
         vendorResumeId: 'vendor-pid',
@@ -1357,7 +1361,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     process.env.HAPPIER_DAEMON_MARKERLESS_REATTACH_ENABLED = '0';
     vi.mocked(listSessionMarkers).mockResolvedValue([
       {
-        pid: 12349,
+        trackingKey: legacyPidSessionTrackingKey(12349), pid: 12349,
         happySessionId: 'session-marker-disabled-scan',
         happyHomeDir: '/tmp/happy',
         createdAt: 1,
@@ -1377,7 +1381,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     ]);
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
 
-    await reattachTrackedSessionsFromMarkers({ pidToTrackedSession: new Map<number, any>() });
+    await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey: new Map<SessionTrackingKey, any>() });
 
     expect(findHappyProcessByPid).toHaveBeenCalledWith(12349);
     expect(findAllHappyProcesses).not.toHaveBeenCalled();
@@ -1407,7 +1411,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       command: 'happier codex --started-by daemon --existing-session session-marker-default',
     };
     const marker = {
-      pid: markedProcess.pid,
+      trackingKey: legacyPidSessionTrackingKey(markedProcess.pid), pid: markedProcess.pid,
       happySessionId: 'session-marker-default',
       happyHomeDir: '/tmp/happy',
       createdAt: 1,
@@ -1426,9 +1430,9 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       markerlessProcess,
       duplicateProcess,
     ]);
-    vi.mocked(adoptSessionsFromMarkers).mockImplementationOnce(({ pidToTrackedSession }) => {
-      pidToTrackedSession.set(markedProcess.pid, {
-        pid: markedProcess.pid,
+    vi.mocked(adoptSessionsFromMarkers).mockImplementationOnce(({ trackedSessionsByKey }) => {
+      trackedSessionsByKey.set(legacyPidSessionTrackingKey(markedProcess.pid), {
+        trackingKey: legacyPidSessionTrackingKey(markedProcess.pid), pid: markedProcess.pid,
         startedBy: 'daemon',
         happySessionId: marker.happySessionId,
         reattachedFromDiskMarker: true,
@@ -1440,23 +1444,25 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     });
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
 
-    const pidToTrackedSession = new Map<number, any>();
-    await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
+    await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey });
 
     expect(findAllHappyProcesses).toHaveBeenCalledOnce();
-    expect(pidToTrackedSession.get(markedProcess.pid)).toEqual(expect.objectContaining({
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(markedProcess.pid))).toEqual(expect.objectContaining({
       happySessionId: marker.happySessionId,
       pid: markedProcess.pid,
     }));
-    expect(pidToTrackedSession.get(markerlessProcess.pid)).toEqual(expect.objectContaining({
+    const recovered = trackedSessionsForProcess(trackedSessionsByKey, markerlessProcess.pid)[0];
+    expect(recovered).toEqual(expect.objectContaining({
+      trackingKey: expect.stringMatching(/^session-/),
       happySessionId: 'session-markerless',
       pid: markerlessProcess.pid,
       reattachedFromDiskMarker: true,
     }));
-    expect(pidToTrackedSession.has(duplicateProcess.pid)).toBe(false);
+    expect(trackedSessionsForProcess(trackedSessionsByKey, duplicateProcess.pid)).toEqual([]);
     expect(writeSessionMarker).toHaveBeenCalledOnce();
     expect(writeSessionMarker).toHaveBeenCalledWith(expect.objectContaining({
-      pid: markerlessProcess.pid,
+      trackingKey: recovered!.trackingKey, pid: markerlessProcess.pid,
       happySessionId: 'session-markerless',
       startedBy: 'daemon',
     }));
@@ -1482,7 +1488,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     };
     vi.mocked(listSessionMarkers).mockResolvedValue([
       {
-        pid: 23456,
+        trackingKey: legacyPidSessionTrackingKey(23456), pid: 23456,
         happySessionId: 'session-hash-fallback',
         happyHomeDir: '/tmp/happy',
         createdAt: 1,
@@ -1518,12 +1524,12 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     ]);
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
 
-    const pidToTrackedSession = new Map<number, any>();
-    await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
+    await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey });
 
-    expect(pidToTrackedSession.get(23456)).toEqual(
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(23456))).toEqual(
       expect.objectContaining({
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(23456), startedBy: 'daemon',
         happySessionId: 'session-hash-fallback',
         pid: 23456,
         reattachedFromDiskMarker: true,
@@ -1546,7 +1552,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     );
     expect(writeSessionMarker).toHaveBeenCalledWith(
       expect.objectContaining({
-        pid: 23456,
+        trackingKey: legacyPidSessionTrackingKey(23456), pid: 23456,
         happySessionId: 'session-hash-fallback',
         startedBy: 'daemon',
         activeTurnId: activeAdmission.turnId,
@@ -1566,7 +1572,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
   it('recovers a live daemon-spawned process from its marker when the live command lacks --existing-session', async () => {
     vi.mocked(listSessionMarkers).mockResolvedValue([
       {
-        pid: 12345,
+        trackingKey: legacyPidSessionTrackingKey(12345), pid: 12345,
         happySessionId: 'session-123',
         happyHomeDir: '/tmp/happy',
         createdAt: 1,
@@ -1585,16 +1591,16 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     ]);
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
 
-    const pidToTrackedSession = new Map<number, any>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
     await reattachTrackedSessionsFromMarkers({
-      pidToTrackedSession,
+      trackedSessionsByKey,
       readProcessIdentityByPidFn: (pid) => readObservedLinuxProcess(pid,
         'C:\\hq\\windetachedfix-007\\happier-v0.2.4-windows-x64\\happier.exe C:\\hq\\windetachedfix-007\\happier-v0.2.4-windows-x64\\package-dist\\index.mjs opencode --happy-starting-mode remote --started-by daemon'),
     });
 
-    expect(pidToTrackedSession.get(12345)).toEqual(
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(12345))).toEqual(
       expect.objectContaining({
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(12345), startedBy: 'daemon',
         happySessionId: 'session-123',
         pid: 12345,
         spawnOptions: {
@@ -1609,7 +1615,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       }),
     );
     expect(writeSessionMarker).toHaveBeenCalledWith({
-      pid: 12345,
+      trackingKey: legacyPidSessionTrackingKey(12345), pid: 12345,
       happySessionId: 'session-123',
       startedBy: 'daemon',
       cwd: '/tmp/project',
@@ -1629,7 +1635,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
   it('recovers a live daemon marker from marker respawn data when the live process proves the session identity', async () => {
     vi.mocked(listSessionMarkers).mockResolvedValue([
       {
-        pid: 12345,
+        trackingKey: legacyPidSessionTrackingKey(12345), pid: 12345,
         happySessionId: 'session-123',
         happyHomeDir: '/tmp/happy',
         createdAt: 1,
@@ -1660,16 +1666,16 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     ]);
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
 
-    const pidToTrackedSession = new Map<number, any>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
     await reattachTrackedSessionsFromMarkers({
-      pidToTrackedSession,
+      trackedSessionsByKey,
       readProcessIdentityByPidFn: (pid) => readObservedLinuxProcess(pid,
         'C:\\hq\\windetachedfix-007\\happier-v0.2.4-windows-x64\\happier.exe C:\\hq\\windetachedfix-007\\happier-v0.2.4-windows-x64\\package-dist\\index.mjs opencode --happy-starting-mode remote --started-by daemon --existing-session session-123'),
     });
 
-    expect(pidToTrackedSession.get(12345)).toEqual(
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(12345))).toEqual(
       expect.objectContaining({
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(12345), startedBy: 'daemon',
         happySessionId: 'session-123',
         pid: 12345,
         spawnOptions: {
@@ -1689,7 +1695,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       }),
     );
     expect(writeSessionMarker).toHaveBeenCalledWith({
-      pid: 12345,
+      trackingKey: legacyPidSessionTrackingKey(12345), pid: 12345,
       happySessionId: 'session-123',
       startedBy: 'daemon',
       cwd: '/tmp/project',
@@ -1713,7 +1719,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
   it('reattaches accepted pre-webhook placeholder custody with its spawn nonce after daemon restart', async () => {
     vi.mocked(listSessionMarkers).mockResolvedValue([
       {
-        pid: 12346,
+        trackingKey: legacyPidSessionTrackingKey(12346), pid: 12346,
         happySessionId: 'PID-12346',
         happyHomeDir: '/tmp/happy',
         createdAt: 1,
@@ -1738,11 +1744,11 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     ]);
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
 
-    const pidToTrackedSession = new Map<number, any>();
-    await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
+    await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey });
 
-    expect(pidToTrackedSession.get(12346)).toEqual(expect.objectContaining({
-      startedBy: 'daemon',
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(12346))).toEqual(expect.objectContaining({
+      trackingKey: legacyPidSessionTrackingKey(12346), startedBy: 'daemon',
       happySessionId: 'PID-12346',
       pid: 12346,
       reattachedFromDiskMarker: true,
@@ -1752,7 +1758,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       }),
     }));
     expect(writeSessionMarker).toHaveBeenCalledWith(expect.objectContaining({
-      pid: 12346,
+      trackingKey: legacyPidSessionTrackingKey(12346), pid: 12346,
       happySessionId: 'PID-12346',
       startedBy: 'daemon',
       respawn: expect.objectContaining({
@@ -1780,7 +1786,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       },
     };
     vi.mocked(listSessionMarkers).mockResolvedValue([{
-      pid: 12346,
+      trackingKey: legacyPidSessionTrackingKey(12346), pid: 12346,
       happySessionId: 'session-provider-v2',
       happyHomeDir: '/tmp/happy',
       createdAt: 1,
@@ -1821,11 +1827,11 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       command: 'happier codex --happy-starting-mode remote --started-by daemon --existing-session session-provider-v2',
     }]);
     vi.spyOn(process, 'kill').mockImplementation(() => true as never);
-    const pidToTrackedSession = new Map<number, never>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, never>();
 
-    await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey });
 
-    expect(pidToTrackedSession.size).toBe(0);
+    expect(trackedSessionsByKey.size).toBe(0);
     expect(writeSessionMarker).not.toHaveBeenCalled();
   });
 
@@ -1848,7 +1854,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       },
     };
     vi.mocked(listSessionMarkers).mockResolvedValue([{
-      pid: 12347,
+      trackingKey: legacyPidSessionTrackingKey(12347), pid: 12347,
       happySessionId: 'session-provider-v1-downgrade',
       happyHomeDir: '/tmp/happy',
       createdAt: 1,
@@ -1880,18 +1886,18 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       command: 'happier codex --happy-starting-mode remote --started-by daemon --existing-session session-provider-v1-downgrade',
     }]);
     vi.spyOn(process, 'kill').mockImplementation(() => true as never);
-    const pidToTrackedSession = new Map<number, never>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, never>();
 
-    await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey });
 
-    expect(pidToTrackedSession.size).toBe(0);
+    expect(trackedSessionsByKey.size).toBe(0);
     expect(writeSessionMarker).not.toHaveBeenCalled();
   });
 
   it('does not recover a weak incomplete marker when the live process only classifies as a generic happy user session', async () => {
     vi.mocked(listSessionMarkers).mockResolvedValue([
       {
-        pid: 12345,
+        trackingKey: legacyPidSessionTrackingKey(12345), pid: 12345,
         happySessionId: 'session-123',
         happyHomeDir: '/tmp/happy',
         createdAt: 1,
@@ -1918,10 +1924,10 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     ]);
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
 
-    const pidToTrackedSession = new Map<number, any>();
-    await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
+    await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey });
 
-    expect(pidToTrackedSession.size).toBe(0);
+    expect(trackedSessionsByKey.size).toBe(0);
     expect(writeSessionMarker).not.toHaveBeenCalled();
   });
 
@@ -1935,7 +1941,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     const processStartTimeMs = 1_717_171_717_123;
     vi.mocked(listSessionMarkers).mockResolvedValue([
       {
-        pid: 12345,
+        trackingKey: legacyPidSessionTrackingKey(12345), pid: 12345,
         happySessionId: 'session-123',
         happyHomeDir: '/tmp/happy',
         createdAt: 1,
@@ -1983,9 +1989,9 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     );
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
 
-    const pidToTrackedSession = new Map<number, any>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
     await reattachTrackedSessionsFromMarkers({
-      pidToTrackedSession,
+      trackedSessionsByKey,
       credentials,
       readProcessIdentityByPidFn: vi.fn(async () => ({
         pid: 12345,
@@ -1997,9 +2003,9 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       })),
     });
 
-    expect(pidToTrackedSession.get(12345)).toEqual(
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(12345))).toEqual(
       expect.objectContaining({
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(12345), startedBy: 'daemon',
         happySessionId: 'session-123',
         pid: 12345,
         spawnOptions: {
@@ -2030,7 +2036,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     const predecessorStatePath =
       '/tmp/materialized/csm-1/connected-service-broker.state.json';
     vi.mocked(listSessionMarkers).mockResolvedValue([{
-      pid: 12348,
+      trackingKey: legacyPidSessionTrackingKey(12348), pid: 12348,
       happySessionId: 'session-remote-cutover',
       happyHomeDir: '/tmp/happy',
       createdAt: 1,
@@ -2079,9 +2085,9 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       () => true as never,
     );
 
-    const pidToTrackedSession = new Map<number, any>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
     await reattachTrackedSessionsFromMarkers({
-      pidToTrackedSession,
+      trackedSessionsByKey,
       credentials,
       readProcessIdentityByPidFn: vi.fn(async () => ({
         pid: 12348,
@@ -2092,7 +2098,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       })),
     });
 
-    const tracked = pidToTrackedSession.get(12348);
+    const tracked = trackedSessionsByKey.get(legacyPidSessionTrackingKey(12348));
     expect(tracked).toMatchObject({
       happySessionId: 'session-remote-cutover',
       pid: 12348,
@@ -2135,7 +2141,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       'happier opencode --happy-starting-mode remote --started-by daemon --existing-session session-rewrite-failure';
     const processStartTimeMs = 1_717_171_717_124;
     const marker = {
-      pid: 12347,
+      trackingKey: legacyPidSessionTrackingKey(12347), pid: 12347,
       happySessionId: 'session-rewrite-failure',
       happyHomeDir: '/tmp/happy',
       createdAt: 1,
@@ -2190,10 +2196,10 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       () => true as never,
     );
 
-    const pidToTrackedSession = new Map<number, any>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
     await expect(
       reattachTrackedSessionsFromMarkers({
-        pidToTrackedSession,
+        trackedSessionsByKey,
         credentials,
         readProcessIdentityByPidFn: vi.fn(async () => ({
           pid: marker.pid,
@@ -2209,12 +2215,12 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       }),
     );
 
-    expect(pidToTrackedSession.has(marker.pid)).toBe(
+    expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(marker.pid))).toBe(
       true,
     );
     expect(
       clearSessionMarkerConnectedServiceRestartIntent,
-    ).toHaveBeenCalledWith(marker.pid);
+    ).toHaveBeenCalledWith(marker.trackingKey);
   });
 
   it('does not recover a marker when the live PID has a different process birth identity', async () => {
@@ -2238,7 +2244,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
           new Uint8Array(length).fill(4),
       });
     vi.mocked(listSessionMarkers).mockResolvedValue([{
-      pid: 12346,
+      trackingKey: legacyPidSessionTrackingKey(12346), pid: 12346,
       happySessionId: 'session-birth-mismatch',
       happyHomeDir: '/tmp/happy',
       createdAt: 1,
@@ -2276,9 +2282,9 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       () => true as never,
     );
 
-    const pidToTrackedSession = new Map<number, any>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
     await reattachTrackedSessionsFromMarkers({
-      pidToTrackedSession,
+      trackedSessionsByKey,
       credentials,
       readProcessIdentityByPidFn: vi.fn(async () => ({
         pid: 12346,
@@ -2289,7 +2295,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       })),
     });
 
-    expect(pidToTrackedSession.has(12346)).toBe(false);
+    expect(trackedSessionsByKey.has(legacyPidSessionTrackingKey(12346))).toBe(false);
     expect(writeSessionMarker).not.toHaveBeenCalled();
   });
 
@@ -2298,7 +2304,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
 
     vi.mocked(listSessionMarkers).mockResolvedValue([
       {
-        pid: 54322,
+        trackingKey: legacyPidSessionTrackingKey(54322), pid: 54322,
         happySessionId: 'session-123',
         happyHomeDir: '/tmp/happy',
         createdAt: 1,
@@ -2312,11 +2318,11 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     ]);
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
 
-    const pidToTrackedSession = new Map<number, any>();
-    const result = await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
+    const result = await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey });
 
     expect(result).toEqual({ inventoryReliable: true, orphanedDeadDaemonSessions: [], connectedServiceRestartIntents: [] });
-    expect(pidToTrackedSession.size).toBe(0);
+    expect(trackedSessionsByKey.size).toBe(0);
     expect(writeSessionMarker).not.toHaveBeenCalled();
   });
 
@@ -2333,10 +2339,10 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       } as any,
     ]);
 
-    const pidToTrackedSession = new Map<number, any>();
-    await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
+    await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey });
 
-    expect(pidToTrackedSession.size).toBe(0);
+    expect(trackedSessionsByKey.size).toBe(0);
     expect(writeSessionMarker).not.toHaveBeenCalled();
   });
 
@@ -2361,7 +2367,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
       });
     vi.mocked(listSessionMarkers).mockResolvedValue([
       {
-        pid: 54321,
+        trackingKey: legacyPidSessionTrackingKey(54321), pid: 54321,
         happySessionId: 'session-123',
         happyHomeDir: '/tmp/happy',
         createdAt: 1,
@@ -2393,15 +2399,15 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     ]);
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
 
-    const pidToTrackedSession = new Map<number, any>();
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
     await reattachTrackedSessionsFromMarkers({
-      pidToTrackedSession,
+      trackedSessionsByKey,
       credentials,
     });
 
-    expect(pidToTrackedSession.get(54321)).toEqual(
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(54321))).toEqual(
       expect.objectContaining({
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(54321), startedBy: 'daemon',
         happySessionId: 'session-123',
         pid: 54321,
         reattachedFromDiskMarker: true,
@@ -2409,7 +2415,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     );
     expect(writeSessionMarker).toHaveBeenCalledWith(
       expect.objectContaining({
-        pid: 54321,
+        trackingKey: legacyPidSessionTrackingKey(54321), pid: 54321,
         happySessionId: 'session-123',
         startedBy: 'daemon',
       }),
@@ -2425,7 +2431,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     isOwnedLiveDaemonSessionProcessCommandMock.mockReturnValue(false);
     vi.mocked(listSessionMarkers).mockResolvedValue([
       {
-        pid: 76543,
+        trackingKey: legacyPidSessionTrackingKey(76543), pid: 76543,
         happySessionId: 'session-789',
         happyHomeDir: '/tmp/happy',
         createdAt: 1,
@@ -2449,12 +2455,12 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     ]);
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
 
-    const pidToTrackedSession = new Map<number, any>();
-    await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
+    await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey });
 
-    expect(pidToTrackedSession.get(76543)).toEqual(
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(76543))).toEqual(
       expect.objectContaining({
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(76543), startedBy: 'daemon',
         happySessionId: 'session-789',
         pid: 76543,
         reattachedFromDiskMarker: true,
@@ -2466,7 +2472,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     isOwnedLiveDaemonSessionProcessCommandMock.mockReturnValue(false);
     vi.mocked(listSessionMarkers).mockResolvedValue([
       {
-        pid: 65432,
+        trackingKey: legacyPidSessionTrackingKey(65432), pid: 65432,
         happySessionId: 'session-456',
         happyHomeDir: '/tmp/happy',
         createdAt: 1,
@@ -2486,12 +2492,12 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     ]);
     vi.spyOn(process, 'kill').mockImplementation(() => true as any);
 
-    const pidToTrackedSession = new Map<number, any>();
-    await reattachTrackedSessionsFromMarkers({ pidToTrackedSession });
+    const trackedSessionsByKey = new Map<SessionTrackingKey, any>();
+    await reattachTrackedSessionsFromMarkers({ trackedSessionsByKey });
 
-    expect(pidToTrackedSession.get(65432)).toEqual(
+    expect(trackedSessionsByKey.get(legacyPidSessionTrackingKey(65432))).toEqual(
       expect.objectContaining({
-        startedBy: 'daemon',
+        trackingKey: legacyPidSessionTrackingKey(65432), startedBy: 'daemon',
         happySessionId: 'session-456',
         pid: 65432,
         reattachedFromDiskMarker: true,

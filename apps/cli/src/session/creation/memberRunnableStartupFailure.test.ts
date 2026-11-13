@@ -8,6 +8,7 @@ import { resolveAgentDisplayTitle } from '@/agent/catalog/agentDisplayTitle';
 import { awaitTrackedRunnerAgentSessionOpen } from '@/daemon/agentRuntime/runnerAgentSessionOpenAttestation';
 import type { TrackedSession } from '@/daemon/types';
 import { projectSessionSpawnFailure } from './projectSessionSpawnFailure';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('member-runnable Agent startup refusal', () => {
   it.each(['preflight', 'native'] as const)('keeps the trusted Agent identity through %s nonce settlement', phase => {
@@ -42,7 +43,7 @@ describe('member-runnable Agent startup refusal', () => {
       // Child exit is an OS fact. Classification, attribution and projection are real owners.
       const childProcess = new ChildProcess();
       Object.defineProperty(childProcess, 'exitCode', { value: 1 });
-      const tracked: TrackedSession = { pid: 123, startedBy: 'daemon', happySessionId: 'member-session',
+      const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(123), pid: 123, startedBy: 'daemon', happySessionId: 'member-session',
         processStartTimeMs: 100, processCommandHash: 'a'.repeat(64), childProcess };
       const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'codex',
         error: { code: 'agent_cli_not_runnable' }, occurredAt: age === 'predecessor' ? 99 : 101 });

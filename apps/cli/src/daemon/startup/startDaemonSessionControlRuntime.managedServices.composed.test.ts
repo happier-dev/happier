@@ -211,8 +211,6 @@ it.each([
   });
   phase = 'predecessor_authority';
   const predecessor = await refresh();
-  const predecessorTracked = { ...h.tracked, agentRuntimeRunnerRestartDisposition: 'runner_authority_unavailable' as const };
-  h.pidToTrackedSession.set(predecessorTracked.pid, predecessorTracked);
   // The OS boundary supplies a distinct successor process occurrence. Source
   // selection, signed authority refresh, tracked-row lookup and dispatch stay real.
   h.tracked.pid += 1;
@@ -222,7 +220,7 @@ it.each([
   h.tracked.agentRuntimeDaemonServiceAuthorityFilePath = await createAgentRuntimeDaemonServiceAuthorityPath({
     happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,
   });
-  h.pidToTrackedSession.set(h.tracked.pid, h.tracked);
+  h.trackedSessionsByKey.set(h.tracked.trackingKey, h.tracked);
   phase = 'successor_authority';
   const successor = await refresh();
   expect(successor.document.runner.pid).not.toBe(predecessor.document.runner.pid);

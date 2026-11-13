@@ -204,7 +204,8 @@ export function createSessionConnectedServiceAuthHotApply(deps: Readonly<{
         materializedSelectionRecord?.credentialRevision,
       );
       const validateCurrentBeforeMutation = async () => {
-        const applicationTarget = groupApplicationTarget ?? deps.runtimeRegistry.getByPid(input.tracked.pid);
+        const applicationTarget = groupApplicationTarget
+          ?? deps.runtimeRegistry.getSessionTarget(input.tracked.pid, input.tracked.happySessionId, input.tracked.trackingKey);
         if (binding.selection === 'group') {
           const groupId = readString(materializedSelectionRecord?.groupId) ?? readString(binding.groupId);
           const profileId = readString(materializedSelectionRecord?.activeProfileId)
@@ -227,7 +228,8 @@ export function createSessionConnectedServiceAuthHotApply(deps: Readonly<{
           if (!withdrawn) return { current: false as const, reason: 'credential_revision_superseded' };
           groupApplicationTarget = withdrawn;
         } else {
-          deps.runtimeRegistry.updateTarget({ pid: input.tracked.pid, connectedServicesBindingsRaw: null });
+          deps.runtimeRegistry.updateTarget({ pid: input.tracked.pid, sessionId: input.tracked.happySessionId,
+            connectedServicesBindingsRaw: null });
         }
         return { current: true as const };
       };

@@ -10,6 +10,8 @@ import { buildHappySessionControlArgs } from '../sessionSpawnArgs';
 import { partitionProviderSessionArgs } from '@/cli/providerSessionArgPartition';
 import { createSpawnLifecycleCallbacks } from './createSpawnLifecycleCallbacks';
 import { createOnChildExited } from '../sessions/onChildExited';
+import { mintSessionTrackingKey, trackSession, type TrackedSessionMap } from '../sessions/sessionTrackingKey';
+import type { TrackedSession } from '../types';
 
 describe('initial access launch custody', () => {
   const roots: string[] = [];
@@ -80,34 +82,38 @@ describe('initial access launch custody', () => {
     await expect(stat(file.path)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
-  it('retires an unconsumed carrier through the canonical PID lifecycle after a real child exits abnormally', async () => {
+  it('retires an unconsumed carrier through the canonical Session lifecycle after a real child exits abnormally', async () => {
     const file = await createSessionInitialAccessFile(await createHome(), initialAccess);
     const scope = createProviderLaunchResourceScope();
     scope.register(file.cleanup);
-    const spawnResourceCleanupByPid = new Map<number, () => void | Promise<void>>();
-    const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
+    const spawnResourceCleanupByKey = new Map();
+    const sessionAttachCleanupByKey = new Map();
     const lifecycle = createSpawnLifecycleCallbacks({
       connectedServicesBindingsRaw: undefined, catalogAgentId: null,
       materializationKey: 'test', hasConnectedServiceAuth: () => false,
       getSpawnResourceCleanupOnExit: () => scope.transfer(),
       onSpawnResourceCleanupArmed: () => undefined,
-      spawnResourceCleanupByPid,
+      spawnResourceCleanupByKey,
       getSessionAttachCleanup: () => null, setSessionAttachCleanup: () => undefined,
-      sessionAttachCleanupByPid,
+      sessionAttachCleanupByKey,
       persistAcceptedSpawnMarker: async () => undefined,
     });
+    const trackedSessionsByKey: TrackedSessionMap = new Map();
     const onChildExited = createOnChildExited({
-      pidToTrackedSession: new Map(), spawnResourceCleanupByPid,
-      sessionAttachCleanupByPid, getApiMachineForSessions: () => null,
+      trackedSessionsByKey, spawnResourceCleanupByKey,
+      sessionAttachCleanupByKey, getApiMachineForSessions: () => null,
+      removeSessionMarkerFn: async () => {},
     });
     // A fixture process, not a Happier runtime or Agent activation.
     const child = spawn(process.execPath, ['-e', 'process.exit(23)'], { stdio: 'ignore' });
     if (!child.pid) throw new Error('Fixture child did not acquire a PID');
-    lifecycle.registerSpawnResourceCleanupForPid(child.pid);
+    const tracked: TrackedSession = { trackingKey: mintSessionTrackingKey(), pid: child.pid, startedBy: 'daemon' };
+    trackSession(trackedSessionsByKey, tracked);
+    lifecycle.registerSpawnResourceCleanupForSession(tracked.trackingKey);
     const [code, signal] = await once(child, 'exit');
     expect(code).toBe(23);
     await onChildExited(child.pid, { reason: 'exit', code, signal });
-    expect(spawnResourceCleanupByPid.size).toBe(0);
+    expect(spawnResourceCleanupByKey.size).toBe(0);
     await expect(stat(file.path)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

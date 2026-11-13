@@ -7,6 +7,7 @@ import {
 
 import type { TrackedSession } from '../types';
 import { publishReportedTerminalControlServiceability } from './publishReportedTerminalControlServiceability';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('publishReportedTerminalControlServiceability', () => {
   it('probes and publishes a live nested host once per exact attachment', async () => {
@@ -35,7 +36,7 @@ describe('publishReportedTerminalControlServiceability', () => {
       updatedAt: 1,
     };
     const tracked: TrackedSession = {
-      pid: 42,
+      trackingKey: legacyPidSessionTrackingKey(42), pid: 42,
       startedBy: 'daemon',
       happySessionId: sessionId,
       happySessionMetadataFromLocalWebhook: {
@@ -89,7 +90,7 @@ describe('publishReportedTerminalControlServiceability', () => {
       ...(alreadyPublished ? { controlServiceabilityV1: { v: 1 as const, attachmentId, state: 'servable' as const, observedAt: 1 } } : {}),
     };
     const tracked: TrackedSession = {
-      pid: 43,
+      trackingKey: legacyPidSessionTrackingKey(43), pid: 43,
       startedBy: 'terminal',
       happySessionId: sessionId,
       happySessionMetadataFromLocalWebhook: {

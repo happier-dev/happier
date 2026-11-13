@@ -28,6 +28,7 @@ import { reloadConfiguration } from '@/configuration';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createLifecycleParams } from './lifecycle.testkit';
 import { runSessionLoopLifecycle } from './lifecycle';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 it('finishes the admitted requester turn, then exits and retires its credential after a refused reconnect', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'happier-requester-revocation-'));
@@ -120,9 +121,9 @@ it('finishes the admitted requester turn, then exits and retires its credential 
             child.once('error', reject);
             child.once('exit', (code, signal) => resolve({ code, signal }));
         });
-        const tracked: TrackedSession = { pid, happySessionId: 'session-1', startedBy: 'daemon', requesterWorkAttributionV1: attribution };
-        const onChildExited = createOnChildExited({ pidToTrackedSession: new Map([[pid, tracked]]),
-            spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null });
+        const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: 'session-1', startedBy: 'daemon', requesterWorkAttributionV1: attribution };
+        const onChildExited = createOnChildExited({ trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]),
+            spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null });
         await onChildExited(pid, { reason: 'process-exited', ...exit });
         await expect(access(custody.path)).rejects.toMatchObject({ code: 'ENOENT' });
         expect(connection.listenerCount('state')).toBe(0);

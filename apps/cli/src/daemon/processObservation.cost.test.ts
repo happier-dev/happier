@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const observed = vi.hoisted(() => ({ paths: [] as string[] }));
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -60,18 +61,18 @@ describe.skipIf(process.platform !== 'linux')('one process observation per ident
     if (!identity) throw new Error('Current process birth witness unavailable');
     observed.paths.length = 0;
     await expect(isSessionRunnerActive({ sessionId: 'audit-session', trackedSessions: [{
-      pid: process.pid, startedBy: 'happy-session', happySessionId: 'audit-session', processStartTimeMs: identity.processStartTimeMs,
+      trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, startedBy: 'happy-session', happySessionId: 'audit-session', processStartTimeMs: identity.processStartTimeMs,
     }] })).resolves.toBe(true);
     expect(observed.paths.filter(path => path === '/proc/' + process.pid + '/stat')).toHaveLength(1);
   });
 
   it('shares one census across tracked runners during a heartbeat', async () => {
     const pids = [...new Set([process.pid, process.ppid])];
-    const tracked = new Map<number, TrackedSession>();
+    const tracked = new Map<SessionTrackingKey, TrackedSession>();
     for (const pid of pids) {
       const identity = await readProcessIdentityByPid(pid);
       if (!identity) throw new Error('Live process birth witness unavailable');
-      tracked.set(pid, { pid, startedBy: 'happy-session', processStartTimeMs: identity.processStartTimeMs });
+      tracked.set(legacyPidSessionTrackingKey(pid), { trackingKey: legacyPidSessionTrackingKey(pid), pid, startedBy: 'happy-session', processStartTimeMs: identity.processStartTimeMs });
     }
     let tick: (() => Promise<void>) | undefined;
     vi.spyOn(global, 'setInterval').mockImplementation((handler) => {
@@ -81,7 +82,7 @@ describe.skipIf(process.platform !== 'linux')('one process observation per ident
     });
     const version = (JSON.parse(readFileSync(join(projectPath(), 'package.json'), 'utf8')) as { version: string }).version;
     startDaemonHeartbeatLoop({
-      pidToTrackedSession: tracked, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+      trackedSessionsByKey: tracked, spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
       getApiMachineForSessions: () => null, controlPort: 8765,
       fileState: { pid: process.pid, httpPort: 8765, startedAt: Date.now(), startedWithCliVersion: version, daemonLogPath: '/tmp/audit-daemon.log' },
       currentCliVersion: version, requestShutdown: () => { throw new Error('Unexpected shutdown'); },

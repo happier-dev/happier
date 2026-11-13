@@ -1,8 +1,9 @@
 import type { ChildExit } from '../sessions/onChildExited';
 import type { TrackedSession } from '../types';
-import { isPidPresent } from '@happier-dev/cli-common/process';
+import { isPidPresent, probeProcessGroupLiveness } from '@happier-dev/cli-common/process';
 import { SessionLaunchRetiredV1Schema } from '@happier-dev/protocol/spawnSession';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
+import { isCurrentTrackedSession, type TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 export type StartupLaunchCancellationResult =
   | Readonly<{ status: 'stopped' }>
@@ -22,7 +23,7 @@ export async function completeStartupCancellationCleanup(params: Readonly<{
   trackedSession: TrackedSession;
   /** Captured POSIX launch wrapper, even after custody moves to its runner. */
   wrapperPid?: number;
-  pidToTrackedSession: Map<number, TrackedSession>;
+  trackedSessionsByKey: TrackedSessionMap;
   onChildExited: (pid: number, exit: ChildExit) => void | Promise<void>;
 }>): Promise<StartupLaunchCancellationResult> {
   const attemptedPids = new Set<number>();
@@ -36,23 +37,17 @@ export async function completeStartupCancellationCleanup(params: Readonly<{
     // Terminal disappearance and synthetic exit bookkeeping cannot prove
     // process retirement. Windows launch owners instead prove exact native
     // runner identity/absence before entering cleanup (their pid can be a dispatcher).
-    if (process.platform !== 'win32' && [params.wrapperPid, params.trackedSession.pid, params.trackedSession.sessionRunnerPid]
-      .some(pid => typeof pid === 'number' && pid > 0 && isPidPresent(pid))) {
+    // The detached POSIX wrapper leads its own process group; only ESRCH proves that group gone
+    // (EPERM is a group run by an isolated agent user, still present).
+    if (process.platform !== 'win32' && (
+      (typeof params.wrapperPid === 'number' && probeProcessGroupLiveness(params.wrapperPid) !== 'absent')
+      || [params.wrapperPid, params.trackedSession.pid, params.trackedSession.sessionRunnerPid]
+        .some(pid => typeof pid === 'number' && pid > 0 && isPidPresent(pid)))) {
       return { status: 'incomplete', reason: 'process_still_running' };
     }
     const currentPid = params.trackedSession.pid;
-    if (
-      params.pidToTrackedSession.get(currentPid)
-      !== params.trackedSession
-    ) {
-      return [...params.pidToTrackedSession.values()].includes(
-        params.trackedSession,
-      )
-        ? {
-            status: 'incomplete',
-            reason: 'exit_cleanup_incomplete',
-          }
-        : { status: 'stopped' };
+    if (!isCurrentTrackedSession(params.trackedSessionsByKey, params.trackedSession)) {
+      return { status: 'stopped' };
     }
     if (attemptedPids.has(currentPid)) {
       return {
@@ -70,7 +65,7 @@ export async function completeStartupCancellationCleanup(params: Readonly<{
       };
     }
     if (
-      ![...params.pidToTrackedSession.values()].includes(
+      ![...params.trackedSessionsByKey.values()].includes(
         params.trackedSession,
       )
     ) {

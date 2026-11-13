@@ -16,6 +16,7 @@ import { createDaemonTransferRuntimeState, createDaemonTransferRuntimeStatePubli
 import { createDaemonServerWorkBudget, createDaemonServerWorkScheduler } from '../serverWork';
 import { withConfiguredDaemonTestHome } from '../testkit/fakeDaemonLifecycle.testkit';
 import { bootstrapMachineSyncRuntime, retireMachineSyncRuntimeAttempt, type BootstrapMachineSyncRuntimeParams } from './bootstrapMachineSyncRuntime';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 describe('Pending recovery after Machine endpoint publication', () => {
   it.each((['automation-read', 'transfer-ack', 'orphan-capture', 'admission-drain'] as const)
@@ -76,7 +77,7 @@ describe('Pending recovery after Machine endpoint publication', () => {
           startAutomationWorkerForMachine: machineId => heldBoundary === 'automation-read'
             ? startAutomationWorker({ token: 'test', machineId, env: { NODE_ENV: 'test' } }) : null,
           startMemoryWorkerForMachine: async () => null, startVoiceInferenceWorkerForMachine: async () => null,
-          orphanedDeadDaemonSessions: heldBoundary === 'orphan-capture' ? [{ sessionId: 'dead-session', pid: 1234567 }] : [],
+          orphanedDeadDaemonSessions: heldBoundary === 'orphan-capture' ? [{ sessionId: 'dead-session', trackingKey: legacyPidSessionTrackingKey(1234567), pid: 1234567 }] : [],
           spawnSessionForInternalResume: async () => ({ type: 'success', sessionId: 'unused' }),
           spawnSession: async () => ({ type: 'success', sessionId: 'unused' }),
           stopSession: async () => ({ status: 'stopped' }), isSessionAlreadyRunning: async () => false,

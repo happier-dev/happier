@@ -8,10 +8,11 @@ import { createProcessOwnershipRuntime } from '../processes/ownership/processOwn
 import type { TrackedSession } from '../types';
 import { createOnChildExited } from './onChildExited';
 import { createStopSession } from './stopSession';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 it('records final runner-exit remainder cleanup for the canonical Stop owner', async () => {
   const tracked: TrackedSession = {
-    startedBy: 'daemon', pid: 42, happySessionId: 'requested-stop-remainder',
+    trackingKey: legacyPidSessionTrackingKey(42), startedBy: 'daemon', pid: 42, happySessionId: 'requested-stop-remainder',
     stopRequestedAtMs: 1,
   };
   const ownerRemainder = {
@@ -20,12 +21,12 @@ it('records final runner-exit remainder cleanup for the canonical Stop owner', a
     end: vi.fn(async () => ({ status: 'complete' as const, outcomes: [] })),
     observeEnd: vi.fn(async () => ({ status: 'complete' as const, outcomes: [] })),
   };
-  const trackedByPid = new Map([[tracked.pid, tracked]]);
+  const trackedByPid = new Map([[tracked.trackingKey, tracked]]);
   const onChildExited = createOnChildExited({
-    pidToTrackedSession: trackedByPid,
+    trackedSessionsByKey: trackedByPid,
     ownerRemainder,
-    spawnResourceCleanupByPid: new Map(),
-    sessionAttachCleanupByPid: new Map(),
+    spawnResourceCleanupByKey: new Map(),
+    sessionAttachCleanupByKey: new Map(),
     getApiMachineForSessions: () => null,
   });
 
@@ -43,9 +44,9 @@ it.each([false, true])('ends a captured reparented child before staging exit or 
     if (initial.status !== 'ok') throw new Error('Native census unavailable');
     const root = initial.rows.find(row => row.pid === parent.pid);
     if (!root) throw new Error('Owned runner missing from native census');
-    const tracked: TrackedSession = { startedBy: 'daemon', pid: root.pid, childProcess: parent,
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(root.pid), startedBy: 'daemon', pid: root.pid, childProcess: parent,
       happySessionId: owner.sessionId, processStartTimeMs: root.start.startTimeMs };
-    const trackedByPid = new Map([[root.pid, tracked]]);
+    const trackedByPid = new Map([[legacyPidSessionTrackingKey(root.pid), tracked]]);
     const runtime = createProcessOwnershipRuntime({ daemonScopeKey: '123456789abc', listRoots: () => [{
       owner, pid: root.pid, start: root.start, live: parent.exitCode === null && parent.signalCode === null,
       ownerCreatedAtMs: 0,
@@ -62,8 +63,8 @@ it.each([false, true])('ends a captured reparented child before staging exit or 
     };
     tracked.ownerRemainderCapture = await remainder.captureTree(owner, { pid: root.pid, start: root.start });
     expect(tracked.ownerRemainderCapture?.roots.some(row => row.pid === childPid)).toBe(true);
-    const onChildExited = createOnChildExited({ pidToTrackedSession: trackedByPid, ownerRemainder: remainder,
-      spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(), getApiMachineForSessions: () => null,
+    const onChildExited = createOnChildExited({ trackedSessionsByKey: trackedByPid, ownerRemainder: remainder,
+      spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(), getApiMachineForSessions: () => null,
       removeSessionMarkerFn: async () => { await assertChildGone('stage'); },
       retireSessionRunnerOwnedManagedServices: async () => { await assertChildGone('retire'); },
       onUnexpectedExit: async () => { await assertChildGone('respawn'); },
@@ -71,11 +72,11 @@ it.each([false, true])('ends a captured reparented child before staging exit or 
     const departed = once(parent, 'exit');
     parent.kill('SIGKILL');
     await departed;
-    if (replacement) trackedByPid.set(process.pid, { pid: process.pid, happySessionId: owner.sessionId, startedBy: 'daemon' });
+    if (replacement) trackedByPid.set(legacyPidSessionTrackingKey(process.pid), { trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, happySessionId: owner.sessionId, startedBy: 'daemon' });
     await onChildExited(root.pid, { reason: 'process-exited', code: null, signal: 'SIGKILL' });
     await assertChildGone('completed');
     expect(phases).toEqual(replacement ? ['stage', 'completed'] : ['stage', 'retire', 'respawn', 'completed']);
-    expect(trackedByPid.has(root.pid)).toBe(false);
+    expect(trackedByPid.has(legacyPidSessionTrackingKey(root.pid))).toBe(false);
     expect(await waitForProcessExit(childPid, { timeoutMs: 2000 })).toBe(true);
   } finally {
     parent.kill('SIGKILL');
@@ -93,7 +94,7 @@ it('captures the live runner chain and ends its reparented child before requeste
     if (!root) throw new Error('Owned runner missing from native census');
     const child = initial.rows.find(row => row.pid === childPid);
     if (!child) throw new Error('Owned child missing from native census');
-    const tracked: TrackedSession = { startedBy: 'daemon', pid: root.pid, childProcess: parent,
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(root.pid), startedBy: 'daemon', pid: root.pid, childProcess: parent,
       happySessionId: owner.sessionId, processStartTimeMs: root.start.startTimeMs,
       spawnOptions: { directory: process.cwd(), terminal: { mode: 'plain' } } };
     const runtime = createProcessOwnershipRuntime({ daemonScopeKey: '123456789abc', listRoots: () => [{
@@ -103,7 +104,7 @@ it('captures the live runner chain and ends its reparented child before requeste
     const remainder = createEndOwnerRemainder({ processOwnershipRuntime: runtime, daemonScopeKey: '123456789abc',
       firstPass: () => {} });
     const departed = once(parent, 'exit');
-    const stop = createStopSession({ pidToTrackedSession: new Map([[root.pid, tracked]]), ownerRemainder: remainder,
+    const stop = createStopSession({ trackedSessionsByKey: new Map([[legacyPidSessionTrackingKey(root.pid), tracked]]), ownerRemainder: remainder,
       readHostAttachmentState: async () => ({ status: 'absent' }),
       waitForTrackedRunnersExit: async () => { await departed; return true; },
     });

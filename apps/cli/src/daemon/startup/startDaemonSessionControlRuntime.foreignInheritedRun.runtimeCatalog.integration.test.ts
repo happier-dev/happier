@@ -39,6 +39,7 @@ import type { startDaemonControlServer } from '@/daemon/controlServer';
 import type { startDaemonSessionControlRuntime } from './startDaemonSessionControlRuntime';
 import * as sessionRpcTransport from '@/session/transport/rpc/sessionRpc';
 import { logger } from '@/ui/logger';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const boundary = vi.hoisted(() => ({ control: null as unknown, app: null as unknown }));
 // The listener is an OS/network boundary; preserve the real daemon dispatcher.
@@ -155,7 +156,7 @@ it('answers an omitted-selection Run from a foreign recipient’s applied Team b
         expectedResourceRevision: 3, deliveryMode: 'brokered', teamId: teamSelection.teamId }] } });
   const authorityPath = await createAgentRuntimeDaemonServiceAuthorityPath({ happyHomeDir: f.directory, publicReleaseRing: configuration.publicReleaseRing });
   tracked.agentRuntimeDaemonServiceAuthorityFilePath = authorityPath;
-  await writeSessionMarker({ pid: process.pid, happySessionId: sessionId, startedBy: 'daemon',
+  await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, happySessionId: sessionId, startedBy: 'daemon',
     processStartTimeMs: fixture.runner.processStartTimeMs, processCommandHash: fixture.runner.processCommandHash,
     requesterWorkAttributionV1: tracked.requesterWorkAttributionV1,
     runnerAgentSourceCustodyV1: retainedAgent.sourceCustody, agentRuntimeDaemonServiceAuthorityFilePath: authorityPath });

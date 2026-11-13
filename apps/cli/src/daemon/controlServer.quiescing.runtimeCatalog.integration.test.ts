@@ -10,6 +10,7 @@ import { FOREGROUND_AGENT_RUNTIME_ADMISSION_PATH, FOREGROUND_AGENT_RUNTIME_RELEA
 import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const foregroundRequest = {
   v: 1 as const, attemptId: 'attempt-1', sessionId: 'session-1', foregroundPid: process.pid,
@@ -22,9 +23,9 @@ describe('daemon control server quiescing producer routes', () => {
     const admissionDrain = createDaemonAdmissionDrain();
     let releaseOtherDrain = () => {};
     if (ordering === 'before') releaseOtherDrain = admissionDrain.beginTemporaryDrain();
-    const tracked = new Map<number, TrackedSession>([[44_001,
-      { pid: 44_001, startedBy: 'daemon', happySessionId: 'pending-stop' }]]);
-    const stopSession = createStopSession({ pidToTrackedSession: tracked,
+    const tracked = new Map<SessionTrackingKey, TrackedSession>([[legacyPidSessionTrackingKey(44_001),
+      { trackingKey: legacyPidSessionTrackingKey(44_001), pid: 44_001, startedBy: 'daemon', happySessionId: 'pending-stop' }]]);
+    const stopSession = createStopSession({ trackedSessionsByKey: tracked,
       // Unreadable topology is the filesystem boundary. Real Stop refuses before any native signal.
       readHostAttachmentState: async () => {
         if (ordering === 'during') releaseOtherDrain = admissionDrain.beginTemporaryDrain();
@@ -61,7 +62,7 @@ describe('daemon control server quiescing producer routes', () => {
   });
   it('reopens the same control ingress after a temporary drain without final teardown', async () => {
     const admissionDrain = createDaemonAdmissionDrain();
-    const tracked: TrackedSession = { pid: 44_001, startedBy: 'daemon', happySessionId: 'happy-test-123', activeTurnId: 'turn-test' };
+    const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(44_001), pid: 44_001, startedBy: 'daemon', happySessionId: 'happy-test-123', activeTurnId: 'turn-test' };
     const app = createDaemonControlApp({
       getChildren: () => [],
       stopSession: async () => ({ status: 'not_found' as const }),

@@ -31,6 +31,7 @@ import { resolveProcessCustodySupportExecutable } from '@/subprocess/supervision
 import { partitionProviderSessionArgs } from '@/cli/providerSessionArgPartition';
 import { buildPluginSessionBindingInput } from '@/plugins/runtime/runtimeCore/plugin/sessionLaunch';
 import { resolveCodexCliSessionExtraOptions } from '../../../../../packages/plugins/codex/src/agent/cli/command';
+import type { SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const envScope = createSpawnHappyCliEnvScope();
 afterEach(() => { envScope.restore(); vi.unstubAllEnvs(); reloadConfiguration(); vi.unstubAllGlobals(); });
@@ -90,19 +91,19 @@ it.each(['opencode', 'codex'] as const)('requires managed runtime bootstrap befo
             runtimeOptions: { pluginIds: [`happier.agent.${agentId}`] },
         });
         vi.stubEnv('PATH', '');
-        const pidToTrackedSession = new Map<number, TrackedSession>();
-        const pidToAwaiter = new Map<number, (session: TrackedSession) => void>();
-        const pidToSpawnResultResolver = new Map<number, (result: SpawnSessionResult) => void>();
-        const pidToSpawnWebhookTimeout = new Map<number, NodeJS.Timeout>();
-        const spawnResourceCleanupByPid = new Map<number, () => void | Promise<void>>();
-        const sessionAttachCleanupByPid = new Map<number, () => Promise<void>>();
+        const trackedSessionsByKey = new Map<SessionTrackingKey, TrackedSession>();
+        const spawnAwaiterByKey = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
+        const spawnResultResolverByKey = new Map<SessionTrackingKey, (result: SpawnSessionResult) => void>();
+        const spawnWebhookTimeoutByKey = new Map<SessionTrackingKey, NodeJS.Timeout>();
+        const spawnResourceCleanupByKey = new Map();
+        const sessionAttachCleanupByKey = new Map();
         const deviceLocalSecretStorage = await readOrCreateDeviceLocalSecretStorage({ path: join(root, 'device-key.json') });
         const lifecycle = createSpawnLifecycleCallbacks({
             connectedServicesBindingsRaw: null, catalogAgentId: null, materializationKey: 'fixture',
             hasConnectedServiceAuth: () => false,
             getSpawnResourceCleanupOnExit: () => null, onSpawnResourceCleanupArmed: () => {},
-            spawnResourceCleanupByPid, getSessionAttachCleanup: () => null, setSessionAttachCleanup: () => {},
-            sessionAttachCleanupByPid,
+            spawnResourceCleanupByKey, getSessionAttachCleanup: () => null, setSessionAttachCleanup: () => {},
+            sessionAttachCleanupByKey,
             persistAcceptedSpawnMarker: async (trackedSession, options) => {
                 try {
                     await persistAcceptedSpawnMarker({ trackedSession, deviceLocalSecretStorage, ...options });
@@ -115,7 +116,7 @@ it.each(['opencode', 'codex'] as const)('requires managed runtime bootstrap befo
         const backendTarget = { kind: 'backend' as const, sourceKind: 'built_in' as const, backendId: agentId };
         const spawnOptions = { directory, backendTarget };
         const onChildExited = createOnChildExited({
-            pidToTrackedSession, spawnResourceCleanupByPid, sessionAttachCleanupByPid,
+            trackedSessionsByKey, spawnResourceCleanupByKey, sessionAttachCleanupByKey,
             getApiMachineForSessions: () => null,
         });
         const childExitObservations: Promise<void>[] = [];
@@ -128,7 +129,7 @@ it.each(['opencode', 'codex'] as const)('requires managed runtime bootstrap befo
             normalizedExistingSessionId: '', effectiveResume: '',
             effectiveBackendTargetV2: backendTarget,
             directoryCreated: false, extraEnvForChildWithMessage: {}, processEnv: { ...process.env }, happyHomeDir: homeDir,
-            pidToTrackedSession, pidToAwaiter, pidToSpawnResultResolver, pidToSpawnWebhookTimeout,
+            trackedSessionsByKey, spawnAwaiterByKey, spawnResultResolverByKey, spawnWebhookTimeoutByKey,
             // Plain launch readiness comes from the canonical webhook owner, never a fixture Session resolver.
             resolveCanonicalTrackedSessionId: () => { throw new Error('Plain routing must not consult the terminal-host Session resolver'); },
             onChildExited: (...args: Parameters<typeof onChildExited>) => {
@@ -219,8 +220,8 @@ it.each(['opencode', 'codex'] as const)('requires managed runtime bootstrap befo
                         launchError: { code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', subtype: 'writer_active' } } } });
             } finally { await app.close(); }
             expect(bootstrapFetches).toBe(0);
-            expect(pidToTrackedSession.size).toBe(0);
-            expect(pidToSpawnWebhookTimeout.size).toBe(0);
+            expect(trackedSessionsByKey.size).toBe(0);
+            expect(spawnWebhookTimeoutByKey.size).toBe(0);
             await expect(listSessionMarkers()).resolves.toEqual([]);
 
             phase = 'reject managed JavaScript runtime bootstrap while offline';
@@ -228,7 +229,7 @@ it.each(['opencode', 'codex'] as const)('requires managed runtime bootstrap befo
             await expect(routeSpawnModeAndWaitForWebhook(params)).rejects.toMatchObject({
                 message: 'Managed JavaScript runtime is unavailable: bootstrap failed', cause: offline,
             });
-            expect(pidToTrackedSession.size).toBe(0);
+            expect(trackedSessionsByKey.size).toBe(0);
             await expect(listSessionMarkers()).resolves.toEqual([]);
 
             const managedRoot = join(homeDir, 'tools', 'js-runtime', 'current');
@@ -256,10 +257,10 @@ it.each(['opencode', 'codex'] as const)('requires managed runtime bootstrap befo
                     throw new Error('Invalid native runner receipt');
                 }
                 native = { pid: parsed.pid, args: parsed.args };
-                expect(pidToTrackedSession.size).toBe(1);
+                expect(trackedSessionsByKey.size).toBe(1);
             });
             if (!native) throw new Error('Missing native runner receipt');
-            const tracked = [...pidToTrackedSession.values()][0]!;
+            const tracked = [...trackedSessionsByKey.values()][0]!;
             phase = 'persist accepted runner marker custody';
             await tracked.acceptedSpawnMarkerGate;
             expect(native.args).toEqual([agentId, '--happy-starting-mode', 'remote', '--started-by', 'daemon']);
@@ -289,8 +290,7 @@ it.each(['opencode', 'codex'] as const)('requires managed runtime bootstrap befo
             expect(buildSpawnSessionOptionsFromRespawnDescriptorV1(marker.respawn, { deviceLocalSecretStorage }))
                 .toMatchObject({ directory, backendTarget });
             const onWebhook = createOnHappySessionWebhook({
-                pidToTrackedSession, pidToAwaiter, spawnResourceCleanupByPid, sessionAttachCleanupByPid,
-                deviceLocalSecretStorage,
+                trackedSessionsByKey, spawnAwaiterByKey, deviceLocalSecretStorage,
             });
             phase = 'admit the canonical Session webhook';
             await onWebhook('session-native-admission', {
@@ -307,10 +307,10 @@ it.each(['opencode', 'codex'] as const)('requires managed runtime bootstrap befo
             expect(await listSessionMarkers()).toEqual(expect.arrayContaining([expect.objectContaining({
                 pid: native.pid, happySessionId: 'session-native-admission',
             })]));
-            expect(pidToAwaiter.size).toBe(0);
-            expect(pidToSpawnWebhookTimeout.size).toBe(0);
+            expect(spawnAwaiterByKey.size).toBe(0);
+            expect(spawnWebhookTimeoutByKey.size).toBe(0);
         } finally {
-            for (const tracked of pidToTrackedSession.values()) {
+            for (const tracked of trackedSessionsByKey.values()) {
                 const child = tracked.childProcess;
                 if (child && child.exitCode === null && child.signalCode === null) {
                     const exited = new Promise<void>(resolve => child.once('exit', () => resolve()));
@@ -318,7 +318,7 @@ it.each(['opencode', 'codex'] as const)('requires managed runtime bootstrap befo
                     await exited;
                 }
             }
-            for (const timeout of pidToSpawnWebhookTimeout.values()) clearTimeout(timeout);
+            for (const timeout of spawnWebhookTimeoutByKey.values()) clearTimeout(timeout);
             // Exit retirement still owns files beneath this temporary home.
             await Promise.all(childExitObservations);
             await runtime.dispose();

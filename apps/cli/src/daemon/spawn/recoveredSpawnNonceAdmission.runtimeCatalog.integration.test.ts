@@ -18,6 +18,7 @@ import { createDaemonControlApp } from '../controlServer';
 import { createOnHappySessionWebhook } from '../sessions/onHappySessionWebhook';
 import { buildWindowsHostedTerminalAttachment, buildWindowsTerminalWindowIdentity } from '../platform/windows/windowsHostedSessionRuntime';
 import { resolveRecoveredSpawnNonceAdmission } from './recoveredSpawnNonceAdmission';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 afterEach(() => { vi.unstubAllEnvs(); reloadConfiguration(); });
 
@@ -58,7 +59,7 @@ describe('recovered spawn readiness through real marker, host and RPC owners', (
         if (identity?.processStartTimeMs === undefined) throw new Error('missing real process generation');
         const nonce = 'nonce-recovered';
         const plain = state.startsWith('plain');
-        const tracked: TrackedSession = { startedBy: 'daemon', pid: process.pid, happySessionId: sessionId,
+        const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(process.pid), startedBy: 'daemon', pid: process.pid, happySessionId: sessionId,
           reattachedFromDiskMarker: true, processStartTimeMs: identity.processStartTimeMs,
           spawnOptions: { directory: home, spawnNonce: nonce, terminal: { mode: plain ? 'plain' : 'herdr' } } };
         if (state === 'plain-wrapper-ready') {
@@ -69,7 +70,7 @@ describe('recovered spawn readiness through real marker, host and RPC owners', (
           tracked.runnerProcessIdentity = { pid: process.pid, processStartTimeMs: identity.processStartTimeMs,
             processCommandHash: hashProcessCommand(identity.command) };
         }
-        await writeSessionMarker({ pid: process.pid, happySessionId: sessionId, startedBy: 'daemon',
+        await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, happySessionId: sessionId, startedBy: 'daemon',
           processStartTimeMs: identity.processStartTimeMs,
           respawn: { version: 1, directory: home, spawnNonce: state === 'marker-unbound' ? 'another-nonce' : nonce,
             terminal: { mode: plain ? 'plain' : 'herdr' } } });
@@ -119,7 +120,7 @@ describe('recovered spawn readiness through real marker, host and RPC owners', (
           resolveRecoveredSpawnNonce: resolveRecovered,
           spawnSession: async () => { throw new Error('recovered admission must not launch another runner'); },
           stopSession: async () => ({ status: 'not_found' }), requestShutdown: () => {},
-          onHappySessionWebhook: createOnHappySessionWebhook({ pidToTrackedSession: new Map([[tracked.pid, tracked]]), pidToAwaiter: new Map() }),
+          onHappySessionWebhook: createOnHappySessionWebhook({ trackedSessionsByKey: new Map([[tracked.trackingKey, tracked]]), spawnAwaiterByKey: new Map() }),
           controlToken: 'test-token' });
         try {
           await app.ready();
@@ -141,7 +142,7 @@ describe('recovered spawn readiness through real marker, host and RPC owners', (
             await probeStarted;
             try {
               if (state === 'await-marker-rebound') {
-                await writeSessionMarker({ pid: process.pid, happySessionId: sessionId, startedBy: 'daemon',
+                await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, happySessionId: sessionId, startedBy: 'daemon',
                   processStartTimeMs: identity.processStartTimeMs,
                   respawn: { version: 1, directory: home, spawnNonce: 'another-nonce', terminal: { mode: 'herdr' } } });
               } else if (state === 'await-tracked-nonce-rebound' && tracked.spawnOptions) {

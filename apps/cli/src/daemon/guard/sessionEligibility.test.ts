@@ -4,13 +4,14 @@ import type { LiveWorkInventoryV1 } from '../lifecycle/managedActivity';
 import { evaluateSessionEligibility } from './sessionEligibility';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
 beforeAll(async () => { runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
   runtimeOptions: { pluginIds: ['happier.agent.codex'] } }); });
 afterAll(async () => { await runtime?.dispose(); });
 
-const tracked: TrackedSession = { pid: 42, happySessionId: 'session-1', startedBy: 'daemon' };
+const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(42), pid: 42, happySessionId: 'session-1', startedBy: 'daemon' };
 const resume = { sessionId: 'session-1', rawSession: { machineId: 'machine-1', path: '/project' },
   metadata: { runtimeDescriptorV1: { v: 1 as const, agentId: 'codex', agent: { backendMode: 'appServer' } }, machineId: 'machine-1', path: '/project', flavor: 'codex', codexSessionId: 'native-1' } };
 const inventory: LiveWorkInventoryV1 = { coverage: 'complete', items: ['session', 'input', 'agents', 'attention'].map(category => ({

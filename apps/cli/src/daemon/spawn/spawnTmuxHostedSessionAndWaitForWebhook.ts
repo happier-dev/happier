@@ -34,6 +34,7 @@ import type { SpawnLifecycleCallbacks } from './createSpawnLifecycleCallbacks';
 import type { SpawnCommitRevalidation } from './spawnCommitRevalidation';
 import type { HappyCliSubprocessLaunchOptions } from '@/utils/spawnHappyCLI';
 import { waitForTerminalHostedSessionWebhook } from './waitForTerminalHostedSessionWebhook';
+import type { SessionTrackingKey, TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 type SpawnTmuxHostedSessionAndWaitForWebhookResult = Readonly<{
   spawnResult: SpawnSessionResult | null;
@@ -62,12 +63,12 @@ export async function spawnTmuxHostedSessionAndWaitForWebhook(params: Readonly<{
   runnerAgentSessionBootstrapAuthorization?:
     RunnerAgentSessionBootstrapAuthorization | null;
   runnerAgentInvocationContext?: RunnerAgentInvocationContext | null;
-  pidToTrackedSession: Map<number, TrackedSession>;
-  pidToAwaiter: Map<number, (session: TrackedSession) => void>;
-  pidToSpawnResultResolver: Map<number, (result: SpawnSessionResult) => void>;
-  pidToSpawnWebhookTimeout: Map<number, NodeJS.Timeout>;
+  trackedSessionsByKey: TrackedSessionMap;
+  spawnAwaiterByKey: Map<SessionTrackingKey, (session: TrackedSession) => void>;
+  spawnResultResolverByKey: Map<SessionTrackingKey, (result: SpawnSessionResult) => void>;
+  spawnWebhookTimeoutByKey: Map<SessionTrackingKey, NodeJS.Timeout>;
   takeoverAdmission?: PersistedTakeoverAdmissionWaitRegistration;
-  resolveCanonicalTrackedSessionId: (pid: number) => string;
+  resolveCanonicalTrackedSessionId: (trackingKey: SessionTrackingKey) => string;
   onChildExited: (pid: number, exit: ChildExit) => void | Promise<void>;
   spawnLifecycleCallbacks: SpawnLifecycleCallbacks;
   cleanupSpawnResources: () => void | Promise<void>;
@@ -257,10 +258,10 @@ export async function spawnTmuxHostedSessionAndWaitForWebhook(params: Readonly<{
     },
     runnerAgentSessionBootstrapAuthorization: params.runnerAgentSessionBootstrapAuthorization,
     runnerAgentInvocationContext: params.runnerAgentInvocationContext,
-    pidToTrackedSession: params.pidToTrackedSession,
-    pidToAwaiter: params.pidToAwaiter,
-    pidToSpawnResultResolver: params.pidToSpawnResultResolver,
-    pidToSpawnWebhookTimeout: params.pidToSpawnWebhookTimeout,
+    trackedSessionsByKey: params.trackedSessionsByKey,
+    spawnAwaiterByKey: params.spawnAwaiterByKey,
+    spawnResultResolverByKey: params.spawnResultResolverByKey,
+    spawnWebhookTimeoutByKey: params.spawnWebhookTimeoutByKey,
     takeoverAdmission: params.takeoverAdmission,
     onChildExited: params.onChildExited,
     spawnLifecycleCallbacks: params.spawnLifecycleCallbacks,
