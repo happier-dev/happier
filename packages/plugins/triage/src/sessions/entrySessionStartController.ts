@@ -74,6 +74,7 @@ import {
 import { triageActionDefaultSeedV1, requestTriageNewSessionAuthoringV1 } from './newSessionAuthoring.js';
 import { readTriageEntrySessionFactsV1, type TriageEntrySessionSourceFactsV1 } from './readEntrySessionFacts.js';
 import { buildTriageEntrySessionHandoffV1 } from './entrySessionHandoff.js';
+import { selectTriageSendRecipientV1 } from './entryStartChoices.js';
 import { projectTriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
 import {
     submitTriageEntrySessionStart,
@@ -762,13 +763,13 @@ export function createTriageEntrySessionStartController(
                     let session = existingSession;
                     if (session === undefined) {
                         setPhase(CHOOSING);
-                        const choice = await host.selectActionInput(
-                            { hostAction: { action: 'session.transcript.get', projection: 'sessionAddress' } },
+                        const choice = await selectTriageSendRecipientV1(host,
+                            { action: request.action, ...(request.repository === undefined ? {} : { repository: request.repository }) },
                             { signal: selectionLifetime.signal },
                         );
                         if (retired.current) return;
-                        if (choice.kind === 'cancelled') { setPhase(IDLE); return; }
-                        if (choice.kind !== 'sessionAddress') { setPhase(unavailable('dispatch')); return; }
+                        if (choice?.kind === 'cancelled') { setPhase(IDLE); return; }
+                        if (choice?.kind !== 'sessionAddress') { setPhase(unavailable('dispatch')); return; }
                         session = choice.session;
                     }
                     const handoff = buildTriageEntrySessionHandoffV1(request, session);
@@ -1198,10 +1199,12 @@ export function createTriageEntrySessionStartController(
             let session = selectedSession;
             if (session === undefined && request.destinationChoice === 'existingSession') {
                 setPhase(CHOOSING);
-                const choice = await host.selectActionInput({ hostAction: { action: 'session.transcript.get', projection: 'sessionAddress' } }, options);
+                const choice = await selectTriageSendRecipientV1(host, {
+                    action: request.action, ...(request.repository === undefined ? {} : { repository: request.repository }),
+                }, options);
                 if (options.signal.aborted || retired.current) { cancel(); return null; }
-                if (choice.kind === 'cancelled') { cancel(); return null; }
-                if (choice.kind !== 'sessionAddress') { inFlight.current = false; setPhase(unavailable('dispatch')); return null; }
+                if (choice?.kind === 'cancelled') { cancel(); return null; }
+                if (choice?.kind !== 'sessionAddress') { inFlight.current = false; setPhase(unavailable('dispatch')); return null; }
                 session = choice.session;
             }
             const handoff = buildTriageEntrySessionHandoffV1(request, session);

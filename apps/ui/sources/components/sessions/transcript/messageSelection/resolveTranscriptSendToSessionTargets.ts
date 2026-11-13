@@ -2,6 +2,7 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 import { isUserFacingSession } from '@/sync/domains/session/listing/isUserFacingSession';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { sortSessionSelectionCandidates } from '@/components/sessions/selection/sortSessionSelectionCandidates';
+import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 
 export type TranscriptSendToSessionTargetCandidate = Readonly<{
     id: string;
@@ -85,7 +86,13 @@ export function resolveReadableSessionPickerTargets<T extends TranscriptSendToSe
     sessions: ReadonlyArray<T>;
     excludedSessionId?: string;
     capability?: 'readTranscript' | 'editSessionRecords';
+    sessionCandidates?: readonly ActionSessionAddressV1[];
 }>): ReadonlyArray<T> {
+    const candidates = params.sessionCandidates === undefined ? undefined : new Set(params.sessionCandidates
+        .filter(candidate => areServerProfileIdentifiersEquivalent(candidate.serverId, params.serverId))
+        .map(candidate => candidate.sessionId));
     return resolveQualifiedSessionTargets({ serverId: params.serverId, sessions: params.sessions, excludedSessionId: params.excludedSessionId ?? '',
-        accepts: params.capability === 'editSessionRecords' ? isRecordEditableSession : isReadableSession });
+        accepts: candidate => (candidates === undefined || candidates.has(candidate.id))
+            && (candidates !== undefined ? isWritableSession(candidate)
+                : params.capability === 'editSessionRecords' ? isRecordEditableSession(candidate) : isReadableSession(candidate)) });
 }

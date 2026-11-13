@@ -10,9 +10,11 @@ import { t } from '@/text';
 
 import { resolveReadableSessionPickerTargets, resolveTranscriptSendToSessionTargets } from './resolveTranscriptSendToSessionTargets';
 import type { SendTranscriptSelectionDestination } from './sendTranscriptSelectionToSession';
+import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 
 export type TranscriptSendToSessionModalProps = CustomModalInjectedProps & Readonly<{
     sourceServerId: string;
+    sessionCandidates?: readonly ActionSessionAddressV1[];
     onResolve: (destination: SendTranscriptSelectionDestination | null) => void;
 }> & (Readonly<{ selectionOnly: true; sourceSessionId?: never; previewText?: never;
     /** A destination picker excludes its source and asks for edit access; a reference picker asks for reading. */
@@ -27,12 +29,13 @@ export const TranscriptSendToSessionModal = React.memo(function TranscriptSendTo
     const serverIds = React.useMemo(() => sourceServerId ? [sourceServerId] : [], [sourceServerId]);
     const selectSessions = React.useCallback((sessions: ReadonlyArray<SessionSelectionCandidate>) =>
         props.selectionOnly ? resolveReadableSessionPickerTargets({ serverId: sourceServerId, sessions,
+            ...(props.sessionCandidates === undefined ? {} : { sessionCandidates: props.sessionCandidates }),
             ...(props.destination ? { excludedSessionId: props.destination.excludedSessionId, capability: props.destination.capability } : {}) })
             : resolveTranscriptSendToSessionTargets({
             sourceSessionId: props.sourceSessionId,
             sourceServerId,
             sessions,
-        }), [props.selectionOnly, props.sourceSessionId, props.destination?.excludedSessionId, props.destination?.capability, sourceServerId]);
+        }), [props.selectionOnly, props.sourceSessionId, props.destination?.excludedSessionId, props.destination?.capability, props.sessionCandidates, sourceServerId]);
     const leadingOptions = React.useMemo<ReadonlyArray<SelectionListOption>>(() => props.selectionOnly ? [] : [{
         id: 'new-session',
         testID: 'transcript-send-to-session-option-new-session',

@@ -54,6 +54,7 @@ function fixture(delivery: 'send' | 'compose' = 'send', rejected = false, uncert
         applyComposer: async (_ref: unknown, transaction: ComposerTransactionV1) => { edits.push(transaction); return { status: 'applied' }; },
         executeAction: async (id: unknown, input: JsonValue, options?: unknown): Promise<unknown> => {
             const localId = testkitTriageActionId(id);
+            if (localId === 'session.list') return { sessions: [{ id: address.sessionId, serverId: address.serverId, updatedAt: 1 }], hasNext: false };
             if (localId === TRIAGE_RUN_CONFIGURED_ACTION_LOCAL_ID_V1) {
                 if (dispatchFailure) throw dispatchFailure;
                 const operand = TriageRunConfiguredActionInputV1Schema.parse(input);

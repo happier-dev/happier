@@ -1631,18 +1631,20 @@ chosen Session's accepted workspace; a repository-bound entry must match that
 workspace's repository. Workspace-less recipients still receive the typed
 `existing_session_workspace_missing` refusal.
 
+The native recent-recipient menu and Find a Session consume the same existing
+workspace eligibility decision as configured handoff admission. Find reads every
+Session-list page; the incumbent host picker projects the eligible addresses and
+retains its Home, visibility and input-access rules. It does not infer repository
+eligibility from a displayed directory. Reference-only actions retain their
+existing workspace-independent contract. A later workspace change can still
+produce the admission owner's typed refusal; the picker does not authorize Send.
+
 An existing Session keeps its admitted Agent. A configured profile's preferred
 Agent applies to new-Session authoring; it does not silently switch or reject
 an existing Session. An incompatible explicitly requested profile or Agent
 returns `agentMismatch`. Compose appends ordinary evidence through the existing
 composer transaction and preserves its prior text, attachments, selection and
 focus; an unavailable composer is not a request to send instead.
-
-In unreleased 0.3 development source, a PR cited in an ordinary Composer Send
-is content. The attachment resolver reads it without creating a Session–PR
-relation, including from a Session without a checkout or in another repository.
-Only explicit work-on-PR or link Actions create the checkout-verified binding;
-`channels_pr_link_checkout_not_verified` belongs to that explicit Action.
 
 In unreleased 0.3 development source, a PR cited in an ordinary Composer Send
 is content. The attachment resolver reads it without creating a Session–PR

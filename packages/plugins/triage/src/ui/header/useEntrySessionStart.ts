@@ -1,5 +1,7 @@
 import * as React from 'react';
-import { usePluginHostApi } from '@happier-dev/plugin-ui';
+import type { PluginUiActionControlController } from '@happier-dev/plugin-sdk/ui';
+import { projectPluginActionControlExecutionV1 } from '@happier-dev/plugin-ui/hostApi';
+import { usePluginHostApi, usePluginTranslation } from '@happier-dev/plugin-ui';
 import { createTriageEntrySessionStartController, type TriageStartHostV1, type TriageEntrySessionStartOptionsV1, type TriageEntrySessionStartControllerV1 } from '../../sessions/entrySessionStartController.js';
 import {
     readTriageEntrySessionStartTargetV1, readTriageRecentSessionsV1,
@@ -9,11 +11,18 @@ import {
 export * from '../../sessions/entrySessionStartController.js';
 export type { TriageRecentSessionV1, TriageEntrySessionStartTargetV1, TriageRecentSessionsV1 } from '../../sessions/entryStartChoices.js';
 
-export function useTriageEntrySessionStart(options?: TriageEntrySessionStartOptionsV1): TriageEntrySessionStartControllerV1 {
+export type TriageEntrySessionStartUiControllerV1 = Omit<TriageEntrySessionStartControllerV1, 'settleAction'> & Readonly<{ settleAction: PluginUiActionControlController['onSettled'] }>;
+
+export function useTriageEntrySessionStart(options?: TriageEntrySessionStartOptionsV1): TriageEntrySessionStartUiControllerV1 {
     const host = usePluginHostApi() as unknown as TriageStartHostV1;
+    const text = usePluginTranslation();
     const owner = React.useMemo(() => createTriageEntrySessionStartController(host, options), [host, options?.mintCreationKey]);
     React.useEffect(() => { owner.activate(); return () => owner.dispose(); }, [owner]);
-    return React.useSyncExternalStore(owner.subscribe, owner.getSnapshot, owner.getSnapshot);
+    const snapshot = React.useSyncExternalStore(owner.subscribe, owner.getSnapshot, owner.getSnapshot);
+    const settleAction = React.useCallback<PluginUiActionControlController['onSettled']>(execution => {
+        owner.getSnapshot().settleAction(projectPluginActionControlExecutionV1(execution, text));
+    }, [owner, text]);
+    return React.useMemo(() => ({ ...snapshot, settleAction }), [snapshot, settleAction]);
 }
 
 export function useTriageEntrySessionStartChoices(
@@ -43,9 +52,11 @@ export function useTriageEntrySessionStartChoices(
         if (!input.menuOpen) { setRecentSessions({ status: 'idle' }); return; }
         const lifetime = new AbortController();
         setRecentSessions({ status: 'loading' });
-        void readTriageRecentSessionsV1(host, true, { signal: lifetime.signal })
+        void readTriageRecentSessionsV1(host, true, { signal: lifetime.signal, eligibility: {
+            action: input.action, ...(input.repository === undefined ? {} : { repository: input.repository }),
+        } })
             .then((result) => { if (!lifetime.signal.aborted) setRecentSessions(result); });
         return () => lifetime.abort();
-    }, [host, input.menuOpen]);
+    }, [host, input.menuOpen, workspaceMode, kind, deployment, repository]);
     return { defaultTarget, recentSessions };
 }

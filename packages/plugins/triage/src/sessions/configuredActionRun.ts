@@ -34,6 +34,7 @@ import type { TriageHandoffRunConfiguredActionResultV1, TriageHandoffStartRecove
 import { readTriageProjectRegistryV1 } from './projectCandidates.js';
 import { TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1, TriageVerifyExistingReviewWorkspaceResultV1Schema } from '../actions/entrySessionProtocol.js';
 import { readTriageHealthAlertHandoffV1 } from './healthAlertHandoff.js';
+import { evaluateTriageExistingSessionWorkspaceV1 } from './existingSessionEligibility.js';
 
 type HandoffHost = Omit<TriageConfiguredActionRunHostV1, 'context' | 'selectActionInput'>
     & Pick<PluginClientActionUi, 'context' | 'selectActionInput'>
@@ -273,13 +274,11 @@ export async function runTriageConfiguredHandoffV1(
         if (state == null || state.serverId !== existing.serverId || state.sessionId !== existing.sessionId) return unavailable('sessionUnavailable');
         if (action.workspaceMode !== 'reference_only' && health && (state.serverId !== health.machine.serverId || state.workspace?.machineId !== health.machine.machineId)) return unavailable('scopeMismatch');
         if (action.workspaceMode !== 'reference_only' && health?.workspace && (!state.acceptedWorkspace || !sameWorkspace(health.workspace, state.acceptedWorkspace.checkout))) return unavailable('scopeMismatch');
-        if (action.workspaceMode !== 'reference_only') {
-            const accepted = state.acceptedWorkspace;
-            if (accepted === undefined) return targetUnavailable('existing_session_workspace_missing');
-            // An unbound entry uses the workspace the person explicitly chose.
-            // A repository-bound entry must still match that accepted checkout.
-            if (repository !== undefined && (accepted.repository === undefined
-                || !sameScmHostingRepositoryIdentity(repository, accepted.repository))) return unavailable('repositoryMismatch');
+        const eligibility = evaluateTriageExistingSessionWorkspaceV1(action.workspaceMode, repository, state.acceptedWorkspace);
+        if (eligibility.kind === 'unavailable') return eligibility.reason === 'repositoryMismatch'
+            ? unavailable(eligibility.reason) : targetUnavailable(eligibility.reason);
+        if (eligibility.kind === 'workspace') {
+            const accepted = eligibility.workspace;
             if (suppliedWorkspace !== undefined && !sameWorkspace(suppliedWorkspace, accepted.checkout)) return unavailable('scopeMismatch');
             if (action.workspaceMode === 'pull_request') {
                 const preparation = primary?.reviewWorkspace?.preparation;

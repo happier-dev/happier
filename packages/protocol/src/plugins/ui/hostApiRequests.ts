@@ -926,6 +926,8 @@ export const PluginUiSelectActionInputHostRequestV1Schema = lazyZodSchema(() => 
   }),
   z.strictObject({
     hostAction: PluginUiSelectActionInputSessionAddressHostActionV1Schema,
+    /** Domain-owner eligible addresses; the picker projects these without deciding eligibility. */
+    sessionCandidates: z.optional(z.array(ActionSessionAddressV1Schema)),
   }),
   z.strictObject({
     hostAction: z.strictObject({ action: z.literal('session.spawn_new'), projection: z.literal('serverStartDraft') }),

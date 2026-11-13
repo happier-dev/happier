@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { validateContributedActionSessionAddressV1 } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import type { PluginUiHostApiRequestEnvelopeV1 } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiSelectActionInputRequestV1Schema } from '@happier-dev/protocol/plugins/ui';
 
 import { Modal } from '@/modal';
 import { createDeferred } from '@/dev/testkit';
+import { createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 
 import { createPluginActionInputSelectionHostApiHandler } from './pluginActionInputSelectionHostApi';
+import { resolveReadableSessionPickerTargets } from '@/components/sessions/transcript/messageSelection/resolveTranscriptSendToSessionTargets';
 
 const anchor = { kind: 'rect', rect: { left: 20, top: 30, width: 80, height: 32 } } as const;
 const request: PluginUiHostApiRequestEnvelopeV1 = { version: 1, requestId: 'session-reference', surface: {
@@ -26,17 +29,30 @@ afterEach(() => vi.restoreAllMocks());
 
 describe('mounted Session address selection', () => {
     it('returns the exact chosen address through native selection, without invoking an Action', async () => {
-        const shown = createDeferred<{ sourceServerId: string; selectionOnly: true; onResolve: (selection: unknown) => void }>();
+        const shown = createDeferred<{ sourceServerId: string; selectionOnly: true;
+            sessionCandidates?: readonly { serverId: string; sessionId: string }[];
+            onResolve: (selection: unknown) => void }>();
         // Modal presentation is the real person/platform boundary; selection admission remains real.
         const show = vi.spyOn(Modal, 'show').mockImplementation(config => { shown.resolve(config.props as Awaited<typeof shown.promise>); return 'picker'; });
         vi.spyOn(Modal, 'hide').mockImplementation(() => {});
         const mounted = mount();
-        const selecting = mounted.handler(request);
+        const sessionAddress = { serverId: 'server-a', sessionId: 'chosen' };
+        const payload = {
+            hostAction: { action: 'session.transcript.get', projection: 'sessionAddress' },
+            sessionCandidates: [sessionAddress],
+        };
+        expect(PluginUiSelectActionInputRequestV1Schema.safeParse(payload).success).toBe(true);
+        const selecting = mounted.handler({ ...request, payload });
         const props = await shown.promise;
         expect(show.mock.calls[0]?.[0].chrome).toMatchObject({ phonePresentation: 'sheet', anchor });
-        expect(props).toMatchObject({ sourceServerId: 'server-a', selectionOnly: true });
+        expect(props).toMatchObject({ sourceServerId: 'server-a', selectionOnly: true, sessionCandidates: [sessionAddress] });
+        const access = createSessionAccessFixture();
+        const eligible = { id: 'chosen', serverId: 'server-a', access, metadata: {} };
+        expect(resolveReadableSessionPickerTargets({ serverId: props.sourceServerId,
+            sessions: [eligible, { ...eligible, id: 'workspace-less' }, { ...eligible, id: 'wrong-repository' }],
+            sessionCandidates: props.sessionCandidates,
+        })).toEqual([eligible]);
         props.onResolve({ kind: 'existingSession', serverId: 'server-a', sessionId: 'chosen' });
-        const sessionAddress = { serverId: 'server-a', sessionId: 'chosen' };
         expect(await selecting).toEqual({ kind: 'sessionAddress', session: sessionAddress });
         expect(validateContributedActionSessionAddressV1({ sessionAddress: JSON.parse(JSON.stringify(sessionAddress)),
             selectionScope: mounted.lifetime, callerPluginId: 'acme.pr' })).toEqual({ ok: true, sessionAddress });

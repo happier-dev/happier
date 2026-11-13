@@ -7,13 +7,15 @@ import { t } from '@/text';
 
 import { TranscriptSendToSessionModal } from './TranscriptSendToSessionModal';
 import type { SendTranscriptSelectionDestination } from './sendTranscriptSelectionToSession';
+import type { ActionSessionAddressV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 
 /**
  * No-invoke selection mode of the incumbent Home-scoped native Session picker: a reference by default,
  * or a destination for Session records (excluding its source, editable Sessions only).
  */
 export function presentSessionAddressSelection(serverId: string, anchor?: PopoverAnchor,
-    destination?: Readonly<{ excludedSessionId: string; capability: 'editSessionRecords'; title: string }>) {
+    destination?: Readonly<{ excludedSessionId: string; capability: 'editSessionRecords'; title: string }>,
+    sessionCandidates?: readonly ActionSessionAddressV1[]) {
     const deferred = createDeferredOnce<SendTranscriptSelectionDestination | null>();
     let modalId = '';
     let closed = false;
@@ -26,7 +28,8 @@ export function presentSessionAddressSelection(serverId: string, anchor?: Popove
     const close = () => settle(null);
     modalId = Modal.show({
         component: TranscriptSendToSessionModal,
-        props: { selectionOnly: true, sourceServerId: serverId, onResolve: settle, ...(destination ? { destination } : {}) },
+        props: { selectionOnly: true, sourceServerId: serverId, onResolve: settle, ...(destination ? { destination } : {}),
+            ...(sessionCandidates === undefined ? {} : { sessionCandidates }) },
         onRequestClose: close,
         onHostUnmount: close,
         closeOnBackdrop: true,

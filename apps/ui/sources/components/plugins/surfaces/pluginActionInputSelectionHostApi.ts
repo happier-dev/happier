@@ -219,7 +219,7 @@ export function createPluginActionInputSelector(input: PluginActionInputSelectio
                         const { presentSessionAddressSelection } = await import(
                             '@/components/sessions/transcript/messageSelection/presentSessionAddressSelection'
                         );
-                        const presentation = presentSessionAddressSelection(serverId, input.anchor);
+                        const presentation = presentSessionAddressSelection(serverId, input.anchor, undefined, parsed.data.sessionCandidates);
                         const cancel = () => presentation.close();
                         signal?.addEventListener('abort', cancel, { once: true });
                         if (signal?.aborted) cancel();

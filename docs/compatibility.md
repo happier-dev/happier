@@ -1,5 +1,26 @@
 # Compatibility and version skew
 
+## Domain-filtered Session selection (unreleased 0.3)
+
+The V1 Host API `selectActionInput` Session-address request accepts optional
+`sessionCandidates`, a list of closed `{ serverId, sessionId }` addresses from
+the requesting domain's eligibility owner. The request, host-action literal and
+address objects stay closed; unknown fields are rejected. The native picker
+projects that set through its existing Home, visibility and input-access rules.
+It does not decide Triage's workspace or repository eligibility or grant Send
+authority. Omission preserves existing reference selection; an empty list offers
+no recipient. The SDK type is derived from the Protocol schema.
+
+This field is not safely ignorable: ignoring it would offer ineligible targets.
+Matching Protocol, SDK, plugin and host source reload together under the
+unpublished 0.3 direct cut, within existing Host API wire epoch1 and independently
+of npm package SemVer. Earlier strict development readers reject it, rather than
+silently opening an unrestricted picker. No persisted format, new capability,
+adapter or runtime union is introduced. The inspected `../0.2` frontier
+`dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has neither scoped Host API file nor
+working changes to `packages/protocol/src/plugins/ui/hostApiRequests.ts` or
+`packages/plugin-sdk/src/ui/hostApi.ts`; no reverse-development adapter is added.
+
 ## Turn publication refusals (unreleased 0.3)
 
 Home retains the existing Team binding rejection code and its canonical reason
@@ -252,6 +273,13 @@ publisher's signed origin, narrow their operands to the signed parent scope,
 and bind delivery and invocation encryption to their selected receiver. This development correction requires the matching source
 components to reload together; it adds no released wire epoch. The retained 0.2
 release at `7b37d65ca75e58560f8f3ca850958ac5407d2e75` has no Machine Setup contract.
+
+The receiving Machine owns each native child's Operation; the Workflow publisher
+does not open a competing Operation before signed ingress. Apply, Remove and
+Updates use the existing Action Operation completion declaration: the Workflow
+retains the receipt, records running, and observes the native terminal outcome.
+Inline Actions still return their full result. This development correction uses
+the existing receipt and frozen completion shapes, with no new wire epoch.
 
 ## Machine Setup connector grant scope (unreleased 0.3)
 
