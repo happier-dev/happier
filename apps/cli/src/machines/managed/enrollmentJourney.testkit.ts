@@ -1,19 +1,25 @@
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { request as httpRequest } from 'node:http';
+import { Readable } from 'node:stream';
+import { appendFile, mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { expect, onTestFinished, vi } from 'vitest';
 import { machineSetup } from '@happier-dev/cli-common';
+import { callSocketRpc } from '@happier-dev/sync-client';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import type { ActionExecutorDeps, ActionExecuteResult, JsonValue } from '@happier-dev/protocol';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ApprovalRequestPublicSettlementSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
-import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAcquireInputV1Schema, ManagedInstallationResponseV1Schema, ManagedTerminalPairingContextV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import type { CapabilitiesInvokeResponse } from '@happier-dev/protocol/capabilities';
 import type { ActionOperationSnapshotV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { MachineInstallationIdentityV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import type { createHostActionOperationRuntime } from '@/daemon/actionOperations';
@@ -33,6 +39,43 @@ import { updateSettings } from '@/persistence';
 import { configuration } from '@/configuration';
 import { buildManagedSudoersSteps, MANAGED_SUDOERS_PATH } from '@/machines/adminAccess/managedSudoers';
 import type { MachineAdminAccessNativeDependencies } from '@/machines/adminAccess/observeMachineAdminAccess';
+import { readManagedMachine } from './readManagedMachine';
+import { withUserScopedRpcSocket } from '@/session/transport/rpc/withUserScopedRpcSocket';
+import { resolveSessionControlSocketConnectTimeoutMs } from '@/session/transport/shared/sessionTimeouts';
+import { approveTerminalAuthRequest } from '@/auth/terminalAuthApproval';
+
+import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
+import type { AgentIsolationReadinessSystem } from '@/daemon/agentIsolation/agentIsolationReadiness';
+
+/** Process/OS substitute beneath the real finite native qualification owner. */
+export function createEnrollmentJourneyIsolationReadinessSystem(agentUid: number): AgentIsolationReadinessSystem { return { run: async (command, args, options) => {
+    if (command === 'getent') return { stdout: args.includes('group')
+        ? args.at(-1) === 'happier-agent' ? 'happier-agent:x:988:\n' : 'happier-workspace:x:1001:happier,happier-agent\n'
+        : `happier-agent:x:${agentUid}:988::/var/lib/happier-agent:/usr/sbin/nologin\n`, stderr: '' };
+    expect(command).toBe('sudo');
+    expect(args.slice(0, 5)).toEqual(['-n', '-u', 'happier-agent', '--', '/opt/happier/cli/current/happier']);
+    const frame = await readAgentLaunchFrame(Readable.from([options!.inputBytes!], { objectMode: false }));
+    expect(frame.executable).toBe('/bin/sh');
+    execFileSync('/bin/sh', ['-n', '-c', frame.args[1]!]);
+    const headers = frame.selectedMaterials.find(file => file.relativePath === 'files/headers');
+    const challenge = frame.selectedMaterials.find(file => file.relativePath === 'files/challenge');
+    if (!headers || !challenge) throw new Error('The readiness producer must frame its native challenge');
+    const authorization = Buffer.from(headers.contentBase64, 'base64').toString('utf8').trim().slice('Authorization: '.length);
+    for (const auth of [authorization, undefined]) await new Promise<void>((resolve, reject) => {
+        const request = httpRequest({ socketPath: frame.args[7]!, path: '/readiness',
+            ...(auth ? { headers: { authorization: auth } } : {}) }, response => {
+            expect(response.statusCode).toBe(auth ? 200 : 401);
+            response.resume(); response.once('end', resolve);
+        });
+        request.once('error', reject); request.end();
+    });
+    const privateCount = Number(frame.args[9]);
+    for (const path of frame.args.slice(10 + privateCount)) {
+        await appendFile(join(path, 'daemon'), 'agent');
+        await writeFile(join(path, 'agent'), 'agent');
+    }
+    return { stdout: Buffer.from(challenge.contentBase64, 'base64'), stderr: '' };
+} }; }
 
 export type EnrollmentJourneyNativeBoundary = Readonly<{
     backend: machineSetup.MachineSetupBackend;
@@ -56,9 +99,22 @@ type Home = Readonly<{
     encryption: Readonly<{ type: 'dataKey'; machineKey: Uint8Array; publicKey: Uint8Array }> | null;
     prepareControllerProvisioner(manifest: unknown): Promise<void>;
 }>;
+type NativeFixtureOptions = NonNullable<Parameters<typeof nativeFixture>[0]>;
+type NativeRoleExecution = NonNullable<NativeFixtureOptions['onNativeRole']>;
 
 /** The only substituted system is the provisioner's native guest/process boundary. */
 export async function acquireEnrollmentJourneyGuest<T extends Home>(controller: T, ports: Readonly<{
+    requester?: Pick<Home, 'accountId' | 'token' | 'encryption'>;
+    acquireInput?: ReturnType<typeof ManagedAcquireInputV1Schema.parse>;
+    /** The provisioner and guest OS are the external boundary, never Home admission. */
+    native?: Readonly<{
+        manifest?: NativeFixtureOptions['fixtureManifest'];
+        payloadRoot?: string | null;
+        execute?(role: Parameters<NativeRoleExecution>[0],
+            input: JsonValue | undefined, context: Parameters<NativeRoleExecution>[2],
+            next: () => Promise<void>): Promise<JsonValue | void>;
+    }>;
+    onSettled?(operation: ActionOperationSnapshotV1): void;
     /** Proves the person's single creation confirmation covers guest policy effects. */
     confirmWholeOperation?: boolean;
     startGuest(guest: T, native: EnrollmentJourneyNativeBoundary): Promise<void>;
@@ -68,15 +124,17 @@ export async function acquireEnrollmentJourneyGuest<T extends Home>(controller: 
         close(): Promise<void>;
     }>>;
 }>): Promise<T> {
-    const directory = join(controller.baseDir, 'enrollment-guest');
+    const requester = ports.requester ?? controller;
+    const directory = ports.acquireInput
+        ? await mkdtemp(join(controller.baseDir, 'enrollment-guest-')) : join(controller.baseDir, 'enrollment-guest');
     const guestHome = join(directory, 'home');
     const payload = join(directory, 'payload');
     const resultPath = join(directory, 'enrolled.json');
     await mkdir(guestHome, { recursive: true });
     await mkdir(payload);
     await writeFile(join(payload, 'happier'), '#!/bin/sh\nexit 0\n');
-    vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', payload);
-    if (!controller.encryption) throw new Error('The S0 controller requires its E2EE credential');
+    vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', ports.native?.payloadRoot === null ? undefined : ports.native?.payloadRoot ?? payload);
+    if (!requester.encryption) throw new Error('The enrollment journey requires its requester E2EE credential');
     const descriptor = { v: 1 as const, homeServerIdentityId: controller.serverId,
         canonicalServerUrl: controller.baseUrl, revision: 1, endpoints: [{ kind: 'https' as const, url: controller.baseUrl }] };
     await updateSettings(settings => ({ ...settings, servers: { ...settings.servers,
@@ -87,7 +145,8 @@ export async function acquireEnrollmentJourneyGuest<T extends Home>(controller: 
             [configuration.activeServerId]: { [controller.accountId]: controller.machineId } },
         lastTokenSubByServerId: { ...settings.lastTokenSubByServerId, [configuration.activeServerId]: controller.accountId },
     }));
-    const credentials = decodeStoredCredentials(encodeStoredCredentials({ token: controller.token, encryption: controller.encryption }));
+    const credentials = decodeStoredCredentials(encodeStoredCredentials({ token: requester.token, encryption: requester.encryption }));
+    const controllerCredentials = decodeStoredCredentials(encodeStoredCredentials({ token: controller.token, encryption: controller.encryption }));
     if (!credentials) throw new Error('The S0 controller requires its real stored credential');
     const target = resolveHomeTargetFromDescriptor({ descriptor, authority: 'trusted_enrollment' });
     const providerAuthority = createEnrollmentJourneyProviderAuthority(directory);
@@ -96,6 +155,8 @@ export async function acquireEnrollmentJourneyGuest<T extends Home>(controller: 
     const guestEntry = join(directory, 'guest.mjs');
     const commandComplete = 'S0_ENROLLMENT_COMMAND_COMPLETE';
     await writeFile(guestEntry, `import { createInterface } from 'node:readline';
+import { request as httpRequest } from 'node:http';
+import { Readable } from 'node:stream';
 import { runEnrollmentGuestBoundary } from ${JSON.stringify(guestModule)};
 const lines = createInterface({ input: process.stdin });
 for await (const line of lines) {
@@ -187,9 +248,8 @@ lines.close(); process.stdin.destroy();\n`);
             readFile: async path => { const file = files.get(path); if (!file || !file.content || file.content.kind !== 'literal') throw absent(); return file.content.value; },
         },
     } };
-    const nativeResults: Partial<Record<'exec', JsonValue>> = {};
-    const native = nativeFixture({ privateNative: true, credentialPurposes: [], supportedIntents: ['start', 'stop', 'delete'],
-        nativeRoleResults: nativeResults, onNativeRole: async (role, body, context) => {
+    const nativeResults: NonNullable<NativeFixtureOptions['nativeRoleResults']> = {};
+    const executeNativeRole: NativeRoleExecution = async (role, body, context) => {
             observed.nativePhase = role;
             if (role !== 'exec') return;
             if (!body || typeof body !== 'object' || Array.isArray(body) || !Array.isArray(body.argv)) throw new Error('Missing native guest command');
@@ -229,7 +289,7 @@ lines.close(); process.stdin.destroy();\n`);
                         || !('daemonToken' in result) || typeof result.daemonToken !== 'string')
                         throw new Error('The public guest enrollment did not return its identity');
                     const identity = MachineInstallationIdentityV1Schema.parse(result.installation);
-                    const guest = { ...controller, machineId: result.machineId, installationId: identity.installationId, daemonToken: result.daemonToken,
+                    const guest = { ...controller, ...requester, machineId: result.machineId, installationId: identity.installationId, daemonToken: result.daemonToken,
                         keys: { publicKey: decodeBase64(identity.publicKey, 'base64url'), secretKey: decodeBase64(identity.privateKey, 'base64url') },
                         machineEncryptionKey: decodeBase64(result.machineEncryptionKey) };
                     observed.guest = guest;
@@ -248,10 +308,18 @@ lines.close(); process.stdin.destroy();\n`);
             } else stdout = JSON.stringify({ ok: true, data: {} }) + '\n';
             nativeResults.exec = { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
                 stdoutBase64: Buffer.from(stdout).toString('base64'), stderrBase64: '', stdoutTruncated: false, stderrTruncated: false };
+        };
+    const native = nativeFixture({ privateNative: true, credentialPurposes: [], supportedIntents: ['start', 'stop', 'delete'],
+        fixtureManifest: ports.native?.manifest, nativeRoleResults: nativeResults,
+        onNativeRole: async (role, body, context) => {
+            const result = ports.native?.execute
+                ? await ports.native.execute(role, body, context, async () => { await executeNativeRole(role, body, context); })
+                : await executeNativeRole(role, body, context);
+            if (result !== undefined) nativeResults[role] = result;
         } });
     await controller.prepareControllerProvisioner(native.manifest);
     let pendingApproval: RecordedApprovalExecutionObservationArgs | undefined;
-    const managedMachineAction = createDaemonManagedMachineActionAdapter({ credentials,
+    const managedMachineAction = createDaemonManagedMachineActionAdapter({ credentials, controllerCredentials: controllerCredentials ?? undefined,
         machineId: controller.machineId, serverBaseUrl: controller.baseUrl, serverId: controller.serverId,
         installationIdentity: { installationId: controller.installationId, privateKey: controller.keys.secretKey },
         managedProviderOperationAuthority: providerAuthority,
@@ -267,6 +335,9 @@ lines.close(); process.stdin.destroy();\n`);
         } finally { pendingApproval = undefined; }
     }
     const operations = ingress.actionOperations;
+    // Observe the real admitted owner in the fixture; an unadmitted local RPC
+    // read defaults to the controller Account and cannot inspect member work.
+    const operationScope = { accountId: requester.accountId, machineId: controller.machineId };
     const author = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
         externalActionClient: true,
         serverId: controller.serverId, serverIdentityId: controller.serverId, serverApiUrl: controller.baseUrl,
@@ -277,12 +348,12 @@ lines.close(); process.stdin.destroy();\n`);
     const cleanup = () => cleanupPromise ??= (async () => {
         lifetime.abort();
         try {
-            if (operationId && !observed.terminal) await operations.handlers.cancel({ operationId });
+            if (operationId && !observed.terminal) operations.runner.cancel(operationScope, operationId);
             if (taskId) {
                 await getLiveSystemTasksRunnerAdapter().cancel({ taskId });
                 await getLiveSystemTasksRunnerAdapter().wait({ taskId });
             }
-            if (operationId && !observed.terminal) await operations.handlers.getV2({ operationId, waitForTerminal: true });
+            if (operationId && !observed.terminal) await operations.runner.waitForTerminal(operationScope, operationId);
         } finally { await guestExited; await ingress.close(); native.retire(); }
     })();
     // The allocation's controller and native occurrence also serve the rest
@@ -290,7 +361,7 @@ lines.close(); process.stdin.destroy();\n`);
     onTestFinished(cleanup);
     try {
         const actionId = 'machines.managed.acquire';
-        const actionInput = ManagedAcquireInputV1Schema.parse({ enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user',
+        const actionInput = ManagedAcquireInputV1Schema.parse(ports.acquireInput ?? { enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user',
             role: 'deployTarget', adminAccessAtCreation: 'preauthorized' }, selection: { kind: 'one-off', homeId: controller.serverId,
             controller: { machineId: controller.machineId, installationId: controller.installationId },
             launch: { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, name: 'S0 guest', choices: {} },
@@ -304,7 +375,7 @@ lines.close(); process.stdin.destroy();\n`);
                 target: actionTarget, credentials, serverHttpBaseUrl: controller.baseUrl, serverIdentityId: controller.serverId,
                 invocation: { surface: 'ui', authority: 'present_user', caller: { kind: 'host' },
                     presentUserConfirmation: { actionId, requestId: actionRequestId,
-                        inputDigest: computeActionInputApprovalDigestV1(actionId, actionInput), accountId: controller.accountId,
+                        inputDigest: computeActionInputApprovalDigestV1(actionId, actionInput), accountId: requester.accountId,
                         serverId: controller.serverId, target: actionTarget } }, signal: lifetime.signal })
             : await author.execute(actionId, actionInput, { surface: 'cli', authority: 'present_user',
                 serverId: controller.serverId, actionRequestId, presentUserConfirmation: { actionId }, signal: lifetime.signal });
@@ -331,12 +402,13 @@ lines.close(); process.stdin.destroy();\n`);
             || typeof result.result.operation.operationId !== 'string') throw new Error('Public acquire did not accept an owned operation');
         operationId = result.result.operation.operationId;
         try { await expect.poll(async () => {
-            const current = await operations.handlers.getV2({ operationId });
-            if (current.kind !== 'found') { observed.operation = { state: current.kind }; return false; }
-            observed.operation = { state: current.operation.state, phase: current.operation.progress?.phase,
-                prompt: current.operation.domainRef?.kind === 'managedMachine' ? current.operation.domainRef.bootstrapTask?.prompt?.kind : undefined };
-            if (current.operation.state === 'failed' || current.operation.state === 'succeeded') {
-                observed.terminal = current.operation;
+            const current = operations.store.get(operationScope, operationId!);
+            if (!current) { observed.operation = { state: 'not_found' }; return false; }
+            observed.operation = { state: current.state, phase: current.progress?.phase,
+                prompt: current.domainRef?.kind === 'managedMachine' ? current.domainRef.bootstrapTask?.prompt?.kind : undefined };
+            if (current.state === 'failed' || current.state === 'succeeded') {
+                observed.terminal = current;
+                ports.onSettled?.(current);
                 return true;
             }
             if (pendingApproval) {
@@ -350,10 +422,38 @@ lines.close(); process.stdin.destroy();\n`);
                         serverId: controller.serverId, actionRequestId: randomUUID() });
                 if (!approved.ok) throw new Error(`S0 ${pending.expectedOrigin.actionId} approval failed: ${approved.errorCode}`);
             }
-            const ref = current.operation.domainRef;
+            const ref = current.domainRef;
             if (ref?.kind === 'managedMachine' && ref.bootstrapTask) taskId = ref.bootstrapTask.id;
             if (ref?.kind === 'managedMachine' && ref.bootstrapTask?.prompt?.kind === 'auth.approveRemoteProvisioning') {
-                await getLiveSystemTasksRunnerAdapter().respond({ taskId: ref.bootstrapTask.id, answer: { approved: true } });
+                if (requester.accountId === controller.accountId) {
+                    await getLiveSystemTasksRunnerAdapter().respond({ taskId: ref.bootstrapTask.id, answer: { approved: true } });
+                } else {
+                    const taskId = ref.bootstrapTask.id;
+                    const machine = await readManagedMachine({ credentials, serverHttpBaseUrl: controller.baseUrl,
+                        homeId: controller.serverId, managedId: ref.id, signal: lifetime.signal });
+                    await withUserScopedRpcSocket({ token: requester.token, serverUrl: controller.baseUrl,
+                        connectTimeoutMs: resolveSessionControlSocketConnectTimeoutMs(), signal: lifetime.signal,
+                        disconnectMessage: 'Enrollment approval disconnected' }, async (socket, connect, signal) => {
+                        await connect();
+                        const respond = async (response: { delivery: { kind: 'terminalPairing' } } | { answer: { approved: true } }) => {
+                            const input = ManagedInstallationResponseV1Schema.parse({ homeId: controller.serverId,
+                                managedId: machine.id, operationId, taskId, controller: machine.controller,
+                                resource: machine.resource, expectedIntentRevision: machine.intentRevision,
+                                expectedPromptKind: 'auth.approveRemoteProvisioning', ...response });
+                            const result = await callSocketRpc<CapabilitiesInvokeResponse>({ socket,
+                                target: { kind: 'machine', id: controller.machineId }, method: RPC_METHODS.CAPABILITIES_INVOKE,
+                                params: { id: 'tool.systemTasks', method: 'respond', params: input },
+                                content: { mode: 'plain' }, timeoutMs: null, signal });
+                            if (!result.ok) throw new Error(`Enrollment approval refused: ${readRpcErrorCode(result) ?? result.error?.code ?? 'unclassified_error'}`);
+                            return result.result;
+                        };
+                        const pairing = ManagedTerminalPairingContextV1Schema.parse(await respond({ delivery: { kind: 'terminalPairing' } }));
+                        expect(pairing.enrollmentAccountId).toBe(requester.accountId);
+                        await approveTerminalAuthRequest({ publicKey: pairing.publicKey, pairing: pairing.pairing,
+                            supportsTokenOnly: pairing.supportsTokenOnly, target, accountCredentials: credentials, signal });
+                        await respond({ answer: { approved: true } });
+                    });
+                }
             }
             return false;
         // Share the ONE journey's existing budget; guest source loading is
@@ -366,7 +466,9 @@ lines.close(); process.stdin.destroy();\n`);
         })}`);
         if (!observed.guest) throw new Error('Retained enrollment did not produce the target Machine');
         expect(observed.guest.machineId).not.toBe(controller.machineId);
-        expect(rootSteps).toEqual(expect.arrayContaining(['bootstrap-isolation-packages', 'agent-account']));
+        if (actionInput.enrollmentIdentity.kind === 'dedicatedDaemonUser') {
+            expect(rootSteps).toEqual(expect.arrayContaining(['bootstrap-isolation-packages', 'agent-account']));
+        }
         return observed.guest;
     } catch (error) {
         await cleanup();

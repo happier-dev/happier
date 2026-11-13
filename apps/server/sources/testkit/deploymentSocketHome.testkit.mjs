@@ -93,6 +93,8 @@ export async function createDeploymentSocketHome({ encryptionMode = 'plain', pre
                 dataKey: machineEncryptionKey, recipientPublicKey: contentKeys.publicKey, randomBytes: nacl.randomBytes,
             }) : privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
         } });
+        // Routes capture the presence port during registration, as in startApi.
+        startSocket(home);
         registerDeploymentRoutes(home);
         projectSourceRoutes(home);
         artifactsRoutes(home);
@@ -102,7 +104,6 @@ export async function createDeploymentSocketHome({ encryptionMode = 'plain', pre
         const homeConnectionDescriptorContinuityStore = createHomeConnectionDescriptorContinuityStoreForServer(process.env);
         if (!homeConnectionDescriptorContinuityStore) throw new Error('Home descriptor continuity unavailable');
         featuresRoutes(home, { homeConnectionDescriptorContinuityStore });
-        startSocket(home);
         registerExternalActionRoutes(home);
         registerPluginAvailabilityRoutes(home);
         await configureApp?.(home);
