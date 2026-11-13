@@ -5,6 +5,8 @@ import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncr
 import { rebindRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { accountSettingsParse, SessionSpawnNewInputV2Schema } from '@happier-dev/protocol';
+import type { SessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import type { ActionExecutorContext, ActionExecuteResult, ActionExecuteFailure } from '@happier-dev/protocol/actions';
 import { TeamSummaryV1Schema } from '@happier-dev/protocol/teams/projections';
 import { NO_TEAM_CAPABILITIES_V1 } from '@happier-dev/protocol/teams/capabilities';
 import { resolveTeamAdmissionProjectionV1 } from '@happier-dev/protocol/teams/projections';
@@ -74,6 +76,7 @@ describe('Session spawn defaults at admission', () => {
     { name: 'retired requester snapshot refuses', surface: 'mcp' as const, layer: 'retired', permission: 'read-only', modelId: 'member-model' },
     { name: 'MCP Team defaults', surface: 'mcp' as const, layer: 'team', permission: 'safe-yolo', modelId: 'team-model' },
     { name: 'saved member defaults', surface: 'mcp' as const, layer: 'member', permission: 'read-only', modelId: 'member-model' },
+    { name: 'Voice spawn binding reaches saved member model and service defaults', surface: 'voice' as const, layer: 'member', permission: 'read-only', modelId: 'member-model' },
     { name: 'explicit Automatic', surface: 'mcp' as const, layer: 'automatic', permission: 'safe-yolo', modelId: 'team-model' },
     { name: 'V2 native Team model', surface: 'mcp' as const, layer: 'v2', permission: 'safe-yolo', modelId: 'team-model' },
     { name: 'V2 Team resource model', surface: 'mcp' as const, layer: 'team-resource', permission: 'safe-yolo', modelId: 'team-model' },
@@ -204,7 +207,24 @@ describe('Session spawn defaults at admission', () => {
         permissionIntent: { value: null, updatedAtMs: 1 }, options: {} } } : {}),
       ...(testCase.layer === 'policy' ? { permissionMode: 'safe-yolo', modelSelection: model('explicit-model') } : {}),
       connectedServices: { v: 2, bindingsByServiceId: testCase.layer === 'policy' ? { [serviceId]: { source: 'connected', profileId: 'explicit-account' } } : {} }, memoryEnabled: false });
-    const spawn = deps.sessionSpawnNew!({ ...input,
+    // Voice binds the Agent before forwarding to the ordinary receiving Action.
+    // Leave model/services unset: supplying them here would hide a defaults bypass.
+    // Keep the UI module in its owning compiler program, as other cross-app
+    // compositions do; Vitest still loads its real implementation.
+    const voiceBinderSource = '../../../../ui/sources/voice/tools/actionImpl/bindSessionSpawnInput';
+    const voiceBinder = testCase.surface === 'voice' ? await vi.importActual<{
+      bindVoiceSessionSpawnInput(input: unknown,
+        execute: (actionId: string, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>
+      ): Promise<{ ok: true; input: SessionSpawnNewActionInputV2 } | ActionExecuteFailure>;
+    }>(voiceBinderSource) : null;
+    const voiceInput = voiceBinder
+      ? await voiceBinder.bindVoiceSessionSpawnInput(input, (actionId, request, context) => executor.execute(actionId, request, context))
+      : null;
+    if (voiceInput && !voiceInput.ok) throw new Error(voiceInput.errorCode);
+    const spawn = testCase.surface === 'voice' && voiceInput?.ok
+      ? executor.execute('session.spawn_new', voiceInput.input, { surface: 'voice', authority: 'present_user',
+        serverId: 'home', actionRequestId: 'voice-member-defaults', bypassApprovals: true })
+      : deps.sessionSpawnNew!({ ...input,
       invokeAgentReadinessAction: (actionId, request) => executor.execute(actionId, request, { surface: 'cli',
         authority: 'present_user', serverId: 'home', bypassApprovals: true }), actionCaller: { kind: 'host' }, callerSurface: testCase.surface,
       sessionCreationTag: deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: input.creationKey! }),
