@@ -2,6 +2,7 @@ import { ScmHostingOperationSchemasV1 } from '@happier-dev/protocol/scm/hostingP
 import type { ScmHostingOperationActionsV1, ScmHostingOperationV1 } from '@happier-dev/protocol/plugins/contributions/scmHostingProviders';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { projectPluginActionFailureCode } from '@happier-dev/protocol/plugins/actions/invocation';
+import { PluginError } from '@happier-dev/cli-common/plugins/errors';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import type { ActionExecuteResult, JsonValue } from '@happier-dev/protocol';
@@ -261,7 +262,9 @@ function bindRuntimeCapability<TCapability extends object>(
                         if (result.ok) return result.result;
                         const details = readRecord(result.details);
                         const evidence = readRecord(details.details ?? details);
-                        throw Object.assign(new Error(result.error, { cause: result }), {
+                        throw Object.assign(new PluginError({ code: result.errorCode, message: result.error,
+                            ...(result.failureCause ? { failureCause: result.failureCause } : {}),
+                        }, { cause: result }), {
                             errorCode: projectPluginActionFailureCode(result.errorCode),
                             ...(evidence.effectNotApplied === true ? { effectNotApplied: true } : {}),
                             ...(typeof evidence.retryNotBeforeMs === 'number' ? { retryNotBeforeMs: evidence.retryNotBeforeMs } : {}),
