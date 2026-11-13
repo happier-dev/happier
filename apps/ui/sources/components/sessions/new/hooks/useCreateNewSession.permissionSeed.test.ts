@@ -1371,7 +1371,12 @@ describe('useCreateNewSession permission seeding', () => {
         });
     });
 
-    it('passes transcriptStorage through to the strict Action request when requested', async () => {
+    // The hook accepts every `BackendTargetRefV2Input`, including the string key form; reading
+    // the consent definition id must not assume an object target.
+    it.each([
+        ['the default object target', undefined],
+        ['a string backend target key', 'backend:claude'],
+    ] as const)('passes transcriptStorage and vendor-recipe consent through the strict Action request (%s)', async (_label, spawnBackendTarget) => {
         const { useCreateNewSession, captured, modalConfirmSpy } = await setupUseCreateNewSessionHarness();
         // Claude installs through its vendor's recipe: Create asks once before an Agent the Machine lacks.
         modalConfirmSpy.mockResolvedValueOnce(true);
@@ -1414,6 +1419,7 @@ describe('useCreateNewSession permission seeding', () => {
                 selectedMachineCapabilities: null,
                 targetServerId: undefined,
                 allowedTargetServerIds: ['server-a'],
+                ...(spawnBackendTarget ? { spawnBackendTarget } : {}),
             } as any);
 
             handleCreateSession = hook.handleCreateSession as () => Promise<void>;
