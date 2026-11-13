@@ -75,7 +75,8 @@ import { getCurrentReactOwnerHint, getUnexpectedPrimitiveViewChildInfo } from '@
 import { resolveForegroundNotificationBehavior } from '@/activity/notifications/resolveForegroundNotificationBehavior';
 import { configureNotificationCategories } from '@/activity/notifications/configureNotificationCategories';
 import { resolveBootCredentials } from '@/boot/resolveBootCredentials';
-import { runAppBootSequence, reportDesktopAppBootPhase, type AppBootReadyState } from '@/boot/runAppBootSequence';
+import { runAppBootSequence, reportDesktopAppBootPhase, type AppBootPhase, type AppBootReadyState } from '@/boot/runAppBootSequence';
+import { AppBootPendingSurface } from '@/boot/AppBootPendingSurface';
 import { prepareSessionDraftPersistenceStorage } from '@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage';
 import { prepareWarmCacheStorage } from '@/sync/domains/state/warmCachePersistence';
 import { installTauriMcpBridgeOnce } from '@/desktop/mcp/maybeInstallTauriMcpBridge';
@@ -743,6 +744,7 @@ function AppBoot() {
     const [initState, setInitState] = React.useState<AppBootReadyState | null>(null);
     const bootReady = initState !== null;
     const [bootError, setBootError] = React.useState<Error | null>(null);
+    const [bootPhase, setBootPhase] = React.useState<AppBootPhase | null>(null);
     const [restartBugReportPending, setRestartBugReportPending] = React.useState(false);
     const restartBugReportIntent = React.useRef<Promise<boolean> | null>(null);
     const onRestartBugReportDispatched = React.useCallback(() => setRestartBugReportPending(false), []);
@@ -772,7 +774,12 @@ function AppBoot() {
         const runBoot = desktopWindowContext.role === 'secondary' ? runDesktopAppWindowBootSequence : runAppBootSequence;
         void runBoot({
             context: isDesktopOverlayWindow ? 'presenter' : 'app',
-            onPhase: reportDesktopAppBootPhase,
+            onPhase: (phase) => {
+                reportDesktopAppBootPhase(phase);
+                // Phases passed within one task batch into one render: only a phase that is
+                // still current when React renders (a held credential read) is ever drawn.
+                if (!cancelled) setBootPhase(phase);
+            },
             loadFonts,
             sodiumReady: sodium.ready,
             resolveCredentials: () => desktopWindowContext.role === 'secondary'
@@ -814,7 +821,7 @@ function AppBoot() {
 
     if (bootError) throw bootError;
     if (!initState) {
-        return null;
+        return <AppBootPendingSurface phase={bootPhase} />;
     }
 
     //

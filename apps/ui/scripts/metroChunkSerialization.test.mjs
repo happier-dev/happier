@@ -88,6 +88,15 @@ function describeChunks(chunks) {
     }));
 }
 
+test('a dependency path deeper than the default call stack still serializes', () => {
+    // The 24k-module web graph overflowed Node's default stack in the recursive walk.
+    const depth = 40000;
+    const modules = Array.from({ length: depth }, (_, i) => makeModule(`chain-${i}`, i + 1 < depth ? [[`chain-${i + 1}`]] : []));
+    const chunks = patchedSerializer.inspectChunks(modules[0].path, [], makeGraph(modules), makeOptions());
+    assert.equal(chunks.size, 1);
+    assert.equal([...chunks][0].deps.size, depth);
+});
+
 test('chunk entry discovery visits the indexed graph linearly at export scale', () => {
     let visits = 0;
     class CountedDependencies extends Map {

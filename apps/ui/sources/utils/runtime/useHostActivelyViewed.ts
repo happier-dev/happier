@@ -8,6 +8,7 @@ import {
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 
 import { isRuntimeActive } from './isRuntimeActive';
+import { subscribeToHostWindowFocus } from './readHostWindowFocus';
 
 type DocumentLike = Readonly<{
     addEventListener?: (event: string, listener: () => void) => void;
@@ -86,6 +87,8 @@ function startHostActivelyViewedWatch(): void {
     const view = globalThis as ViewLike;
     view.addEventListener?.('focus', publishHostActivelyViewed);
     view.addEventListener?.('blur', publishHostActivelyViewed);
+    // A desktop shell's native window focus can change without a document focus event.
+    if (isDesktopHost()) subscribeToHostWindowFocus(publishHostActivelyViewed);
 }
 
 export function readHostActivelyViewed(): boolean {

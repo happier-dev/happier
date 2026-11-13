@@ -199,6 +199,7 @@ pub fn run() {
             .manage(browser::DesktopBrowserState::default())
             .manage(desktop_notifications::DesktopNotificationState::default())
             .manage(hosted_artifact_desktop::DesktopHostedArtifactState::default())
+            .manage(secure_storage::DesktopSecureStorage::for_build(&context.config().identifier))
             .invoke_handler(with_desktop_commands!(desktop_invoke_handler));
     }
 

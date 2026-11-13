@@ -66,7 +66,7 @@ const SURFACE_FAILURE_SCENE = defineHappierScene({ name: 'happier.surfaceFailed'
  * A wait becomes worth narrating after this long: a first read that answers quickly never shows the
  * line, one that doesn't says so instead of spinning silently (pane-states lab 0, "L").
  */
-const STILL_WAITING_AFTER_MS = 5_000;
+export const STILL_WAITING_AFTER_MS = 5_000;
 
 /** A present-tense line under the state: "Reconnecting · next try in 8 s", "Still waiting · 12 s". */
 export type SurfaceStateLive = HappierSurfaceStateLive;

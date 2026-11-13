@@ -1,7 +1,7 @@
 import { AppState, Platform } from 'react-native';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 import { isWebMobileHost } from '@/utils/platform/webMobileHeuristics';
-import { readHostWindowFocus } from './readHostWindowFocus';
+import { readHostWindowFocus, subscribeToHostWindowFocus } from './readHostWindowFocus';
 
 export function isRuntimeActive(): boolean {
     try {
@@ -77,6 +77,10 @@ export function subscribeToRuntimeActiveChange(listener: () => void, options?: R
             hostWindow.removeEventListener('focus', listener);
             hostWindow.removeEventListener('blur', listener);
         });
+    }
+    if (options?.includeWindowFocus === true && isDesktopHost()) {
+        // A desktop shell's native window focus can change without a document focus event.
+        detach.push(subscribeToHostWindowFocus(listener));
     }
 
     try {

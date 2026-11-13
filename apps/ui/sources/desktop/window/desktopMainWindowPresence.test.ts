@@ -4,9 +4,16 @@ import { isDesktopMainWindowFocused, isDesktopMainWindowVisible } from './deskto
 
 const isDesktopHostMock = vi.hoisted(() => vi.fn(() => true));
 
-vi.mock('@/utils/platform/desktopHost', () => ({
-    isDesktopHost: () => isDesktopHostMock(),
-}));
+// The native shell boundary: the host kind, and a shell that never answers the window focus
+// query, so these cases exercise the document fallback.
+vi.mock('@/utils/platform/desktopHost', async (importOriginal) => {
+    const { createDesktopHostModuleMock } = await import('@/dev/testkit/mocks/desktopHost');
+    return createDesktopHostModuleMock({ importOriginal, overrides: {
+        isDesktopHost: () => isDesktopHostMock(),
+        getDesktopHostWindowLabel: () => null,
+        listenDesktopHostEvent: () => new Promise<() => void>(() => {}),
+    } });
+});
 
 type DocumentStub = Readonly<{
     visibilityState?: string;
