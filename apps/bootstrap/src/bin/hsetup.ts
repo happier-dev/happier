@@ -2,18 +2,13 @@ import { readDesktopInstallationContext } from '@happier-dev/cli-common/firstPar
 import { uninstallDesktopComponents } from '../systemTasks/desktopUninstall.js';
 import { systemTasks } from '@happier-dev/cli-common';
 import { installRemoteCli } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
-import type { InteractiveSystemTaskEventInput, InteractiveSystemTaskKind, InteractiveSystemTaskKindMap } from '@happier-dev/cli-common/systemTasks';
+import type { InteractiveSystemTaskKindMap } from '@happier-dev/cli-common/systemTasks';
 import { randomUUID } from 'node:crypto';
 import { createInterface } from 'node:readline';
 import { pathToFileURL } from 'node:url';
 import {
   SystemTaskEventSchema,
   SystemTaskResultSchema,
-  SystemTaskSpecSchema,
-  SYSTEM_TASK_PROTOCOL_VERSION,
-  type SystemTaskJsonValue,
-  type SystemTaskEvent,
-  type SystemTaskResult,
 } from '@happier-dev/protocol';
 
 import { createHsetupSystemTaskRegistry, createSystemTaskId } from '../systemTasks/registry.js';
@@ -91,33 +86,29 @@ export async function runHsetupCli(argv: readonly string[], io: HsetupIo = creat
     parsedSpec = rawSpecText;
   }
 
-	try {
-	  const now = io.now ?? Date.now;
-	  const interactiveKinds = io.interactiveKinds ?? createDefaultInteractiveKinds();
-	  const parsedInteractiveSpec = SystemTaskSpecSchema.safeParse(parsedSpec);
-	  const interactiveKind = parsedInteractiveSpec.success
-	    ? interactiveKinds[parsedInteractiveSpec.data.kind]
-	    : undefined;
-
-    const result = parsedInteractiveSpec.success && interactiveKind
-      ? await executeInteractiveSystemTask({
-        taskId,
-        kind: interactiveKind,
-        params: parsedInteractiveSpec.data.params,
-        signal: signalState.signal,
-        now,
-        io,
-      })
-      : await systemTasks.executeSystemTask({
-        spec: parsedSpec,
-        taskId,
-        registry: createHsetupSystemTaskRegistry(),
-        signal: signalState.signal,
-        now,
-        emitEvent(event) {
-          writeValidatedJsonLine(io.stdout.write, SystemTaskEventSchema, event);
-        },
-      });
+  try {
+    const registry = new Map(createHsetupSystemTaskRegistry());
+    for (const [kind, task] of Object.entries(io.interactiveKinds ?? createDefaultInteractiveKinds())) {
+      registry.set(kind, systemTasks.createExecutionRunnerFromKind(task));
+    }
+    const result = await systemTasks.executeSystemTask({
+      spec: parsedSpec,
+      taskId,
+      registry,
+      signal: signalState.signal,
+      now: io.now ?? Date.now,
+      async readPromptAnswer() {
+        const line = await readLineAbortable(io.stdin, signalState.signal);
+        try {
+          return JSON.parse(line);
+        } catch {
+          return line;
+        }
+      },
+      emitEvent(event) {
+        writeValidatedJsonLine(io.stdout.write, SystemTaskEventSchema, event);
+      },
+    });
 
     writeValidatedJsonLine(io.stdout.write, SystemTaskResultSchema, result);
     return result.ok ? 0 : resolveFailureExitCode(signalState.signalName);
@@ -163,15 +154,6 @@ function writeValidatedJsonLine<T>(
 ): void {
   const parsed = schema.parse(value);
   write(`${JSON.stringify(parsed)}\n`);
-}
-
-function redactEventInput(event: InteractiveSystemTaskEventInput): InteractiveSystemTaskEventInput {
-  return typeof event.data === 'undefined'
-    ? event
-    : {
-        ...event,
-        data: systemTasks.redactSensitiveSystemTaskJsonValue(event.data),
-      };
 }
 
 async function readSpecJsonFromStdin(stdin: HsetupIo['stdin']): Promise<string> {
@@ -224,85 +206,10 @@ export function createDefaultInteractiveKinds(): InteractiveSystemTaskKindMap {
   };
 }
 
-async function executeInteractiveSystemTask(params: Readonly<{
-  taskId: string;
-  kind: InteractiveSystemTaskKind;
-  params: SystemTaskJsonValue;
-  signal: AbortSignal;
-  now: () => number;
-  io: HsetupIo;
-}>): Promise<SystemTaskResult> {
-  const emit = (event: InteractiveSystemTaskEventInput) => {
-    const sanitizedEvent = redactEventInput(event);
-    writeValidatedJsonLine(params.io.stdout.write, SystemTaskEventSchema, {
-      protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
-      taskId: params.taskId,
-      tsMs: params.now(),
-      ...sanitizedEvent,
-    });
-  };
-
-  try {
-    const data = await params.kind.run({
-      taskId: params.taskId,
-      params: params.params,
-      signal: params.signal,
-      emit,
-      prompt: async (prompt) => {
-        emit({
-          type: 'prompt',
-          ...(prompt.stepId ? { stepId: prompt.stepId } : {}),
-          message: prompt.message,
-          data: systemTasks.buildPromptEventData(prompt),
-        });
-        const line = await readLineAbortable(params.io.stdin, params.signal);
-        try {
-          return JSON.parse(line);
-        } catch {
-          return line;
-        }
-      },
-    });
-
-    return SystemTaskResultSchema.parse({
-      protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
-      taskId: params.taskId,
-      ok: true,
-      ...(typeof data === 'undefined' ? {} : { data }),
-    });
-  } catch (error) {
-    if (params.signal.aborted || isAbortLikeError(error)) {
-      return SystemTaskResultSchema.parse({
-        protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
-        taskId: params.taskId,
-        ok: false,
-        error: { code: 'cancelled', message: 'System task execution was cancelled.' },
-      });
-    }
-    if (error instanceof systemTasks.SystemTaskExecutionError) {
-      return SystemTaskResultSchema.parse({
-        protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
-        taskId: params.taskId,
-        ok: false,
-        error: { code: error.code, message: error.message },
-      });
-    }
-    const message = error instanceof Error && error.message.trim()
-      ? error.message.trim()
-      : 'System task execution failed.';
-    return SystemTaskResultSchema.parse({
-      protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
-      taskId: params.taskId,
-      ok: false,
-      error: { code: 'execution_failed', message },
-    });
-  }
-}
-
 async function readLineAbortable(stdin: HsetupIo['stdin'], signal: AbortSignal): Promise<string> {
   if (signal.aborted) {
     const abortError = new Error('AbortError');
-    (abortError as any).name = 'AbortError';
+    abortError.name = 'AbortError';
     throw abortError;
   }
 
@@ -311,7 +218,7 @@ async function readLineAbortable(stdin: HsetupIo['stdin'], signal: AbortSignal):
   const abortPromise = new Promise<never>((_, reject) => {
     onAbort = () => {
       const abortError = new Error('AbortError');
-      (abortError as any).name = 'AbortError';
+      abortError.name = 'AbortError';
       reject(abortError);
     };
     signal.addEventListener('abort', onAbort);
@@ -329,12 +236,6 @@ async function readLineAbortable(stdin: HsetupIo['stdin'], signal: AbortSignal):
     throw new Error('System task prompt awaited an answer but stdin closed.');
   }
   return String(line);
-}
-
-function isAbortLikeError(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false;
-  const name = 'name' in error ? String((error as any).name ?? '') : '';
-  return name === 'AbortError';
 }
 
 function createCancellationState(processObject: SignalProcessLike): Readonly<{

@@ -11,6 +11,7 @@ export function createExecutionRunnerFromKind(
 ): SystemTaskExecutionRunner {
   return function runKind(params, context) {
     return createAsyncGeneratorFromEventProducer((emit) => kind.run({
+      taskId: context.taskId,
       params: params as SystemTaskJsonValue,
       signal: context.signal,
       emit,
@@ -21,6 +22,7 @@ export function createExecutionRunnerFromKind(
           message: prompt.message,
           data: buildPromptEventData(prompt),
         });
+        if (context.readPromptAnswer) return await context.readPromptAnswer();
         throw new SystemTaskExecutionError('prompt_required', prompt.message);
       },
     }));

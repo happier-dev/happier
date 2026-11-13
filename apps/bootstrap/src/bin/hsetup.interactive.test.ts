@@ -3,6 +3,32 @@ import { describe, expect, it } from 'vitest';
 import { runHsetupCli } from './hsetup.js';
 
 describe('runHsetupCli (interactive system tasks)', () => {
+  it('cancels a pending stdin prompt when the native host terminates the task', async () => {
+    const listeners = new Map<NodeJS.Signals, () => void>();
+    const output: unknown[] = [];
+    const result = await runHsetupCli(['system-tasks', 'run', '--spec-json', JSON.stringify({
+      protocolVersion: 1, kind: 'test.prompt.v1', params: {},
+    })], {
+      stdin: { readAll: async () => '', readLine: () => new Promise(() => {}) },
+      stdout: { write: chunk => {
+        const event = JSON.parse(chunk);
+        output.push(event);
+        if (event.type === 'prompt') listeners.get('SIGTERM')?.();
+      } },
+      stderr: { write: chunk => { throw new Error(chunk); } },
+      processObject: {
+        once: (name, listener) => { listeners.set(name, listener); },
+        off: name => { listeners.delete(name); },
+      },
+      interactiveKinds: { 'test.prompt.v1': { run: async ctx => {
+        await ctx.prompt({ kind: 'confirm', message: 'Continue?', data: {} });
+        return { completed: true };
+      } } },
+    });
+    expect(result).toBe(143);
+    expect(output.at(-1)).toMatchObject({ ok: false, error: { code: 'cancelled' } });
+  });
+
   it('streams prompt events and resumes execution when a prompt answer is provided over stdin', async () => {
     const stdoutChunks: string[] = [];
     const stderrChunks: string[] = [];

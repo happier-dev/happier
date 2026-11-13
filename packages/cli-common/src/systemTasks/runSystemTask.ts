@@ -32,6 +32,8 @@ export type SystemTaskExecutionRunner = (params: unknown, context: Readonly<{
   now: () => number;
   /** Live producer callbacks use the same validation/redaction path as yielded events. */
   emit: (event: unknown) => void;
+  /** Host transport for the next answer after a prompt event is published. */
+  readPromptAnswer?: () => Promise<unknown>;
 }>) => AsyncGenerator<unknown, unknown, void>;
 
 export type SystemTaskRegistryEntry = Readonly<{
@@ -63,6 +65,7 @@ export async function executeSystemTask({
   signal = undefined,
   now = Date.now,
   emitEvent,
+  readPromptAnswer,
 }: Readonly<{
   spec: unknown;
   taskId: string;
@@ -70,6 +73,7 @@ export async function executeSystemTask({
   signal?: AbortSignal;
   now?: () => number;
   emitEvent?: (event: SystemTaskEvent) => void;
+  readPromptAnswer?: () => Promise<unknown>;
 }>): Promise<SystemTaskResult> {
   const effectiveSignal = signal ?? new AbortController().signal;
   const parsedSpec = SystemTaskSpecSchema.safeParse(spec);
@@ -86,6 +90,7 @@ export async function executeSystemTask({
     taskId,
     signal: effectiveSignal,
     now,
+    readPromptAnswer,
     emit: (rawEvent) => {
       if (effectiveSignal.aborted) return;
       const event = buildEvent({ taskId, tsMs: now(), rawEvent });

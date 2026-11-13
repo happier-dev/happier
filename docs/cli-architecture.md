@@ -2379,6 +2379,11 @@ whose handlers call the local daemon control client and supervisor. hsetup prese
 the task's data and typed failures; it does not implement tunnel lifecycle or
 maintain another list of kind strings. Electron and Tauri share this hsetup path.
 
+All hsetup tasks execute through the shared system-task registry runner. A prompt
+event leaves the task pending while hsetup reads its JSON answer from stdin,
+including first-use SSH host trust. Hosts without an answer transport retain the
+typed `prompt_required` refusal. Task cancellation interrupts the stdin wait.
+
 ### Standalone SSH identity (0.3 development)
 
 `machine enroll --ssh` accepts an explicit personal, adopted, sandbox, server or
