@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { consumeRuntimeTranscriptSourceFact } from './consumeRuntimeTranscriptSourceFact';
+import { createMuseEventProjection } from '../../../../../../../packages/plugins/muse/src/agent/events';
+import { loadCommittedTranscriptLocalIdBaseline, getSessionCommittedTranscriptLocalIds } from '@/api/session/client/transcript/committedTranscriptLocalIdBaseline';
 import { createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol';
 import { db } from '../../../../../../server/sources/storage/db';
 import { createLightSqliteHarness } from '../../../../../../server/sources/testkit/lightSqliteHarness';
@@ -15,6 +19,76 @@ import { createExternalSessionTerminalFollowProjector } from '@/session/external
 import { createRuntimeTranscriptProjector, projectRuntimeTranscriptEvent, type RuntimeTranscriptProjectionSession } from './projectRuntimeTranscriptEvent';
 
 describe('runtime transcript custody', () => {
+  it('resumes recorded native history without repeating a host user prompt, then completes the fresh turn', async () => {
+    const echoes = JSON.parse(readFileSync(new URL('./fixtures/resumePromptEcho.json', import.meta.url), 'utf8')) as Record<string, string>;
+    const harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-resume-prompt-',
+      env: { HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' } });
+    try {
+      const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
+      const stored = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), active: true,
+        lastActiveAt: new Date(), encryptionMode: 'plain', metadataLayoutVersion: 1,
+        metadata: JSON.stringify(projectSessionSharedMetadataV1({ metadata: {} })),
+        ownerMetadata: JSON.stringify(createPlainSessionOwnerMetadataEnvelopeV1({ v: 1 })),
+      } });
+      const authentication = createPresentUserSessionAccessAuthentication();
+      const makeSession = (): RuntimeTranscriptProjectionSession => ({ sessionId: stored.id,
+        async enqueueUserTextMessageCommitted(text, opts) {
+          const result = await createSessionMessage({ authentication, inputAdmission: 'transcriptOnly',
+            actorUserId: account.id, sessionId: stored.id, localId: opts.localId, messageRole: 'user',
+            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text }, meta: opts.meta ?? {} } },
+          });
+          if (!result.ok) throw new Error(result.error);
+          return { persisted: true, delivered: true, committedSequence: result.message.seq };
+        },
+        async enqueueAgentMessageCommitted(provider, body, opts) {
+          const result = await createSessionMessage({ authentication, inputAdmission: 'transcriptOnly',
+            actorUserId: account.id, sessionId: stored.id, localId: opts.localId, messageRole: 'agent',
+            content: { t: 'plain', v: buildAcpAgentMessageEnvelope({ provider, body, meta: opts.meta }) },
+          });
+          if (!result.ok) throw new Error(result.error);
+          return { persisted: true, delivered: true, committedSequence: result.message.seq };
+        },
+      });
+      const initial = makeSession();
+      const original = 'Reply exactly L12_GUEST_NATIVE_WAKE_1113';
+      await initial.enqueueUserTextMessageCommitted!(original, { localId: 'app-original', provenance: { kind: 'non_dependent', source: 'external' } });
+      const live = createMuseEventProjection({ sessionId: stored.id,
+        onHostPromptEcho: async (localId: string) => {
+          await consumeRuntimeTranscriptSourceFact({ session: initial, provider: 'muse', localId, reason: 'host_prompt_echo' });
+        },
+      });
+      live.admit({ inputIds: ['app-original'], input: { text: echoes['29']! }, delivery: { kind: 'newTurn', turnId: 'host-old' } }, 'command-old');
+      live.accept('command-old', { status: 'accepted', turnId: 'native-old' });
+      const nativeUser = { itemId: 'native-user-old', kind: 'userMessage', commandId: 'command-old', turnId: 'native-old', revision: 1, text: echoes['29']! };
+      await live.observe({ method: 'item/completed', params: { item: nativeUser } });
+      // A new host object models wake; only persisted source identities survive.
+      const resumed = makeSession();
+      await loadCommittedTranscriptLocalIdBaseline({ localIds: getSessionCommittedTranscriptLocalIds(resumed),
+        fetchPage: async () => ({ messages: await db.sessionMessage.findMany({ where: { sessionId: stored.id } }), hasMore: false, nextBeforeSeq: null }) });
+      const pending: Promise<unknown>[] = [];
+      const project = createRuntimeTranscriptProjector();
+      const native = createMuseEventProjection({ sessionId: stored.id,
+        onHostPromptEcho: localId => consumeRuntimeTranscriptSourceFact({ session: resumed, provider: 'muse', localId, reason: 'host_prompt_echo' }),
+      });
+      native.watch(event => { pending.push(project({ session: resumed, provider: 'muse', event })); });
+      const fresh = 'Reply exactly L12_GUEST_FRESH_WAKE_R122_1113';
+      await resumed.enqueueUserTextMessageCommitted!(fresh, { localId: 'app-fresh', provenance: { kind: 'non_dependent', source: 'external' } });
+      await native.replayItems([nativeUser]);
+      native.admit({ inputIds: ['app-fresh'], input: { text: fresh }, delivery: { kind: 'newTurn', turnId: 'host-fresh' } }, 'command-fresh');
+      native.accept('command-fresh', { status: 'accepted', turnId: 'native-fresh' });
+      await native.observe({ method: 'item/completed', params: { item: { itemId: 'native-user-fresh', kind: 'userMessage', commandId: 'command-fresh', turnId: 'native-fresh', revision: 1, text: echoes['29']!.replace(original, fresh) } } });
+      await native.observe({ method: 'item/completed', params: { item: { itemId: 'fresh-reply', kind: 'agentMessage', turnId: 'native-fresh', revision: 1, text: 'L12_GUEST_FRESH_WAKE_R122_1113' } } });
+      await native.observe({ method: 'turn/completed', params: { turnId: 'native-fresh', terminal: 'completed' } });
+      await Promise.all(pending);
+      const rows = await db.sessionMessage.findMany({ where: { sessionId: stored.id }, orderBy: { seq: 'asc' } });
+      const bodies = rows.map(row => row.content);
+      const users = bodies.filter(body => typeof body === 'object' && body !== null && 'v' in body && (body.v as { role?: string }).role === 'user');
+      expect(users).toHaveLength(2);
+      expect(JSON.stringify(bodies)).not.toContain('<happier_coding_prompt');
+      expect(bodies).toContainEqual(expect.objectContaining({ v: expect.objectContaining({ content: expect.objectContaining({ data: expect.objectContaining({ type: 'message', message: 'L12_GUEST_FRESH_WAKE_R122_1113' }) }) }) }));
+    } finally { await harness.close(); }
+  }, 180_000);
+
   it.each(['runtime', 'source-follow', 'source-first'] as const)('joins a Session-scoped native final to its named foreground stream without a second timestamp owner (%s)', async (route) => {
     const harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-transcript-final-ack-',
       env: { HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' } });

@@ -143,6 +143,9 @@ async function openMuseConversation<SessionId extends string | undefined>(
     readiness.clear();
   };
   const projection = createMuseEventProjection({ sessionId,
+    async onHostPromptEcho(localId) {
+      await sessionServices?.transcripts.markSourceFactConsumed?.({ localId, reason: 'host_prompt_echo' });
+    },
     onActivity(state) {
       activity = state;
       if (state === 'idle') {
@@ -348,15 +351,20 @@ async function openMuseConversation<SessionId extends string | undefined>(
     }
     catalogSessionId = nativeSessionId;
     projection.observeSession(opened.session);
-    async function interruptTurn(hostTurnId?: string, options?: Readonly<{ signal?: AbortSignal }>): Promise<AgentSessionCancelResult> {
+    async function interruptTurn(hostTurnId?: string, options?: Readonly<{ signal?: AbortSignal }>,
+      reason: Parameters<NonNullable<AgentSessionRuntime['cancel']>>[0]['reason'] = 'user'): Promise<AgentSessionCancelResult> {
         const turnId = projection.readOwningTurn(hostTurnId);
         if (!turnId) return { status: 'notRunning' };
+        // Native terminal notifications can arrive before the interrupt acknowledgement.
+        projection.setCancellationCause(turnId, reason);
         try {
           const result = readMuseRecord(await msp.command('turn/interrupt', { sessionId: nativeSessionId, turnId },
             { signal: options?.signal }));
           if (result.status === 'accepted') return { status: 'requested', turnId: hostTurnId ?? turnId };
+          projection.setCancellationCause(turnId, undefined);
           return { status: 'unavailable', diagnostic: { code: 'PLUGIN_EXEC_PROTOCOL_ERROR', severity: 'error' } };
         } catch (error) {
+          projection.setCancellationCause(turnId, undefined);
           const failure = classifyJsonRpcSubmissionFailure(error, { method: 'turn/interrupt', effectObserved: false });
           return { status: 'unavailable', diagnostic: {
             code: failure.kind === 'rejected_before_effect' ? 'provider_request_rejected' : 'PLUGIN_EXEC_FAILED',
@@ -528,7 +536,7 @@ async function openMuseConversation<SessionId extends string | undefined>(
           return { status: 'unavailable', diagnostic, retryable: true };
         }
       },
-      cancel: (request, options) => interruptTurn(request.turnId, options),
+      cancel: (request, options) => interruptTurn(request.turnId, options, request.reason),
       async compact(request, options): Promise<AgentSessionCompactResult> {
         if (request.trigger !== 'manual' || request.instructions) return { status: 'unsupported', retryable: false,
           diagnostic: { code: 'unsupported', severity: 'error' } };

@@ -11,7 +11,9 @@ type EventContent<T = AgentExecutionRunConversationEventV1> = T extends AgentExe
 type ProjectionEvent<SessionId extends string | undefined> = SessionId extends string
   ? AgentSessionRuntimeEvent : AgentExecutionRunConversationEventV1;
 type NativeRecord = Readonly<Record<string, JsonValue>>;
-type Admission = { commandId: string; request: AgentSessionSendRequest; accepted: boolean; started: boolean; terminal?: boolean; continuations?: Set<string>; steerCommandIds?: Set<string> };
+type Admission = { commandId: string; request: AgentSessionSendRequest; accepted: boolean; started: boolean; terminal?: boolean;
+  cancelCause?: Extract<AgentSessionRuntimeEvent, { kind: 'turn-cancelled' }>['cause'];
+  continuations?: Set<string>; steerCommandIds?: Set<string> };
 type NativeItem = { value: NativeRecord; revision: number; streamedText: string; committed: boolean;
   compaction?: Pick<AgentSessionCompactRequest, 'compactionId' | 'trigger'>;
   presentation?: Readonly<{ toolCallId: string; toolName: string; input: JsonValue }> };
@@ -19,6 +21,7 @@ type NativeChild = { state?: NativeItem; workflowChild?: NativeRecord; label?: s
 type ChildObservation = AgentSessionSubagentObservation;
 
 export function createMuseEventProjection<SessionId extends string | undefined = undefined>(options: Readonly<{ sessionId?: SessionId;
+  onHostPromptEcho?(localId: string): Promise<void>;
   onActivity?(state: 'active' | 'idle' | 'unknown'): void;
   onChild?(observation: ChildObservation): Promise<void>;
   onWorkflow?(snapshot: SessionWorkflowRunSnapshotV1): Promise<void>;
@@ -109,7 +112,9 @@ export function createMuseEventProjection<SessionId extends string | undefined =
     state.committed = true;
     const admission = typeof item.turnId === 'string' ? turns.get(item.turnId) : undefined;
     if (role === 'user' && admission && typeof item.commandId === 'string'
-      && (item.commandId === admission.commandId || admission.steerCommandIds?.has(item.commandId))) return;
+      && (item.commandId === admission.commandId || admission.steerCommandIds?.has(item.commandId))) {
+      return options.onHostPromptEcho?.(itemId);
+    }
     const owner = correlation(item.turnId);
     publish({ kind: 'transcript-message-committed', messageId: itemId, role, text,
       ...(owner.turnId ? { turnId: owner.turnId } : {}) });
@@ -372,8 +377,9 @@ export function createMuseEventProjection<SessionId extends string | undefined =
     items.set(item.itemId, state);
     if (!initialReplay && compactionItem(item.itemId, state, previous)) return;
     const childPublication = childItem(state, previous, initialReplay);
-    textItem(item.itemId, state, completed, initialReplay);
+    const textPublication = textItem(item.itemId, state, completed, initialReplay);
     toolItem(item.itemId, state, previous, completed);
+    if (textPublication) return textPublication;
     if (childPublication) return childPublication.then(() => workflowCompleted(item));
     if (!initialReplay) workflowCompleted(item);
   }
@@ -416,7 +422,7 @@ export function createMuseEventProjection<SessionId extends string | undefined =
       if (!admission || admission.terminal) return;
       const owner = { turnId: admission.request.delivery.turnId, agentTurnId: params.turnId };
       if (params.terminal === 'interrupted' || params.terminal === 'cancelled') {
-        publish({ kind: 'turn-cancelled', ...owner, cause: 'providerInterrupted' });
+        publish({ kind: 'turn-cancelled', ...owner, cause: admission.cancelCause ?? 'providerInterrupted' });
       } else if (params.terminal === 'failed') {
         const error = readMuseRecord(params.error);
         publish({ kind: 'turn-failed', ...owner, diagnostic: { code: 'PLUGIN_EXEC_FAILED', severity: 'error',
@@ -474,6 +480,10 @@ export function createMuseEventProjection<SessionId extends string | undefined =
       const admission = commands.get(commandId);
       commands.delete(commandId);
       return admission?.accepted;
+    },
+    setCancellationCause(nativeTurnId: string, cause: Admission['cancelCause']) {
+      const admission = turns.get(nativeTurnId);
+      if (admission) admission.cancelCause = cause;
     },
     readOwningTurn(hostTurnId?: string) {
       for (const [nativeTurnId, admission] of turns) {

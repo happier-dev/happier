@@ -16,6 +16,20 @@ const recording = JSON.parse(readFileSync(new URL('./testkit/fixtures/login-smok
 const nativeTurnId = '01a1bf87-e037-7cc3-ad73-d6ffffa47b13';
 
 describe('Muse event projection', () => {
+  it('durably consumes the native identity of an admitted user echo before resume can replay its scaffold', async () => {
+    const consumed: string[] = [];
+    const projection = createMuseEventProjection({ sessionId: 'host',
+      onHostPromptEcho: async (localId: string) => { consumed.push(localId); },
+    });
+    projection.admit({ inputIds: ['app-input'], input: { text: 'prompt' },
+      delivery: { kind: 'newTurn', turnId: 'host-turn' } }, 'native-command');
+    projection.accept('native-command', { status: 'accepted', turnId: 'native-turn' });
+    await projection.observe({ method: 'item/completed', params: { item: {
+      itemId: 'native-user', kind: 'userMessage', turnId: 'native-turn', commandId: 'native-command',
+      text: 'prompt', revision: 1,
+    } } });
+    expect(consumed).toEqual(['native-user']);
+  });
   it.each(['live', 'snapshot', 'history'] as const)('keeps recorded compaction out of assistant output on %s', async source => {
     const capture = readMuseRecord(JSON.parse(readFileSync(new URL('./testkit/fixtures/resume-compact.json', import.meta.url), 'utf8')));
     const frames = (Array.isArray(capture.rows) ? capture.rows : []).map(row => readMuseRecord(readMuseRecord(row).message))

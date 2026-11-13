@@ -46,6 +46,7 @@ import { SESSION_AGENT_ACTIVITY_HEADLINE_METADATA_KEY } from '@happier-dev/proto
 import { SessionActivityHeadlineBundleV1Schema } from '@happier-dev/protocol/sessions/work/sessionActivityHeadlineBundleV1';
 import { SessionRuntimeFailureCauseV1Schema, SessionRuntimeIssueSourceV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import type { ExternalSessionsSource, SessionEnvOverlayV1, SessionRuntimeIssueV1, SessionInputCausalPermissionAuthorityV1, PluginMachineMaterializationRefV1, PluginSourceCustodyV1, AgentStartSessionCallerV1, CodingPromptBehaviorV1 } from '@happier-dev/protocol';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import {
     getAgentLocalControlCapability,
     readEffectiveAgentSessionCompactionCapability,
@@ -255,9 +256,9 @@ import { createAgentRuntimeSwitchState } from '@/agent/runtime/mode/switching/cr
 import { createTerminalRuntimeProjectionHostService } from '@/agent/runtime/session/terminal/projection';
 import { createHostTerminalTranscriptFollowService } from '@/agent/runtime/session/terminal/transcriptFollow';
 import {
-    commitRequiredRuntimeTranscriptMessage,
     projectRuntimeTranscriptEvent,
 } from '@/agent/runtime/session/transcripts/projectRuntimeTranscriptEvent';
+import { consumeRuntimeTranscriptSourceFact } from '@/agent/runtime/session/transcripts/consumeRuntimeTranscriptSourceFact';
 import { publishRuntimeSessionEvent } from '@/agent/runtime/session/transcripts/publishRuntimeSessionEvent';
 import { createExternalSessionTerminalFollowProjector } from '@/session/external/terminalFollowProjection';
 import { publishNativeAgentTerminalHostBinding } from '@/agent/runtime/session/terminal/terminalHostBinding';
@@ -768,23 +769,11 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
                     message: 'Invalid transcript source-fact localId',
                 });
             }
-            await commitRequiredRuntimeTranscriptMessage({
+            await consumeRuntimeTranscriptSourceFact({
                 session: params.session,
                 provider: params.agentId,
                 localId,
-                body: {
-                    type: 'output',
-                    data: {
-                        type: 'progress',
-                        marker: 'source_fact_consumed',
-                        reason: request.reason,
-                    },
-                },
-                meta: {
-                    happier: { kind: 'source_fact_consumed.v1' },
-                },
-                provenance: { kind: 'non_dependent', source: 'external' },
-                eventKind: 'source-fact-consumed',
+                reason: request.reason,
             });
             return Object.freeze({ status: 'custodied' as const });
         });
@@ -1382,7 +1371,7 @@ function toHostConfigurationOutcome(
     result: Awaited<ReturnType<NonNullable<AgentSessionRuntime['updateConfiguration']>>>,
 ): RuntimeConfigUpdateOutcomeV1 {
     if ('diagnostic' in result && result.diagnostic.details
-        && typeof result.diagnostic.details === 'object' && !Array.isArray(result.diagnostic.details)
+        && isJsonObject(result.diagnostic.details)
         && result.diagnostic.details.status === 'requires_restart') {
         return { status: 'requires_restart', diagnostic: result.diagnostic };
     }
@@ -4514,7 +4503,10 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             if (openIntent.kind === 'fork' && !nativeForkSource) {
                 throw new Error('Native Agent fork source is invalid');
             }
-            if (!sessionCapabilities?.open.includes(openIntent.kind)) {
+            // Adopting the crashed runner's held Agent re-enters its open Session through the adopt
+            // contract (the provider is never asked to resume), so it needs no declared resume.
+            const reentersHeldSession = openIntent.kind === 'resume' && hasSessionHolderAdoptToken();
+            if (!sessionCapabilities || (!sessionCapabilities.open.includes(openIntent.kind) && !reentersHeldSession)) {
                 throw new Error(
                     `Native Agent '${identity.agentId}' does not declare sessions.open ${openIntent.kind} support`,
                 );
@@ -5905,6 +5897,11 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 assertGenerationCurrent();
                 await attestOpenOutcome('prepare');
                 assertGenerationCurrent();
+                // Native resume can publish history during open, before source
+                // follow binds. Hydrate the same durable identity owner first.
+                if (openRequest?.kind === 'resume' && fetchCommittedTranscriptLocalIdBaseline) {
+                    await fetchCommittedTranscriptLocalIdBaseline.call(hostRuntimeParams.session, { signal });
+                }
                 const openNativeSession = async (): Promise<AgentSessionRuntime> => {
                     const request = openRequest;
                     if (!request) throw new Error('Native Session open request unavailable');
