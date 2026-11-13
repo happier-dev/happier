@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
-import { observeWorkspaceBundleLockPriority, withWorkspaceBundleLock, WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE } from '../../../../../packages/cli-common/workspaceBundleLock.mjs';
+import { observeWorkspaceBundleLock, observeWorkspaceBundleLockPriority, withWorkspaceBundleLock, WORKSPACE_BUNDLE_LOCK_BUSY_ERROR_CODE } from '../../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { resolveWorkspaceBuildAdmissionInvocation, runWorkspaceBuildAdmission, withWorkspaceBuildResources } from './workspace_build_admission.mjs';
 import { resolveDependencyRefreshLockPath, withDependencyRefreshLock } from './dependency_refresh.mjs';
 import * as dependencies from './dependency_refresh.mjs';
@@ -876,6 +876,12 @@ test('cancelling an inherited producer releases the containing reservation and e
   assert.notEqual(result.status, 0);
   assert.match(result.stdout, /producer-started/);
   await assertBrokerIdle(native);
+  // Forced tree retirement can leave a dead owner's file. Publication custody
+  // is released when the canonical owner admits the next producer immediately.
+  assert.equal(observeWorkspaceBundleLock(lockPath).active, false);
+  assert.equal(await withWorkspaceBundleLock(() => 'published-after-cancellation', {
+    lockPath, wait: false, signal: t.signal,
+  }), 'published-after-cancellation');
   await assert.rejects(lstat(lockPath), { code: 'ENOENT' });
 });
 
