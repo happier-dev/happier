@@ -186,6 +186,9 @@ describe('isApprovalRequiredByActionsSettings', () => {
     expect(resolveActionApprovalRouting({ actionId, spec, input, context, settings: EMPTY_SETTINGS }).required).toBe(true);
     expect(resolveActionApprovalRouting({ actionId, spec, input, context: { ...context,
       authority: 'present_user', presentUserConfirmation: { actionId } }, settings: EMPTY_SETTINGS }).required).toBe(false);
+    // Agent-initiated write while the person is present: no completed confirmation, so it still Asks.
+    expect(resolveActionApprovalRouting({ actionId, spec, input, context: { ...context,
+      authority: 'present_user' }, settings: EMPTY_SETTINGS }).required).toBe(true);
     expect(resolveActionApprovalRouting({ actionId: 'settings.get', spec: getActionSpec('settings.get'),
       input: { anchor: input.anchor }, context, settings: EMPTY_SETTINGS }).required).toBe(false);
     expect(resolveActionApprovalRouting({ actionId: 'session.attention.set', spec: getActionSpec('session.attention.set'),
