@@ -1005,6 +1005,9 @@ export async function startServerLight(params: {
       ...baseEnv,
       PORT: String(port),
       PUBLIC_URL: baseUrl,
+      // Key-challenge auth (terminal sign-in) is bound to the canonical Home
+      // origin and answers 503 without one; a test server is its own origin.
+      HAPPIER_CANONICAL_SERVER_URL: params.extraEnv?.HAPPIER_CANONICAL_SERVER_URL ?? baseUrl,
       ...databaseUrlEnv,
     };
 

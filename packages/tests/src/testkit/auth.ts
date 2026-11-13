@@ -8,6 +8,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { fetchJson } from './http';
+import { createKeyChallengeV2SigningInput, KeyChallengeV2IssueResponseSchema } from '@happier-dev/protocol/auth/keyChallenge';
 
 export type TestAuth = {
   token: string;
@@ -19,6 +20,24 @@ export type TestAuth = {
 export type TestAuthMtls = {
   token: string;
 };
+
+/** Obtain a real terminal credential for the same Account; never relabel an Account bearer. */
+export async function createTestTerminalAuth(baseUrl: string, auth: TestAuth): Promise<TestAuth> {
+  const issue = await fetchJson<unknown>(`${baseUrl}/v1/auth/challenge`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+  });
+  if (issue.status !== 200) throw new Error(`Terminal challenge failed (${issue.status})`);
+  const challenge = KeyChallengeV2IssueResponseSchema.parse(issue.data);
+  const signing = tweetnacl.sign.keyPair.fromSeed(auth.accountSigningSeed);
+  const signature = tweetnacl.sign.detached(createKeyChallengeV2SigningInput(challenge), signing.secretKey);
+  const response = await fetchJson<{ token?: string }>(`${baseUrl}/v1/auth`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ challengeId: challenge.challengeId, publicKey: auth.publicKeyBase64,
+      signature: privacyKit.encodeBase64(Uint8Array.from(signature)), credentialKind: 'terminal' }),
+  });
+  if (response.status !== 200 || !response.data?.token) throw new Error(`Terminal login failed (${response.status})`);
+  return { ...auth, token: response.data.token };
+}
 
 export async function createTestAuth(baseUrl: string): Promise<TestAuth> {
   const accountSigningSeed = Uint8Array.from(randomBytes(tweetnacl.sign.seedLength));

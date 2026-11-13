@@ -8,9 +8,10 @@ import {
   type HomeConnectionDescriptorV1,
   type MachineReplacementReason,
 } from '@happier-dev/protocol';
+import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
 import tweetnacl from 'tweetnacl';
 
-import type { TestAuth } from './auth';
+import { createTestTerminalAuth, type TestAuth } from './auth';
 
 const CLI_HOME_DIR_MODE = 0o700;
 const CLI_HOME_FILE_MODE = 0o600;
@@ -39,17 +40,27 @@ function deriveServerIdFromUrl(url: string): string {
   return `env_${(h >>> 0).toString(16)}`;
 }
 
-function readAccountIdFromToken(token: string): string | null {
+function decodeTokenPayload(token: string): unknown {
   const [, payload] = token.split('.');
   if (!payload) return null;
   try {
-    const decoded = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as unknown;
-    if (!decoded || typeof decoded !== 'object' || !('sub' in decoded)) return null;
-    const sub = decoded.sub;
-    return typeof sub === 'string' && sub.trim() ? sub.trim() : null;
+    return JSON.parse(Buffer.from(payload, 'base64url').toString('utf8')) as unknown;
   } catch {
     return null;
   }
+}
+
+function readAccountIdFromToken(token: string): string | null {
+  const decoded = decodeTokenPayload(token);
+  if (!decoded || typeof decoded !== 'object' || !('sub' in decoded)) return null;
+  const sub = decoded.sub;
+  return typeof sub === 'string' && sub.trim() ? sub.trim() : null;
+}
+
+/** The CLI refuses a stored Account bearer (`cli_relogin_required`); it reads the same unsigned marker. */
+function isAccountBearer(token: string): boolean {
+  const payload = decodeTokenPayload(token);
+  return readAuthTokenProvenance(payload, { allowLegacyHome: true })?.provenance.kind === 'account';
 }
 
 function buildMachineReplacementCandidates(
@@ -242,15 +253,21 @@ export async function seedCliAuthForTestAccount(params: {
   mode: TestAccountCliAuthMode;
   replacementCandidate?: SeedReplacementCandidate;
   homeConnectionDescriptor?: HomeConnectionDescriptorV1;
-}): Promise<{ serverId: string; machineId: string }> {
-  return seedCliCredentialsForServer({
+}): Promise<{ serverId: string; machineId: string; token: string }> {
+  // A CLI signs in with a terminal credential. Exchange an Account bearer for one
+  // through the real key-challenge sign-in, as `happier auth login` does.
+  const auth = isAccountBearer(params.auth.token)
+    ? await createTestTerminalAuth(params.serverUrl, params.auth)
+    : params.auth;
+  const seeded = await seedCliCredentialsForServer({
     cliHome: params.cliHome,
     serverUrl: params.serverUrl,
-    token: params.auth.token,
-    credentials: buildTestAccountCliAuthCredentials({ auth: params.auth, mode: params.mode }),
+    token: auth.token,
+    credentials: buildTestAccountCliAuthCredentials({ auth, mode: params.mode }),
     replacementCandidate: params.replacementCandidate,
     ...(params.homeConnectionDescriptor
       ? { homeConnectionDescriptor: params.homeConnectionDescriptor }
       : {}),
   });
+  return { ...seeded, token: auth.token };
 }

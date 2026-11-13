@@ -4,6 +4,7 @@ import {
 } from '@happier-dev/protocol';
 
 import { fetchJson } from '../http';
+import { normalizeSpawnSessionRequestBody } from './normalizeSpawnSessionRequestBody';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return typeof value === 'object' && value !== null ? value as Record<string, unknown> : null;
@@ -26,7 +27,11 @@ export async function daemonControlPostJson<T = any>(params: {
           ? { 'x-happier-daemon-token': params.controlToken }
           : {}),
       },
-      body: JSON.stringify(params.body ?? {}),
+      // The daemon requires an explicit V2 backend target; every raw spawn body
+      // reaches it through this one choke point.
+      body: JSON.stringify(params.path === '/spawn-session'
+        ? normalizeSpawnSessionRequestBody(params.body ?? {})
+        : params.body ?? {}),
       timeoutMs: params.timeoutMs ?? defaultTimeoutMs,
     });
     if (params.path !== '/spawn-session') {
