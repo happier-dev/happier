@@ -2183,6 +2183,9 @@ export function registerSocketRpcHandlers(params: Readonly<{
             const isTransitionRoot = verifiedExternalAction?.binding.actionId === 'session.agent.transition';
             const transitionSessionTarget = isTransitionRoot && methodSessionAuthorization?.routeToSessionOwnerDaemon
                 && verifiedExternalAction.target.kind === 'session' ? verifiedExternalAction.target : null;
+            const signedSessionTarget = verifiedExternalAction?.sessionRpcTarget
+                ?? (transitionSessionTarget ? { sessionId: transitionSessionTarget.sessionId,
+                    machineId: verifiedExternalAction!.binding.machineId } : null);
             const decisionMachine = requesterApprovalMachine;
             const targetSpecificGuard = explicitMachineStopRequest
                 ? createExactMachineRpcTargetGuard(explicitMachineStopRequest)
@@ -2204,8 +2207,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                             targetUserId,
                             presence: params.sessionPublisherPresence,
                             ...(callerInputViewer ? { sessionId: callerInputViewer.sessionId } : {}),
-                            ...(transitionSessionTarget ? { sessionId: transitionSessionTarget.sessionId,
-                                machineId: verifiedExternalAction!.binding.machineId } : {}),
+                            ...(signedSessionTarget ?? {}),
                         });
             const finiteWakeCurrent = finiteWake && (finiteWake.kind === 'ready' || finiteWake.kind === 'not-needed')
                 ? finiteWake.isCurrent : undefined;
@@ -2283,7 +2285,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 ...(originalActionEnvelope ? { originalActionEnvelope } : {}),
                 ...(workspaceSyncContext ? {
                     callerAuthority: sessionActionOrigin ? 'account_automation' as const : workspaceSyncContext.callerAuthority,
-                } : (moveChildExecution || isHandoffCurrent || isTransitionRoot || verifiedExternalAction?.binding.workflowActionOrigin) && verifiedExternalAction
+                } : (moveChildExecution || isHandoffCurrent || isTransitionRoot || verifiedExternalAction?.sessionRpcTarget || verifiedExternalAction?.binding.workflowActionOrigin) && verifiedExternalAction
                     ? { callerAuthority: requestAuthentication.authority } : {}),
                 ...(liveApprovalOrigin ? { callerAuthority: 'present_user' as const } : {}),
                 ...(sessionBrowserAuthorization ? { callerAuthority: requestAuthentication.authority } : {}),
@@ -2294,7 +2296,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 ...(liveApprovalOrigin ? { answeringClient: { requireSingle: true } } : answeringClient ? { answeringClient } : {}),
                 callerSocket: params.socket,
                 ...(sessionActionOrigin ? { sessionActionOrigin } : {}),
-                ...((isTransitionRoot || verifiedExternalAction?.binding.sessionActionOrigin || verifiedExternalAction?.binding.workflowActionOrigin
+                ...((isTransitionRoot || verifiedExternalAction?.sessionRpcTarget || verifiedExternalAction?.binding.sessionActionOrigin || verifiedExternalAction?.binding.workflowActionOrigin
                     || verifiedExternalAction?.binding.handoffAdmission || verifiedExternalAction?.binding.managedContinuation || isProjectSource
                     || workspaceSyncSourceWriterTargetRouting && verifiedExternalAction
                         && (isWorkspaceSyncRelationshipWriteActionId(verifiedExternalAction.binding.actionId)

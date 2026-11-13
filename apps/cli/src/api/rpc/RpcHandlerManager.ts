@@ -704,7 +704,11 @@ export class RpcHandlerManager {
                 && request.callerAuthority === expectedAuthority
                 && isDeepStrictEqual(binding.sessionActionOrigin, request.sessionActionOrigin);
         })();
-        const sessionTransitionInputAuthorizationMatchesRequest = (() => {
+        const sessionTransitionInput = parsedInputAuthorization?.success
+            && parsedInputAuthorization.data.binding.actionId === 'session.agent.transition'
+            && (targetMethod === SESSION_RPC_METHODS.SESSION_PROVIDER_INPUT_ADMISSION
+                || targetMethod === SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND);
+        const sessionInputAuthorizationMatchesRequest = (() => {
             if (!parsedInputAuthorization?.success || !this.localMachineId
                 || this.scopePrefix === this.localMachineId) return false;
             const binding = parsedInputAuthorization.data.binding;
@@ -712,11 +716,14 @@ export class RpcHandlerManager {
             const apiRootAdmission = 'grant' in binding && !parsedInputAuthorization.data.requesterAccountContext && !!this.authorizeRequest;
             if (!privateAccountCustody && !apiRootAdmission) return false;
             const expectedAuthority = resolveExternalActionRootInvocationAuthority(parsedInputAuthorization.data);
-            return binding.actionId === 'session.agent.transition' && binding.machineId === this.localMachineId
+            // Session roots use the same declared method/effect owner as
+            // Machine roots. Keep transition's existing composite input phase.
+            const methodMatches = sessionTransitionInput
+                || resolveSocketRpcSessionAuthorization(targetMethod)?.routeToSessionOwnerDaemon === true
+                    && resolveMachineRpcExternalActionEffectV1(targetMethod, binding) === binding.actionId;
+            return methodMatches && binding.machineId === this.localMachineId
                 && (binding.target.kind === 'machine' && binding.target.machineId === this.localMachineId
                     || binding.target.kind === 'session' && binding.target.sessionId === this.scopePrefix)
-                && (targetMethod === SESSION_RPC_METHODS.SESSION_PROVIDER_INPUT_ADMISSION
-                    || targetMethod === SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND)
                 && request.method === `${this.scopePrefix}:${targetMethod}` && request.callerAuthority === expectedAuthority
                 && isDeepStrictEqual(binding.sessionActionOrigin, request.sessionActionOrigin);
         })();
@@ -734,7 +741,7 @@ export class RpcHandlerManager {
             || request.callerAuthority !== 'account_automation'
             || isWorkspaceTargetPhase && !workspaceSyncTargetRouting?.success
                 && (!machineAdmission?.success || machineAdmission.data.machineId !== this.scopePrefix || !this.authorizeRequest)
-            || !serviceMoveChild && !machineInputAuthorizationMatchesRequest && !sessionTransitionInputAuthorizationMatchesRequest && !sourceInputAuthorizationMatchesRequest
+            || !serviceMoveChild && !machineInputAuthorizationMatchesRequest && !sessionInputAuthorizationMatchesRequest && !sourceInputAuthorizationMatchesRequest
                 && !writerTargetInputAuthorizationMatchesRequest && !seedInputAuthorizationMatchesRequest
                 && !isSessionActionRpcMethodV1(this.readUnprefixedMethod(request.method)))) {
             return await deny('session_action_origin', { error: 'Invalid Session Action origin', errorCode: RPC_ERROR_CODES.FORBIDDEN });
@@ -768,7 +775,7 @@ export class RpcHandlerManager {
             ? parsedRequestId.data
             : null;
         if (parsedInputAuthorization) {
-            let matchesRequest = serviceMoveChild || deploymentArchiveChild || machineInputAuthorizationMatchesRequest || sessionTransitionInputAuthorizationMatchesRequest || sourceInputAuthorizationMatchesRequest
+            let matchesRequest = serviceMoveChild || deploymentArchiveChild || machineInputAuthorizationMatchesRequest || sessionInputAuthorizationMatchesRequest || sourceInputAuthorizationMatchesRequest
                 || writerTargetInputAuthorizationMatchesRequest || seedInputAuthorizationMatchesRequest || workflowRoleInputAuthorizationMatchesRequest;
             if (!matchesRequest && parsedInputAuthorization.success && requestId) {
                 const binding = parsedInputAuthorization.data.binding;
@@ -984,7 +991,7 @@ export class RpcHandlerManager {
                     ...(workspaceSyncTargetRouting?.success ? { workspaceSyncTargetRouting: Object.freeze(workspaceSyncTargetRouting.data) } : {}),
                     ...(workspaceSyncSourceWriterTargetRouting?.success ? { workspaceSyncSourceWriterTargetRouting: Object.freeze(workspaceSyncSourceWriterTargetRouting.data) } : {}),
                     ...(workspaceSyncSeedRouting?.success ? { workspaceSyncSeedRouting: Object.freeze(workspaceSyncSeedRouting.data) } : {}),
-                    ...((serviceMoveChild || deploymentArchiveChild || sessionTransitionInputAuthorizationMatchesRequest || sourceInputAuthorizationMatchesRequest || writerTargetInputAuthorizationMatchesRequest || seedInputAuthorizationMatchesRequest || workflowRoleInputAuthorizationMatchesRequest) && parsedInputAuthorization?.success
+                    ...((serviceMoveChild || deploymentArchiveChild || sessionInputAuthorizationMatchesRequest || sourceInputAuthorizationMatchesRequest || writerTargetInputAuthorizationMatchesRequest || seedInputAuthorizationMatchesRequest || workflowRoleInputAuthorizationMatchesRequest) && parsedInputAuthorization?.success
                         ? { callerInputAuthorization: parsedInputAuthorization.data } : {}),
                     signal: controller.signal,
             });
@@ -1123,7 +1130,7 @@ export class RpcHandlerManager {
                     return await respond(request, { error: RPC_ERROR_MESSAGES.FORBIDDEN, errorCode: RPC_ERROR_CODES.FORBIDDEN });
                 }
             }
-            if (sessionTransitionInputAuthorizationMatchesRequest && targetMethod === SESSION_RPC_METHODS.SESSION_PROVIDER_INPUT_ADMISSION) {
+            if (sessionInputAuthorizationMatchesRequest && sessionTransitionInput && targetMethod === SESSION_RPC_METHODS.SESSION_PROVIDER_INPUT_ADMISSION) {
                 const phase = decryptedParams && typeof decryptedParams === 'object' && !Array.isArray(decryptedParams)
                     ? decryptedParams as Record<string, unknown> : null;
                 if (phase?.serviceId !== 'session.agentTransition' || (phase.action !== 'enforce' && phase.action !== 'clear')) {
@@ -1132,7 +1139,7 @@ export class RpcHandlerManager {
             }
             if (callerInputAuthorization?.requesterAccountContext && !deploymentArchiveChild) {
                 const finitePreparation = isFiniteSource && sourceInputAuthorizationMatchesRequest;
-                if ((!serviceMoveChild && !machineInputAuthorizationMatchesRequest && !sessionTransitionInputAuthorizationMatchesRequest && !finitePreparation) || !this.prepareRequesterAccountContext
+                if ((!serviceMoveChild && !machineInputAuthorizationMatchesRequest && !sessionInputAuthorizationMatchesRequest && !finitePreparation) || !this.prepareRequesterAccountContext
                     || controller.signal.aborted) {
                     return await deny('requester_account_admission');
                 }

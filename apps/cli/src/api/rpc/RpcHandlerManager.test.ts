@@ -45,6 +45,7 @@ import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/mod
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
 import { readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
 
 it.each(['registered', 'retained'] as const)('closes selected receiving admission while existing creation drains, then reopens on release (%s handler)', async binding => {
   const rpc = new RpcHandlerManager({ scopePrefix: 'session', encryptionMode: 'plain', logger: () => {} });
@@ -737,7 +738,7 @@ it.each(['plain', 'e2ee'] as const)('admits arbitrary %s requester custody throu
       params: mode === 'plain' ? resume : await sealRpcRequest(machineKey, freshMethod, resume) });
     expect(mode === 'plain' ? resumeResponse : await openRpcResponse(machineKey, resumeResponse)).toMatchObject({ type: 'success' });
     expect(freshSpawnEffects).toBe(1);
-    const sessionRpc = new RpcHandlerManager({ ...config, scopePrefix: 'original-session' });
+    const sessionRpc = new RpcHandlerManager({ ...config, scopePrefix: 'original-session', scopeKind: 'session' });
     const sessionMethod = `original-session:${SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND}`;
     sessionRpc.registerHandler(SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND,
       (_input, context) => ({ accepted: true, authority: context?.callerAuthority }));
@@ -753,6 +754,60 @@ it.each(['plain', 'e2ee'] as const)('admits arbitrary %s requester custody throu
         params: mode === 'plain' ? {} : await sealRpcRequest(machineKey, sessionMethod, {}) });
       expect(mode === 'plain' ? response : await openRpcResponse(machineKey, response), kind)
         .toMatchObject({ accepted: true, authority: 'account_automation' });
+    }
+    const voiceInvocation = { caller: { kind: 'host' }, surface: 'voice', authority: 'present_user' } as const;
+    const voiceStart = ExecutionRunStartRequestSchema.parse({ intent: 'voice_agent',
+      backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, permissionMode: 'read-only',
+      retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming', bootstrapMode: 'none' });
+    for (const target of [{ kind: 'machine', machineId: 'machine' },
+      { kind: 'session', sessionId: 'original-session' }] as const) {
+      for (const [actionId, runMethod] of [
+        ['execution.run.start', SESSION_RPC_METHODS.EXECUTION_RUN_START],
+        ['execution.run.ensure', SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE],
+        ['execution.run.ensure_or_start', SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START],
+      ] as const) {
+        sessionRpc.registerHandler(runMethod, (_input, context) => {
+          const admitted = buildActionExecutorContextForRpc(context!);
+          return { admitted: true, surface: admitted.surface, authority: admitted.authority, caller: admitted.actionCaller };
+        });
+        const runInput = actionId === 'execution.run.start' ? voiceStart : actionId === 'execution.run.ensure'
+          ? { runId: 'voice-run' } : { runId: 'voice-run', start: voiceStart };
+        const runRoot = sealExternalActionRequesterAccountContextV1({ authorization: {
+          ...authorization, binding: { ...authorization.binding, actionId, custodianAccountId: 'bob', target },
+        }, credentials: encodedCredentials, invocation: voiceInvocation,
+          purpose: { kind: 'machine_rpc', method: runMethod, params: runInput },
+          installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes });
+        const fullMethod = `original-session:${runMethod}`;
+        const response = await sessionRpc.handleRequest({ method: fullMethod, requestId: `voice-${runMethod}`,
+          authorization: { kind: 'session.write', sessionId: 'original-session' },
+          callerAuthority: 'present_user', callerInputAuthorization: runRoot,
+          params: mode === 'plain' ? runInput : await sealRpcRequest(machineKey, fullMethod, runInput) });
+        expect(mode === 'plain' ? response : await openRpcResponse(machineKey, response), actionId)
+          .toMatchObject({ admitted: true, surface: 'voice', authority: 'present_user', caller: { kind: 'host' } });
+      }
+    }
+    const runBinding = { ...authorization.binding, actionId: 'execution.run.start', custodianAccountId: 'bob',
+      target: { kind: 'machine', machineId: 'machine' } as const };
+    for (const binding of [
+      { ...runBinding, machineId: 'another-machine' },
+      { ...runBinding, target: { kind: 'machine', machineId: 'another-machine' } as const },
+      { ...runBinding, target: { kind: 'session', sessionId: 'another-session' } as const },
+      { ...runBinding, actionId: 'execution.run.ensure' },
+    ]) {
+      const runInput = voiceStart;
+      const method = `original-session:${SESSION_RPC_METHODS.EXECUTION_RUN_START}`;
+      const root = sealExternalActionRequesterAccountContextV1({ authorization: { ...authorization, binding },
+        credentials: encodedCredentials, invocation: voiceInvocation,
+        purpose: { kind: 'machine_rpc', method: SESSION_RPC_METHODS.EXECUTION_RUN_START, params: runInput },
+        installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes });
+      get.mockClear(); post.mockClear();
+      const response = await sessionRpc.handleRequest({ method, requestId: 'wrong-run-binding',
+        authorization: { kind: 'session.write', sessionId: 'original-session' },
+        callerAuthority: 'present_user', callerInputAuthorization: root,
+        params: mode === 'plain' ? runInput : await sealRpcRequest(machineKey, method, runInput) });
+      expect(mode === 'plain' ? response : await openRpcResponse(machineKey, response))
+        .toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false });
+      expect(get).not.toHaveBeenCalled(); expect(post).not.toHaveBeenCalled();
     }
     expect(await run(seal(), { homeId: 'other' })).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
     expect(await run({ ...seal(), token: 'swapped-root' })).toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });

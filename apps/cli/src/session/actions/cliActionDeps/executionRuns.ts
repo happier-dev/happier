@@ -66,6 +66,22 @@ export type CliExecutionRunFamily = Readonly<{
   readExecutionRunTransportMachineId: (transport: ResolvedSessionTransport) => string | null;
 }>;
 export function createCliExecutionRunActionDeps(params: CliActionDepsParams, host: CliExecutionRunHost): CliExecutionRunFamily {
+  const sessionRpcAuthority = (effectActionId: ActionId, opts?: ExecutionRunActionTransportOptions) => {
+    const ceiling = executionRunAuthorityCeiling(opts);
+    if (!opts || (opts.externalActionCredential === undefined && opts.externalActionExecutionAuthorization === undefined)) return ceiling;
+    if (!opts.externalActionExecutionAuthorization || !opts.externalActionTarget
+      || !params.externalActionMachineInstallationId || !params.externalActionMachineRequestPrivateKey) {
+      throw Object.assign(new Error('not_authenticated'), { code: 'not_authenticated' });
+    }
+    // Keep the Account admission on the existing signed Session RPC path. Its
+    // requester custody carries the invocation; Run input never supplies it.
+    return { ...ceiling, externalAction: {
+      context: { ...opts, surface: opts.surface ?? 'rpc', callerPermissionMode: opts.effectiveCallerPermissionMode },
+      effectActionId,
+      installationId: params.externalActionMachineInstallationId,
+      privateKey: params.externalActionMachineRequestPrivateKey,
+    } };
+  };
   const { resolveTransportForSession, readCurrentMachineControlIdentity, readTransportSessionOwnerMetadata, resumeInactiveSessionTransport, callMachineAction, isMachineActionServerScopeCurrent, normalizeStringValue, isExecutionRunActionAbort, executionRunActionFailure } = host;
 
   type ExecutionRunMachineTarget =
@@ -284,6 +300,7 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
           opts,
         );
       }
+      const rpcAuthority = sessionRpcAuthority('execution.run.start', opts);
       // Public Session RPC cannot authenticate a host-private admission stamp.
       // Refuse before resuming/sending instead of losing the admitted ceiling.
       if (opts?.workDepth !== undefined || opts?.workspaceWrites !== undefined) {
@@ -340,7 +357,7 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
         ...transport,
         token: params.token,
         sessionId: transport.sessionId,
-        ...executionRunAuthorityCeiling(opts),
+        ...rpcAuthority,
         request,
         ...(opts?.signal ? { signal: opts.signal } : {}),
       });
@@ -408,6 +425,7 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
           opts,
         );
       }
+      const rpcAuthority = sessionRpcAuthority('execution.run.ensure', opts);
       const transport = await resolveTransportForSession(sessionId, opts?.signal);
       if (!transport.ok) {
         return { ok: false, code: transport.code, ...(transport.candidates ? { details: transport.candidates } : {}) };
@@ -417,7 +435,7 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
         ...transport,
         token: params.token,
         sessionId: transport.sessionId,
-        ...executionRunAuthorityCeiling(opts),
+        ...rpcAuthority,
         request,
         ...(opts?.signal ? { signal: opts.signal } : {}),
       });
@@ -431,6 +449,7 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
           opts,
         );
       }
+      const rpcAuthority = sessionRpcAuthority('execution.run.ensure_or_start', opts);
       const transport = await resolveTransportForSession(sessionId, opts?.signal);
       if (!transport.ok) {
         return { ok: false, code: transport.code, ...(transport.candidates ? { details: transport.candidates } : {}) };
@@ -440,7 +459,7 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
         ...transport,
         token: params.token,
         sessionId: transport.sessionId,
-        ...executionRunAuthorityCeiling(opts),
+        ...rpcAuthority,
         request,
         ...(opts?.signal ? { signal: opts.signal } : {}),
       });

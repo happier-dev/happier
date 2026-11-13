@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import {
-  CallToolRequestSchema, ListToolsRequestSchema,
+  CallToolRequestSchema, ListToolsRequestSchema, ListToolsResultSchema,
   ListResourcesRequestSchema, ReadResourceRequestSchema, ListResourceTemplatesRequestSchema,
   SubscribeRequestSchema, UnsubscribeRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
@@ -32,7 +32,10 @@ export function createForwardingMcpServer(input: Readonly<{
   // Initialize without an upstream round trip; discovery and execution still go upstream.
   server.server.registerCapabilities({ tools: { listChanged: false } });
   server.server.setRequestHandler(ListToolsRequestSchema, async (request, extra) => {
-    const result = await upstream(client => client.listTools(request.params, { signal: extra.signal }), 'read');
+    // Discovery is forwarded unchanged; compiling every upstream output schema
+    // here repeats the tool owner's validation and can block the entire catalog.
+    const result = await upstream(client => client.request({ method: 'tools/list', params: request.params },
+      ListToolsResultSchema, { signal: extra.signal }), 'read');
     const names = projectMcpToolNames(result.tools.map(tool => tool.name), toolNameMaxLength);
     return { ...result, tools: result.tools.map((tool, index) => ({ ...tool, name: names[index]!.projectedName })) };
   });
@@ -43,7 +46,8 @@ export function createForwardingMcpServer(input: Readonly<{
         const names: string[] = [];
         let cursor: string | undefined;
         do {
-          const page = await client.listTools(cursor === undefined ? {} : { cursor }, { signal: extra.signal });
+          const page = await client.request({ method: 'tools/list', params: cursor === undefined ? {} : { cursor } },
+            ListToolsResultSchema, { signal: extra.signal });
           names.push(...page.tools.map(tool => tool.name));
           cursor = page.nextCursor;
         } while (cursor !== undefined);

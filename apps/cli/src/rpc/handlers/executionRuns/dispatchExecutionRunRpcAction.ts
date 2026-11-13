@@ -345,6 +345,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
   async function startRun(
     raw: unknown,
     sessionId: string | null,
+    actionId: 'execution.run.start' | 'execution.run.ensure_or_start',
     actionOptions?: Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[2],
   ): Promise<ExecutionRunStartResult> {
     const classifyFailure = (
@@ -531,7 +532,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       const started = await params.manager.start({
         ...runStartRequest,
         ...(parsed.data.intent === 'voice_agent' ? {
-          actionInvocation: readAdmittedVoiceRunActionInvocation(actionOptions, 'execution.run.start'),
+          actionInvocation: readAdmittedVoiceRunActionInvocation(actionOptions, actionId),
         } : {}),
         approvalProfileId: runStartRequest.approvalProfileId === undefined
           ? actionOptions?.approvalProfileId ?? null : runStartRequest.approvalProfileId,
@@ -654,7 +655,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
           details: withExecutionRunStartFailureDetails(mismatch.details, 'noRunCreated'),
         };
       }
-      const started = await startRun(request, sessionId, actionOptions);
+      const started = await startRun(request, sessionId, 'execution.run.start', actionOptions);
       return started.ok
         ? {
             runId: started.runId,
@@ -819,7 +820,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
         return { ok: true, runId, created: false, ...(ensured.actionInvocation ? { actionInvocation: ensured.actionInvocation } : {}) };
       }
 
-      const started = await startRun(parsed.start, sessionId, actionOptions);
+      const started = await startRun(parsed.start, sessionId, 'execution.run.ensure_or_start', actionOptions);
       if (!started.ok) return started;
       return { ...started, created: true };
     },

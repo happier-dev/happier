@@ -71,7 +71,7 @@ import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema }
 import { bindApiSessionSpawnNewInput } from '@happier-dev/protocol/actions/specs/session/lifecycle';
 import type { MachineOperationRequesterContext } from '@/app/machines/machineOperationSupport';
 import type { ActionRequiredAuthority } from "@happier-dev/protocol/actions/metadata";
-import { SOCKET_RPC_EVENTS, WorkspaceSyncSourceExecutionV1Schema, type WorkspaceSyncSourceRoutingV1, type WorkspaceSyncSourceWriterTargetRoutingV1,
+import { SOCKET_RPC_EVENTS, resolveSocketRpcSessionAuthorization, WorkspaceSyncSourceExecutionV1Schema, type WorkspaceSyncSourceRoutingV1, type WorkspaceSyncSourceWriterTargetRoutingV1,
     type WorkspaceSyncSourceExecutionV1, type WorkspaceSyncTargetRoutingV1, type WorkspaceSyncSeedRoutingV1 } from "@happier-dev/protocol/socketRpc";
 import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -898,6 +898,8 @@ export async function verifyCurrentExternalActionPrincipalInTx(
 }
 
 export type VerifiedExternalActionExecutionRequest = Readonly<{
+    /** Signed Session routing scope; the router admits Session access and the exact publisher. */
+    sessionRpcTarget?: Readonly<{ sessionId: string; machineId: string }>;
     /** One private acquisition admission; HTTP authentication consumes its typed result. */
     machineNpmProfileAdmission?: Awaited<ReturnType<typeof resolveMachineAdmissionInTx>>;
     /** The ordinary child Action's admission, consumed by the RPC router once. */
@@ -4519,6 +4521,13 @@ export async function verifyExternalActionMachineRpcExecution(
         return admitted.verified;
     }
 
+    const sessionRule = resolveSocketRpcSessionAuthorization(request.method);
+    const scopedSessionId = separator > 0 && request.method.slice(0, separator) !== binding.machineId
+        && sessionRule?.routeToSessionOwnerDaemon && sessionRule.machineScope === true
+        && binding.actionId === execution.effectActionId
+        && resolveMachineRpcExternalActionEffectV1(sessionRule.method, binding) === execution.effectActionId
+        ? request.method.slice(0, separator) : null;
+    const sessionRpcTarget = scopedSessionId ? { sessionId: scopedSessionId, machineId: binding.machineId } : null;
     const isTransitionRoot = binding.actionId === 'session.agent.transition';
     const transitionPurpose = isTransitionRoot && isSessionAgentTransitionRpcPurpose(binding, execution, request);
     if (isTransitionRoot && !transitionPurpose) return null;
@@ -4582,7 +4591,7 @@ export async function verifyExternalActionMachineRpcExecution(
             { machineId: binding.machineId, installationId: binding.installationId }) !== execution.effectActionId) return null;
     if ('authentication' in binding || binding.handoffContinuation || binding.handoffPreflight) {
         const workflowSessionTarget = binding.workflowActionOrigin && binding.target.kind === 'session' ? binding.target : null;
-        const prefix = `${workflowSessionTarget?.sessionId ?? binding.machineId}:`;
+        const prefix = `${sessionRpcTarget?.sessionId ?? workflowSessionTarget?.sessionId ?? binding.machineId}:`;
         const method = managedGuestActivity && guestMethod ? guestMethod
             : request.method.startsWith(prefix) ? request.method.slice(prefix.length) : request.method;
         // Pending admission has its own signed socket event, not a Machine RPC
@@ -4653,6 +4662,7 @@ export async function verifyExternalActionMachineRpcExecution(
     }) : null;
     if (readinessPurpose && readinessAdmission?.kind !== 'admitted') return null;
     return { binding, effectActionId: execution.effectActionId, target: execution.target, principal, effectiveAuthority: principal.authority,
+        ...(sessionRpcTarget ? { sessionRpcTarget } : {}),
         ...(readinessAdmission?.kind === 'admitted' ? { sessionAgentReadinessAdmission: readinessAdmission } : {}),
         ...(prepareInputPurpose ? { deploymentPrepareSessionInput: prepareInputPurpose } : {}),
         ...(managedGuestActivity ? { managedGuestActivity } : {}) };

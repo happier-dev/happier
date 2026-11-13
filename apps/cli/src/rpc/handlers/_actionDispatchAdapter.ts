@@ -1,5 +1,6 @@
 import { projectExternalActionWorkflowSessionLeafContextV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { ActionExecuteResult, ActionExecutorContext, ActionId } from '@happier-dev/protocol';
+import { ACTION_ID_FAMILIES_V1 } from '@happier-dev/protocol/actions/actionIds';
 import type { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import type { RpcLocalActionContext, RpcHandlerContext } from '@/api/rpc/types';
 import type { SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
@@ -354,11 +355,12 @@ async function resolveRpcActionExecutor<TActionId extends ActionId>(params: RpcA
     return module.createCliActionExecutor(buildActionExecutorDepsForRpc({ executorParams: params.executorParams }));
 }
 
-/** A requester confirms a Bot's effect; its Account executor never replaces the Bot's custody. */
+/** Runtime-owned effects retain requester custody without re-entering its transport executor. */
 export function readRequesterAccountRpcActionExecutor(
     params: Pick<RpcActionDispatchRequest, 'actionId' | 'requesterApprovalDecision' | 'callerInputAuthorization'>,
 ) {
-    return params.actionId === 'approval.request.decide' && params.requesterApprovalDecision
+    return ACTION_ID_FAMILIES_V1.execution_run_control.some(actionId => actionId === params.actionId)
+        || params.actionId === 'approval.request.decide' && params.requesterApprovalDecision
         ? undefined : params.callerInputAuthorization?.requesterAccountExecutor;
 }
 

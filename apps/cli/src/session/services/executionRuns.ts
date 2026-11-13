@@ -30,6 +30,7 @@ type ExecutionRunRpcContext = Readonly<{
     sessionId: string;
     signal?: AbortSignal;
     authorityCeiling?: 'account_automation';
+    externalAction?: Parameters<typeof callSessionRpc>[0]['externalAction'];
 }> & SessionStoredContentCryptoContext;
 
 export type ExecutionRunTerminalStatus = ProtocolExecutionRunTerminalStatus;

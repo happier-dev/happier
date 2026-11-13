@@ -316,28 +316,9 @@ export type CliActionDepsParams = Readonly<{
 }> & SessionStoredContentCryptoContext & ExternalActionHomeBinding & CliActionExactHomeTarget;
 
 
-  export type ExecutionRunActionTransportOptions = Readonly<{
-    surface?: ActionExecutorContext['surface'];
-    authority?: ActionExecutorContext['authority'];
-    actionCaller?: ActionExecutorContext['actionCaller'];
-    actionRequestId?: ActionExecutorContext['actionRequestId'];
-    workDepth?: number;
-    workspaceWrites?: 'allow' | 'deny';
-    agentStartContext?: ActionExecutorContext['agentStartContext'];
-    sessionAgentSpawnPolicyV1?: unknown;
-    causalPermissionAuthority?: ActionExecutorContext['causalPermissionAuthority'];
-    effectiveCallerPermissionMode?: string;
-    serverId?: string | null;
-    originSessionId?: string | null;
-    targetMachineId?: string | null;
-    exactMachineId?: string | null;
-    signal?: AbortSignal;
-    permissionRequestStore?: unknown;
-    workflowObservationSink?: unknown;
-    workflowRunId?: string;
-    workflowScope?: NonNullable<ActionExecutorContext['executionRunWorkflowScope']>;
-    requesterWorkAttributionV1?: RpcLocalActionContext['requesterWorkAttributionV1'];
-  }>;
+export type ExecutionRunActionTransportOptions = NonNullable<
+  Parameters<NonNullable<ActionExecutorDeps['executionRunStart']>>[2]
+>;
 
 export type ResolvedSessionTransport = Extract<
     Awaited<ReturnType<typeof resolveSessionTransportContext>>,
