@@ -459,7 +459,10 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         wantsPinnedRef,
     } = deps;
 
-    const [jumpToBottomDistanceFromBottom, setJumpToBottomDistanceFromBottom] = React.useState(0);
+    const [jumpToBottomGeometry, setJumpToBottomGeometry] = React.useState({
+        distanceFromBottom: 0,
+        viewportHeightPx: listLayoutHeight,
+    });
     const jumpToBottomDistanceFromBottomRef = React.useRef(0);
     const consumedRouteJumpRef = React.useRef<RouteJumpOperation | null>(null);
     const inFlightRouteJumpRef = React.useRef<RouteJumpOperation | null>(null);
@@ -488,7 +491,7 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         typeof transcriptScrollJumpToBottomRevealViewportRatio === 'number' && Number.isFinite(transcriptScrollJumpToBottomRevealViewportRatio)
             ? Math.max(0, Math.min(TRANSCRIPT_SCROLL_JUMP_TO_BOTTOM_REVEAL_VIEWPORT_RATIO_MAX, transcriptScrollJumpToBottomRevealViewportRatio))
             : settingsDefaults.transcriptScrollJumpToBottomRevealViewportRatio;
-    const jumpRevealOffsetThresholdPx = Math.max(pinThresholdPx, Math.trunc(listLayoutHeight * jumpRevealViewportRatio));
+    const jumpRevealOffsetThresholdPx = Math.max(pinThresholdPx, Math.trunc(jumpToBottomGeometry.viewportHeightPx * jumpRevealViewportRatio));
     const jumpAnimateScroll = transcriptScrollJumpToBottomAnimateScroll !== false;
 
     const resolveRouteMessageIdForMessageId = React.useCallback((messageId: string): string | null => {
@@ -647,16 +650,21 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
         });
     }, [listData, messagesById, sessionId]);
 
-    const commitJumpToBottomDistanceForVisibility = React.useCallback((distanceFromBottom: number) => {
+    const commitJumpToBottomDistanceForVisibility = React.useCallback((distanceFromBottom: number, viewportHeightPx = listLayoutHeight) => {
         jumpToBottomDistanceFromBottomRef.current = distanceFromBottom;
-        setJumpToBottomDistanceFromBottom((previousCommittedDistance) =>
-            resolveNextJumpToBottomDistanceVisibilityState({
-                previousCommittedDistance,
+        setJumpToBottomGeometry((previous) => {
+            const viewportHeight = viewportHeightPx || previous.viewportHeightPx;
+            const distance = resolveNextJumpToBottomDistanceVisibilityState({
+                previousCommittedDistance: previous.distanceFromBottom,
                 nextDistance: distanceFromBottom,
-                revealThresholdPx: jumpRevealOffsetThresholdPx,
-            })
-        );
-    }, [jumpRevealOffsetThresholdPx]);
+                revealThresholdPx: Math.max(pinThresholdPx, Math.trunc(viewportHeight * jumpRevealViewportRatio)),
+                viewportHeightPx: viewportHeight,
+            });
+            return distance === previous.distanceFromBottom && viewportHeight === previous.viewportHeightPx
+                ? previous
+                : { distanceFromBottom: distance, viewportHeightPx: viewportHeight };
+        });
+    }, [jumpRevealViewportRatio, listLayoutHeight, pinThresholdPx]);
 
     const promotePendingJumpSeqViewportSnapshot = React.useCallback((params: Readonly<{
         distanceFromBottom: number;
@@ -838,24 +846,24 @@ export function useTranscriptJumpHost(deps: TranscriptJumpHostDeps): TranscriptJ
     ]);
 
     React.useEffect(() => {
-        setJumpToBottomDistanceFromBottom((previousCommittedDistance) =>
-            resolveNextJumpToBottomDistanceVisibilityState({
-                previousCommittedDistance,
-                nextDistance: jumpToBottomDistanceFromBottomRef.current,
-                revealThresholdPx: jumpRevealOffsetThresholdPx,
-            })
+        // An existing streamed row can grow without a new activity id or scroll
+        // event. Web's scroll node also owns the viewport when host onLayout is 0.
+        const metrics = platformOS === 'web' ? resolveWebScrollMetrics() : null;
+        commitJumpToBottomDistanceForVisibility(
+            metrics ? getWebTranscriptDistanceFromBottom(metrics) : jumpToBottomDistanceFromBottomRef.current,
+            metrics?.clientHeight ?? listLayoutHeight,
         );
-    }, [jumpRevealOffsetThresholdPx]);
+    }, [commitJumpToBottomDistanceForVisibility, listContentHeight, listLayoutHeight, platformOS, resolveWebScrollMetrics]);
 
     const jumpToBottomAffordance = resolveJumpToBottomAffordanceState({
-        distanceFromBottom: jumpToBottomDistanceFromBottom,
+        distanceFromBottom: jumpToBottomGeometry.distanceFromBottom,
         enabled: jumpEnabled,
         hasMoreNewerBeyondRenderedWindow: targetWindowHasNewerBeyondRenderedWindow,
         isPinned: scrollPin.isPinned,
         minNewActivityCount: jumpMinNewCount,
         newActivityCount: scrollPin.newActivityCount,
         revealThresholdPx: jumpRevealOffsetThresholdPx,
-        viewportHeightPx: listLayoutHeight,
+        viewportHeightPx: jumpToBottomGeometry.viewportHeightPx,
     });
 
     const transcriptNavigationRuntimeAnchors = React.useMemo(

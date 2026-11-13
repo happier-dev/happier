@@ -2,6 +2,7 @@ export function resolveNextJumpToBottomDistanceVisibilityState(params: Readonly<
     previousCommittedDistance: number;
     nextDistance: number;
     revealThresholdPx: number;
+    viewportHeightPx?: number;
 }>): number {
     const threshold = typeof params.revealThresholdPx === 'number' && Number.isFinite(params.revealThresholdPx)
         ? Math.max(0, Math.trunc(params.revealThresholdPx))
@@ -14,6 +15,9 @@ export function resolveNextJumpToBottomDistanceVisibilityState(params: Readonly<
         : 0;
     const previousVisible = previous >= threshold;
     const nextVisible = next >= threshold;
-    if (previousVisible === nextVisible) return previous;
-    return nextVisible ? next : 0;
+    const viewportHeight = params.viewportHeightPx ?? 0;
+    const previousBeyondViewport = viewportHeight > 0 && previous > viewportHeight;
+    const nextBeyondViewport = viewportHeight > 0 && next > viewportHeight;
+    if (previousVisible === nextVisible && previousBeyondViewport === nextBeyondViewport) return previous;
+    return nextVisible || nextBeyondViewport ? next : 0;
 }

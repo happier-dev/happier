@@ -19,6 +19,7 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { storage } from '@/sync/domains/state/storage';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
 import type { Message } from '@happier-dev/session-core/messages';
+import type { CapturingLegendListMockState } from '@/dev/testkit/mocks/legendList';
 
 vi.mock('react-native', async () =>
     (await import('@/dev/testkit/harness/chatListHarness')).createChatListHarnessReactNativeMock({ platformOs: 'web' }));
@@ -131,7 +132,7 @@ describe('ChatList (jump-to-bottom)', () => {
         });
     });
 
-    it('shows a jump-to-bottom button when an existing newest turn grows while unpinned', async () => {
+    it.each([600, 0])('shows a jump-to-bottom button when an existing newest turn streams with host layout height %i', async (hostLayoutHeight) => {
         const onViewportChange = vi.fn();
         storage.setState({ settings: { ...storage.getState().settings, transcriptGroupingMode: 'turns' } });
         const messages: Message[] = [
@@ -146,9 +147,21 @@ describe('ChatList (jump-to-bottom)', () => {
             source,
         );
         try {
-        await triggerLegendChatListInitialFill(screen, { contentHeight: 3000, layoutHeight: 600 });
-        await detachFromTail(scroller);
-        expect(onViewportChange).toHaveBeenCalledWith(expect.objectContaining({ isPinned: false }));
+        await triggerLegendChatListInitialFill(screen, { contentHeight: 3000, layoutHeight: hostLayoutHeight,
+            state: { scrollLength: 600 } });
+        if (hostLayoutHeight > 0) {
+            await detachFromTail(scroller);
+            expect(onViewportChange).toHaveBeenCalledWith(expect.objectContaining({ isPinned: false }));
+        } else {
+            // Web can retain its previous at-end/pin report during a growing row.
+            // Only the scroller has the current viewport and physical position.
+            await triggerLegendChatListWheel(-100, { turns: 1 });
+            scroller.scrollTop = 200;
+            chatListHarnessState.legendListState = {
+                ...chatListHarnessState.legendListState, scroll: 200,
+                isAtEnd: false, isNearEnd: false, isWithinMaintainScrollAtEndThreshold: false,
+            };
+        }
 
         const releasedScrollTop = scroller.scrollTop;
         scroller.scrollHeight = 3600;
@@ -170,10 +183,19 @@ describe('ChatList (jump-to-bottom)', () => {
         expect(scroller.scrollTop).toBe(releasedScrollTop);
         expect(screen.findAllByTestId('transcript-jump-to-bottom').length).toBeGreaterThan(0);
         onViewportChange.mockClear();
-        await screen.pressByTestIdAsync('transcript-jump-to-bottom');
-        expect(onViewportChange).toHaveBeenCalledWith({
-            isPinned: true, offsetY: 0, shouldRestoreViewport: false,
+        // The third-party list boundary applies its requested physical landing.
+        const list = chatListHarnessState.legendListRefHandle as CapturingLegendListMockState['refHandle'];
+        list.scrollToEnd.mockImplementation(() => {
+            scroller.scrollTop = scroller.scrollHeight - scroller.clientHeight;
+            return Promise.resolve();
         });
+        await screen.pressByTestIdAsync('transcript-jump-to-bottom');
+        expect(scroller.scrollTop).toBe(scroller.scrollHeight - scroller.clientHeight);
+        if (hostLayoutHeight > 0) {
+            expect(onViewportChange).toHaveBeenCalledWith({
+                isPinned: true, offsetY: 0, shouldRestoreViewport: false,
+            });
+        }
         } finally {
             await screen.unmount();
         }
