@@ -38,6 +38,8 @@ import type { DaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadD
 import type { FreshPluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
 import { resolveFreshPluginMachineExecutionOrigin } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
 import { composePluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
+import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
+import type { PluginMachineSourceExecutionOriginCandidateV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import { applyPluginAccountAvailabilityProjectionRefresh, clearPluginAccountAvailabilityProjection, readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { createActivePluginAccountAvailabilityProjectionHydrator } from '@/sync/api/plugins/availability/pluginAvailabilityProjection';
 import { clearDaemonMergedProjectionCacheForTests, loadDaemonMergedProjectionInputs, readCachedDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
@@ -282,7 +284,7 @@ function projectionResponse(
                 source: { kind: 'archive', locator: `sha256:${'a'.repeat(64)}` },
                 immutableGenerationId: event.event.occurrenceId,
                 occurrenceId: event.event.occurrenceId, sourceCustody: event.event.sourceCustody,
-                executionOrigin: { serverIdentityId: SERVER_IDENTITY_ID,
+                executionOrigin: event.observationBinding?.executionOrigin ?? { serverIdentityId: SERVER_IDENTITY_ID,
                     materializationRef: { machineId: MACHINE_ID, materializationId: MATERIALIZATION_ID, pluginId: PLUGIN_ID } },
             } },
             agentsById: {},
@@ -292,10 +294,11 @@ function projectionResponse(
                     pluginId: PLUGIN_ID,
                     occurrenceId: action.occurrenceId,
                     title: action.title,
+                    ...(action.inputHints ? { inputHints: action.inputHints } : {}),
                     scopes: ['settings'],
                     surfaces: ['ui', 'plugin'],
                     execution: { target: 'daemon' },
-                    executionOrigin: { serverIdentityId: SERVER_IDENTITY_ID,
+                    executionOrigin: event.observationBinding?.executionOrigin ?? { serverIdentityId: SERVER_IDENTITY_ID,
                         materializationRef: { machineId: MACHINE_ID, materializationId: MATERIALIZATION_ID, pluginId: PLUGIN_ID } },
                     placementBindings: [],
                     priority: 0,
@@ -688,6 +691,83 @@ describe('automation history-gap recovery status', () => {
 });
 
 describe('AutomationHistoryGapRecoveryAction', () => {
+    it('recovers an enabled native watcher only through its admitted source candidate and exact observer binding', async () => {
+        const sourceCustody = { kind: 'development', registeredRootId: 'native-github-root' } as const;
+        const origin = { serverIdentityId: SERVER_IDENTITY_ID, sourceRef: { machineId: MACHINE_ID, pluginId: PLUGIN_ID, sourceCustody } };
+        const event = DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({
+            ...eligibleEvent(),
+            event: { ...eligibleEvent().event, sourceCustody },
+            observationBinding: { executionOrigin: origin, materializationRef: eventSourceStatus().reporterMaterializationRef },
+            historyGapResetAction: { ...eligibleEvent().historyGapResetAction, inputHints: { fields: [
+                { path: 'automationId', widget: 'text', required: true, title: 'Automation Id' },
+                { path: 'sourceSelectorId', widget: 'text', required: true, title: 'Source Selector Id' },
+                { path: 'triggerId', widget: 'text', required: true, title: 'Trigger Id' },
+                { path: 'triggerRevision', widget: 'integer', required: true, title: 'Trigger Revision' },
+            ] } },
+        });
+        const sources: readonly PluginMachineSourceExecutionOriginCandidateV1[] = [{
+            source: { origin, version: '1.0.0', occurrenceId: event.event.occurrenceId, serverId: SERVER_ID },
+            releaseContent: 'matched', validation: { kind: 'admitted' },
+        }];
+        const installed = { ...materialization(), portableRelease: false };
+        home.answer(SERVER_ID, `POST ${PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']}`, {
+            body: PluginAvailabilityMaterializationsReadActionOutputV1Schema.parse({ availabilityCursor: 2,
+                snapshots: [{ serverIdentityId: SERVER_IDENTITY_ID, machineId: MACHINE_ID, materializations: [installed] }] }),
+        });
+        const refreshed = await createActivePluginAccountAvailabilityProjectionHydrator().refresh();
+        if (!refreshed) throw new Error('native recovery Account retired');
+        applyPluginAccountAvailabilityProjectionRefresh(refreshed);
+        const currentAutomation = automationForScreen({ triggers: [eventTrigger({ sourceStatus: eventSourceStatus({ reporterSourceCustody: sourceCustody }) })] });
+        rpcEvent = event;
+        rpcProjection = projectionResponse(event);
+        clearDaemonMergedProjectionCacheForTests();
+        resetMachineProjectionReadsForTests();
+        rpcRequests.length = 0;
+        const facts = {
+            establishingTargets: [], sourceCandidates: sources, machineRejections: [], declaredDefaultOrigins: [], autoPick: true,
+        };
+        const pendingFacts = { ...facts, sourceCandidates: [] };
+        let unpublish = publishCommittedAppShellPluginUiProjection(() => null, () => pendingFacts);
+        try {
+            const { AutomationHistoryGapRecoveryAction } = await import('./AutomationHistoryGapRecoveryAction');
+            const screen = await renderScreen(React.createElement(AutomationHistoryGapRecoveryAction, {
+                automation: currentAutomation, triggerId: TRIGGER_ID, isCurrentRoute: () => true, rereadAutomationStatus,
+            }));
+            await waitForHomeGovernance(() => expect(rpcRequests.some(request =>
+                request.method === `${MACHINE_ID}:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`)).toBe(true));
+            const { act } = await import('react-test-renderer');
+            await act(async () => { unpublish = publishCommittedAppShellPluginUiProjection(() => null, () => facts); });
+            await waitForHomeGovernance(() => expect(screen.findAll(row =>
+                row.props.title === 'History gap needs attention' && typeof row.props.onPress === 'function').length).toBeGreaterThan(0));
+            await pressTestInstanceAsync(screen.find(row =>
+                row.props.title === 'History gap needs attention' && typeof row.props.onPress === 'function'), 'native recovery');
+            await waitForHomeGovernance(() => expect(actionRequests).toHaveLength(1));
+            expect(actionRequests[0]).toMatchObject({
+                action: { pluginId: PLUGIN_ID, localId: ACTION_LOCAL_ID },
+                expectedContributorOccurrenceId: event.event.occurrenceId,
+                input: { automationId: AUTOMATION_ID, triggerId: TRIGGER_ID, triggerRevision: TRIGGER_REVISION, sourceSelectorId: SOURCE_SELECTOR_ID },
+            });
+            const replacedBinding = DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema.parse({
+                ...event,
+                observationBinding: { executionOrigin: origin, materializationRef: {
+                    ...eventSourceStatus().reporterMaterializationRef, materializationId: 'different-watcher',
+                } },
+            });
+            const reader = readPluginAccountAvailability(ACCOUNT_LIFETIME.scope);
+            await expect(recoverAutomationHistoryGap({
+                eligibleEvent: replacedBinding, triggerId: TRIGGER_ID, accountLifetime: ACCOUNT_LIFETIME,
+                resolveCurrentAutomation: () => currentAutomation,
+                resolveExecutionOrigin: () => resolveFreshPluginMachineExecutionOrigin({
+                    pluginId: PLUGIN_ID, origin, reader, classifyRelease: reader.classifyRelease, sourceCandidates: sources,
+                }),
+                loadCurrentProjection: () => projectionInputs(replacedBinding),
+            })).resolves.toEqual({ kind: 'stale' });
+            expect(actionRequests).toHaveLength(1);
+        } finally {
+            unpublish();
+        }
+    });
+
     it('exposes source attention and recovery from the workflow trigger History', async () => {
         const { WorkflowTriggerSection } = await import('@/components/workflows/triggers/WorkflowTriggerSection');
         const { WorkflowTriggerSetV1Schema } = await import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1');

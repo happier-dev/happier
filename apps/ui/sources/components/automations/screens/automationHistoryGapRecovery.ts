@@ -14,7 +14,13 @@ import {
     type PluginContributedActionDispatch,
 } from '@/components/plugins/actions/pluginContributedActionController';
 import { dispatchPluginSurfaceAction } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
-import type { FreshPluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
+import {
+    readFreshPluginMachineExecutionOriginCandidates,
+    resolveFreshPluginMachineExecutionOrigin,
+    type FreshPluginMachineExecutionOriginV1,
+} from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
+import { getPluginExecutionOriginCandidateOrigin, isPluginMachineExecutionOriginCandidateSelectable } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
+import { resolvePluginEventAutomationObserverMaterialization } from '@/components/automations/editor/pluginEventAutomationObservationBinding';
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import {
     createPluginUiProjectedActionResolver,
@@ -105,6 +111,27 @@ export function readAutomationHistoryGapRecoveryStatus(
     return status;
 }
 
+/** Reuse Administration admission for the reporting watcher's exact installed or native source. */
+export function resolveAutomationHistoryGapRecoveryExecutionOrigin(params: Readonly<{
+    automation: AutomationDefinitionListItem | null;
+    triggerId: string;
+}> & Pick<Parameters<typeof resolveFreshPluginMachineExecutionOrigin>[0], 'reader' | 'classifyRelease' | 'sourceCandidates' | 'machineRejections'>): FreshPluginMachineExecutionOriginV1 | null {
+    const status = readAutomationHistoryGapRecoveryStatus(params.automation, params.triggerId);
+    if (!status) return null;
+    const inputs = { ...params, pluginId: status.eventRef.pluginId, origin: null };
+    const matches = readFreshPluginMachineExecutionOriginCandidates(inputs).filter(candidate => {
+        if (!isPluginMachineExecutionOriginCandidateSelectable(candidate)) return false;
+        const origin = getPluginExecutionOriginCandidateOrigin(candidate);
+        return 'materializationRef' in origin
+            ? arePluginMachineMaterializationRefsEqual(origin.materializationRef, status.reporterMaterializationRef)
+            : origin.sourceRef.machineId === status.reporterMaterializationRef.machineId
+                && origin.sourceRef.pluginId === status.reporterMaterializationRef.pluginId
+                && pluginSourceCustodyV1Equal(origin.sourceRef.sourceCustody, status.reporterSourceCustody);
+    });
+    if (matches.length !== 1) return null;
+    return resolveFreshPluginMachineExecutionOrigin({ ...inputs, origin: getPluginExecutionOriginCandidateOrigin(matches[0]!) });
+}
+
 /** The cold catalog is the one Action binding source; this only reads its exact Event entry. */
 export function readAutomationHistoryGapRecoveryEligibleEvent(params: Readonly<{
     inputs: DaemonMergedProjectionInputs | null | undefined;
@@ -170,11 +197,8 @@ function resolveCurrentRecoverySnapshot(params: Readonly<{
     const automation = params.resolveCurrentAutomation();
     const status = readAutomationHistoryGapRecoveryStatus(automation, params.triggerId);
     const origin = params.resolveExecutionOrigin();
-    if (!automation || !status || !origin || !('materializationRef' in origin.origin) || params.signal.aborted || !params.accountLifetime.isCurrent()) {
+    if (!automation || !status || !origin || params.signal.aborted || !params.accountLifetime.isCurrent()) {
         return { kind: 'unavailable' };
-    }
-    if (!arePluginMachineMaterializationRefsEqual(origin.origin.materializationRef, status.reporterMaterializationRef)) {
-        return { kind: 'stale' };
     }
     const event = readAutomationHistoryGapRecoveryEligibleEvent({
         inputs: params.inputs,
@@ -182,6 +206,10 @@ function resolveCurrentRecoverySnapshot(params: Readonly<{
         triggerId: params.triggerId,
     });
     if (!event || !sameRecoveryEligibleEvent(event, params.desiredEvent)) {
+        return { kind: 'stale' };
+    }
+    const reporter = resolvePluginEventAutomationObserverMaterialization(event, origin.origin);
+    if (!reporter || !arePluginMachineMaterializationRefsEqual(reporter, status.reporterMaterializationRef)) {
         return { kind: 'stale' };
     }
     const action = event.historyGapResetAction;
@@ -216,6 +244,7 @@ function resolveCurrentRecoverySnapshot(params: Readonly<{
                 } catch {
                     return false;
                 }
+                const currentReporter = currentOrigin && resolvePluginEventAutomationObserverMaterialization(event, currentOrigin.origin);
                 return params.actionSnapshotRef.current === actionSnapshot
                     && !params.signal.aborted
                     && params.accountLifetime.isCurrent()
@@ -224,10 +253,10 @@ function resolveCurrentRecoverySnapshot(params: Readonly<{
                     && currentStatus !== null
                     && sameCurrentSourceStatus(currentStatus, status)
                     && currentOrigin !== null
-                    && 'materializationRef' in currentOrigin.origin
                     && areFreshPluginMachineExecutionOriginsCurrent(currentOrigin, origin)
+                    && currentReporter !== null
                     && arePluginMachineMaterializationRefsEqual(
-                        currentOrigin.origin.materializationRef,
+                        currentReporter,
                         currentStatus.reporterMaterializationRef,
                     );
             },
@@ -331,7 +360,23 @@ export async function recoverAutomationHistoryGap(params: Readonly<{
                 sourceSelectorId: initialTrigger.sourceSelectorId,
             },
         });
-        if (selection.kind !== 'direct' || selection.result.kind !== 'submitted' || operationScope.signal.aborted) {
+        const selected = selection.kind === 'form'
+            ? await (async () => {
+                try {
+                    // Recovery's complete source identity is host-filled. Reuse the
+                    // canonical form validation without presenting those identity fields.
+                    const submitted = await selection.form.submit();
+                    if (submitted.kind !== 'settled' || !submitted.outcome.ok) {
+                        selection.form.cancel();
+                        return null;
+                    }
+                    return await selection.result;
+                } finally {
+                    selection.form.retire();
+                }
+            })()
+            : selection.kind === 'direct' ? selection.result : null;
+        if (selected?.kind !== 'submitted' || operationScope.signal.aborted) {
             return { kind: 'unavailable' };
         }
 
@@ -346,7 +391,7 @@ export async function recoverAutomationHistoryGap(params: Readonly<{
             return { kind: 'stale' };
         }
         actionSnapshotRef.current = current.actionSnapshot;
-        const input = reconstructPluginUiSelectedActionInput(selection.result);
+        const input = reconstructPluginUiSelectedActionInput(selected);
         if (!input || operationScope.signal.aborted) return { kind: 'unavailable' };
         const outcome = await (params.dispatch ?? dispatchPluginSurfaceAction)({
             action: action.identity,

@@ -1,10 +1,8 @@
 import * as React from 'react';
 import { HappierBanner } from '@happier-dev/plugin-ui/presentation';
-import { arePluginMachineMaterializationRefsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { useUnistyles } from 'react-native-unistyles';
 
-import { composePluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
-import { resolveFreshPluginMachineExecutionOrigin, type FreshPluginMachineExecutionOriginV1 } from '@/sync/domains/machines/administration/usePluginExecutionOriginSelection';
+import { readCurrentAppShellPluginUiExecutionOriginCandidates, subscribeCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import {
     useActivePluginAccountAvailabilityReader,
@@ -23,32 +21,8 @@ import {
     readAutomationHistoryGapRecoveryEligibleEvent,
     readAutomationHistoryGapRecoveryStatus,
     recoverAutomationHistoryGap,
+    resolveAutomationHistoryGapRecoveryExecutionOrigin,
 } from './automationHistoryGapRecovery';
-
-function resolveHistoryGapRecoveryExecutionOrigin(params: Readonly<{
-    automation: AutomationDefinition | null;
-    triggerId: string;
-    reader: ReturnType<typeof useActivePluginAccountAvailabilityReader>;
-    classifyRelease: ReturnType<typeof useActivePluginAccountAvailabilityReleaseClassifier>;
-}>): FreshPluginMachineExecutionOriginV1 | null {
-    const status = readAutomationHistoryGapRecoveryStatus(params.automation, params.triggerId);
-    const automation = params.automation;
-    const trigger = automation?.triggers.find((candidate) => candidate.id === params.triggerId);
-    if (!status || !automation || trigger?.kind !== 'pluginEvent' || !params.reader) return null;
-    const admission = params.reader.readMaterializations();
-    if (admission.kind !== 'available') return null;
-    const matches = admission.materializations.filter((materialization) => (
-        materialization.pluginId === trigger.eventRef.pluginId
-        && arePluginMachineMaterializationRefsEqual(materialization, status.reporterMaterializationRef)
-    ));
-    if (matches.length !== 1) return null;
-    return resolveFreshPluginMachineExecutionOrigin({
-        pluginId: trigger.eventRef.pluginId,
-        origin: composePluginMachineExecutionOriginV1(matches[0]!),
-        reader: params.reader,
-        classifyRelease: params.classifyRelease,
-    });
-}
 
 /**
  * A detail-only recovery entry point. It borrows the existing cold Event
@@ -68,19 +42,27 @@ export function AutomationHistoryGapRecoveryAction(props: Readonly<{
     const automationRef = React.useRef(props.automation);
     automationRef.current = props.automation;
     const status = readAutomationHistoryGapRecoveryStatus(props.automation, props.triggerId);
-    const resolveExecutionOrigin = React.useCallback(() => resolveHistoryGapRecoveryExecutionOrigin({
-        automation: automationRef.current,
-        triggerId: props.triggerId,
-        reader: availabilityReader,
-        classifyRelease,
-    }), [availabilityReader, classifyRelease, props.triggerId]);
+    const watcherPluginId = status?.eventRef.pluginId ?? '';
+    const readWatcherFacts = React.useCallback(() => readCurrentAppShellPluginUiExecutionOriginCandidates(watcherPluginId), [watcherPluginId]);
+    React.useSyncExternalStore(subscribeCommittedAppShellPluginUiProjection, readWatcherFacts, readWatcherFacts);
+    const resolveExecutionOrigin = React.useCallback(() => {
+        const facts = readWatcherFacts();
+        return resolveAutomationHistoryGapRecoveryExecutionOrigin({
+            automation: automationRef.current,
+            triggerId: props.triggerId,
+            reader: availabilityReader,
+            classifyRelease,
+            sourceCandidates: facts.sourceCandidates,
+            machineRejections: facts.machineRejections,
+        });
+    }, [availabilityReader, classifyRelease, props.triggerId, readWatcherFacts]);
     const origin = resolveExecutionOrigin();
     const projection = useDaemonMergedProjectionInputs({
-        machineId: origin?.machineTarget.target.machineId ?? null,
-        serverId: origin?.machineTarget.serverId ?? null,
-        enabled: status !== null && origin !== null,
+        machineId: status?.reporterMaterializationRef.machineId ?? null,
+        serverId: accountLifetime?.scope.serverId ?? null,
+        enabled: status !== null && accountLifetime !== null,
         staleMs: 0,
-        // The eligible Event plus the plugin UI facts its recovery Action dispatch reads.
+        // The reporting watcher supplies native origins too; load its cold facts before execution admission.
         sections: PLUGIN_EVENT_AUTOMATION_SECTIONS,
     });
     const eligibleEvent = React.useMemo(() => (
