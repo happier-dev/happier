@@ -3019,6 +3019,7 @@ const ja = {
         storedContentUnavailableBody: 'このイベント ワークフローは、保存されているコンテンツが利用できないため保存できません。',
         historyGapRecoveryTitle: '歴史のギャップに注意が必要',
         historyGapRecoverySubtitle: '新しいイベントの監視を再開するには、ソース ベースラインをリセットします。',
+        historyGapRecoveryAction: '追いつく',
         historyGapRecoveryUnavailable: 'ソース回復アクションは、現在のウォッチャーでは使用できません。',
         historyGapRecoveryFailureTitle: 'ソースの回復にはもう一度試す必要があります',
         historyGapRecoveryFailureBody: '回復は確認されなかった。ソースにはまだ注意が必要です。',

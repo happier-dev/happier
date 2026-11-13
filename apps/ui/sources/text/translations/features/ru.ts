@@ -3041,6 +3041,7 @@ const ru = {
         storedContentUnavailableBody: 'Этот рабочий процесс событий невозможно сохранить, поскольку его сохраненное содержимое недоступно.',
         historyGapRecoveryTitle: 'Исторический пробел требует внимания',
         historyGapRecoverySubtitle: 'Сбросьте исходную базовую линию, чтобы возобновить наблюдение за новыми событиями.',
+        historyGapRecoveryAction: 'Наверстать',
         historyGapRecoveryUnavailable: 'Действие по восстановлению источника недоступно в текущем наблюдателе.',
         historyGapRecoveryFailureTitle: 'Для восстановления исходного кода требуется еще одна попытка',
         historyGapRecoveryFailureBody: 'Восстановление не подтвердилось. Источник по-прежнему требует внимания.',

@@ -3032,6 +3032,7 @@ const pl = {
         storedContentUnavailableBody: 'Nie można zapisać tego przepływu pracy wydarzenia, ponieważ przechowywana w nim zawartość jest niedostępna.',
         historyGapRecoveryTitle: 'Luka w historii wymaga uwagi',
         historyGapRecoverySubtitle: 'Zresetuj linię bazową źródła, aby wznowić obserwację nowych zdarzeń.',
+        historyGapRecoveryAction: 'Nadrób zaległości',
         historyGapRecoveryUnavailable: 'Akcja odzyskiwania źródła nie jest dostępna w bieżącym obserwatorze.',
         historyGapRecoveryFailureTitle: 'Odzyskiwanie źródła wymaga kolejnej próby',
         historyGapRecoveryFailureBody: 'Powrót do zdrowia nie został potwierdzony. Źródło nadal wymaga uwagi.',

@@ -3021,6 +3021,7 @@ const es = {
         storedContentUnavailableBody: 'Este flujo de trabajo de eventos no se puede guardar porque su contenido almacenado no está disponible.',
         historyGapRecoveryTitle: 'La brecha histórica necesita atención',
         historyGapRecoverySubtitle: 'Restablezca la línea base de origen para continuar observando nuevos eventos.',
+        historyGapRecoveryAction: 'Ponerse al día',
         historyGapRecoveryUnavailable: 'La acción de recuperación de origen no está disponible en su observador actual.',
         historyGapRecoveryFailureTitle: 'La recuperación de la fuente necesita otro intento',
         historyGapRecoveryFailureBody: 'La recuperación no fue confirmada. La fuente todavía necesita atención.',

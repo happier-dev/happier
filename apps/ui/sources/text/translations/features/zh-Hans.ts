@@ -3014,6 +3014,7 @@ const zhHans = {
         storedContentUnavailableBody: '无法保存此事件工作流，因为其存储的内容不可用。',
         historyGapRecoveryTitle: '历史差距需引起重视',
         historyGapRecoverySubtitle: '重置源基线以继续观察新事件。',
+        historyGapRecoveryAction: '补齐',
         historyGapRecoveryUnavailable: '源恢复操作在当前观察程序上不可用。',
         historyGapRecoveryFailureTitle: '源恢复需要再次尝试',
         historyGapRecoveryFailureBody: '康复情况尚未得到证实。消息来源仍需关注。',

@@ -3021,6 +3021,7 @@ const it = {
         storedContentUnavailableBody: 'Questo flusso di lavoro dell\'evento non può essere salvato perché il suo contenuto archiviato non è disponibile.',
         historyGapRecoveryTitle: 'Il divario storico necessita di attenzione',
         historyGapRecoverySubtitle: 'Reimposta la linea di base di origine per riprendere a osservare nuovi eventi.',
+        historyGapRecoveryAction: 'Recupera',
         historyGapRecoveryUnavailable: 'L\'azione di ripristino dell\'origine non è disponibile sul relativo osservatore corrente.',
         historyGapRecoveryFailureTitle: 'Il ripristino della fonte richiede un altro tentativo',
         historyGapRecoveryFailureBody: 'Il recupero non è stato confermato. La fonte necessita ancora di attenzione.',

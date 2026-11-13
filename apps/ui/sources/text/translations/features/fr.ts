@@ -3021,6 +3021,7 @@ const eventAutomationComposerTranslations = { fr: {
         storedContentUnavailableBody: 'Ce workflow d’Événement ne peut pas être enregistré car son contenu stocké est indisponible.',
         historyGapRecoveryTitle: 'Une lacune d’historique nécessite ton attention',
         historyGapRecoverySubtitle: 'Réinitialise la ligne de base de la source pour reprendre l’observation des nouveaux Événements.',
+        historyGapRecoveryAction: 'Rattraper',
         historyGapRecoveryUnavailable: 'L’action de récupération de la source n’est pas disponible sur son watcher actuel.',
         historyGapRecoveryFailureTitle: 'La récupération de la source doit être retentée',
         historyGapRecoveryFailureBody: 'La récupération n’a pas été confirmée. La source nécessite toujours ton attention.',

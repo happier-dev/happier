@@ -3021,6 +3021,7 @@ const ca = {
         storedContentUnavailableBody: 'Aquest flux de treball d\'esdeveniments no es pot desar perquè el seu contingut emmagatzemat no està disponible.',
         historyGapRecoveryTitle: 'La bretxa històrica necessita atenció',
         historyGapRecoverySubtitle: 'Restableix la línia de base d\'origen per reprendre l\'observació d\'esdeveniments nous.',
+        historyGapRecoveryAction: 'Posa al dia',
         historyGapRecoveryUnavailable: 'L\'acció de recuperació de la font no està disponible al seu observador actual.',
         historyGapRecoveryFailureTitle: 'La recuperació de la font necessita un altre intent',
         historyGapRecoveryFailureBody: 'La recuperació no es va confirmar. La font encara necessita atenció.',

@@ -95,7 +95,9 @@ describe('Android material fallback', () => {
                     <GlassSurface testID="android-material" floatingRole={floatingRole} solidColor="#ffffff"><></></GlassSurface>
                 </GlassMaterialSettingsProvider>
             </GlassRuntimeEnvironmentProvider>);
-            expect(Color(flattenTestStyle(screen.findByTestId('android-material')?.props.style).backgroundColor).alpha()).toBe(1);
+            const materialColor = flattenTestStyle(screen.findByTestId('android-material')?.props.style).backgroundColor;
+            if (typeof materialColor !== 'string') throw new Error('Expected an Android material background color');
+            expect(Color(materialColor).alpha()).toBe(1);
             standardCleanup();
         }
         const card = await renderScreen(<GlassRuntimeEnvironmentProvider value={{ nativeRenderer: true, atmosphereBehind: 'wallpaper' }}>
@@ -103,6 +105,8 @@ describe('Android material fallback', () => {
                 <GlassSurface testID="android-card" surfaceGroup="card" solidColor="#ffffff"><></></GlassSurface>
             </GlassMaterialSettingsProvider>
         </GlassRuntimeEnvironmentProvider>);
-        expect(Color(flattenTestStyle(card.findByTestId('android-card')?.props.style).backgroundColor).alpha()).toBeLessThan(1);
+        const cardColor = flattenTestStyle(card.findByTestId('android-card')?.props.style).backgroundColor;
+        if (typeof cardColor !== 'string') throw new Error('Expected an Android card background color');
+        expect(Color(cardColor).alpha()).toBeLessThan(1);
     });
 });

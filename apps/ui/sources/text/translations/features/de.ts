@@ -3015,6 +3015,7 @@ const eventAutomationComposerTranslations = { de: {
         storedContentUnavailableBody: 'Dieser Ereignis-Workflow lässt sich nicht speichern, weil sein gespeicherter Inhalt nicht verfügbar ist.',
         historyGapRecoveryTitle: 'Eine Lücke im Verlauf braucht Aufmerksamkeit',
         historyGapRecoverySubtitle: 'Setz die Quell-Baseline zurück, um wieder neue Ereignisse zu beobachten.',
+        historyGapRecoveryAction: 'Aufholen',
         historyGapRecoveryUnavailable: 'Die Wiederherstellungsaktion für die Quelle gibt es bei ihrem aktuellen Watcher nicht.',
         historyGapRecoveryFailureTitle: 'Die Quell-Wiederherstellung braucht einen weiteren Versuch',
         historyGapRecoveryFailureBody: 'Die Wiederherstellung wurde nicht bestätigt. Die Quelle braucht weiter Aufmerksamkeit.',

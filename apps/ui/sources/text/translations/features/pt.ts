@@ -3021,6 +3021,7 @@ const pt = {
         storedContentUnavailableBody: 'Este fluxo de trabalho de evento não pode ser salvo porque seu conteúdo armazenado não está disponível.',
         historyGapRecoveryTitle: 'A lacuna histórica precisa de atenção',
         historyGapRecoverySubtitle: 'Redefina a linha de base de origem para retomar a observação de novos eventos.',
+        historyGapRecoveryAction: 'Colocar em dia',
         historyGapRecoveryUnavailable: 'A ação de recuperação de origem não está disponível no inspetor atual.',
         historyGapRecoveryFailureTitle: 'A recuperação da fonte precisa de outra tentativa',
         historyGapRecoveryFailureBody: 'A recuperação não foi confirmada. A fonte ainda precisa de atenção.',
