@@ -242,26 +242,35 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
   // pick, else the only account, else the selector's first eligible one. Without any of these the tightest account
   // stands in, said as the tightest. At full width every plan's cell still follows it for comparison.
   const next = readNextLimitsAccount(selections, drawn);
+  // Until the selector answers, which account leads is not known: the headline's room is held and no caption is said,
+  // so the tightest standing in never turns into the next account after arrival (acceptance 11-13 #2).
+  const deciding = next === null && drawn.length > 1 && [...selections.values()].some(state => state === 'loading');
   // Beside other widgets the headline account is one figure and one meter and the rest one line: the next account
   // always, the tightest standing in when the pooled bar has no room for a label per segment. Listing them instead
   // grew the column ~240 px past the Daily chart beside it (R6 N12); their figures are Plans' to compare.
-  const compact = pooled && (next !== null
+  const compact = pooled && (next !== null || deciding
     || width !== null && width / Math.max(1, drawn.length) < POOLED_COLUMN_LABEL_MIN_WIDTH_PX);
   // The caption says what the headline is: the next session's account, or the tightest of every plan standing in.
-  useWidgetFrameBodyCaption(t(next !== null ? 'usage.board.plans.limitsCaption' : 'usage.board.plans.capacityCaption'));
+  useWidgetFrameBodyCaption(deciding ? null : t(next !== null ? 'usage.board.plans.limitsCaption' : 'usage.board.plans.capacityCaption'));
   const nextWindow = next?.headline ?? null;
-  const tightest = next === null ? projection.tightest
+  const tightest = deciding ? null : next === null ? projection.tightest
     : nextWindow !== null && nextWindow.remainingFraction !== null
       ? { account: next, window: nextWindow, provisional: projection.tightest?.provisional === true } : null;
   // The next account answered without a figure for its window: the headline says "not reported", never 0%.
   const nextUnreported = next !== null && tightest === null;
-  // Every other account in one line ("6 more · 2 used up"); their figures are Plans' to compare.
-  const lead = next ?? projection.tightest?.account ?? null;
+  // Every other account in one line ("6 more · 2 used up · 5 not read"); their figures are Plans' to compare. An
+  // account whose allowance was never read is not one more figure: it is said apart.
+  const lead = deciding ? null : next ?? projection.tightest?.account ?? null;
   const othersLine = !compact || lead === null ? null : (() => {
     const others = projection.accounts.filter((account) => account.key !== lead.key);
-    if (others.length === 0) return null;
-    const usedUp = others.filter((account) => account.headline?.remainingFraction != null && account.headline.remainingFraction <= 0).length;
-    return t('usage.board.plans.limitsOthers', { count: others.length, usedUp });
+    const read = others.filter(isUsagePlanAccountDrawn);
+    const notRead = others.filter(isUsagePlanAccountSettledUnread).length;
+    const usedUp = read.filter((account) => account.headline?.remainingFraction != null && account.headline.remainingFraction <= 0).length;
+    const parts = [
+      read.length > 0 ? t('usage.board.plans.limitsOthers', { count: read.length, usedUp }) : null,
+      notRead > 0 ? t('usage.board.plans.limitsNotRead', { count: notRead }) : null,
+    ].filter(Boolean);
+    return parts.length > 0 ? parts.join(' · ') : null;
   })();
   const tightestName = tightest ? nameOf(tightest.account) : null;
   const cellCount = drawn.length;
@@ -272,7 +281,7 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
   // Until the first allowance answers there is no tightest to name, but the headline's room is held: the
   // figure it will be and one quiet line ("Reading 5 accounts…"), so its arrival moves nothing below it.
   const pendingAccounts = readPendingPlanAccountCount(projection.accounts);
-  const reading = tightest === null && pendingAccounts > 0;
+  const reading = tightest === null && (pendingAccounts > 0 || deciding);
   const provisionalReading = tightest?.provisional === true && pendingAccounts > 0;
   // One account: the headline says its figure and reset, and its cell under the bar names it (mark, name, plan),
   // so neither says the other's fact again. An old reading is said once, by the read-state line under the body;
@@ -413,7 +422,8 @@ export function UsageCapacityWidget(props: UsageBodyProps) {
         </Text>
       ) : null}
       {projection.accounts.some(account => account.windows.length > 0) ? (
-        <UsagePlanDisclosure title={`${t('usage.widgets.usage_capacity')}: ${t('usage.board.charts.showValues')}`}
+        <UsagePlanDisclosure title={t('usage.board.charts.showValues')}
+          name={`${t('usage.widgets.usage_capacity')}: ${t('usage.board.charts.showValues')}`}
           testID={`${props.testID}.values`}>
           <CapacityExactValues accounts={projection.accounts} nameOf={nameOf} nowMs={nowMs} testID={`${props.testID}.values.rows`} />
         </UsagePlanDisclosure>
@@ -523,7 +533,9 @@ function CapacityHeroReading(props: Readonly<{ count: number; testID: string }>)
         <HappierSkeletonBlock color={theme.colors.surface.skeleton} width={84} height={HAPPIER_DATA_METRICS.heroValue.fontSize * 0.7}
           radius={8} reducedMotion={reducedMotion} />
       </View>
-      <Text style={[styles.subline, text.detail]}>{t('usage.board.plans.capacityReading', { count: props.count })}</Text>
+      <Text style={[styles.subline, text.detail]}>
+        {props.count > 0 ? t('usage.board.plans.capacityReading', { count: props.count }) : t('common.loading')}
+      </Text>
     </View>
   );
 }

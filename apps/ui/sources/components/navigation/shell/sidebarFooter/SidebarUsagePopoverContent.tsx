@@ -306,10 +306,17 @@ export function SidebarUsagePopoverView(props: Readonly<{
 
     let body: React.ReactNode;
     if (nothing) {
+        // An invitation with its one way in: the gear's destination, said as the action (acceptance 11-13 #15).
         body = (
-            <Text testID="sidebar-usage-status" style={styles.status}>
-                {t('sidebarFooter.usageNoAccounts')}
-            </Text>
+            <View style={styles.empty}>
+                <Text testID="sidebar-usage-status" style={styles.emptyText}>
+                    {t('sidebarFooter.usageNoAccounts')}
+                </Text>
+                <View style={styles.emptyAction}>
+                    <RoundButton testID="sidebar-usage-connect-account" size="small" display="secondary"
+                        title={t('settings.connectAccount')} onPress={props.onOpenConnectedServices} />
+                </View>
+            </View>
         );
     } else if (scoped) {
         body = sessionAccount
@@ -433,28 +440,42 @@ function withDividers(items: readonly React.ReactElement[]): React.ReactNode {
         : [<View key={`divider:${String(item.key)}`} style={styles.divider} />, item]));
 }
 
-/** An account's head line: "Service · Name" with its email (or a short provider id hint) on the right. */
-function accountHeaderLine(serviceLabel: string, name: ConnectedAccountNamePresentation): Readonly<{ title: string; email: string | null }> {
+/**
+ * An account's head: its name beside the bare service mark (the mark says the service; the words name it for assistive
+ * tech), then the plan and email on one quiet line beneath. Side by side, with a dozen accounts, all three were cut.
+ */
+function accountHeaderLine(serviceLabel: string, name: ConnectedAccountNamePresentation): Readonly<{ title: string; spoken: string; email: string | null }> {
     return {
-        title: name.serviceFallback ? name.primaryLabel : `${serviceLabel} · ${name.primaryLabel}`,
+        title: name.primaryLabel,
+        spoken: name.serviceFallback ? name.primaryLabel : `${serviceLabel} · ${name.primaryLabel}`,
         email: name.identityLabel,
     };
 }
 
-/** An account's head: the bare service mark, "Service · Name", the plan, and the email on the right. */
 function AccountHeader(props: Readonly<{
     service?: PluginContributionIdentityV1 | null;
     legacyServiceId: string | null;
     title: string;
+    spoken?: string;
     planLabel: string | null;
     email: string | null;
+    testID?: string;
 }>) {
+    const meta = props.planLabel || props.email;
     return (
-        <View style={styles.accountHeader}>
-            <ConnectedServiceMark service={props.service} legacyServiceId={props.legacyServiceId as ConnectedServiceId | null} size="inline" />
-            <ConnectedAccountIdentityText value={props.title} style={styles.accountLabel} numberOfLines={1} />
-            {props.planLabel ? <Text style={styles.plan} numberOfLines={1}>{props.planLabel}</Text> : null}
-            {props.email ? <ConnectedAccountIdentityText value={props.email} style={styles.email} numberOfLines={1} /> : null}
+        <View style={styles.accountHead}>
+            <View style={styles.accountHeader} accessible accessibilityLabel={props.spoken ?? props.title}>
+                <ConnectedServiceMark service={props.service} legacyServiceId={props.legacyServiceId as ConnectedServiceId | null} size="inline" />
+                <ConnectedAccountIdentityText testID={props.testID ? `${props.testID}-name` : undefined} value={props.title}
+                    style={styles.accountLabel} numberOfLines={1} />
+            </View>
+            {meta ? (
+                <View style={styles.accountMeta} testID={props.testID ? `${props.testID}-meta` : undefined}>
+                    {props.planLabel ? <Text style={styles.plan} numberOfLines={1}>{props.planLabel}</Text> : null}
+                    {props.planLabel && props.email ? <Text style={styles.metaDot}>·</Text> : null}
+                    {props.email ? <ConnectedAccountIdentityText value={props.email} style={styles.email} numberOfLines={1} /> : null}
+                </View>
+            ) : null}
         </View>
     );
 }
@@ -480,9 +501,11 @@ const UsageAccountGroup = React.memo(function UsageAccountGroup(props: Readonly<
     return (
         <View testID={`sidebar-usage-account-${account.key}`} style={styles.group}>
             <AccountHeader
+                testID={`sidebar-usage-account-${account.key}`}
                 service={props.service}
                 legacyServiceId={props.legacyServiceId}
                 title={identity.title}
+                spoken={identity.spoken}
                 planLabel={account.planLabel}
                 email={identity.email}
             />
@@ -565,9 +588,11 @@ const SignedOutAccount = React.memo(function SignedOutAccount(props: Readonly<{
     return (
         <View testID={`sidebar-usage-signed-out-${account.key}`} style={styles.group}>
             <AccountHeader
+                testID={`sidebar-usage-signed-out-${account.key}`}
                 service={account.ref.service}
                 legacyServiceId={account.legacyServiceId}
                 title={identity.title}
+                spoken={identity.spoken}
                 planLabel={null}
                 email={identity.email}
             />
@@ -627,6 +652,19 @@ const styles = StyleSheet.create((theme) => ({
         paddingHorizontal: CONTENT_INSET_PX,
         paddingVertical: theme.space.s8,
     },
+    empty: {
+        paddingHorizontal: CONTENT_INSET_PX,
+        paddingTop: theme.space.s4,
+        paddingBottom: theme.space.s10,
+        gap: theme.space.s10,
+    },
+    emptyText: {
+        ...Typography.variant('body'),
+        color: theme.colors.text.secondary,
+    },
+    emptyAction: {
+        flexDirection: 'row',
+    },
     scopeLine: {
         ...Typography.variant('meta'),
         color: theme.colors.text.secondary,
@@ -649,31 +687,42 @@ const styles = StyleSheet.create((theme) => ({
         marginHorizontal: CONTENT_INSET_PX,
         backgroundColor: theme.colors.border.default,
     },
+    accountHead: {
+        gap: theme.space.s2,
+    },
     accountHeader: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: theme.space.s8,
     },
-    // Identity first: the email gives up its room before the plan, and both before the account's name.
     accountLabel: {
         flexShrink: 1,
         minWidth: 0,
         ...Typography.variant('body', 'semiBold'),
         color: theme.colors.text.primary,
     },
+    // Under the name, on the rows' edge: the plan keeps its words and the email gives up its room first.
+    accountMeta: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: theme.space.s4,
+        minWidth: 0,
+    },
     plan: {
-        flexShrink: 10,
+        flexShrink: 1,
         minWidth: 0,
         ...Typography.variant('meta'),
         color: theme.colors.text.secondary,
     },
+    metaDot: {
+        ...Typography.variant('meta'),
+        color: theme.colors.text.tertiary,
+    },
     email: {
-        marginLeft: 'auto',
         flexShrink: 100,
         minWidth: 0,
         ...Typography.variant('meta'),
         color: theme.colors.text.secondary,
-        textAlign: 'right',
     },
     accountState: {
         ...Typography.variant('meta'),

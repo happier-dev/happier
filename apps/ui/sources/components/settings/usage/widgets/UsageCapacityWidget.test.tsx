@@ -519,7 +519,10 @@ it('says Limits beside other widgets too narrow for a label per segment as the t
       pace: [], targets: [], waitingWork: { status: 'unavailable', reason: 'unsupported' },
     });
   });
-  const slice = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: quota } }).results[0]!;
+  const read = resolveUsagePageAggregation({ queries: [query], quota: { status: 'available', value: quota } }).results[0]!;
+  // Two more accounts whose allowance could not be read: they are not "more" figures, and are said apart.
+  const slice = { ...read, sources: [...read.sources, ...['unread1', 'unread2'].map(accountId => ({
+    source: `quota:${createCanonicalJsonSigningInput({ bindingKind: 'account', ref: { service, accountId } })}`, status: 'error' as const }))] };
   const model = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
     freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel;
   const { UsageCapacityWidget } = await import('./UsageCapacityWidget');
@@ -534,7 +537,8 @@ it('says Limits beside other widgets too narrow for a label per segment as the t
   const text = screen.getTextContent();
   expect(screen.findHostByTestId('capacity.tightest')).not.toBeNull();
   expect(screen.findHostByTestId('capacity.nextMeter')).not.toBeNull();
-  expect(text).toContain(t('usage.board.plans.limitsOthers', { count: 7, usedUp: 0 }));
+  expect(screen.findHostByTestId('capacity.others')?.props.children)
+    .toBe(`${t('usage.board.plans.limitsOthers', { count: 7, usedUp: 0 })} · ${t('usage.board.plans.limitsNotRead', { count: 2 })}`);
   expect(screen.findHostByTestId('capacity.pooled')).toBeNull();
   expect(screen.findHostByTestId('capacity.accounts')).toBeNull();
   expect(used.map((_, index) => `acct${index}`).filter(id => screen.findHostByTestId(`capacity.cell.${id}`) !== null)).toEqual([]);
@@ -696,12 +700,25 @@ it('says Limits beside other widgets as the account the next session uses: its f
   const model = { requestedQuery: null, shownQuery: null, slice, pending: false, error: null,
     freshness: 'fresh', updatingPreviousPeriod: false, refreshing: false, refresh: async () => {} } satisfies UsageWidgetBodyModel;
   const { UsageCapacityWidget } = await import('./UsageCapacityWidget');
-  const screen = await renderScreen(<InjectedAuthProvider credentials={null}>
+  const { WidgetFrameBodyCaptionContext } = await import('@/components/widgets/frame/widgetFrameBodyCaption');
+  const captions: (string | null)[] = [];
+  const lend = (caption: string | null) => { if (caption !== null && captions.at(-1) !== caption) captions.push(caption); };
+  const medium = (shown: typeof slice) => <InjectedAuthProvider credentials={null}>
+    <WidgetFrameBodyCaptionContext.Provider value={lend}>
     <WidgetPresentationProvider value={{ size: 'medium', footprint: { columns: 2, columnSpan: 1, rowSpan: 2, width: 'half', height: 'regular' },
       geometry: { width: 520, height: 232 } }}>
-      <UsageCapacityWidget id="usage_capacity" model={model} slice={slice} query={query} serverId="home" testID="capacity" />
+      <UsageCapacityWidget id="usage_capacity" model={{ ...model, slice: shown }} slice={shown} query={query} serverId="home" testID="capacity" />
     </WidgetPresentationProvider>
-  </InjectedAuthProvider>);
+    </WidgetFrameBodyCaptionContext.Provider>
+  </InjectedAuthProvider>;
+  // While the selector has not answered, the headline's room is held: no tightest account standing in, no caption
+  // that changes meaning when the pick lands (acceptance 11-13 #2: "every plan · longest window" → "next session").
+  const screen = await renderScreen(medium(base));
+  expect(screen.findHostByTestId('capacity.tightest')).toBeNull();
+  expect(screen.findByTestId('capacity.reading')).not.toBeNull();
+  expect(screen.getTextContent()).not.toContain(', the tightest');
+  await screen.update(medium(slice));
+  expect(captions).toEqual([t('usage.board.plans.limitsCaption')]);
   const text = screen.getTextContent();
   expect(text).toContain('60%');
   expect(screen.findHostByTestId('capacity.tightest')).not.toBeNull();

@@ -128,12 +128,16 @@ describe('SidebarUsagePopoverContent', () => {
         const screen = await renderContent();
 
         const text = screen.getTextContent();
-        expect(text).toContain('Anthropic Claude · Work');
+        // The mark says the service; the name leads alone and the plan and email share the line beneath it, so with
+        // many accounts no field is cut three ways (acceptance 11-13 #15).
+        expect(text).not.toContain('Anthropic Claude · Work');
+        expect(screen.findByTestId('sidebar-usage-account-claude:b-name')?.props.children).toBe('Work');
+        expect(screen.findByTestId('sidebar-usage-account-claude:a-meta')).toBeTruthy();
         expect(text).toContain('kevin@gmail.com');
         expect(text).toContain('connectedServices.quota.remaining(percent=73%)');
         expect(text).toContain('connectedServices.quota.remaining(percent=40%)');
         // The unavailable account is named and says so, instead of vanishing from the list.
-        expect(text).toContain('Anthropic Claude · Home');
+        expect(text).toContain('Home');
         expect(text).toContain('common.unavailable');
         // Its plan is shared by the provider's read accounts only when every account reports it.
         expect(screen.findByTestId('sidebar-usage-as-of')).toBeTruthy();
@@ -187,10 +191,14 @@ describe('SidebarUsagePopoverContent', () => {
         expect(times).toEqual([1_000]);
     });
 
-    it('explains what usage is for when no account is connected', async () => {
+    it('explains what usage is for when no account is connected, with the one way to connect one', async () => {
+        rendered.closed = 0;
         const screen = await renderContent();
         expect(screen.findByTestId('sidebar-usage-status')).toBeTruthy();
         expect(screen.getTextContent()).toContain('sidebarFooter.usageNoAccounts');
+        await screen.pressByTestIdAsync('sidebar-usage-connect-account');
+        expect(rendered.router!.push).toHaveBeenLastCalledWith('/settings/connected-services');
+        expect(rendered.closed).toBe(1);
     });
 
     it('keeps a signed-out account beside usage with its fix, and counts keys without limits', async () => {
@@ -335,7 +343,8 @@ describe('SidebarUsagePopoverContent', () => {
             expect(shown).not.toContain('acct_9f2c8e71');
 
             const hidden = (await renderView({ hidden: true })).getTextContent();
-            expect(hidden).toContain('Anthropic Claude · Work');
+            // A name the person gave stays readable beside its mark.
+            expect(hidden).toContain('Work');
             expect(hidden).toContain('le•••@c•••.com');
             expect(hidden).toContain('ke•••@g•••.com');
             expect(hidden).not.toContain('leeroy@company.com');

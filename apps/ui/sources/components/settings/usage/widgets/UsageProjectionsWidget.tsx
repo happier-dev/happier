@@ -155,9 +155,11 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
   const presentation = useWidgetPresentation();
   const width = presentation?.geometry?.width ?? null;
   const tile = presentation?.size === 'small';
-  // Beside other widgets (Medium, Wide) Projections is the lab's Limits list (`wgusage-CD`): one meter
-  // per reported window with its projection, no burn-up, no disclosures. Its own view keeps the chart.
-  const list = presentation?.size === 'medium' || presentation?.size === 'wide';
+  // Beside other widgets (Medium, Wide, a Full band such as Overview's) Projections is the lab's Limits list
+  // (`wgusage-CD`, d2views-OV): one meter per reported window with its projection, no burn-up, no disclosures. As a
+  // band its burn-up, quota history and past cycles ran ~880 px of near-empty charts (acceptance 11-13 #1), and its
+  // focus headline disagreed with Limits; a view of its own (Large, Tall) keeps the chart.
+  const list = presentation?.size === 'medium' || presentation?.size === 'wide' || presentation?.size === 'full';
   const { projection, nameOf, nowMs } = useUsagePlans(props.slice, props.model.refresh);
   useWidgetFrameBodyCaption(t('usage.board.plans.projectionsCaption'));
   // Settled once every first read has answered; a re-read keeps the last reading (and its pace) in place, so a refresh

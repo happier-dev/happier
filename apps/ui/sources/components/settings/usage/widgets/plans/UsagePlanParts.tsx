@@ -320,10 +320,11 @@ export function UsagePlanIdentity(
           <ConnectedAccountIdentityText
             value={split.identity}
             style={[styles.identityQualifier, text.detail]}
-            // Two lines, broken once between the name and the domain: a one-line cell cut every address to
-            // "codex3@…" at 1440 (R6 #12). A longer local part still loses its domain tail, never the part that
-            // tells same-name accounts apart; the cell's accessibility label keeps it whole.
+            // One line that gives up its middle ("codex3@ha…er.dev"): a tail cut read "codex3@…" (R6 #12) and a
+            // two-line wrap broke every address at "@" and floated the rank badge mid-tile (USAGE-ACCEPT #7). The
+            // start that tells same-name accounts apart stays; the cell's accessibility label keeps it whole.
             numberOfLines={2}
+            ellipsize="middle"
           />
         ) : null}
         {qualifier && !props.compact ? (
@@ -579,6 +580,8 @@ export function UsagePlanSectionHead(
 export function UsagePlanDisclosure(
   props: Readonly<{
     title: string;
+    /** What assistive tech and commands call it when the drawn title leans on its widget ("Exact values"). */
+    name?: string;
     meta?: string | null;
     /**
      * The row this disclosure opens from (a plan's identity and its quiet line), drawn in place of the title, which
@@ -594,7 +597,8 @@ export function UsagePlanDisclosure(
   const text = usePlanText();
   const reducedMotion = useReducedMotionPreference();
   const [expanded, setExpanded] = React.useState(false);
-  const toggle = useUsageDisclosureCommand(props.title, expanded, () => setExpanded(value => !value));
+  const name = props.name ?? props.title;
+  const toggle = useUsageDisclosureCommand(name, expanded, () => setExpanded(value => !value));
   return (
     <ExpandableItem
       testID={props.testID}
@@ -608,7 +612,7 @@ export function UsagePlanDisclosure(
           testID={`${props.testID}-header`}
           onPress={headerProps.onPress}
           accessibilityRole="button"
-          accessibilityLabel={[props.title, props.meta].filter(Boolean).join(', ')}
+          accessibilityLabel={[name, props.meta].filter(Boolean).join(', ')}
           expanded={expanded}
           style={(state) => [
             styles.disclosureHeader,

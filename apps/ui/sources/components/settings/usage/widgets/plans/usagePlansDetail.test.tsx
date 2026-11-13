@@ -459,7 +459,8 @@ it('shows the canonical capacity weather and insufficient model/reset basis insi
   expect(screen.getTextContent()).not.toContain('—');
   expect(screen.getTextContent()).not.toContain(t('usage.board.plans.planNoPriceShort'));
   const sharedPriceReason = t('usage.board.plans.planNoPriceAll');
-  expect(String(screen.findByTestId('fit.once')!.props.children)).toContain(sharedPriceReason);
+  // The list's caveats are one quiet line (USAGE-ACCEPT #7): the first leads, the rest open under Details.
+  expect(String(screen.findByTestId('fit.once')!.props.reason)).toBe(sharedPriceReason);
   expect(screen.getTextContent().split(sharedPriceReason), 'one shared cause across the accounts').toHaveLength(2);
   // The plan row itself opens its details (lab p2sheet-D: one row per plan); no "Details" line repeats under every plan.
   expect(screen.getTextContent()).not.toContain(t('usage.board.plans.planDetails'));
@@ -777,6 +778,16 @@ it('lists every reported window with its projection beside other widgets, withou
   expect(quiet.findByTestId('quiet.sharedReason')).toBeTruthy();
   // No window has a pace: the pace legend explains nothing here, in the list or on the Plans view.
   expect(quiet.findByTestId('quiet.legend')).toBeFalsy();
+  // A full-width band among other widgets (Overview) is the same compact list: its burn-up, quota history and past
+  // cycles ran ~880 px of near-empty charts there (acceptance 11-13 #1). Only a view of its own (large) charts.
+  const band = await renderScreen(wrap(<WidgetPresentationProvider value={{ size: 'full',
+    footprint: { columns: 2, columnSpan: 2, rowSpan: 2, width: 'full', height: 'regular' }, geometry: { width: 1040, height: 260 } }}>
+    <UsageProjectionsWidget {...bodyProps([partial])} id="usage_projections" testID="band" />
+  </WidgetPresentationProvider>));
+  expect(band.findByTestId('band.windows')).toBeTruthy();
+  expect(band.findAllByType(BurnUpChart)).toHaveLength(0);
+  expect(band.findByTestId('band.dailyHistory')).toBeFalsy();
+  expect(band.findByTestId('band.pastCycles-header')).toBeFalsy();
   const own = await renderScreen(wrap(<UsageProjectionsWidget {...bodyProps([unpaced])} id="usage_projections" testID="own" />));
   expect(own.findByTestId('own.noPace')).toBeTruthy();
   expect(own.findByTestId('own.reported')).toBeTruthy();
@@ -1622,11 +1633,11 @@ it('promises later detail only for history gaps', async () => {
     return renderScreen(wrap(<UsagePlanFitWidget {...props} slice={slice} id="usage_plan_fit" testID="fit" />));
   };
   const priceGap = await render('period_price_unavailable');
-  expect(priceGap.findByTestId('fit.notRecorded')).toBeFalsy();
-  expect(priceGap.findByTestId('fit.attribution')).toBeFalsy();
+  expect(priceGap.getTextContent()).not.toContain(t('usage.board.plans.moreDetailLater'));
+  expect(priceGap.getTextContent()).not.toContain(t('usage.board.plans.attributionNote'));
   await priceGap.unmount();
   const historyGap = await render('recorded_resets_unavailable');
-  expect(historyGap.findByTestId('fit.notRecorded')).toBeTruthy();
+  expect(historyGap.getTextContent()).toContain(t('usage.board.plans.moreDetailLater'));
   await historyGap.unmount();
 });
 
