@@ -2198,7 +2198,8 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     ]));
   });
 
-  it('replaces a persisted history gap only through an authenticated baseline before the next conditional poll', async () => {
+  it.each(['persisted history gap', 'missing checkpoint'] as const)(
+    'recovers a %s through the authenticated baseline and admits the next new event', async (prior) => {
     const source = definition({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA });
     const rowId = createGithubAutomationEventCheckpointRowId({
       automationId: 'automation-a',
@@ -2206,9 +2207,10 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       eventRef: { pluginId: GITHUB_PLUGIN_ID, localId: EVENT_LOCAL_ID },
       sourceSelectorId: sourceSelectorA,
     });
-    const checkpoints = createCheckpointCollection([
-      historyGapCheckpointRow({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA }),
-    ]);
+    const checkpoints = createCheckpointCollection(prior === 'persisted history gap'
+      ? [historyGapCheckpointRow({ automationId: 'automation-a', sourceSelectorId: sourceSelectorA })]
+      : []);
+    const priorRevision = prior === 'persisted history gap' ? 1 : 0;
     const admitted: AutomationEventAdmitInput[] = [];
     const statuses: AutomationEventSourceStatusReport[] = [];
     const baselineEventAt = Date.now() - 1_000;
@@ -2311,7 +2313,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     }));
 
     expect(checkpoints.read(rowId)).toMatchObject({
-      revision: 2,
+      revision: priorRevision + 1,
       value: {
         payload: {
           cursor: { etag: 'baseline-etag', seenEventIds: ['baseline-current'] },
@@ -2340,7 +2342,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       occurrenceId: 'github:repository:77:event:new-after-baseline',
     }));
     expect(checkpoints.read(rowId)).toMatchObject({
-      revision: 3,
+      revision: priorRevision + 2,
       value: {
         payload: {
           cursor: { etag: 'next-etag' },

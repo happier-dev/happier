@@ -865,11 +865,8 @@ export async function replaceGithubAutomationEventHistoryGapWithBaseline(input: 
   );
   const row = await collection.get(checkpointRowId(source), { signal: input.context.signal });
   input.context.signal.throwIfAborted();
-  if (row === null) {
-    return Object.freeze({ kind: 'noHistoryGap' });
-  }
-  const checkpoint = loadCheckpoint({ row, source });
-  if (!checkpoint.historyGap) {
+  const checkpoint = row === null ? null : loadCheckpoint({ row, source });
+  if (checkpoint && !checkpoint.historyGap) {
     return Object.freeze({ kind: 'noHistoryGap' });
   }
   input.context.signal.throwIfAborted();
@@ -880,7 +877,8 @@ export async function replaceGithubAutomationEventHistoryGapWithBaseline(input: 
   input.context.signal.throwIfAborted();
 
   // A null cursor deliberately omits If-None-Match and establishes a new
-  // current-head baseline. The old cursor is never resumed or deleted.
+  // current-head baseline, including when the checkpoint is absent but the
+  // host still reports a history gap. The old cursor is never resumed or deleted.
   const polled = await pollRepositoryEvents({
     context: input.context,
     source,
@@ -909,7 +907,7 @@ export async function replaceGithubAutomationEventHistoryGapWithBaseline(input: 
       cursor: baseline,
       lastContiguousOccurrenceId: null,
       baseline: { kind: 'currentHead', establishedAt: observedAtMs },
-    }), { expectedRevision: checkpoint.row.revision, signal: input.context.signal });
+    }), { expectedRevision: checkpoint?.row.revision ?? 'absent', signal: input.context.signal });
   } catch (error) {
     input.context.signal.throwIfAborted();
     if (isCollectionCurrentnessConflict(error)) return Object.freeze({ kind: 'stale' });
