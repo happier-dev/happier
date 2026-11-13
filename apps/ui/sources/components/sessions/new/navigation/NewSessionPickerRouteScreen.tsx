@@ -34,19 +34,27 @@ const styles = StyleSheet.create({
  * so on the web a modal picker draws its declared bar (title, Cancel, actions) itself and fills the card
  * or the phone sheet on the page surface. Native stacks and forced screens draw the header themselves.
  */
+/** A route's options, as an object or as the argument-free factory `Stack.Screen` also accepts. */
+export type NewSessionPickerRouteOptions = NativeStackNavigationOptions | (() => NativeStackNavigationOptions);
+
 export function NewSessionPickerRouteScreen(props: Readonly<{
-    options: NativeStackNavigationOptions;
+    options: NewSessionPickerRouteOptions;
     children: React.ReactNode;
 }>): React.ReactElement {
     const mode = useSetting('newSessionPresentationModeV1');
+    // The bar reads the same options the navigator gets, whichever form the route declared them in.
+    const options = React.useMemo(
+        () => (typeof props.options === 'function' ? props.options() : props.options),
+        [props.options],
+    );
     const drawsOwnChrome = Platform.OS === 'web'
         && resolveNewSessionPickerRoutePresentation({ mode, platformOs: 'web' }) === 'modal'
-        && props.options.headerShown !== false;
+        && options.headerShown !== false;
     return (
         <>
-            <Stack.Screen options={props.options} />
+            <Stack.Screen options={options} />
             {drawsOwnChrome
-                ? <WebDrawerPickerFrame options={props.options}>{props.children}</WebDrawerPickerFrame>
+                ? <WebDrawerPickerFrame options={options}>{props.children}</WebDrawerPickerFrame>
                 : props.children}
         </>
     );

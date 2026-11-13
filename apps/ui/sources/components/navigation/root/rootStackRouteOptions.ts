@@ -2,7 +2,7 @@ import { Platform } from 'react-native';
 import type { ExtendedStackNavigationOptions } from 'expo-router/build/layouts/StackClient';
 import { t } from '@/text';
 import { createFriendsStackScreenOptions, createInboxStackScreenOptions } from '@/utils/navigation/createSocialStackScreenOptions';
-import { resolveNewSessionPickerRoutePresentation, resolveNewSessionSecretRequirementRoutePresentation } from '@/components/sessions/new/navigation/newSessionPresentation';
+import { resolveNewSessionPickerRoutePresentation, resolveNewSessionPickerWebModalStyle, resolveNewSessionSecretRequirementRoutePresentation } from '@/components/sessions/new/navigation/newSessionPresentation';
 import { createSessionPageScreenOptions } from '@/components/navigation/sessionRouteScreenOptions';
 
 type StackScreenOptions = ExtendedStackNavigationOptions;
@@ -49,6 +49,7 @@ export function createRootStackRouteOptions(newSessionPresentationMode: 'auto' |
             newPicker: {
                 ...blankBack,
                 presentation: resolveNewSessionPickerRoutePresentation({ mode: newSessionPresentationMode, platformOs: Platform.OS }),
+                webModalStyle: resolveNewSessionPickerWebModalStyle({ mode: newSessionPresentationMode, platformOs: Platform.OS }),
             },
             settings: {
                 // Nested navigator; per-settings-screen headers are configured in `settings/_layout.tsx`.

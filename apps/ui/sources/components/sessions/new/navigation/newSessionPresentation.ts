@@ -96,6 +96,21 @@ export function resolveNewSessionShouldBottomAnchor(params: Readonly<{
     }) === undefined;
 }
 
+/**
+ * A picker's route card height on the web. A content-sized card is centred, so it grew and its top
+ * jumped while a picker's rows arrived. Pickers take the route-modal cap as a fixed height, as settings
+ * does, so the card is still from the first frame and the rows load inside it.
+ */
+export function resolveNewSessionPickerWebModalStyle(params: Readonly<{
+    mode: NewSessionPresentationModeV1 | null | undefined;
+    platformOs: PlatformOs;
+}>): Readonly<{ height: string }> | undefined {
+    if (params.platformOs !== 'web') return undefined;
+    return resolveNewSessionPickerRoutePresentation(params) === 'modal'
+        ? { height: 'var(--happier-route-modal-max-height)' }
+        : undefined;
+}
+
 export function resolveNewSessionPickerRoutePresentation(params: Readonly<{
     mode: NewSessionPresentationModeV1 | null | undefined;
     platformOs: PlatformOs;

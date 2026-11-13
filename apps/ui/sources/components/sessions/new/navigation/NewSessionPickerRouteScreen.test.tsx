@@ -39,6 +39,20 @@ describe('NewSessionPickerRouteScreen', () => {
         }
     });
 
+    it('draws the bar from options a route declares as a factory', async () => {
+        const { NewSessionPickerRouteScreen } = await import('./NewSessionPickerRouteScreen');
+        const onCancel = vi.fn();
+        const screen = await renderScreen(
+            <NewSessionPickerRouteScreen options={() => pickerOptions(onCancel)}>{React.createElement('PickerList')}</NewSessionPickerRouteScreen>,
+        );
+        try {
+            await screen.pressByTestIdAsync('picker-cancel');
+            expect(onCancel).toHaveBeenCalledTimes(1);
+        } finally {
+            screen.unmount();
+        }
+    });
+
     it('leaves a forced-screen route to the navigator header', async () => {
         const { storage } = await import('@/sync/domains/state/storageStore');
         const previous = storage.getState();
