@@ -66,9 +66,16 @@ export async function executeCliManagedAccountPower(input: Readonly<{
         }
         throw error;
     }
-    await input.post('report-intent', { ...correlation, result: power.result, observation: power.observation }, ManagedControllerMachineOutputV1Schema, null);
-    if (power.guestStartupError) throw power.guestStartupError;
-    if (power.result.kind === 'refused') throw new ManagedMachineControllerError(power.result.code);
+    const nativeFailure = power.guestStartupError ?? (power.result.kind === 'refused'
+        ? new ManagedMachineControllerError(power.result.code, undefined,
+            power.result.nativeCause ? { kind: 'managedNative', nativeCause: power.result.nativeCause } : undefined) : undefined);
+    try {
+        await input.post('report-intent', { ...correlation, result: power.result, observation: power.observation }, ManagedControllerMachineOutputV1Schema, null);
+    } catch (reportError) {
+        if (!nativeFailure) throw reportError;
+        logger.warn('[MANAGED MACHINE] Native outcome report failed', projectActionFailureCauseV1(reportError, 'machines.managed.power.set'));
+    }
+    if (nativeFailure) throw nativeFailure;
     if (power.result.kind !== 'confirmed' || !power.observation
         || (machine.desired === 'start' || machine.desired === 'resume') && (power.observation.availability !== 'present'
             || power.observation.storage === 'lost' || power.observation.power !== 'running')) {

@@ -18,6 +18,7 @@ import { configureConnectedServerSocketBoundary, restoreServerAccountForTest } f
 import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { Modal } from '@/modal';
 import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
+import { log } from '@/log';
 
 const vendorHttp = vi.hoisted(() => vi.fn<typeof fetch>());
 const packaged = vi.hoisted(() => ({ artifacts: [] as unknown[], declarations: [] as unknown[],
@@ -184,7 +185,15 @@ describe('Account native power through the original reviewed role port', () => {
     });
 });
 
-it.each([false, true])('wakes asleep retained Account compute through default preparation, public activation and its selected credential without a daemon operation, refused=%s', async refused => {
+it.each(['confirmed', 'admission-refused', 'guest-startup-report-failed', 'native-refused-report-failed', 'confirmed-report-failed', 'native-refused-report-confirmed', 'resize-unsupported-report-failed'] as const)(
+    'settles retained Account power through public activation and its selected credential, outcome=%s', async outcome => {
+    const refused = outcome === 'admission-refused';
+    const guestStartup = outcome === 'guest-startup-report-failed';
+    const nativeRefused = outcome.startsWith('native-refused-');
+    const reportFailed = outcome.endsWith('report-failed');
+    const resizeUnsupported = outcome === 'resize-unsupported-report-failed';
+    const actionId = resizeUnsupported ? 'machines.managed.resize' : 'machines.managed.power.set';
+    const logStart = log.getCount();
     // Native HTTP is the intended runtime boundary; a browser requires a selected remote host.
     // The real credential owner verifies writes through the desktop OS storage command boundary.
     vi.stubGlobal('__TAURI_INTERNALS__', { ...createDesktopSecureStorageBoundary(),
@@ -211,6 +220,7 @@ it.each([false, true])('wakes asleep retained Account compute through default pr
     }] };
     let machine = ManagedMachineV1Schema.parse({ id: 'retained', homeId, custodianAccountId: refused ? 'another-owner' : accountId,
         launch, allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 2,
+        ...(guestStartup ? { enrolledMachineId: 'enrolled-guest', enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } } : {}),
         resource: { contributionRef: provider, schemaVersion: 1,
             value: { name: 'same-native', createdAt: 1000, managedId: 'retained', teamId: 'team_one', projectId: 'prj_one' } },
         retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
@@ -252,19 +262,21 @@ it.each([false, true])('wakes asleep retained Account compute through default pr
                 admissions++;
                 if (refused) return Response.json({ code: 'managed_power_required' }, { status: 403 });
                 expect(await new Response(init?.body).json()).toMatchObject({
-                    action: 'machines.managed.power.set', input: { managedId: machine.id, intent: 'start', when: 'now' },
+                    action: actionId, input: resizeUnsupported ? { managedId: machine.id, size: { memoryBytes: 4294967296 } }
+                        : { managedId: machine.id, intent: 'start', when: 'now' },
                 });
                 machine = { ...machine, desired: 'start', intentRevision: 3 };
-                return Response.json({ machine, replayed: false });
+                return Response.json({ machine, replayed: false, ...(resizeUnsupported ? { resizeProvisioner: provisioner } : {}) });
             }
             if (address.pathname.endsWith('/submit-intent')) {
                 submitted++;
                 return Response.json({ machine, submitted: true });
             }
-            if (address.pathname.endsWith('/report-intent')) {
+            if (address.pathname.endsWith('/report-intent') || address.pathname.endsWith('/report-resize')) {
                 reports++;
                 const body: unknown = await new Response(init?.body).json();
                 reported.push(body);
+                if (reportFailed) return Response.json({ code: 'managed_request_failed', message: 'private-home-report-body' }, { status: 503 });
                 if (body && typeof body === 'object' && 'observation' in body) {
                     machine = ManagedMachineV1Schema.parse({ ...machine, observation: body.observation });
                 }
@@ -324,14 +336,15 @@ it.each([false, true])('wakes asleep retained Account compute through default pr
             return Response.json({ command: { id: 'cmd_one', sessionId: 'sbx_one', exitCode: null } });
         }
         if (path === '/v2/sandboxes/sessions/sbx_one/cmd/cmd_one') return Response.json({
-            command: { id: 'cmd_one', sessionId: 'sbx_one', exitCode: 0 },
+            command: { id: 'cmd_one', sessionId: 'sbx_one', exitCode: guestStartup ? 7 : 0 },
         });
         if (path === '/v2/sandboxes/sessions/sbx_one/cmd/cmd_one/logs') return new Response(
-            JSON.stringify({ stream: 'stdout', data: '' }) + '\n');
+            JSON.stringify({ stream: 'stderr', data: guestStartup ? 'private-guest-startup-output' : '' }) + '\n');
         if (path === '/v2/sandboxes/snapshots/snap_one') return Response.json({ snapshot: {
             id: 'snap_one', sourceSessionId: 'sbx_one', status: 'created', createdAt: 1000,
         } });
         if (path === '/v2/sandboxes/same-native') {
+            if (nativeRefused) return Response.json({ error: { code: 'FORBIDDEN', message: 'private-native-refusal-body' } }, { status: 403 });
             if (address.searchParams.get('resume') === 'true') nativeResumes++;
             return Response.json({ sandbox: {
             name: 'same-native', createdAt: 1000, currentSessionId: 'sbx_one', currentSnapshotId: 'snap_one', persistent: true,
@@ -343,17 +356,53 @@ it.each([false, true])('wakes asleep retained Account compute through default pr
     });
     const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
     const { bindPresentUserActionConfirmation } = await import('@/sync/ops/actions/presentUserConfirmation');
-    const input = { homeId, managedId: machine.id, expectedRevision: 2, when: 'now' as const, intent: 'start' as const };
-    const result = await createDefaultActionExecutor().execute('machines.managed.power.set', input,
-        bindPresentUserActionConfirmation('machines.managed.power.set', input, { surface: 'ui', authority: 'present_user',
+    const input = resizeUnsupported ? { homeId, managedId: machine.id, size: { memoryBytes: 4294967296 } }
+        : { homeId, managedId: machine.id, expectedRevision: 2, when: 'now' as const, intent: 'start' as const };
+    const result = await createDefaultActionExecutor().execute(actionId, input,
+        bindPresentUserActionConfirmation(actionId, input, { surface: 'ui', authority: 'present_user',
             actionCaller: { kind: 'host' }, serverId, serverIdentityId: homeId, runtimeAccountId: accountId, actionRequestId: 'foreground-power' }));
     // The original Action already owns review. A provider role cannot ask the
     // person a second time instead of consuming its exact reviewed-child proof.
     expect(Modal.show).not.toHaveBeenCalled();
+    if (resizeUnsupported) {
+        expect(result).toMatchObject({ ok: true, result: { result: { kind: 'unsupported', dimension: 'memoryBytes' } } });
+        if (!result.ok) throw new Error(result.errorCode);
+        const { getActionSpec } = await import('@happier-dev/protocol/actions/actionSpecs');
+        expect(getActionSpec(actionId).outputSchema!.safeParse(result.result).success).toBe(true);
+        expect({ admissions, submitted, reports, nativeResumes, guestBoots, roles }).toEqual({
+            admissions: 1, submitted: 0, reports: 1, nativeResumes: 0, guestBoots: 0, roles: [] });
+        const retainedLogs = log.getLogs().slice(logStart);
+        expect(retainedLogs).toContain(JSON.stringify({ phase: actionId, errorClass: 'ManagedMachineControllerError',
+            errorCode: 'managed_request_failed', httpStatus: null }));
+        expect(JSON.stringify({ result, retainedLogs })).not.toMatch(/private-home-report-body|private-selected-power-token/);
+        return;
+    }
     if (refused) {
         expect(result).toMatchObject({ ok: false, errorCode: 'managed_power_required' });
         expect({ submitted, reports, nativeResumes, guestBoots, roles }).toEqual({
             submitted: 0, reports: 0, nativeResumes: 0, guestBoots: 0, roles: [] });
+        return;
+    }
+    if (reportFailed || nativeRefused) {
+        // The first guest command is the public provider's platform probe;
+        // its nonzero exit authors this bootstrap failure before daemon start.
+        expect(result).toMatchObject({ ok: false, errorCode: guestStartup ? 'vercel_guest_unsupported'
+            : nativeRefused ? 'provider_unavailable' : 'managed_request_failed' });
+        if (nativeRefused) expect(result).toMatchObject({ details: {
+            kind: 'managedNative', nativeCause: { httpStatusClass: '4xx' },
+        } });
+        expect(reported).toEqual([expect.objectContaining({ result: expect.objectContaining(nativeRefused
+            ? { kind: 'refused', code: 'provider_unavailable' } : { kind: 'confirmed' }) })]);
+        expect({ admissions, submitted, reports, nativeResumes, guestBoots }).toEqual({
+            admissions: 1, submitted: 1, reports: 1, nativeResumes: nativeRefused ? 0 : 1, guestBoots: guestStartup ? 1 : 0 });
+        const retainedLogs = log.getLogs().slice(logStart);
+        if (reportFailed && (guestStartup || nativeRefused)) expect(retainedLogs).toContain(JSON.stringify({ phase: 'machines.managed.power.set',
+            errorClass: 'ManagedMachineControllerError', errorCode: 'managed_request_failed', httpStatus: null }));
+        else expect(retainedLogs.some(entry => entry.includes('"errorCode":"managed_request_failed"'))).toBe(false);
+        const publicEvidence = JSON.stringify({ result, retainedLogs });
+        for (const privateValue of [secret, 'private-home-report-body', 'private-guest-startup-output', 'private-native-refusal-body']) {
+            expect(publicEvidence).not.toContain(privateValue);
+        }
         return;
     }
     expect(result, JSON.stringify({ result, reported, roles, requests })).toMatchObject({ ok: true,

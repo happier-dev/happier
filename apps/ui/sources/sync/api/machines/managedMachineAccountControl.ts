@@ -3,13 +3,15 @@ import { ManagedMachineControllerError, createManagedNativeObservationWait, exec
     executeManagedMachinePowerIntent, executeManagedMachineResize } from '@happier-dev/cli-common/machines/managed';
 import { ManagedControlAdmissionInputV1Schema, ManagedAdmissionOutputV1Schema, ManagedControllerSubmitOutputV1Schema,
     ManagedControllerResizeReportV1Schema, type ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createUiManagedAccountHome, createUiManagedAccountHomeRequest } from './managedMachineAccountHome';
 import { createUiManagedAccountNative, readUiManagedAccountAdmission } from './managedMachineAccountNative';
 import { createUiManagedAccountCredential } from './managedMachineAccountCredential';
 import { resolvePreferredPublicReleaseRingLabelForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
+import { log } from '@/log';
 
 type Control = Readonly<{ action: 'machines.managed.resize'; input: ManagedMachineActionInputV1<'machines.managed.resize'> }>
     | Readonly<{ action: 'machines.managed.power.set'; input: ManagedMachineActionInputV1<'machines.managed.power.set'> }>
@@ -76,14 +78,22 @@ export async function executeUiManagedAccountControl(params: Readonly<{
         const power = await executeManagedMachinePowerIntent({ machine, invoke: native.invoke,
             guestStartup: { channel: resolvePreferredPublicReleaseRingLabelForCurrentApp(), transport: admitted.provisioner.bootstrapTransport },
             io: { signal: params.signal }, waitForObservation: wait });
-        machine = await client.home.row('report-intent', { ...correlation, result: power.result, observation: power.observation }, null);
-        if (power.guestStartupError) return failure(power.guestStartupError.code);
+        const nativeFailure = power.guestStartupError ?? (power.result.kind === 'refused'
+            ? new ManagedMachineControllerError(power.result.code, undefined,
+                power.result.nativeCause ? { kind: 'managedNative', nativeCause: power.result.nativeCause } : undefined) : undefined);
+        try {
+            machine = await client.home.row('report-intent', { ...correlation, result: power.result, observation: power.observation }, null);
+        } catch (reportError) {
+            if (!nativeFailure) throw reportError;
+            log.log(JSON.stringify(projectActionFailureCauseV1(reportError, control.action)));
+        }
+        if (nativeFailure) throw nativeFailure;
         if (power.result.kind !== 'confirmed' || !power.observation) {
             return failure(power.result.kind === 'confirmed' ? 'action_outcome_unknown' : power.result.code ?? 'action_outcome_unknown');
         }
         return accepted();
     } catch (error) {
-        if (error instanceof ManagedMachineControllerError) return failure(error.code);
+        if (error instanceof ManagedMachineControllerError) return { ok: false, ...normalizeActionExecutorThrownError(error, control.action) };
         throw error;
     }
 }

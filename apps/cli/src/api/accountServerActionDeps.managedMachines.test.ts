@@ -1,8 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
+import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
+import { tmpdir } from 'node:os';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fastify from 'fastify';
-import { AccountSettingsSchema, ActionIdSchema, FeaturesResponseSchema, normalizeActionsSettingsV1, type ActionId } from '@happier-dev/protocol';
+import { AccountSettingsSchema, ActionIdSchema, FeaturesResponseSchema, MachineSetupApplyInputV1Schema, normalizeActionsSettingsV1, deriveMachineSetupCombinedRunIdV1, openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, type ActionId } from '@happier-dev/protocol';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
+import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { QualifiedConnectedAccountListResponseV4Schema, QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { TeamsListInputV1Schema, TeamsPageV1Schema } from '@happier-dev/protocol/teams/projections';
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentsListActionInputV1Schema, PluginAvailabilityIntentsListActionOutputV1Schema, PluginAvailabilityIntentReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
@@ -16,9 +21,14 @@ import { prepareCliManagedProvisionerAdmission } from '@/machines/managed/provis
 import { projectContributedActionFailure } from '@/plugins/runtime/invocation/actions/contributedActionFailure';
 import type { ManagedMachineOperationSettlementContext, ManagedNativeOperationSettlement } from '@/machines/managed/managedIntentReconciler';
 import axios from '@/api/client/credentialAxios';
+import { logger } from '@/ui/logger';
+import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readMachineProvisionerActionRolesV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 
 import { createAccountServerActionDeps } from './accountServerActionDeps';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
+import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { listCompiledActionCliCommands } from '@/cli/actions/compiledCommands';
 import { runCompiledActionCliCommand } from '@/cli/actions/executeCommand';
 import { fetchServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
@@ -33,6 +43,18 @@ import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSna
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
+import { createWorkflowRunStorageTestkit, type WorkflowRunStorageTestkitOperation } from '@/daemon/workflows/workflowRunStorage.testkit';
+import { WORKFLOW_RUN_STORAGE_HTTP_PATH } from '@/daemon/workflows/workflowRunStorageClient';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { SESSION_FOLLOW_HTTP_PATHS_V1 } from '@happier-dev/protocol/sessions/follow/api';
+import { DEFAULT_SESSION_AUTO_FOLLOW_PREFERENCES_V1, DEFAULT_SESSION_FOLLOW_CREATION_POLICIES_V1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { registerPlainArtifactRoutes } from '@/session/actions/widgetApproval.testkit';
+import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
+import { decodeStoredCredentials } from '@/persistence';
 
 const socketBoundary = vi.hoisted(() => ({
   connections: [] as Array<{ serverUrl: string; token?: string }>,
@@ -52,6 +74,9 @@ vi.mock('socket.io-client', async () => {
 describe('managed inventory CLI Home adapter', () => {
   let app = fastify();
   let restore = () => {};
+  afterAll(async () => {
+    if (pluginReloadController.getState().activeRegistry) await pluginReloadController.shutdown();
+  });
   beforeEach(() => {
     resetActiveAccountSettingsSnapshotForTests();
     setActiveAccountSettingsSnapshot({ source: 'network', settings: AccountSettingsSchema.parse({ actionsSettingsV1: policy }),
@@ -107,6 +132,20 @@ describe('managed inventory CLI Home adapter', () => {
     retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
   } as const;
 
+  it.each(['stop', 'suspend'] as const)('admits deferred %s through the control endpoint without native dispatch', async intent => {
+    const actionInput = { homeId: 'srv_home', managedId: machine.id, when: 'after-idle' as const, intent };
+    const requests: unknown[] = [];
+    app.post('/v1/machines/managed/controller/admit-control', async request => {
+      requests.push(request.body);
+      return { machine: { ...machine, desired: intent, desiredWhen: 'after-idle', intentRevision: 2 }, replayed: false };
+    });
+    await app.ready();
+    const deps = createAccountServerActionDeps({ token: 'bound', serverId: 'route-home', serverIdentityId: 'srv_home', serverHttpBaseUrl: 'http://home.test' });
+    expect(await deps.managedMachineAction!({ actionId: 'machines.managed.power.set', input: actionInput,
+      context: { ...context, actionRequestId: 'deferred-power' } })).toEqual({ kind: 'accepted', managedId: machine.id, intentRevision: 2 });
+    expect(requests).toEqual([{ action: 'machines.managed.power.set', input: actionInput, requestId: 'deferred-power' }]);
+  });
+
   it('refuses a foreign acquisition Home with a typed failure before dispatch', async () => {
     const deps = createAccountServerActionDeps({ token: 'bound', serverId: 'route-home', serverIdentityId: 'srv_home', serverHttpBaseUrl: 'http://home.test' });
     await app.ready();
@@ -121,20 +160,6 @@ describe('managed inventory CLI Home adapter', () => {
     // @ts-expect-error Exercise malformed wire input with the required Home omitted.
     await expect(deps.managedMachineAction!({ actionId: 'machines.managed.acquire', input: { ...delegatedAcquire, selection }, context }))
       .resolves.toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
-  });
-
-  it.each(['stop', 'suspend'] as const)('admits deferred %s through the control endpoint without native dispatch', async intent => {
-    const actionInput = { homeId: 'srv_home', managedId: machine.id, when: 'after-idle' as const, intent };
-    const requests: unknown[] = [];
-    app.post('/v1/machines/managed/controller/admit-control', async request => {
-      requests.push(request.body);
-      return { machine: { ...machine, desired: intent, desiredWhen: 'after-idle', intentRevision: 2 }, replayed: false };
-    });
-    await app.ready();
-    const deps = createAccountServerActionDeps({ token: 'bound', serverId: 'route-home', serverIdentityId: 'srv_home', serverHttpBaseUrl: 'http://home.test' });
-    expect(await deps.managedMachineAction!({ actionId: 'machines.managed.power.set', input: actionInput,
-      context: { ...context, actionRequestId: 'deferred-power' } })).toEqual({ kind: 'accepted', managedId: machine.id, intentRevision: 2 });
-    expect(requests).toEqual([{ action: 'machines.managed.power.set', input: actionInput, requestId: 'deferred-power' }]);
   });
 
   it.each([undefined, 'controller-1'])('discovers Account provisioner declarations through CLI composition with transport Machine %s', async machineId => {
@@ -253,9 +278,13 @@ describe('managed inventory CLI Home adapter', () => {
       expect(JSON.parse(new URL(request.url, 'http://home.test').searchParams.get('service')!)).toEqual(service);
       return QualifiedConnectedAccountListResponseV4Schema.parse({ service, accounts: [profile] });
     });
+    app.post('/v1/teams/list', async request => {
+      expect(TeamsListInputV1Schema.parse(request.body)).toEqual({ v: 1, scope: 'member', archived: 'active' });
+      return TeamsPageV1Schema.parse({ items: [], nextCursor: null });
+    });
     await app.ready();
     const result = await executor().execute('machines.provisioners.list', { homeId: 'srv_home', contribution }, context);
-    expect(result).toMatchObject({ ok: true, result: { provisioners: [expect.objectContaining({ contribution,
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { provisioners: [expect.objectContaining({ contribution,
       credentialPurposes: [expect.objectContaining({ options: [{ value: profile.ref, label: 'Selected' }] })],
     })] } });
     expect(metadataReads).toBe(1);
@@ -264,6 +293,10 @@ describe('managed inventory CLI Home adapter', () => {
   it('reports unavailable guest diagnostics when Account inspection cannot reach the retained controller', async () => {
     const retained = { ...machine, enrolledMachineId: 'offline-guest' };
     app.post('/v1/machines/managed/actions/get', async () => retained);
+    app.post('/v1/machines/managed/actions/inspect', async request => {
+      expect(request.body).toEqual({ homeId: machine.homeId, managedId: machine.id });
+      return ManagedMachineActionOutputSchemasV1['machines.managed.inspect'].parse({ machine: retained });
+    });
     await app.ready();
     const result = await executor().execute('machines.managed.inspect', {
       homeId: machine.homeId, managedId: machine.id, includeGuestDiagnostics: true,
@@ -286,6 +319,8 @@ describe('managed inventory CLI Home adapter', () => {
       reviewedFacts: { launch, provisioner, optionStatus: 'current', prerequisites: [], billing: provisioner.billing,
         retentionCapabilities: provisioner.retention, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } };
     app.post('/v1/machines/managed/actions/get', async () => retained);
+    app.post('/v1/machines/managed/actions/inspect', async () =>
+      ManagedMachineActionOutputSchemasV1['machines.managed.inspect'].parse({ machine: retained }));
     app.post('/v1/machines/managed/controller/context', async () => ({ machine: retained, requestId: 'retained-creation' }));
     app.post('/v1/machines/managed/controller/report', async () => ({ machine: retained }));
     app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'], async () => ({
@@ -328,7 +363,7 @@ describe('managed inventory CLI Home adapter', () => {
     const result = await deps.managedMachineAction!({ actionId: 'machines.managed.inspect', input: inspectInput, context: actionContext });
     expect(result).toMatchObject({ machine: { id: retained.id }, guestDiagnostics: { status: 'collected',
       snapshot: { daemonState: { machineId: 'guest-account' } } } });
-    expect(roles).toEqual(['inspect', 'exec']);
+    expect(roles).toEqual(['exec']);
   });
 
   it.each([['account', false], ['account', true], ['native', false], ['native', true]] as const)(
@@ -347,7 +382,7 @@ describe('managed inventory CLI Home adapter', () => {
     const provisioner = base.manifest.contributes.machineProvisioners[0]!;
     const provider = { pluginId: managedPluginId, localId: provisioner.id };
     const launch = { provider, schemaVersion: 1, name: 'Retained', choices: {}, credentials: [{
-      purpose: { consumer: { pluginId: provider.pluginId, localId: 'power' }, purpose: 'upstream' }, account: { service, accountId: 'selected-account' },
+      purpose: { consumer: provider, purpose: 'upstream' }, account: { service, accountId: 'selected-account' },
     }] };
     let retained: ManagedMachineV1 = { id: 'retained', homeId: 'srv_home', custodianAccountId: 'owner', launch,
       allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 2,
@@ -391,11 +426,15 @@ describe('managed inventory CLI Home adapter', () => {
       return { machine: retained };
     });
     const native: string[] = [];
+    const nativeResults = { inspect: { observedAt: 2, availability: 'present' as const, power: 'stopped' as 'stopped' | 'running', storage: 'retained' as const } };
     const runtime = managedFixture({ fixtureManifest: manifest, executionRealm: 'account', credentialOwner: owner, referenceManifests: [reference],
-      onNativeRole: role => { native.push(role); }, onInspect: () => { native.push('inspect'); },
-      nativeRoleResults: { inspect: { observedAt: 2, availability: 'present', power: 'running', storage: 'retained' } } });
+      onNativeRole: role => { native.push(role); if (role === 'power') nativeResults.inspect.power = 'running'; },
+      onInspect: () => { native.push('inspect'); }, nativeRoleResults: nativeResults });
     const invoke = createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: async () => ({ registry: runtime.runtimeRegistry,
-      source: 'ephemeral', durableRevision: -1, release: async () => {} }), connectedAccountPurposeBindingOwner: owner });
+      source: 'ephemeral', durableRevision: -1, release: async () => {} }), managedProviderOperationAuthority: createManagedProviderOperationAuthority({ materializationBaseDir: tmpdir(),
+        purposeBindingOwner: owner, requestAuthRegistry: createConnectedAccountRequestAuthSubjectRegistry(),
+        resolveRequestAuthHttpPort: () => 43123, createRedactionLease: () => ({ add() {}, close() {} }),
+      }) });
     const actionContext: ActionExecutorContext = { ...context, actionRequestId: 'original-power', runtimeAccountId: refused ? 'other' : 'owner',
       operationAcceptance: { operationId: 'original-operation', accept() {} }, operationOwnerUpdate: { update() {} } };
     // This constructs the consumer's canonical private-port boundary; it is
@@ -427,7 +466,7 @@ describe('managed inventory CLI Home adapter', () => {
         });
     expect(result).toMatchObject(refused ? { ok: false, errorCode: 'managed_power_required' }
       : { kind: 'accepted', managedId: retained.id, intentRevision: 3 });
-    expect(native).toEqual(refused ? [] : ['power', 'inspect']);
+    expect(native).toEqual(refused ? [] : ['inspect', 'power', 'inspect']);
     // The native power handler materializes the selected token. The fixture's
     // Inspect returns its observed state without acquiring another token.
     expect(disclosed).toEqual(refused ? [] : ['selected-account']);
@@ -435,8 +474,10 @@ describe('managed inventory CLI Home adapter', () => {
     expect(paths.some(path => path.endsWith('/execution-authorization'))).toBe(false);
   });
 
-  it.each(['unknown', 'refused'] as const)('reports a thrown Account power outcome as %s before preserving its failure', async kind => {
-    const base = managedFixture();
+  async function failedAccountPowerFixture(kind: 'unknown' | 'refused', nativeFailure?: ActionExecuteFailure | Error, reportRefused = false,
+    returnedOutcome?: 'refused' | 'guest-startup-failed' | 'confirmed') {
+    const guestStartup = returnedOutcome === 'guest-startup-failed';
+    const base = managedFixture({ nativeTransport: guestStartup });
     const manifest = normalizePluginManifestV2({ ...base.manifest, contributes: { ...base.manifest.contributes,
       actions: base.manifest.contributes.actions.map(action => ({ ...action, hostAccess: undefined,
         execution: { target: 'account', account: { artifactId: 'native', exportName: 'activate' } } })),
@@ -444,7 +485,9 @@ describe('managed inventory CLI Home adapter', () => {
     const provisioner = manifest.contributes.machineProvisioners[0]!;
     const provider = { pluginId: manifest.id, localId: provisioner.id };
     const launch = { provider, schemaVersion: 1, name: 'Retained', choices: {} };
-    const retained: ManagedMachineV1 = { ...machine, controller: undefined, launch, allocation: 'bound', desired: 'stop',
+    const intent = guestStartup ? 'start' as const : 'stop' as const;
+    const retained: ManagedMachineV1 = { ...machine, controller: undefined, launch, allocation: 'bound', desired: intent,
+      ...(guestStartup ? { enrolledMachineId: 'enrolled-guest', enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } } : {}),
       resource: { contributionRef: provider, schemaVersion: 1, value: { id: 'same-native' } },
       reviewedFacts: { launch, provisioner, optionStatus: 'current', prerequisites: [], billing: provisioner.billing,
         retentionCapabilities: provisioner.retention, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false } };
@@ -459,37 +502,149 @@ describe('managed inventory CLI Home adapter', () => {
     const reports: unknown[] = [];
     app.post('/v1/machines/managed/controller/admit-control', async () => ({ machine: retained, replayed: false }));
     app.post('/v1/machines/managed/controller/submit-intent', async () => ({ machine: retained, submitted: true }));
-    app.post('/v1/machines/managed/controller/report-intent', async request => {
+    app.post('/v1/machines/managed/controller/report-intent', async (request, reply) => {
       reports.push(request.body);
+      if (reportRefused) return reply.code(503).send({ code: 'managed_request_failed' });
       return { machine: retained };
     });
-    const actionInput = { homeId: retained.homeId, managedId: retained.id, expectedRevision: 0, when: 'now' as const, intent: 'stop' as const };
+    const actionInput = { homeId: retained.homeId, managedId: retained.id, expectedRevision: 0, when: 'now' as const, intent };
     const actionContext: ActionExecutorContext = { ...context, actionRequestId: 'failed-power', runtimeAccountId: 'owner' };
+    const native: string[] = [];
+    let powered = false;
+    const roles = readMachineProvisionerActionRolesV1(provisioner);
     actionContext.hostReviewedChild = createHostReviewedChildPortV1({ actionId: 'machines.managed.power.set', input: actionInput,
-      context: actionContext, plan: { children: [{ action: { pluginId: provider.pluginId, localId: provisioner.actions.power! }, role: 'power' }] },
+      context: actionContext, plan: { children: roles.filter(({ role }) => role === 'power' || returnedOutcome && (role === 'inspect'
+        || guestStartup && (role === 'bootstrap' || role === 'exec'))).map(({ role, action }) => ({
+          action: { pluginId: provider.pluginId, localId: action }, role })) },
       // The native provider boundary distinguishes a proven refusal from ambiguous delivery.
-      execute: async () => projectContributedActionFailure({
-        errorCode: kind === 'refused' ? 'native_permission_denied' : 'native_transport_unavailable',
-        error: 'Native failure', ...(kind === 'refused' ? { actionHandlerInvocation: 'notStarted' as const } : {}),
-      }) });
+      execute: async body => {
+        if (returnedOutcome) {
+          if (!body || typeof body !== 'object' || !('action' in body) || !body.action || typeof body.action !== 'object'
+            || !('localId' in body.action)) throw new Error('Expected provider Action');
+          const localId = body.action.localId;
+          const role = roles.find(candidate => candidate.action === localId)?.role;
+          if (!role) throw new Error('Expected declared provider role');
+          native.push(role);
+          if (role === 'inspect') return { ok: true, result: { observedAt: 2, availability: 'present',
+            power: guestStartup && powered ? 'running' : 'stopped', storage: 'retained' } };
+          if (role === 'power') {
+            powered = true;
+            return { ok: true, result: returnedOutcome === 'refused'
+              ? { kind: 'refused', code: 'native_permission_denied', nativeCause: { httpStatusClass: '4xx' } } : { kind: 'confirmed' } };
+          }
+          if (role === 'bootstrap') return { ok: true, result: { kind: 'native',
+            transport: { contributionRef: provider, schemaVersion: 1 } } };
+        }
+        if (nativeFailure instanceof Error) throw nativeFailure;
+        return nativeFailure ?? projectContributedActionFailure({
+          errorCode: kind === 'refused' ? 'native_permission_denied' : 'native_transport_unavailable',
+          error: 'Native failure', ...(kind === 'refused' ? { actionHandlerInvocation: 'notStarted' as const } : {}),
+        });
+      } });
     const deps = createAccountServerActionDeps({ token: 'bound', serverId: 'route-home', serverIdentityId: 'srv_home', serverHttpBaseUrl: 'http://home.test' });
+    return { retained, reports, actionInput, actionContext, deps, native };
+  }
+
+  it.each(['unknown', 'refused'] as const)('reports a thrown Account power outcome as %s before preserving its failure', async kind => {
+    const { retained, reports, actionInput, actionContext, deps } = await failedAccountPowerFixture(kind);
     expect(await deps.managedMachineAction!({ actionId: 'machines.managed.power.set', input: actionInput, context: actionContext }))
       .toMatchObject({ ok: false, errorCode: kind === 'refused' ? 'native_permission_denied' : 'native_transport_unavailable' });
     expect(reports).toEqual([expect.objectContaining({ requestId: 'failed-power', expectedIntentRevision: retained.intentRevision,
       result: { kind, code: kind === 'refused' ? 'native_permission_denied' : 'native_transport_unavailable' } })]);
   });
 
-  it.each(['bound', 'pending-power', 'pending-acquisition'] as const)('inspects Account native power and acquisition without a second effect and reports through retained correlation (%s)', async state => {
+  it('preserves the exact native exception when Account outcome reporting fails and records its closed report warning', async () => {
+    const authored = projectContributedActionFailure({ errorCode: 'native_transport_unavailable', error: 'Reconnect the native provider',
+      data: { failureCause: { phase: 'action.invoke', errorClass: 'Error', errorCode: 'EPIPE', httpStatus: null } } });
+    const nativeFailure = ManagedMachineControllerError.fromActionFailure(authored, 'action.invoke');
+    // Console/file logging is an external IO boundary; keep its diagnostic payload observable.
+    const warnings = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    try {
+      const { reports, actionInput, actionContext } = await failedAccountPowerFixture('unknown', nativeFailure, true);
+      await expect(executeCliManagedAccountPower({ body: actionInput, context: actionContext,
+        credentials: { token: 'bound', encryption: null }, serverUrl: 'http://home.test',
+        post: async (suffix, request, schema) => {
+          const response = await axios.post(`http://home.test/v1/machines/managed/controller/${suffix}`, request,
+            { headers: { Authorization: 'Bearer bound' }, validateStatus: () => true });
+          if (response.status >= 400) throw new ManagedMachineControllerError('managed_request_failed');
+          return schema.parse(response.data);
+        } })).rejects.toBe(nativeFailure);
+      expect(nativeFailure.cause).toMatchObject({ errorCode: authored.errorCode, error: authored.error, failureCause: authored.failureCause });
+      expect(reports).toEqual([expect.objectContaining({ result: { kind: 'unknown', code: 'native_transport_unavailable' } })]);
+      expect(warnings).toHaveBeenCalledWith(expect.any(String),
+        projectActionFailureCauseV1(new ManagedMachineControllerError('managed_request_failed'), 'machines.managed.power.set'));
+    } finally { warnings.mockRestore(); }
+  });
+
+  it.each(['guest-startup-failed', 'refused', 'confirmed'] as const)(
+    'preserves a known returned Account power failure when reporting fails while exposing confirmed report failure (%s)', async outcome => {
+      const authored = projectContributedActionFailure({ errorCode: 'native_transport_unavailable', error: 'Reconnect the native provider',
+        data: { failureCause: { phase: 'action.invoke', errorClass: 'Error', errorCode: 'EPIPE', httpStatus: null } } });
+      const nativeFailure = ManagedMachineControllerError.fromActionFailure(authored, 'action.invoke');
+      const warnings = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+      try {
+        const { reports, actionInput, actionContext, native } = await failedAccountPowerFixture('unknown', nativeFailure, true, outcome);
+        const execution = executeCliManagedAccountPower({ body: actionInput, context: actionContext,
+          credentials: { token: 'bound', encryption: null }, serverUrl: 'http://home.test',
+          post: async (suffix, request, schema) => {
+            const response = await axios.post(`http://home.test/v1/machines/managed/controller/${suffix}`, request,
+              { headers: { Authorization: 'Bearer bound' }, validateStatus: () => true });
+            if (response.status >= 400) throw new ManagedMachineControllerError('managed_request_failed');
+            return schema.parse(response.data);
+          } });
+        if (outcome === 'guest-startup-failed') await expect(execution).rejects.toBe(nativeFailure);
+        else await expect(execution).rejects.toMatchObject({ code: outcome === 'refused' ? 'native_permission_denied' : 'managed_request_failed' });
+        expect(reports).toEqual([expect.objectContaining({ result: expect.objectContaining(outcome === 'refused'
+          ? { kind: 'refused', code: 'native_permission_denied' } : { kind: 'confirmed' }) })]);
+        expect(native).toEqual(outcome === 'guest-startup-failed' ? ['inspect', 'power', 'inspect', 'bootstrap', 'exec']
+          : outcome === 'refused' ? ['power'] : ['power', 'inspect']);
+        if (outcome === 'confirmed') expect(warnings).not.toHaveBeenCalled();
+        else expect(warnings).toHaveBeenCalledWith(expect.any(String),
+          { phase: 'machines.managed.power.set', errorClass: 'ManagedMachineControllerError', errorCode: 'managed_request_failed', httpStatus: null });
+      } finally { warnings.mockRestore(); }
+    });
+
+  it('preserves the closed returned native refusal cause when Home outcome reporting succeeds', async () => {
+    const { reports, actionInput, actionContext, deps } = await failedAccountPowerFixture('unknown', undefined, false, 'refused');
+    expect(await deps.managedMachineAction!({ actionId: 'machines.managed.power.set', input: actionInput, context: actionContext }))
+      .toMatchObject({ ok: false, errorCode: 'native_permission_denied',
+        details: { kind: 'managedNative', nativeCause: { httpStatusClass: '4xx' } } });
+    expect(reports).toEqual([expect.objectContaining({ result: {
+      kind: 'refused', code: 'native_permission_denied', nativeCause: { httpStatusClass: '4xx' },
+    } })]);
+  });
+
+  it('preserves the admitted authored native failure and its original cause at the Account Action boundary', async () => {
+    const failureCause = { phase: 'action.invoke', errorClass: 'Error', errorCode: 'EPIPE', httpStatus: null } as const;
+    const authored = projectContributedActionFailure({ errorCode: 'native_transport_unavailable', error: 'Reconnect the native provider',
+      data: { failureCause } });
+    const { actionInput, actionContext, deps } = await failedAccountPowerFixture('unknown', authored);
+    expect(await deps.managedMachineAction!({ actionId: 'machines.managed.power.set', input: actionInput, context: actionContext }))
+      .toMatchObject({ ok: false, errorCode: authored.errorCode, error: authored.error, failureCause,
+        details: { name: 'PluginError', code: authored.errorCode, message: authored.error } });
+  });
+
+  it.each(['bound', 'pending-power', 'pending-acquisition', 'denied-read', 'missing-reviewed-child', 'wrong-purpose'] as const)('inspects Account native power and acquisition without a second effect and reports through retained correlation (%s)', async state => {
     const pending = state === 'pending-power';
     const acquiring = state === 'pending-acquisition';
-    const base = managedFixture({ reconciliation: true });
+    const credentialOwner = createConnectedAccountPurposeBindingOwner({
+      store: { read: async () => ({ v: 1, bindings: [] }), update: async mutate => mutate({ v: 1, bindings: [] }), subscribe: () => ({ dispose() {} }) },
+      selectTarget: async () => { throw new Error('Inspect must use its retained credential selection'); },
+      resolveTarget: async () => { throw new Error('Wrong-purpose credential must not be resolved'); },
+      materializeAccount: async () => { throw new Error('Wrong-purpose credential must not be materialized'); },
+      projectTargetAccounts: async () => { throw new Error('Inspect must not list Accounts'); },
+      assertTargetAccountMaterializable: async () => { throw new Error('Inspect must not probe an unrelated Account'); },
+    });
+    const base = managedFixture({ reconciliation: true, ...(state === 'wrong-purpose' ? { credentialOwner } : {}) });
     const manifest = normalizePluginManifestV2({ ...base.manifest, contributes: { ...base.manifest.contributes,
-      actions: base.manifest.contributes.actions.map(action => ({ ...action, hostAccess: undefined,
+      actions: base.manifest.contributes.actions.map(action => ({ ...action, hostAccess: state === 'wrong-purpose' ? action.hostAccess : undefined,
         execution: { target: 'account', account: { artifactId: 'native', exportName: 'activate' } } })),
     } });
     const provisioner = manifest.contributes.machineProvisioners[0]!;
     const provider = { pluginId: manifest.id, localId: provisioner.id };
-    const launch = { provider, schemaVersion: 1, name: 'Retained', choices: {} };
+    const launch = { provider, schemaVersion: 1, name: 'Retained', choices: {}, ...(state === 'wrong-purpose' ? { credentials: [{
+      purpose: { consumer: provider, purpose: 'another-purpose' }, account: { service: { pluginId: 'acme.accounts', localId: 'cloud' }, accountId: 'unrelated' },
+    }] } : {}) };
     const resource = { contributionRef: provider, schemaVersion: 1, value: { id: 'same-native' } };
     let retained: ManagedMachineV1 = { ...machine, controller: undefined, launch, allocation: acquiring ? 'may-exist' : 'bound',
       ...(acquiring ? { nativeOperationRef: { contributionRef: provider, schemaVersion: 1, value: { requestId: 'original-allocation' } } } : { resource }),
@@ -506,7 +661,8 @@ describe('managed inventory CLI Home adapter', () => {
     }));
     const paths: string[] = [];
     app.addHook('onRequest', async request => { paths.push(request.url); });
-    app.post('/v1/machines/managed/actions/get', async () => retained);
+    app.post('/v1/machines/managed/actions/get', async (_request, reply) => state === 'denied-read'
+      ? reply.code(403).send({ code: 'permission_denied' }) : retained);
     app.post('/v1/machines/managed/controller/context', async () => ({ machine: retained, requestId: 'creation-request' }));
     const observation = { observedAt: 20, availability: 'present' as const, power: 'stopped' as const, storage: 'retained' as const };
     app.post(`/v1/machines/managed/controller/${pending ? 'report-intent' : 'report'}`, async request => {
@@ -523,10 +679,18 @@ describe('managed inventory CLI Home adapter', () => {
       settleManagedNativeOperation: settlement => { settlements.push(settlement); } };
     const plan = await prepareCliManagedProvisionerAdmission({ actionId: 'machines.managed.inspect', input: inspectInput, context: actionContext },
       { credentials: { token: 'bound', encryption: null }, serverUrl: 'http://home.test', managedMachineAction: deps.managedMachineAction });
+    if (state === 'denied-read') {
+      expect(plan).toEqual({ children: [] });
+      expect(await deps.managedMachineAction!({ actionId: 'machines.managed.inspect', input: inspectInput, context: actionContext }))
+        .toMatchObject({ ok: false, errorCode: 'permission_denied' });
+      expect(paths.every(path => path === '/v1/machines/managed/actions/get')).toBe(true);
+      expect(settlements).toEqual([]);
+      return;
+    }
     expect(plan).toMatchObject({ children: expect.arrayContaining([{ action: { pluginId: provider.pluginId, localId: provisioner.actions.inspect }, role: 'inspect' }]) });
     if (!plan || !('children' in plan)) throw new Error('Expected prepared inspection roles');
     const native: string[] = [];
-    actionContext.hostReviewedChild = createHostReviewedChildPortV1({ actionId: 'machines.managed.inspect', input: inspectInput,
+    if (state !== 'missing-reviewed-child') actionContext.hostReviewedChild = createHostReviewedChildPortV1({ actionId: 'machines.managed.inspect', input: inspectInput,
       context: actionContext, plan, execute: async body => {
         if (body && typeof body === 'object' && 'action' in body && body.action && typeof body.action === 'object'
           && 'localId' in body.action && body.action.localId === provisioner.reconciliation?.action) {
@@ -538,6 +702,14 @@ describe('managed inventory CLI Home adapter', () => {
         native.push('inspect');
         return { ok: true, result: observation };
       } });
+    if (state === 'missing-reviewed-child' || state === 'wrong-purpose') {
+      expect(await deps.managedMachineAction!({ actionId: 'machines.managed.inspect', input: inspectInput, context: actionContext }))
+        .toMatchObject({ ok: false, errorCode: state === 'wrong-purpose' ? 'credential_unavailable' : 'admission_unavailable' });
+      expect(native).toEqual([]);
+      expect(settlements).toEqual([]);
+      expect(paths.some(path => path.endsWith('/report') || path.endsWith('/report-intent') || path.endsWith('/submit-intent'))).toBe(false);
+      return;
+    }
     expect(await deps.managedMachineAction!({ actionId: 'machines.managed.inspect', input: inspectInput, context: actionContext }))
       .toMatchObject({ machine: { observation } });
     expect(native).toEqual(acquiring ? ['reconcile', 'inspect'] : ['inspect']);
@@ -652,18 +824,94 @@ describe('managed inventory CLI Home adapter', () => {
     ]);
   });
 
-  it.each(['cli', 'agent', 'mcp'] as const)('invokes preset setup, terminals and authenticated work summary through the exact-machine %s transport', async surface => {
+  it.each(['cli', 'agent', 'mcp'] as const)('admits the reviewed Setup Run and invokes terminals and authenticated work summary through the exact-machine %s transport', async surface => {
+    if (!pluginReloadController.getState().activeRegistry) {
+      const lease = await pluginReloadController.acquireRuntimeRegistry({
+        resolveRuntimeRegistry: () => resolveExecutablePluginRuntimeRegistry({ contributes: createResolvedContributionRegistry({}) }),
+      });
+      await lease.release();
+    }
     const seen: Array<{ method: string; request: unknown }> = [];
-    const environment = { homeId: 'srv_home', machineId: 'controller-1', sources: [
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner', tokenEpoch: 7,
+      provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`;
+    const requestId = `parity-${surface}-machines.setup.apply`;
+    const setupPolicy = normalizeActionsSettingsV1({ ...policy,
+      actions: { ...policy.actions, 'machines.setup.apply': { approvalRequiredSurfaces: ['cli', 'agent', 'mcp'] } },
+      approvalWaivedSurfaces: { ...policy.approvalWaivedSurfaces, 'machines.setup.apply': [] },
+    });
+    const settings = AccountSettingsSchema.parse({ actionsSettingsV1: setupPolicy });
+    setActiveAccountSettingsSnapshot({ source: 'network', settings,
+      settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKeyForToken(token) });
+    const environment = MachineSetupApplyInputV1Schema.parse({ homeId: 'srv_home', machineId: 'controller-1', targets: [{
+      homeId: 'srv_home', machineId: 'controller-1', desiredRevision: 0, exclusions: [], recipePlans: [], sources: [
       { kind: 'accountPreset', presetId: 'preset-1', presetRevision: 2, setup: { scripts: [{ body: 'echo reviewed', affects: 'none' }],  } },
       { kind: 'direct', setup: {} },
-    ] };
+    ] }] });
     const terminals = { ok: true, terminals: [{ terminalId: 'terminal-1', terminalKey: 'setup', cwd: '/workspace', ended: false, exit: null }] };
     const workSummary = { kind: 'current', requesters: [{ accountId: 'recipient', displayName: 'Recipient', sessions: 2, tasks: 1, terminals: 3 }] } satisfies MachineWorkSummaryV1;
+    const homeMachine = { id: 'controller-1', kind: 'persistent', active: true, activeAt: Date.now(),
+      installationId: 'installation-1', revokedAt: null, replacedByMachineId: null,
+      storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, runnerContentKeyBinding: null,
+      access: { custodian: { accountId: 'owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } };
     app.get('/v1/machines/controller-1', async request => {
-      expect(request.headers.authorization).toBe('Bearer bound');
-      return { machine: { id: 'controller-1', storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER } };
+      expect(request.headers.authorization).toBe(`Bearer ${token}`);
+      return { machine: homeMachine };
     });
+    app.get('/v1/machines', async () => [homeMachine]);
+    app.get('/v1/account/profile', async () => ({ id: 'owner' }));
+    app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture());
+    app.get(SESSION_FOLLOW_HTTP_PATHS_V1.preferences, async request => {
+      expect(request.headers.authorization).toBe(`Bearer ${token}`);
+      return { ...DEFAULT_SESSION_AUTO_FOLLOW_PREFERENCES_V1, ...DEFAULT_SESSION_FOLLOW_CREATION_POLICIES_V1 };
+    });
+    const features = FeaturesResponseSchema.parse({ features: { automations: { enabled: true }, workflows: { enabled: true } },
+      capabilities: { serverIdentity: { serverIdentityId: 'srv_home' } } });
+    app.get('/v1/features', async () => features);
+    app.get('/v1/features/authenticated', async request => {
+      expect(request.headers.authorization).toBe(`Bearer ${token}`);
+      return features;
+    });
+    // Agent and MCP tools originate in a real Session. Account-host labels such
+    // as cli-global carry no machine, workspace or native caller baseline.
+    const originSessionId = 'c333333333333333333333333';
+    const originMetadata = createTestMetadata({ machineId: 'controller-1', path: '/workspace', permissionMode: 'default' });
+    const originSession = createSessionRecordFixture({ id: originSessionId, active: true, encryptionMode: 'plain',
+      metadata: JSON.stringify(originMetadata), workDepth: 0 });
+    app.get('/v2/sessions/:sessionId', async request => {
+      expect(request.params).toEqual({ sessionId: originSessionId });
+      expect(request.headers.authorization).toBe(`Bearer ${token}`);
+      return { session: originSession };
+    });
+    registerPlainArtifactRoutes(app, 'owner');
+    app.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: settings }, version: 1 }));
+    const runId = deriveMachineSetupCombinedRunIdV1({ homeId: 'srv_home', accountId: 'owner', requestId });
+    const storage = createWorkflowRunStorageTestkit({ accountId: 'owner', runId, machineId: 'controller-1', origin: { kind: 'direct' } });
+    const storageFailures: Array<{ operation: 'get' | 'other'; errorClass: 'Error' | 'other';
+      httpStatus: number; errorCode: 'run_not_found' | 'currentness_conflict' | 'unclassified' }> = [];
+    app.post(WORKFLOW_RUN_STORAGE_HTTP_PATH, async (request, reply) => {
+      expect(request.headers.authorization).toBe(`Bearer ${token}`);
+      // This is Home's opaque persistence boundary, not a preaccepted Run or a
+      // substituted composition owner. The real owner materializes admission.
+      const operation = request.body as WorkflowRunStorageTestkitOperation;
+      if (operation.operation === 'wait') return reply.code(503).send({ error: 'storage_unavailable' });
+      try {
+        return await storage.execute(operation);
+      } catch (error) {
+        const response = error && typeof error === 'object' && 'response' in error ? error.response : null;
+        if (!response || typeof response !== 'object' || !('status' in response)
+          || typeof response.status !== 'number' || !('data' in response)) throw error;
+        const code = response.data && typeof response.data === 'object' && 'error' in response.data
+          ? response.data.error : null;
+        storageFailures.push({ operation: operation.operation === 'get' ? 'get' : 'other',
+          errorClass: error instanceof Error ? 'Error' : 'other', httpStatus: response.status,
+          errorCode: code === 'run_not_found' || code === 'currentness_conflict' ? code : 'unclassified' });
+        // Preserve the storage boundary's HTTP failure; Fastify otherwise turns
+        // the testkit's Axios-shaped not-found rejection into an unrelated 500.
+        return reply.code(response.status).send(response.data);
+      }
+    });
+    const operations = createHostActionOperationRuntime({ serverId: 'route-home', machineId: 'controller-1',
+      resolveAccountId: async () => 'owner', generateOperationId: () => `setup-${surface}` });
     socketBoundary.respond = async (event, payload) => {
       expect(event).toBe(SOCKET_RPC_EVENTS.CALL);
       if (!payload || typeof payload !== 'object') throw new Error('Missing machine RPC request');
@@ -674,29 +922,126 @@ describe('managed inventory CLI Home adapter', () => {
       seen.push({ method: RPC_METHODS.MACHINES_WORK_SUMMARY_GET, request: decoded.params });
       return { ok: true, result: await socketRpcCodec.encodeResponse({ mode: 'plain' }, workSummary, decoded.callId) };
     };
-    const cli = createCliActionExecutor({ token: 'bound', credentials: { token: 'bound', encryption: null }, sessionId: 'cli-global', serverId: 'route-home', serverIdentityId: 'srv_home',
+    // The access.key reader owns terminal sign-in provenance. A bearer-shaped
+    // object alone is automation and cannot approve the persisted request.
+    const credentials = decodeStoredCredentials({ token });
+    if (!credentials) throw new Error('Expected stored terminal credentials');
+    const approvals: string[] = [];
+    const cli = createCliActionExecutor({ token, credentials, sessionId: originSessionId, rawSession: originSession,
+      serverId: 'route-home', serverIdentityId: 'srv_home',
       serverHttpBaseUrl: 'http://home.test', mode: 'plain', ctx: null,
+      runActionOperation: operations.runActionOperation,
+      isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentnessFromCredentials({ credentials,
+        machineId: 'controller-1', serverId: 'route-home', serverApiUrl: 'http://home.test',
+        // Local installation identity is the OS boundary; Home, Account and
+        // exact-target review currentness still use their canonical owners.
+        resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: 'controller-1', serverIdentityId: 'srv_home' }),
+      }),
+      onApprovalRequested: async (artifactId, signal) => {
+        approvals.push(artifactId);
+        return await cli.execute('approval.request.decide', { artifactId, decision: 'approve' }, {
+          surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+          actionRequestId: `review-${requestId}`, signal,
+        });
+      },
+      resolveServerFeaturesSnapshot: () => fetchServerFeaturesSnapshot({ serverUrl: 'http://home.test', token,
+        fetchImpl: async (input, init) => {
+          const url = new URL(input instanceof Request ? input.url : String(input));
+          expect(url.origin).toBe('http://home.test');
+          const response = await app.inject({ method: 'GET', url: url.pathname,
+            headers: Object.fromEntries(new Headers(init?.headers).entries()) });
+          return new Response(response.payload, { status: response.statusCode, headers: { 'Content-Type': 'application/json' } });
+        } }),
       // Only the daemon IPC boundary is substituted; the Action/tool executors,
       // exact-target adapter, schema validation and admission remain real.
       machineActionDirectTargetTransport: { machineId: 'controller-1', invoke: async (method, request) => {
         seen.push({ method, request });
-        if (method === 'machines.setup.apply') return { operationId: 'setup-1', terminalId: 'terminal-1' };
+        if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) {
+          return DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
+            projection: { v: 2, generation: 1, familiesById: {} } });
+        }
         if (method === RPC_METHODS.DAEMON_TERMINAL_LIST) return terminals;
         throw new Error(`Unexpected daemon method: ${method}`);
       } },
     });
-    await expect(invoke(cli, surface, 'machines.setup.apply', environment))
-      .resolves.toEqual({ ok: true, result: { operationId: 'setup-1', terminalId: 'terminal-1' } });
+    // Malformed Setup fails before admission. The valid request below reaches
+    // the real composed Run owner and persists its reviewed parent in Home.
+    await expect(invoke(cli, surface, 'machines.setup.apply', { ...environment, targets: environment.targets.map(target => ({ ...target,
+      sources: target.sources.map(source => source.kind === 'accountPreset' ? { ...source, presetRevision: '2' } : source) })) }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    const applied = surface === 'cli'
+      ? await cli.execute('machines.setup.apply', environment, { ...context, actionsSettings: setupPolicy, actionRequestId: requestId })
+      : await createActionToolExecutorBridge({ executor: cli, surface, actionsSettings: setupPolicy,
+          resolveCallerPermissionMode: () => originMetadata.permissionMode ?? null })
+        .executeActionByToolName('action_execute', { actionId: 'machines.setup.apply', input: environment }, originSessionId,
+          { actionRequestId: requestId });
+    expect(applied, JSON.stringify(storageFailures)).toEqual({ ok: true, result: surface === 'cli'
+      ? { operationId: `setup-${surface}`, runId }
+      : { status: 'accepted', operationId: `setup-${surface}`, machineId: 'controller-1' } });
+    // Agent/MCP acknowledge their Operation through its admission response.
+    // Observe that same Operation through its public RPC owner.
+    // The public uncertainty projection contains a typed failure, while the
+    // CombinedRun receipt and accepted snapshot below retain exact Run identity.
+    expect(await operations.handlers.getV2({ operationId: `setup-${surface}`, waitForTerminal: true }))
+      .toMatchObject({ kind: 'found', operation: { operationId: `setup-${surface}`, requestId,
+        actionId: 'machines.setup.apply', state: 'running', cancellation: 'unsupported',
+        error: { errorCode: 'outcome_uncertain' } } });
+    const accepted = storage.acceptedEnvelope();
+    if (!accepted) throw new Error('Setup Run was not admitted to Home');
+    const opened = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+      binding: { v: 1, purpose: 'accepted_snapshot', accountId: 'owner', runId },
+      envelope: parseWorkflowStoredContentEnvelopeV1(accepted) });
+    expect(opened).toMatchObject({ kind: 'available', content: {
+      approvedOperation: { parent: { actionId: 'machines.setup.apply', input: environment } },
+    } });
+    expect(approvals).toHaveLength(1);
     await expect(invoke(cli, surface, 'machines.terminal.list', { serverId: 'route-home', machineId: 'controller-1' }))
       .resolves.toEqual({ ok: true, result: terminals });
     await expect(invoke(cli, surface, 'machines.work.summary.get', { serverId: 'route-home', machineId: 'controller-1' }))
       .resolves.toEqual({ ok: true, result: workSummary });
-    await expect(invoke(cli, surface, 'machines.setup.apply', { ...environment, sources: environment.sources.map(source =>
-      source.kind === 'accountPreset' ? { ...source, presetRevision: '2' } : source) }))
-      .resolves.toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
-    expect(seen).toEqual([{ method: 'machines.setup.apply', request: environment },
+    expect(seen).toEqual([{ method: RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
+      request: { machineId: 'controller-1', selection: 'workflowMaterialization' } },
       { method: RPC_METHODS.DAEMON_TERMINAL_LIST, request: {} },
       { method: RPC_METHODS.MACHINES_WORK_SUMMARY_GET, request: { serverId: 'route-home', machineId: 'controller-1' } }]);
+  });
+
+  it.each(['cli', 'agent', 'mcp'] as const)('retains the public Setup CombinedRun receipt and credential lifetime through the %s API-token bridge', async surface => {
+    const token = 'hap_v1_11111111-1111-4111-8111-111111111111_' + 'A'.repeat(43);
+    const credentials = { token, encryption: null, credentialProvenance: 'api_token' as const };
+    const input = MachineSetupApplyInputV1Schema.parse({ homeId: 'srv_home', machineId: 'controller-1', targets: [{
+      homeId: 'srv_home', machineId: 'controller-1', desiredRevision: 0, exclusions: [], recipePlans: [],
+      sources: [{ kind: 'direct', setup: { scripts: [{ body: 'echo reviewed', affects: 'none' }] } }],
+    }] });
+    const result = ManagedMachineActionOutputSchemasV1['machines.setup.apply'].parse({
+      operationId: `setup-${surface}`, runId: `setup-run-${surface}`,
+    });
+    const requests: unknown[] = [];
+    app.post('/v1/actions/machines.setup.apply', async request => {
+      expect(request.headers.authorization).toBe(`Bearer ${token}`);
+      const envelope = ExternalActionRequestEnvelopeV1Schema.parse(request.body);
+      expect(envelope).toEqual({ v: 1, requestId: `parity-${surface}-machines.setup.apply`,
+        target: { kind: 'machine', machineId: 'controller-1' }, input });
+      requests.push(envelope);
+      // Home HTTP is the system boundary. Return the canonical owner's complete
+      // receipt, keeping the public SDK's correlation and output parsing real.
+      return { v: 1, actionId: 'machines.setup.apply', requestId: envelope.requestId,
+        execution: { ok: true, result } };
+    });
+    const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+    let current = true;
+    const cli = createCliActionExecutorFromCredentials({ credentials,
+      readCredentials: async () => current ? credentials : null,
+      serverId: 'route-home', serverIdentityId: 'srv_home', serverApiUrl: origin, machineId: 'controller-1' });
+    const execute = () => surface === 'cli'
+      ? cli.execute('machines.setup.apply', input, { surface, actionRequestId: `parity-${surface}-machines.setup.apply` })
+      : createActionToolExecutorBridge({ executor: cli, surface, actionsSettings: policy })
+        .executeActionByToolName('action_execute', { actionId: 'machines.setup.apply', input }, 'cli-global',
+          { actionRequestId: `parity-${surface}-machines.setup.apply` });
+    await expect(execute()).resolves.toEqual({ ok: true, result });
+    current = false;
+    await expect(execute()).resolves.toMatchObject({ ok: false, errorCode: 'not_authenticated' });
+    expect(requests).toHaveLength(1);
+    expect(socketBoundary.connections).toEqual([]);
   });
 
   it.each(['cli', 'agent', 'mcp'] as const)('invokes Session and Run Stop through the real %s control owners on the captured Home', async surface => {
