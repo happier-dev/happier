@@ -127,8 +127,8 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
         },
     });
     // The cold Add census saw four Machines with 76/62/58/33 contributions.
-    // Account-admitted directory declarations must not hydrate those Machines'
-    // unrelated execution catalogues merely to present catalog choices.
+    // Store discovery acquires live occurrences for packaged catalog reads,
+    // including installations whose directory declarations are already known.
     const fleet = declaredDirectory ? [machine, ...Array.from({ length: 3 }, (_, index) =>
         createMachineFixture({ id: `directory-machine-${index}`, activeAt: 0, storageMode: 'plain' }))] : [machine];
     const rows = fleet.map(entry => entry.id === machine.id ? row
@@ -280,16 +280,16 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
         await tree.update(<Presented visible />);
         if (declaredDirectory) {
             await waitForHomeGovernance(() => expect(tree!.tree.root.findAllByProps({ testID: storeKind.id })).toHaveLength(1));
+            await waitForHomeGovernance(() => expect(current?.phase).toBe('current'));
             await flushHookEffects();
-            console.info('COLD_DIRECTORY_COST', { machines: fleet.length, declarations: fleetMaterializations.flat().length, describes: requests.length });
-            expect(requests).toHaveLength(0);
-            expect(current?.phase).toBe('establishing');
+            // StoreDiscover intentionally requests allInstallations (35e95d33bdc).
+            expect(requests.length).toBeGreaterThan(0);
+            const settledReads = requests.length;
             await tree.update(<Presented visible={false} />);
             await tree.update(<Presented visible />);
             await flushHookEffects();
-            expect(requests).toHaveLength(0);
-            // When the census no longer supplies these declarations, discovery
-            // must acquire the live source rather than treating unread as empty.
+            expect(requests).toHaveLength(settledReads);
+            // Losing directory declarations must retain the acquired live kind.
             materialization = PluginMachineMaterializationV1Schema.parse({ ...materialization,
                 declaredManifest: undefined, declaredUiEntries: undefined, observedAt: 2 });
             availabilityCursor += 1;
@@ -302,7 +302,8 @@ it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory
         if (starterSurface) {
             await waitForHomeGovernance(() => expect(tree!.tree.root.findAllByProps({ testID: 'newApp.starter:static-website' }).length).toBeGreaterThan(0));
             const starterIds = new Set(tree.tree.root.findAll(node => typeof node.props.testID === 'string' && node.props.testID.startsWith('newApp.starter:')).map(node => node.props.testID));
-            expect(starterIds.size).toBe(5);
+            // Whole-repository starters replaced subdirectory examples (3dbb310bf51).
+            expect(starterIds).toEqual(new Set(['newApp.starter:static-website', 'newApp.starter:expo-blank']));
             await act(async () => { tree!.tree.root.findAllByProps({ testID: 'newApp.starter:static-website' })[0]!.props.onPress(); });
             const continueButton = tree.tree.root.findAllByProps({ testID: 'newApp.continue' })[0]!;
             expect(continueButton.props.disabled).toBeFalsy();
