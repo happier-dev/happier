@@ -10189,6 +10189,13 @@ observation projection contain no text, and durable replay cannot reconstruct it
 The answering client must still be available to deliver the copy; approval does
 not supply a clipboard or turn an unavailable delivery into success.
 
+The development UI retains two platform/bootstrap exceptions. Browser text Copy
+uses the clipboard owner's synchronous gesture path because WebKit requires the
+write to begin in the click stack; native Copy retains Action admission. The
+root crash fallback and unsupported-WebCrypto startup screen can copy diagnostic
+details before an Account Action runtime is available. These exceptions do not
+grant an Agent another clipboard path.
+
 In unreleased 0.3 source, `files.save` is the shared client file handoff for native
 and deployment log downloads and Agent/MCP/CLI callers. Its `source` accepts
 `{ kind: 'text', text }` or `{ kind: 'deploymentLog', reference }`; the latter

@@ -9,7 +9,7 @@ import {
 } from '@/components/widgets/frame/WidgetFrame';
 import { useSessionProjectScmSummarySnapshot } from '@/sync/store/hooks';
 import { t } from '@/text';
-import { openExternalUrl } from '@/utils/url/openExternalUrl';
+import { requestOpenExternalUrl } from '@/utils/url/requestOpenExternalUrl';
 import { useOpenResource } from '@/utils/url/openResource';
 
 import { resolveLinksSectionRow } from './glanceModels';
@@ -90,7 +90,7 @@ export function LinksGlance(
                   ? { mode: 'info' as const }
                   : {
                       onPress: () => {
-                        void openExternalUrl(repository.url);
+                        void requestOpenExternalUrl(repository.url, props.serverId ? { serverId: props.serverId } : undefined);
                       },
                     })}
               />
