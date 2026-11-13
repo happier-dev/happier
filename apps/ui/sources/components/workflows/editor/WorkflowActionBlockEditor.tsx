@@ -120,7 +120,7 @@ export function WorkflowActionBlockEditor(props: Readonly<{
     const rows = React.useMemo(() => resolveActionFieldRows(spec, block.input), [block.input, spec]);
     const literalInput = React.useMemo(() => Object.fromEntries(Object.entries(block.input)
         .flatMap(([name, binding]) => binding.kind === 'literal' ? [[name, binding.value]] : [])), [block.input]);
-    const fieldOptions = useInputFieldOptions({ machineId: catalog.machineId, serverId: catalog.serverId,
+    const fieldOptions = useInputFieldOptions({ machineId: catalog.machineId, sessionId: catalog.sessionId, serverId: catalog.serverId,
         enabled: editable && spec !== null && spec.projectionError === undefined,
         requests: rows.flatMap((row) => row.hint ? [{ field: row.hint, actionId: block.actionId, draftInput: literalInput }] : []) });
     const resolveFieldOptions = parseQualifiedPluginActionId(block.actionId) ? fieldOptions.resolveOptions

@@ -12,6 +12,6 @@ export function useActionFieldOptionsForMachine(params: Readonly<{
 }>): ResolveSessionActionFieldOptions {
     const enabledAgentIds = useEnabledAgentIds();
     const backends = useExecutionRunsBackendsForMachine({ ...params, enabled: params.enabled && params.requests.length > 0 });
-    return useInputFieldOptions({ ...params, refreshKey: JSON.stringify([enabledAgentIds, backends]) }).resolveOptions;
+    return useInputFieldOptions({ ...params, sessionId: null, refreshKey: JSON.stringify([enabledAgentIds, backends]) }).resolveOptions;
 }
 

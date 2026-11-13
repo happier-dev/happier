@@ -103,7 +103,7 @@ export function useInputFieldOptions(params: Readonly<{
         }) : null);
     const sessionMachines = getStorage()(useShallow(state => params.requests.map(request => {
         const selected = request.consumer?.kind === 'widget' ? request.consumer.selectedSession : undefined;
-        const sessionId = params.sessionId ?? selected?.sessionId;
+        const sessionId = params.sessionId === undefined ? selected?.sessionId : params.sessionId;
         const serverId = selected?.serverId ?? optionServerId;
         return sessionId && serverId ? resolveMachineTargetForSessionFromState(state, { sessionId, serverId })?.machineId ?? null : undefined;
     })));
@@ -116,7 +116,7 @@ export function useInputFieldOptions(params: Readonly<{
         return readInputTypeOptionsProducer(type, optionServerId, params.pluginUiMachineId);
     });
     const signature = JSON.stringify([accountScope?.accountId, params.accountLifetime?.revision, optionServerId, machineId,
-        params.sessionId, producerRoutes, pickerRelays, params.requests.map((request) => ({ ...request,
+        { sessionId: params.sessionId }, producerRoutes, pickerRelays, params.requests.map((request) => ({ ...request,
             draftInput: projectInputOptionsDependencies(request.draftInput ?? {}, request.consumer, request.actionId) }))]);
     const { reads, keys, defaultContexts, fieldTargets } = React.useMemo(() => {
         const keys = new Map<string, string>();
@@ -124,7 +124,8 @@ export function useInputFieldOptions(params: Readonly<{
         const reads = new Map<string, InputOptionsRead>();
         const fieldTargets: Record<string, NonNullable<InputTypePickerHostContext['fieldTargets']>[string]> = {};
         for (const [index, request] of params.requests.entries()) {
-            const requestSessionId = params.sessionId ?? (request.consumer?.kind === 'widget' ? request.consumer.selectedSession?.sessionId : undefined);
+            const requestSessionId = params.sessionId === undefined
+                ? (request.consumer?.kind === 'widget' ? request.consumer.selectedSession?.sessionId : undefined) : params.sessionId;
             const serverId = params.serverId ?? accountScope?.serverId;
             // Literal fields can still offer a custom picker while deliberately
             // asking for no option inventory. Keep their exact Session context.
@@ -146,7 +147,7 @@ export function useInputFieldOptions(params: Readonly<{
                 ...(request.cursor === undefined ? {} : { cursor: request.cursor }),
                 draftInput: { ...projectInputOptionsDependencies(request.draftInput ?? {}, request.consumer, request.actionId),
                     ...(requestMachineId ? { machineId: requestMachineId } : {}),
-                    ...(requestSessionId ? { sessionId: requestSessionId } : {}) },
+                    ...(requestSessionId === undefined ? {} : { sessionId: requestSessionId }) },
             };
             if (request.field.inputType && 'pluginId' in request.field.inputType) fieldTargets[request.field.path] = {
                 machineId: requestMachineId ?? pickerRelays[index] ?? null, ...(serverId ? { serverId } : {}),

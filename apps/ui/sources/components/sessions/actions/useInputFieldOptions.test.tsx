@@ -29,6 +29,8 @@ import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { SESSION_CONSUMPTION_REPLACE_EVENT, SessionConsumptionReplaceV1Schema } from '@happier-dev/protocol/sessions';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { useActionFieldOptionsForMachine } from './useSessionActionFieldOptions';
+import { ReviewEngineListItemSchema } from '@happier-dev/protocol/reviews/reviewEngines';
 
 // Hoist the physical transport before cross-package imports can capture Socket.IO.
 vi.mock('socket.io-client', async importOriginal => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal));
@@ -213,6 +215,40 @@ function reply(label: string) {
 }
 
 describe('qualified input field options scope', () => {
+    it('offers detached review engines from a Machine form through the real options owner', async () => {
+        const origin = 'https://detached-review-options.example';
+        const serverIdentityId = 'srv_detached_review_options';
+        const serverId = await harness.addHome({ name: 'Review choices', serverUrl: origin,
+            serverIdentityId, accountId: 'viewer', currentAccount: true });
+        const engine = ReviewEngineListItemSchema.parse({ engineId: 'codex', value: 'codex', label: 'Detached reviewer',
+            enabled: true, capabilities: { structuredNarration: true } });
+        // Review inventory crosses Machine HTTP; the UI's options owner and target selection stay real.
+        optionsBoundaries.set(origin, await createExternalActionAccountHttpBoundary({ serverUrl: origin, serverIdentityId,
+            accountId: 'viewer', machineId: 'controller-a', actionId: 'review.engines.list', tokenEpoch: 0, requesterInvocation: 'none',
+            execute: input => typeof input === 'object' && input !== null && 'sessionId' in input && input.sessionId === null
+                && 'machineId' in input && input.machineId === 'controller-a'
+                ? { items: [engine] } : { items: [] } }));
+        const machine = createPlainMachineRowFixture({ id: 'controller-a', accountId: 'viewer' });
+        harness.answer(serverId, 'GET /v1/machines/controller-a', { body: { machine } });
+        harness.answer(serverId, 'GET /v1/machines', { body: [machine] });
+        const reviewField = { path: 'engineIds', optionsSourceId: 'review.engines.available' };
+        function ReviewOptions() {
+            const options = useActionFieldOptionsForMachine({ machineId: 'controller-a', serverId, enabled: true,
+                requests: [{ actionId: 'review.start', field: reviewField, draftInput: {} }] });
+            const state = options.state?.(reviewField);
+            return <View testID="review.options" accessibilityLabel={state?.status} accessibilityHint={state?.errorCode}>
+                {options(reviewField).map(option => <Text key={option.label}>{option.label}</Text>)}
+            </View>;
+        }
+        const screen = await renderScreen(<ReviewOptions />);
+        try {
+            await waitForHomeGovernance(() => expect(screen.findByTestId('review.options')?.props.accessibilityLabel).not.toBe('loading'));
+            expect({ status: screen.findByTestId('review.options')?.props.accessibilityLabel,
+                error: screen.findByTestId('review.options')?.props.accessibilityHint }).toEqual({ status: 'ready', error: undefined });
+            expect(screen.getTextContent()).toContain('Detached reviewer');
+        } finally { await screen.unmount(); }
+    });
+
     it('selects a real capture participant in an unsaved composer and starts without inventing an inventory', async () => {
         const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
         await loadSyncSingletonForTests();
@@ -250,7 +286,7 @@ describe('qualified input field options scope', () => {
         const onRun = vi.fn();
         function Composer() {
             const { binding } = useServerCredentialAccountScopeBinding(serverId);
-            const [values, onChangeValues] = React.useState<Record<string, JsonValue>>({});
+            const [values, onChangeValues] = React.useState<Readonly<Record<string, JsonValue | undefined>>>({});
             return <WorkflowAccountLifetimeProvider value={binding}><WorkflowRunComposer serverId={serverId}
                 definition={definition} inputs={definition.inputs} values={values} onChangeValues={onChangeValues}
                 onRun={onRun} onCancel={() => {}} /></WorkflowAccountLifetimeProvider>;

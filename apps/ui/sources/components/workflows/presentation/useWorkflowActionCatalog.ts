@@ -24,5 +24,5 @@ export function useWorkflowActionCatalog(scope?: AuthoringComposerScope) {
     const uiProjection = projection.phase === 'ready' ? projection.inputs?.pluginUiProjection ?? null : null;
     const localize = usePluginLocalizedTextResolver({ projection: uiProjection, locale: language });
     const specs = React.useMemo(() => listWorkflowStepActionSpecs(current, uiProjection, localize), [current, uiProjection, language, localize]);
-    return { specs, phase: projection.phase, machineId, serverId: serverId ?? null };
+    return { specs, phase: projection.phase, machineId, sessionId, serverId: serverId ?? null };
 }
