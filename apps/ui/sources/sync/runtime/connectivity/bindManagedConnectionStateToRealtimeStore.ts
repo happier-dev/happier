@@ -5,6 +5,7 @@ import type { EndpointConnectivitySnapshot, EndpointConnectivityStatus } from '@
 import type { PauseController } from '@/utils/timing/pauseController';
 
 import { sanitizeEndpointErrorMessage } from './sanitizeEndpointErrorMessage';
+import { log } from '@/log';
 
 type EndpointConnectivityStateLike = Pick<
     ManagedConnectionState,
@@ -63,8 +64,9 @@ export function bindEndpointConnectivityStateToRealtimeStore(params: Readonly<{
             sawOfflineLike = false;
             try {
                 onEndpointOnline?.();
-            } catch {
-                // ignore listener failures; store updates must continue
+            } catch (error) {
+                // Store updates must continue; the failed listener stays visible.
+                log.log(`[connectivity] endpoint-online listener failed reason=${error instanceof Error ? error.name : typeof error}`);
             }
         }
 

@@ -16,6 +16,7 @@ import { materializeProjectAccountRowPage } from './projectAccountRowPage';
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
 import { canonicalSessionDraftAddressV2, type SessionDraftAddressV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 import { readSessionUpdatedMessageChangeHintV1, isMachineProjectionChangeKindV1 } from '@happier-dev/protocol/changes';
+import { log } from '@/log';
 
 export type TodoSocketUpdate = Readonly<{
     key: string;
@@ -398,8 +399,9 @@ export async function applyPlannedChangeActions(params: {
                 }
                 await params.materializeSessionDraft(address, revision);
                 completedSessionDraftAddresses.add(key);
-            } catch {
+            } catch (error) {
                 failedSessionDraftAddresses.add(key);
+                log.log(`[sync-changes] Session draft materialization failed; the durable cursor stops here reason=${errorName(error)}`);
             }
         });
     }
@@ -410,8 +412,9 @@ export async function applyPlannedChangeActions(params: {
                 if (!params.materializeAuthoringMemory) return;
                 await params.materializeAuthoringMemory(key);
                 completedAuthoringMemoryKeys.add(key);
-            } catch {
+            } catch (error) {
                 // This row remains unmaterialized and the durable cursor stops below.
+                log.log(`[sync-changes] Durable authoring memory materialization failed; the durable cursor stops here reason=${errorName(error)}`);
             }
         });
     }
@@ -703,4 +706,9 @@ export async function applyPlannedChangeActions(params: {
         processedChanges,
         blockedChanges: 0,
     };
+}
+
+/** Names the failure class only; row keys and content stay out of the log. */
+function errorName(error: unknown): string {
+    return error instanceof Error ? error.name : typeof error;
 }

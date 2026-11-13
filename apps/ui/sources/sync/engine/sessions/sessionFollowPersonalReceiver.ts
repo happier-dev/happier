@@ -8,6 +8,7 @@ import type { SessionFollowPersonalReceiverOccurrence } from '@/sync/api/session
 import type { ActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { log } from '@/log';
 
 type ReceiverProgress = Extract<SessionFollowPersonalProgressRequestV1, { evaluation: 'receiver' }>;
 
@@ -120,9 +121,12 @@ export function createSessionFollowPersonalReceiverRuntime(input: Readonly<{
                 const { visitSessionFollowPersonalReceiverOriginals } = await import('@/sync/api/session/sessionFollowPersonalReceiverApi');
                 await visitSessionFollowPersonalReceiverOriginals({ lifetime: input.lifetime, snapshot, sourceSessionIds,
                     signal: controller.signal, onOccurrence: consume });
-            } catch {
+            } catch (error) {
                 // Failed or locked reads leave originals and server progress
                 // untouched. The next existing catch-up/configuration wake retries.
+                if (!controller.signal.aborted) {
+                    log.log(`[session-follow] Personal receiver catch-up read failed reason=${error instanceof Error ? error.name : typeof error}`);
+                }
             }
         }
     };

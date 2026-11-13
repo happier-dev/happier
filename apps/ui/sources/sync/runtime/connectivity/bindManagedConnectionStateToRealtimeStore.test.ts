@@ -8,6 +8,7 @@ import {
 
 import { storage } from '@/sync/domains/state/storage';
 import { PauseController } from '@/utils/timing/pauseController';
+import { log } from '@/log';
 
 import { bindEndpointConnectivityStateToRealtimeStore } from './bindManagedConnectionStateToRealtimeStore';
 
@@ -57,6 +58,35 @@ describe('bindEndpointConnectivityStateToRealtimeStore', () => {
 
         detach();
         await supervisor.stop();
+    });
+
+    it('reports a failed endpoint-online listener while the store keeps updating', async () => {
+        let probeResult: ReadinessProbeResult = { status: 'server_unreachable', errorMessage: 'nope' };
+        const supervisor = createManagedEndpointSupervisor({
+            ...DEFAULT_MANAGED_CONNECTION_POLICY,
+            initialFastRetryDelayMs: 10,
+            backoffMinMs: 10,
+            backoffMaxMs: 50,
+            probeReadiness: async () => probeResult,
+        });
+        const logged = vi.spyOn(log, 'log');
+        const detach = bindEndpointConnectivityStateToRealtimeStore({
+            subscribe: (listener) => supervisor.subscribe(listener),
+            onEndpointOnline: () => { throw new Error('resync failed'); },
+        });
+        try {
+            await supervisor.start();
+            probeResult = { status: 'ready' };
+            supervisor.invalidate();
+            await new Promise<void>((resolve) => queueMicrotask(resolve));
+            await new Promise<void>((resolve) => queueMicrotask(resolve));
+            expect(storage.getState().endpointStatus).toBe('online');
+            expect(logged.mock.calls.filter(([line]) => line.includes('endpoint-online listener failed')).length).toBe(1);
+        } finally {
+            logged.mockRestore();
+            detach();
+            await supervisor.stop();
+        }
     });
 
     it('stops updating the store after the returned unsubscribe is called', async () => {

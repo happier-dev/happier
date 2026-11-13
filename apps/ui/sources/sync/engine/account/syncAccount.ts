@@ -571,7 +571,10 @@ export async function registerPushTokenIfAvailable(params: {
                     : undefined;
             };
 
-            const transport = await resolveServerScopedTransport({ profile, credentials: serverCredentials }).catch(() => null);
+            const transport = await resolveServerScopedTransport({ profile, credentials: serverCredentials }).catch((error: unknown) => {
+                log.log(`Push token registration transport unavailable for Home ${profile.serverUrl}: ${error instanceof Error ? error.name : typeof error}`);
+                return null;
+            });
             if (!transport) {
                 didEnabledRegistrationFail = true;
                 return;

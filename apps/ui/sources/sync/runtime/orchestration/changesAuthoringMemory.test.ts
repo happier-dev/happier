@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { log } from '@/log';
 import { planSyncActionsFromChanges } from './changesPlanner';
 import { applyPlannedChangeActions } from './changesApplier';
 import { createStore } from 'zustand/vanilla';
@@ -39,8 +40,12 @@ describe('authoring memory durable changes', () => {
             applyTodoSocketUpdates: async () => {}, kvBulkGet: async () => ({ values: [] }),
         };
         offline = true;
+        const logged = vi.spyOn(log, 'log');
         const failed = await applyPlannedChangeActions({ ...base, materializeAuthoringMemory: owner.refresh });
         expect(failed).toMatchObject({ status: 'partial', safeAdvanceCursor: null, blockedCursor: '7' });
+        // The stopped cursor is diagnosable: one line names the failed row class, not its content.
+        expect(logged.mock.calls.filter(([line]) => line.includes('authoring memory')).length).toBe(1);
+        logged.mockRestore();
         offline = false;
         const result = await applyPlannedChangeActions({ ...base, materializeAuthoringMemory: owner.refresh });
         expect(result).toMatchObject({ status: 'complete', safeAdvanceCursor: '7' });
