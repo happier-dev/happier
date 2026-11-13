@@ -707,7 +707,7 @@ export async function installGenericRootFileSystemBoundary(directory: string) {
   const dockerFactReads: ('identity' | 'descriptors' | 'listeners')[] = [];
   const mutations: Readonly<{ method: string; paths: readonly string[] }>[] = [];
   const reads = new Set(['lstat', 'stat', 'readFile', 'readdir', 'realpath', 'readlink', 'access', 'opendir']);
-  const writes = new Set(['mkdir', 'writeFile', 'chmod', 'chown', 'rename', 'unlink', 'rm', 'mkdtemp', 'copyFile', 'link', 'rmdir', 'symlink']);
+  const writes = new Set(['mkdir', 'writeFile', 'appendFile', 'chmod', 'chown', 'rename', 'unlink', 'rm', 'mkdtemp', 'copyFile', 'link', 'rmdir', 'symlink']);
   const ownedStat = (result: unknown, path: string) => {
     if (!result || typeof result !== 'object') return result;
     const owner = ownership.get(path) ?? (inside(rootfs, path) ? { uid: 0, gid: 0 } : undefined);
@@ -756,7 +756,7 @@ export async function installGenericRootFileSystemBoundary(directory: string) {
     const original: unknown = Reflect.get(fs, method);
     if (typeof original !== 'function') return refused();
     const rootWriter = process.getuid?.() === 0;
-    const created = rootWriter && (method === 'writeFile' || method === 'mkdir' || opening && !reading)
+    const created = rootWriter && (method === 'writeFile' || method === 'appendFile' || method === 'mkdir' || opening && !reading)
       && await fs.lstat(paths[0]!).then(() => false, error => {
         if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') return true;
         throw error;
@@ -1856,9 +1856,9 @@ export async function createGenericDefaultFactoryJourney(fixture: Awaited<Return
       daemonSessionMutationCustody: { stageTranscriptEvent: async () => { throw new Error('Unexpected Session transcript'); },
         stageTranscriptMessage: async () => { throw new Error('Unexpected Session message'); } },
       getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-      pidToTrackedSession: new Map(), pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
-      getApiMachineForSessions: () => installed, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
-      connectedServicesRestartRequestedPids: new Set(),
+      trackedSessionsByKey: new Map(), spawnAwaiterByKey: new Map(), spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
+      getApiMachineForSessions: () => installed, spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
+      connectedServicesRestartRequestedSessions: new Set(),
       resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({
         serverUrl: fixture.accountRuntime.serverHttpBaseUrl, resolveCurrentMachineId: () => machineId,
         resolveCurrentServerIdentityId: () => homeIdentity,
@@ -2339,6 +2339,7 @@ export function parseCompletedReachabilityConfigure(result: Awaited<ReturnType<t
   const staleDetails = !result.ok && result.errorCode === 'approval_stale'
     ? ApprovalStaleFailureDetailsSchema.safeParse(result.details) : null;
   expect(!result.ok && { errorCode: result.errorCode, effectAttempted: result.effectAttempted,
+    failureCause: result.failureCause,
     staleReason: staleDetails?.success ? staleDetails.data.reason : undefined,
     setupOutcome: result.details && typeof result.details === 'object' && 'setupOutcome' in result.details
       ? result.details.setupOutcome : undefined }, 'Actual retained Configure failure before DTO parsing').toBe(false);
