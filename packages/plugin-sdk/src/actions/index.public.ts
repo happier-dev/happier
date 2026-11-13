@@ -11,6 +11,7 @@ export type { FilesystemTreeNode } from './actionTypeMap.generated.js';
 export type { BoardItemRefV1 } from './dtos/pluginActionDtoSupport.generated.js';
 export type { FollowPolicyV1, FollowEventMapV1, FollowEventDeliveryV1 } from './dtos/pluginActionDtoSupport.generated.js';
 export type { ExecutionRunChildChoiceV1, ExecutionRunStartFailureDetailsV1 } from './dtos/pluginActionDtoSupport.generated.js';
+export type { ActionFailureCauseV1 } from './dtos/pluginActionDtoSupport.generated.js';
 export type { UsageCoachFinding, UsageCoachEvaluation } from './dtos/pluginActionDtoSupport.generated.js';
 export type { InputTypePickerLaunchInputV1 } from './inputHints.js';
 export { readInputTypePickerLaunchInput } from './inputHints.js';
