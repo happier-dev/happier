@@ -2617,6 +2617,13 @@ This development-only recovery stores no launch command, environment, credential
 or permission to replay Start, and does not apply to plugin-scoped services or
 replace native-resource lifecycle recovery.
 
+Owned Project processes launch through the native support helper's `service-io`
+command. It owns the child's stdout/stderr pipes, forwards output to the daemon's
+existing redaction and log owner while connected, and drains output after that
+daemon disconnects. It stores no output and exits when the child exits. This
+prevents a surviving Service from exiting on a broken output pipe at its next
+request after daemon replacement; recovery still uses the same process witness.
+
 Development-source Service controls resolve a published managed-instance selection
 through the retained service owner. Omitted `cwd` and declaration operands use that
 instance's authoritative Project binding; explicit qualifiers must match it. Agent
@@ -2963,18 +2970,30 @@ establish an available end-to-end Project execution flow.
 
 ### Preset Machine setup (0.3 development)
 
-The existing `ManagedMachinePresetV1` record can contain creation, setup, or
-both; at least one part is required. Creation requires `launch`; a personal
-Account-owned portable launch may omit `controller`. Installed local providers
-and delegated Team creation still require the actual Machine/installation pair.
-The creation guard establishes launch presence, not controller presence.
+The existing `ManagedMachinePresetV1` record carries its name, creation launch,
+setup and optional controller display label inside tagged private `content`.
+Plain Accounts write `{t:'plain',v}` without Account encryption material; E2EE
+Accounts write `{t:'encrypted',c}` with a fresh per-revision data key wrapped for
+the author and eligible Team Accounts. The controller daemon opens the envelope
+with its custodian Account key; there is no Machine recipient. The server keeps
+ownership, controller routing, admission and revision/CAS outside the content.
+
+Opened content can contain creation, setup, or both; at least one part is
+required. Creation requires `launch`; a personal Account-owned portable launch
+may omit `controller`. Installed local providers and delegated Team creation
+still require the actual Machine/installation pair. The controller validates
+the local declaration, launch choices, credential availability and Team fixed
+shape at acquire. The server does not construct a plaintext launch review.
 Setup-only Presets use the same Account/Team CRUD, revisions
 and list/get results without inventing a provider or controller. Saving them
 requires Preset-owner authority, not creation-provider validation. Removing
 creation explicitly clears both fields and withdraws delegated acquisition;
 the existing controller-authority checks still protect that withdrawal. A
-setup-only Preset cannot acquire a Machine. The additive nullable-column
-migration retains existing setup bytes; it does not convert script content.
+setup-only Preset cannot acquire a Machine. Existing JSON columns retain the
+tagged content and recipient envelopes. Legacy raw rows remain readable through
+a transient Plain projection, including rows authored by E2EE Accounts. The next
+normal save seals them according to the author’s persisted Account mode; reads
+do not rewrite stored rows.
 Presets owned by an archived Team inherit that Team's archive timestamp in
 get/list results and cannot be selected for a new Create or Apply. Active lists
 omit them; archived-inclusive lists retain them. An explicit archive by a retained
@@ -5770,7 +5789,9 @@ redactor covers them while they are live. The session hook server
 (`plugins/runtime/hooks/session/service.ts`, 127.0.0.1) is the same case: its two
 secrets reach the Agent only as private secret files named by `--secret-file` in
 its hook config, never the Agent environment, and the service registers them with
-the transcript redactor until the hook server is disposed. No bearer
+the transcript redactor until the hook server is disposed. The same redactor runs
+once at the Agent-state commit (`ApiSessionClient.updateAgentState`), so permission
+request arguments carrying an echoed secret are stored redacted too. No bearer
 is logged.
 
 Agents launch the Session MCP as `happier-session-holder mcp-relay` (the shipped
@@ -7040,10 +7061,16 @@ channels and exits when the holder closes that connection.
     own), a runner process at its `exit`. The placement (`managedTargetPlacement`) is
     kept in the Session marker's respawn descriptor, so a daemon that reattaches the
     runner after a restart, or respawns it, knows the Session is placed: a crashed
-    runner's held Agent is probed and spared or ended through the target, and a
-    reattached runner that leaves without a spare (its relay ended with the previous
-    daemon, so it could not stop its Agent) has that Agent ended in the target
-    (`createSparedHeldAgentCustody().endStranded`). Its end runs the
+    runner's held Agent is probed and spared or ended through the target. The runner
+    records its relay address with its held primary Agent (`heldAgentsV1[].relaySocketPath`
+    in the marker); a restarted daemon serves that relay again for each reattached placed
+    runner (`createSparedHeldAgentCustody().restoreRelays` → `restoreSessionTargetRelay`:
+    only an address of this Machine's holder directory, only that runner's pid, under a
+    Session authority of the daemon's own), and the runner's next use of a holder whose
+    reattach met no relay attaches again. The restored relay is released at that runner's
+    exit (a crash: the respawn places the Session anew). A reattached runner whose relay
+    could not be restored and that leaves without a spare has its Agent ended in the
+    target (`endStranded`). Its end runs the
     placement's Session-end steps (`onSessionEnd`), then the authority and relay end.
     Each call of the authority is its own provider operation (the Agents' held
     channels stay open next to finite calls).
@@ -7060,10 +7087,12 @@ channels and exits when the holder closes that connection.
     is withheld (skill folders are materialized on this Machine and not delivered into
     targets).
   - Session MCP: the endpoint is a socket on this Machine, which nothing in a target
-    can reach. The primary Agent's holder starts with `serve --session-mcp`: it binds
-    `<socket>.mcp` (0600) and writes the relay context `<socket>.mcp.json`, which the
-    Agent's MCP config names (`resolveSessionAgentMcpContextFile`; this Machine's
-    socket and bearer never cross). The Agent's `mcp-relay` connects there; the holder
+    can reach. Every Agent's holder in a target (the primary and execution runs) starts
+    with `serve --session-mcp`: it binds `<socket>.mcp` (0600) and writes the relay
+    context `<socket>.mcp.json`. A placed Session's Agents are named no context file
+    (`resolveSessionAgentMcpContextFile`; this Machine's socket and bearer never cross):
+    the Agent's `mcp-relay` uses the context of the nearest ancestor that is the same
+    holder executable serving `--session-mcp` (`/proc` ancestry). It connects there; the holder
     admits only its own Agent tree (SO_PEERCRED uid, then the Agent's process group or
     `/proc` ancestry), answers the upgrade, and carries the connection on its existing
     client channel as a numbered stream (`M` opens it, then `O`/`X` and `I`/`C`, under
@@ -7099,15 +7128,23 @@ channels and exits when the holder closes that connection.
     (`~/.happier/agent-cli/<sha256>/`) when it is a Linux ELF for the target's
     architecture, streamed over the channel and verified in the guest with the digest
     computed on this Machine (transport integrity only: the guest user can replace its
-    own files). Otherwise (a launcher script such as Muse's, another architecture) the
-    provider's own Linux install recipe from the Agent's CLI descriptor
+    own files). Otherwise, when the Agent's CLI ships as a GitHub release (catalog
+    `github_release_binary`), the release for the target's platform and architecture is
+    staged on this Machine by the install owner (`installAgentCliForTarget`: the same
+    asset declaration, digest-verified download and promotion as this Machine's managed
+    install, under `tools/targets/linux-<arch>/providers/<id>`, reused once staged) and
+    every declared file of it (e.g. Codex's `bin/codex`, `bin/codex-code-mode-host`,
+    `codex-resources/bwrap`) is placed the same way: one directory per digest of the
+    files' `sha256sum` list, streamed into a staging directory, verified there with
+    `sha256sum -c`, then moved into place. Otherwise (a launcher script such as Muse's, no
+    release) the provider's own Linux install recipe from the Agent's CLI descriptor
     (`planAgentCliInstallForRuntime`, no-admin vendor recipes only) runs in the target
     as its user, once per target, with this Session's delivered credential environment
     (Muse's installer downloads with the login), and the CLI is found in the provider's
     declared user bin directories. A missing recipe tool (e.g. `bash`/`curl` in a slim
     image), a failed recipe, a managed package (needs this Machine's runtime) or a
-    managed GitHub release for another architecture is refused
-    (`agent_cli_target_unavailable`). A custody hand-over of the row (pushed row change or
+    release that cannot be staged or is not an executable for the target's architecture
+    is refused (`agent_cli_target_unavailable`). A custody hand-over of the row (pushed row change or
     the per-call re-check) ends the Session authority and its channels. `exec` and
     `putFile` never wake a stopped target. Request-auth materializations (a loopback
     proxy on this Machine) are refused (`connected_service_target_unsupported`).

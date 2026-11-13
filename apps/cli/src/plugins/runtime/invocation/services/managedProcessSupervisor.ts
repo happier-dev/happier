@@ -2390,6 +2390,7 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                         assertNotAborted(entry.lifecycle.signal);
                     } catch (error) { await authorized.release(); throw error; }
                     return spawnAuthorizedHostExecLaunchForHost({ ...authorized, processOwnerTag }, {
+                        ...(scope.kind === 'project' && custodyOwner === 'daemon' ? { serviceOutputLifetime: true as const } : {}),
                         readSpawnFailureLimits: params.readSpawnFailureLimits,
                         signal: entry.lifecycle.signal,
                         retainLaunch,

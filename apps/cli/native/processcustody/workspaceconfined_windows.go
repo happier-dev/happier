@@ -23,7 +23,6 @@ const (
 	workspaceConfinedShareMode            = windows.FILE_SHARE_READ | windows.FILE_SHARE_WRITE | windows.FILE_SHARE_DELETE
 	workspaceConfinedDirectoryInfoClass   = 12 // FILE_NAMES_INFORMATION
 	workspaceConfinedDirectoryBufferBytes = 64 * 1024
-	workspaceConfinedMaxSafeJSONInteger   = uint64(1<<53 - 1)
 )
 
 var workspaceConfinedNtQueryDirectoryFile = windows.NewLazySystemDLL("ntdll.dll").NewProc("NtQueryDirectoryFile")
@@ -217,10 +216,6 @@ func (operation *workspaceConfinedDeleteOperation) commit() workspaceConfinedRes
 	}
 	operation.path.handles[len(operation.path.handles)-1].handle = 0
 	return workspaceConfinedSuccess("deleted")
-}
-
-func workspaceConfinedUint64(value uint64) *uint64 {
-	return &value
 }
 
 func validateWorkspaceConfinedRelativePath(relativePath string) ([]string, *workspaceConfinedDomainError) {

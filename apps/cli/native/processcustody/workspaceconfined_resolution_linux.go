@@ -30,6 +30,10 @@ type workspaceConfinedLinuxPath struct {
 	components []string
 	handles    []workspaceConfinedLinuxHandle
 	missing    bool
+	// Read-side operations (read, delete, observe, capture) treat a missing
+	// ancestor like a missing leaf, as Darwin and Windows do; apply keeps
+	// requiring its parent directory.
+	missingAncestorAllowed bool
 }
 type workspaceConfinedLinuxApplyOperation struct {
 	path    *workspaceConfinedLinuxPath
@@ -40,18 +44,6 @@ type workspaceConfinedLinuxRecoverOperation struct {
 	request workspaceConfinedRecoverRequest
 }
 
-func prepareWorkspaceConfinedRead(workspaceConfinedReadRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
-	return nil, workspaceConfinedError("workspace_root_unsafe", "native preview confinement is not used on Linux")
-}
-func prepareWorkspaceConfinedDelete(workspaceConfinedDeleteRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
-	return nil, workspaceConfinedError("workspace_root_unsafe", "native deletion confinement is not used on Linux")
-}
-func prepareWorkspaceConfinedObserve(workspaceConfinedObserveRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
-	return nil, workspaceConfinedError("workspace_root_unsafe", "Linux observation is owned by the retained-descriptor TypeScript path")
-}
-func prepareWorkspaceConfinedCapture(workspaceConfinedCaptureRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
-	return nil, workspaceConfinedError("workspace_root_unsafe", "Linux capture is owned by the retained-descriptor TypeScript path")
-}
 func prepareWorkspaceConfinedApply(request workspaceConfinedApplyRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
 	path, err := openWorkspaceConfinedLinuxPath(request.rootPath, request.relativePath)
 	if err != nil {
@@ -362,6 +354,12 @@ func workspaceConfinedLinuxKind(mode uint32) (workspaceConfinedKind, error) {
 	}
 }
 func openWorkspaceConfinedLinuxPath(rootPath, relativePath string) (*workspaceConfinedLinuxPath, *workspaceConfinedDomainError) {
+	return openWorkspaceConfinedLinuxPathMode(rootPath, relativePath, false)
+}
+func openWorkspaceConfinedLinuxReadPath(rootPath, relativePath string) (*workspaceConfinedLinuxPath, *workspaceConfinedDomainError) {
+	return openWorkspaceConfinedLinuxPathMode(rootPath, relativePath, true)
+}
+func openWorkspaceConfinedLinuxPathMode(rootPath, relativePath string, missingAncestorAllowed bool) (*workspaceConfinedLinuxPath, *workspaceConfinedDomainError) {
 	parts, domainErr := validateWorkspaceConfinedLinuxRelativePath(relativePath)
 	if domainErr != nil {
 		return nil, domainErr
@@ -370,11 +368,12 @@ func openWorkspaceConfinedLinuxPath(rootPath, relativePath string) (*workspaceCo
 	if err != nil {
 		return nil, workspaceConfinedError("workspace_root_unsafe", "workspace root could not be opened safely")
 	}
-	path := &workspaceConfinedLinuxPath{rootPath: filepath.Clean(rootPath), components: parts, handles: []workspaceConfinedLinuxHandle{root}}
+	path := &workspaceConfinedLinuxPath{rootPath: filepath.Clean(rootPath), components: parts, handles: []workspaceConfinedLinuxHandle{root},
+		missingAncestorAllowed: missingAncestorAllowed}
 	parent := root.fd
 	for index, part := range parts {
 		child, err := openWorkspaceConfinedLinuxAt(parent, part)
-		if errors.Is(err, unix.ENOENT) && index == len(parts)-1 {
+		if errors.Is(err, unix.ENOENT) && (index == len(parts)-1 || missingAncestorAllowed) {
 			path.missing = true
 			return path, nil
 		}
@@ -398,9 +397,10 @@ func (p *workspaceConfinedLinuxPath) close() {
 	}
 }
 func (p *workspaceConfinedLinuxPath) revalidate() *workspaceConfinedDomainError {
-	current, err := openWorkspaceConfinedLinuxPath(p.rootPath, strings.Join(p.components, "/"))
+	current, err := openWorkspaceConfinedLinuxPathMode(p.rootPath, strings.Join(p.components, "/"), p.missingAncestorAllowed)
 	if err != nil {
-		return err
+		// The path was safe at prepare; any refusal now means it changed (as on Darwin).
+		return workspaceConfinedError("conflict_changed", "workspace path changed before commit")
 	}
 	defer current.close()
 	if current.missing != p.missing || len(current.handles) != len(p.handles) {
@@ -426,12 +426,23 @@ func observeWorkspaceConfinedLinuxPath(path *workspaceConfinedLinuxPath) (worksp
 	return observeWorkspaceConfinedLinuxEntry(parent.fd, path.components[len(path.components)-1], final)
 }
 func observeWorkspaceConfinedLinuxEntry(parent int, name string, entry workspaceConfinedLinuxHandle) (workspaceConfinedExpectation, *workspaceConfinedDomainError) {
+	return observeWorkspaceConfinedLinuxEntryMode(parent, name, entry, nil)
+}
+
+// One traversal owns both complete effect expectations and passive metadata-only measurements.
+func observeWorkspaceConfinedLinuxEntryMode(parent int, name string, entry workspaceConfinedLinuxHandle, measurement *uint64) (workspaceConfinedExpectation, *workspaceConfinedDomainError) {
 	current, err := inspectWorkspaceConfinedLinuxFD(entry.fd)
 	if err != nil || current.dev != entry.dev || current.ino != entry.ino || current.kind != entry.kind {
 		return workspaceConfinedExpectation{}, workspaceConfinedError("conflict_changed", "workspace entry changed during observation")
 	}
 	switch entry.kind {
 	case workspaceConfinedKindFile:
+		if measurement != nil {
+			if current.stat.Size < 0 {
+				return workspaceConfinedExpectation{}, workspaceConfinedError("workspace_file_unsupported", "workspace file size cannot be represented")
+			}
+			return workspaceConfinedExpectation{}, addWorkspaceConfinedMeasuredBytes(measurement, uint64(current.stat.Size))
+		}
 		if _, err := unix.Seek(entry.fd, 0, 0); err != nil {
 			return workspaceConfinedExpectation{}, workspaceConfinedError("workspace_file_unsupported", "file cannot be read")
 		}
@@ -448,6 +459,9 @@ func observeWorkspaceConfinedLinuxEntry(parent int, name string, entry workspace
 		safeSize := uint64(size)
 		return workspaceConfinedExpectation{Kind: entry.kind, Digest: hex.EncodeToString(hasher.Sum(nil)), Executable: &executable, Size: &safeSize}, nil
 	case workspaceConfinedKindSymlink:
+		if measurement != nil {
+			return workspaceConfinedExpectation{}, nil
+		}
 		buffer := make([]byte, 4096)
 		count, err := unix.Readlinkat(parent, name, buffer)
 		if err != nil {
@@ -468,12 +482,14 @@ func observeWorkspaceConfinedLinuxEntry(parent int, name string, entry workspace
 			if err != nil {
 				return workspaceConfinedExpectation{}, workspaceConfinedError("conflict_changed", "directory changed during observation")
 			}
-			childExpectation, childErr := observeWorkspaceConfinedLinuxEntry(entry.fd, childName, child)
+			childExpectation, childErr := observeWorkspaceConfinedLinuxEntryMode(entry.fd, childName, child, measurement)
 			_ = unix.Close(child.fd)
 			if childErr != nil {
 				return workspaceConfinedExpectation{}, childErr
 			}
-			fingerprint.add(childName, childExpectation)
+			if measurement == nil {
+				fingerprint.add(childName, childExpectation)
+			}
 		}
 		unchanged := workspaceConfinedLinuxDirectoryUnchanged(entry.fd, current, names)
 		var named unix.Stat_t
@@ -481,6 +497,9 @@ func observeWorkspaceConfinedLinuxEntry(parent int, name string, entry workspace
 		if !unchanged || nameErr != nil ||
 			uint64(named.Dev) != current.dev || named.Ino != current.ino || named.Mode&unix.S_IFMT != unix.S_IFDIR {
 			return workspaceConfinedExpectation{}, workspaceConfinedError("conflict_changed", "directory changed during observation")
+		}
+		if measurement != nil {
+			return workspaceConfinedExpectation{}, nil
 		}
 		return workspaceConfinedExpectation{Kind: entry.kind, Fingerprint: fingerprint.finish()}, nil
 	}

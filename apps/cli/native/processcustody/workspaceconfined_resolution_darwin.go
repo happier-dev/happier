@@ -454,6 +454,12 @@ func listWorkspaceConfinedDarwinDirectory(fd int) ([]string, error) {
 		return nil, err
 	}
 	unix.CloseOnExec(duplicate)
+	// A dup shares the held descriptor's directory offset: an earlier listing
+	// (observe before capture/copy) leaves it at the end, so rewind first.
+	if _, err := unix.Seek(duplicate, 0, 0); err != nil {
+		_ = unix.Close(duplicate)
+		return nil, err
+	}
 	directory := os.NewFile(uintptr(duplicate), "workspace-confined-directory")
 	entries, readErr := directory.ReadDir(-1)
 	closeErr := directory.Close()

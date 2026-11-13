@@ -15,6 +15,9 @@ const (
 	workspaceConfinedMaxPreviewBytes = 1024 * 1024
 )
 
+// Sizes in results must stay exact JSON numbers for the TypeScript reader.
+const workspaceConfinedMaxSafeJSONInteger = uint64(1<<53 - 1)
+
 type workspaceConfinedKind string
 
 const (
@@ -136,6 +139,10 @@ func (e *workspaceConfinedDomainError) result() workspaceConfinedResult {
 
 func workspaceConfinedSuccess(status string) workspaceConfinedResult {
 	return workspaceConfinedResult{V: 1, T: "workspace-confined-result", Status: status}
+}
+
+func workspaceConfinedUint64(value uint64) *uint64 {
+	return &value
 }
 
 func workspaceConfinedString(value string) *string {

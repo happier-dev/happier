@@ -19,8 +19,6 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const workspaceConfinedMaxSafeJSONInteger = uint64(1<<53 - 1)
-
 type workspaceConfinedDarwinIdentity struct {
 	device int32
 	inode  uint64
@@ -214,10 +212,6 @@ func (operation *workspaceConfinedDarwinDeleteOperation) commit() workspaceConfi
 		).result()
 	}
 	return workspaceConfinedSuccess("deleted")
-}
-
-func workspaceConfinedUint64(value uint64) *uint64 {
-	return &value
 }
 
 func validateWorkspaceConfinedDarwinRelativePath(relativePath string) ([]string, *workspaceConfinedDomainError) {
@@ -530,6 +524,11 @@ func deleteWorkspaceConfinedDarwinTree(parent int, name string, target workspace
 			return err
 		}
 		unix.CloseOnExec(duplicate)
+		// The dup shares the held directory offset; rewind past any earlier listing.
+		if _, err := unix.Seek(duplicate, 0, 0); err != nil {
+			_ = unix.Close(duplicate)
+			return err
+		}
 		directory := os.NewFile(uintptr(duplicate), "workspace-confined-directory")
 		entries, err := directory.ReadDir(-1)
 		closeErr := directory.Close()

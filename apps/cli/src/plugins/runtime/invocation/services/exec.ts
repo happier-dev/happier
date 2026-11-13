@@ -33,7 +33,7 @@ import {
     type SupervisedPluginProcess,
     type SupervisedPluginGracefulStop,
 } from '../../exec/processSupervisor';
-import type { ProcessCustodySpawnSpec } from '@/subprocess/supervision/processCustody';
+import { resolveProcessCustodySupportExecutable, type ProcessCustodySpawnSpec } from '@/subprocess/supervision/processCustody';
 import { resolveAgentSessionHolderLaunch, trackSessionManagedProcess, type SessionHolderRole } from '@/subprocess/supervision/sessionHolder';
 import { resolveSessionHostCwd } from '@/subprocess/supervision/sessionTargetRelay';
 import { createSessionHolderAdoption, JSON_RPC_INITIALIZE_HANDSHAKE, JSON_STREAM_ADOPT_HANDSHAKES } from '@/subprocess/supervision/sessionHolderAdoption';
@@ -439,6 +439,8 @@ export function spawnAuthorizedHostExecLaunchForHost(
         signal?: AbortSignal;
         /** Host-only binary pipeline: stdout belongs to the raw pipe, not diagnostics. */
         pipeStdout?: true;
+        /** Project Services retain their pipe writers across daemon replacement. */
+        serviceOutputLifetime?: true;
         processCustody?: ProcessCustodySpawnSpec;
         /** Host-owned worker containment; ordinary Exec retains its dedicated group. */
         posixProcessGroup?: 'inherit';
@@ -477,15 +479,24 @@ export function spawnAuthorizedHostExecLaunchForHost(
             : null;
         const holder = options.sessionHolder && !custody && !scopedLaunch
             ? resolveAgentSessionHolderLaunch({ role: options.sessionHolder }) : null;
+        let command = custody ? custody.executablePath : scopedLaunch?.filePath ?? launch.command;
+        let args = custody ? [
+            'run', `--job=${custody.jobName}`, `--handshake=${custody.handshakePath}`,
+            ...(launch.windowsVerbatimArguments ? ['--target-windows-verbatim'] : []),
+            '--', launch.command, ...launch.args,
+        ] : scopedLaunch?.args ?? launch.args;
+        if (options.serviceOutputLifetime) {
+            const executable = resolveProcessCustodySupportExecutable();
+            if (!executable) throw new PluginError({ code: 'plugin_managed_service_unavailable',
+                message: 'Service output runtime is unavailable' });
+            args = ['service-io', '--', command, ...args];
+            command = executable;
+        }
         spawnAttempted = true;
         supervised = spawnSupervisedPluginProcess({
             ...(holder ? { sessionHolder: holder } : {}),
-            command: custody ? custody.executablePath : scopedLaunch?.filePath ?? launch.command,
-            args: custody ? [
-                'run', `--job=${custody.jobName}`, `--handshake=${custody.handshakePath}`,
-                ...(launch.windowsVerbatimArguments ? ['--target-windows-verbatim'] : []),
-                '--', launch.command, ...launch.args,
-            ] : scopedLaunch?.args ?? launch.args,
+            command,
+            args,
             ...((launch.launcherCwd ?? launch.cwd) ? { cwd: launch.launcherCwd ?? launch.cwd } : {}),
             env: scopedLaunch?.env ?? environment,
             ...(launch.stdin ? { stdin: launch.stdin } : {}),
@@ -505,7 +516,7 @@ export function spawnAuthorizedHostExecLaunchForHost(
             ...(options.processTreeSystemBoundary ? { processTreeSystemBoundary: options.processTreeSystemBoundary } : {}),
             spawnOptions: {
                 detached: process.platform !== 'win32' && options.posixProcessGroup !== 'inherit',
-                ...(custody ? {} : { windowsVerbatimArguments: launch.windowsVerbatimArguments }),
+                ...(custody || options.serviceOutputLifetime ? {} : { windowsVerbatimArguments: launch.windowsVerbatimArguments }),
             },
             ...(options.recordRuntimeLimitMeasurement
                 ? { recordRuntimeLimitMeasurement: options.recordRuntimeLimitMeasurement }

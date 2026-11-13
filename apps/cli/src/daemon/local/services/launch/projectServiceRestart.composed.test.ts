@@ -1,7 +1,8 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import type { ChildProcess } from 'node:child_process';
 import { createLocalServiceActionConfirmationNonceV1, isLocalServiceActionConfirmationNonceV1 } from '@happier-dev/protocol/local/services/actions/v1';
 import { LocalServiceLauncherSnapshotV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 import { createManagedServicesOwner, type WorkspaceProjectManagedServiceSupervisionInput } from '@/plugins/runtime/invocation/services/managedServicesOwner';
@@ -10,11 +11,25 @@ import { MANAGED_SERVICE_NUMERIC_CONTRACT } from '@/plugins/runtime/invocation/s
 import { authorizeResolvedProjectExecLaunchForHost, createProjectNativeToolchainIoForHost } from '@/plugins/runtime/invocation/services/exec';
 import { createLocalServiceInventoryRegistry } from '../inventory/registry';
 import { createLocalServicePreviewRegistry } from '../preview/registry';
+import { createLocalServicePreviewRoutes } from '../preview/routes';
+import { localServicePreviewDirectBindingV1 } from '@happier-dev/protocol/local/services/preview/v1';
 import { createLocalServiceActionRoutes } from '../actions/routes';
 import { createLocalServiceLauncherFeed } from './feed';
 
+const serviceChildren = vi.hoisted(() => [] as ChildProcess[]);
+// Keep real process execution; retain the OS pipes so the restart closes the
+// old daemon's readers, as a real daemon exit does.
+vi.mock('node:child_process', async importOriginal => {
+    const original = await importOriginal<typeof import('node:child_process')>();
+    return { ...original, spawn: (...args: Parameters<typeof original.spawn>) => {
+        const child = original.spawn(...args);
+        if (args[1]?.some(arg => arg.includes('SERVICE_RESTART_IO'))) serviceChildren.push(child);
+        return child;
+    } };
+});
+
 describe('Project Service daemon restart reconciliation', () => {
-    it.each(['alive', 'gone'] as const)('reconciles a %s process after owner retirement, preserving identity and idempotent Stop', async condition => {
+    it.each(['alive', 'gone'] as const)('reconciles a %s process after daemon pipe loss, preserving Open and idempotent Stop', async condition => {
         const directory = await mkdtemp(join(tmpdir(), 'project-service-restart-'));
         const createOwner = () => createManagedServicesOwner({
             projectServiceStateDirectory: directory,
@@ -43,7 +58,7 @@ describe('Project Service daemon restart reconciliation', () => {
                         io: createProjectNativeToolchainIoForHost({ resolveTool: async () => null }),
                     } },
                     launch: { command: process.execPath,
-                        args: ['-e', `require('node:http').createServer((req,res)=>res.end('ready')).listen(${endpoint!.port},'127.0.0.1')`],
+                        args: ['-e', `/* SERVICE_RESTART_IO */ require('node:http').createServer((req,res)=>{process.stderr.write('request\\n'); res.end('ready')}).listen(${endpoint!.port},'127.0.0.1')`],
                         cwd: workspace.rootPath, env: {}, release() {} },
                 }),
                 processSpec: { mode: { kind: 'managedSpawn', host: '127.0.0.1' },
@@ -57,6 +72,10 @@ describe('Project Service daemon restart reconciliation', () => {
             const original = running.targets[0]!;
             expect(original).toMatchObject({ serviceState: 'healthy', sourceClass: { managedServiceId: handle.instanceId } });
             await before.dispose({ preserveProjectServices: true });
+            for (const child of serviceChildren.splice(0)) {
+                child.stdout?.destroy();
+                child.stderr?.destroy();
+            }
             // This is the same owner-retirement boundary used by registry reload.
             // A real process survives; no ready flag or recovered handle is supplied.
             if (condition === 'gone') await handle.stop();
@@ -70,6 +89,26 @@ describe('Project Service daemon restart reconciliation', () => {
             if (condition === 'alive') {
                 expect(settled.targets[0]!.endpointUrl).toBe(original.endpointUrl);
                 expect(settled.targets[0]!.actions).toEqual(['manage', 'register_preview']);
+                expect(await (await fetch(original.endpointUrl!)).text()).toBe('ready');
+                const previews = createLocalServicePreviewRoutes({ machineId: workspace.machineId,
+                    accountId: 'account-one', registry: createLocalServicePreviewRegistry(), projectManagedServices: after,
+                    server: { token: 'fixture-token', serverBaseUrl: 'https://home.example.test', http: {
+                        async post(_url, body) { return { data: { resource: body, accessUrl: 'https://preview.example.test/', expiresAt: 61_000 } }; },
+                        async delete() { return { data: { ok: true } }; },
+                    } },
+                });
+                const openRequest = { machineId: workspace.machineId,
+                    serviceTarget: { kind: 'managed_service', machineId: workspace.machineId, managedServiceId: handle.instanceId,
+                        cwd: workspace.rootPath, declaration } } as const;
+                const opened = await previews.openOrCreate(openRequest);
+                if (!opened.ok) throw new Error(opened.reasonCode);
+                await previews.resolveApplication(localServicePreviewDirectBindingV1(opened.response.preview.resource));
+                expect(await (await fetch(original.endpointUrl!)).text()).toBe('ready');
+                expect((await feed(after).getSnapshot(request)).targets[0]?.serviceState).toBe('running');
+                expect(await previews.openOrCreate(openRequest)).toMatchObject({ ok: true, response: { status: 'existing' } });
+                const revoked = await previews.revoke({ machineId: workspace.machineId, previewId: opened.response.preview.resource.previewId,
+                    serviceTarget: opened.response.preview.resource.serviceTarget });
+                if (!revoked.ok) throw new Error(revoked.reasonCode);
                 expect(await (await fetch(original.endpointUrl!)).text()).toBe('ready');
             } else {
                 expect(settled.targets[0]).not.toHaveProperty('endpointUrl');

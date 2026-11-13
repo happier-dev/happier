@@ -71,6 +71,7 @@ func emit(payload map[string]any) error {
 func usage() {
 	fmt.Fprintln(os.Stderr, strings.TrimSpace(`
 usage:
+  happier-process-custody service-io -- <command> [args...]
   happier-process-custody run --job=<name> [--wait-for-job-empty] [--target-windows-verbatim] [--target-inherited-stdin-arg=<arg>] -- <command> [args...]
   happier-process-custody terminate --job=<name> [--timeout-ms=<ms>]
   happier-process-custody query --job=<name>
@@ -89,6 +90,8 @@ usage:
   happier-process-custody workspace-confined-apply
   happier-process-custody workspace-confined-inspect
   happier-process-custody workspace-confined-recover
+  happier-process-custody workspace-confined-meta
+  happier-process-custody workspace-confined-write
   happier-process-custody disk-measure
   happier-process-custody storage-rename
   happier-process-custody disk-scan`))
@@ -103,6 +106,8 @@ func main() {
 	command, rest := args[0], args[1:]
 	var err error
 	switch command {
+	case "service-io":
+		err = serviceIOCommand(rest)
 	case "run":
 		err = runCustodyCommand(rest)
 	case "terminate":
@@ -139,6 +144,10 @@ func main() {
 		err = workspaceConfinedInspectCommand(rest, os.Stdin, os.Stdout)
 	case "workspace-confined-recover":
 		err = workspaceConfinedRecoverCommand(rest, os.Stdin, os.Stdout)
+	case "workspace-confined-meta":
+		err = workspaceConfinedMetaCommand(rest, os.Stdin, os.Stdout)
+	case "workspace-confined-write":
+		err = workspaceConfinedWriteCommand(rest, os.Stdin, os.Stdout)
 	case "disk-measure":
 		err = diskMeasureCommand(rest, os.Stdin, os.Stdout)
 	case "storage-rename":
