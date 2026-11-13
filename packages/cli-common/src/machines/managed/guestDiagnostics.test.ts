@@ -73,7 +73,8 @@ describe('managed guest diagnostic disclosure', () => {
     it.each([
         { error: new ManagedMachineControllerError('credential_unavailable'), code: 'credential_unavailable' },
         { error: new SystemTaskExecutionError('resource_mismatch', 'private native detail'), code: 'resource_mismatch' },
-        { error: new Error('private native detail'), code: 'provider_unavailable' },
+        { error: Object.assign(new Error('private native detail'), { code: 'admission_unavailable' }), code: 'admission_unavailable' },
+        { error: new Error('private native detail'), code: 'action_failed' },
     ])('preserves typed native refusal without disclosing exceptions ($code)', async ({ error, code }) => {
         const result = await readManagedGuestDiagnostics({ machine, requesterAccountId: 'owner', transport, channel: 'dev',
             native: { exec: async () => { throw error; } } });

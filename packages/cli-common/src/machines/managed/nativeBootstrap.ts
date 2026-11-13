@@ -90,7 +90,7 @@ export type ManagedGuestPlatform = Readonly<{ os: 'linux' | 'darwin'; arch: 'x64
 /** The one guest platform probe (enrollment and Session holder bootstrap). */
 export async function probeManagedNativeGuestPlatform(exec: ManagedNativeBootstrapIO['exec'], signal?: AbortSignal): Promise<ManagedGuestPlatform> {
     const platform = await exec({ command: 'uname -s; uname -m; printf "%s\\n" "$HOME"', signal });
-    if (platform.status !== 0) throw new SystemTaskExecutionError('provider_unavailable', 'Native guest platform could not be observed.');
+    if (platform.status !== 0) throw new SystemTaskExecutionError('remote_command_failed', 'Native guest platform could not be observed.');
     const [os, arch, home] = platform.stdout.trim().split(/\r?\n/u);
     if (!home?.startsWith('/')) throw new SystemTaskExecutionError('provider_unavailable', 'Native guest home could not be observed.');
     return { os: normalizeRemoteReleaseOs(os), arch: normalizeRemoteReleaseArch(arch), home };
@@ -131,7 +131,7 @@ export async function ensureManagedGuestSessionHolder(input: Readonly<{
     const socketDirectory = `${platform.home}/.happier/holder/run`;
     const run = async (command: string) => {
         const result = await input.io.exec({ command, signal: input.signal });
-        if (result.status !== 0) throw new SystemTaskExecutionError('provider_unavailable', 'Session holder placement command failed in the guest.');
+        if (result.status !== 0) throw new SystemTaskExecutionError('remote_command_failed', 'Session holder placement command failed in the guest.');
         return result.stdout;
     };
     await run(`umask 077; mkdir -p ${q(directory)} ${q(socketDirectory)} && chmod 700 ${q(socketDirectory)}`);

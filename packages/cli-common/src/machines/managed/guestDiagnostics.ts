@@ -5,8 +5,7 @@ import { BugReportMachineDiagnosticsSnapshotSchema } from '@happier-dev/protocol
 import type { ManagedNativeBootstrapIO } from '../../systemTasks/kinds/managedMachineEnrollment.js';
 import { buildDedicatedDaemonInvocationCommand, buildRemoteHappierInvocationCommand, DEDICATED_DAEMON_INSTALL_HOME } from '../../systemTasks/ssh/remoteBootstrapCommandBuilder.js';
 import { resolveRemoteInstalledFirstPartyBinaryPath } from '../../systemTasks/ssh/remoteFirstPartyInstallPath.js';
-import { SystemTaskExecutionError } from '../../systemTasks/runSystemTask.js';
-import { ManagedMachineControllerError } from './controllerErrors.js';
+import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 /** Explicit finite read: the installed collector owns selection, redaction and tail budgets. */
 export async function readManagedGuestDiagnostics(input: Readonly<{
@@ -43,7 +42,6 @@ export async function readManagedGuestDiagnostics(input: Readonly<{
         return { status: 'collected', snapshot: { daemonState, sessionDiagnostics } };
     } catch (error) {
         input.signal?.throwIfAborted();
-        return unavailable(error instanceof ManagedMachineControllerError || error instanceof SystemTaskExecutionError
-            ? error.code : 'provider_unavailable', 'guest_collection');
+        return unavailable(readActionErrorCodeV1(error) ?? 'action_failed', 'guest_collection');
     }
 }

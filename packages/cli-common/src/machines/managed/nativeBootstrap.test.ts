@@ -95,6 +95,16 @@ describe('native stream channel', () => {
 });
 
 describe('Session holder bootstrap in a managed guest', () => {
+    it.each(['platform', 'placement'] as const)('retains command failure at the %s boundary', async phase => {
+        await expect(ensureManagedGuestSessionHolder({ version: 'test',
+            io: { exec: async ({ command }) => command.startsWith('uname') && phase !== 'platform'
+                ? { status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' }
+                : { status: 127, stdout: 'private output', stderr: 'private credential' },
+                putFile: async () => { throw new Error('must not upload'); } },
+            resolveArtifacts: async () => ({ holder: { bytes: new Uint8Array(), sha256: 'unused' },
+                helper: { bytes: new Uint8Array(), sha256: 'unused' } }),
+        })).rejects.toMatchObject({ code: 'remote_command_failed' });
+    });
     // The guest is this host's shell in a private HOME: putFile and exec are the
     // provider's two native roles, implemented at the OS boundary.
     async function guest() {
