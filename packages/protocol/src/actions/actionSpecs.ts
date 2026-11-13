@@ -276,6 +276,7 @@ import { MACHINE_RESOURCES_ACTION_SPECS } from './specs/machineResources.js';
 import { MACHINE_ROLES_ACTION_SPECS } from './specs/machineRoles.js';
 import { MACHINE_SERVICE_ACTION_SPECS } from './specs/machine/services.js';
 import { MACHINE_SERVICE_ADOPTION_ACTION_SPECS } from './specs/machine/serviceAdoption.js';
+import { MACHINE_SCHEDULED_ACTION_SPECS } from './specs/machineScheduled.js';
 import { MACHINE_REBOOT_ACTION_SPECS } from './specs/machine/reboot.js';
 import { MACHINE_AGENT_ISOLATION_ACTION_SPECS } from './specs/machine/agentIsolation.js';
 import { MACHINE_ADMIN_ACCESS_ACTION_SPECS } from './specs/machine/adminAccess.js';
@@ -502,6 +503,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   | (typeof MACHINE_ROLES_ACTION_SPECS)[number]
   | (typeof MACHINE_SERVICE_ACTION_SPECS)[number]
   | (typeof MACHINE_SERVICE_ADOPTION_ACTION_SPECS)[number]
+  | (typeof MACHINE_SCHEDULED_ACTION_SPECS)[number]
   | (typeof MACHINE_REBOOT_ACTION_SPECS)[number]
   | (typeof MACHINE_AGENT_ISOLATION_ACTION_SPECS)[number]
   | (typeof MACHINE_ADMIN_ACCESS_ACTION_SPECS)[number]
@@ -552,6 +554,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   ...MACHINE_ROLES_ACTION_SPECS,
   ...MACHINE_SERVICE_ACTION_SPECS,
   ...MACHINE_SERVICE_ADOPTION_ACTION_SPECS,
+  ...MACHINE_SCHEDULED_ACTION_SPECS,
   ...MACHINE_REBOOT_ACTION_SPECS,
   ...MACHINE_AGENT_ISOLATION_ACTION_SPECS,
   ...MACHINE_ADMIN_ACCESS_ACTION_SPECS,

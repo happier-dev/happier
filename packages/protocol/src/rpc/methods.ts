@@ -203,6 +203,8 @@ export const RPC_METHODS = {
   DAEMON_GUARD_ACTIVITY_WATCH: 'daemon.guard.activity.watch',
   MACHINES_VITALS_HISTORY_GET: 'machines.vitals.history.get',
   DAEMON_VITALS_WATCH: 'daemon.vitals.watch',
+  MACHINES_SCHEDULED_LIST: 'machines.scheduled.list',
+  MACHINES_SCHEDULED_WATCH: 'machines.scheduled.watch',
   MACHINES_PROCESSES_LIST: 'machines.processes.list',
   MACHINES_PROCESSES_GET: 'machines.processes.get',
   MACHINES_PROCESSES_CHECK: 'machines.processes.check',

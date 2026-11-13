@@ -1,3 +1,5 @@
+import { MACHINE_SCHEDULED_ACTION_IDS } from '../../../machines/scheduled/actionIdsV1.js';
+import type { MachineScheduledInputV1 } from '../../../machines/scheduled/scheduledV1.js';
 import { MachineRebootResultV1Schema } from '../../specs/machine/reboot.js';
 import { readActionFailureEnvelope } from '../actionFailureEnvelope.js';
 import { isActionFamilyId } from '../actionFamilies.js';
@@ -7,6 +9,7 @@ import { ManagedServiceNativeLogResultV1Schema } from '../../../local/services/n
 import { MachineStorageActionIdSchema, MACHINE_STORAGE_ACTION_INPUT_SCHEMAS } from '../../specs/storage.js';
 import { MachineProcessesActionIdSchema, MACHINE_PROCESSES_ACTION_INPUT_SCHEMAS } from '../../specs/machineProcesses.js';
 import { MachineResourcesActionIdSchema, MACHINE_RESOURCES_ACTION_INPUT_SCHEMAS } from '../../specs/machineResources.js';
+import { MachineRolesActionIdSchema, MACHINE_ROLES_ACTION_INPUT_SCHEMAS } from '../../specs/machineRoles.js';
 import { MachineAdminAccessActionIdSchema, MACHINE_ADMIN_ACCESS_ACTION_INPUT_SCHEMAS } from '../../specs/machine/adminAccess.js';
 import { MachineReachabilityActionIdV1Schema } from '../../specs/machineReachability.js';
 import { MACHINE_REACHABILITY_ACTION_INPUT_SCHEMAS_V1 } from '../../../machines/reachability/actionsV1.js';
@@ -44,6 +47,14 @@ export async function dispatchMachineControls1(inv: Pick<CoreInvocation, 'action
         const result = await deps.machineServiceExec({ input, context: ctx,
           ...(approvalScope ? { approvalScope } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}) });
         return readActionFailureEnvelope(result) ?? { ok: true, result: MachineServiceExecResultV1Schema.parse(result) };
+      }
+      const scheduledId = MACHINE_SCHEDULED_ACTION_IDS.find(id => id === actionId);
+      if (scheduledId) {
+        const input = parsed.data as MachineScheduledInputV1;
+        if (ctx.serverId && !isSameHome(input.serverId, ctx.serverId, ctx)) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+        if (!deps.machineScheduledAction) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+        const result = await deps.machineScheduledAction({ actionId: scheduledId, input, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+        return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
       if (actionId === 'machines.reboot') {
         const input = parsed.data as AdmittedActionInputById['machines.reboot'];
@@ -152,6 +163,14 @@ export async function dispatchMachineControls1(inv: Pick<CoreInvocation, 'action
         if (ctx.serverId && input.serverId && !isSameHome(input.serverId, ctx.serverId, ctx)) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
         if (!deps.machineResourcesPolicyAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const result = await deps.machineResourcesPolicyAction({ actionId: machineResourcesActionId, input, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+        return readActionFailureEnvelope(result) ?? { ok: true, result };
+      }
+      const machineRolesActionId = isActionFamilyId(actionId, MachineRolesActionIdSchema) ? actionId : null;
+      if (machineRolesActionId !== null) {
+        const input = parsed.data as z.infer<(typeof MACHINE_ROLES_ACTION_INPUT_SCHEMAS)[typeof machineRolesActionId]>;
+        if (ctx.serverId && input.serverId && !isSameHome(input.serverId, ctx.serverId, ctx)) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
+        if (!deps.machineRolesAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
+        const result = await deps.machineRolesAction({ actionId: machineRolesActionId, input, context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
         return readActionFailureEnvelope(result) ?? { ok: true, result };
       }
       if (machineVitalsActionId !== null) {

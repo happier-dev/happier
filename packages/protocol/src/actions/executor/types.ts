@@ -3536,6 +3536,13 @@ export type ActionExecutorDeps = Readonly<{
   }>) => Promise<unknown>;
 
   /** Scoped Machine process reads/effects; the daemon rechecks identity and ownership. */
+  machineScheduledAction?: (args: Readonly<{
+    actionId: import('../../machines/scheduled/actionIdsV1.js').MachineScheduledActionId;
+    input: import('../../machines/scheduled/scheduledV1.js').MachineScheduledInputV1;
+    context: ActionExecutorContext;
+    signal?: AbortSignal;
+  }>) => Promise<unknown>;
+
   machineProcessesAction?: (args: Readonly<{
     actionId: import('../specs/machineProcesses.js').MachineProcessesActionId;
     input: import('../specs/machineProcesses.js').MachineProcessesActionInput;

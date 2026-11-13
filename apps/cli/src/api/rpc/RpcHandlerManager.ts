@@ -248,6 +248,8 @@ export class RpcHandlerManager {
     }>>();
     private readonly ownedHandlerMethodsByOwner = new Map<string, Set<string>>();
     private ownedHandlerRegistration: OwnedHandlerRegistrationContext | null = null;
+    /** RPC namespace prefix → inactive Machine role id. Set by the Machine role runtime on each reconcile. */
+    private inactiveRoleNamespaces: ReadonlyArray<readonly [prefix: string, roleId: string]> = [];
 
     constructor(config: RpcHandlerConfig) {
         this.scopePrefix = config.scopePrefix;
@@ -948,7 +950,7 @@ export class RpcHandlerManager {
             const handler = this.handlers.get(request.method)
                 ?? (requesterApprovalDecision ? this.handlers.get(`${this.scopePrefix}:${RPC_METHODS.APPROVAL_REQUEST_DECIDE}`) : undefined);
             if (!handler) {
-                return await respond(request, { error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND, errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND });
+                return await respond(request, this.unregisteredMethodResult(rpcMethod));
             }
             if (requesterApprovalDecision && (!decryptedParams || typeof decryptedParams !== 'object' || Array.isArray(decryptedParams)
                 || !('sessionId' in decryptedParams) || decryptedParams.sessionId !== requesterApprovalDecision.sessionId)) {
@@ -1374,7 +1376,7 @@ export class RpcHandlerManager {
         return this.observeRequest(prefixedMethod, undefined, async diagnostic => {
             diagnostic.admissionPredicate = 'handler_admission';
             if (!handler) {
-                return { error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND, errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
+                return this.unregisteredMethodResult(method);
             }
             const signal = options?.signal ?? new AbortController().signal;
             const localRequester = options?.rpcContext !== undefined
@@ -1720,6 +1722,27 @@ export class RpcHandlerManager {
             this.socket.emit(SOCKET_RPC_EVENTS.UNREGISTER, { method: prefixedMethod });
         }
         return true;
+    }
+
+    /**
+     * The one refusal for work owned by an inactive Machine role: its handlers are not
+     * registered, and a call into one of its namespaces answers `machine_role_inactive`
+     * instead of method-not-found. Owned by the daemon's Machine role runtime.
+     */
+    setInactiveRoleNamespaces(namespaces: ReadonlyArray<readonly [prefix: string, roleId: string]>): void {
+        this.inactiveRoleNamespaces = [...namespaces];
+    }
+
+    /** The inactive Machine role whose namespace holds `method`, or null when no inactive role owns it. */
+    inactiveRoleIdFor(method: string): string | null {
+        return this.inactiveRoleNamespaces.find(([prefix]) => method.startsWith(prefix))?.[1] ?? null;
+    }
+
+    private unregisteredMethodResult(method: string): Readonly<{ error: string; errorCode: string; roleId?: string }> {
+        const roleId = this.inactiveRoleIdFor(method);
+        return roleId
+            ? { error: 'The Machine role that serves this method is not active', errorCode: RPC_ERROR_CODES.MACHINE_ROLE_INACTIVE, roleId }
+            : { error: RPC_ERROR_MESSAGES.METHOD_NOT_FOUND, errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
     }
 
     replaceOwnedHandlers<T>(ownerId: string, register: () => T): T {

@@ -82,6 +82,7 @@ import { LOCAL_DAEMON_SERVICE_ACTION_IDS } from './specs/localDaemonServiceActio
 import { USAGE_ACTION_IDS, USAGE_COACH_ACTION_IDS } from '../usage/usageActionIdsV1.js';
 import { MACHINE_ACCESS_ACTION_IDS, MACHINE_WORK_SUMMARY_ACTION_IDS } from './specs/machine/accessActionIdsV1.js';
 import { MACHINE_VITALS_ACTION_IDS } from './specs/machineVitalsActionIdsV1.js';
+import { MACHINE_SCHEDULED_ACTION_IDS } from '../machines/scheduled/actionIdsV1.js';
 import { MACHINE_PROCESSES_ACTION_IDS } from './specs/machineProcessesActionIdsV1.js';
 import { MACHINE_STORAGE_ACTION_IDS } from './specs/storageActionIdsV1.js';
 import { MACHINE_RESOURCES_ACTION_IDS } from './specs/machineResourcesActionIdsV1.js';
@@ -343,6 +344,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   machine_agent_isolation: MACHINE_AGENT_ISOLATION_ACTION_IDS,
   machine_admin_access: MACHINE_ADMIN_ACCESS_ACTION_IDS,
   machine_reachability: MACHINE_REACHABILITY_ACTION_IDS_V1,
+  machine_scheduled: MACHINE_SCHEDULED_ACTION_IDS,
   machine_reboot: MACHINE_REBOOT_ACTION_IDS,
   machine_guard: MACHINE_GUARD_ACTION_IDS,
   session_access: [

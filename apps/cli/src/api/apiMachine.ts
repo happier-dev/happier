@@ -44,8 +44,7 @@ import { readAgentIsolationSnapshot, type AgentIsolationSnapshot } from '@/daemo
 import { registerDaemonMachineAgentIsolationRpcHandlers } from '@/rpc/handlers/daemonMachineAgentIsolation';
 import { registerDaemonCommittedServiceHealthDeliveryRpcHandler } from '@/notifications/activity/committedServiceHealthDelivery';
 import type { AgentIsolationEffectDependencies } from '@/daemon/agentIsolation/agentIsolationProvisioner';
-import { readAgentIsolationNativeIdentity } from '@/daemon/agentIsolation/agentIsolationNativeIdentity';
-import { readAgentIsolationMemberBindingForAccount } from '@/daemon/agentIsolation/memberBindings';
+import { readAgentIsolationMemberLaunchIdentity } from '@/daemon/agentIsolation/memberBindings';
 import { observeAgentIsolationMemberLaunchReadiness, observeUnqualifiedAgentIsolationNativeReadiness } from '@/daemon/agentIsolation/agentIsolationReadiness';
 import { readMachineAgentIsolationPolicyV1, type MachineAgentIsolationOwnStatusV1 } from '@happier-dev/protocol';
 import { createAgentIsolationMemberOperations, type AgentIsolationMemberOperations } from '@/daemon/agentIsolation/createAgentIsolationMemberOperations';
@@ -187,6 +186,7 @@ import {
     registerDaemonMachineVitalsRpcHandlers,
     type DaemonMachineVitalsRoutes,
 } from '@/rpc/handlers/daemonMachineVitals';
+import { registerDaemonScheduledRpcHandlers } from '@/rpc/handlers/daemonScheduled';
 import { registerDaemonProcessesRpcHandlers, type DaemonProcessesRoutes } from '@/rpc/handlers/daemonProcesses';
 import { registerDaemonDeploymentChildRpcHandler } from '@/deployments/daemonDeploymentChildRpc';
 import {
@@ -792,6 +792,7 @@ export class ApiMachineClient {
         synchronizeIrohMachineEndpointAuthority: (state, hadEndpoint) => this.synchronizeIrohMachineEndpointAuthority(state, hadEndpoint),
     });
     private machineServicesBinding: ReturnType<typeof createApiMachineServicesBinding> | null = null;
+    private scheduledObservation: ReturnType<typeof registerDaemonScheduledRpcHandlers> | null = null;
     private machineRebootAction: ReturnType<typeof createMachineRebootAction> | null = null;
     private localServiceStartObservationCleanup: (() => void) | null = null;
     private readonly liveWorkProducer = createLiveWorkProducerGroup(() => {
@@ -1276,7 +1277,8 @@ export class ApiMachineClient {
         readiness: RpcHandlerRegistrationReadiness;
     }>> {
         const { socket, transportGeneration, timeoutMs } = params;
-        const missingCoreHandlers = REQUIRED_MACHINE_CONTROL_RPC_METHODS.filter(
+        const requiredMethods = this.requiredMachineControlRpcMethods();
+        const missingCoreHandlers = requiredMethods.filter(
             (method) => !this.rpcHandlerManager.hasHandler(method),
         );
         if (missingCoreHandlers.length > 0) {
@@ -1287,7 +1289,7 @@ export class ApiMachineClient {
         }
 
         const readiness = await this.rpcHandlerManager.waitForRegisteredHandlers(
-            REQUIRED_MACHINE_CONTROL_RPC_METHODS,
+            requiredMethods,
             { timeoutMs },
         );
         if (
@@ -1737,6 +1739,9 @@ export class ApiMachineClient {
             },
         });
 
+        this.scheduledObservation = registerDaemonScheduledRpcHandlers(this.rpcHandlerManager, {
+            machineId: this.machine.id, accountId: readAccountIdFromToken(this.token) ?? undefined,
+        });
         this.machineRpcWorkingDirectory = resolveMachineRpcWorkingDirectory();
         const reboot = this.lifecycleDependencies.machineReboot;
         const managedActivity = this.lifecycleDependencies.managedActivity;
@@ -3305,15 +3310,10 @@ export class ApiMachineClient {
                 if (!daemon || daemon.daemonIdentity !== 'nonRoot' || daemon.daemonUid === null || daemon.daemonUid <= 0
                     || !daemon.daemonUsername || !daemon.daemonPrimaryGroup) return unavailable('provisioning_unavailable');
                 try {
-                    const binding = await readAgentIsolationMemberBindingForAccount({ activeServerDir: configuration.activeServerDir,
-                        homeServerIdentityId, machineId: this.machine.id, installationId: requesterIdentity.requester.installationId },
-                    requesterIdentity.requester.accountId);
-                    if (!binding) return unavailable('agent_user_missing');
-                    const memberIdentity = await readAgentIsolationNativeIdentity({
-                        requesterIdentity: { ...requesterIdentity, homeServerIdentityId }, expectedUid: binding.uid, signal,
+                    const memberIdentity = await readAgentIsolationMemberLaunchIdentity({
+                        activeServerDir: configuration.activeServerDir,
+                        requesterIdentity: { ...requesterIdentity, homeServerIdentityId }, signal,
                     }, effects.backend);
-                    if (memberIdentity.username !== binding.username || memberIdentity.home !== binding.home)
-                        return unavailable('agent_user_missing');
                     const ready = await observeAgentIsolationMemberLaunchReadiness({ installedCli: effects.installedCli,
                         memberIdentity, signal, system: effects.nativeReadiness?.system });
                     signal?.throwIfAborted();
@@ -4934,17 +4934,30 @@ export class ApiMachineClient {
         return revision;
     }
 
+    /**
+     * Machine-control methods that must be registered before the Machine reports running. Methods
+     * owned by an inactive Machine role are refused by design (`machine_role_inactive`), not missing.
+     */
+    private requiredMachineControlRpcMethods(): readonly string[] {
+        return REQUIRED_MACHINE_CONTROL_RPC_METHODS.filter(method => !this.rpcHandlerManager.inactiveRoleIdFor(method));
+    }
+
     private currentMachineOperationProtocolCapabilities(
         includeSessionCapabilities = true,
     ): MachineOperationProtocolCapabilitiesV1 | null {
         const {
             externalActionExecutionAuthorization: _externalActionExecutionAuthorization,
+            sessionSpawn,
             ...sessionCapabilities
         } = CURRENT_MACHINE_OPERATION_PROTOCOL_CAPABILITIES_V1;
         const capabilities: MachineOperationProtocolCapabilitiesV1 = {
             ...(this.sessionMessageReplyRecoverySupported ? { sessionMessageReply: { protocolVersions: [1] } } : {}),
             ...(includeSessionCapabilities && this.sessionSpawnV1OutcomeRequired
-                ? sessionCapabilities
+                ? {
+                    ...sessionCapabilities,
+                    // A Machine whose sessions role is off starts no Session, so placement never picks it.
+                    ...(this.rpcHandlerManager.inactiveRoleIdFor(RPC_METHODS.SPAWN_HAPPY_SESSION) ? {} : { sessionSpawn }),
+                }
                 : {}),
             ...(this.externalActionExecutionAuthorizationV1OutcomeRequired
                 ? { externalActionExecutionAuthorization: { protocolVersions: [1] } }
@@ -5535,7 +5548,7 @@ export class ApiMachineClient {
                     if (readAccountIdFromToken(this.token)) {
                         await timeWebLatencyPhase('machine.startup.accountIdentity', () => this.getAccountId());
                     }
-                    const missingCoreHandlers = REQUIRED_MACHINE_CONTROL_RPC_METHODS.filter(
+                    const missingCoreHandlers = this.requiredMachineControlRpcMethods().filter(
                         (method) => !this.rpcHandlerManager.hasHandler(method),
                     );
                     if (socket) {
@@ -6065,6 +6078,8 @@ export class ApiMachineClient {
         this.projectionSchedulingClosed = true;
         this.localServiceStartObservationCleanup?.();
         this.localServiceStartObservationCleanup = null;
+        this.scheduledObservation?.dispose();
+        this.scheduledObservation = null;
         await this.machineServicesBinding?.dispose();
         await this.accountEncryptionCurrentness?.dispose();
         this.accountEncryptionCurrentness = null;
