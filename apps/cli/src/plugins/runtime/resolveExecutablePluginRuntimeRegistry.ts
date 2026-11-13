@@ -4446,11 +4446,12 @@ export async function resolveExecutablePluginRuntimeRegistry(
         },
         async readAccountScope(signal) {
             const authority = params?.accountExecution;
-            if (signal.aborted || !authority?.serverId || !await authority.isCurrent()) return undefined;
+            const serverId = authority?.serverIdentityId ?? authority?.serverId;
+            if (signal.aborted || !authority || !serverId || !await authority.isCurrent()) return undefined;
             const credentials = await readSessionCredentials();
             const accountId = credentials ? readAccountIdFromToken(credentials.token) : null;
             if (signal.aborted || !accountId || !await authority.isCurrent()) return undefined;
-            return Object.freeze({ serverId: authority.serverId, accountId });
+            return Object.freeze({ serverId, accountId });
         },
         ...(params?.accountExecution ? { readCurrentTargetedDeclarations: readCurrentAccountTargetedDeclarations,
             createAccountSourceMachineResolver } : {}),

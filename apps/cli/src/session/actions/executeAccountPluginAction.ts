@@ -119,6 +119,7 @@ export async function executeAccountPluginAction(params: Readonly<{
       ?? (params.context?.externalActionTarget?.kind === 'machine' ? params.context.externalActionTarget.machineId : undefined)
       ?? params.context?.executionRunTargetMachineId;
     const machineId = explicitMachineId ?? params.context?.defaultSessionMachineId;
+    const serverIdentityId = params.context?.serverIdentityId ?? params.host.serverIdentityId;
     const runtime = await resolveAccountExecutionRuntime({
       executeTeamCredentialBrokerAction: params.host.executeTeamCredentialBrokerAction,
       externalActionHomeBinding: {
@@ -135,7 +136,7 @@ export async function executeAccountPluginAction(params: Readonly<{
       accountExecution: { credentials, serverUrl: params.host.serverHttpBaseUrl!, isCurrent, isCredentialCurrent,
         ...(operationContext ? { savedSecretOperationContext: operationContext } : {}),
         ...(params.host.serverId ? { serverId: params.host.serverId } : {}),
-        ...(params.context?.serverIdentityId ? { serverIdentityId: params.context.serverIdentityId } : {}),
+        ...(serverIdentityId ? { serverIdentityId } : {}),
         ...(machineId ? { machineId } : {}),
         ...(explicitMachineId ? { explicitMachineId } : {}) },
     }).catch(unavailableSource);

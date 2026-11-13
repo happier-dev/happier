@@ -2855,8 +2855,14 @@ reads and watches, `services.actions.execute`,
 `services.targetedContributions`, together with the invocation surface, signal
 and host-stamped caller. Authenticated hosts may supply `accountScope` and the
 same exact `sessionTargetsV1` operands admitted by the Action executor. Neither
-comes from plugin input or selects a Machine. An invoking UI may supply the
-ordinary optional `ui` authoring capability on finite invocations, never read
+comes from plugin input or selects a Machine.
+
+CLI Account scope uses the admitted canonical Home `serverIdentityId` when
+available, while the local `serverId` profile continues to route credentials and
+requests. One-shot and retained Account runtimes publish the same scope; hosts
+without a canonical identity retain their admitted server id.
+
+An invoking UI may supply the ordinary optional `ui` authoring capability on finite invocations, never read
 observations; headless handlers must refuse a
 UI-only compose operation when it is absent. The context exposes no Machine
 filesystem, process or credentials. Storage remains with the existing Account KV and
@@ -4790,6 +4796,33 @@ same deferred body owner. Its Action bodies are selected by the providers' exact
 references; it claims only narrow coverage. The existing loader merges it with
 other demands and expands to full catalogue coverage when requested. This is
 unreleased 0.3 source behavior.
+
+A Session reads only the plugins it presents (unreleased 0.3 source behavior).
+Each index part names the plugin whose adjacent entries it groups, through the
+index's `plugins` table. The manifest's `sessionPluginIds` lists the plugins with
+a Session-facing contribution. That means a Session, message or Composer Action
+placement, a Session surface placement, a header, info or activity row, or a
+Composer or drag/drop family entry. The protocol producer owns that rule.
+
+For `actionsById`, `resourcesById` and `familiesById.pluginUi`, a reader may
+demand `<section>#<pluginId>`. It may also demand `<section>#@session`, which
+expands to the manifest's Session plugins. The reader then fetches only those
+plugins' bodies and assembles exactly their entries. A manifest without
+`sessionPluginIds` (an older daemon) reads the whole section.
+
+A whole section covers every slice; a slice never claims the whole section. So
+AppShell and other complete-catalogue readers never treat a Session's slices as
+their catalogue. The Session tree demands slices: the Composer, message Actions,
+transcript Activities, header, panes and plugin runtime. Slices of one manifest
+join in the held answer.
+
+A plugin outside the loaded slices is not loaded, never retired. The contributed
+Action controller reports `action_not_loaded` for it. Its by-identity entry points
+read that plugin's slice once (`useDaemonProjectionPluginSlices`) and re-resolve.
+Synchronous availability starts the read and answers `false` until the slice
+lands. Session holders publish their sliced projection to AppShell's executable
+owner as mounted client-Action demand, so their client Actions register without a
+complete catalogue.
 
 Every manifest carries `sectionFrameVersion: 2`: index frames travel as raw index
 text, and body pages as their JSON span array. A manifest without that version,
@@ -7172,10 +7205,15 @@ to coalesce behind the current read; no transport or Host API method changes.
 ### Mounted host Action controls (0.3 development)
 
 An installed plugin can bind `hostApi.actionControl({ action, presentation }, controller)`
-or mount the public Plugin UI `Action.Control`. The mounted surface host renders its
-existing accessible button in the surface's host action slot, outside the author tree
-and outside hosted-web's iframe. Native and hosted surfaces, including Session and
-Project `detailsPane` destinations, use the same mounted presentation owner.
+or mount the public Plugin UI `Action.Control`. The mounted presentation owner
+(`pluginSurfaceActionControls.ts`) registers it and owns its button. On the same-realm
+React Native carrier the host draws that button where `Action.Control` is declared,
+through the private presentation host's `renderActionControl`, so it stays inside the
+presentation that hosts it (a `detailsPane` docked or over the page, a sheet, a dialog)
+and in its focus order. Hosted-web, and a native tree without the private presentation
+host, keep the button in the surface's host action slot, outside the author tree and
+outside the iframe. Placement grants nothing: only the host button's physical press
+reaches the pending-gesture path below.
 
 On a physical host press, the host requests one fresh `controller.prepare({signal})`.
 The controller returns `{input}` or `null` to cancel; it receives no executor or token
@@ -8273,6 +8311,12 @@ does not copy undisplayed structured output.
 Resource-only plugins do not need an unrelated View to supply app-scope widget data. The existing daemon projection stamps the Resource's actual execution origin and occurrence; the app union admits it only against Administration's exact selected origin and the matching enabled package occurrence. Older unstamped rows retain only their existing admitted-UI context, not independent app read authority. Demand and explicit Refresh use the Resource origin's own currentness: another current machine in the union cannot start reads on an offline origin. Retained authorized data may still display while reads are paused.
 
 Client-targeted Actions receive the bounded [`PluginClientActionUi`](../packages/plugin-sdk/src/actions/contracts.ts) subset, not a mounted `SurfaceContext`. Its `context(options?)` returns current `targetedContributions` for the Action's plugin (or `null`) and the optional `accountScope` from its admitted Account lifetime. The scope identifies private evidence; it grants no Action authority. `version()` and `selectActionInput(...)` reuse the canonical host method advertisement and selected-input admission/custody; `executeAction` and `openSurface` remain the effect seams. An Action gets no page, mount, layout or UI-selection owner from this capability.
+
+For Account Actions, targeted input selection reads the current Account UI
+declarations through Account Availability without requiring daemon authority.
+Machine-bound client Actions retain their daemon projection path. Projection
+refusals carry the unavailable source or daemon failure reason in the existing
+PluginError diagnostics.
 
 In 0.3 development source, that capability also exposes `readSession`,
 `readComposer` and `applyComposer` through the incumbent Account and Composer

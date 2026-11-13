@@ -234,6 +234,47 @@ it('carries an explicit Machine target into an Account Action’s nested Machine
     }
 });
 
+it.each(['host', 'context', 'retained'] as const)('publishes canonical Home identity in Account plugin scope (%s)', async source => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'account-home-scope-'));
+    const app = fastify();
+    const accountId = 'account-home-scope-owner';
+    const serverId = 'local-home-profile';
+    const serverIdentityId = 'srv_canonical_account_home';
+    const serverHttpBaseUrl = 'http://account-home-scope.test';
+    registerAccountHomeHttp(app, { accountId, serverId: serverIdentityId });
+    const authored = await registerAuthoredAccountActionRelease(app, accountId, { primary: {
+        manifest: sessionSourceManifest, projectRoot: resolve(import.meta.dirname, '../../..'),
+        entryPath: resolve(import.meta.dirname, 'accountSessionMachineSource.testkit.ts'),
+    } });
+    await app.ready();
+    const restore = installAxiosFastifyAdapter({ app, origin: serverHttpBaseUrl });
+    const token = `e30.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    const credentials: StoredCredentials = { token, encryption: null, credentialProvenance: 'stored_session' };
+    const retained = source === 'retained' ? createRetainedAccountExecutionRuntime(() => ({ happyHomeDir,
+        accountExecution: { credentials, serverUrl: serverHttpBaseUrl, serverId, serverIdentityId, isCurrent: () => true } })) : undefined;
+    try {
+        await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => authored.publishArtifacts(credentials));
+        const host = { token, credentials, happyHomeDir, sessionId: 'cli-global', mode: 'plain' as const, ctx: null,
+            serverId, serverHttpBaseUrl, ...(source === 'host' ? { serverIdentityId } : {}) };
+        const input = { action: { pluginId: authored.pluginId, localId: 'account-scope' }, input: {} };
+        const context = { surface: 'cli' as const, ...(source === 'context' ? { serverIdentityId } : {}) };
+        const expected = { ok: true, result: { scope: { serverId: serverIdentityId, accountId } } };
+        if (retained) {
+            const { deps } = createCliActionExecutorHarness(host);
+            expect(await executeAccountPluginAction({ host, deps, accountRuntime: retained,
+                actionId: 'action.invoke', input, context })).toEqual({ matched: true, result: expected });
+        } else {
+            expect(await createCliActionExecutor(host).execute('action.invoke', input, context)).toEqual(expected);
+        }
+    } finally {
+        await retained?.dispose();
+        restore();
+        await app.close();
+        resetActiveAccountSettingsSnapshotForTests();
+        await rm(happyHomeDir, { recursive: true, force: true });
+    }
+});
+
 it('executes a qualified Account Action through the same owner as action.invoke without a Machine', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'account-qualified-action-'));
     const app = fastify();
