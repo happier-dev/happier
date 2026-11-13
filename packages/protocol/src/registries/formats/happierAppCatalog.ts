@@ -1,3 +1,4 @@
+import type { RegistryAppMappingV1 } from '../registryAppMappingV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { sha256 } from '@noble/hashes/sha256';
 import { bytesToHex } from '@noble/hashes/utils';
@@ -74,7 +75,7 @@ export function listHappierAppCatalogV1(input: Readonly<{
 export function readHappierAppCatalogItemV1(input: Readonly<{
   sourceId: string; catalog: HappierAppCatalogV1; fetchedAt: number; itemId: string; version?: string;
   ref?: RegistryContentRefV1;
-  packageContent?: RegistryPackagedSourceDescriptorV1['packageContent'];
+  packageContent?: RegistryPackagedSourceDescriptorV1['packageContent']; appMappingCorrection?: RegistryAppMappingV1;
 }>): RegistryItemV1 {
   const matching = selectedEntries(input.catalog, new Set([input.itemId])).get(input.itemId);
   if (matching?.length !== 1) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
