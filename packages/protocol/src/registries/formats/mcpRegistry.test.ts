@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readMcpRegistryServerV1 } from './mcpRegistry.js';
 import { createRegistryHostV1, detectRegistrySourceV1 } from '../registryHostV1.js';
 import { BUILT_IN_REGISTRY_SOURCES_V1 } from '../registrySourcesV1.js';
 import { RegistryItemV1Schema, RegistryProvenanceV1Schema } from '../registryItemsV1.js';
@@ -138,6 +139,28 @@ describe('registered MCP Registry reader', () => {
     const listed = await hostFor(page).host.execute('registries.items.list', { kind: 'mcpServer' });
     expect(listed).toMatchObject({ pages: [{ status: { state: 'ok' } }] });
     expect((listed as { pages: { items: unknown[] }[] }).pages[0]!.items).toHaveLength(3);
+  });
+  it.each(['arguments', 'digest'] as const)('keeps valid search results when a registry record has malformed package %s', async failure => {
+    // Official postgres search, 2026-11-13: postgres-scout-mcp publishes empty
+    // argument types. That entry must not withdraw the other 42 valid records.
+    const malformed = { ...MCP_REGISTRY_V01_PACKAGE_FIXTURE, server: {
+      ...MCP_REGISTRY_V01_PACKAGE_FIXTURE.server, name: 'io.github.bluwork/postgres-scout-mcp',
+      packages: [{ ...MCP_REGISTRY_V01_PACKAGE_FIXTURE.server.packages[0],
+        ...(failure === 'arguments' ? { packageArguments: [
+          { type: '', value: '--read-only' }, { type: '', value: 'postgresql://localhost/example' },
+        ] } : { fileSha256: 'invalid-digest' }),
+      }],
+    } };
+    const { host, http } = hostFor({ servers: [malformed, ...MCP_REGISTRY_V01_PAGE_FIXTURE.servers],
+      metadata: { count: 3, nextCursor: 'next-page' } }, malformed);
+    expect(await detectRegistrySourceV1({ http }, 'https://registry.modelcontextprotocol.io/v0.1'))
+      .toMatchObject({ format: 'mcp-registry', kinds: ['mcpServer'] });
+    expect(await host.execute('registries.items.list', { kind: 'mcpServer', query: 'postgres' }))
+      .toMatchObject({ pages: [{ status: { state: 'ok' }, nextCursor: 'next-page', items: [
+        { itemId: malformed.server.name, problem: { code: 'unsupported_entry', reason: 'distribution' } },
+        ...MCP_REGISTRY_V01_PAGE_FIXTURE.servers.map(row => ({ itemId: row.server.name })),
+      ] }] });
+    expect(() => readMcpRegistryServerV1(malformed.server)).toThrow();
   });
   it('refuses a version/identity mismatch instead of creating the latest or another server', async () => {
     const { host } = hostFor();

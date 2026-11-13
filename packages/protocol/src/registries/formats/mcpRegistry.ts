@@ -21,7 +21,10 @@ const wireServer = z.object({ name: z.string().check(z.minLength(1)), descriptio
 });
 const official = z.object({ status: z.enum(['active', 'deprecated', 'deleted']), publishedAt: z.optional(z.string()), updatedAt: z.optional(z.string()), isLatest: z.optional(z.boolean()) });
 const record = z.object({ server: wireServer, _meta: z.optional(z.object({ 'io.modelcontextprotocol.registry/official': z.optional(official) })) });
-const page = z.object({ servers: z.array(record), metadata: z.object({ count: z.number().check(z.int(), z.nonnegative()), nextCursor: z.optional(z.string()) }) });
+// Display metadata remains usable when upstream publishes an unsupported
+// distribution. Pinned reads still require the complete executable record.
+const listingRecord = z.extend(record, { server: z.omit(wireServer, { packages: true, remotes: true }) });
+const page = z.object({ servers: z.array(z.unknown()), metadata: z.object({ count: z.number().check(z.int(), z.nonnegative()), nextCursor: z.optional(z.string()) }) });
 function endpoint(sourceUrl: string) {
   const url = new URL(sourceUrl); url.search = ''; url.hash = '';
   url.pathname = url.pathname.replace(/\/+$/, '').replace(/\/v0\.1(?:\/servers)?$/, '') + '/v0.1/servers'; return url;
@@ -74,6 +77,15 @@ function summary(source: RegistrySourceV1, item: z.infer<typeof record>, server 
       ? { problem: { code: 'unsupported_entry' as const, reason: 'package_type' as const } } : {}),
   };
 }
+function listSummary(source: RegistrySourceV1, raw: unknown): RegistryItemSummaryV1 {
+  try { return summary(source, record.parse(raw)); }
+  catch (error) { if (!(error instanceof z.core.$ZodError)) throw error; }
+  const listing = listingRecord.safeParse(raw);
+  if (!listing.success) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
+  const item = summary(source, listing.data);
+  return item.problem?.code === 'removed_from_source' ? item
+    : { ...item, problem: { code: 'unsupported_entry', reason: 'distribution' } };
+}
 async function json(ctx: RegistryFetchContextV1, source: RegistrySourceV1, url: URL) {
   ctx.signal?.throwIfAborted(); const response = await ctx.http.getJson(url.href, { source }); ctx.signal?.throwIfAborted();
   if (!response.ok) throw new RegistryFetchErrorV1(response.status); return response;
@@ -83,7 +95,9 @@ export const mcpRegistryAdapterV1: RegistryFormatAdapterV1 = {
   async detect(ctx, url) {
     const target = endpoint(url); target.searchParams.set('limit', '1'); const response = await ctx.http.getJson(target.href);
     if (!response.ok) return response.status.state === 'auth_failed' ? { unsupported: 'needs_token' } : null;
-    return page.safeParse(response.value).success ? { format: 'mcp-registry', kinds: ['mcpServer'], title: new URL(url).hostname } : null;
+    const parsed = page.safeParse(response.value);
+    return parsed.success && parsed.data.servers.every(item => listingRecord.safeParse(item).success)
+      ? { format: 'mcp-registry', kinds: ['mcpServer'], title: new URL(url).hostname } : null;
   },
   async list(ctx, req) {
     try {
@@ -91,7 +105,7 @@ export const mcpRegistryAdapterV1: RegistryFormatAdapterV1 = {
       if (req.query) url.searchParams.set('search', req.query); if (req.cursor) url.searchParams.set('cursor', req.cursor);
       const response = await json(ctx, req.source, url); const parsed = page.safeParse(response.value);
       if (!parsed.success) throw new RegistryFetchErrorV1({ state: 'invalid_source' });
-      return { sourceId: req.source.id, status: { state: 'ok', fetchedAt: response.fetchedAt }, items: parsed.data.servers.map(item => summary(req.source, item)), nextCursor: parsed.data.metadata.nextCursor ?? null };
+      return { sourceId: req.source.id, status: { state: 'ok', fetchedAt: response.fetchedAt }, items: parsed.data.servers.map(item => listSummary(req.source, item)), nextCursor: parsed.data.metadata.nextCursor ?? null };
     } catch (error) { if (!(error instanceof RegistryFetchErrorV1)) throw error;
       return { sourceId: req.source.id, status: error.status, items: [], nextCursor: null }; }
   },
