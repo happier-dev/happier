@@ -2094,7 +2094,10 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
                     execute: executeApprovalAction,
                     context: signal ? { ...context, signal } : context, run })
                   : await run(signal);
-                if (requester) return requester;
+                if (requester) return await consumeDeferredCliApprovalResult(requester, { onApprovalRequested: params.onApprovalRequested,
+                  token: credentials.token, serverHttpBaseUrl: resolveActionServerApiUrl(),
+                  execute: executeApprovalAction,
+                  context: signal ? { ...context, signal } : context });
               } catch { return actionFailure(signal?.aborted ? 'cancelled' : 'target_unavailable'); }
             }
           }

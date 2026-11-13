@@ -31,9 +31,11 @@ import { createOwnServerDeploymentRuntimeForHost } from './targets/ownServer/own
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); });
 
 describe.skipIf(process.platform !== 'linux')('approved native Compose adoption', () => {
-    it('settles approval into a new Project and readable E2EE Environment', async () => {
+    // Both fixtures share the server process's canonical Home identity cache.
+    const serverId = `srv_${randomUUID().replaceAll('-', '')}`;
+    it.each(['manual', 'presenter'] as const)('settles approval into a new Project and readable E2EE Environment (%s)', async delivery => {
         const encryptionMode = 'e2ee' as const;
-        const home = await createDeploymentSocketHome({ encryptionMode,
+        const home = await createDeploymentSocketHome({ encryptionMode, serverId,
             ...(encryptionMode === 'e2ee' ? { prepareMachineContent: (key: Uint8Array, metadata: Readonly<Record<string, unknown>>) =>
                 createMachineContentCodec({ encryptionMode: 'e2ee', encryptionKey: key,
                     encryptionVariant: 'dataKey' }).encodeStored(metadata) } : {}) });
@@ -164,8 +166,19 @@ else process.exit(23);
                     owner: { kind: 'account', accountId: home.accountId } }, protection: 'nonProduction', purpose: 'standard',
                     deployerMode: 'managers', controllerMachineId: home.machineId } };
             const approvalsBeforeApply = approvalArtifacts.length;
-            const result = await approved('machines.services.adopt', apply);
-            expect(approvalArtifacts.length).toBe(approvalsBeforeApply + 1);
+            const presentedApprovals: string[] = [];
+            const presentingExecutor = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
+                externalActionClient: true,
+                machineId: home.machineId, serverId: home.serverId, serverIdentityId: home.serverId, serverApiUrl: home.baseUrl,
+                onApprovalRequested: async (artifactId, _signal, decide) => {
+                    presentedApprovals.push(artifactId);
+                    return await decide('approve');
+                } });
+            const result = delivery === 'manual' ? await approved('machines.services.adopt', apply)
+                : await presentingExecutor.execute('machines.services.adopt', apply, { surface: 'cli', serverId: home.serverId,
+                    serverIdentityId: home.serverId, actionRequestId: randomUUID() });
+            expect(presentedApprovals).toHaveLength(delivery === 'presenter' ? 1 : 0);
+            expect(approvalArtifacts.length).toBe(approvalsBeforeApply + (delivery === 'manual' ? 1 : 0));
             const projects = await db.projectSource.findMany({ where: { name: 'Approved adoption' }, select: { id: true } });
             const environments = await db.deploymentEnvironment.count({ where: { projectSourceId: { in: projects.map(row => row.id) } } });
             expect(result, JSON.stringify({ result, projects, environments })).toMatchObject({ ok: true, result: { kind: 'adopted' } });
