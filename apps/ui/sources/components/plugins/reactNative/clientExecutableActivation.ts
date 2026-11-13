@@ -185,11 +185,16 @@ async function createAcquiredClientExecutableActivation(input: Readonly<{
     const { accountLifetime, reader, target } = input;
     const serverId = target.authority.serverId;
     if (!reader || !accountLifetime || !serverId || !isCurrent(input)) return null;
+    const admission = targetAdmission(target);
     let claimedByComposition = false;
     let activation: PluginUiClientExecutableActivation;
+    // AppShell may supersede its request while retaining this exact target.
+    // Byte preparation follows that admission; replacing a request is no revoke.
     const scopeIsCurrent = () => accountLifetime.isCurrent() && (
-        claimedByComposition && input.retainCommittedActivation
-            ? input.composition.isCurrentActivation(activation)
+        input.retainCommittedActivation
+            ? claimedByComposition
+                ? input.composition.isCurrentActivation(activation)
+                : input.composition.isAdmitted(admission)
             : isCurrent(input)
     );
 

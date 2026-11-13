@@ -15,6 +15,7 @@ import { getPluginUiClientExecutableComposition } from './clientExecutableContri
 import { resolveProjectedPluginUiClientExecutables } from './clientExecutableProjection';
 import { createPluginUiCommonJsLoaderBackend } from './commonJsLoaderBackend';
 import { encodeBase64 } from '@/encryption/base64';
+import { log } from '@/log';
 import { PluginReleaseFactsV1Schema, PluginMachineMaterializationV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { DaemonPluginUiArtifactBytesReadRequestSchema, DaemonPluginUiArtifactBytesReadResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
@@ -273,12 +274,30 @@ it('publishes a healthy target while unrelated bytes are parked, then withdraws 
         await new Promise<void>(resolve => { releases.set(id, resolve); });
         return executableBytes(id);
     });
-    const pending = reconcileProjectedPluginUiClientExecutables(state.input);
+    const pending = reconcileProjectedPluginUiClientExecutables({ ...state.input, retainCommittedActivation: true });
     try {
         await vi.waitFor(() => expect([...releases.keys()]).toEqual([1, 2]));
-        releases.get(2)!();
-        await vi.waitFor(() => expect(state.loaded).toEqual(['acme.concurrent-2']));
         const target = resolveProjectedPluginUiClientExecutables(state.input).find(target => target.pluginId === 'acme.concurrent-2')!;
+        const ready = new Promise<void>((resolve, reject) => {
+            // Wait on publication under the case's existing deadline. The real
+            // SDK can initialize cold when this case runs in isolation.
+            const stop = state.composition.subscribe(() => {
+                const address = { family: 'actions' as const, pluginId: target.pluginId, localId: 'run',
+                    occurrenceId: target.occurrenceId, target: target.target, executionOrigin: target.executionOrigin };
+                const refusal = state.composition.readRefusal(address);
+                if (!state.composition.read(address) && !refusal) return;
+                stop();
+                if (refusal) reject(new Error(refusal.code));
+                else resolve();
+            });
+            onTestFinished(() => {
+                stop();
+                reject(new Error('Target did not publish before the test finished'));
+            });
+        });
+        releases.get(2)!();
+        await ready;
+        expect(state.loaded).toEqual(['acme.concurrent-2']);
         const registration = state.composition.read({ family: 'actions', pluginId: target.pluginId, localId: 'run',
             occurrenceId: target.occurrenceId, target: target.target, executionOrigin: target.executionOrigin });
         expect(registration).not.toBeNull();
@@ -384,11 +403,16 @@ it('keeps retained predecessor registrations when a successor is superseded', as
     assetIo.read.mockImplementation(async id => executableBytes(id));
     await reconcileProjectedPluginUiClientExecutables({ ...state.input, retainCommittedActivation: true });
     await retainProjectedPluginUiClientExecutables(state.input);
+    const diagnosticsBeforeRefresh = log.getCount();
     let current = true;
     const pending = reconcileProjectedPluginUiClientExecutables({ ...state.input, retainCommittedActivation: true, isCurrent: () => current });
     current = false;
     expect(await pending).toEqual([]);
     expect(state.loaded).toEqual(['acme.concurrent-1', 'acme.concurrent-2']);
+    // AppShell supersedes a request when projection facts change, even if the
+    // complete-set owner still retains these exact targets. That is no revoke.
+    expect(log.getLogs().slice(diagnosticsBeforeRefresh)
+        .filter(message => message.includes('"kind":"artifact_preparation_refused"'))).toEqual([]);
     for (const artifact of BUNDLED_PLUGIN_UI_APP_ARTIFACTS.filter(artifact => artifact.artifactId !== 'peer')) {
         expect(state.composition.read({ family: 'actions', pluginId: artifact.pluginId,
             occurrenceId: `${artifact.pluginId}:current`, localId: 'run',

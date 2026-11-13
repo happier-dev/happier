@@ -657,6 +657,8 @@ export type PluginUiClientExecutableAdmission = Pick<PluginUiClientExecutableAct
 export type PluginUiClientExecutableComposition = Readonly<{
     /** Withdraw obsolete exact targets before successor Artifact preparation awaits. */
     retain(admissions: readonly PluginUiClientExecutableAdmission[]): Promise<void>;
+    /** The latest complete set still admits this exact target, including while bytes prepare. */
+    isAdmitted(admission: PluginUiClientExecutableAdmission): boolean;
     /** A preparing or committed activation still owns its exact controller and index target. */
     isCurrentActivation(activation: PluginUiClientExecutableActivation): boolean;
     /** Publish ready targets against the complete set already admitted by retain. */
@@ -960,7 +962,7 @@ export function createPluginUiClientExecutableComposition(input: Readonly<{
         await Promise.all(retirements);
     };
 
-    const isAdmitted = (activation: PluginUiClientExecutableActivation): boolean => {
+    const isAdmitted = (activation: PluginUiClientExecutableAdmission): boolean => {
         const admitted = admittedByTargetKey.get(getPluginUiClientExecutableTargetAddressKey(activation));
         return admitted !== undefined && admitted.fingerprint === clientExecutableActivationFingerprint(
             activation, admitted.registrationContributes,
@@ -1211,6 +1213,7 @@ export function createPluginUiClientExecutableComposition(input: Readonly<{
 
     return Object.freeze({
         retain,
+        isAdmitted,
         isCurrentActivation: (activation) => {
             const active = activeByTargetKey.get(getPluginUiClientExecutableTargetAddressKey(activation));
             return active?.activation === activation && !active.controller.signal.aborted;
