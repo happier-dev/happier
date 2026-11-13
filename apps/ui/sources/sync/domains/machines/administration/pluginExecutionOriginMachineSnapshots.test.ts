@@ -5,6 +5,8 @@ import { setImmediate } from 'node:timers/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { activateStorageAccountScope } from '@/dev/testkit/runtime/storageRuntime';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { storage } from '@/sync/domains/state/storageStore';
 import { subscribeRegisteredStorageMachineUpdates } from '@/sync/domains/state/storageStateReaderBridge';
 import * as inventory from '@/sync/domains/machines/machineInventorySnapshots';
@@ -74,6 +76,38 @@ function fixture() {
 }
 
 describe('execution-origin Machine publication', () => {
+    it('collects superseded selections while their Account-bound connection remains subscribed', async () => {
+        const { inputs, home, connect } = fixture();
+        const account = await activateStorageAccountScope({ serverId: home.id, accountId: 'account-count' }, storage);
+        try {
+            const accountLifetime = captureActiveServerAccountScopeLifetime();
+            expect(accountLifetime?.isCurrent()).toBe(true);
+            const selections: WeakRef<object>[] = [];
+            const classifyRelease = () => ({ releaseContent: 'matched' as const, validation: { kind: 'admitted' as const } });
+            const next = (): ExecutionOriginMachineSnapshotInputs => {
+                const selection = { availabilityRevision: {}, storedOrigin: null, classifyRelease,
+                    machineRejections: [{ serverIdentityId: home.serverIdentityId, machineId: 'old-machine', reason: 'offline' as const }] };
+                selections.push(new WeakRef(selection));
+                return { ...inputs, accountLifetime, selection };
+            };
+            const connection = connect(next());
+            for (let round = 0; round < 8; round++) connection.updateInputs(next());
+            setFlagsFromString('--expose-gc');
+            const collect: () => void = runInNewContext('gc');
+            setFlagsFromString('--no-expose-gc');
+            await setImmediate();
+            collect();
+            // The context may retain its initial inputs; the current demand must
+            // remain readable. No intervening rebinding frame is still needed.
+            expect(selections.slice(1, -1).filter(ref => ref.deref())).toHaveLength(0);
+            expect(selections.at(-1)?.deref()).toBeDefined();
+            expect(connection.getSnapshot().selection).not.toBeNull();
+            connection.dispose();
+        } finally {
+            account.dispose();
+        }
+    });
+
     it('uses Availability declarations for thin census rows, retains unknown coverage, and switches only for proven improvement', () => {
         const { inputs, home, machine, source, connect } = fixture();
         const second = createMachineFixture({ id: 'z-thin-machine', activeAt: machine.activeAt });
@@ -683,7 +717,8 @@ describe('execution-origin Machine publication', () => {
             const onFirst = plugins.filter(plugin => plugin.machineId === machine.id);
             const before = onFirst.map(plugin => plugin.connection.getSnapshot());
             const version = (second.daemonStateVersion ?? 0) + 1;
-            const keyBasis = { metadataVersion: second.metadataVersion ?? 0, daemonStateVersion: version };
+            const keyBasis = { dataEncryptionKey: second.dataEncryptionKey ?? null,
+                metadataVersion: second.metadataVersion ?? 0, daemonStateVersion: version };
             for (const plugin of plugins) plugin.listener.mockClear();
             // Machine B announces newer daemon content, then opens it.
             publishMachineSnapshot({ machineListByServerId: { [home.id]: [machine, { ...second, keyBasis }] } });
@@ -710,7 +745,8 @@ describe('execution-origin Machine publication', () => {
             expect(onFirst.length).toBeGreaterThan(0);
             const before = onFirst.map(plugin => plugin.connection.getSnapshot().selection);
             const version = (second.daemonStateVersion ?? 0) + 1;
-            const keyBasis = { metadataVersion: second.metadataVersion ?? 0, daemonStateVersion: version };
+            const keyBasis = { dataEncryptionKey: second.dataEncryptionKey ?? null,
+                metadataVersion: second.metadataVersion ?? 0, daemonStateVersion: version };
             for (const plugin of plugins) plugin.listener.mockClear();
             publishMachineSnapshot({ machineListByServerId: { [home.id]: [machine, { ...second, keyBasis }] } });
             publishMachineSnapshot({ machineListByServerId: { [home.id]: [machine, { ...second, daemonStateVersion: version, keyBasis }] } });

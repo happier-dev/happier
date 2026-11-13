@@ -390,6 +390,15 @@ function retainDescriptiveState(previous: PluginMachineExecutionOriginStateV1 | 
     return next;
 }
 
+// Hermes closures retain their creation frame. A retirement callback must not
+// capture bind's previous demand or the disposer from the preceding binding.
+function createMachineSnapshotRetirementCallback(
+    bind: (inputs: ExecutionOriginMachineSnapshotInputs) => void,
+    inputs: ExecutionOriginMachineSnapshotInputs,
+): () => void {
+    return () => bind(inputs);
+}
+
 /** The existing inventory producer publishes on source changes; snapshot reads never derive. */
 export function createExecutionOriginMachineSnapshotPublication(dependencies: PublicationDependencies) {
     const contexts = new Map<string, Context>();
@@ -785,6 +794,8 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
             let demand: Demand;
             let retirements: Array<Readonly<{ dispose(): void }>> = [];
             const notify = () => listener();
+            const publishAuthentication = () => withAutomaticOriginView(() => publishDemand(demand, true));
+            const publishObservation = () => withAutomaticOriginView(() => publishDemand(demand));
             function bind(next: ExecutionOriginMachineSnapshotInputs) {
                 if (disposed) return;
                 const scopes = new Map([...next.accountScopesByServerId].filter(([serverId, scope]) => {
@@ -855,19 +866,13 @@ export function createExecutionOriginMachineSnapshotPublication(dependencies: Pu
                 });
                 demand.listeners.add(notify);
                 retirements.push({ dispose: subscribePluginExecutionOriginNativeToolAuthentication(next.pluginId, next.materializations,
-                    demand.current.snapshots, () => {
-                        withAutomaticOriginView(() => publishDemand(demand, true));
-                    }, next.selection?.installedPlugins) });
+                    demand.current.snapshots, publishAuthentication, next.selection?.installedPlugins) });
                 if (next.accountLifetime?.isCurrent()) {
                     const observationKey = serverAccountScopedResourceKey(next.accountLifetime.scope, `plugin.lastRunOn:${next.pluginId}`);
-                    retirements.push({ dispose: machineAdministrationTargetObservationsState.subscribeKey(observationKey, () => {
-                        withAutomaticOriginView(() => publishDemand(demand));
-                    }) });
+                    retirements.push({ dispose: machineAdministrationTargetObservationsState.subscribeKey(observationKey, publishObservation) });
                 }
                 for (const lifetime of [next.accountLifetime, ...next.bindings ?? []]) {
-                    if (lifetime?.isCurrent()) retirements.push(lifetime.onRetire(() => {
-                        if (!disposed) bind(next);
-                    }));
+                    if (lifetime?.isCurrent()) retirements.push(lifetime.onRetire(createMachineSnapshotRetirementCallback(bind, next)));
                 }
                 if (previousSnapshot.key !== demand.snapshot.key || previousSnapshot.selection !== demand.snapshot.selection) notify();
             }
