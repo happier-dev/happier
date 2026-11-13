@@ -1,4 +1,24 @@
 import { expect, it, vi } from 'vitest';
+import { setImmediate } from 'node:timers/promises';
+
+it('waits for initialized dependencies when a completed front door reenters a pending executor', async () => {
+    const { executorLoading, releaseExecutor } = await import('./testkit/fixtures/vitestAsyncMockContext/pendingExecutorControl');
+    const frontDoor = await import('./testkit/fixtures/vitestAsyncMockContext/pendingExecutorFrontDoor');
+    const loading = import('./testkit/fixtures/vitestAsyncMockContext/pendingExecutor');
+    await executorLoading;
+
+    const execution = frontDoor.execute().then(
+        value => ({ kind: 'ready' as const, value }),
+        error => ({ kind: 'failed' as const, error }),
+    );
+    try {
+        expect(await Promise.race([execution, setImmediate({ kind: 'pending' })])).toEqual({ kind: 'pending' });
+    } finally {
+        releaseExecutor();
+        await loading;
+    }
+    expect(await execution).toEqual({ kind: 'ready', value: 'ready' });
+});
 
 it('resolves a three-module cycle entered concurrently through two modules', async () => {
     const [a, b] = await Promise.all([
@@ -16,8 +36,7 @@ it('waits for a shared asynchronous dependency when no cycle exists', async () =
     expect([a.readyA, b.readyB]).toEqual([true, true]);
 });
 
-// Guards the pinned Vitest patch with a real import cycle. Two-module cycles
-// also hit Vite's reciprocal-edge shortcut and would hide the lost ancestry.
+// Guards the pinned Vitest patch with a real three-module import cycle.
 vi.mock('./testkit/fixtures/vitestAsyncMockContext/nested', () => ({ value: 'nested mock' }));
 vi.mock('./testkit/fixtures/vitestAsyncMockContext/entry', async (importOriginal) => {
     await import('./testkit/fixtures/vitestAsyncMockContext/nested');

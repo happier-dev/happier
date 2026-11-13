@@ -10,6 +10,8 @@ installSettingsViewCommonModuleMocks({ storage: 'real' });
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
 const { useManagedIdentityProviders } = await import('./useManagedIdentityProviders');
+// Finish the real executor graph at collection, before render waits own an Action.
+await import('@/sync/ops/actions/defaultActionExecutor');
 const LIST_PATH = '/v1/identity/providers/list';
 
 async function home() {
