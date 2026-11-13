@@ -10,6 +10,9 @@ import {
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { createServer as createNetServer, type Socket } from 'node:net';
+import { createInterface } from 'node:readline';
+import fastify from 'fastify';
 import {
   afterAll,
   afterEach,
@@ -42,14 +45,6 @@ import type {
   AgentSessionRuntimeEvent,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import type {
-  ExecService,
-  PluginProcessResult,
-} from '@happier-dev/plugin-sdk/exec';
-import type {
-  PluginJsonRpcClient,
-  PluginProtocolClientHandle,
-} from '@happier-dev/plugin-sdk/exec/protocol-clients';
 
 import type { ApiClient } from '@/api/api';
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol';
@@ -130,6 +125,27 @@ import * as runtimeRecovery from '../runtimeAuth/handleConnectedServiceRuntimeAu
 import { ConnectedServiceTemporaryThrottleRetryScheduler } from '../runtimeAuth/temporaryThrottleRetryScheduler';
 import { createRecoveryIntentFileStore } from '../recoveryScheduler/recoveryIntentFileStore';
 import { connectedServiceRecoveryScopeKey } from '../runtimeRegistry/target';
+import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { createStablePluginExecService, readPluginExecProcessCustodyForHost, type HostAgentNativeLaunchPreparation } from '@/plugins/runtime/invocation/services/exec';
+import { prepareProjectAgentLaunch } from '@/workspaces/projectSetup/projectAgentLaunch';
+import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
+import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
+import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+
+// Node's HTTP owner uses the declared Undici entry, not global fetch. Substitute
+// only its external transport; keep HTTP, refresh and Connected Account owners real.
+vi.mock('undici/index.js', async (importOriginal) => {
+  const runtime = await importOriginal<typeof import('undici')>();
+  return { ...runtime, fetch: (...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args) };
+});
+
+const codexProcessCleanups = new Set<() => Promise<void>>();
+const requesterAttribution = {
+  serverId: 'fixture-home',
+  accountId: 'fixture-owner',
+  machineId: 'fixture-machine',
+  installationId: 'fixture-installation',
+} satisfies RequesterWorkAttributionV1;
 
 const service = {
   pluginId: 'happier.agent.codex',
@@ -146,163 +162,113 @@ type Materialization = Extract<
   { ok: true }
 >;
 
-function createCodexProcessBoundary(
+async function createCodexProcessBoundary(
+  prepareAgentNativeLaunch: HostAgentNativeLaunchPreparation,
   rejectStart: boolean,
   onRequest?: (method: string) => void,
 ) {
   const rpcRequests: Array<{ method: string; params: unknown }> = [];
-  const listeners = new Set<
-    Parameters<PluginJsonRpcClient['onNotification']>[0]
-  >();
+  const controller = new AbortController();
+  let socket: Socket | undefined;
   let activeAccountId: string | null = null;
-  const result: PluginProcessResult = {
-    termination: {
-      observed: { kind: 'exit', exitCode: 0 },
-      requestedBy: { kind: 'none' },
-    },
-    stdout: new TextEncoder().encode(
-      'realtime_conversation under development false\n',
-    ),
-    stderr: new Uint8Array(),
-    stdoutTruncated: false,
-    stderrTruncated: false,
+  const answer = (method: string, params: unknown): JsonValue => {
+    rpcRequests.push({ method, params });
+    onRequest?.(method);
+    if (method === 'thread/resume') return { thread: { id: 'provider-thread' } };
+    if (method === 'thread/start') {
+      if (rejectStart) throw new Error(`model '${modelId}' is not enabled in rustponsesapi`);
+      return { threadId: 'provider-thread' };
+    }
+    if (method === 'turn/start') return { turnId: 'provider-turn' };
+    if (['model/list', 'collaborationMode/list', 'experimentalFeature/list'].includes(method)) return { data: [] };
+    if (method === 'account/login/start') {
+      if (!params || typeof params !== 'object' || Array.isArray(params)
+        || !('type' in params) || params.type !== 'chatgptAuthTokens'
+        || !('accessToken' in params) || typeof params.accessToken !== 'string'
+        || !('chatgptAccountId' in params) || typeof params.chatgptAccountId !== 'string') {
+        throw new Error('Unexpected fixture login request');
+      }
+      activeAccountId = params.chatgptAccountId;
+      return { type: 'chatgptAuthTokens' };
+    }
+    if (method === 'account/read') return { account: activeAccountId ? { id: activeAccountId } : null };
+    if (method === 'account/rateLimits/read') return { rateLimits: {} };
+    return {};
   };
-  let settleExit!: (result: PluginProcessResult) => void;
-  const exit = new Promise<PluginProcessResult>((resolve) => {
-    settleExit = resolve;
+  const write = (message: unknown) => {
+    if (!socket || socket.destroyed) throw new Error('Fixture Codex process is not running');
+    socket.write(JSON.stringify(message) + '\n');
+  };
+  const server = createNetServer((connection) => {
+    socket = connection;
+    createInterface({ input: connection }).on('line', (line) => {
+      const request: unknown = JSON.parse(line);
+      if (!request || typeof request !== 'object' || !('id' in request)
+        || !('method' in request) || typeof request.method !== 'string') return;
+      try {
+        write({ id: request.id, result: answer(request.method, 'params' in request ? request.params : undefined) });
+      } catch (error) {
+        write({ id: request.id, error: { code: -32000, message: error instanceof Error ? error.message : 'Fixture request failed' } });
+      }
+    });
   });
-  const client: PluginJsonRpcClient = {
-    async request(method, params): Promise<JsonValue> {
-      rpcRequests.push({ method, params });
-      onRequest?.(method);
-      if (method === 'thread/resume')
-        return { thread: { id: 'provider-thread' } };
-      if (method === 'thread/start') {
-        if (rejectStart)
-          throw Object.assign(
-            new Error(`model '${modelId}' is not enabled in rustponsesapi`),
-            {
-              name: 'JsonRpcApplicationError',
-              method,
-              code: -32000,
-            },
-          );
-        return { threadId: 'provider-thread' };
-      }
-      if (method === 'turn/start') return { turnId: 'provider-turn' };
-      if (
-        method === 'model/list' ||
-        method === 'collaborationMode/list' ||
-        method === 'experimentalFeature/list'
-      )
-        return { data: [] };
-      if (method === 'account/login/start') {
-        if (
-          !params ||
-          typeof params !== 'object' ||
-          Array.isArray(params) ||
-          !('type' in params) ||
-          params.type !== 'chatgptAuthTokens' ||
-          !('accessToken' in params) ||
-          typeof params.accessToken !== 'string' ||
-          !('chatgptAccountId' in params) ||
-          typeof params.chatgptAccountId !== 'string'
-        )
-          throw new Error('Unexpected fixture login request');
-        activeAccountId = params.chatgptAccountId;
-        return { type: 'chatgptAuthTokens' };
-      }
-      if (method === 'account/read')
-        return { account: activeAccountId ? { id: activeAccountId } : null };
-      if (method === 'account/rateLimits/read') return { rateLimits: {} };
-      return {};
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  if (!address || typeof address === 'string') throw new Error('Fixture Codex listener unavailable');
+  // A real executable also works when the native Session holder starts it in
+  // another process. Only the external Codex protocol peer is substituted.
+  const executableArgs = ['-e', `
+    if (!process.argv.includes('app-server') || process.argv.includes('--help')) {
+      process.stdout.write('realtime_conversation under development false\\n');
+    } else {
+      const socket = require('node:net').connect(${address.port}, '127.0.0.1');
+      process.stdin.pipe(socket);
+      socket.pipe(process.stdout);
+      socket.on('close', () => process.exit(0));
+      socket.on('error', () => process.exit(1));
+    }
+  `, '--'];
+  const exec = createStablePluginExecService({
+    signal: controller.signal,
+    isOccurrenceCurrent: () => true,
+    resolveExecutable: async () => ({ command: process.execPath, args: executableArgs }),
+    resolvePath: async () => process.cwd(),
+    prepareAgentNativeLaunch,
+    systemTools: {
+      resolve: async () => ({
+        grantId: 'fixture-codex',
+        toolId: 'codex-cli',
+        displayName: 'Fixture Codex',
+        source: 'system',
+        executablePath: process.execPath,
+        launch: { kind: 'binary', executablePath: process.execPath, args: executableArgs, env: {} },
+      }),
     },
-    notify: async () => undefined,
-    onRequest: () => ({ dispose() {} }),
-    onNotificationReceived(listener) {
-      const observe: Parameters<PluginJsonRpcClient['onNotification']>[0] = (
-        message,
-      ) => {
-        listener({ ...message, receivedAtMs: Date.now() });
-      };
-      listeners.add(observe);
-      return {
-        dispose() {
-          listeners.delete(observe);
-        },
-      };
-    },
-    onNotification(listener) {
-      listeners.add(listener);
-      return {
-        dispose() {
-          listeners.delete(listener);
-        },
-      };
-    },
-    dispose: async () => undefined,
-  };
-  const handle: PluginProtocolClientHandle<'jsonRpc'> = {
-    client,
-    process: {
-      write: async () => undefined,
-      closeStdin: async () => undefined,
-      async waitForExit() { return (await this.wait()).termination; },
-      wait: () => exit,
-      onOutput: () => ({ dispose() {} }),
-      dispose: async () => {
-        settleExit(result);
-      },
-    },
-    wait: () => exit,
-    dispose: async () => {
-      settleExit(result);
-    },
-  };
+  });
+  codexProcessCleanups.add(async () => {
+    controller.abort();
+    const custody = readPluginExecProcessCustodyForHost(exec);
+    try {
+      await custody.requestStop();
+      await custody.waitForSettlement();
+    } finally {
+      socket?.destroy();
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
   return {
     rpcRequests,
-    // Only the external process/JSON-RPC transport is substituted; the admitted
-    // Codex producer, startup acceptance and failure classifier remain real.
-    exec: {
-      run: async () => result,
-      systemTools: {
-        resolve: async () => ({
-          executable: { kind: 'systemTool', id: 'codex-cli' },
-          executablePath: '/fixture/codex',
-        }),
-      },
-      clients: { spawn: async () => handle },
-    } as unknown as ExecService,
+    exec,
     async finish(acceptedFailure: boolean) {
-      if (acceptedFailure)
-        for (const listener of listeners)
-          await listener({
-            method: 'item/agentMessage/delta',
-            params: {
-              threadId: 'provider-thread',
-              turnId: 'provider-turn',
-              itemId: 'answer',
-              delta: 'accepted work',
-            },
-          });
-      for (const listener of listeners)
-        await listener({
-          method: 'turn/completed',
-          params: {
-            threadId: 'provider-thread',
-            turn: {
-              id: 'provider-turn',
-              status: acceptedFailure ? 'failed' : 'completed',
-              ...(acceptedFailure
-                ? {
-                    error: {
-                      message: `model '${modelId}' is not enabled in rustponsesapi`,
-                    },
-                  }
-                : {}),
-            },
-          },
-        });
+      if (acceptedFailure) write({ method: 'item/agentMessage/delta', params: {
+        threadId: 'provider-thread', turnId: 'provider-turn', itemId: 'answer', delta: 'accepted work',
+      } });
+      write({ method: 'turn/completed', params: {
+        threadId: 'provider-thread', turn: {
+          id: 'provider-turn', status: acceptedFailure ? 'failed' : 'completed',
+          ...(acceptedFailure ? { error: { message: `model '${modelId}' is not enabled in rustponsesapi` } } : {}),
+        },
+      } });
     },
   };
 }
@@ -311,6 +277,39 @@ async function createScenario() {
   const root = await mkdtemp(join(tmpdir(), 'happier-run-model-proof-'));
   const baseDir = join(root, 'materialized');
   const credentials = { token: 'test-server-token', encryption: null };
+  const nativeHome = fastify();
+  const nativeHomeOrigin = 'http://composed-run-native-home.test';
+  nativeHome.get('/v1/account/encryption', async () =>
+    AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 1 }),
+  );
+  nativeHome.post(`${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`, async () =>
+    ProjectAccountRowListResponseV1Schema.parse({ status: 'listed', rows: [], coverage: 'complete' }),
+  );
+  await nativeHome.ready();
+  const restoreNativeHome = installAxiosFastifyAdapter({ app: nativeHome, origin: nativeHomeOrigin });
+  const prepareAgentNativeLaunch: HostAgentNativeLaunchPreparation = async (signal, cwd, environment) => {
+    // This Home has no Project association; the real launch owner must establish
+    // that fact rather than the process fixture granting native readiness.
+    const prepared = await prepareProjectAgentLaunch({
+      cwd: cwd ?? root,
+      machineId: 'fixture-machine',
+      serverId: 'fixture-home',
+      serverHttpBaseUrl: nativeHomeOrigin,
+      account: {
+        credentials,
+        sessionCustody: {
+          serverId: 'fixture-home',
+          accountId: 'fixture-owner',
+          serverHttpBaseUrl: nativeHomeOrigin,
+          isCurrent: async () => !signal.aborted,
+        },
+      },
+      signal,
+      ...(environment ? { configEnvironment: environment } : {}),
+    });
+    expect(prepared).toEqual({ kind: 'notAssociated' });
+    return undefined;
+  };
   let nowMs = 1_000;
   let recoveryResumePromptMode: 'off' | 'standard' | 'custom' = 'standard';
   let recoveryCustomResumePrompt: string | null = null;
@@ -956,6 +955,7 @@ async function createScenario() {
       };
     },
     runtimeRegistry: runtimeLease.registry,
+    prepareAgentNativeLaunch,
     recoveryScheduler,
     nextRecoveryArmed: () =>
       new Promise<void>((resolve) => {
@@ -1063,6 +1063,8 @@ async function createScenario() {
       await runtimeLease.release();
       recoveryScheduler.dispose();
       await pluginReloadController.shutdown({ timeoutMs: 5_000 });
+      restoreNativeHome();
+      await nativeHome.close();
       await rm(root, { recursive: true, force: true });
     },
   };
@@ -1080,7 +1082,12 @@ describe('composed finite Run model recovery', () => {
     try {
       await scenario?.release();
     } finally {
-      vi.unstubAllGlobals();
+      try {
+        await Promise.all([...codexProcessCleanups].map((cleanup) => cleanup()));
+      } finally {
+        codexProcessCleanups.clear();
+        vi.unstubAllGlobals();
+      }
     }
   });
   afterAll(async () => {
@@ -1106,13 +1113,13 @@ describe('composed finite Run model recovery', () => {
       input: Readonly<{
         owner: ExecutionRunHostBridge;
         action: ReturnType<typeof createExecutionRunRpcActionExecutor>;
-        processes: ReturnType<typeof createCodexProcessBoundary>[];
+        processes: Awaited<ReturnType<typeof createCodexProcessBoundary>>[];
         materializations: Materialization[];
         firstInput: Promise<void>;
       }>,
     ) => Promise<void>,
   ) {
-    const processes: ReturnType<typeof createCodexProcessBoundary>[] = [];
+    const processes: Awaited<ReturnType<typeof createCodexProcessBoundary>>[] = [];
     const materializations: Materialization[] = [];
     let inputStarted!: () => void;
     const firstInput = new Promise<void>((resolve) => {
@@ -1130,7 +1137,7 @@ describe('composed finite Run model recovery', () => {
             scenario.runtimeRegistry,
             input,
           );
-          const process = createCodexProcessBoundary(false, (method) => {
+          const process = await createCodexProcessBoundary(scenario.prepareAgentNativeLaunch, false, (method) => {
             if (method === 'turn/start') inputStarted();
           });
           processes.push(process);
@@ -1217,6 +1224,7 @@ describe('composed finite Run model recovery', () => {
     vi.stubEnv('HAPPIER_HOME_DIR', scenario.root);
     reloadConfiguration();
     const owner = new ExecutionRunHostBridge({
+      runtimeAccountId: requesterAttribution.accountId,
       cwd: scenario.root,
       happyHomeDir: scenario.root,
       parentProvider: 'codex',
@@ -1275,6 +1283,7 @@ describe('composed finite Run model recovery', () => {
     runClass: 'bounded' | 'long_lived' = 'long_lived',
   ) {
     return await owner.start({
+      requesterWorkAttributionV1: requesterAttribution,
       sessionId: null,
       intent: 'agent',
       backendTarget: { kind: 'builtInAgent', agentId: 'codex' },
@@ -1317,7 +1326,7 @@ describe('composed finite Run model recovery', () => {
             await action.execute(
               actionId,
               { runId: started.runId, resume: true },
-              { surface: 'rpc', authority: 'present_user' },
+              { surface: 'rpc', authority: 'present_user', requesterWorkAttributionV1: requesterAttribution },
             ),
           ).toMatchObject({
             ok: false,
@@ -1334,7 +1343,7 @@ describe('composed finite Run model recovery', () => {
               message: 'Ordinary bounded input must refuse',
               localInputId: 'bounded-ordinary-refusal',
             },
-            { surface: 'rpc', authority: 'present_user' },
+            { surface: 'rpc', authority: 'present_user', requesterWorkAttributionV1: requesterAttribution },
           ),
         ).toMatchObject({ ok: false, errorCode: 'execution_run_not_allowed' });
         expect(materializations).toHaveLength(before);
@@ -1359,7 +1368,7 @@ describe('composed finite Run model recovery', () => {
           message: 'Fresh bounded input',
           localInputId: 'bounded-recovery-input',
         };
-        const context = { surface: 'rpc', authority: 'present_user' } as const;
+        const context = { surface: 'rpc', authority: 'present_user', requesterWorkAttributionV1: requesterAttribution } as const;
         const recovered = await action.execute(
           'execution.run.send',
           request,
@@ -1467,7 +1476,7 @@ describe('composed finite Run model recovery', () => {
           const ensured = await action.execute(
             'execution.run.ensure',
             { runId: started.runId, resume: true },
-            { surface: 'cli', authority: 'present_user' },
+            { surface: 'cli', authority: 'present_user', requesterWorkAttributionV1: requesterAttribution },
           );
           expect(ensured).toMatchObject({ ok: true });
           expect(materializations).toHaveLength(before + 1);
@@ -1533,7 +1542,7 @@ describe('composed finite Run model recovery', () => {
           await action.execute(
             'execution.run.ensure',
             { runId: started.runId, resume: true },
-            { surface: 'rpc', authority: 'present_user' },
+            { surface: 'rpc', authority: 'present_user', requesterWorkAttributionV1: requesterAttribution },
           ),
         ).toMatchObject({
           ok: false,
@@ -1589,6 +1598,7 @@ describe('composed finite Run model recovery', () => {
                 surface:
                   actionId === 'execution.run.ensure_or_start' ? 'rpc' : 'cli',
                 authority: 'present_user',
+                requesterWorkAttributionV1: requesterAttribution,
               },
             ),
           ).toMatchObject({
@@ -1811,11 +1821,6 @@ describe('composed finite Run model recovery', () => {
   // model_not_found "not supported when using Codex with a ChatGPT account" refusal.
   // Its text is sanitized; the bounded model evidence travels in details.
   const modelRefusalDiagnostic = (materialization: Materialization) => {
-    const selection = readConnectedServiceChildSelectionsFromEnv(
-      materialization.env,
-    )?.get(serviceId);
-    if (selection?.kind !== 'group')
-      throw new Error('Expected materialized pool selection');
     return {
       code: 'provider_model_not_found',
       severity: 'error',
@@ -1823,24 +1828,12 @@ describe('composed finite Run model recovery', () => {
       details: {
         v: 1,
         source: 'provider',
-        runtimeAuthClassification: {
-          kind: 'plan',
-          limitCategory: 'plan_invalid',
-          quotaScope: 'model',
-          providerLimitId: modelId,
-          serviceId: 'openai-codex',
-          profileId: selection.activeProfileId,
-          groupId: 'pool',
-          groupGeneration: selection.generation,
-          expectedCredentialRevision: selection.credentialRevision,
-          source: 'structured_provider_error',
-          connectedServiceRecovery: 'available',
-        },
+        runtimeAuthClassification: scenario.classification(materialization),
       },
     };
   };
 
-  it('rotates a new Run off a member that refuses the requested model and keeps that model', async () => {
+  it('keeps a model-refused Run out of automatic account recovery', async () => {
     const first = await scenario.materialize();
     const nativeResumeId = '019fea40-8040-7d00-9b7e-9b8f3b5cfcb1';
     // Codex records the refused input in its thread before the model request.
@@ -1859,40 +1852,21 @@ describe('composed finite Run model recovery', () => {
       },
       new AbortController().signal,
     );
-    expect(result).toMatchObject({ status: 'continue', rematerialize: true });
-    expect(scenario.commits).toEqual(['second']);
-    expect(
-      scenario
-        .group()
-        .members.find((member) => member.connectedAccountId === 'first')?.state
-        .modelUnavailableUntilMsByModelId?.[modelId],
-    ).toBeGreaterThan(1_000);
-    const replaced = await scenario.bridge.materialize({
-      activationId: randomUUID(),
-      runId,
-      runnerPid,
-      agentId: 'codex',
-      cwd: scenario.root,
-      modelId,
-      connectedServices: ConnectedServiceBindingsV2Schema.parse(
-        first.connectedServicesBindings,
-      ),
-      recovery: { activationId: first.activationId, nativeResumeId },
-    });
-    if (!replaced.ok) throw new Error(replaced.errorMessage);
-    expect(
-      readConnectedServiceChildSelectionsFromEnv(replaced.env)?.get(serviceId),
-    ).toMatchObject({ kind: 'group', activeProfileId: 'second' });
+    // 2c32463248b9: model refusals require model recovery, not Account repair.
+    expect(result).toMatchObject({ status: 'failed' });
+    expect(scenario.commits).toEqual([]);
+    expect(scenario.group().generation).toBe(7);
+    expect(scenario.group().members.every((member) =>
+      !member.state.modelUnavailableUntilMsByModelId?.[modelId],
+    )).toBe(true);
     await scenario.release();
-    // A later new launch starts on the capable member without another refusal.
     const next = await scenario.materialize('model-refusal-next-run');
-    expect(
-      readConnectedServiceChildSelectionsFromEnv(next.env)?.get(serviceId),
-    ).toMatchObject({ kind: 'group', activeProfileId: 'second' });
-    expect(scenario.commits).toEqual(['second']);
+    expect(readConnectedServiceChildSelectionsFromEnv(next.env)?.get(serviceId))
+      .toMatchObject({ kind: 'group', activeProfileId: 'first' });
+    expect(scenario.commits).toEqual([]);
   });
 
-  it('refuses with a typed model refusal and never swaps the model when no member can serve it', async () => {
+  it('does not poison account eligibility when every alternative refuses the model', async () => {
     scenario.blockModelFor(['second', 'third']);
     const first = await scenario.materialize();
     const result = await scenario.bridge.recoverRuntimeFailure(
@@ -1909,12 +1883,12 @@ describe('composed finite Run model recovery', () => {
     expect(result).toMatchObject({ status: 'failed' });
     expect(scenario.commits).toEqual([]);
     await scenario.release();
-    await expect(
-      scenario.materialize('model-refusal-exhausted-run'),
-    ).rejects.toMatchObject({
-      executionRunErrorCode: 'connected_service_run_model_unavailable',
-      message: expect.stringContaining(modelId),
-    });
+    // 2c32463248b9 keeps model eligibility separate from Account eligibility.
+    const next = await scenario.materialize('model-refusal-exhausted-run');
+    expect(readConnectedServiceChildSelectionsFromEnv(next.env)?.get(serviceId))
+      .toMatchObject({ kind: 'group', activeProfileId: 'first' });
+    expect(scenario.group().members.find((member) => member.connectedAccountId === 'first')
+      ?.state.modelUnavailableUntilMsByModelId?.[modelId]).toBeUndefined();
     expect(scenario.commits).toEqual([]);
   });
 
@@ -2569,7 +2543,7 @@ describe('composed finite Run model recovery', () => {
     'opens connected detached Codex from %s engine composition with materialized native auth',
     async (catalogBasis) => {
       const materialization = await scenario.materialize();
-      const processBoundary = createCodexProcessBoundary(false);
+      const processBoundary = await createCodexProcessBoundary(scenario.prepareAgentNativeLaunch, false);
       const unsupportedAuthDiagnostics: unknown[] = [];
       const captureDiagnostic = (...args: readonly unknown[]) => {
         for (const value of args) {
@@ -3124,11 +3098,11 @@ describe('composed finite Run model recovery', () => {
       let active: Materialization | null = null;
       const requests: AgentExecutionRunOpenRequest[] = [];
       const openedMembers: string[] = [];
-      const processBoundaries: ReturnType<typeof createCodexProcessBoundary>[] =
+      const processBoundaries: Awaited<ReturnType<typeof createCodexProcessBoundary>>[] =
         [];
-      let processBoundary: ReturnType<
+      let processBoundary: Awaited<ReturnType<
         typeof createCodexProcessBoundary
-      > | null = null;
+      >> | null = null;
       const host = createLazyExecutionRunHostRuntime({
         resolveRuntime: async () => {
           active = await scenario.materialize();
@@ -3155,7 +3129,8 @@ describe('composed finite Run model recovery', () => {
           });
           if (!runtime.sessions?.executionRunContextV1)
             throw new Error('Admitted Codex Run facet unavailable');
-          processBoundary = createCodexProcessBoundary(
+          processBoundary = await createCodexProcessBoundary(
+            scenario.prepareAgentNativeLaunch,
             rejectCount > 0 && openedMembers.length <= rejectCount,
           );
           processBoundaries.push(processBoundary);
@@ -3757,7 +3732,7 @@ describe('composed finite Run model recovery', () => {
       'second-run-attempt',
     );
     const firstRefresh = scenario.bridge.refreshRuntimeAuth(firstRequest);
-    await gate.entered;
+    expect(await Promise.race([gate.entered, firstRefresh])).toBeUndefined();
     const secondRefresh = scenario.bridge.refreshRuntimeAuth(secondRequest);
     gate.resume();
     const [firstProof, secondProof] = await Promise.all([
