@@ -68,6 +68,7 @@ const authEntryOptions = {
 await loadSyncSingletonForTests();
 await import('./OnboardingWizardSurface');
 
+/** The Home chooser's address choice opens the Welcome's connect step (one address flow on every width). */
 async function enterManualHomeAddress(screen: Awaited<ReturnType<typeof renderScreen>>) {
     const customAddress = screen.findByTestId('onboarding-wizard-relay:customUrl');
     expect(customAddress).toBeTruthy();
@@ -75,7 +76,17 @@ async function enterManualHomeAddress(screen: Awaited<ReturnType<typeof renderSc
     const next = screen.findByTestId('onboarding-wizard-primary');
     expect(next).toBeTruthy();
     await act(async () => { await next!.props.onPress(); });
-    expect(screen.findByTestId('onboarding-wizard-relay-url-input')).toBeTruthy();
+    expect(screen.findByTestId('already-use-happier.home-address')).toBeTruthy();
+}
+
+async function typeAndConnect(screen: Awaited<ReturnType<typeof renderScreen>>, address?: string) {
+    if (address !== undefined) await act(async () => {
+        screen.findByTestId('already-use-happier.home-address')?.props.onChangeText?.(address);
+    });
+    await act(async () => {
+        await screen.findByTestId('already-use-happier.home-connect')?.props.onPress?.();
+    });
+    await flushHookEffects({ cycles: 3, turns: 3 });
 }
 
 function withoutSyntheticTimestamps(items: readonly import('@/sync/domains/server/serverProfiles').ServerProfile[]) {
@@ -90,6 +101,8 @@ describe('first-run custom Home address connection', () => {
         process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = `onboarding_connect_${Date.now()}_${Math.random()}`;
         browser = await installBrowserRuntimeForTests({ url: 'https://app.happier.dev' });
         runtimeFetchMock.mockReset().mockImplementation(async () => new Response(null, { status: 404 }));
+        // The feature probe uses the platform fetch, the reachability probe runtimeFetch: one fake Home answers both.
+        vi.stubGlobal('fetch', runtimeFetchMock);
         modalAlert.mockClear();
         (await import('@/sync/domains/server/serverProfiles')).resetServerProfilesRuntimeForTests();
     });
@@ -99,6 +112,7 @@ describe('first-run custom Home address connection', () => {
         await (await import('@/sync/runtime/orchestration/connectionManager')).disconnectActiveServerConnection();
         browser?.restore();
         browser = null;
+        vi.unstubAllGlobals();
         if (originalScope === undefined) delete process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE;
         else process.env.EXPO_PUBLIC_HAPPY_STORAGE_SCOPE = originalScope;
     });
@@ -115,23 +129,16 @@ describe('first-run custom Home address connection', () => {
             authEntryOptions,
         }));
         await enterManualHomeAddress(screen);
-        const input = screen.findByTestId('onboarding-wizard-relay-url-input');
-        expect(input).toBeTruthy();
-        await act(async () => {
-            input?.props.onChangeText?.('https://unreachable-home.example.test');
-        });
-        await act(async () => {
-            await screen.findByTestId('onboarding-wizard-primary')?.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await typeAndConnect(screen, 'https://unreachable-home.example.test');
 
         expect(runtimeFetchMock.mock.calls.some(([url]) => String(url) === 'https://unreachable-home.example.test/health')).toBe(true);
-        expect(screen.findByTestId('onboarding-wizard-relay-url-input')?.props.value).toBe('https://unreachable-home.example.test');
+        await vi.waitFor(() => expect(screen.findByTestId('already-use-happier.home-address-error')).toBeTruthy());
+        expect(screen.findByTestId('already-use-happier.home-address')?.props.value).toBe('https://unreachable-home.example.test');
         expect(withoutSyntheticTimestamps(listServerProfiles())).toEqual(withoutSyntheticTimestamps(beforeProfiles));
         expect(getActiveServerSnapshot()).toMatchObject({ serverId: beforeFocus.serverId, serverUrl: beforeFocus.serverUrl });
     });
 
-    it('adopts a reachable entered Home and focuses its returned profile before continuing', async () => {
+    it('adopts a reachable entered Home and continues to that Home\'s own sign-in', async () => {
         runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL) => {
             const url = String(input);
             if (url.endsWith('/health')) {
@@ -147,28 +154,24 @@ describe('first-run custom Home address connection', () => {
             }
             return new Response(null, { status: 404 });
         });
-        const { listServerProfiles, getActiveServerSnapshot, resolveServerProfileScopeId } = await import('@/sync/domains/server/serverProfiles');
+        const { listServerProfiles } = await import('@/sync/domains/server/serverProfiles');
+        const { AuthProvider } = await import('@/auth/context/AuthContext');
         const beforeProfiles = listServerProfiles();
         const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
-        const screen = await renderScreen(React.createElement(OnboardingWizardSurface, {
+        const screen = await renderScreen(<AuthProvider initialCredentials={null}>{React.createElement(OnboardingWizardSurface, {
             layout: 'portrait',
             isDesktopShell: true,
             initialStepId: 'relay_select',
             authEntryOptions,
-        }));
+        })}</AuthProvider>);
         await enterManualHomeAddress(screen);
-        await act(async () => {
-            screen.findByTestId('onboarding-wizard-relay-url-input')?.props.onChangeText?.('https://connected-home.example.test');
-        });
-        await act(async () => {
-            await screen.findByTestId('onboarding-wizard-primary')?.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 2, turns: 2 });
+        await typeAndConnect(screen, 'https://connected-home.example.test');
 
         const added = listServerProfiles().filter((profile) => !beforeProfiles.some((existing) => existing.id === profile.id));
         expect(added).toHaveLength(1);
         expect(added[0]).toMatchObject({ serverUrl: 'https://connected-home.example.test', serverIdentityId: 'srv_onboarding_connected' });
-        expect(getActiveServerSnapshot().serverId).toBe(resolveServerProfileScopeId(added[0]!));
+        // The Home's own sign-in follows in the same step; the add-a-Home owner focuses it once signed in.
+        await vi.waitFor(() => expect(screen.findByTestId('already-use-happier.pane.home-sign-in')).toBeTruthy());
     });
 
     it.each(['typed', 'supplied'] as const)('connects a %s Directory-capable Home without selecting it as the sign-in service', async (entry) => {
@@ -186,6 +189,7 @@ describe('first-run custom Home address connection', () => {
         const beforeService = profiles.resolveSelectedAccountServiceEndpoint();
         const { selectAccountServiceEndpoint } = await import('@/sync/ops/accountDirectory/selectAccountServiceEndpoint');
         const { useAccountServiceEntryOptions } = await import('@/components/account/auth/useAccountServiceEntryOptions');
+        const { AuthProvider } = await import('@/auth/context/AuthContext');
         const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         function Entry() {
             const accountServiceEntry = useAccountServiceEntryOptions();
@@ -198,19 +202,14 @@ describe('first-run custom Home address connection', () => {
                 onAccountDirectoryKeyResult={vi.fn()}
             />;
         }
-        const screen = await renderScreen(<Entry />);
+        const screen = await renderScreen(<AuthProvider initialCredentials={null}><Entry /></AuthProvider>);
         await enterManualHomeAddress(screen);
-        if (entry === 'typed') await act(async () => {
-            screen.findByTestId('onboarding-wizard-relay-url-input')?.props.onChangeText?.(endpointUrl);
-        });
-        await act(async () => {
-            await screen.findByTestId('onboarding-wizard-primary')?.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 3, turns: 3 });
+        // A supplied address is already in the field; a typed one is entered there.
+        await typeAndConnect(screen, entry === 'typed' ? endpointUrl : undefined);
 
         expect(profiles.resolveSelectedAccountServiceEndpoint()).toEqual(beforeService);
-        expect(profiles.getActiveServerSnapshot().serverUrl).toBe(endpointUrl);
         expect(modalAlert).not.toHaveBeenCalled();
         expect(profiles.listServerProfiles()).toHaveLength(beforeProfiles.length + 1);
+        await vi.waitFor(() => expect(screen.findByTestId('already-use-happier.pane.home-sign-in')).toBeTruthy());
     });
 });

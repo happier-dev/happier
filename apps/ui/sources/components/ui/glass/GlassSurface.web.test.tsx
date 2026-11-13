@@ -1056,11 +1056,13 @@ describe('web glass material', () => {
         const layer = (id: string) => flattenTestStyle(screen.findAll(node => typeof node.type === 'string' && node.props.testID === id)[0]!
             .findAll(node => typeof node.type === 'string' && node.props.dataSet?.happyGlassBackdrop === 'true')[0]!.props.style) ?? {};
         const popover = layer('popover');
-        expect(popover.right).toBeLessThanOrEqual(-96);
-        expect(popover.bottom).toBeLessThanOrEqual(-96);
+        const reachRight = -Number(popover.right);
+        const reachBottom = -Number(popover.bottom);
+        expect(reachRight).toBeGreaterThanOrEqual(96);
+        expect(reachBottom).toBeGreaterThanOrEqual(96);
         // The extension is clipped back to the surface's own rounded box, so nothing frosts outside it.
-        expect(String(popover.clipPath)).toBe(`inset(0px ${-Number(popover.right)}px ${-Number(popover.bottom)}px 0px round 12px 12px 12px 12px)`);
-        expect(layer('card').right ?? 0).toBe(0);
+        expect(String((popover as Record<string, unknown>).clipPath)).toBe(`inset(0px ${reachRight}px ${reachBottom}px 0px round 12px 12px 12px 12px)`);
+        expect(Number(layer('card').right ?? 0)).toBe(0);
     });
 
     it('lets secondary action ink sit on the containing translucent material instead of an opaque slab', async () => {

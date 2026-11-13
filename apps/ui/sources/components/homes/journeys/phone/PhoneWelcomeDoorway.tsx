@@ -21,9 +21,9 @@ import { PaneServiceLabel } from '../alreadyUse/journeyPaneKit';
 import { presentAlreadyUseHappierSheet } from './AlreadyUseHappierSheet';
 
 /**
- * The phone's doorway on its welcome screen (lab K1p): a phone never hosts a Home, so its first run
- * asks how to reach one. Scan the computer's code (primary), Sign in "with <service> · Change",
- * connect to a Home directly, and — only when the service is also a Home — "No computer yet? Use
+ * The Welcome's first-run doorway on every width (lab K1p, first drawn for phones; UI refinements 11-13: one
+ * first run, wide only has more room): it asks how to reach a Home. Scan the computer's code (primary),
+ * Sign in "with <service> · Change", connect to a Home directly, and — only when the service is also a Home — "No computer yet? Use
  * <service> as your Home". Connecting directly continues as the welcome's own step; the sign-in
  * service ways open as sheets (`AlreadyUseHappierSheet`). Rendered inside the welcome's own action
  * list, so one action runs at a time.

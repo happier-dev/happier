@@ -83,6 +83,11 @@ function renderPanel(
     };
 }
 
+/** A sign-in service the person chose themselves (Change): the Welcome lists its methods instead of the first-run doorway. */
+function chosenAccountServiceEntry(entry: AccountServiceEntryOptions): AccountServiceEntryOptions {
+    return { ...entry, endpoint: { ...entry.endpoint, source: 'user' } } as AccountServiceEntryOptions;
+}
+
 function readyAccountServiceEntry(
     oauthProviderIds: readonly string[],
     options: Readonly<{
@@ -279,7 +284,7 @@ describe('WelcomeDecisionPanel', () => {
         }));
         expect(callbacks.onContinueWithHomeAuthentication).not.toHaveBeenCalled();
     });
-    it('keeps a true no-target entry free of Home methods and offers service selection', async () => {
+    it('keeps a true no-target first run free of Home methods and offers the sign-in service with a way to change it', async () => {
         const noTargetOptions = { ...baseOptions };
         delete noTargetOptions.homeTarget;
         delete noTargetOptions.requestedHomeTarget;
@@ -294,10 +299,12 @@ describe('WelcomeDecisionPanel', () => {
         );
 
         expect(screen.findAllByTestId('welcome-primary-start')).toHaveLength(0);
-        expect(screen.findByTestId('welcome-account-service-choose')).toBeTruthy();
+        // A first run is the doorway on every width (UI refinements 11-13).
+        expect(screen.findByTestId('welcome-doorway-sign-in')).toBeTruthy();
+        expect(screen.findByTestId('welcome-doorway-change-service')).toBeTruthy();
     });
 
-    it('targets the default sign-in service without duplicating the unrelated seeded Home methods', async () => {
+    it('keeps the unrelated seeded Home methods out of a default-service first run', async () => {
         const fallbackOptions = { ...baseOptions };
         delete fallbackOptions.requestedHomeTarget;
         const onContinueWithAccountServiceProvider = vi.fn();
@@ -314,8 +321,10 @@ describe('WelcomeDecisionPanel', () => {
         );
 
         expect(screen.findAllByTestId('welcome-primary-start')).toHaveLength(0);
-        await screen.pressByTestIdAsync('welcome-account-service-provider-github');
-        expect(onContinueWithAccountServiceProvider).toHaveBeenCalledWith(expect.objectContaining({ intendedHome: null }));
+        // The first-run doorway signs in through the service's own sheet; no seeded Home method is offered here.
+        expect(screen.findAllByTestId('welcome-provider-primary')).toHaveLength(0);
+        expect(screen.findByTestId('welcome-doorway-sign-in')).toBeTruthy();
+        expect(onContinueWithAccountServiceProvider).not.toHaveBeenCalled();
     });
 
     it('says what each Home sign-in way does instead of repeating the Home on every card', async () => {
@@ -510,8 +519,9 @@ describe('WelcomeDecisionPanel', () => {
     });
 
     it('connects to a Home directly through the welcome step on every width, not the Home chooser', async () => {
-        // A build with no default Home: the action is "Connect to a Home directly" (owner 11-13: one flow).
-        const { callbacks, screenPromise } = renderPanel({ homeTarget: null, requestedHomeTarget: null, homeLabel: null, serverUrlForCopy: '' });
+        // No Home yet, with a sign-in service the person chose: the action is "Connect to a Home directly" (owner 11-13: one flow).
+        const { callbacks, screenPromise } = renderPanel({ homeTarget: null, requestedHomeTarget: null, homeLabel: null, serverUrlForCopy: '' },
+            chosenAccountServiceEntry(readyAccountServiceEntry(['github'])));
         const screen = await screenPromise;
         expect(screen.findByTestId('welcome-use-different-home-title')?.props.children).toBe('Connect to a Home directly');
 
@@ -658,11 +668,11 @@ describe('WelcomeDecisionPanel', () => {
     it('keeps provider provisioning new-here while presenting its keyless execution truthfully', async () => {
         const { callbacks, screenPromise } = renderPanel(
             { requestedHomeTarget: undefined },
-            readyAccountServiceEntry(['github'], {
+            chosenAccountServiceEntry(readyAccountServiceEntry(['github'], {
                 oauthAction: 'provision',
                 oauthMode: 'keyless',
                 oauthPresentationName: 'Company Identity',
-            }),
+            })),
         );
         const screen = await screenPromise;
         const action = screen.findByTestId('welcome-account-service-provider-github');

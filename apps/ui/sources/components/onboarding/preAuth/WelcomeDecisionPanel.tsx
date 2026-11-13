@@ -18,7 +18,6 @@ import { createServerUrlComparableKey } from '@/sync/domains/server/url/serverUr
 import { t } from '@/text';
 import { PhoneWelcomeDoorway } from '@/components/homes/journeys/phone/PhoneWelcomeDoorway';
 import { OrganizationPolicyFieldNotice, OrganizationPolicyInvalidNextStep, readOrganizationPolicyFieldState } from '@/components/organizationPolicy/OrganizationPolicyFieldNotice';
-import { useViewportClass } from '@/utils/platform/useViewportClass';
 import { useReturningGreeting } from './useReturningGreeting';
 import { WELCOME_ACTION_TEXT_INSET, WelcomeActionCard } from './WelcomeActionCard';
 import { WelcomeActionList, type WelcomeActionAdmission } from './WelcomeActionList';
@@ -79,9 +78,6 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
     // long as that link can still be approved. The pairing's own expiry decides, not a second clock.
     const pendingTerminal = usePendingTerminalConnect(props.showGreeting !== false);
     const terminalWaiting = pendingTerminal !== null;
-    // A phone's first run is the Homes doorway (lab K1p): a phone never hosts a Home, so it asks how
-    // to reach one. A chosen Home, or a returning person, keeps the Home's own sign-in below.
-    const viewportClass = useViewportClass();
     const activeActionIdRef = React.useRef<string | null>(null);
     const [pendingActionId, setPendingActionId] = React.useState<string | null>(null);
     const runAction = React.useCallback(async (actionId: string, action: () => Promise<void> | void) => {
@@ -168,9 +164,11 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
         serviceCatalogState,
         userHistory: isReturningUser ? 'returning' : 'first_time',
     });
-    // The phone doorway's paths all add a Home, so a Home fixed by policy keeps the ordinary list.
-    const phoneDoorway = viewportClass === 'compact'
-        && !homePolicy.disabled
+    // A first run is the Homes doorway on every width (lab K1p; UI refinements 11-13: one first run, wide only has
+    // more room): it asks how to reach a Home. A chosen Home, a returning person, a chosen sign-in service or a device
+    // that can host its own Home keeps the Home's own sign-in below. The doorway's paths all add a Home, so a Home
+    // fixed by policy keeps the ordinary list.
+    const firstRunDoorway = !homePolicy.disabled
         && !isReturningUser
         && !(model.notice?.kind === 'service_unsupported' && model.notice.hasUsableHomeMethods)
         && !options.requestedHomeTarget
@@ -357,7 +355,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                 </Text>
             ) : null}
             <WelcomeActionList admission={actionAdmission}>
-                {phoneDoorway
+                {firstRunDoorway
                     ? <PhoneWelcomeDoorway canScanQr={props.canScanQr === true} onScan={handleLogin} onConnectDirectly={props.onConnectHomeDirectly} />
                     : renderActions()}
             </WelcomeActionList>

@@ -101,17 +101,21 @@ describe('WelcomeDecisionPanel on a phone (the Homes doorway)', () => {
         viewport.klass = 'medium';
         const wide = await renderScreen(<WelcomeDecisionPanel authEntryOptions={firstRunOptions} canScanQr
             onOpenRestore={vi.fn()} onChangeRelay={vi.fn()} />);
-        expect(wide.findByTestId('welcome-use-different-home')).toBeNull();
+        expect(wide.findByTestId('welcome-doorway-scan')).toBeTruthy();
+        expect(wide.findByTestId('welcome-doorway-direct')).toBeNull();
         await screen.unmount();
         await wide.unmount();
     });
 
-    it('keeps the full welcome on a wider window', async () => {
+    it('shows the same first-run doorway on a wider window (one first run on every width)', async () => {
+        // UI refinements 11-13 ruling: wide composes the same steps with more room, not a different first screen.
         viewport.klass = 'medium';
-        const { screenPromise } = renderPanel();
+        const { screenPromise, onConnectHomeDirectly } = renderPanel();
         const screen = await screenPromise;
-        expect(screen.findByTestId('welcome-doorway-scan')).toBeFalsy();
-        expect(screen.findByTestId('welcome-scan-existing-home')).toBeTruthy();
+        expect(screen.findByTestId('welcome-doorway-scan')).toBeTruthy();
+        expect(screen.findByTestId('welcome-scan-existing-home')).toBeFalsy();
+        await screen.pressByTestIdAsync('welcome-doorway-direct');
+        expect(onConnectHomeDirectly).toHaveBeenCalledOnce();
         await screen.unmount();
     });
 
