@@ -95,6 +95,22 @@ afterEach(async () => {
 });
 
 describe('submitSessionDraft', () => {
+    it('returns a typed persistence failure before attempting attachment-only Send', async () => {
+        const scope = target();
+        const records = await import('@/sync/domains/state/browserRecordStorage');
+        const write = vi.spyOn(records, 'writeBrowserRecord').mockRejectedValue(
+            Object.assign(new Error('private storage detail'), { code: 'QuotaExceededError' }));
+        try {
+            writeSessionAttachmentDrafts(resolveSessionAttachmentDraftScope(scope), [{ id: 'save-failed', status: 'pending',
+                source: { kind: 'memory', name: 'notes.txt', bytes: new Uint8Array([1]) } }]);
+            expect(await submitSessionDraft({ sessionTarget: scope })).toMatchObject({
+                ok: false, errorCode: 'attachment_persistence_failed', effectAttempted: false,
+                failureCause: { phase: 'attachment.draft.persist', errorCode: 'QuotaExceededError' },
+            });
+            expect(readSessionAttachmentDrafts(resolveSessionAttachmentDraftScope(scope))).toHaveLength(1);
+        } finally { write.mockRestore(); }
+    });
+
     it('settles an admitted offscreen Session draft after its caller cancels', async () => {
         const scope = target();
         const owner = createExistingSessionComposerDocumentOwner({ scope, ref: { kind: 'session', sessionId } });

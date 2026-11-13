@@ -1,5 +1,7 @@
 import { removeSubmittedAttachmentDrafts, type AttachmentDraft } from './attachmentDraftModel';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { HappyError } from '@/utils/errors/errors';
 
 const EMPTY_DRAFTS: readonly AttachmentDraft[] = Object.freeze([]);
 type Entry = { drafts: readonly AttachmentDraft[]; scope?: ServerAccountScope; loaded: boolean;
@@ -40,9 +42,13 @@ function load(key: string, entry: Entry): Promise<void> {
         entry.loaded = true;
         notify(key, 'changed');
     }).catch(async (error: unknown) => {
-        entry.loadError = error;
         const [{ Modal }, { t }] = await Promise.all([import('@/modal'), import('@/text')]);
-        Modal.alert(t('common.error'), t('attachments.alerts.recoveryFailedBody'));
+        const failure = new HappyError(t('attachments.alerts.recoveryFailedBody'), true, {
+            code: 'attachment_persistence_failed', effectAttempted: false,
+            failureCause: projectActionFailureCauseV1(error, 'attachment.draft.restore'), cause: error,
+        });
+        entry.loadError = failure;
+        Modal.alert(t('common.error'), failure.message);
     });
     return entry.loading;
 }
@@ -52,14 +58,23 @@ async function persist(key: string, entry: Entry): Promise<void> {
     const scope = entry.scope;
     await load(key, entry);
     if (entry.loadError) throw entry.loadError;
-    const { writeAttachmentDraftRecord } = await import('./attachmentDraftPersistence');
-    await writeAttachmentDraftRecord(key, scope, entry.drafts);
+    try {
+        const { writeAttachmentDraftRecord } = await import('./attachmentDraftPersistence');
+        await writeAttachmentDraftRecord(key, scope, entry.drafts);
+    } catch (error) {
+        const { t } = await import('@/text');
+        throw new HappyError(t('common.saveError'), true, {
+            code: 'attachment_persistence_failed', effectAttempted: false,
+            failureCause: projectActionFailureCauseV1(error, 'attachment.draft.persist'), cause: error,
+        });
+    }
 }
 
 function observeSaveFailure(key: string, entry: Entry): void {
-    void entry.saving?.catch(() => {
+    void entry.saving?.catch((error: unknown) => {
         entry.drafts = entry.drafts.map(draft => draft.errorCode === 'attachment_source_missing' ? draft : {
             ...draft, status: 'error', errorCode: 'attachment_persistence_failed',
+            error: error instanceof HappyError ? error.message : draft.error,
         });
         notify(key, 'changed');
     });

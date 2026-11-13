@@ -4875,7 +4875,12 @@ export function useSessionComposerController({
                 const submission = activeComposerRefRef.current.kind === 'session'
                     ? submitSessionDraft({ sessionTarget: { ...sessionAccountLifetime.scope, sessionId }, sendOptions: options })
                     : agentInputSendRef.current(options);
-                fireAndForget(submission, { tag: 'SessionView.composer.dispatch' });
+                fireAndForget(submission.then(result => {
+                    // This failure precedes mounted Send, which presents its own later failures.
+                    if (!result.ok && result.errorCode === 'attachment_persistence_failed') {
+                        alertComposerActionResultFailure(result);
+                    }
+                }), { tag: 'SessionView.composer.dispatch' });
             },
             [sessionAccountLifetime, sessionId],
         );

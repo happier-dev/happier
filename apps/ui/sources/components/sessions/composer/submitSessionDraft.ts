@@ -1,3 +1,4 @@
+import { HappyError } from '@/utils/errors/errors';
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteFailure, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ExactSessionMachineTargetIdentity } from '@/sync/ops/sessionMachineTarget';
 import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composerRef';
@@ -83,7 +84,13 @@ export async function submitSessionDraft(input: Readonly<{
     signal?: AbortSignal;
 }>): Promise<SessionDraftSubmitResult> {
     const { sessionTarget, signal } = input;
-    await flushAttachmentDraftsForKey(sessionAttachmentDraftKey(resolveSessionAttachmentDraftScope(sessionTarget)));
+    try {
+        await flushAttachmentDraftsForKey(sessionAttachmentDraftKey(resolveSessionAttachmentDraftScope(sessionTarget)));
+    } catch (error) {
+        if (!(error instanceof HappyError) || error.code !== 'attachment_persistence_failed') throw error;
+        return { ok: false, errorCode: error.code, error: error.message,
+            failureCause: error.failureCause, effectAttempted: false };
+    }
     const mounted = readSessionComposerPresentationTargetAtAddress(sessionTarget);
     if (mounted?.submitDraft && areServerAccountScopesEqual(mounted.readScope?.(), sessionTarget)) {
         return readSessionDraftSubmitResult(await mounted.submitDraft(input.sendOptions));
