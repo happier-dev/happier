@@ -130,7 +130,8 @@ type RunLoggedCommandParams = {
   env?: NodeJS.ProcessEnv;
   stdoutPath: string;
   stderrPath: string;
-  timeoutMs?: number;
+  // null lets an enclosing operation or canonical publisher own completion.
+  timeoutMs?: number | null;
   abortSignal?: AbortSignal;
 };
 
@@ -159,8 +160,8 @@ export async function runLoggedCommandWithOutcome(
   child.stdout?.pipe(stdout);
   child.stderr?.pipe(stderr);
 
-  const timeoutMs = params.timeoutMs ?? 120_000;
-  const streamDrainTimeoutMs = Math.max(10_000, Math.min(timeoutMs, 120_000));
+  const timeoutMs = params.timeoutMs === null ? null : params.timeoutMs ?? 120_000;
+  const streamDrainTimeoutMs = Math.max(10_000, Math.min(timeoutMs ?? 120_000, 120_000));
   const closeLogStreams = () => {
     try {
       child.stdout?.unpipe(stdout);
@@ -204,7 +205,7 @@ export async function runLoggedCommandWithOutcome(
       }
       resolve(result);
     };
-    const timer = setTimeout(() => {
+    const timer = timeoutMs === null ? undefined : setTimeout(() => {
       if (typeof child.pid === 'number' && child.pid > 0) {
         void terminateProcessTreeByPid(child.pid, { graceMs: 0, pollMs: 25 });
       }

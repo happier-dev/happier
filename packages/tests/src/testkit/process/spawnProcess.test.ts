@@ -528,7 +528,7 @@ describe('runLoggedCommand', () => {
     }
   });
 
-  it('attaches the actual nonzero exit tuple to command failures', async () => {
+  it.each([undefined, null])('attaches the actual nonzero exit tuple to command failures (timeoutMs=%s)', async (timeoutMs) => {
     const rootDir = await mkdtemp(join(tmpdir(), 'happier-run-logged-command-failure-'));
 
     try {
@@ -537,6 +537,7 @@ describe('runLoggedCommand', () => {
       const error = await runLoggedCommandWithOutcome({
         command: process.execPath,
         args: ['-e', 'process.exit(7)'],
+        timeoutMs,
         cwd: rootDir,
         stdoutPath,
         stderrPath,
@@ -581,7 +582,7 @@ describe('runLoggedCommand', () => {
     }
   });
 
-  it('aborts promptly and reaps descendant processes when aborted', async () => {
+  it.each([30_000, null])('aborts promptly and reaps descendant processes (timeoutMs=%s)', async (timeoutMs) => {
     if (process.platform === 'win32') {
       return;
     }
@@ -609,7 +610,7 @@ describe('runLoggedCommand', () => {
         cwd: rootDir,
         stdoutPath,
         stderrPath,
-        timeoutMs: 30_000,
+        timeoutMs,
         abortSignal: abortController.signal,
       });
 

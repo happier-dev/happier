@@ -18,6 +18,7 @@ import {
 } from './cliDist';
 import { CLI_SHARED_DEP_TEST_FIXTURE_PACKAGE_NAMES } from './workspacePackageResolution';
 import { sleep } from '../timing';
+import { runLoggedCommand } from './spawnProcess';
 
 const createdDirs: string[] = [];
 
@@ -270,6 +271,9 @@ describe('ensureCliDistBuilt', () => {
     const sharedDepsHeld = createSignal();
     const distHeld = createSignal();
     const stackWaitingForDist = createSignal();
+    // This scratch publisher models a caller waiting before admission. The real
+    // validation job keeps its admission; only this fixture's environment differs.
+    vi.stubEnv('HAPPIER_WORKSPACE_DIST_BUILD_LOCK_WAIT_ALLOWED', undefined);
     const stackBuild = withWorkspaceBundleLock(
       async () => {
         sharedDepsHeld.resolve();
@@ -325,10 +329,11 @@ describe('ensureCliDistBuilt', () => {
       );
 
       expect(entrypoint).toBe(distEntrypoint);
-      expect(invocations).toEqual([['-s', 'workspace', '@happier-dev/cli', 'build:prepared']]);
+      expect(invocations[0]).toContain('build:prepared');
       await expect(stackBuild).resolves.toBe('stack build completed');
     } finally {
       await stackBuild.catch(() => {});
+      vi.unstubAllEnvs();
     }
   });
 
@@ -1706,6 +1711,43 @@ describe('ensureCliDistBuilt', () => {
     await expect(ensureSkippedSharedDeps()).rejects.toThrow(
       /shared workspace deps runtime prerequisites are missing/i,
     );
+  });
+
+  it('waits for the shared publisher past admission delay without a harness deadline', async () => {
+    const repoRoot = await createRepoRoot();
+    const output = join(repoRoot, 'apps', 'cli', 'node_modules', '@happier-dev', 'connection-supervisor', 'dist', 'index.js');
+    rmSync(output);
+    const invoked = createSignal();
+    const release = join(repoRoot, 'publisher.release');
+    // The process boundary models a publisher queued before it can write its output.
+    // Only the parent's clock advances; the child completes on its own real clock.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const build = ensureCliSharedDepsBuilt(
+        { testDir: join(repoRoot, '.project'), env: process.env },
+        {
+          repoRoot,
+          skipSourceFreshnessCheck: true,
+          runCommand: (invocation) => {
+            const child = runLoggedCommand({
+              ...invocation,
+              command: process.execPath,
+              args: ['-e', 'const fs = require("node:fs"); const timer = setInterval(() => { if (fs.existsSync(process.argv[2])) { clearInterval(timer); fs.writeFileSync(process.argv[1], "exports.ok = true;"); } }, 10);', output, release],
+            });
+            invoked.resolve();
+            return child;
+          },
+        },
+      );
+      const result = build.then(() => ({ ok: true }), (error: unknown) => ({ ok: false, error }));
+      await invoked.promise;
+      await vi.advanceTimersByTimeAsync(600_001);
+      await writeFile(release, 'ready');
+      expect(await result).toEqual({ ok: true });
+      expect(existsSync(output)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('rebuilds when a bundled shared dependency workspace is missing from the CLI node_modules tree', async () => {

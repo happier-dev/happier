@@ -78,7 +78,7 @@ type EnsureCliSharedDepsBuiltOptions = CliDistBuildLockOptions & {
     env?: NodeJS.ProcessEnv;
     stdoutPath: string;
     stderrPath: string;
-    timeoutMs?: number;
+    timeoutMs?: number | null;
   }) => Promise<void>;
 };
 
@@ -96,7 +96,7 @@ type EnsureCliDistBuiltOptions = CliDistBuildLockOptions & {
     env?: NodeJS.ProcessEnv;
     stdoutPath: string;
     stderrPath: string;
-    timeoutMs?: number;
+    timeoutMs?: number | null;
   }) => Promise<void>;
 };
 
@@ -879,7 +879,9 @@ export async function ensureCliSharedDepsBuilt(
         env: { ...process.env, ...params.env, CI: '1' },
         stdoutPath: resolve(params.testDir, 'cli.buildShared.stdout.log'),
         stderrPath: resolve(params.testDir, 'cli.buildShared.stderr.log'),
-        timeoutMs: options.buildTimeoutMs ?? DEFAULT_CLI_DIST_BUILD_TIMEOUT_MS,
+        // The publisher owns readiness and may wait for admission or workspace locks.
+        // Do not cut that operation short with a harness wall-clock deadline.
+        timeoutMs: options.buildTimeoutMs ?? null,
       });
       const sourceFreshnessAfterBuild = readCliSharedDepsSourceFreshnessSignature(rootDir);
 
