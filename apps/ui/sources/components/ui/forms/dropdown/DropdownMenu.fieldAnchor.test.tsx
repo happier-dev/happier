@@ -198,3 +198,29 @@ it('never checks a prompt row ("Choose…") as the current value, while an expli
   );
   expect(checked(noneScreen, 'empty')).toBe(true);
 });
+
+it('treats a select whose current value is its prompt as having no value: no other row reads as a checkbox', async () => {
+  const { DropdownMenu } = await import('./DropdownMenu');
+  const { ListPresentationProvider } =
+    await import('@/components/ui/lists/listPresentation');
+  const screen = await renderScreen(
+    <ListPresentationProvider value="page">
+      <DropdownMenu
+        open
+        onOpenChange={() => {}}
+        items={[{ id: 'ref:default', title: 'Choose a branch', testID: 'member:default', prompt: true },
+          { id: 'ref:other', title: 'Other branch or revision…', testID: 'member:other' }]}
+        selectedId="ref:default"
+        onSelect={() => {}}
+        itemTrigger={{ title: 'Branch' }}
+      />
+    </ListPresentationProvider>,
+  );
+  await vi.waitFor(() =>
+    expect(screen.findAllHostsByTestId('member:other').length).toBeGreaterThan(0),
+  );
+  const states = (id: string) => screen.findAllHostsByTestId(`member:${id}`)
+    .map((node) => [node.props.role ?? node.props.accessibilityRole, node.props['aria-checked'] ?? (node.props.accessibilityState as { checked?: boolean } | undefined)?.checked]);
+  expect(states('other').some(([role]) => role === 'checkbox' || role === 'radio')).toBe(false);
+  expect(states('default').some(([, checked]) => checked === true)).toBe(false);
+});

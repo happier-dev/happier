@@ -446,8 +446,10 @@ export function DropdownMenu(props: DropdownMenuProps) {
     // A select (an item trigger naming a value) checks its current value as the one choice among its rows, searched or
     // not. An empty value is a choice too when a row stands for it (an explicit "None"); otherwise it means nothing is chosen.
     const selectValue = props.itemTrigger && typeof props.selectedId === 'string' ? props.selectedId.trim() : null;
-    const emptyRow = selectValue === '' ? findMenuItem('') : undefined;
-    const selectCheckedId = selectValue !== null && (selectValue !== '' || (emptyRow !== undefined && emptyRow.prompt !== true)) ? selectValue : null;
+    // A select whose value is its prompt row ("Choose a branch") has no value yet: nothing among its rows is checked.
+    const currentRow = selectValue === null ? undefined : findMenuItem(selectValue);
+    const selectCheckedId = selectValue !== null && currentRow?.prompt !== true && (selectValue !== '' || currentRow !== undefined)
+        ? selectValue : null;
     const toSelectableItem = (item: DropdownMenuItem): SelectableMenuItem => {
             const hasSubmenu = Boolean(item.submenu && (item.submenu.items.length > 0 || item.submenu.renderContent));
             return {
@@ -568,7 +570,7 @@ export function DropdownMenu(props: DropdownMenuProps) {
             const cfg = props.itemTrigger;
             const showSelectedDetail = cfg.showSelectedDetail !== false;
             const showSelectedSubtitle = cfg.showSelectedSubtitle !== false;
-            const formattedDetail = showSelectedDetail
+            const formattedDetail = showSelectedDetail || pageTrigger
                 ? (cfg.detailFormatter
                     ? cfg.detailFormatter(selectedItemForTrigger)
                     : (selectedItemForTrigger?.title ?? null))
