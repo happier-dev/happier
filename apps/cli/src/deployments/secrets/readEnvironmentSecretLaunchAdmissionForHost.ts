@@ -5,6 +5,7 @@ import { WorkspaceSyncSourceExecutionV1Schema } from '@happier-dev/protocol/sock
 import { projectDeploymentChildRoutingV1, type DeploymentDomainChildRpcV1,
     type DeploymentDomainHeaderV1 } from '@happier-dev/protocol';
 import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
+import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { parseActionExecuteFailure, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -225,7 +226,11 @@ async function readEnvironmentSecretAdmissionForHost(input: HostSecretAdmissionR
         }
         if (!parsed.success) return refuse(response.status === 404 || response.status === 405 || response.status === 501
             ? 'unsupported_action' : 'invalid_action_output');
-        if (!parsed.data.ok) return refuse(parsed.data.error);
+        if (!parsed.data.ok) return refuse(parsed.data.error, {
+            ok: false, errorCode: parsed.data.error, error: parsed.data.error,
+            failureCause: projectActionFailureCauseV1(
+                createHttpStatusError(response.status, parsed.data.error, parsed.data.error), 'deployment.secret_launch.admission'),
+        });
         if (response.status !== 200) throw Object.assign(new Error('invalid_action_output'), { code: 'invalid_action_output',
             cause: deploymentOutputValidationFailure('environment_secret_launch_admission', response.status) });
         const { grants, bindingPreparation, domainAdmission } = parsed.data;
@@ -332,7 +337,11 @@ async function createConnectorSecretTransportForHost(input: MachineConnectorSecr
         }
         if (!parsed.success) return refuse(response.status === 404 || response.status === 405 || response.status === 501
             ? 'unsupported_action' : 'invalid_action_output');
-        if (!parsed.data.ok) return refuse(parsed.data.error);
+        if (!parsed.data.ok) return refuse(parsed.data.error, {
+            ok: false, errorCode: parsed.data.error, error: parsed.data.error,
+            failureCause: projectActionFailureCauseV1(
+                createHttpStatusError(response.status, parsed.data.error, parsed.data.error), 'deployment.connector_secret_grant'),
+        });
         if (response.status !== 200) return refuse('invalid_action_output');
         const grant = parsed.data.grant;
         if (grant && (grant.kind !== 'connectorToken' || machineSecretGrantSubjectKey(grant) !== machineSecretGrantSubjectKey(input.subject))) {

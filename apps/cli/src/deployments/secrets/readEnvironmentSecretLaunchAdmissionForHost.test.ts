@@ -20,6 +20,7 @@ import { prepareEnvironmentSecretBindingsForLaunch } from './prepareEnvironmentS
 import { createDeploymentChildRequesterHarness } from '@/testkit/backends/deploymentChildRequesterHarness';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { readDeploymentAuthorizationFailure } from '../deploymentAuthorizationFailure';
+import { projectDeploymentFailure } from '../deploymentFailure';
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -315,6 +316,14 @@ describe('installed Environment secret launch reader', () => {
         expect(readDeploymentAuthorizationFailure(unknown)).toMatchObject({ errorCode: 'action_forbidden',
             error: 'action_forbidden (home_signed_authorization_rejected)' });
         expect(String(unknown)).not.toContain('private-');
+        boundary.mockResolvedValue({ status: 404,
+            data: EnvironmentSecretLaunchAdmissionResultV1Schema.parse({ ok: false, error: 'deployment_unavailable' }) });
+        const refused = await readEnvironmentSecretLaunchAdmissionForHost({ ...request,
+            context: { ...request.context, externalActionExecutionAuthorization: authorization } }).catch(error => error);
+        expect(projectDeploymentFailure('deployment_unavailable', refused, 'deployment.restore.prepare'))
+            .toMatchObject({ ok: false, errorCode: 'deployment_unavailable',
+                failureCause: { phase: 'deployment.secret_launch.admission', httpStatus: 404 } });
+        boundary.mockResolvedValue({ status: 401, data: { error: 'private-untrusted-response', authorizationRefusal: 'private-phase' } });
         // The same installed read intentionally uses the Account bearer for an ordinary deploy.
         await expect(readEnvironmentSecretLaunchAdmissionForHost(request)).rejects.toMatchObject({ code: 'action_home_signed_out' });
         expect(boundary.mock.calls.at(-1)?.[0].headers?.Authorization).toBe(`Bearer ${token}`);
@@ -458,6 +467,11 @@ describe('installed Environment secret launch reader', () => {
             expect(acknowledged).toEqual(grants);
             expect(new TextDecoder().decode(bytes)).toBe('connector-token-for-receiver');
             expect(boundary).toHaveBeenCalledTimes(3);
+            boundary.mockResolvedValueOnce({ status: 404, data: { ok: false, error: 'secret_missing' } });
+            const refused = await sink.write({ token: bytes, subject: { provider, connectorId: 'connector' } }).catch(error => error);
+            expect(projectDeploymentFailure('secret_missing', refused, 'deployment.domain.apply'))
+                .toMatchObject({ ok: false, errorCode: 'secret_missing',
+                    failureCause: { phase: 'deployment.connector_secret_grant', httpStatus: 404 } });
             acknowledged.length = 0;
             failSibling = true;
             await expect(sink.write({ token: bytes, subject: { provider, connectorId: 'connector' } }))
