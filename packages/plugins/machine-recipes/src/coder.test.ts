@@ -18,7 +18,7 @@ it.skipIf(process.platform === 'win32').each([false, true])('installs Coder idem
   const installed = join(root, 'installed');
   writeFileSync(calls, '');
   const executable = (name: string, body: string) => writeFileSync(join(root, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
-  executable('uname', 'echo Linux');
+  executable('apt-get', 'exit 0');
   executable('coder', `test -f '${installed}' || exit 1; echo 'Coder v2.39.0'`);
   executable('curl', `printf 'download\n' >> '${calls}'
 while [ "$#" -gt 0 ]; do
