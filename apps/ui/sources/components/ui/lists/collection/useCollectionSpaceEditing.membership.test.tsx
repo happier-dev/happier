@@ -54,11 +54,11 @@ describe('Session space membership form', () => {
         const screen = await renderForm();
         await screen.pressByTestIdAsync('space-membership:manual_only');
         await screen.pressByTestIdAsync('space-submit');
-        expect(execute).toHaveBeenCalledWith('settings.invoke', expect.objectContaining({
+        expect(execute.mock.calls.at(-1)?.[1]).toMatchObject({
             input: expect.objectContaining({ mutation: expect.objectContaining({
                 op: 'create', space: expect.objectContaining({ membership: { mode: 'manual_only', tags: [] } }),
             }) }),
-        }));
+        });
     });
 
     it('edits only the mode so the catalog retains its current qualified membership tags', async () => {
@@ -75,10 +75,10 @@ describe('Session space membership form', () => {
         } });
         await act(() => editing.openSaveAs());
         await screen.pressByTestIdAsync('space-submit');
-        expect(execute).toHaveBeenCalledWith('settings.invoke', expect.objectContaining({
+        expect(execute.mock.calls.at(-1)?.[1]).toMatchObject({
             input: expect.objectContaining({ mutation: expect.objectContaining({
                 op: 'create', space: expect.objectContaining({ membership: { mode: 'filter_or_manual', tags: [] } }),
             }) }),
-        }));
+        });
     });
 });

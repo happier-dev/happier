@@ -11,6 +11,7 @@ import {
 import type { CollectionFilterMapV1 } from '@happier-dev/protocol/collections/filter/entityListFilterV1';
 
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import type { UiActionOperation } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import {
   MODAL_AWARE_FLOATING_POPOVER_PORTAL_OPTIONS,
   Popover,
@@ -93,12 +94,12 @@ export function useCollectionSpaceEditing<K extends CollectionEntityKindV1>(
   const [form, setForm] = React.useState<SpaceForm | null>(null);
 
   const invoke = React.useCallback(
-    async (mutation: CollectionSpaceMutationV1<K>): Promise<boolean> => {
+    async (mutation: CollectionSpaceMutationV1<K>, operation?: UiActionOperation): Promise<boolean> => {
       try {
         const result = await execute('settings.invoke', {
           anchor: refs.spaces.anchor,
           input: { kind: 'collection_space', entityKind, mutation },
-        });
+        }, operation);
         const status = result.ok
           ? (result.result as { status?: unknown } | null)?.status
           : undefined;
@@ -190,7 +191,7 @@ export function useCollectionSpaceEditing<K extends CollectionEntityKindV1>(
       { confirmText: t('sessionsList.spacesDelete'), destructive: true },
     );
     if (!confirmed) return;
-    if (await invoke({ op: 'delete', spaceId: selectedSpace.id })) setForm(null);
+    if (await invoke({ op: 'delete', spaceId: selectedSpace.id }, { confirmed: true })) setForm(null);
   }, [defaultSpaceId, invoke, selectedSpace]);
   /** Moves a space before another (null: to the end); the strip, menu, swipes and digits follow the order. */
   const reorder = React.useCallback(

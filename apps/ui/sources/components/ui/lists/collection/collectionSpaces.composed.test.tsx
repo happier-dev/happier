@@ -17,6 +17,7 @@ import { settingsParse } from '@/sync/domains/settings/settings';
 import { storage, useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
 import { useCollectionSpaceFilter } from './useCollectionSpaceFilter';
 import { useCollectionSpaceHeader } from './useCollectionSpaceHeader';
+import { useCollectionSpaceEditing } from './useCollectionSpaceEditing';
 import { useNewSessionOrganizationPlacement } from '@/components/sessions/new/organization/useNewSessionOrganizationPlacement';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 
@@ -24,7 +25,10 @@ vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNati
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 // Deleting a space asks once (P6 §7.1); the person confirms it here.
-vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({ confirmResult: true }).module);
+const { confirm } = vi.hoisted(() => ({ confirm: vi.fn(async () => true) }));
+vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
+    confirmResult: true, spies: { confirm },
+}).module);
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module);
 vi.mock('@/components/ui/popover', async original => (await import('@/dev/testkit/mocks/popover')).createInlinePopoverModuleMock(original));
 vi.mock('socket.io-client', async original => (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(original));
@@ -60,13 +64,15 @@ async function mountEntity<K extends 'workflow' | 'discussion', Facts>(input: {
     }
     const element = <HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}><Host /></HappierUiPlatformProvider>;
     const screen = await renderScreen(element);
+    const selectTitleMenuItem = async (testID: string) => {
+        const menu = screen.tree.findAllByType(DropdownMenu).find(node => node.props.items.some((item: { testID?: string }) => item.testID === testID));
+        expect(menu).toBeDefined();
+        const item = menu!.props.items.find((item: { testID?: string }) => item.testID === testID);
+        await act(async () => { menu!.props.onSelect(item.id); });
+    };
     return { account, screen, element, view: () => view, header: () => header, ids: () => ids,
-        edit: async () => {
-            const menu = screen.tree.findAllByType(DropdownMenu).find(node => node.props.items.some((item: { testID?: string }) => item.testID === 'joined-menu-edit'));
-            expect(menu).toBeDefined();
-            const item = menu!.props.items.find((item: { testID?: string }) => item.testID === 'joined-menu-edit');
-            await act(async () => { menu!.props.onSelect(item.id); });
-        },
+        edit: () => selectTitleMenuItem('joined-menu-edit'),
+        saveAs: () => selectTitleMenuItem('joined-menu-save-as'),
         // An ordinary New Session entry mounted now: the Space it starts in, if any.
         newEntrySpaceId: async () => {
             const entry = await renderHook(() => useNewSessionOrganizationPlacement({
@@ -78,6 +84,36 @@ async function mountEntity<K extends 'workflow' | 'discussion', Facts>(input: {
         },
         setOffline: (next: boolean) => { offline = next; } };
 }
+
+describe('saved Space deletion through the mounted Action owner', () => {
+    it.each(['sessionWork', 'workflow', 'discussion'] as const)('%s consumes the editor confirmation once even with saved Ask', async entityKind => {
+        confirm.mockClear();
+        const base = createDefaultCollectionSpaceV1(entityKind);
+        const saved = { ...base, id: 'release', name: 'Release' };
+        const account = await createSecretSettingsTestHarness({ settings: settingsParse({
+            collectionSpacesV1: { v: 1, spaces: [saved] },
+            actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+                'settings.invoke': { approvalRequiredSurfaces: ['ui'] },
+            } }),
+        }) });
+        let editing!: ReturnType<typeof useCollectionSpaceEditing>;
+        const anchorRef = { current: null };
+        function Host() {
+            editing = useCollectionSpaceEditing({ entityKind, testIDPrefix: 'deletion', scope: account.scope,
+                spaces: [saved], selectedSpace: saved, currentFilter: base.filter,
+                suggestion: { name: 'Work', icon: base.icon }, summary: [], anchorRef });
+            return editing.formOverlay;
+        }
+        const screen = await renderScreen(<HappierUiPlatformProvider platform={{ platform: 'ios', colorScheme: 'light' }}><Host /></HappierUiPlatformProvider>);
+        try {
+            await act(() => editing.openEdit());
+            await screen.pressByTestIdAsync('deletion-delete');
+            await vi.waitFor(() => expect(account.persistedSettings.collectionSpacesV1.spaces).toEqual([]));
+            expect(confirm).toHaveBeenCalledTimes(1);
+            expect(screen.findByTestId('deletion-form')).toBeNull();
+        } finally { standardCleanup(); await account.dispose(); }
+    });
+});
 
 describe('shared entity Space presentation through real settings Actions and HTTP persistence', () => {
     const cases = [
@@ -95,7 +131,7 @@ describe('shared entity Space presentation through real settings Actions and HTT
                 expect(mounted.ids()).toHaveLength(2);
                 await act(async () => { mounted.view().update({ filters: input.narrowed }); });
                 expect(mounted.ids()).toEqual([input.rows[0]!.id]);
-                await screen.pressByTestIdAsync('joined-strip-add');
+                await mounted.saveAs();
                 await act(async () => screen.changeTextByTestId('joined-name', 'My selection'));
                 await screen.pressByTestIdAsync('joined-submit');
                 await vi.waitFor(() => expect(account.persistedSettings.collectionSpacesV1.spaces).toHaveLength(1));
@@ -128,7 +164,7 @@ describe('shared entity Space presentation through real settings Actions and HTT
         try {
             await act(async () => { mounted.view().update({ filters: { view: 'triggered' } }); });
             const selectedBefore = mounted.view().selectedSpaceId;
-            await screen.pressByTestIdAsync('joined-strip-add');
+            await mounted.saveAs();
             await act(async () => screen.changeTextByTestId('joined-name', 'Keep this draft'));
             mounted.setOffline(true);
             await screen.pressByTestIdAsync('joined-submit');
@@ -151,7 +187,7 @@ describe('shared entity Space presentation through real settings Actions and HTT
         const { account, screen } = mounted;
         try {
             await act(async () => { mounted.view().update({ filters: { view: 'triggered' } }); });
-            await screen.pressByTestIdAsync('joined-strip-add');
+            await mounted.saveAs();
             await act(async () => screen.changeTextByTestId('joined-name', 'Local choice'));
             await screen.pressByTestIdAsync('joined-submit');
             await vi.waitFor(() => expect(account.persistedSettings.collectionSpacesV1.spaces).toHaveLength(1));
