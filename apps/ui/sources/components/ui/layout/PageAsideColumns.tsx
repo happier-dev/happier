@@ -44,16 +44,17 @@ export const PageAsideColumns = React.memo(function PageAsideColumns(props: Omit
         <View key="aside" style={sideBySide ? styles.aside : undefined}>{props.aside}</View>
     ) : null;
     // Keep the same parents through responsive changes and receipt arrival. Keyed sibling slots can
-    // change their reading order without resetting a field or an open control in either column.
+    // change their reading order without resetting a field or an open control in either column. The
+    // closing row keeps its own last slot too: side by side, the row wraps it onto a line of its own
+    // that leaves the aside's column free, so it stays under the sections without changing parent.
     return (
         <View onLayout={measureColumns ? onLayout : undefined} style={sideBySide ? [styles.row, columnWidth] : undefined}>
             {asideFirst ? aside : null}
             <View key="main" style={sideBySide ? styles.main : undefined}>
                 {children}
-                {sideBySide ? props.closing : null}
             </View>
             {asideFirst ? null : aside}
-            {sideBySide ? null : props.closing}
+            {props.closing ? <View key="closing" style={sideBySide ? styles.closing : undefined}>{props.closing}</View> : null}
         </View>
     );
 });
@@ -67,6 +68,7 @@ const stickyAside: ViewStyle = Platform.OS === 'web'
 const styles = {
     row: {
         flexDirection: 'row',
+        flexWrap: 'wrap',
         alignItems: 'flex-start',
         width: '100%',
         alignSelf: 'center',
@@ -74,6 +76,11 @@ const styles = {
     main: {
         flex: 1,
         minWidth: 0,
+    },
+    // A line of its own under the sections: the full row, less the aside's column.
+    closing: {
+        width: '100%',
+        paddingRight: PAGE_ASIDE_COLUMN_WIDTH_PX,
     },
     aside: {
         width: PAGE_ASIDE_COLUMN_WIDTH_PX,

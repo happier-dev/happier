@@ -483,48 +483,134 @@ export function HappierSelectionTiles<T extends string, I extends string = strin
 
 function ActionSelectionTiles<T extends string, I extends string>(props: HappierActionSelectionTilesProps<T, I>) {
   const section = useHappierPageSection();
+  const page = props.listPresentation === undefined ? section !== null : props.listPresentation === 'page';
+  // A page's action tiles become its rows when narrow; cards with footers stay cards.
+  return page && !props.renderOptionFooter ? <ResponsiveActionTiles {...props} /> : <ActionSelectionCards {...props} />;
+}
+
+/**
+ * Action tiles in a page section: cards side by side when wide, the section's rows when narrow (the
+ * page row anatomy, on one sheet). Each option is one control across the change, so focus, press and
+ * hover state survive a resize; only its anatomy and the sheet's chrome change.
+ */
+function ResponsiveActionTiles<T extends string, I extends string>(props: HappierActionSelectionTilesProps<T, I>) {
+  const styles = useTileStyles(props.colors);
   const localization = useOptionalHappierUiLocalization();
   const rtl = localization ? localization.direction === 'rtl' : I18nManager.isRTL;
   const palette = useOptionalHappierUiPalette(props.theme);
-  const page = props.listPresentation === undefined ? section !== null : props.listPresentation === 'page';
-  const rowsWhenNarrow = page && !props.renderOptionFooter;
-  const [narrow, setNarrow] = useState(false);
+  const [width, setWidth] = useState(0);
   const onLayout = useCallback((event: Readonly<{ nativeEvent: Readonly<{ layout: Readonly<{ width: number }> }> }>) => {
-    const next = isHappierPageRowNarrow(event.nativeEvent.layout.width);
-    setNarrow((current) => current === next ? current : next);
+    const next = Math.floor(event.nativeEvent.layout.width);
+    setWidth((current) => current === next ? current : next);
   }, []);
+  const narrow = width > 0 && isHappierPageRowNarrow(width);
+  const trackStyle = useActionTrackStyle(props.options.length, width);
+  return (
+    <View onLayout={onLayout}>
+      <HappierItemGroup accessibilityLabel={props.accessibilityLabel}>
+        {/* The containing section already owns the page inset; this sheet adds no second one. */}
+        <HappierPageSheet
+          colors={props.pageColors ?? palette ?? {
+            sheet: props.colors.actionBackground,
+            sheetBorder: props.colors.tileBorder,
+            rowDivider: props.colors.divider ?? props.colors.tileBorder,
+            groupDivider: props.colors.divider ?? props.colors.tileBorder,
+          }}
+          {...(narrow ? {} : { surface: 'none' as const, rowDividers: false, style: styles.actionGrid })}
+        >
+          {props.options.map((option) => (
+            <ResponsiveActionOption key={option.id} tiles={props} option={option} narrow={narrow} rtl={rtl}
+              trackStyle={trackStyle} styles={styles} />
+          ))}
+        </HappierPageSheet>
+      </HappierItemGroup>
+    </View>
+  );
+}
 
-  const body = rowsWhenNarrow && narrow ? (
-    <HappierItemGroup accessibilityLabel={props.accessibilityLabel}>
-      {/* The containing section already owns the page inset; this sheet adds no second one. */}
-      <HappierPageSheet colors={props.pageColors ?? palette ?? {
-        sheet: props.colors.actionBackground,
-        sheetBorder: props.colors.tileBorder,
-        rowDivider: props.colors.divider ?? props.colors.tileBorder,
-        groupDivider: props.colors.divider ?? props.colors.tileBorder,
-      }}>
-        {props.options.map((option) => (
-          <HappierListItem
-            key={option.id}
-            testID={option.testID ?? (props.testIdPrefix ? `${props.testIdPrefix}:${option.id}` : undefined)}
-            theme={props.theme}
-            textScale={props.textScale}
-            pageRowMetrics={props.pageRowMetrics}
-            title={option.title}
-            subtitle={option.subtitle}
-            accessibilityLabel={option.subtitle ? `${option.title}, ${option.subtitle}` : option.title}
-            icon={option.mark ?? (option.icon ? props.renderGlyph({
-              glyph: { kind: 'icon', name: option.icon }, size: props.pageRowMetrics?.iconGlyphPx ?? HAPPIER_PAGE_METRICS.rowIconGlyphPx, color: props.colors.glyph,
-            }) : undefined)}
-            disabled={option.disabled}
-            accessory={<HappierChevron direction={rtl ? 'left' : 'right'} color={props.colors.glyph} />}
-            onPress={() => props.onPress(option.id)}
-          />
-        ))}
-      </HappierPageSheet>
-    </HappierItemGroup>
-  ) : <ActionSelectionCards {...props} />;
-  return rowsWhenNarrow ? <View onLayout={onLayout}>{body}</View> : body;
+function ResponsiveActionOption<T extends string, I extends string>(props: Readonly<{
+  tiles: HappierActionSelectionTilesProps<T, I>;
+  option: HappierActionSelectionTilesProps<T, I>['options'][number];
+  narrow: boolean;
+  rtl: boolean;
+  trackStyle: ViewStyle | null;
+  styles: ReturnType<typeof useTileStyles>;
+  /** Set by the sheet on its rows. */
+  showDivider?: boolean;
+}>) {
+  const { tiles, option, styles } = props;
+  const disabled = option.disabled === true;
+  return (
+    <Pressable
+      testID={option.testID ?? (tiles.testIdPrefix ? `${tiles.testIdPrefix}:${option.id}` : undefined)}
+      accessibilityRole="button"
+      accessibilityLabel={option.subtitle ? `${option.title}, ${option.subtitle}` : option.title}
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={() => {
+        if (disabled) return;
+        tiles.onPress(option.id);
+      }}
+      style={({ pressed, hovered }: { pressed: boolean; hovered?: boolean }) => props.narrow
+        ? { opacity: pressOpacity(disabled, pressed) }
+        : [styles.actionTile, props.trackStyle, hovered && !disabled ? styles.actionTileHovered : null, { opacity: pressOpacity(disabled, pressed) }]}
+    >
+      {props.narrow ? (
+        // The page row's anatomy; the option's one control above owns press, focus and its name.
+        <HappierListItem
+          theme={tiles.theme}
+          textScale={tiles.textScale}
+          pageRowMetrics={tiles.pageRowMetrics}
+          title={option.title}
+          subtitle={option.subtitle}
+          icon={option.mark ?? (option.icon ? tiles.renderGlyph({
+            glyph: { kind: 'icon', name: option.icon }, size: tiles.pageRowMetrics?.iconGlyphPx ?? HAPPIER_PAGE_METRICS.rowIconGlyphPx, color: tiles.colors.glyph,
+          }) : undefined)}
+          disabled={option.disabled}
+          showDivider={props.showDivider}
+          accessory={<HappierChevron direction={props.rtl ? 'left' : 'right'} color={tiles.colors.glyph} />}
+        />
+      ) : <ActionCardBody tiles={tiles} option={option} styles={styles} />}
+    </Pressable>
+  );
+}
+
+function ActionCardBody<T extends string, I extends string>(props: Readonly<{
+  tiles: HappierActionSelectionTilesProps<T, I>;
+  option: HappierActionSelectionTilesProps<T, I>['options'][number];
+  styles: ReturnType<typeof useTileStyles>;
+}>) {
+  const { tiles, option } = props;
+  return (
+    <>
+      {option.mark ?? (option.icon
+        ? tiles.renderGlyph({ glyph: { kind: 'icon', name: option.icon }, size: 20, color: tiles.colors.glyph })
+        : null)}
+      <View style={props.styles.actionText}>
+        {tiles.renderText({ role: 'actionTitle', text: option.title, selected: false, compact: false, numberOfLines: 2 })}
+        {option.subtitle
+          ? tiles.renderText({ role: 'actionSubtitle', text: option.subtitle, selected: false, compact: false, numberOfLines: 2 })
+          : null}
+      </View>
+    </>
+  );
+}
+
+/**
+ * Every tile takes the same track, so a wrapped last row keeps the width of the rows above it
+ * (a lone tile never stretches across the grid). Before the first measure the grid reserves the
+ * columns a page row fits (up to three, the visual grid's basis trick): a wrapped tile is held to
+ * one column instead of spanning the row, so the first layout does not move it.
+ */
+function useActionTrackStyle(count: number, width: number): ViewStyle | null {
+  return useMemo((): ViewStyle | null => {
+    if (width <= 0) {
+      const columns = Math.max(1, Math.min(count, ACTION_PREMEASURE_COLUMNS));
+      return { flexBasis: `${100 / (columns + 1)}%`, maxWidth: `${100 / columns}%` };
+    }
+    const columns = Math.max(1, Math.min(count, Math.floor((width + ACTION_GRID_GAP_PX) / (ACTION_TILE_MIN_WIDTH_PX + ACTION_GRID_GAP_PX))));
+    return { width: Math.floor((width - ACTION_GRID_GAP_PX * (columns - 1)) / columns), flexGrow: 0, flexShrink: 0, flexBasis: 'auto' };
+  }, [count, width]);
 }
 
 function ActionSelectionCards<T extends string, I extends string>(props: HappierActionSelectionTilesProps<T, I>) {
@@ -534,18 +620,7 @@ function ActionSelectionCards<T extends string, I extends string>(props: Happier
     const next = Math.floor(event.nativeEvent.layout.width);
     setWidth((current) => current === next ? current : next);
   }, []);
-  // Every tile takes the same track, so a wrapped last row keeps the width of the rows above it
-  // (a lone tile never stretches across the grid). Before the first measure the grid reserves the
-  // columns a page row fits (up to three, the visual grid's basis trick): a wrapped tile is held to
-  // one column instead of spanning the row, so the first layout does not move it.
-  const trackStyle = useMemo((): ViewStyle | null => {
-    if (width <= 0) {
-      const columns = Math.max(1, Math.min(props.options.length, ACTION_PREMEASURE_COLUMNS));
-      return { flexBasis: `${100 / (columns + 1)}%`, maxWidth: `${100 / columns}%` };
-    }
-    const columns = Math.max(1, Math.min(props.options.length, Math.floor((width + ACTION_GRID_GAP_PX) / (ACTION_TILE_MIN_WIDTH_PX + ACTION_GRID_GAP_PX))));
-    return { width: Math.floor((width - ACTION_GRID_GAP_PX * (columns - 1)) / columns), flexGrow: 0, flexShrink: 0, flexBasis: 'auto' };
-  }, [props.options.length, width]);
+  const trackStyle = useActionTrackStyle(props.options.length, width);
   return (
     <View
       onLayout={onLayout}
@@ -604,15 +679,7 @@ function ActionSelectionCards<T extends string, I extends string>(props: Happier
               { opacity: pressOpacity(disabled, pressed) },
             ]}
           >
-            {option.mark ?? (option.icon
-              ? props.renderGlyph({ glyph: { kind: 'icon', name: option.icon }, size: 20, color: props.colors.glyph })
-              : null)}
-            <View style={styles.actionText}>
-              {props.renderText({ role: 'actionTitle', text: option.title, selected: false, compact: false, numberOfLines: 2 })}
-              {option.subtitle
-                ? props.renderText({ role: 'actionSubtitle', text: option.subtitle, selected: false, compact: false, numberOfLines: 2 })
-                : null}
-            </View>
+            <ActionCardBody tiles={props} option={option} styles={styles} />
           </Pressable>
         );
       })}

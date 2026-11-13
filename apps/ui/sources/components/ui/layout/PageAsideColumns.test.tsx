@@ -54,6 +54,26 @@ describe('PageAsideColumns continuity', () => {
         }
     });
 
+    it('keeps the closing control, ending the page under the sections or after the aside, across the split', async () => {
+        const page = (compact: boolean) => <PageAsideColumns compact={compact} aside={<StatefulControl id="aside" />}
+            closing={<StatefulControl id="closing" />}>
+            <StatefulControl id="main" />
+        </PageAsideColumns>;
+        const screen = await renderScreen(page(false));
+        await act(async () => { screen.findByTestId('closing')!.props.onTouchEnd(); });
+        for (const compact of [true, false]) {
+            await screen.update(page(compact));
+            expect(screen.findByTestId('closing')!.props.accessibilityValue.now).toBe(1);
+            // It always ends the page: after the sections and the aside in reading order.
+            expect(screen.findAllByType(StatefulControl).map(control => control.props.id)).toEqual(['main', 'aside', 'closing']);
+        }
+        for (const width of [320, 1200]) {
+            const frame = screen.findAllByType('View').find(node => typeof node.props.onLayout === 'function')!;
+            await act(async () => { frame.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width, height: 800 } } }); });
+            expect(screen.findByTestId('closing')!.props.accessibilityValue.now).toBe(1);
+        }
+    });
+
     it('withdraws an aside reserved for the split layout while retaining the main control', async () => {
         const page = (compact: boolean) => <PageAsideColumns compact={compact} compactAside="none" aside={<StatefulControl id="aside" />}>
             <StatefulControl id="main" />

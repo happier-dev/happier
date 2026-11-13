@@ -124,6 +124,30 @@ describe('SelectionTiles', () => {
     } finally { mount.unmount(); }
   });
 
+  it('keeps each action option one control across the card/row change, so focus stays on it', () => {
+    const mount = mountTiles(
+      <HappierPageSheet surface="none" colors={SHEET_COLORS}>
+        <HappierSelectionTiles variant="action" accessibilityLabel="Devices" options={ACTION_OPTIONS}
+          onPress={() => undefined} colors={TILE_COLORS} renderText={({ text }) => <span>{text}</span>} renderGlyph={() => null} />
+      </HappierPageSheet>,
+    );
+    const option = () => mount.container.querySelector<HTMLElement>('[data-testid="action:home"]')!;
+    const separators = () => mount.container.querySelectorAll('[role="separator"]');
+    try {
+      measureTiles(mount.container, 704);
+      const control = option();
+      act(() => control.focus());
+      expect(document.activeElement).toBe(control);
+      for (const width of [358, 704, 358]) {
+        measureTiles(mount.container, width);
+        // Rows when narrow, cards when wide: the anatomy changes, the control does not.
+        expect(separators()).toHaveLength(width < 400 ? 2 : 0);
+        expect(option()).toBe(control);
+        expect(document.activeElement).toBe(control);
+      }
+    } finally { mount.unmount(); }
+  });
+
   it('lets plugin authors use action tiles and inherits page rows from their section', async () => {
     const onPress = vi.fn();
     const mount = mountTiles(
