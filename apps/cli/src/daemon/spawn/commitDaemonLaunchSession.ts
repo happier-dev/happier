@@ -12,7 +12,6 @@ import type { SessionAttachFilePayload } from '@/agent/runtime/sessionAttachPayl
 import type { StoredCredentials } from '@/persistence';
 import type { SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { resolveAvailableAccountSettings } from '@/settings/accountSettings/resolveAvailableAccountSettings';
-import { archiveSessionOnceInactive } from '@/session/services/archiveSessionOnceInactive';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
 import {
   SPAWN_SESSION_ERROR_CODES,
@@ -92,6 +91,8 @@ export async function commitDaemonLaunchSession(input: Readonly<{
   credentials: StoredCredentials;
   options: SpawnSessionOptions;
   directory: string;
+  /** The launch owner retains birth identity even if attach or binding preparation fails. */
+  onCommitted?: (session: Pick<CommittedDaemonLaunchSession, 'sessionId' | 'created'>) => void | Promise<void>;
   agentModeId?: string;
   agentModeUpdatedAt?: number;
   accountSettings?: Readonly<Record<string, unknown>>;
@@ -156,21 +157,18 @@ export async function commitDaemonLaunchSession(input: Readonly<{
       },
     };
   }
+  const createdHere = created.sessionCreationOutcome?.disposition === 'created';
+  await input.onCommitted?.({ sessionId: created.id, created: createdHere });
   const attach = await resolveExistingSessionAttachContext({
     token: input.credentials.token,
     sessionId: created.id,
     credentials: input.credentials,
   });
-  const createdHere = created.sessionCreationOutcome?.disposition === 'created';
   const requestedTeamModel = options.teamCredentialBindings?.some(binding => binding.slot.kind === 'provider_model' && binding.resourceId !== null);
   const acceptedTeamModel = attach.ok ? attach.attachPayload.snapshot?.acceptedTeamCredentialBinding : null;
   const missingTeamModelWitness = requestedTeamModel && (!acceptedTeamModel
     || acceptedTeamModel.slot.kind !== 'provider_model' || acceptedTeamModel.resourceId === null);
   if (!attach.ok || missingTeamModelWitness) {
-    if (createdHere) {
-      await archiveSessionOnceInactive({ token: input.credentials.token, sessionId: created.id })
-        .catch(() => undefined);
-    }
     return { ok: false, result: !attach.ok ? mapExistingSessionAttachFailureToSpawnError(attach) : {
       type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
       errorMessage: 'team_credential_provider_binding_unavailable',

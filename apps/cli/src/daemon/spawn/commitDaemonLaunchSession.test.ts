@@ -9,12 +9,11 @@ import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/boot
 import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 
-// The Session row, Account currentness/settings reads and archive mutation are
-// HTTP boundaries. Settings bootstrap and attach-context building stay real.
+// The Session row and Account currentness/settings reads are HTTP boundaries.
+// Settings bootstrap and attach-context building stay real.
 const network = vi.hoisted(() => ({
   fetchSessionByIdCompat: vi.fn(),
   fetchAccountEncryptionCurrentness: vi.fn(),
-  setSessionArchivedStateById: vi.fn(),
 }));
 vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/session/transport/http/sessionsHttp')>()),
@@ -23,10 +22,6 @@ vi.mock('@/session/transport/http/sessionsHttp', async (importOriginal) => ({
 vi.mock('@/api/client/connectedServiceCredentialApi', async (importOriginal) => ({
   ...(await importOriginal<typeof import('@/api/client/connectedServiceCredentialApi')>()),
   fetchAccountEncryptionCurrentness: network.fetchAccountEncryptionCurrentness,
-}));
-vi.mock('@/session/services/sessionArchivedStateById', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/session/services/sessionArchivedStateById')>()),
-  setSessionArchivedStateById: network.setSessionArchivedStateById,
 }));
 
 import {
@@ -221,7 +216,6 @@ describe('commitDaemonLaunchSession', () => {
     network.fetchAccountEncryptionCurrentness.mockReset().mockResolvedValue({
       mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
     });
-    network.setSessionArchivedStateById.mockReset().mockResolvedValue({ archivedAt: 1 });
     const settingsResponse = AccountSettingsV2GetResponseSchema.parse({
       content: { t: 'plain', v: {} }, version: 1,
     });
@@ -435,26 +429,4 @@ describe('commitDaemonLaunchSession', () => {
     expect(network.fetchSessionByIdCompat).not.toHaveBeenCalled();
   });
 
-  it('archives a Session it created when the launch cannot attach to it', async () => {
-    const getOrCreateSession = vi.fn(async () => ({
-      id: 'session-unattachable',
-      metadata: { path: '/repo', host: 'h' },
-      sessionCreationOutcome: {
-        disposition: 'created' as const,
-        organizationPlacement: { folderId: null, tagIds: [] },
-      },
-    }));
-    network.fetchSessionByIdCompat.mockResolvedValue(null);
-
-    await expect(commitDaemonLaunchSession({
-      api: { getOrCreateSession } as never,
-      credentials,
-      options: directTeamOptions,
-      directory: '/repo',
-    })).resolves.toMatchObject({ ok: false, result: { type: 'error' } });
-    expect(network.setSessionArchivedStateById).toHaveBeenCalledWith(expect.objectContaining({
-      sessionId: 'session-unattachable',
-      archived: true,
-    }));
-  });
 });

@@ -22,13 +22,11 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError } from '@happier-dev/protocol/rpcErrors';
 import { randomUUID } from 'node:crypto';
 import { isDefiniteSpawnPreAdmissionRejection } from './spawnPreAdmissionRejection';
+import { settleCommittedSessionLaunchFailure } from './settleCommittedSessionLaunchFailure';
 import os from 'node:os';
 import { pickSessionCreateOriginFields } from '@/session/shared/sessionCreateOrigin';
 import { applyInitialSessionCreationFactsToMetadata, buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetadata';
 import { resolveAvailableAccountSettings } from '@/settings/accountSettings/resolveAvailableAccountSettings';
-import { createSessionTurnLifecycle } from '@/agent/runtime/session/turn/lifecycle';
-import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
-import { deliverSessionTurnMutation } from '@/api/session/client/transport/mutations/deliverSessionTurnMutation';
 
 import { createAuthenticationHttpStatusError, isAuthenticationStatus } from '@/api/client/httpStatusError';
 import { validateStoredAuthTokenAgainstActiveServer } from '@/auth/validateStoredAuthTokenAgainstActiveServer';
@@ -148,6 +146,8 @@ export type CreateSpawnedSessionParams = Readonly<import('@happier-dev/protocol'
   observeSessionBirth?: NonNullable<import('@happier-dev/protocol/actions').ActionExecutorContext['operationAcceptance']>['observeSessionBirth'];
   /** Informational origin persisted only by the fresh canonical creator. */
   placementOrigin?: MachinePoolSelectionOriginV1;
+  /** Run the Agent inside one of the person's managed targets (admitted by the Action approval owner). */
+  managedTargetPlacement?: import('@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2').SessionManagedTargetPlacementV1;
   authoringOrigin?: import('@happier-dev/protocol/plugins/ui').PluginUiNewSessionSeedOriginV1;
   organizationPlacement?: SessionOrganizationPlacementV1;
   initialAccess?: import('@happier-dev/protocol').SessionInitialAccessDraftV1;
@@ -612,38 +612,9 @@ async function dispatchCommittedSpawn(args: Readonly<{
       ...(args.signal ? { signal: args.signal } : {}),
     });
     if (settled.type === 'error' && isDefiniteSpawnPreAdmissionRejection(settled.errorCode)) {
-      const failure = projectSessionSpawnFailure(settled);
-      const launchError = failure.code === 'spawn_failed' ? failure.launchError : undefined;
-      // The committed child has no admitted runner or input. Settle its known
-      // startup refusal through the existing host lifecycle, never raw daemon prose.
-      const lifecycle = createSessionTurnLifecycle({
-        session: {
-          sessionId: args.sessionId,
-          enqueueSessionTurnMutation: async (mutation) => {
-            const delivery = await deliverSessionTurnMutation({
-              token: args.token,
-              socket: null,
-              mutation,
-              ...(args.authorizeRequest ? { resolveAuthorizationHeaders: args.authorizeRequest } : {}),
-            });
-            if (!delivery.delivered) throw new Error(delivery.reason);
-          },
-        },
+      await settleCommittedSessionLaunchFailure({ token: args.token, sessionId: args.sessionId, failure: settled,
+        ...(args.authorizeRequest ? { authorizeRequest: args.authorizeRequest } : {}),
       });
-      try {
-        await lifecycle.failTurn({
-          allocateWhenIdle: true,
-          issue: classifyPrimarySessionRuntimeIssue({
-            cause: 'session_error',
-            ...(settled.agentId ? { provider: settled.agentId } : {}),
-            error: { code: launchError?.code ?? settled.errorCode, severity: 'error',
-              ...(launchError?.failureCause ? { failureCause: launchError.failureCause } : {}),
-            },
-          }),
-        });
-      } finally {
-        lifecycle.dispose();
-      }
       if (args.createdHere) {
         await archiveSessionOnceInactive({ token: args.token, sessionId: args.sessionId,
           ...(args.authorizeRequest ? { resolveAuthorizationHeaders: args.authorizeRequest } : {}),
@@ -1022,6 +993,7 @@ export async function createSpawnedSession(
       ? { sessionCreationCorrespondence: params.sessionCreationCorrespondence }
       : {}),
     ...(params.placementOrigin ? { placementOrigin: params.placementOrigin } : {}),
+    ...(params.managedTargetPlacement ? { managedTargetPlacement: params.managedTargetPlacement } : {}),
     ...(params.identity !== undefined ? { identity: params.identity } : {}),
     ...(params.memoryEnabled !== undefined ? { memoryEnabled: params.memoryEnabled } : {}),
     ...(params.approvalProfileId !== undefined ? { approvalProfileId: params.approvalProfileId } : {}),

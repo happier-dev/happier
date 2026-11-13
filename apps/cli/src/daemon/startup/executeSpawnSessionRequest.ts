@@ -4,6 +4,10 @@ import { NativeSessionDirectoryResultSchema } from '@/rpc/handlers/fileSystem/se
 import { prepareAdmittedScmEffect } from '@/workspaces/activation/workspaceEffect';
 import type { PersistedTakeoverAdmissionWaiter } from '../spawn/persistedTakeoverAdmission';
 import { configuration } from '@/configuration';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { deliverSessionTargetLaunch, prepareSessionTargetPlacement, projectSessionTargetLaunchFailure, type OpenManagedSessionTarget } from '@/daemon/spawn/prepareSessionTargetPlacement';
+import { SESSION_TARGET_PLACEMENT_ENV_KEY, type SessionTargetPlacement } from '@/subprocess/supervision/sessionTargetRelay';
+import { registerSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
 import type { SpawnFailureLimitsReader } from '@/processes/spawnFailure/classifySpawnFailure';
 import { createSessionInitialAccessFile } from '../spawn/sessionInitialAccessFile';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
@@ -58,6 +62,7 @@ import { readSessionCreationTerminalSpawnErrorDetail } from '@/api/session/sessi
 import { prepareExecuteSpawnSessionRequest } from './prepareExecuteSpawnSessionRequest';
 import { resolveExistingSessionSpawnPreGate } from '../spawn/resolveExistingSessionSpawnPreGate';
 import { probeSessionRunnerPresence } from '../sessions/isSessionRunnerActive';
+import type { SessionAttachCleanupByKey, SpawnResourceCleanupByKey } from '../sessions/cleanupSessionResources';
 import { refreshAccountSettingsForDaemonRequest } from './accountSettingsFreshness';
 import {
     type ProviderSpawnAuthorizationAttempt,
@@ -82,6 +87,7 @@ import {
     type CommittedDaemonLaunchSession,
 } from '../spawn/commitDaemonLaunchSession';
 import { archiveSessionOnceInactive } from '@/session/services/archiveSessionOnceInactive';
+import { settleCommittedSessionLaunchFailure } from '@/session/services/settleCommittedSessionLaunchFailure';
 import { bindAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
 import { AgentCliNotFoundError } from '@/packagedRuntime/managedTools/agentCliNotFoundError';
 import { SessionSpawnLaunchErrorV1Schema } from '@happier-dev/protocol/spawnSession';
@@ -133,6 +139,7 @@ import { resolveSessionMemoryCeilingBytes } from '../platform/linux/sessionMemor
 import { readRequesterHomeWithinActionLifetime } from '../sessionEncryption/requesterCurrentness';
 import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { reportTemplateAcceptedVersionAfterLaunch } from '../sessions/reportTemplateAcceptedVersionAfterLaunch';
+import type { SessionTrackingKey, TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 
 /** `SpawnSessionOptions.connectedServices` is wire-typed; read its team-resource selection through the canonical schema. */
 function hasTeamResourceConnectedServiceBinding(connectedServices: unknown): boolean {
@@ -162,6 +169,8 @@ export type ExecuteSpawnSessionRequestParams = Readonly<{
     agentIsolation?: import('../agentIsolation/agentIsolationLaunchPolicy').HostAgentIsolationLaunchContext;
     signal?: AbortSignal;
     readMachineResourcesPolicy?: import('@/processes/toolIdleTimeouts').MachineResourcesPolicyReader;
+    /** Present when multi-Session hosting is enabled: headless Sessions join this session host. */
+    sessionHost?: import('../sessionHost/daemonSessionHost').DaemonSessionHost;
     readSpawnFailureLimits?: SpawnFailureLimitsReader;
     checkRegistryUpdates?: () => Promise<void>;
     options: SpawnSessionOptions;
@@ -169,6 +178,8 @@ export type ExecuteSpawnSessionRequestParams = Readonly<{
     retainedTerminalRecovery?: 'adopt';
     persistedTakeoverAdmissionWaiter?: Pick<PersistedTakeoverAdmissionWaiter, 'getRegistration'>;
     credentials: SpawnCredentials;
+    /** The managed driver's Session-target custody (daemon-held; see `managedTargetPlacement`). */
+    openManagedSessionTarget?: OpenManagedSessionTarget;
     deviceLocalSecretStorage?: DeviceLocalSecretStorage;
     api: SpawnApi;
     connectedServicesMaterializationBaseDir: string;
@@ -184,15 +195,15 @@ export type ExecuteSpawnSessionRequestParams = Readonly<{
         connectedServices: ConnectedServiceBindingsV2;
         vendorResumeId: string | null;
     }>) => Promise<MissingConnectedServiceMaterializationIdentityRepair | null>;
-    pidToTrackedSession: Map<number, TrackedSession>;
-    pidToAwaiter: Map<number, (session: TrackedSession) => void>;
-    pidToSpawnResultResolver: Map<number, (result: SpawnSessionResult) => void>;
-    pidToSpawnWebhookTimeout: Map<number, NodeJS.Timeout>;
-    resolveCanonicalTrackedSessionId: (pid: number) => string;
+    trackedSessionsByKey: TrackedSessionMap;
+    spawnAwaiterByKey: Map<SessionTrackingKey, (session: TrackedSession) => void>;
+    spawnResultResolverByKey: Map<SessionTrackingKey, (result: SpawnSessionResult) => void>;
+    spawnWebhookTimeoutByKey: Map<SessionTrackingKey, NodeJS.Timeout>;
+    resolveCanonicalTrackedSessionId: (trackingKey: SessionTrackingKey) => string;
     onChildExited: (pid: number, exit: { reason: string; code: number | null; signal: string | null }) => void | Promise<void>;
     onTrackedSessionRegistered?: () => void;
-    spawnResourceCleanupByPid: Map<number, () => void | Promise<void>>;
-    sessionAttachCleanupByPid: Map<number, () => Promise<void>>;
+    spawnResourceCleanupByKey: SpawnResourceCleanupByKey;
+    sessionAttachCleanupByKey: SessionAttachCleanupByKey;
     processEnv?: NodeJS.ProcessEnv;
     /** Canonical daemon/server feature decision. Missing or non-enabled fails provider spawns closed. */
     resolveProvidersFeatureEnabled?: () => boolean | Promise<boolean>;
@@ -266,6 +277,8 @@ export async function executeSpawnSessionRequest(
             activateSessionPurposeBindings: requesterRuntime.activateSessionPurposeBindings,
             activatePurposeBindings: requesterRuntime.activatePurposeBindings };
     }
+    const requesterAttribution = options.requesterSessionBootstrap?.attribution ?? options.requesterWorkAttributionV1;
+    const requesterAccountId = requesterAttribution?.accountId ?? readAccountIdFromToken(params.credentials.token) ?? null;
     const requesterAdmissionFailure = await resolveRequesterLaunchAdmissionFailure(options);
     if (requesterAdmissionFailure) {
         logger.infoFile('[DAEMON RUN] Spawn launch admission refused', {
@@ -376,9 +389,9 @@ export async function executeSpawnSessionRequest(
             const admission = await resolveExistingSessionSpawnPreGate({
                 existingSessionId: prepared.normalizedExistingSessionId,
                 providerConversation: { backendTarget: prepared.effectiveBackendTargetV2, resumeId: prepared.effectiveResume },
-                pidToTrackedSession: params.pidToTrackedSession,
+                trackedSessionsByKey: params.trackedSessionsByKey,
                 probeSessionRunnerPresence: async (sessionId) => await probeSessionRunnerPresence({
-                    sessionId, trackedSessions: params.pidToTrackedSession.values(),
+                    sessionId, trackedSessions: params.trackedSessionsByKey.values(),
                 }),
                 waitForExitTimeoutMs: configuration.daemonSpawnExistingSessionWaitForExitMs,
                 waitForExitPollIntervalMs: configuration.daemonSpawnExistingSessionWaitForExitPollIntervalMs,
@@ -585,6 +598,8 @@ export async function executeSpawnSessionRequest(
                 return launchRetirementOutcome;
             };
 
+        let committedBirth: Pick<CommittedDaemonLaunchSession, 'sessionId' | 'created'> | null = null;
+        const executeLaunch = async (): Promise<SpawnSessionResult> => {
         try {
             const cleanupSpawnResources = async () => {
                 const incompleteRetirement =
@@ -705,7 +720,7 @@ export async function executeSpawnSessionRequest(
             }
             const preparedAgentIsolationIdentity = await prepareDaemonAgentIsolationIdentity({
                 hasAgentRuntime: catalogAgentId !== null, prepareAgentIsolationMember: params.prepareAgentIsolationMember,
-                requesterWorkAttributionV1: options.requesterSessionBootstrap?.attribution ?? options.requesterWorkAttributionV1,
+                requesterWorkAttributionV1: requesterAttribution,
                 signal: preparationSignal ?? params.signal,
                 ...(prepared.directoryKind === 'managed' ? { managedDirectory: {
                     directory, workspaceRoots: params.agentIsolation?.read()?.workspaceRoots ?? [],
@@ -920,6 +935,25 @@ export async function executeSpawnSessionRequest(
                 ));
             }
 
+            // The relay admits only this Session's runner; read live (a wrapper→runner promotion moves the pid).
+            let sessionTargetRunner: Readonly<{ pid: number }> | null = null;
+            let sessionTarget: Extract<Awaited<ReturnType<typeof prepareSessionTargetPlacement>>, { ok: true }> | undefined;
+            const sessionTargetKey = optionsWithProviderIsolation.spawnNonce ?? normalizedExistingSessionId ?? randomUUID();
+            if (optionsWithProviderIsolation.managedTargetPlacement) {
+                const placed = await prepareSessionTargetPlacement({ request: optionsWithProviderIsolation.managedTargetPlacement,
+                    sessionKey: sessionTargetKey,
+                    requesterAccountId,
+                    holderVersion: configuration.currentCliVersion,
+                    readTrustedCallerPid: () => sessionTargetRunner?.pid ?? null,
+                    ...(params.openManagedSessionTarget ? { openManagedSessionTarget: params.openManagedSessionTarget } : {}),
+                    // A respawn adopting the crashed runner's held Agent keeps that holder as the Session's primary.
+                    ...(optionsWithProviderIsolation.adoptSessionHolder ? { primarySocketPath: optionsWithProviderIsolation.adoptSessionHolder.socketPath } : {}),
+                    launchResourceScope });
+                if (!placed.ok) return await refuseSpawn(placed.result);
+                sessionTarget = placed;
+                recordPreparationPhase('session_target_placement');
+            }
+
             // Direct Team launch material is disclosed only to an existing
             // Session carrying its Home-accepted Team binding (lane 10 child 06
             // L10D-R11, §15; child 01 principle 3). Such a fresh launch commits
@@ -939,7 +973,10 @@ export async function executeSpawnSessionRequest(
                 // key with a durable row that a later retry can only rejoin.
                 // Credential checks still need the Home-accepted Team binding
                 // and therefore remain at final child-environment admission.
-                if (catalogAgentId) {
+                // Member executable admission belongs to the native resolver in
+                // final child-environment preparation, after launch material exists.
+                // The daemon cannot establish presence in that member's private HOME.
+                if (catalogAgentId && !preparedAgentIsolationIdentity.memberIdentity) {
                     const executable = await validateSpawnAgentCliLaunch({
                         agentId: catalogAgentId, options: optionsWithProviderIsolation,
                         happyHomeDir: configuration.happyHomeDir,
@@ -955,6 +992,14 @@ export async function executeSpawnSessionRequest(
                         errorMessage: executable.errorMessage, agentId: catalogAgentId });
                 }
                 const committed = await commitDaemonLaunchSession({
+                    onCommitted: async birth => {
+                        committedBirth = birth;
+                        // Retain the committed row's directory even if attach or
+                        // native binding preparation refuses before returning.
+                        if (managedAllocation && managedDirectoryOwner) {
+                            await managedDirectoryOwner.bind({ allocationId: managedAllocation.allocationId, sessionId: birth.sessionId });
+                        }
+                    },
                     ...(params.prepareNativeTeamCredentialBinding ? { prepareNativeTeamCredentialBinding: async ({ sessionId: committedSessionId, created, binding }) => {
                         const model = optionsWithProviderIsolation.modelSelection?.ref;
                         if (!model) throw new SessionTeamCredentialLaunchUnavailableError();
@@ -978,24 +1023,13 @@ export async function executeSpawnSessionRequest(
                 diagnosticSessionId = committed.session.sessionId;
                 launchSessionAttachPayload = committed.session.attachPayload;
                 launchOptions = committed.session.options;
-                // Home now retains this Session for ordinary Retry/Resume.
-                // Its allocation must survive a later pre-runner refusal,
-                // including an exhausted connected-account pool.
-                if (managedAllocation && managedDirectoryOwner) {
-                    await managedDirectoryOwner.bind({ allocationId: managedAllocation.allocationId, sessionId: launchExistingSessionId });
-                }
                 if (committed.session.created) {
-                    const committedSessionId = committed.session.sessionId;
                     launchResourceScope.register({
-                        // Archive this launch's new row on pre-runner refusal;
-                        // once registered, the runner owns it.
+                        // Release binding custody on refusal; the result owner
+                        // below settles and archives its new Session.
                         onFailure: async () => {
                             if (childLaunchSubmitted) return;
                             await committed.session.releaseNativeBindingOnLaunchFailure?.();
-                            await archiveSessionOnceInactive({
-                                token: params.credentials.token,
-                                sessionId: committedSessionId,
-                            }).catch(() => undefined);
                         },
                         onExit: () => undefined,
                     });
@@ -1339,6 +1373,28 @@ export async function executeSpawnSessionRequest(
                 launchResourceScope.register(runnerAgentSessionBootstrap.cleanupBootstrapFile);
             }
             const { spawnEnvironment, extraEnv, extraEnvForChild, trackedSpawnOptions, terminalRequest } = childEnvironment;
+            if (sessionTarget && effectiveOptionsForSpawn.managedTargetPlacement) {
+                // The launch step: this Session's own Agent material and CLI into the target, then the placement to the runner.
+                try {
+                    const catalogEntry = catalogAgentId && appliedPluginRuntimeLease.registry.acquireAgentCatalogEntry
+                        ? await appliedPluginRuntimeLease.registry.acquireAgentCatalogEntry(catalogAgentId)
+                        : catalogAgentId ? appliedPluginRuntimeLease.registry.contributes.catalogEntriesById[catalogAgentId] : undefined;
+                    const sharing = await catalogEntry?.getConnectedServiceStateSharingDescriptor?.();
+                    const launch = await deliverSessionTargetLaunch({ target: sessionTarget.target, sessionKey: sessionTarget.sessionKey,
+                        runnerEnvironment: extraEnvForChild, launchResourceScope,
+                        credentialEntries: sharing?.authIsolation?.secretEntries ?? null,
+                        materializedRoot: connectedServiceAuth?.targetMaterializedRoot ?? null,
+                        requestAuthMaterializedRoot: connectedServiceAuth?.requestAuthMaterializedRoot ?? null,
+                        agentCommand: spawnEnvironment.agentCliLaunchSpec?.command ?? null,
+                        agentRuntime: catalogAgentId ? appliedPluginRuntimeLease.registry.contributes.agentDefinitionsById.get(catalogAgentId)?.runtimeSpec ?? null : null,
+                        workspace: { hostRoot: effectiveOptionsForSpawn.directory, targetRoot: effectiveOptionsForSpawn.managedTargetPlacement.workspaceRoot },
+                        signal: sessionTarget.signal });
+                    extraEnvForChild[SESSION_TARGET_PLACEMENT_ENV_KEY] = JSON.stringify({ ...sessionTarget.placement, launch } satisfies SessionTargetPlacement);
+                } catch (error) {
+                    return await refuseSpawn(projectSessionTargetLaunchFailure(error));
+                }
+                recordPreparationPhase('session_target_launch');
+            }
             const runnerAgentInvocationContext =
                 runnerAgentSessionBootstrap
                     ? Object.freeze({
@@ -1391,7 +1447,8 @@ export async function executeSpawnSessionRequest(
                 ...(connectedServices.agentLaunchMaterials ? { agentLaunchMaterials: connectedServices.agentLaunchMaterials } : {}),
                 ...(effectiveOptionsForSpawn.projectSetupOperation ? { projectSetupOperation: effectiveOptionsForSpawn.projectSetupOperation } : {}),
                 ...(requesterRuntime ? { requesterSessionRuntimeContext: requesterRuntime } : {}),
-                onTrackedSessionRegistered: () => {
+                onTrackedSessionRegistered: (trackedSession) => {
+                    sessionTargetRunner = trackedSession;
                     childLaunchSubmitted = true;
                     params.onTrackedSessionRegistered?.();
                 },
@@ -1426,8 +1483,8 @@ export async function executeSpawnSessionRequest(
                 connectedServiceRefreshCoordinator: params.connectedServiceRefreshCoordinator,
                 connectedServiceQuotasCoordinator: params.connectedServiceQuotasCoordinator,
                 connectedServiceRuntimeRegistry: params.connectedServiceRuntimeRegistry,
-                spawnResourceCleanupByPid: params.spawnResourceCleanupByPid,
-                sessionAttachCleanupByPid: params.sessionAttachCleanupByPid,
+                spawnResourceCleanupByKey: params.spawnResourceCleanupByKey,
+                sessionAttachCleanupByKey: params.sessionAttachCleanupByKey,
                 setPendingSessionAttachCleanup: (cleanup) => {
                     cleanupPendingSessionAttach = cleanup;
                 },
@@ -1475,6 +1532,7 @@ export async function executeSpawnSessionRequest(
             recordPreparationPhase('runner_launch');
             const launchResources = params.readMachineResourcesPolicy?.();
             let spawnResult = await routeSpawnModeAndWaitForWebhook({
+                ...(params.sessionHost ? { sessionHost: params.sessionHost } : {}),
                 memoryHighBytes: launchResources
                     ? resolveSessionMemoryCeilingBytes(launchSessionAttachPayload?.snapshot?.metadata,
                         launchResources.status === 'ready' ? launchResources.policy.guard : undefined)
@@ -1509,11 +1567,11 @@ export async function executeSpawnSessionRequest(
                 runnerAgentInvocationContext,
                 processEnv: params.processEnv ?? process.env,
                 happyHomeDir: configuration.happyHomeDir,
-                pidToTrackedSession: params.pidToTrackedSession,
-                pidToAwaiter: params.pidToAwaiter,
+                trackedSessionsByKey: params.trackedSessionsByKey,
+                spawnAwaiterByKey: params.spawnAwaiterByKey,
                 takeoverAdmission: takeoverAdmission ?? undefined,
-                pidToSpawnResultResolver: params.pidToSpawnResultResolver,
-                pidToSpawnWebhookTimeout: params.pidToSpawnWebhookTimeout,
+                spawnResultResolverByKey: params.spawnResultResolverByKey,
+                spawnWebhookTimeoutByKey: params.spawnWebhookTimeoutByKey,
                 resolveCanonicalTrackedSessionId: params.resolveCanonicalTrackedSessionId,
                 onChildExited: params.onChildExited,
                 spawnLifecycleCallbacks: spawnLifecycle.spawnLifecycleCallbacks,
@@ -1535,6 +1593,16 @@ export async function executeSpawnSessionRequest(
                 },
             });
             if (spawnResult.type === 'success') diagnosticSessionId = spawnResult.sessionId || diagnosticSessionId;
+            if (spawnResult.type === 'success' && spawnResult.sessionId && sessionTarget?.placement.primarySocketPath
+                && effectiveOptionsForSpawn.managedTargetPlacement) {
+                // Files/Git for this Session use its target workspace through the primary Agent's holder.
+                const target = sessionTarget.target;
+                const signal = sessionTarget.signal;
+                registerSessionTargetWorkspace({ sessionId: spawnResult.sessionId, lifetime: signal, primarySocketPath: sessionTarget.placement.primarySocketPath,
+                    target: { id: target.id, holderPath: target.holderPath, helperPath: target.helperPath, socketDirectory: target.socketDirectory,
+                        exec: command => target.exec(command, signal), openChannel: argv => target.openChannel(argv, signal) },
+                    workspace: { hostRoot: effectiveOptionsForSpawn.directory, targetRoot: effectiveOptionsForSpawn.managedTargetPlacement.workspaceRoot } });
+            }
             recordPreparationPhase('runner_webhook');
             if (spawnResult.type === 'success' && spawnResult.sessionId && !launchExistingSessionId && managedAllocation && managedDirectoryOwner) {
                 try {
@@ -1588,7 +1656,7 @@ export async function executeSpawnSessionRequest(
             const pluginCodeRefusal = !incompleteRetirement ? projectPluginCodeRefusal(error, { platform: process.platform,
                 role: (requesterRuntime?.bootstrap.savedSecretOperationContext.machineAdmission
                     ?? options.spawnActionContext?.machineAdmission)?.role,
-                target: requesterRuntime?.bootstrap.attribution ?? options.requesterWorkAttributionV1 }) : undefined;
+                target: requesterAttribution }) : undefined;
             const launchCause = SessionSpawnLaunchErrorV1Schema.safeParse(pluginCodeRefusal ?? { kind: 'launch_error',
                 code: incompleteRetirement ? 'STARTUP_RETIREMENT_INCOMPLETE' : rawCauseCode,
                 message: incompleteRetirement ?? errorMessage });
@@ -1612,6 +1680,22 @@ export async function executeSpawnSessionRequest(
                     ),
             };
         }
+        };
+        const result = await executeLaunch();
+        // Only this creator's fresh, unlaunched row belongs to this settlement.
+        // Host-seeded births settle at their creator; resumed/running Sessions
+        // keep their existing runner lifecycle.
+        const committed = committedBirth as Pick<CommittedDaemonLaunchSession, 'sessionId' | 'created'> | null;
+        if (committed?.created && !childLaunchSubmitted && !retainResourcesForUntrackedHostedChild && result.type === 'error') {
+            try {
+                await settleCommittedSessionLaunchFailure({ token: params.credentials.token,
+                    sessionId: committed.sessionId, failure: result });
+            } finally {
+                await archiveSessionOnceInactive({ token: params.credentials.token,
+                    sessionId: committed.sessionId }).catch(() => undefined);
+            }
+        }
+        return result;
     } catch (error) {
         logger.warn('[DAEMON RUN] Failed before spawn session work started', {
             hasExistingSessionId: typeof options.existingSessionId === 'string' && options.existingSessionId.trim().length > 0,

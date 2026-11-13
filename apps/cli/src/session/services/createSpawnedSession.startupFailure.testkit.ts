@@ -35,6 +35,7 @@ import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions
 import { SessionTeamCredentialLaunchUnavailableError } from './sessionTeamCredentialLaunch';
 import { buildSessionSpawnInitialInputLocalIdV1 } from '@happier-dev/protocol/sessions/messages/spawnedFirstTurn';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 // Socket.IO is a network boundary. Keep its ordinary implementation outside
 // this fixture so sibling composed paths retain their own transport behavior.
@@ -64,7 +65,7 @@ export async function assertStartupFailureThroughCli(input: Readonly<{
         generateOperationId: () => `native-startup-${++operationSequence}` });
     let row: ReturnType<typeof createCurrentSessionProjectionRecordFixture> | null = null;
     const runners: ReturnType<typeof spawn>[] = [];
-    const tracked = new Map<number, TrackedSession>();
+    const tracked = new Map<SessionTrackingKey, TrackedSession>();
     let launches = 0;
     let nonceReads = 0;
     let admittedInputs = 0;
@@ -126,7 +127,7 @@ export async function assertStartupFailureThroughCli(input: Readonly<{
                 : spawn(process.execPath, ['-e', 'process.exit(1)'], { stdio: 'ignore' });
             runners.push(child);
             if (!child.pid) throw new Error('Missing fixture runner pid');
-            tracked.set(child.pid, { pid: child.pid, startedBy: 'daemon', happySessionId: sessionId,
+            tracked.set(legacyPidSessionTrackingKey(child.pid), { trackingKey: legacyPidSessionTrackingKey(child.pid), pid: child.pid, startedBy: 'daemon', happySessionId: sessionId,
                 ...(preparationCode === 'opened' ? { agentRuntimeDaemonServiceAuthorityFilePath: '/fixture/native-startup-authority' } : {}),
                 childProcess: child, processStartTimeMs: Date.now() });
             const fields = buildSessionMetadataEnvelopeCreateFields({ credentials, accountEncryptionMode: 'plain',

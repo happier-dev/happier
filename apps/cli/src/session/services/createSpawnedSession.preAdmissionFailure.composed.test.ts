@@ -17,7 +17,7 @@ import { createSpawnedSession } from './createSpawnedSession';
 afterEach(() => { vi.unstubAllEnvs(); reloadConfiguration(); resetServerFeaturesClientForTests(); });
 
 describe('committed Session pre-admission failure', () => {
-  it.each(['pool', 'diagnostic'] as const)('persists the %s refusal as a readable startup issue', async variant => {
+  it.each(['pool', 'diagnostic', 'quota'] as const)('persists the %s refusal as a readable startup issue', async variant => {
     const home = await mkdtemp(join(tmpdir(), 'happier-pre-admission-refusal-'));
     const sessionId = 'c1234567890123456789012345';
     const credentials = { token: 'fixture-token', encryption: null } as const;
@@ -63,7 +63,7 @@ describe('committed Session pre-admission failure', () => {
     vi.stubEnv('HAPPIER_SERVER_URL', `http://127.0.0.1:${address.port}`);
     reloadConfiguration();
     resetServerFeaturesClientForTests();
-    const code = variant === 'pool' ? 'no_eligible_member' : 'no_eligible_group_member';
+    const code = variant === 'quota' ? 'usage_limit' : variant === 'pool' ? 'no_eligible_member' : 'no_eligible_group_member';
     try {
       await expect(createSpawnedSession({ credentials, directory: home, machineId: 'fixture-machine',
         accountEncryptionCurrentness: currentness, accountSettings: {},
@@ -72,7 +72,11 @@ describe('committed Session pre-admission failure', () => {
         beforeLaunch: async () => {},
         directTransport: {
           spawn: async () => ({ type: 'error', errorCode: SPAWN_SESSION_ERROR_CODES.SPAWN_VALIDATION_FAILED,
-            errorMessage: 'PRIVATE_ADAPTER_PROSE', errorDetail: variant === 'pool'
+            errorMessage: 'PRIVATE_ADAPTER_PROSE', errorDetail: variant === 'quota'
+              ? { kind: 'launch_error', code, message: 'PRIVATE_ADAPTER_PROSE',
+                failureCause: { code: 'usage_limit', phase: 'client_start', failureReason: 'usage_limit' },
+                connectedAccountPool: { serviceId: 'happier.agent.codex/openai-codex', excluded: [{ profileId: 'primary', reason: 'quota_exhausted' }] } }
+              : variant === 'pool'
               ? { kind: 'launch_error', code, message: 'PRIVATE_ADAPTER_PROSE',
                 connectedAccountPool: { serviceId: 'openai-codex', excluded: [] } }
               : { kind: SPAWN_SESSION_ERROR_DETAIL_KINDS.CONNECTED_SERVICE_UX_DIAGNOSTIC, uxDiagnostic: {
@@ -85,7 +89,8 @@ describe('committed Session pre-admission failure', () => {
       const failed = mutations.find(mutation => mutation.action === 'fail');
       expect(failed).toMatchObject({ action: 'fail', issue: { code } });
       if (!failed || failed.action !== 'fail') throw new Error('Missing persisted failure');
-      expect(readSessionStartupFailurePreview(failed.issue.code)).not.toBeNull();
+      if (variant !== 'quota') expect(readSessionStartupFailurePreview(failed.issue.code)).not.toBeNull();
+      expect(failed.issue.failureCause?.phase).toBe('client_start');
       expect(JSON.stringify(mutations)).not.toContain('PRIVATE_ADAPTER_PROSE');
     } finally {
       await new Promise<void>((resolve, reject) => http.close(error => error ? reject(error) : resolve()));

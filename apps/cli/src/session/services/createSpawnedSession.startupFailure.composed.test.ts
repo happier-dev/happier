@@ -38,6 +38,7 @@ import { reportSessionRunnerFailure } from '@/cli/resolveSessionRunnerFailureExi
 import { readSessionRunnerFailureCause } from '@/session/shared/spawnSessionContract';
 import { logger } from '@/ui/logger';
 import { SessionTeamCredentialLaunchUnavailableError } from './sessionTeamCredentialLaunchError';
+import { legacyPidSessionTrackingKey, type SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 afterEach(() => { vi.unstubAllEnvs(); reloadConfiguration(); });
 
@@ -158,17 +159,17 @@ describe('durable creation after daemon startup refusal', () => {
         reloadConfiguration();
         const identity = await readProcessIdentityByPid(process.pid);
         if (identity?.processStartTimeMs === undefined) throw new Error('Missing process generation');
-        const tracked: TrackedSession = { startedBy: 'daemon', pid: process.pid, happySessionId: `PID-${process.pid}`,
+        const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(process.pid), startedBy: 'daemon', pid: process.pid, happySessionId: `PID-${process.pid}`,
             spawnOptions: { directory: home }, processStartTimeMs: identity.processStartTimeMs };
-        const sessions = new Map([[tracked.pid, tracked]]);
-        const awaiters = new Map<number, (session: TrackedSession) => void>();
+        const sessions = new Map([[tracked.trackingKey, tracked]]);
+        const awaiters = new Map<SessionTrackingKey, (session: TrackedSession) => void>();
         let startupResponseStatus: number | undefined;
         let launches = 0;
         const startupFailure = { result: null as Extract<SpawnSessionResult, { type: 'error' }> | null };
         const app = createDaemonControlApp({ getChildren: () => [...sessions.values()], machineId,
             spawnSession: async () => { throw new Error('Unexpected control launch'); },
             stopSession: async () => ({ status: 'not_found' }), requestShutdown() {}, controlToken: 'fixture-token',
-            onHappySessionWebhook: createOnHappySessionWebhook({ pidToTrackedSession: sessions, pidToAwaiter: awaiters,
+            onHappySessionWebhook: createOnHappySessionWebhook({ trackedSessionsByKey: sessions, spawnAwaiterByKey: awaiters,
                 readCredentialsFn: async () => null,
                 onTrackedSessionReady: async session => {
                     session.agentRuntimeDaemonServiceAuthorityFilePath = join(home, 'authority.json');
@@ -193,8 +194,8 @@ describe('durable creation after daemon startup refusal', () => {
                 directTransport: {
                     spawn: async request => {
                         launches += 1;
-                        const pending = waitForSessionWebhook({ pid: tracked.pid, pidToTrackedSession: sessions,
-                            pidToAwaiter: awaiters, pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+                        const pending = waitForSessionWebhook({ trackingKey: tracked.trackingKey, pid: tracked.pid, trackedSessionsByKey: sessions,
+                            spawnAwaiterByKey: awaiters, spawnResultResolverByKey: new Map(), spawnWebhookTimeoutByKey: new Map(),
                             timeoutErrorMessage: 'Fixture report did not complete' });
                         created = candidate !== 'absent';
                         const report = await app.inject({ method: 'POST', url: '/session-started',
