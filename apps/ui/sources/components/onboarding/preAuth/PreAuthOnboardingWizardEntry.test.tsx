@@ -458,7 +458,7 @@ describe('PreAuthOnboardingWizardEntry', () => {
         const screen = await renderScreen(React.createElement(PreAuthOnboardingWizardEntry));
 
         expect(wizardControllerMock.lastProps?.initialServerUrl).toBe('https://home.example.test');
-        expect(wizardControllerMock.lastProps?.initialStepId).toBe('relay_enter_url');
+        expect(wizardControllerMock.lastProps?.initialStepId).toBe('connect_home');
         expect(screen.findAllByType('OnboardingWizardSurfacePresentation' as never)).toHaveLength(1);
         expect(replaceState).not.toHaveBeenCalled();
         (wizardControllerMock.lastProps?.onInitialServerUrlConnected as (() => void) | undefined)?.();

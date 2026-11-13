@@ -58,6 +58,11 @@ export type WizardStepDefinition = Readonly<{
     subtitleKey?: TranslationKey;
     /** The step body titles itself (its heading changes with its own sub-views), so the host draws none. */
     bodyOwnsHeading?: boolean;
+    /**
+     * Opened by its own entry (a Welcome row, a supplied Home address), never reached by advancing:
+     * it may be the wizard's first step though it takes no place in the sequence.
+     */
+    directEntry?: boolean;
     kind: WizardStepKind;
     surface: WizardMode;
     canSkip: boolean;

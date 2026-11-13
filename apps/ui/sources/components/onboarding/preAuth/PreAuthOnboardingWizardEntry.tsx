@@ -349,7 +349,7 @@ export const PreAuthOnboardingWizardEntry = React.memo(function PreAuthOnboardin
         if (props.initialStepId) {
             return props.initialStepId;
         }
-        if (suppliedHomeAddress && !suppliedHomeAddress.isAdmitted) return 'relay_enter_url';
+        if (suppliedHomeAddress && !suppliedHomeAddress.isAdmitted) return 'connect_home';
         if (homeStepRequested) return 'relay_select';
         const candidate = readDebugWebQueryParam('happier_wizard_step');
         if (!candidate) {

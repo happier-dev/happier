@@ -21,12 +21,12 @@ const onboardingVisible = (stepId: WizardStepId) => (context: WizardContext): bo
             return true;
         case 'host_relay_remote':
             return context.platform === 'desktop' && context.relaySelection.choiceId === 'remoteComputer';
+        // Only the web "this computer" handoff asks for its own Home's address here; every other
+        // address goes through the Welcome's connect step (`connect_home`).
         case 'relay_enter_url':
-            return (
-                (context.relaySelection.choiceId === 'customUrl'
-                    || (context.platform === 'web' && context.relaySelection.choiceId === 'thisComputer'))
-                && (context.relaySelection.serverUrl == null || String(context.relaySelection.serverUrl).trim() === '')
-            );
+            return context.platform === 'web'
+                && context.relaySelection.choiceId === 'thisComputer'
+                && (context.relaySelection.serverUrl == null || String(context.relaySelection.serverUrl).trim() === '');
         case 'welcome':
             return true;
         default:
@@ -156,7 +156,8 @@ const wizardStepRegistryEntries = [
         kind: 'auth',
         surface: 'onboarding',
         canSkip: false,
-        // Opened from the welcome's own row, never reached by advancing the sequence.
+        // Opened from the Welcome's row, the Home chooser's address choice or a supplied Home address.
+        directEntry: true,
         visibleWhen: () => false,
     },
     {

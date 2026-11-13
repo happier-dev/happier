@@ -49,7 +49,10 @@ export type WelcomeDecisionPanelProps = Readonly<{
     canScanQr?: boolean;
     canCreatePersonalHome?: boolean;
     onCreatePersonalHome?: () => void;
-    /** The phone doorway's "Connect to a Home directly": the wizard's own step for it. */
+    /**
+     * "Connect to a Home directly" (phone doorway and every width): the wizard's own step for it. Absent
+     * when setup policy does not allow adding a Home by its address, and the way in is left out.
+     */
     onConnectHomeDirectly?: () => void;
 }>;
 
@@ -167,7 +170,6 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
     });
     // The phone doorway's paths all add a Home, so a Home fixed by policy keeps the ordinary list.
     const phoneDoorway = viewportClass === 'compact'
-        && props.onConnectHomeDirectly != null
         && !homePolicy.disabled
         && !isReturningUser
         && !(model.notice?.kind === 'service_unsupported' && model.notice.hasUsableHomeMethods)
@@ -194,7 +196,11 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
                 />;
             }
             if (action.kind === 'choose_home') {
-                return <WelcomeActionCard key={row.id} actionId={row.id} testID="welcome-use-different-home" primary={row.emphasis === 'primary'} presentation={presentation} title={t(hasHome ? 'welcome.useDifferentHome' : 'homesJourneys.pathDirectTitle')} subtitle={hasHome ? t('welcome.useDifferentHomeSubtitle', { home: options.homeLabel ?? t('settingsAccount.thisHomeTitle') }) : t('homesJourneys.pathDirectSubtitle')} iconName="house" onPress={props.onChangeRelay} />;
+                // With no Home yet this is "Connect to a Home directly": the same Welcome step on every width.
+                // Choosing among Homes (saved, hosted, this computer) stays the Home chooser's.
+                const chooseHome = hasHome ? props.onChangeRelay : props.onConnectHomeDirectly;
+                if (!chooseHome) return null;
+                return <WelcomeActionCard key={row.id} actionId={row.id} testID="welcome-use-different-home" primary={row.emphasis === 'primary'} presentation={presentation} title={t(hasHome ? 'welcome.useDifferentHome' : 'homesJourneys.pathDirectTitle')} subtitle={hasHome ? t('welcome.useDifferentHomeSubtitle', { home: options.homeLabel ?? t('settingsAccount.thisHomeTitle') }) : t('homesJourneys.pathDirectSubtitle')} iconName="house" onPress={chooseHome} />;
             }
             if (action.kind === 'choose_sign_in_service') {
                 return <WelcomeActionCard key={row.id} actionId={row.id} testID="welcome-account-service-choose" primary={row.emphasis === 'primary'} presentation={presentation} title={t('welcome.chooseSignInService')} subtitle={t('welcome.signInServiceUrlPrompt')} iconName="globe" onPress={props.onChooseAccountService!} />;
@@ -352,7 +358,7 @@ export const WelcomeDecisionPanel = React.memo(function WelcomeDecisionPanel(pro
             ) : null}
             <WelcomeActionList admission={actionAdmission}>
                 {phoneDoorway
-                    ? <PhoneWelcomeDoorway canScanQr={props.canScanQr === true} onScan={handleLogin} onConnectDirectly={props.onConnectHomeDirectly!} />
+                    ? <PhoneWelcomeDoorway canScanQr={props.canScanQr === true} onScan={handleLogin} onConnectDirectly={props.onConnectHomeDirectly} />
                     : renderActions()}
             </WelcomeActionList>
         </View>

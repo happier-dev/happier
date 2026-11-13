@@ -13,6 +13,7 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { SetupPathPanel, type SetupPath } from '@/components/ui/setupBlocks/SetupPathPanel';
 import { canSetUpServerHomeHere } from '@/sync/domains/server/setup/setupSurfacePolicy';
+import type { ServerProfile } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
 
@@ -101,6 +102,8 @@ export function HomeAddForm(props: Readonly<{
      * back; null hands it back to the host (leaving the form).
      */
     onBackChange?: (next: Readonly<{ onPress: () => void }> | null) => void;
+    /** The Home typed or linked answered and is saved on this device (before its sign-in). */
+    onHomeConnected?: (profile: ServerProfile) => void;
 }>) {
     const { theme } = useUnistyles();
     const homePolicy = readOrganizationPolicyFieldState('home');
@@ -179,7 +182,10 @@ export function HomeAddForm(props: Readonly<{
             case 'direct':
                 pane = <DirectHomePathPane
                     initialAddress={flow.pane.initialAddress}
-                    onHomeConnected={flow.homeConnected}
+                    onHomeConnected={async (profile) => {
+                        props.onHomeConnected?.(profile);
+                        await flow.homeConnected(profile);
+                    }}
                     onAddressChange={props.onAddressChange}
                     onLeave={onClose}
                 />;

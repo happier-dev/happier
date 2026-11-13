@@ -145,8 +145,12 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
     onScan: (payload: string) => void;
 
     onOpenRelaySelectionFromWelcome: () => void;
-    onOpenConnectHome: () => void;
+    /** Absent when setup policy does not allow adding a Home by its address. */
+    onOpenConnectHome?: () => void;
     onBackToWelcome: () => void;
+    /** A supplied Home address the connect step starts with, and who learns that it was reached. */
+    connectHomeInitialAddress?: string;
+    onConnectHomeReached?: () => void;
     onOpenRelaySelectionFromAuth: () => void;
     onCreatePersonalHome?: () => void;
 
@@ -200,8 +204,10 @@ export function renderOnboardingWizardStepBody(params: Readonly<{
                 layout="step"
                 testID={`${params.testIDPrefix}-connect-home`}
                 initialPath="direct"
+                initialAddress={params.connectHomeInitialAddress}
                 onClose={params.onBackToWelcome}
                 onBackChange={params.onWizardBackChange}
+                onHomeConnected={params.onConnectHomeReached}
             />
         );
     }

@@ -79,7 +79,6 @@ describe('wizardSelectors', () => {
             'welcome',
             'scan_code',
             'relay_select',
-            'relay_enter_url',
             'auth',
             'auth_restore',
             'auth_secret_key',

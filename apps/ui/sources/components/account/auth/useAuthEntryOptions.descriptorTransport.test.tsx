@@ -82,7 +82,7 @@ it('offers Retry while Welcome discovery is pending and replaces its abandoned o
     });
     function Welcome() {
         return <WelcomeDecisionPanel authEntryOptions={useAuthEntryOptions()}
-            onOpenRestore={() => {}} onChangeRelay={() => {}} />;
+            onOpenRestore={() => {}} onChangeRelay={() => {}} onConnectHomeDirectly={() => {}} />;
     }
     const screen = await renderScreen(<Welcome />, { wrapper: signedOut });
     try {

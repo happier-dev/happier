@@ -31,6 +31,11 @@ function isAllowedByBuildPolicy(featureId: Parameters<typeof getFeatureBuildPoli
     return getFeatureBuildPolicyDecision(featureId) !== 'deny';
 }
 
+/** Whether a person may add a Home by its own address or link (Welcome's connect step, Settings' Add a Home). */
+export function canConnectHomeByAddress(policy: Pick<SetupSurfacePolicy, 'relay'> = resolveSetupSurfacePolicy()): boolean {
+    return policy.relay.allowRelaySelection && policy.relay.allowCustomRelayUrl;
+}
+
 export function resolveSetupSurfacePolicy(): SetupSurfacePolicy {
     const organizationPolicy = readOrganizationPolicy();
     const governedHomeSelection = organizationPolicy.status === 'invalid'

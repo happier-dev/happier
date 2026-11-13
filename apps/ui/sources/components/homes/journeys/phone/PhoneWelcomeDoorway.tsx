@@ -32,14 +32,15 @@ export function PhoneWelcomeDoorway(props: Readonly<{
     canScanQr: boolean;
     /** The welcome's existing scan / paste-a-Home-link entry. */
     onScan: () => void;
-    /** The welcome's own step for a Home reached directly (its link or address, then its sign-in). */
-    onConnectDirectly: () => void;
+    /** The welcome's own step for a Home reached directly (its link or address, then its sign-in); absent when policy denies it. */
+    onConnectDirectly?: () => void;
 }>) {
     const service = useJourneyAccountService();
     const servicePolicy = readOrganizationPolicyFieldState('accountService');
     const admission = React.useContext(WelcomeActionAdmissionContext);
     const { theme } = useUnistyles();
     const serviceUrl = service.discovery?.endpointUrl ?? service.entry.endpoint.url;
+    const { onConnectDirectly } = props;
     return (
         <>
             <WelcomeActionCard
@@ -77,14 +78,16 @@ export function PhoneWelcomeDoorway(props: Readonly<{
             {/* The welcome panel already draws the box edge its buttons stand on; the sheet stands there too,
                 not a page's sheet inset further in (L2: card at 40 under buttons at 24). */}
             <ItemGroup containerStyle={styles.doorwaySheet}>
-            <Item
-                testID="welcome-doorway-direct"
-                title={t('homesJourneys.pathDirectTitle')}
-                subtitle={t('homesJourneys.pathDirectSubtitle')}
-                icon={<Icon name="hard-drives" size={20} color={theme.colors.text.secondary} />}
-                disabled={admission.pendingActionId !== null}
-                onPress={() => { void admission.run('welcome-doorway-direct', props.onConnectDirectly); }}
-            />
+            {onConnectDirectly ? (
+                <Item
+                    testID="welcome-doorway-direct"
+                    title={t('homesJourneys.pathDirectTitle')}
+                    subtitle={t('homesJourneys.pathDirectSubtitle')}
+                    icon={<Icon name="hard-drives" size={20} color={theme.colors.text.secondary} />}
+                    disabled={admission.pendingActionId !== null}
+                    onPress={() => { void admission.run('welcome-doorway-direct', onConnectDirectly); }}
+                />
+            ) : null}
             {service.hostsHome ? (
                 <Item
                     testID="welcome-doorway-service-as-home"

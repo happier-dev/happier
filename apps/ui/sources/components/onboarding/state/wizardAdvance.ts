@@ -23,7 +23,6 @@ export type WizardAdvanceEvent =
     | Readonly<{
         type: 'saveCustomRelayUrl';
         relayUrl: string;
-        relayProfileId: string | null;
     }>;
 
 export type WizardAdvanceEffect =
@@ -87,13 +86,10 @@ function resolveRelaySelectAdvance(
         : [{ type: 'persistOnboardingIntent' as const, relayUrl: relayUrlForIntent || null }];
 
     if (selection.choiceId === 'customUrl') {
-        if (!selection.relayProfileId) {
-            return { nextStepId: 'relay_enter_url', effects: intentEffect };
-        }
-
+        // A new address is connected in the Welcome's connect step; a saved Home is selected here.
         const serverUrl = trimmed(selection.serverUrl);
-        if (!serverUrl) {
-            return { nextStepId: 'relay_enter_url', effects: intentEffect };
+        if (!selection.relayProfileId || !serverUrl) {
+            return { nextStepId: 'connect_home', effects: intentEffect };
         }
 
         const effects: WizardAdvanceEffect[] = [...intentEffect];
@@ -153,18 +149,13 @@ function resolveRelaySelectAdvance(
     return { nextStepId: 'auth', effects: intentEffect };
 }
 
+/** The web "this computer" handoff: the address of the Home this computer runs, then its background service. */
 function resolveSaveCustomRelayUrl(
-    state: WizardState,
     event: Extract<WizardAdvanceEvent, { type: 'saveCustomRelayUrl' }>,
 ): WizardAdvanceResolution {
     const relayUrl = trimmed(event.relayUrl);
-    const isThisComputerHandoff =
-        (state.context.platform === 'web' || state.context.platform === 'native')
-        && state.context.relaySelection.choiceId === 'thisComputer';
-    const choiceId = isThisComputerHandoff ? 'thisComputer' : 'customUrl';
-
     return {
-        nextStepId: isThisComputerHandoff ? 'background_service_handoff' : authStepFor(state),
+        nextStepId: 'background_service_handoff',
         effects: [
             {
                 type: 'activateServerUrl',
@@ -175,9 +166,9 @@ function resolveSaveCustomRelayUrl(
             {
                 type: 'setRelaySelection',
                 relaySelection: {
-                    choiceId,
+                    choiceId: 'thisComputer',
                     serverUrl: relayUrl,
-                    relayProfileId: choiceId === 'customUrl' ? event.relayProfileId : null,
+                    relayProfileId: null,
                     locked: false,
                 },
             },
@@ -192,7 +183,7 @@ export function resolveWizardAdvance(
     event: WizardAdvanceEvent,
 ): WizardAdvanceResolution {
     if (event.type === 'saveCustomRelayUrl') {
-        return resolveSaveCustomRelayUrl(state, event);
+        return resolveSaveCustomRelayUrl(event);
     }
 
     if (state.currentStepId === 'relay_select') {

@@ -59,6 +59,7 @@ function renderPanel(overrides: Partial<AuthEntryOptions> = {}) {
         onContinueWithHomeAuthentication: vi.fn(),
         onOpenRestore: vi.fn(),
         onChangeRelay: vi.fn(),
+        onConnectHomeDirectly: vi.fn(),
     };
     return {
         callbacks,

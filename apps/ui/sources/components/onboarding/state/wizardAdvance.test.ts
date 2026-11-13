@@ -120,7 +120,7 @@ describe('resolveWizardAdvance', () => {
         });
     });
 
-    it('routes manual custom relay selection with no URL to relay URL entry', () => {
+    it('routes the manual Home address choice to the Welcome connect step', () => {
         const result = resolveWizardAdvance(
             buildState({
                 mode: 'onboarding',
@@ -132,7 +132,7 @@ describe('resolveWizardAdvance', () => {
         );
 
         expect(result).toEqual({
-            nextStepId: 'relay_enter_url',
+            nextStepId: 'connect_home',
             effects: [],
         });
     });
@@ -198,7 +198,6 @@ describe('resolveWizardAdvance', () => {
             {
                 type: 'saveCustomRelayUrl',
                 relayUrl: 'https://local-relay.example.test',
-                relayProfileId: null,
             },
         );
 
@@ -223,26 +222,6 @@ describe('resolveWizardAdvance', () => {
                 { type: 'persistOnboardingIntent', relayUrl: 'https://local-relay.example.test' },
             ],
         });
-    });
-
-    it('routes saved custom relay URL entry to restore auth when restore intent is active', () => {
-        const result = resolveWizardAdvance(
-            buildState({
-                mode: 'onboarding',
-                stepId: 'relay_enter_url',
-                authIntent: 'restore',
-                relaySelection: { choiceId: 'customUrl' },
-            }),
-            wizardStepRegistry,
-            {
-                type: 'saveCustomRelayUrl',
-                relayUrl: 'https://restore-relay.example.test',
-                relayProfileId: 'profile:https://restore-relay.example.test',
-            },
-        );
-
-        expect(result.nextStepId).toBe('auth_restore');
-        expect(result.effects).toContainEqual({ type: 'persistOnboardingIntent', relayUrl: 'https://restore-relay.example.test' });
     });
 
     it('uses the registry fallback for ordinary onboarding advances', () => {

@@ -31,7 +31,7 @@ function renderPanel(variant: 'desktop' | 'mobile') {
             <WelcomeDecisionPanel
                 authEntryOptions={baseOptions}
                 onOpenRestore={vi.fn()}
-                onChangeRelay={vi.fn()}
+                onChangeRelay={vi.fn()} onConnectHomeDirectly={vi.fn()}
             />
         </WorkflowPanel>,
     );

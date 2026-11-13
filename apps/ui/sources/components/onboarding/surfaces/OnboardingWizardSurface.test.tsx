@@ -373,9 +373,10 @@ describe('OnboardingWizardSurface', () => {
         browser!.reconfigureUrl('https://app.happier.dev/desktop/app-window');
         const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
         const screen = await renderScreen(<OnboardingWizardSurface layout="portrait" isDesktopShell
-            initialStepId="relay_enter_url" authEntryOptions={baseAuthOptions} />);
-        await act(async () => screen.findByTestId('onboarding-wizard-relay-url-input')!.props.onChangeText('https://secondary-onboarding.example.test'));
+            initialStepId="relay_select" authEntryOptions={baseAuthOptions} />);
+        await pressOnboarding(screen, homeRowTestId(targetId));
         await pressOnboarding(screen, 'onboarding-wizard-primary');
+        await vi.waitFor(() => expect(getOnboardingStepId(screen)).toBe('auth'));
         expect(profiles.getActiveServerId()).toBe(targetId);
         expect(profiles.getTabActiveServerId()).toBe(targetId);
         expect(profiles.getDeviceDefaultServerId()).toBe(deviceHome);
@@ -1696,7 +1697,7 @@ describe('OnboardingWizardSurface', () => {
         expect(getOnboardingStepId(screen)).toBe('auth_lost_access');
     });
 
-    it('only advances to relay URL entry after pressing Continue when selecting the custom relay option', async () => {
+    it('only opens the connect step after pressing Continue when selecting the custom Home address option', async () => {
         await focusHomeAtAddress('https://api.happier.dev');
 
         const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
@@ -1717,7 +1718,7 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        expect(screen.findByTestId('onboarding-wizard-relay-url-input')).toBeNull();
+        expect(screen.findByTestId('already-use-happier.home-address')).toBeNull();
 
         const continueButton = screen.findByTestId('onboarding-wizard-primary')!;
         await act(async () => {
@@ -1725,42 +1726,8 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        expect(screen.findByTestId('onboarding-wizard-relay-url-input')).not.toBeNull();
-    });
-
-    it('prefills the relay URL entry input with the currently selected relay URL when available', async () => {
-        await focusHomeAtAddress('https://prefilled.relay.test');
-
-        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
-        const screen = await renderScreen(
-            React.createElement(OnboardingWizardSurface, {
-                layout: 'portrait',
-                isDesktopShell: true,
-                authEntryOptions: baseAuthOptions,
-                initialStepId: 'relay_select',
-            }),
-        );
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        const customRelayRow = screen.findByTestId('onboarding-wizard-relay:customUrl')!;
-        await act(async () => {
-            await customRelayRow.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        const continueButton = screen.findByTestId('onboarding-wizard-primary')!;
-        await act(async () => {
-            await continueButton.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        const relayInput = screen.findByTestId('onboarding-wizard-relay-url-input')!;
-        expect(relayInput.props.value).toBe('https://prefilled.relay.test');
-        expect(screen.findByTestId('onboarding-wizard-relay-url-label')?.props.children).toBe('setupOnboarding.customRelayUrlLabel');
-        expect(relayInput.props).toMatchObject({
-            accessibilityLabel: 'setupOnboarding.customRelayUrlLabel',
-            accessibilityLabelledBy: 'onboarding-wizard-relay-url-label',
-        });
+        expect(getOnboardingStepId(screen)).toBe('connect_home');
+        expect(screen.findByTestId('already-use-happier.home-address')).not.toBeNull();
     });
 
     it('routes the auth view change-relay action back to the wizard relay selection step', async () => {
@@ -1880,23 +1847,14 @@ describe('OnboardingWizardSurface', () => {
         ['desktop', 'desktop'],
         ['web', 'web'],
         ['native', 'native'],
-    ] as const)('characterizes manual custom relay URL unset vs set on %s', async (_label, platform) => {
+    ] as const)('sends the manual Home address choice to the Welcome connect step on %s', async (_label, platform) => {
         const screen = await renderPreAuthRelayMatrix(platform);
 
         await pressOnboarding(screen, 'onboarding-wizard-relay:customUrl');
         await pressOnboarding(screen, 'onboarding-wizard-primary');
-        expect(getOnboardingStepId(screen)).toBe('relay_enter_url');
-
-        const relayInput = screen.findByTestId('onboarding-wizard-relay-url-input');
-        expect(relayInput).toBeTruthy();
-        await act(async () => {
-            relayInput?.props.onChangeText?.(`https://${platform}.custom-relay.example.test`);
-        });
-        await pressOnboarding(screen, 'onboarding-wizard-primary');
-
-        // Connecting a typed address probes the Home before the wizard advances.
-        await vi.waitFor(() => expect(getOnboardingStepId(screen)).toBe('auth'));
-        expectFocusedHome(`https://${platform}.custom-relay.example.test`);
+        // One address flow on every width and platform (owner 11-13): the connect step, not a second URL step.
+        expect(getOnboardingStepId(screen)).toBe('connect_home');
+        expect(screen.findByTestId('already-use-happier.home-address')).toBeTruthy();
     });
 
     it.each([
@@ -2119,68 +2077,6 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        expect(screen.findByTestId('onboarding-wizard-lost-access')).not.toBeNull();
-    });
-
-    it('skips relay URL entry when a custom relay has already been resolved', async () => {
-        await focusHomeAtAddress('https://api.happier.dev');
-
-        const { OnboardingWizardSurface } = await import('@/dev/testkit/harness/onboardingWizardHarness');
-        const screen = await renderScreen(
-            React.createElement(OnboardingWizardSurface, {
-                layout: 'portrait',
-                isDesktopShell: true,
-                authEntryOptions: baseAuthOptions,
-                initialStepId: 'relay_select',
-            }),
-        );
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        const customRelayRow = screen.findByTestId('onboarding-wizard-relay:customUrl')!;
-        await act(async () => {
-            await customRelayRow.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        const continueToUrlEntry = screen.findByTestId('onboarding-wizard-primary')!;
-        await act(async () => {
-            await continueToUrlEntry.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        const relayInput = screen.findByTestId('onboarding-wizard-relay-url-input')!;
-        await act(async () => {
-            relayInput.props.onChangeText?.('https://custom.relay.test');
-        });
-
-        const saveRelayButton = screen.findByTestId('onboarding-wizard-primary')!;
-        await act(async () => {
-            await saveRelayButton.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        // Connecting the typed address probes the Home before the wizard advances.
-        await vi.waitFor(() => expect(screen.findByTestId('onboarding-wizard-lost-access')).not.toBeNull());
-
-        const backButton = screen.findByTestId('onboarding-wizard-back')!;
-        await act(async () => {
-            await backButton.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        expect(screen.findByTestId('onboarding-wizard-relay:customUrl')).not.toBeNull();
-
-        const activeRelayRow = screen.findByProps({ testID: homeRowTestId('active') } as never);
-        expect(activeRelayRow?.props.selected).toBe(true);
-        expect(screen.findByProps({ testID: 'onboarding-wizard-relay:customUrl' } as never)?.props.selected).toBe(false);
-
-        const continueAfterResolved = screen.findByTestId('onboarding-wizard-primary')!;
-        await act(async () => {
-            await continueAfterResolved.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 1, turns: 1 });
-
-        expect(screen.findByTestId('onboarding-wizard-relay-url-input')).toBeNull();
         expect(screen.findByTestId('onboarding-wizard-lost-access')).not.toBeNull();
     });
 
@@ -3008,7 +2904,7 @@ describe('OnboardingWizardSurface', () => {
         expect(continueButtonAfter.props.disabled).toBe(false);
     });
 
-    it('keeps a manually entered unreachable Home address in the URL step without saving it', async () => {
+    it('keeps a manually entered unreachable Home address in the connect step without saving it', async () => {
         const previousFetchImpl = runtimeFetchMock.getMockImplementation();
         runtimeFetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = String(input);
@@ -3046,25 +2942,20 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        const continueToUrlEntry = screen.findByTestId('onboarding-wizard-primary')!;
+        const continueToConnect = screen.findByTestId('onboarding-wizard-primary')!;
         await act(async () => {
-            await continueToUrlEntry.props.onPress?.();
+            await continueToConnect.props.onPress?.();
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        const relayInput = screen.findByTestId('onboarding-wizard-relay-url-input')!;
         await act(async () => {
-            relayInput.props.onChangeText?.('https://typed-unreachable-relay.example.test');
+            screen.findByTestId('already-use-happier.home-address')!.props.onChangeText?.('https://typed-unreachable-relay.example.test');
         });
+        await pressOnboarding(screen, 'already-use-happier.home-connect');
+        await vi.waitFor(() => expect(screen.findByTestId('already-use-happier.home-address-error')).toBeTruthy());
 
-        const saveButton = screen.findByTestId('onboarding-wizard-primary')!;
-        await act(async () => {
-            await saveButton.props.onPress?.();
-        });
-        await flushHookEffects({ cycles: 2, turns: 2 });
-
-        expect(getOnboardingStepId(screen)).toBe('relay_enter_url');
-        expect(screen.findByTestId('onboarding-wizard-relay-url-input')?.props.value).toBe('https://typed-unreachable-relay.example.test');
+        expect(getOnboardingStepId(screen)).toBe('connect_home');
+        expect(screen.findByTestId('already-use-happier.home-address')?.props.value).toBe('https://typed-unreachable-relay.example.test');
         expect(profiles.getActiveServerSnapshot()).toMatchObject(focusBeforeAction);
 
         runtimeFetchMock.mockImplementation(previousFetchImpl ?? (async (input: RequestInfo | URL, init?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } })));
@@ -3109,15 +3000,14 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        const relayInput = screen.findByTestId('onboarding-wizard-relay-url-input')!;
         await act(async () => {
-            relayInput.props.onChangeText?.('https://typed-relay.example.ts.net');
+            screen.findByTestId('already-use-happier.home-address')!.props.onChangeText?.('https://typed-relay.example.ts.net');
         });
-        await flushHookEffects({ cycles: 4, turns: 4 });
+        await pressOnboarding(screen, 'already-use-happier.home-connect');
+        await vi.waitFor(() => expect(screen.findByTestId('server-settings-add-reachability-remediation')).toBeTruthy());
 
         expect(screen.findByTestId('server-settings-add-reachability-remediation')).toBeTruthy();
         expect(screen.findByTestId('server-settings-add-remediation-action-prepare_tailscale')).toBeTruthy();
-        expect(screen.findByTestId('onboarding-wizard-primary')?.props.disabled).toBe(true);
 
         runtimeFetchMock.mockImplementation(previousFetchImpl ?? (async (input: RequestInfo | URL, init?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } })));
     });
@@ -3163,16 +3053,15 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        const relayInput = screen.findByTestId('onboarding-wizard-relay-url-input')!;
         await act(async () => {
-            relayInput.props.onChangeText?.('https://typed-relay.example.ts.net');
+            screen.findByTestId('already-use-happier.home-address')!.props.onChangeText?.('https://typed-relay.example.ts.net');
         });
-        await flushHookEffects({ cycles: 4, turns: 4 });
+        await pressOnboarding(screen, 'already-use-happier.home-connect');
+        await vi.waitFor(() => expect(screen.findByTestId('server-settings-add-reachability-remediation')).toBeTruthy());
 
         expect(screen.findByTestId('server-settings-add-reachability-remediation')).toBeTruthy();
         expect(screen.findByTestId('server-settings-add-remediation-action-install_tailscale')).toBeTruthy();
         expect(screen.findAllByTestId('server-settings-add-remediation-action-prepare_tailscale')).toHaveLength(0);
-        expect(screen.findByTestId('onboarding-wizard-primary')?.props.disabled).toBe(true);
 
         runtimeFetchMock.mockImplementation(previousFetchImpl ?? (async (input: RequestInfo | URL, init?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } })));
     });
@@ -3218,16 +3107,15 @@ describe('OnboardingWizardSurface', () => {
         });
         await flushHookEffects({ cycles: 1, turns: 1 });
 
-        const relayInput = screen.findByTestId('onboarding-wizard-relay-url-input')!;
         await act(async () => {
-            relayInput.props.onChangeText?.('https://typed-relay.example.ts.net');
+            screen.findByTestId('already-use-happier.home-address')!.props.onChangeText?.('https://typed-relay.example.ts.net');
         });
-        await flushHookEffects({ cycles: 4, turns: 4 });
+        await pressOnboarding(screen, 'already-use-happier.home-connect');
+        await vi.waitFor(() => expect(screen.findByTestId('server-settings-add-reachability-remediation')).toBeTruthy());
 
         expect(screen.findByTestId('server-settings-add-reachability-remediation')).toBeTruthy();
         expect(screen.findByTestId('server-settings-add-remediation-action-install_tailscale')).toBeTruthy();
         expect(screen.findAllByTestId('server-settings-add-remediation-action-prepare_tailscale')).toHaveLength(0);
-        expect(screen.findByTestId('onboarding-wizard-primary')?.props.disabled).toBe(true);
 
         runtimeFetchMock.mockImplementation(previousFetchImpl ?? (async (input: RequestInfo | URL, init?: RequestInit) => new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'content-type': 'application/json' } })));
     });

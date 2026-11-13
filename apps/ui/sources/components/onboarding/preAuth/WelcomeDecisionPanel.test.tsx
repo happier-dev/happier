@@ -64,6 +64,7 @@ function renderPanel(
         onContinueWithHomeAuthentication: vi.fn(),
         onOpenRestore: vi.fn(),
         onChangeRelay: vi.fn(),
+        onConnectHomeDirectly: vi.fn(),
         onContinueWithAccountServiceProvider: vi.fn(),
         onContinueWithAccountServiceKey: vi.fn(),
         onChooseAccountService: vi.fn(),
@@ -186,7 +187,7 @@ describe('WelcomeDecisionPanel', () => {
                     action: { id: 'login', mode: 'keyed' }, execution: { kind: 'key_entry' } }] }}
             accountServiceEntry={{ effectiveSignInService: { kind: 'no_target_default', endpoint: baseOptions.serverUrlForCopy },
                 endpoint: { url: baseOptions.serverUrlForCopy, source: 'user' }, status: 'unsupported', discovery: null, transport: {}, retry: vi.fn() }}
-            onContinueWithHomeAuthentication={onAuthenticate} onOpenRestore={onRestore} onChangeRelay={vi.fn()} onChooseAccountService={vi.fn()} />);
+            onContinueWithHomeAuthentication={onAuthenticate} onOpenRestore={onRestore} onChangeRelay={vi.fn()} onConnectHomeDirectly={vi.fn()} onChooseAccountService={vi.fn()} />);
         await screen.pressByTestIdAsync('welcome-provider-primary');
         expect(onAuthenticate).toHaveBeenCalledWith(expect.objectContaining({ execution: { kind: 'key_entry' },
             authority: { purpose: 'home', target: homeTarget }, intendedHome: homeTarget }));
@@ -218,7 +219,7 @@ describe('WelcomeDecisionPanel', () => {
         });
         try {
             const screen = await renderScreen(
-                <WelcomeDecisionPanel authEntryOptions={baseOptions} onContinueWithHomeAuthentication={vi.fn()} onOpenRestore={vi.fn()} onChangeRelay={vi.fn()} />,
+                <WelcomeDecisionPanel authEntryOptions={baseOptions} onContinueWithHomeAuthentication={vi.fn()} onOpenRestore={vi.fn()} onChangeRelay={vi.fn()} onConnectHomeDirectly={vi.fn()} />,
             );
             const headers = screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityRole === 'header')
                 .map(node => node.props.children);
@@ -238,7 +239,7 @@ describe('WelcomeDecisionPanel', () => {
                 showGreeting={false}
                 onContinueWithHomeAuthentication={onAuthenticate}
                 onOpenRestore={vi.fn()}
-                onChangeRelay={vi.fn()}
+                onChangeRelay={vi.fn()} onConnectHomeDirectly={vi.fn()}
             />,
         );
 
@@ -288,7 +289,7 @@ describe('WelcomeDecisionPanel', () => {
                 authEntryOptions={noTargetOptions}
                 onChooseAccountService={vi.fn()}
                 onOpenRestore={vi.fn()}
-                onChangeRelay={vi.fn()}
+                onChangeRelay={vi.fn()} onConnectHomeDirectly={vi.fn()}
             />,
         );
 
@@ -308,7 +309,7 @@ describe('WelcomeDecisionPanel', () => {
                 onContinueWithAccountServiceProvider={onContinueWithAccountServiceProvider}
                 onChooseAccountService={vi.fn()}
                 onOpenRestore={vi.fn()}
-                onChangeRelay={vi.fn()}
+                onChangeRelay={vi.fn()} onConnectHomeDirectly={vi.fn()}
             />,
         );
 
@@ -508,6 +509,17 @@ describe('WelcomeDecisionPanel', () => {
         expect(callbacks.onOpenRestore).toHaveBeenCalledTimes(1);
     });
 
+    it('connects to a Home directly through the welcome step on every width, not the Home chooser', async () => {
+        // A build with no default Home: the action is "Connect to a Home directly" (owner 11-13: one flow).
+        const { callbacks, screenPromise } = renderPanel({ homeTarget: null, requestedHomeTarget: null, homeLabel: null, serverUrlForCopy: '' });
+        const screen = await screenPromise;
+        expect(screen.findByTestId('welcome-use-different-home-title')?.props.children).toBe('Connect to a Home directly');
+
+        await screen.pressByTestIdAsync('welcome-use-different-home');
+        expect(callbacks.onConnectHomeDirectly).toHaveBeenCalledTimes(1);
+        expect(callbacks.onChangeRelay).not.toHaveBeenCalled();
+    });
+
     it('keeps retry and relay-change actions available when the server is unavailable', async () => {
         const retryServerCheck = vi.fn();
         const { callbacks, screenPromise } = renderPanel({
@@ -547,6 +559,7 @@ describe('WelcomeDecisionPanel', () => {
             onContinueWithHomeAuthentication: vi.fn(),
             onOpenRestore: vi.fn(),
             onChangeRelay: vi.fn(),
+            onConnectHomeDirectly: vi.fn(),
         };
         const screen = await renderScreen(<WelcomeDecisionPanel authEntryOptions={baseOptions} {...callbacks} />);
 
@@ -559,6 +572,7 @@ describe('WelcomeDecisionPanel', () => {
             onContinueWithHomeAuthentication: vi.fn(),
             onOpenRestore: vi.fn(),
             onChangeRelay: vi.fn(),
+            onConnectHomeDirectly: vi.fn(),
         };
         const screen = await renderScreen(<WelcomeDecisionPanel
             authEntryOptions={baseOptions}
@@ -582,6 +596,7 @@ describe('WelcomeDecisionPanel', () => {
             onContinueWithHomeAuthentication: vi.fn(() => pending),
             onOpenRestore: vi.fn(),
             onChangeRelay: vi.fn(),
+            onConnectHomeDirectly: vi.fn(),
         };
         const screen = await renderScreen(<WelcomeDecisionPanel authEntryOptions={baseOptions} {...callbacks} canScanQr />);
         const primary = screen.findByTestId('welcome-primary-start');

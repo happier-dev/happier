@@ -34,7 +34,7 @@ import { openAddHome } from '@/components/homes/add/openAddHome';
 import { removeServerProfileUiAction } from '@/components/serverProfiles/removeServerProfileUiAction';
 import { presentFirstKeyCredentialLifecycle } from '@/components/account/presentFirstKeyCredentialLifecycle';
 import { useEndpointReachabilityRemediationController } from '@/components/settings/server/hooks/useEndpointReachabilityRemediationController';
-import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
+import { canConnectHomeByAddress, resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 import { useRequestPersonalHomeBootstrap } from '@/components/personalHome/bootstrap/personalHomeBootstrapRequest';
 import { isLocalishServerUrl } from '@/sync/domains/server/url/serverUrlClassification';
 import { toServerUrlDisplay } from '@/sync/domains/server/url/serverUrlDisplay';
@@ -214,7 +214,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         [qrScannerHeuristicViewport.height, qrScannerHeuristicViewport.width],
     );
 
-    const [urlDraft, setUrlDraft] = React.useState(props.initialServerUrl ?? '');
+    const [urlDraft, setUrlDraft] = React.useState('');
     const [relaySwitchDecision, setRelaySwitchDecision] = React.useState<RelaySwitchDecision>('switch');
     const [relayAccessTarget, setRelayAccessTarget] = React.useState<RelayAccessTaskTarget | null>(null);
     const relayAccessRunnerRef = React.useRef<RelayAccessControlOptions['runWithTarget']>(undefined);
@@ -248,8 +248,9 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             } as const;
 
             const requestedStepId = props.initialStepId ?? 'welcome';
-            const isRequestedVisible = getWizardStepDefinition(requestedStepId).visibleWhen(context);
-            const initialStepId = isRequestedVisible ? requestedStepId : 'welcome';
+            const requestedStep = getWizardStepDefinition(requestedStepId);
+            const isRequestedOpenable = requestedStep.directEntry === true || requestedStep.visibleWhen(context);
+            const initialStepId = isRequestedOpenable ? requestedStepId : 'welcome';
 
             return createWizardState({
                 context: {
@@ -409,21 +410,9 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         const selectedRelayUrl = typeof state.context.relaySelection.serverUrl === 'string'
             ? state.context.relaySelection.serverUrl.trim()
             : '';
-        const fallbackRelayUrl =
-            state.context.relaySelection.choiceId === 'customUrl'
-            && (
-                state.context.relaySelection.relayProfileId === 'active'
-                || state.context.relaySelection.relayProfileId == null
-            )
-                ? snapshotRelayUrl
-                : '';
-        const resolved = selectedRelayUrl || fallbackRelayUrl;
-        if (!resolved) return;
-        setUrlDraft(resolved);
+        if (!selectedRelayUrl) return;
+        setUrlDraft(selectedRelayUrl);
     }, [
-        snapshotRelayUrl,
-        state.context.relaySelection.choiceId,
-        state.context.relaySelection.relayProfileId,
         state.context.relaySelection.serverUrl,
         stepId,
         urlDraft,
@@ -724,7 +713,7 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
     };
 
     const buildManualRelayChoiceItem = (): WizardChoiceListItem | null => {
-        if (!setupPolicy.relay.allowRelaySelection || !setupPolicy.relay.allowCustomRelayUrl) {
+        if (!canConnectHomeByAddress(setupPolicy)) {
             return null;
         }
         const rawServerUrl = state.context.relaySelection.serverUrl
@@ -951,7 +940,6 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
             {
                 type: 'saveCustomRelayUrl',
                 relayUrl: trimmed,
-                relayProfileId: null,
             },
         ));
     }, [applyWizardAdvanceResolution, state, urlDraft]);
@@ -1575,8 +1563,10 @@ export function useOnboardingWizardController(props: OnboardingWizardSurfaceProp
         },
         onScan: handleScan,
         onOpenRelaySelectionFromWelcome: handleOpenRelaySelectionFromWelcome,
-        onOpenConnectHome: handleOpenConnectHome,
+        onOpenConnectHome: canConnectHomeByAddress(setupPolicy) ? handleOpenConnectHome : undefined,
         onBackToWelcome: handleBackToWelcome,
+        connectHomeInitialAddress: props.initialServerUrl,
+        onConnectHomeReached: props.onInitialServerUrlConnected,
         onOpenRelaySelectionFromAuth: handleOpenRelaySelectionPreservingSelection,
         onCreatePersonalHome: requestPersonalHomeBootstrap ?? undefined,
         onOpenRestore: handleOpenRestore,

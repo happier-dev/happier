@@ -1,14 +1,11 @@
 import { defineSettingsPage, settingsHosts, parseSettingScalarValue, type SettingsHostPredicate } from '@/components/settings/catalog/settingDeclarations';
-import { resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
+import { canConnectHomeByAddress, resolveSetupSurfacePolicy } from '@/sync/domains/server/setup/setupSurfacePolicy';
 
 // The setup surface policy is fixed by the build, so like a host fact it decides whether a row exists.
 const localRelayHostAllowed: SettingsHostPredicate = (host) => settingsHosts.tauriDesktop(host)
     && resolveSetupSurfacePolicy().relay.allowLocalRelayHost;
 const relaySelectionAllowed: SettingsHostPredicate = () => resolveSetupSurfacePolicy().relay.allowRelaySelection;
-const addHomeAllowed: SettingsHostPredicate = () => {
-    const { relay } = resolveSetupSurfacePolicy();
-    return relay.allowRelaySelection && relay.allowCustomRelayUrl;
-};
+const addHomeAllowed: SettingsHostPredicate = () => canConnectHomeByAddress();
 
 /**
  * The searchable settings of the `servers` page (Settings → Homes, landing on This device). Rows render

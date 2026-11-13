@@ -91,6 +91,21 @@ describe('WelcomeDecisionPanel on a phone (the Homes doorway)', () => {
         await screen.unmount();
     });
 
+    it('leaves out connecting to a Home directly when the build does not allow Home addresses', async () => {
+        const { WelcomeDecisionPanel } = await import('./WelcomeDecisionPanel');
+        // The host passes no connect step when setup policy denies custom Home addresses.
+        const screen = await renderScreen(<WelcomeDecisionPanel authEntryOptions={firstRunOptions} canScanQr
+            onOpenRestore={vi.fn()} onChangeRelay={vi.fn()} />);
+        expect(screen.findByTestId('welcome-doorway-scan')).toBeTruthy();
+        expect(screen.findByTestId('welcome-doorway-direct')).toBeNull();
+        viewport.klass = 'medium';
+        const wide = await renderScreen(<WelcomeDecisionPanel authEntryOptions={firstRunOptions} canScanQr
+            onOpenRestore={vi.fn()} onChangeRelay={vi.fn()} />);
+        expect(wide.findByTestId('welcome-use-different-home')).toBeNull();
+        await screen.unmount();
+        await wide.unmount();
+    });
+
     it('keeps the full welcome on a wider window', async () => {
         viewport.klass = 'medium';
         const { screenPromise } = renderPanel();
@@ -113,7 +128,7 @@ describe('WelcomeDecisionPanel on a phone (the Homes doorway)', () => {
                 }] }}
             accountServiceEntry={{ effectiveSignInService: { kind: 'no_target_default', endpoint: url }, endpoint: { url, source: 'default' },
                 status: 'unsupported', discovery: null, transport: {}, retry: vi.fn() }}
-            onContinueWithHomeAuthentication={authenticate} onOpenRestore={vi.fn()} onChangeRelay={vi.fn()} />);
+            onContinueWithHomeAuthentication={authenticate} onOpenRestore={vi.fn()} onChangeRelay={vi.fn()} onConnectHomeDirectly={vi.fn()} />);
         expect(screen.findByTestId('welcome-doorway-scan')).toBeNull();
         await screen.pressByTestIdAsync('welcome-provider-primary');
         expect(authenticate).toHaveBeenCalledWith(expect.objectContaining({ execution: { kind: 'key_entry' },
