@@ -166,6 +166,8 @@ export type ComputerTargetPickerRequest = Readonly<{
     refusalCode?: string;
     requestedTarget?: string | null;
     onChosen?: (entry: ComputerTargetEntry, access: ComputerAccessV1) => void;
+    /** The requester's executor (a scoped or staged host); the front door's otherwise. */
+    execute?: ComputerActionExecute;
     onSelected: (selection: ComputerSelectedTargetResponseV1) => void;
 }>;
 
@@ -182,6 +184,7 @@ export function computerTargetPickerProps(params: ComputerTargetPickerRequest): 
         ...(params.refusalCode ? { refusalCode: params.refusalCode } : {}),
         ...(params.requestedTarget ? { requestedTarget: params.requestedTarget } : {}),
         ...(params.onChosen ? { onChosen: params.onChosen } : {}),
+        ...(params.execute ? { execute: params.execute } : {}),
         onSelected: params.onSelected,
     };
 }
