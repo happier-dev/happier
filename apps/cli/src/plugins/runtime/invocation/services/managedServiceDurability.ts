@@ -41,6 +41,8 @@ import {
 import {
     ensureProtectedLocalStateDirectory,
 } from '@/utils/fs/protectedLocalState';
+import { probeProcessLiveness } from '@happier-dev/cli-common/process';
+import { retireProjectionFreeServiceScopes } from './managedServiceScopeRecovery';
 
 export type ManagedServiceDurableLogCapture = Readonly<{
     path: string;
@@ -95,10 +97,18 @@ export interface ManagedServiceDurabilityOwner
     retireSessionRunnerOwnedProjections(input: Readonly<{
         sessionId: string;
     }>): Promise<readonly number[]>;
-    /** Retry retained custody only when the canonical fresh native owner is positively ended. */
+    /**
+     * Retry retained custody only when the canonical fresh native owner is positively ended.
+     * The full native census runs only on demand: at startup (a previous daemon lifetime may have
+     * left custody behind), after `requestRecovery` (an owner ended), after a Session runner's
+     * projections were retired or released, and while an authorized target is still standing.
+     * Retirement needs an ended owner, so an idle heartbeat with none of these reads nothing.
+     */
     retireEndedSessionRunnerOwnedProjections(input: Readonly<{
         processOwnership: Pick<ReturnType<typeof createProcessOwnershipRuntime>, 'readOwners'>;
     }>): Promise<readonly number[]>;
+    /** A lifecycle owner ended; the next recovery pass re-reads native ownership. */
+    requestRecovery(): void;
 }
 
 const DEFAULT_MAX_LOG_BYTES = 8 * 1024 * 1024;
@@ -140,16 +150,7 @@ export async function observeManagedServiceProcessStartIdentity(
     if (identity?.processStartTimeMs !== undefined) {
         return `${pid}:${identity.processStartTimeMs}`;
     }
-    try {
-        (dependencies.signalProcessFn ?? process.kill)(pid, 0);
-    } catch (error) {
-        if (
-            error
-            && typeof error === 'object'
-            && 'code' in error
-            && error.code === 'ESRCH'
-        ) return null;
-    }
+    if (probeProcessLiveness(pid, dependencies.signalProcessFn) === 'absent') return null;
     throw new Error('Managed server process identity observation is unavailable');
 }
 
@@ -282,6 +283,7 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
     const maxLogBytes = resolvePositiveBound(params.maxLogBytes, DEFAULT_MAX_LOG_BYTES);
     const openLogPaths = new Set<string>();
     let stateQueue = Promise.resolve();
+    let recoveryDemanded = true;
 
     function runExclusive<T>(operation: () => Promise<T>): Promise<T> {
         const result = stateQueue.then(operation, operation);
@@ -501,6 +503,8 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
                 || current.sessionId !== input.sessionId
                 || current.pluginId !== input.pluginId
             ) return false;
+            // The released instance's processes may outlive its projection.
+            recoveryDemanded = true;
             return await removeEndpointProjectionIfCurrent(current);
         });
     }
@@ -756,11 +760,25 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
     async function retireSessionRunnerOwnedProjections(input: Readonly<{
         sessionId: string;
     }>): Promise<readonly number[]> {
+        // The runner ended: whatever this immediate pass cannot retire is the heartbeat's to retry.
+        recoveryDemanded = true;
         return await runExclusive(async () => {
             await ensureDirs();
             return await retireProjections(readManagedServiceEndpointProjectionCandidates(params.rootDir)
                 .filter(projection => projection.sessionId === input.sessionId && projection.custodyOwner === 'sessionRunner'));
         });
+    }
+
+    /** Records which projections this pass authorized, so a target still standing is retried. */
+    function trackAuthorized(
+        authorized: Set<string>,
+        authorize: (projection: ManagedServiceEndpointProjectionV1, fresh?: boolean) => Promise<readonly Readonly<{ pid: number; start: ProcessStartIdentity }>[] | null>,
+    ) {
+        return async (projection: ManagedServiceEndpointProjectionV1, fresh = false) => {
+            const targets = await authorize(projection, fresh);
+            if (!fresh && targets?.length) authorized.add(projection.instanceId);
+            return targets;
+        };
     }
 
     async function retireEndedSessionRunnerOwnedProjections(input: Readonly<{
@@ -770,10 +788,17 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
             await ensureDirs();
             const projections = readManagedServiceEndpointProjectionCandidates(params.rootDir)
                 .filter(projection => projection.custodyOwner === 'sessionRunner' && projection.mode === 'managedSpawn');
-            if (!projections.length) return [];
+            if (!recoveryDemanded || !projections.length && platform !== 'linux') return [];
+            recoveryDemanded = false;
             const initialView = await input.processOwnership.readOwners({ freshness: 'fresh', requesterAttribution: 'retained' });
-            if (initialView.status !== 'ok') return [];
-            return await retireProjections(projections,
+            if (initialView.status !== 'ok') { recoveryDemanded = true; return []; }
+            const scopes = platform === 'linux' ? await retireProjectionFreeServiceScopes({
+                view: initialView, processOwnership: input.processOwnership,
+                projectedInstances: new Set(projections.map(projection => projection.instanceId)),
+                terminate: terminateTargets,
+            }) : { retired: [], incomplete: false };
+            const authorized = new Set<string>();
+            const retiredProjections = await retireProjections(projections, trackAuthorized(authorized,
                 async (projection, fresh = false) => {
                     if (projection.mode !== 'managedSpawn') return null;
                     // Share only the selection view of this pass; physical signals always re-read current owners.
@@ -813,7 +838,11 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
                         (view.rows.find(row => row.pid === right.pid)?.chain.length ?? 0)
                         - (view.rows.find(row => row.pid === left.pid)?.chain.length ?? 0))
                         .map(row => ({ pid: row.pid, start: row.start }));
-                });
+                }));
+            // An authorized target that is still standing keeps the retry on the next heartbeat.
+            if (scopes.incomplete || readManagedServiceEndpointProjectionCandidates(params.rootDir)
+                .some(projection => authorized.has(projection.instanceId))) recoveryDemanded = true;
+            return [...scopes.retired, ...retiredProjections];
         });
     }
 
@@ -843,6 +872,7 @@ export function createManagedServiceDurabilityOwner(params: Readonly<{
         resolveEndpointProjection,
         retireSessionRunnerOwnedProjections,
         retireEndedSessionRunnerOwnedProjections,
+        requestRecovery() { recoveryDemanded = true; },
         openLog,
         getCurrentLogPaths,
     });

@@ -133,7 +133,7 @@ it.each(['identity unavailable', 'termination failed', 'replacement during retry
           : { ownerEnded: true, level: 'left_behind' });
       const intervals = vi.spyOn(globalThis, 'setInterval');
       timer = startDaemonHeartbeatLoop({
-        pidToTrackedSession: new Map(), spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
+        trackedSessionsByKey: new Map(), spawnResourceCleanupByKey: new Map(), sessionAttachCleanupByKey: new Map(),
         getApiMachineForSessions: () => null, controlPort: 8765,
         fileState: { pid: process.pid, httpPort: 8765, startedAt: Date.now(),
           startedWithCliVersion: configuration.currentCliVersion, daemonLogPath: join(home, 'daemon.log') },
@@ -163,7 +163,8 @@ it.each(['identity unavailable', 'termination failed', 'replacement during retry
         }
         const readsBeforeEmptyTick = censusReads;
         await tick();
-        expect(censusReads).toBe(readsBeforeEmptyTick);
+        // MANAGED-SCOPE-LEAK-1112: Linux recovery must inventory native scopes even without projections.
+        expect(censusReads - readsBeforeEmptyTick).toBe(1);
       }
     } finally {
       if (timer) clearInterval(timer);
