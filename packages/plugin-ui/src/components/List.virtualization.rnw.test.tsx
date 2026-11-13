@@ -1078,15 +1078,21 @@ describe('virtualized List data ownership', () => {
     expect(initialRenderItem).toBeDefined();
     expect(initialKeyExtractor).toBeDefined();
 
-    let previousSelectedKey: string | null = null;
-    for (const index of [0, 1, 2, 3, 4]) {
-      const selectedKey = items[index]!.id;
+    // OWNER-0836-DESKTOP (19145ebc224): moving selection also changes the
+    // separator above it. Only those neighbours and the selected rows commit;
+    // the rest of the mounted window must stay still.
+    const selectionSteps = [
+      [0, [0]],
+      [1, [0, 1]],
+      [2, [0, 1, 2]],
+      [3, [1, 2, 3]],
+      [4, [2, 3, 4]],
+    ] as const;
+    for (const [index, affectedIndices] of selectionSteps) {
       rowCommits.length = 0;
       await act(async () => { options()[index]?.click(); });
 
-      expect(rowCommits).toEqual(
-        previousSelectedKey === null ? [selectedKey] : [previousSelectedKey, selectedKey],
-      );
+      expect(rowCommits).toEqual(affectedIndices.map((affectedIndex) => items[affectedIndex]!.id));
       expect(flatListCapture.renderItem.at(-1)).toBe(initialRenderItem);
       expect(flatListCapture.keyExtractor.at(-1)).toBe(initialKeyExtractor);
       await vi.waitFor(() => {
@@ -1104,7 +1110,6 @@ describe('virtualized List data ownership', () => {
       expect(openedResourceSubscriptions).toBe(openedBeforeDetailUpdate);
       expect(flatListCapture.renderItem.at(-1)).toBe(initialRenderItem);
       expect(filter).toHaveBeenCalledTimes(0);
-      previousSelectedKey = selectedKey;
     }
 
     const search = mount.container.querySelector<HTMLInputElement>('[data-testid="large-list-search"]');
@@ -1140,15 +1145,11 @@ describe('virtualized List data ownership', () => {
     expect(scrolledRenderItem).toBeDefined();
     expect(flatListCapture.keyExtractor.at(-1)).toBe(initialKeyExtractor);
 
-    previousSelectedKey = items[4]!.id;
-    for (const index of [0, 1, 2, 3, 4]) {
-      const selectedKey = items[1_000 + index]!.id;
+    for (const [index, affectedIndices] of selectionSteps) {
       rowCommits.length = 0;
       await act(async () => { options()[index]?.click(); });
 
-      expect(rowCommits).toEqual(
-        index === 0 ? [selectedKey] : [previousSelectedKey, selectedKey],
-      );
+      expect(rowCommits).toEqual(affectedIndices.map((affectedIndex) => items[1_000 + affectedIndex]!.id));
       expect(flatListCapture.renderItem.at(-1)).toBe(scrolledRenderItem);
       expect(flatListCapture.keyExtractor.at(-1)).toBe(initialKeyExtractor);
       await vi.waitFor(() => {
@@ -1167,7 +1168,6 @@ describe('virtualized List data ownership', () => {
       expect(rowCommits).toEqual([]);
       expect(openedResourceSubscriptions).toBe(openedBeforeDetailUpdate);
       expect(filter).toHaveBeenCalledTimes(items.length);
-      previousSelectedKey = selectedKey;
     }
 
     expect(activeResourceSubscriptions).toBe(1);
