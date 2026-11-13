@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { accountDisplayProfileFixture, renderScreen, standardCleanup, teamGroupFixture, teamMembershipFixture, withPopoverWebGlobals } from '@/dev/testkit';
@@ -17,6 +18,12 @@ type ShownModal = Readonly<{
 const shownModals = vi.hoisted(() => [] as ShownModal[]);
 let restorePopoverWebGlobals: (() => void) | null = null;
 
+// The third-party virtualizer needs measured native rows; render them at this boundary in source tests.
+vi.mock('@legendapp/list/react-native', async () => {
+    const { createLegendListModuleMock } = await import('@/dev/testkit/mocks/legendList');
+    return createLegendListModuleMock({ renderItems: true });
+});
+
 installSettingsViewCommonModuleMocks({
     modal: async () => {
         const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
@@ -33,6 +40,7 @@ installSettingsViewCommonModuleMocks({
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+const { TeamCredentialAudiencePicker } = await import('./TeamCredentialAudiencePicker');
 
 const MEMBERS_LIST_PATH = '/v1/teams/members/list';
 const GROUPS_LIST_PATH = '/v1/teams/groups/list';
@@ -48,8 +56,7 @@ async function addHome(): Promise<string> {
     return serverId;
 }
 
-async function renderOpenedPicker(serverId: string, excludedMemberIds: readonly string[] = []) {
-    const { TeamCredentialAudiencePicker } = await import('./TeamCredentialAudiencePicker');
+async function renderOpenedPicker(serverId: string, excludedMemberIds: readonly string[] = [], allowedKinds: readonly ('member' | 'group')[] = ['member']) {
     const onChoose = vi.fn();
     const trigger = await renderScreen(
         <TeamCredentialAudiencePicker
@@ -58,7 +65,7 @@ async function renderOpenedPicker(serverId: string, excludedMemberIds: readonly 
             excludedGroupIds={[]}
             excludedMemberIds={excludedMemberIds}
             disabled={false}
-            allowedKinds={['member']}
+            allowedKinds={allowedKinds}
             onChoose={onChoose}
             testID="member-picker-trigger"
         />,
@@ -89,6 +96,32 @@ afterEach(() => {
 });
 
 describe('TeamCredentialAudiencePicker exact member mode', () => {
+    it('keeps searched member and Group sources loading until their directory answers arrive', async () => {
+        const serverId = await addHome();
+        let release!: () => void;
+        const respondAfter = new Promise<void>(resolve => { release = resolve; });
+        harness.answer(serverId, MEMBERS_LIST_PATH, { respondAfter, body: {
+            items: [teamMembershipFixture({ id: 'membership-ada', accountId: 'account-ada', account: accountDisplayProfileFixture('Ada') })], nextCursor: null,
+        } });
+        harness.answer(serverId, GROUPS_LIST_PATH, { respondAfter, body: {
+            items: [teamGroupFixture({ id: 'group-ada', name: 'Ada group' })], nextCursor: null,
+        } });
+        const { picker } = await renderOpenedPicker(serverId, [], ['member', 'group']);
+        try {
+            await act(async () => { picker.changeTextByTestId('team-credential-audience-picker:header:input', 'Ada'); });
+            await vi.waitFor(() => expect(harness.requestsFor(GROUPS_LIST_PATH)).toHaveLength(1));
+            const { t } = await import('@/text');
+            expect(picker.getTextContent()).toContain(t('common.loading'));
+            expect(picker.getTextContent()).not.toContain(t('common.noMatches'));
+        } finally {
+            await act(async () => { release(); });
+        }
+        await vi.waitFor(() => {
+            expect(picker.findByTestId('team-credential-audience-pick-member:membership-ada')).not.toBeNull();
+            expect(picker.findByTestId('team-credential-audience-pick-group:group-ada')).not.toBeNull();
+        });
+    });
+
     it('keeps a failed member page retryable without querying or offering Groups', async () => {
         const serverId = await addHome();
         harness.answer(serverId, MEMBERS_LIST_PATH, { status: 503, body: { error: 'unavailable' } });
@@ -112,13 +145,8 @@ describe('TeamCredentialAudiencePicker exact member mode', () => {
         });
         await picker.pressByTestIdAsync('team-credential-audience-picker:pagination:retry');
         await vi.waitFor(() => expect(harness.requestsFor(MEMBERS_LIST_PATH)).toHaveLength(2));
-        const { SelectionList } = await import('@/components/ui/selectionList');
-        let option: { testID?: string } | undefined;
         await vi.waitFor(() => {
-            option = picker.findByType(SelectionList).props.rootStep.sections[0]?.options?.find(
-                (candidate: { testID?: string }) => candidate.testID === 'team-credential-audience-pick-member:membership-1',
-            );
-            expect(option).toBeDefined();
+            expect(picker.findByTestId('team-credential-audience-pick-member:membership-1')).not.toBeNull();
         });
     });
 
@@ -150,16 +178,11 @@ describe('TeamCredentialAudiencePicker exact member mode', () => {
         });
         await picker.pressByTestIdAsync('team-credential-audience-picker:pagination:more');
         await vi.waitFor(() => expect(harness.requestsFor(MEMBERS_LIST_PATH)).toHaveLength(2));
-        const { SelectionList } = await import('@/components/ui/selectionList');
-        let option: { testID?: string; onSelect?: () => void } | undefined;
         await vi.waitFor(() => {
-            option = picker.findByType(SelectionList).props.rootStep.sections[0]?.options?.find(
-                (candidate: { testID?: string }) => candidate.testID === 'team-credential-audience-pick-member:membership-2',
-            );
-            expect(option).toBeDefined();
+            expect(picker.findByTestId('team-credential-audience-pick-member:membership-2')).not.toBeNull();
         });
         expect(harness.requestsFor(MEMBERS_LIST_PATH).at(-1)?.input).toMatchObject({ cursor: 'members-next' });
-        option?.onSelect?.();
+        await picker.pressByTestIdAsync('team-credential-audience-pick-member:membership-2');
         expect(onClose).toHaveBeenCalledOnce();
         expect(onChoose).toHaveBeenCalledWith({
             kind: 'member', id: 'membership-2', accountId: 'account-grace', name: 'Grace',
@@ -170,7 +193,6 @@ describe('TeamCredentialAudiencePicker exact member mode', () => {
 describe('TeamCredentialAudiencePicker presentation', () => {
     it('opens as the shared share sheet, hanging from the row that opened it (a bottom sheet on a phone)', async () => {
         const serverId = await addHome();
-        const { TeamCredentialAudiencePicker } = await import('./TeamCredentialAudiencePicker');
         const trigger = await renderScreen(
             <TeamCredentialAudiencePicker
                 scope={{ serverId, accountId: 'account-owner' }}

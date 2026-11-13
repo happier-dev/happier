@@ -3,6 +3,7 @@ import * as React from 'react';
 import type { SessionAccessCandidateRowModel, SessionAccessDirectoryKind, SessionAccessGrantOperationModel } from '@/components/sessions/access/sessionAccessEditorTypes';
 import { useSessionAccessDirectory } from '@/components/sessions/access/useSessionAccessDirectory';
 import { presentShareSheet } from '@/components/sharing/presentShareSheet';
+import { buildDirectorySelectionSection } from '@/components/sharing/buildDirectorySelectionSection';
 import { Item } from '@/components/ui/lists/Item';
 import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { SELECTION_LIST_MODAL_MAX_HEIGHT, SelectionList, resolveSelectionListModalHeightBehavior, type SelectionListOption, type SelectionListSectionDescriptor, type SelectionListStep } from '@/components/ui/selectionList';
@@ -82,11 +83,13 @@ function PickerContent(props: Readonly<{
         props.onChoose(principal);
     }, [props]);
     const visibleSources = directory.sections;
-    const sections = visibleSources.map((source): SelectionListSectionDescriptor => ({
-        kind: 'static',
+    const sections = visibleSources.map((source): SelectionListSectionDescriptor => buildDirectorySelectionSection({
+        source,
         id: `team-credential-audience:${source.kind}`,
         title: source.title,
-        options: source.candidates.flatMap((row) => {
+        resolverKey: JSON.stringify([source.resolverKey, props.excludedGroupIds, props.excludedMemberIds]),
+        showSkeletonsOnFirstLoad: true,
+        options: (rows) => rows.flatMap((row) => {
             const option = optionFromRow(row, excludedGroups, excludedMembers, choose);
             return option ? [option] : [];
         }),

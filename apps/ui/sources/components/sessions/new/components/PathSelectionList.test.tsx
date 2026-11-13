@@ -510,24 +510,28 @@ describe('PathSelectionList', () => {
         act(() => screen.tree.unmount());
     });
 
-    it('history-first mode selects the saved row that matches the displayed path instead of the first row', async () => {
+    it('history-first mode retains the displayed selection as favorites and recents arrive across sections', async () => {
         const currentPath = '/Users/leeroy/Documents/Development/happier/dev';
         const firstPath = '/Users/leeroy/Documents/Development/happier/remote-dev';
         const { PathSelectionList } = await import('./PathSelectionList');
-        const screen = await renderScreen(
+        const render = (settled: boolean) => (
             <PathSelectionList
                 initialValue={currentPath}
                 initialSuggestionMode="history"
-                favorites={[{ path: firstPath }]}
-                recents={[{ path: currentPath, lastUsedAt: 1 }]}
+                favorites={settled ? [{ path: firstPath }] : []}
+                recents={settled ? [{ path: currentPath, lastUsedAt: 1 }] : []}
                 machineHomeDir="/Users/leeroy"
                 machineId="m-1"
                 serverId={null}
                 machinePlatform="unix"
                 onCommit={() => {}}
                 onRequestClose={() => {}}
-            />,
+            />
         );
+        const screen = await renderScreen(render(false));
+        expect(screen.findByTestId('path-selection-list:header:input')?.props.value).toBe(currentPath);
+        expect(screen.findByTestId(`path-selection-list:path-root:option-wrapper:recent:${currentPath}`)).toBeNull();
+        await screen.update(render(true));
 
         const firstWrapper = screen.findByTestId(
             `path-selection-list:path-root:option-wrapper:favorite:${firstPath}`,

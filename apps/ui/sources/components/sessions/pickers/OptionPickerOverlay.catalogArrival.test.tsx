@@ -21,6 +21,30 @@ const { OptionPickerOverlay } = await import('./OptionPickerOverlay');
 
 const readCustomValue = (value: string) => value;
 
+it('retains selection through late grouped options, search, and query clear', async () => {
+    const render = (settled: boolean) => <OptionPickerOverlay title="Model" options={[]}
+        sections={settled ? [
+            { id: 'own', title: 'Own', options: [{ value: 'own', label: 'Own model' },
+                // Search is offered for catalogs of at least ten options.
+                ...Array.from({ length: 7 }, (_, index) => ({ value: `extra-${index}`, label: `Extra model ${index}` })),
+            ] },
+            { id: 'team', title: 'Team', options: [{ value: 'chosen', label: 'Shared model' }] },
+            { id: 'native', title: 'Native', options: [{ value: 'native', label: 'Native model' }] },
+        ] : []} selectedValue="chosen" emptyText="Empty" onSelect={() => {}} />;
+    const screen = await renderScreen(render(false));
+    expect(screen.findByTestId('model-picker-overlay-option-selected-indicator:chosen')).toBeNull();
+    await screen.update(render(true));
+    expect(screen.findByTestId('model-picker-overlay-option-selected-indicator:chosen')).not.toBeNull();
+    expect(screen.findByTestId('model-picker-overlay-option:own')).not.toBeNull();
+    await act(async () => { screen.changeTextByTestId('model-picker-overlay-search', 'SHARED'); });
+    expect(screen.findByTestId('model-picker-overlay-option-selected-indicator:chosen')).not.toBeNull();
+    expect(screen.findByTestId('model-picker-overlay-option:own')).toBeNull();
+    await act(async () => { screen.changeTextByTestId('model-picker-overlay-search', ''); });
+    expect(screen.findByTestId('model-picker-overlay-option-selected-indicator:chosen')).not.toBeNull();
+    expect(screen.findByTestId('model-picker-overlay-option:own')).not.toBeNull();
+    await screen.unmount();
+});
+
 it('settles an asynchronously listed selected value in the catalog-arrival commit', async () => {
     let publishCatalog: (() => void) | undefined;
     let commitCount = 0;

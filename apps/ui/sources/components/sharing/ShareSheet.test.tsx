@@ -10,6 +10,7 @@ import type { ShareSheetActions, ShareSheetModel } from './shareSheetTypes';
 import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { ArtifactAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { presentSharePrincipal } from './sharePrincipalPresentation';
+import { SelectionList } from '@/components/ui/selectionList';
 
 const routerPush = vi.hoisted(() => vi.fn());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: { push: routerPush } }).module);
@@ -44,6 +45,27 @@ async function startAdding(screen: Awaited<ReturnType<typeof renderScreen>>, inp
 }
 
 describe('ShareSheet full presentation', () => {
+    it('keeps cold searched directories loading across sources until their answers settle', async () => {
+        vi.useFakeTimers();
+        const directory: ShareSheetModel['directory'] = { query: 'Ada', sections: (['account', 'group'] as const).map(kind => ({
+            kind, title: kind, candidates: [], status: 'loading',
+            cursor: null, hasMore: false, loadingMore: false, resolveCandidates: async () => [],
+        })) };
+        const render = (settled: boolean) => <SelectionList testID="directory-test" inputValue="Ada" onSelect={noop}
+            rootStep={buildShareSheetSelectionStep({ model: { ...model, revision: settled ? 1 : 0, directory: {
+                ...directory, sections: directory.sections.map(section => ({ ...section, status: settled ? 'idle' : 'loading', resolved: settled })),
+            } }, actions, adapter, presentation: 'full', idPrefix: '', onExpand: noop })} />;
+        const screen = await renderScreen(render(false));
+        await flushHookEffects();
+        await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+        expect(screen.findByTestId('document-share-search-empty')).toBeNull();
+        expect(screen.getTextContent()).toContain(t('common.loading'));
+        expect(screen.getTextContent()).not.toContain(t('selectionList.emptyMatch'));
+        await screen.update(render(true));
+        await act(async () => { await vi.advanceTimersByTimeAsync(200); });
+        await vi.waitFor(() => expect(screen.findByTestId('document-share-search-empty')).not.toBeNull());
+    });
+
     it('keeps a selected grant while folded directories become searched asynchronous results across kinds', async () => {
         const chosen = presentSharePrincipal({ ref: { kind: 'account', accountId: 'chosen' }, name: 'Shared person' });
         const candidate = presentSharePrincipal({ ref: { kind: 'account', accountId: 'other' }, name: 'Shared colleague' });

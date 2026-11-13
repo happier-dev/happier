@@ -11,6 +11,7 @@ import { t } from '@/text';
 import { ShareGrantRow, ShareLevelControl, ShareRowAction } from './ShareGrantRow';
 import { ShareConnectedPeoplePrompt } from './ShareConnectedPeoplePrompt';
 import { useSharePresentationHost } from './sharePresentationHost';
+import { buildDirectorySelectionSection } from './buildDirectorySelectionSection';
 import {
     SHARE_ACCESS_LEVEL_ORDER,
     type ShareCandidateRowModel,
@@ -179,29 +180,23 @@ export function buildShareSheetSelectionStep<TRow extends ShareGrantRowModel>(in
             }];
         });
     };
-    const sourceSection = (source: ShareDirectorySectionModel): SelectionListSectionDescriptor => ({
-        kind: 'dynamic', id: `directory:${source.kind}`, title: input.directoryKind
+    const sourceSection = (source: ShareDirectorySectionModel): SelectionListSectionDescriptor => buildDirectorySelectionSection({
+        source, id: `directory:${source.kind}`, title: input.directoryKind
             ? source.title : t('shareSheet.suggestions', { kind: source.title }),
         resolverKey: JSON.stringify([source.resolverKey ?? source.kind, [...excluded], source.resolveCandidates ? undefined : model.revision]),
-        resultFiltering: 'provider', resultTransition: 'none',
         // A directory step is the section, so its first load shows a skeleton row. On the root, suggestions
         // whose existence is unknown stay out until they resolve: a heading that appears and then empties
         // moved everything below it twice on every open (RUX-11.2).
-        showSkeletonsOnFirstLoad: input.directoryKind !== undefined, loadingSkeletonRows: 1,
-        // The list owns debounce, cancellation and stale result rejection. No network or store access lives here.
-        resolve: async (query, signal) => {
-            const rows = source.resolveCandidates ? await source.resolveCandidates(query, signal) : source.candidates;
+        showSkeletonsOnFirstLoad: input.directoryKind !== undefined,
+        options: (rows, query) => {
             const options = candidateOptions(rows);
             // Only friends and teammates can be found, so a people search that finds no one says so and leads to
             // connecting first (the people directory's own empty prompt), instead of a bare "No matches". Someone
             // found who already has access is shown under Who has access, not as a reason to connect.
             const typed = query.trim();
             const noOne = source.kind === 'account' && source.resolveCandidates !== undefined && typed !== '' && rows.length === 0;
-            return {
-                options: noOne ? [{ id: 'search-empty', label: t('shareSheet.noMatchingPeople', { query: typed }), disabled: true,
-                    content: <ShareConnectedPeoplePrompt query={typed} testID={`${idPrefix}${ns}-search-empty`} /> }] : options,
-                resultHint: !source.resolveCandidates && (source.status === 'loading' || source.status === 'refreshing') ? t('common.loading') : undefined,
-            };
+            return noOne ? [{ id: 'search-empty', label: t('shareSheet.noMatchingPeople', { query: typed }), disabled: true,
+                content: <ShareConnectedPeoplePrompt query={typed} testID={`${idPrefix}${ns}-search-empty`} /> }] : options;
         },
     });
 
