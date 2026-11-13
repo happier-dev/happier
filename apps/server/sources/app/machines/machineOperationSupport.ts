@@ -1,3 +1,5 @@
+import { ACTION_OPERATION_CONTROL_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
+import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/methodsV1';
 import { supportsMachineOperationProtocolCapabilityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { resolveMachineRpcExternalActionEffectV1, resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
@@ -24,6 +26,19 @@ const nativePayloadMethods = new Set<string>([
     })
         .filter((method): method is string => typeof method === 'string' && method.length > 0),
 ]);
+
+const retainedOperationActionIds = new Set<string>(ACTION_OPERATION_CONTROL_ACTION_IDS_V1);
+const retainedOperationRpcMethods = new Set<string>([
+    ...Object.values(ACTION_OPERATION_RPC_METHODS_V1),
+    ...Object.values(ACTION_OPERATION_RPC_METHODS_V2),
+]);
+
+/** Retained operation controls use live exact-installation routing, not persisted presence. */
+export function isRetainedMachineOperationRequest(input: Readonly<{ actionId: string } | { rpcMethod: string }>): boolean {
+    return 'rpcMethod' in input
+        ? retainedOperationRpcMethods.has(input.rpcMethod)
+        : retainedOperationActionIds.has(input.actionId);
+}
 
 /** Operation support is independent of grants and reviewed composite-effect custody. */
 export function isMachineOperationSupportedForRequester(input: Readonly<{

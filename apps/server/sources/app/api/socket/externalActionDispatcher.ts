@@ -42,7 +42,7 @@ import { db } from "@/storage/db";
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import { resolveMachineAdmission } from "@/app/machines/machineAccess";
 import { readAdmittedExternalActionHandoffMachineInTx, readAdmittedExternalActionMachineInTx } from '@/app/auth/externalActionHandoffAdmission';
-import type { MachineOperationRequesterContext } from '@/app/machines/machineOperationSupport';
+import { isRetainedMachineOperationRequest, type MachineOperationRequesterContext } from '@/app/machines/machineOperationSupport';
 import { getAccountSessionSocketRoom } from "@/app/api/socketRooms";
 import { getOrCreateServerIdentityId } from "@/app/serverIdentity/serverIdentity";
 import { readExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
@@ -948,7 +948,8 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 ...((executionAuthorization?.binding.handoffAdmission ?? request.envelope.handoffAdmission)
                     ? { handoffAdmission: executionAuthorization?.binding.handoffAdmission ?? request.envelope.handoffAdmission } : {}),
                 requiredExternalActionExecutionAuthorization: true,
-                ...(managedWakeRoot ? { requireOnline: false } : {}),
+                ...((managedWakeRoot || isRetainedMachineOperationRequest({ actionId: request.actionId }))
+                    ? { requireOnline: false } : {}),
                 ...(requiredSessionInputAdmissionProtocolVersion === undefined
                     ? {}
                     : { requiredSessionInputAdmissionProtocolVersion }),

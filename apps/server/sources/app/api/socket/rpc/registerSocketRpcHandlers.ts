@@ -80,7 +80,7 @@ import { readSessionAccessAuthenticationFromSocket } from "@/app/session/access/
 import { isCurrentSessionInputMachineTargetInTx, readCurrentCommittedSessionInputMachineTargetInTx } from '@/app/session/messages/sessionInputAdmission';
 import { db } from "@/storage/db";
 import { readMachineAdmissionFactsInTx, resolveMachineAdmission, resolveMachineAdmissionFromFactsInTx } from "@/app/machines/machineAccess";
-import { isMachineOperationSupportedForRequester, type MachineOperationRequesterContext } from '@/app/machines/machineOperationSupport';
+import { isMachineOperationSupportedForRequester, isRetainedMachineOperationRequest, type MachineOperationRequesterContext } from '@/app/machines/machineOperationSupport';
 import { readMachineDevcontainerWorkspaceSyncRouteInTx } from "@/app/machines/managed/managedRows";
 import { recoverMachineAccessLossCustody } from '@/app/machines/machineAccessCustody';
 import { log, warn } from "@/utils/logging/log";
@@ -2096,10 +2096,11 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     // Reuse the Action ingress policy in this same admission decision.
                     const actionPolicy = structuredMessageRouting?.invocationKind === 'mountedPluginSurface'
                         || structuredMessageRouting?.invocationKind === 'clientPluginAction' ? 'action.invoke' : undefined;
-                    // Passive worker status does not wake a Machine. Admit authority
-                    // independently of presence so the existing forwarder classifies
-                    // a disconnected target for every client using this transport.
-                    const requireOnline = rpcMethod !== 'projects.worker.status';
+                    // Passive status and retained operation controls do not wake a Machine.
+                    // Authority is admitted independently of persisted presence; the
+                    // existing forwarder still requires the live exact installation.
+                    const requireOnline = rpcMethod !== 'projects.worker.status'
+                        && !isRetainedMachineOperationRequest({ rpcMethod });
                     const managedTarget = rpcMethod === MANAGED_ACTIVITY_READ_RPC_METHOD ? ManagedActivityReadRequestV1Schema.safeParse(callParams)
                         : rpcMethod === MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD ? ManagedAdmissionDrainConfirmRequestV1Schema.safeParse(callParams) : null;
                     const readScopedAdmission = isHandoffCurrent && verifiedExternalAction

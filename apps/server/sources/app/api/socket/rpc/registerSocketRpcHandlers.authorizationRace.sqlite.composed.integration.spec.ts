@@ -27,7 +27,7 @@ import { eventRouter } from '@/app/events/connectionEventRouter';
 import { forwardRpcCall } from './forwardRpcCall';
 import { createServerRpcForwarder } from '../serverRpcForwarder';
 import { evaluateAccountStoredContentSocketCompatibility } from '@/app/clientCompatibility/accountStoredContentCompatibility';
-import { ACTION_OPERATION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/operations/v1';
+import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
 import { resolveMachineAdmission } from '@/app/machines/machineAccess';
 import { createActionOperationStore } from '../../../../../../cli/src/daemon/actionOperations/actionOperationStore';
 import { createActionOperationRunner } from '../../../../../../cli/src/daemon/actionOperations/actionOperationRunner';
@@ -640,11 +640,11 @@ describe("Session RPC final access admission on SQLite", () => {
         expect(effect).toHaveBeenCalledTimes(2);
     });
 
-    it('cancels only the admitted requester operation on a shared Machine through real socket admission and operation custody', async () => {
+    it.each([true, false])('observes and cancels only requester operations through a connected Machine with persisted active=%s', async active => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const actor = await db.account.create({ data: { encryptionMode: 'plain' } });
         const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
-        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, active: true,
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, active,
             installationId: randomUUID(), installationPublicKey: tweetnacl.sign.keyPair().publicKey,
             metadata: encodePlainMachineStoredContent({ host: 'shared', platform: 'linux', happyCliVersion: 'test', homeDir: '/shared', happyHomeDir: '/shared/.happier' }),
             dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
@@ -653,6 +653,9 @@ describe("Session RPC final access admission on SQLite", () => {
         const scope = { accountId: actor.id, machineId: machine.id };
         for (const accountId of [owner.id, stranger.id]) store.create({ operationId: accountId, actionId: 'projects.script.run',
             title: 'Private operation', scope: { accountId, machineId: machine.id }, cancellation: 'unsupported', inputIdentity: '{}' });
+        store.create({ operationId: 'completed-inspection', actionId: 'machines.reachability.inspect',
+            title: 'Completed inspection', scope, cancellation: 'unsupported', inputIdentity: '{}' });
+        store.succeed('completed-inspection', { ok: true });
         const runner = createActionOperationRunner({ store, generateOperationId: () => 'own-script', resolveAction: actionId => ({
             actionId, title: 'Script', operation: { version: 1, visibility: 'activity', progress: 'reported', presentation: { onStart: 'current' } } }) });
         let cancelled = false;
@@ -663,27 +666,53 @@ describe("Session RPC final access admission on SQLite", () => {
             return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
         } });
         const handlers = createActionOperationRpcHandlers({ store, runner, machineId: machine.id, resolveAccountId: async () => owner.id });
-        const method = `${machine.id}:${ACTION_OPERATION_RPC_METHODS_V1.cancel}`;
+        const cancelMethod = ACTION_OPERATION_RPC_METHODS_V1.cancel;
         const effect = vi.fn(async (_event: string, raw: unknown) => {
             const payload = raw as SocketRpcRequestPayload;
             const admission = payload.machineAdmission;
-            return handlers.cancel(payload.params, { machineAdmission: admission, verifyMachineAdmissionCurrent: async () => {
+            const context = { machineAdmission: admission, verifyMachineAdmissionCurrent: async () => {
                 const current = await resolveMachineAdmission({ actorAccountId: admission!.actorAccountId, machineId: machine.id, rpcMethod: ACTION_OPERATION_RPC_METHODS_V1.cancel });
                 return current.kind === 'admitted' && current.installationId === admission!.installationId;
-            } });
+            } };
+            if (payload.method.endsWith(`:${ACTION_OPERATION_RPC_METHODS_V1.get}`)) return handlers.get(payload.params, context);
+            if (payload.method.endsWith(`:${ACTION_OPERATION_RPC_METHODS_V2.get}`)) return handlers.getV2(payload.params, context);
+            if (payload.method.endsWith(`:${ACTION_OPERATION_RPC_METHODS_V1.list}`)) return handlers.list(payload.params, context);
+            if (payload.method.endsWith(`:${ACTION_OPERATION_RPC_METHODS_V2.list}`)) return handlers.listV2(payload.params, context);
+            return handlers.cancel(payload.params, context);
         });
         const daemon = { id: 'fx14-operation-daemon', data: { clientType: 'machine-scoped', userId: owner.id, machineId: machine.id,
             verifiedMachineInstallationId: machine.installationId, accountStoredContentCompatibility }, timeout: () => ({ emitWithAck: effect }) };
-        const read = (room: string) => room === daemon.id || room === `rpc:${owner.id}:${method}` ? [daemon] : [];
+        let connected = true;
+        const methods = [...Object.values(ACTION_OPERATION_RPC_METHODS_V1), ...Object.values(ACTION_OPERATION_RPC_METHODS_V2)];
+        const read = (room: string) => connected && (room === daemon.id
+            || methods.some(rpcMethod => room === `rpc:${owner.id}:${machine.id}:${rpcMethod}`)) ? [daemon] : [];
         const io = createSocketRoomDiscoveryHarness(async room => read(room));
         const caller = createCaller();
         registerSocketRpcHandlers({ userId: actor.id, socket: caller as unknown as Socket, io });
-        const call = async (operationId: string) => {
+        const call = async (operationId: string, rpcMethod: string = cancelMethod) => {
             const callback = vi.fn();
-            await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method, params: { operationId } }, callback);
+            await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method: `${machine.id}:${rpcMethod}`,
+                params: rpcMethod === ACTION_OPERATION_RPC_METHODS_V1.list || rpcMethod === ACTION_OPERATION_RPC_METHODS_V2.list ? {} : { operationId } }, callback);
             return callback;
         };
         try {
+            for (const rpcMethods of [ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2]) {
+                expect(await call('own-script', rpcMethods.get)).toHaveBeenCalledWith(expect.objectContaining({
+                    ok: true, result: expect.objectContaining({ kind: 'found', operation: expect.objectContaining({ operationId: 'own-script' }) }) }));
+                expect(await call('completed-inspection', rpcMethods.get)).toHaveBeenCalledWith(expect.objectContaining({
+                    ok: true, result: expect.objectContaining({ kind: 'found', operation: expect.objectContaining({
+                        operationId: 'completed-inspection', state: 'succeeded', result: { ok: true } }) }) }));
+                expect(await call(owner.id, rpcMethods.get)).toHaveBeenCalledWith({ ok: true, result: { kind: 'not_found' } });
+                const listed = await call('own-script', rpcMethods.list);
+                expect(listed).toHaveBeenCalledWith(expect.objectContaining({
+                    ok: true, result: expect.objectContaining({ items: expect.arrayContaining([expect.objectContaining({ operationId: 'own-script' }),
+                        expect.objectContaining({ operationId: 'completed-inspection' })]) }) }));
+                expect(listed.mock.calls[0]?.[0].result.items).toHaveLength(2);
+            }
+            connected = false;
+            expect(await call('own-script')).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: 'target_unavailable' }));
+            expect(cancelled).toBe(false);
+            connected = true;
             for (const id of [owner.id, stranger.id, 'guessed']) expect(await call(id)).toHaveBeenCalledWith({ ok: true, result: { kind: 'not_found' } });
             expect(cancelled).toBe(false);
             expect(await call('own-script')).toHaveBeenCalledWith({ ok: true, result: { kind: 'requested' } });

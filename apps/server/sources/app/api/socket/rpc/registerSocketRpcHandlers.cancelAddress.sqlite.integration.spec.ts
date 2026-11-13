@@ -31,12 +31,12 @@ describe('signed cancellation original Address through the Home relay', () => {
     }, 180_000);
     afterAll(async () => { if (harness) await harness.close(); });
 
-    it('retains the reviewed cancel envelope only for the current requester Account on a shared Machine', async () => {
+    it.each([true, false])('retains the reviewed cancel envelope only for the current requester Account on a shared Machine with persisted active=%s', async active => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const actor = await db.account.create({ data: { encryptionMode: 'plain' } });
         const installationKey = nacl.sign.keyPair();
         const installationId = randomUUID();
-        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, active: true,
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, active,
             installationId, installationPublicKey: new Uint8Array(installationKey.publicKey),
             metadata: encodePlainMachineStoredContent({ host: 'cancel-worker', platform: 'linux', happyCliVersion: 'test',
                 homeDir: '/worker', happyHomeDir: '/worker/.happier' }),
@@ -73,7 +73,7 @@ describe('signed cancellation original Address through the Home relay', () => {
             accountStoredContentCompatibility: compatibility }, timeout: () => ({ emitWithAck: effect }) });
         const io = createSocketRoomDiscoveryHarness(async room => room === daemon.id || room === `rpc:${owner.id}:${method}` ? [daemon] : []);
         const caller = Object.assign(createAuthenticatedFakeSocket({ id: 'cancel-requester', data: {
-            clientType: 'user-scoped', authTokenKind: 'account', authAuthority: 'present_user',
+            clientType: 'user-scoped', userId: actor.id, authTokenKind: 'account', authAuthority: 'present_user',
             accountStoredContentCompatibility: compatibility } }), { handshake: { auth: { token: accountToken } } });
         registerSocketRpcHandlers({ userId: actor.id, socket: caller as unknown as Socket, io });
         const call = async (operationId: string, options: Readonly<{
@@ -86,6 +86,7 @@ describe('signed cancellation original Address through the Home relay', () => {
             const execution = ExternalActionMachineRpcExecutionV1Schema.parse({ v: 1, authorization,
                 effectActionId, target, installationId,
                 machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: authorization.token,
+                    requesterAccountContext: authorization.requesterAccountContext,
                     effectActionId, target, installationId,
                     event: SOCKET_RPC_EVENTS.CALL, method, requestId, params, privateKey: installationKey.secretKey }) });
             const callback = vi.fn();
