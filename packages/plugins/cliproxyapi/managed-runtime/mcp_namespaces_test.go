@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -45,7 +46,7 @@ func (m *namespaceModel) RoundTrip(req *http.Request) (*http.Response, error) {
 		if tool.Type == "namespace" && tool.Name == "mcp__happier" {
 			name = tool.Name + "." + tool.Tools[0].Name
 		}
-		if tool.Type == "function" && strings.Contains(tool.Name, "action_spec_search") {
+		if tool.Type == "function" && strings.HasPrefix(tool.Name, "mcp__") {
 			name = tool.Name
 		}
 	}
@@ -71,41 +72,45 @@ func (m *namespaceModel) RoundTrip(req *http.Request) (*http.Response, error) {
 	return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Body: io.NopCloser(strings.NewReader(strings.Join(lines, ""))), Request: req}, nil
 }
 func TestCodexMcpNamespaceRoundTrip(t *testing.T) {
-	for _, provider := range []Provider{ProviderMeta, ProviderCodex} {
-		for _, stream := range []bool{true, false} {
-			t.Run(fmt.Sprint(provider, "/", stream), func(t *testing.T) {
-				testCase := metaProtocolCases()[1]
-				if provider == ProviderCodex {
-					testCase.provider = provider
-					testCase.purpose = "openai-upstream"
-					testCase.model = "gpt-6.1-sol"
+	for _, toolName := range []string{"action_spec_search", "connected_services_authentication_continue_connect"} {
+		t.Run(toolName, func(t *testing.T) {
+			for _, provider := range []Provider{ProviderMeta, ProviderCodex} {
+				for _, stream := range []bool{true, false} {
+					t.Run(fmt.Sprint(provider, "/", stream), func(t *testing.T) {
+						testCase := metaProtocolCases()[1]
+						if provider == ProviderCodex {
+							testCase.provider = provider
+							testCase.purpose = "openai-upstream"
+							testCase.model = "gpt-6.1-sol"
+						}
+						cfg := crossProtocolConfig(t, testCase)
+						model := &namespaceModel{}
+						gateway, err := NewGateway(cfg, testRuntimeIdentity(), &sequenceBroker{leases: []RequestAuthHeaders{validLease("fixture-only", nil)}}, model)
+						if err != nil {
+							t.Fatal(err)
+						}
+						cancel, result := runGateway(t, gateway)
+						defer stopGateway(t, cancel, result)
+						_ = awaitManagedHealthIdentity(t, cfg)
+						request := fmt.Sprintf(`{"model":%q,"stream":%t,"input":"list store Action specs","tools":[{"type":"namespace","name":"mcp__happier","description":"Happier MCP","tools":[{"type":"function","name":%q,"parameters":{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer"}}}}]}]}`, testCase.model, stream, toolName)
+						response := postJSON(t, cfg, "/v1/responses", request)
+						body := readResponse(t, response)
+						_ = response.Body.Close()
+						if response.StatusCode != 200 {
+							t.Fatalf("response %d: %s", response.StatusCode, body)
+						}
+						if len(model.names) != 1 || !regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`).MatchString(model.names[0]) {
+							t.Fatalf("presented names = %v; expected flat MCP function", model.names)
+						}
+						for _, fragment := range []string{`"namespace":"mcp__happier"`, fmt.Sprintf(`"name":%q`, toolName), `call_01a1d2e5e25c76f399c8cfb81136ee3c`} {
+							if !strings.Contains(body, fragment) {
+								t.Fatalf("Codex response missing %s: %s", fragment, body)
+							}
+						}
+					})
 				}
-				cfg := crossProtocolConfig(t, testCase)
-				model := &namespaceModel{}
-				gateway, err := NewGateway(cfg, testRuntimeIdentity(), &sequenceBroker{leases: []RequestAuthHeaders{validLease("fixture-only", nil)}}, model)
-				if err != nil {
-					t.Fatal(err)
-				}
-				cancel, result := runGateway(t, gateway)
-				defer stopGateway(t, cancel, result)
-				_ = awaitManagedHealthIdentity(t, cfg)
-				request := fmt.Sprintf(`{"model":%q,"stream":%t,"input":"list store Action specs","tools":[{"type":"namespace","name":"mcp__happier","description":"Happier MCP","tools":[{"type":"function","name":"action_spec_search","parameters":{"type":"object","properties":{"query":{"type":"string"},"limit":{"type":"integer"}}}}]}]}`, testCase.model, stream)
-				response := postJSON(t, cfg, "/v1/responses", request)
-				body := readResponse(t, response)
-				_ = response.Body.Close()
-				if response.StatusCode != 200 {
-					t.Fatalf("response %d: %s", response.StatusCode, body)
-				}
-				if len(model.names) != 1 || model.names[0] != "mcp__7_happier__action_spec_search" {
-					t.Fatalf("presented names = %v; expected flat MCP function", model.names)
-				}
-				for _, fragment := range []string{`"namespace":"mcp__happier"`, `"name":"action_spec_search"`, `call_01a1d2e5e25c76f399c8cfb81136ee3c`} {
-					if !strings.Contains(body, fragment) {
-						t.Fatalf("Codex response missing %s: %s", fragment, body)
-					}
-				}
-			})
-		}
+			}
+		})
 	}
 }
 
@@ -295,6 +300,87 @@ func TestMcpNamespaceInjectiveFlatNames(t *testing.T) {
 				if textField(input[0], "name") != textField(tools[0], "name") || textField(choice, "name") != textField(tools[1], "name") {
 					t.Fatalf("history/choice diverged from catalog: %s", translated)
 				}
+			}
+		})
+	}
+}
+
+// Longest current Happier MCP binding (bindings.mcpToolName), projected
+// through the CLI Happier tool inventory; source: protocol/actions/specs/connectedServices.ts.
+// Test the actual request boundary, including deferred catalogs and continuation.
+func TestMcpNamespaceVendorFunctionNameContract(t *testing.T) {
+	addresses := []toolAddress{
+		{"mcp__happier", "connected_services_authentication_continue_connect"},
+		{"mcp__happier", strings.Repeat("x", 200)},
+		{"mcp__happier", strings.Repeat("x", 199) + "y"},
+		{"mcp__has.dots", "tool/name-雪"},
+		{"mcp__happier", strings.Repeat("b", 48)}, // exactly 64 before compaction
+		{"mcp__happier", strings.Repeat("b", 49)},
+	}
+	valid := regexp.MustCompile(`^[a-zA-Z0-9_-]{1,64}$`)
+	hook := mcpNamespaceTranslation{}
+	for _, deferred := range []bool{false, true} {
+		t.Run(fmt.Sprint("deferred=", deferred), func(t *testing.T) {
+			seen := map[string]bool{}
+			for _, address := range addresses {
+				t.Run(address.name, func(t *testing.T) {
+					catalog := []any{map[string]any{"type": "namespace", "name": address.namespace, "tools": []any{map[string]any{"type": "function", "name": address.name, "parameters": map[string]any{}}}}}
+					root := map[string]any{"tools": catalog, "input": []any{map[string]any{"type": "function_call", "namespace": address.namespace, "name": address.name, "arguments": "{}"}}, "tool_choice": map[string]any{"type": "function", "namespace": address.namespace, "name": address.name}}
+					if deferred {
+						root["input"] = []any{map[string]any{"type": "tool_search_output", "tools": catalog}}
+						delete(root, "tools")
+					}
+					request := encodeWire(root)
+					translated := hook.NormalizeRequest(context.Background(), sdktranslator.FormatOpenAIResponse, sdktranslator.FormatCodex, "muse-spark-1.3", request, true)
+					var normalized wireObject
+					_ = json.Unmarshal(translated, &normalized)
+					var input []wireObject
+					_ = json.Unmarshal(normalized["input"], &input)
+					catalogRoot := normalized
+					if deferred {
+						catalogRoot = input[0]
+					}
+					var tools []wireObject
+					_ = json.Unmarshal(catalogRoot["tools"], &tools)
+					flat := textField(tools[0], "name")
+					if !valid.MatchString(flat) {
+						t.Fatalf("vendor rejects offered function name (%d bytes): %q", len(flat), flat)
+					}
+					if seen[flat] {
+						t.Fatalf("different native addresses collided: %q", flat)
+					}
+					seen[flat] = true
+					if !deferred {
+						var choice wireObject
+						_ = json.Unmarshal(normalized["tool_choice"], &choice)
+						if textField(input[0], "name") != flat || textField(choice, "name") != flat {
+							t.Fatalf("history/choice differ from offered name: %s", translated)
+						}
+						delete(root, "tools")
+						continuation := hook.NormalizeRequest(context.Background(), sdktranslator.FormatOpenAIResponse, sdktranslator.FormatCodex, "muse-spark-1.3", encodeWire(root), true)
+						if !strings.Contains(string(continuation), flat) {
+							t.Fatalf("catalog-independent continuation diverged: %s", continuation)
+						}
+					}
+					for _, stream := range []bool{false, true} {
+						response := encodeWire(map[string]any{"type": "response.output_item.done", "item": map[string]any{"type": "function_call", "name": flat, "arguments": "{}"}})
+						if stream {
+							response = append([]byte("data: "), response...)
+						}
+						restored := hook.NormalizeResponseBefore(context.Background(), sdktranslator.FormatCodex, sdktranslator.FormatOpenAIResponse, "muse-spark-1.3", request, translated, response, stream)
+						var event struct {
+							Item struct{ Namespace, Name string }
+						}
+						_ = json.Unmarshal([]byte(strings.TrimPrefix(string(restored), "data: ")), &event)
+						if event.Item.Namespace != address.namespace || event.Item.Name != address.name {
+							t.Fatalf("exact address not restored: %s", restored)
+						}
+					}
+					alias := encodeWire(map[string]any{"type": "function_call", "name": address.namespace + "." + address.name})
+					if got := hook.NormalizeResponseBefore(context.Background(), sdktranslator.FormatCodex, sdktranslator.FormatOpenAIResponse, "muse-spark-1.3", request, translated, alias, false); string(got) != string(alias) {
+						t.Fatalf("accepted dotted alias: %s", got)
+					}
+				})
 			}
 		})
 	}

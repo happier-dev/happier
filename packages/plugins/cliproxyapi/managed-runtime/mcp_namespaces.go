@@ -3,6 +3,8 @@ package managedruntime
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"strconv"
 	"strings"
@@ -33,9 +35,23 @@ func mcpAddress(o wireObject) (toolAddress, bool) {
 // Length-prefix the namespace so embedded double underscores in either
 // component cannot merge two native addresses. This is catalog-independent,
 // keeping continuation history and deferred discovery on the same encoding.
+// Compact names are deterministic and collision-resistant (not reversible).
 func (a toolAddress) flat() string {
 	namespace := strings.TrimPrefix(a.namespace, "mcp__")
-	return "mcp__" + strconv.Itoa(len(namespace)) + "_" + namespace + "__" + a.name
+	flat := "mcp__" + strconv.Itoa(len(namespace)) + "_" + namespace + "__" + a.name
+	// Muse rejects function names above 64 characters (final142-a capture).
+	// OpenAI's Chat FunctionDefinition also requires [a-zA-Z0-9_-], max 64:
+	// https://developers.openai.com/api/reference/resources/evals/subresources/runs/methods/create
+	if len(flat) <= 64 && strings.IndexFunc(flat, func(c rune) bool {
+		return !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-')
+	}) == -1 {
+		return flat
+	}
+	// Hash the unambiguous full address, never a truncated or sanitized prefix.
+	// Full SHA-256 preserves collision resistance; h cannot overlap the numeric
+	// namespace-length prefix. Exact restoration uses only the offered catalog.
+	digest := sha256.Sum256([]byte(flat))
+	return "mcp__h_" + base64.RawURLEncoding.EncodeToString(digest[:])
 }
 
 func flattenMcpCatalog(root wireObject) map[string]toolAddress {
