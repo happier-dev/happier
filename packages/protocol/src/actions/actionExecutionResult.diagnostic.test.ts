@@ -178,3 +178,8 @@ describe('managed controller failure causes', () => {
     expect(readUnexpectedActionErrorDiagnosticV1(Object.assign(new Error('private'), fields)).errorCode).toBeNull();
   });
 });
+
+it('retains a producer-projected cause when a failure crosses an Action adapter', () => {
+  const failureCause = projectActionFailureCauseV1(Object.assign(new Error('private'), { code: 'EACCES' }), 'plugins.development.prepare');
+  expect(projectActionFailureCauseV1({ failureCause }, 'dispatch')).toEqual(failureCause);
+});

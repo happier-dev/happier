@@ -145,6 +145,7 @@ describe('createDaemonPluginChangeService', () => {
       kind: 'failed',
       code: 'plugin_update_pinned',
       message: 'Pinned plugin channels cannot advance',
+      details: { failureCause: { phase: 'plugins.change.prepare', errorClass: 'Error', errorCode: 'plugin_update_pinned', httpStatus: null } },
     });
   });
 
@@ -163,6 +164,7 @@ describe('createDaemonPluginChangeService', () => {
       kind: 'failed',
       code: 'plugin_change_preparation_failed',
       message: 'Plugin author directory must contain exactly one of src/index.ts or index.ts',
+      details: { failureCause: { phase: 'plugins.change.prepare', errorClass: 'Error', errorCode: null, httpStatus: null } },
     });
   });
 
@@ -1014,6 +1016,7 @@ describe('createDaemonPluginChangeService', () => {
       kind: 'failed',
       code: 'plugin_change_failed',
       message: 'Storage-pressure quarantine eviction cleanup remains pending: reconciliation: generationCleanup unavailable',
+      details: { failureCause: { phase: 'plugins.change.apply', errorClass: 'Error', errorCode: null, httpStatus: null } },
     });
   });
 

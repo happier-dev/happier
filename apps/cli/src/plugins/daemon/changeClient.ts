@@ -1,4 +1,5 @@
 import { realpath } from 'node:fs/promises';
+import { readActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import {
   decideDaemonPluginChange,
@@ -29,6 +30,7 @@ export type UserPluginChangeResult = PluginChangeRequestResult | PluginChangeDec
 export function describeUserPluginChangeFailure(result: Exclude<UserPluginChangeResult, { kind: 'committed' }>): Readonly<{
   code: string;
   message: string;
+  failureCause?: ActionFailureCauseV1;
   details?: Readonly<Record<string, unknown>>;
 }> {
   switch (result.kind) {
@@ -76,8 +78,11 @@ export function describeUserPluginChangeFailure(result: Exclude<UserPluginChange
       return { code: 'conflict', message: `Plugin facts changed while applying ${result.pluginId}; review the candidate again.`, details: { pluginId: result.pluginId } };
     case 'failed': {
       const cause = readPluginModuleFailureCause(result.details);
+      const failureCause = result.details && typeof result.details === 'object' && 'failureCause' in result.details
+        ? readActionFailureCauseV1(result.details.failureCause) : undefined;
       return {
         code: result.code,
+        ...(failureCause ? { failureCause } : {}),
         message: result.message ?? `The daemon rejected the plugin change (${result.code}).`,
         details: { causeCode: result.code, ...(cause ? { cause } : {}) },
       };

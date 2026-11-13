@@ -19,7 +19,7 @@ import type { CurrentIntentMismatchV1 } from '../../actions/executor/approvalRev
 import type { JsonValue as StrictJsonValue } from '../../json/strictJsonValue.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { isPluginError, isPluginErrorData } from '../errors.js';
-import { projectActionFailureCauseV1, readActionFailureCauseV1 } from '../../actions/actionExecutionResult.js';
+import { parseActionExecuteFailure, projectActionFailureCauseV1, readActionFailureCauseV1 } from '../../actions/actionExecutionResult.js';
 import type {
   PluginContributionIdentityV1,
 } from '../contributionIdentity.js';
@@ -434,9 +434,11 @@ export function readPluginActionError(error: unknown): Readonly<{
   data?: StrictJsonValue;
 }> | null {
   if (!isPluginError(error)) {
-    const failureCause = readActionOutputDiagnostic(error)?.failureCause;
+    const publicFailure = parseActionExecuteFailure(error);
+    const failureCause = publicFailure?.failureCause ?? readActionOutputDiagnostic(error)?.failureCause;
     if (!failureCause) return null;
-    return Object.freeze({ code: PLUGIN_ACTION_FAILURE_FALLBACK_CODE, message: PLUGIN_ACTION_FAILURE_FALLBACK_MESSAGE,
+    return Object.freeze({ code: publicFailure?.errorCode ?? PLUGIN_ACTION_FAILURE_FALLBACK_CODE,
+      message: publicFailure?.error ?? PLUGIN_ACTION_FAILURE_FALLBACK_MESSAGE,
       retryable: false, data: { failureCause: { ...failureCause } } });
   }
   const data = AgentRuntimeJsonValueV1Schema.safeParse(error.data);

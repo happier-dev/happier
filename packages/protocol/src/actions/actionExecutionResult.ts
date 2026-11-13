@@ -231,6 +231,10 @@ export function readActionFailureCauseV1(value: unknown): ActionFailureCauseV1 {
 }
 
 export function projectActionFailureCauseV1(error: unknown, phase?: string): ActionFailureCauseV1 {
+  try {
+    const projected = error && typeof error === 'object' && 'failureCause' in error ? error.failureCause : undefined;
+    if (projected !== undefined) return readActionFailureCauseV1(projected);
+  } catch { /* A diagnostic accessor cannot replace the original failure. */ }
   const diagnostic = readUnexpectedActionErrorDiagnosticV1(error);
   let stage: unknown;
   try { stage = error && typeof error === 'object' && 'stage' in error ? error.stage : undefined; }

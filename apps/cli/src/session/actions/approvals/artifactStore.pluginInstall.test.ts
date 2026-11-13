@@ -205,7 +205,7 @@ describe('plugin install approval Artifact rejoin', () => {
     // Substitute local HTTP only; the daemon routes and change owner stay real.
     const control = vi.spyOn(daemonHttp, 'daemonPost').mockImplementation(async (path, body) => {
       const response = await app.inject({ method: 'POST', url: path,
-        headers: { 'x-happier-daemon-token': 'test-control' }, ...(body === undefined ? {} : { payload: body }) });
+        headers: { 'x-happier-daemon-token': 'test-control' }, ...(body == null ? {} : { payload: body }) });
       return response.json();
     });
     try {
@@ -225,7 +225,8 @@ describe('plugin install approval Artifact rejoin', () => {
         actionRequestId: 'installed-update', interactivePresentation: 'unavailable' as const };
       const review = await executor.execute('plugins.install', input, context);
       expect(review).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
-      if (review.ok || typeof review.details?.reviewDigest !== 'string') throw new Error(JSON.stringify(review));
+      if (review.ok || !review.details || typeof review.details !== 'object'
+        || !('reviewDigest' in review.details) || typeof review.details.reviewDigest !== 'string') throw new Error(JSON.stringify(review));
       expect((await createPluginRegistryStateStore({ happyHomeDir }).read()).plugins[pluginId]?.install.manifestVersion).toBe('1.0.0');
       const confirmed = await executor.execute('plugins.install', input, { ...context,
         presentUserConfirmation: { actionId: 'plugins.install', accountId: 'account-1', serverId: 'home-identity',
@@ -367,7 +368,7 @@ describe('plugin install approval Artifact rejoin', () => {
         verifyPat: async () => { throw new Error('Unexpected PAT'); } } });
     const control = vi.spyOn(daemonHttp, 'daemonPost').mockImplementation(async (path, body) => {
       const response = await app.inject({ method: 'POST', url: path,
-        headers: { 'x-happier-daemon-token': 'test-control' }, ...(body === undefined ? {} : { payload: body }) });
+        headers: { 'x-happier-daemon-token': 'test-control' }, ...(body == null ? {} : { payload: body }) });
       return response.json();
     });
     const accountGet = http.get.getMockImplementation()!;
@@ -573,6 +574,49 @@ describe('plugin install approval Artifact rejoin', () => {
         await rm(root, { recursive: true, force: true });
       }
     });
+
+  it('retries a rejected development install with the registered source revision', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-development-retired-review-'));
+    const happyHomeDir = join(root, 'home');
+    const entryPath = join(root, 'plugin.ts');
+    const pluginId = 'acme.development-retirement';
+    const store = createStore();
+    const reloadController = createPluginReloadController({ happyHomeDir });
+    const owner = createDaemonPluginRuntimeOwner({ happyHomeDir, staleCandidateCleanup: 'disabled', reloadController,
+      connectedAccounts: createPackedTestConnectedAccountsRuntime({ happyHomeDir, pluginId }).owner,
+      approvalStore: store,
+      resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: 'machine-1', serverIdentityId: 'home-identity' }),
+    });
+    try {
+      await mkdir(happyHomeDir, { recursive: true });
+      await writeFile(entryPath, `export const manifest = ${JSON.stringify(createPluginManifestV2Fixture({
+        id: pluginId, entrypoints: undefined, engines: undefined,
+      }))}; export function activate() {}`);
+      await owner.initialize();
+      const input = { kind: 'development' as const, sourceRootPath: entryPath };
+      const first = await owner.changeService.requestPluginChange(input);
+      expect(first, JSON.stringify(first)).toMatchObject({ kind: 'reviewRequired' });
+      if (first.kind !== 'reviewRequired') throw new Error('Expected development review');
+      const request = ApprovalRequestV2Schema.parse({ ...installRequest(), actionArgs: { path: entryPath, dev: true },
+        preview: { pluginInstall: { pendingReview: first } } });
+      const created = await store.approvalsCreate({ request, serverId: 'home-1' });
+      const rejected = ApprovalRequestV2Schema.parse({ ...request, status: 'rejected', updatedAtMs: 2,
+        decision: { kind: 'reject', decidedAtMs: 2 } });
+      expect(await store.approvalsUpdate({ ...created, request: rejected, serverId: 'home-1' })).toEqual({ ok: true });
+      const retry = await owner.changeService.requestPluginChange(input);
+      expect(retry, JSON.stringify(retry)).toMatchObject({ kind: 'reviewRequired' });
+      if (retry.kind !== 'reviewRequired') throw new Error('Expected fresh development review');
+      expect(retry.pendingChangeId).not.toBe(first.pendingChangeId);
+      const result = await owner.changeService.decidePluginChange({
+        pendingChangeId: retry.pendingChangeId, decision: 'installAndTrust',
+      });
+      expect(result, JSON.stringify(result)).toMatchObject({ kind: 'committed', pluginId });
+    } finally {
+      await owner.changeService.shutdown();
+      await reloadController.shutdown();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
   it.each([['rejected', 'plain'], ['canceled', 'plain'], ['withdrawn', 'plain'], ['expired_origin', 'plain'],
     ['superseded_source', 'plain'], ['expired_change', 'plain'], ['unknown_admission', 'plain'],

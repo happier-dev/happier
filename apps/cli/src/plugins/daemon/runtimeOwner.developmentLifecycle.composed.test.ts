@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -371,7 +371,7 @@ it.each([false, true])('publishes new dynamic Resources with their Actions, reta
     if (crash) {
       expect(update.status.plugins).toEqual(expect.arrayContaining([expect.objectContaining({
         pluginId, phase: 'retained_incumbent', diagnostic: expect.objectContaining({
-          code: 'plugin_change_failed', message: expect.stringContaining('candidate activation failed'),
+          code: 'plugin_activation_failed', message: expect.stringContaining('candidate activation failed'),
         }),
       })]));
       expect(runtime.reloadController.readCurrentPluginOccurrenceId?.(pluginId)).toBe(incumbentOccurrence);
@@ -405,10 +405,15 @@ it.each([false, true])('publishes new dynamic Resources with their Actions, reta
   }
 });
 
-it('registers a direct development install and rejoins its exact review before publishing the approved source', async () => {
+it.each(['file', 'package'] as const)('registers a direct development install (%s) and rejoins its exact review before publishing the approved source', async (shape) => {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-development-direct-install-')));
   const pluginId = 'acme.direct-development';
-  const entryPath = join(root, 'plugin.ts');
+  const entryPath = shape === 'file' ? join(root, 'plugin.ts') : join(root, 'source', 'src', 'index.mjs');
+  const locator = shape === 'file' ? entryPath : join(root, 'source');
+  if (shape === 'package') {
+    await mkdir(join(locator, 'src'), { recursive: true });
+    await writeFile(join(locator, 'package.json'), JSON.stringify({ type: 'module', main: './src/index.mjs' }));
+  }
   const runtime = createRuntime(root, pluginId);
   const store = createPluginRegistryStateStore({ happyHomeDir: root });
   try {
@@ -421,7 +426,7 @@ it('registers a direct development install and rejoins its exact review before p
     ].join('\n'));
     const lease = await runtime.reloadController.acquireRuntimeRegistry();
     await lease.release();
-    const request = { kind: 'development' as const, sourceRootPath: entryPath };
+    const request = { kind: 'development' as const, sourceRootPath: locator };
     const pending = await runtime.owner.changeService.requestPluginChange(request);
     expect(pending.kind).toBe('reviewRequired');
     if (pending.kind !== 'reviewRequired') throw new Error('Expected installation review');
@@ -432,9 +437,12 @@ it('registers a direct development install and rejoins its exact review before p
       pendingChangeId: pending.pendingChangeId, decision: 'installAndTrust',
     });
     expect(approved, JSON.stringify(approved)).toMatchObject({ kind: 'committed', pluginId });
-    expect((await store.read()).plugins[pluginId]?.source).toMatchObject({ kind: 'path', locator: entryPath, devWatch: true });
+    if (shape === 'package') {
+      await expect(readFile(join(locator, 'pnpm-lock.yaml'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+    }
+    expect((await store.read()).plugins[pluginId]?.source).toMatchObject({ kind: 'path', locator, devWatch: true });
     expect((await runtime.owner.changeService.controlPluginDevelopment!({ kind: 'status' })).status.plugins)
-      .toEqual(expect.arrayContaining([expect.objectContaining({ pluginId, sourceRootPath: entryPath, phase: 'active' })]));
+      .toEqual(expect.arrayContaining([expect.objectContaining({ pluginId, sourceRootPath: locator, phase: 'active' })]));
     await expect(runtime.reloadController.getState().activeRegistry!.targetActionInvocations.invoke({
       pluginId, localId: 'identity', input: {}, surface: 'cli',
     })).resolves.toMatchObject({ status: 'executed', value: { installed: true } });
@@ -535,7 +543,8 @@ it.each(['unregistered', 'staleRevision', 'unregisteredAfterReview'] as const)(
     await expect(runtime.owner.changeService.decidePluginChange({
       pendingChangeId: request.pendingChangeId, decision: 'installAndTrust',
     })).resolves.toMatchObject({ kind: 'failed', code: 'plugin_change_failed',
-      message: expect.stringContaining('superseded before preparation') });
+      message: expect.stringContaining('superseded before preparation'),
+      details: { failureCause: { errorCode: 'plugin_change_superseded', phase: 'plugins.change.apply' } } });
     expect((await createPluginRegistryStateStore({ happyHomeDir: root }).read()).plugins[pluginId]).toBeUndefined();
     expect(runtime.reloadController.readCurrentPluginOccurrenceId?.(pluginId)).toBeNull();
     if (custody === 'unregistered') {

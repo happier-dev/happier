@@ -1,3 +1,4 @@
+import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { CliActionDepsParams } from '../cliActionDeps/types';
 import type { logger } from '@/ui/logger';
 import { ManagedDeleteInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -96,6 +97,8 @@ buildApprovalPreview: async ({ actionId, input, context, defaultPreview, machine
           pluginInstall: { pendingReview: readRecord(evaluation).pendingReview },
         });
         if (!daemonEvaluation && installInput.dryRun !== true) {
+          const failure = parseActionExecuteFailure(evaluation);
+          if (failure) return failure;
           const result = readRecord(evaluation);
           const change = readRecord(result.change);
           const diagnostic = readRecord(Array.isArray(result.diagnostics) ? result.diagnostics[0] : null);

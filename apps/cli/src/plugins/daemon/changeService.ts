@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { realpath } from 'node:fs/promises';
 import { runPluginAuthorPhase } from '@/plugins/authoring/phaseLog';
@@ -100,14 +101,22 @@ function failedPluginChange(
   code: string,
   error: unknown,
   sourceRootPath?: string,
+  phase = 'plugins.change.apply',
 ): Extract<PluginChangeApplyResult, { kind: 'failed' }> {
   logger.warnLocalFile(`[plugins] ${code}`, { code, ...(sourceRootPath ? { sourceRootPath } : {}), error });
   const moduleError = findPluginModuleLoadError(error);
   const diagnostic = findPluginFailureDiagnostic(error)
     ?? (moduleError ? mapDaemonModuleLoadErrorToDiagnostic(moduleError) : undefined);
   const message = diagnostic?.message ?? describePluginChangeFailureCause(error);
-  return { kind: 'failed', code: diagnostic?.code ?? code, ...(message ? { message } : {}),
-    ...(diagnostic?.details === undefined ? {} : { details: diagnostic.details }),
+  const failureCause = projectActionFailureCauseV1(error, phase);
+  const details = diagnostic?.details;
+  return {
+    kind: 'failed', code: diagnostic?.code ?? code, ...(message ? { message } : {}),
+    details: {
+      ...(details === undefined ? {} : details !== null && typeof details === 'object' && !Array.isArray(details)
+        ? details : { diagnosticDetails: details }),
+      failureCause: { ...failureCause },
+    },
   };
 }
 
@@ -335,9 +344,7 @@ export function createDaemonPluginChangeService(params: Readonly<{
         }, async () => applyDevelopment(prepared, decision ? {
           optionalSelections: decision.optionalSelections ?? [],
         } : undefined), (result) => result.kind === 'committed');
-        return result.kind === 'failed'
-          ? failedPluginChange(result.code, result.message === undefined ? undefined : new Error(result.message), prepared.sourceAuthority.canonicalRoot)
-          : result;
+        return result;
       }
       return await prepared.apply(decision ? {
         optionalSelections: decision.optionalSelections ?? [],
@@ -379,26 +386,27 @@ export function createDaemonPluginChangeService(params: Readonly<{
           const retained = root === null ? undefined : findPendingDevelopmentSourceChange(root);
           if (retained) {
             await reconcileApprovalRetirement(retained);
-          }
-          if (retained && pendingById.get(retained.id) === retained) {
             const prepared = retained.prepared;
             const sourceAuthority = isDevelopmentCandidate(prepared) ? prepared.sourceAuthority : null;
             const current = sourceAuthority ? params.resolveDevelopmentSourceAuthority?.({
               pluginId: prepared.pluginId, rootPath: sourceAuthority.registeredRootId,
             }) : null;
-            if (retained.state === 'applying' || !params.resolveDevelopmentSourceAuthority
-              || !sourceAuthority
-              || developmentSourceAuthorityEqual(sourceAuthority, current)) {
-              const outstanding = projectOutstandingPendingChange(retained);
-              if (outstanding?.kind === 'reviewRequired') return outstanding;
-              return { kind: 'busy', pluginId: prepared.pluginId };
+            if (pendingById.get(retained.id) === retained) {
+              if (retained.state === 'applying' || !params.resolveDevelopmentSourceAuthority
+                || !sourceAuthority
+                || developmentSourceAuthorityEqual(sourceAuthority, current)) {
+                const outstanding = projectOutstandingPendingChange(retained);
+                if (outstanding?.kind === 'reviewRequired') return outstanding;
+                return { kind: 'busy', pluginId: prepared.pluginId };
+              }
+              // A new request must not re-present facts already known to be stale.
+              // Direct approval still validates the exact retained observation.
+              removePending(retained);
+              await cleanupPrepared(prepared);
+              if (options?.signal?.aborted) return { kind: 'cancelled' };
+              if (!acceptsChanges()) return admissionRefusal();
             }
-            // A new request must not re-present facts already known to be stale.
-            // Direct approval still validates the exact retained observation.
-            removePending(retained);
-            await cleanupPrepared(prepared);
-            if (options?.signal?.aborted) return { kind: 'cancelled' };
-            if (!acceptsChanges()) return admissionRefusal();
+            // Retirement releases review custody, not the registered observation.
             if (current) preparationRequest = {
               ...request, sourceRootPath: current.registeredRootId, observedRevision: current.observedRevision,
             };
@@ -417,6 +425,7 @@ export function createDaemonPluginChangeService(params: Readonly<{
               : 'plugin_change_preparation_failed',
             error,
             request.kind === 'development' ? request.sourceRootPath : undefined,
+            'plugins.change.prepare',
           );
         }
 

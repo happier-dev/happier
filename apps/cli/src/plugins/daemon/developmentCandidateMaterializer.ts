@@ -58,7 +58,7 @@ export async function preparePluginDevelopmentRoot(
         args: [
           'install',
           '--ignore-scripts',
-          ...(hasAuthorLockfile ? ['--frozen-lockfile'] : []),
+          ...(hasAuthorLockfile ? ['--frozen-lockfile'] : ['--lockfile=false']),
         ],
         sdkRegistryOrigin: normalizePluginSdkRegistryOrigin(params.sdkRegistryOrigin),
       });

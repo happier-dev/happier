@@ -20,6 +20,7 @@ import { startPluginDevelopmentSourceObserver } from '@/plugins/authoring/source
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 
 import { executePluginDevLoopAction } from './actions';
+import { createCliApprovalActionDeps } from '@/session/actions/approvals/cliActionDeps';
 
 const daemonControl = vi.hoisted(() => ({
   request: vi.fn(),
@@ -104,6 +105,42 @@ describe('executePluginDevLoopAction', () => {
     await expect(executePluginDevLoopAction({
       actionId: 'plugins.dev.unregister', input: { projectRoot: '/workspace/plugin' },
     })).resolves.toEqual({ ok: false, kind: 'plugins_dev_unregister', diagnostics: [{ code: 'root_missing', message: 'Missing root' }] });
+  });
+
+  it('retains the daemon prepare failure cause in approval preparation', async () => {
+    const failureCause = { phase: 'plugins.change.prepare', errorClass: 'Error' as const,
+      errorCode: 'plugin_change_superseded', httpStatus: null };
+    daemonControl.request.mockResolvedValueOnce({ kind: 'failed', code: 'plugin_change_failed', details: { failureCause } });
+    const deps = createCliApprovalActionDeps({}, {
+      approvalsStore: null,
+      managedMachineReferences: async () => { throw new Error('Unexpected Machine lookup'); },
+      normalizeStringValue: value => typeof value === 'string' ? value : null,
+      pluginInstallApprovalChangeServices: {},
+      readRecord: value => value && typeof value === 'object' && !Array.isArray(value)
+        ? value as Record<string, unknown> : {},
+      resolvePluginInstallWorkspaceRoot: async () => undefined,
+      resolvePluginInstallRegistry: async () => ({ ok: true, registry: null }),
+    });
+    if (!deps.buildApprovalPreview) throw new Error('Expected approval preview owner');
+    await expect(deps.buildApprovalPreview({ actionId: 'plugins.install',
+      input: { path: '/workspace/plugin', dev: true }, context: { surface: 'cli' }, defaultPreview: {},
+    })).resolves.toMatchObject({ ok: false, errorCode: 'plugin_change_failed', failureCause });
+  });
+
+  it.each(['prepare', 'adopt'] as const)('retains the daemon %s failure cause in the install Action', async (phase) => {
+    const failureCause = { phase: `plugins.development.${phase}`, errorClass: 'Error' as const,
+      errorCode: 'plugin_change_superseded', httpStatus: null };
+    const failed = { kind: 'failed', code: 'plugin_change_failed', details: { failureCause } };
+    const pending = { kind: 'reviewRequired', reviewKind: 'installation', pendingChangeId: 'pending-cause',
+      reason: 'firstInstall', currentVersion: null, authorityExpansion: [], review: createPluginInstallationReviewFixture() };
+    daemonControl.request.mockResolvedValueOnce(phase === 'prepare' ? failed : pending);
+    daemonControl.status.mockResolvedValueOnce(pending);
+    daemonControl.decide.mockResolvedValueOnce(failed);
+    await expect(executePluginDevLoopAction({ actionId: 'plugins.install',
+      input: { path: '/workspace/plugin', dev: true },
+    }, { installEffectAdmitted: true })).resolves.toMatchObject({
+      ok: false, errorCode: 'plugin_change_failed', failureCause,
+    });
   });
 
   it('rejects remote archive locators before the installer can fetch network content', async () => {

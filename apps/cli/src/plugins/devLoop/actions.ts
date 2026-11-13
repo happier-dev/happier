@@ -145,6 +145,9 @@ function projectInstallChangeFailure(
     ok: false,
     kind: 'plugins_install' as const,
     outcome: 'failed' as const,
+    errorCode: failure.code,
+    error: failure.message || fallbackMessage,
+    ...(failure.failureCause ? { failureCause: failure.failureCause } : {}),
     change,
     diagnostics: [{ code: failure.code, message: failure.message || fallbackMessage,
       ...(cause ? { details: { cause } } : {}),
@@ -170,6 +173,7 @@ async function settleApprovedInstallReview(
   if (settled.kind === 'committed') {
     return { ok: true, kind: 'plugins_install', outcome: 'applied', change: settled };
   }
+  if (settled.kind === 'failed') return projectInstallChangeFailure(settled, 'The daemon did not apply the plugin install.');
   const errorCode = outcome.kind === 'terminal' || outcome.kind === 'reviewRequired'
     ? 'plugin_change_superseded'
     : outcome.kind === 'daemonUnavailable'

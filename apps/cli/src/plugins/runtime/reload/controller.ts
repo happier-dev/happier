@@ -773,7 +773,7 @@ export function createPluginReloadController(params?: Readonly<{
                     adoption.isDevelopmentCandidateCurrent() === false
                     || highestObservedDurableRevision !== developmentBaseDurableRevision
                 )) {
-                    throw new Error('Prepared plugin development candidate was superseded before publication');
+                    throw Object.assign(new Error('Prepared plugin development candidate was superseded before publication'), { code: 'plugin_change_superseded' });
                 }
                 if (
                     adoption.durableRevision !== undefined
@@ -823,7 +823,7 @@ export function createPluginReloadController(params?: Readonly<{
                     );
                 }
                 if (adoption.isDevelopmentCandidateCurrent?.() === false) {
-                    throw new Error('Prepared plugin development candidate was superseded before adoption');
+                    throw Object.assign(new Error('Prepared plugin development candidate was superseded before adoption'), { code: 'plugin_change_superseded' });
                 }
                 // A durable candidate reaches this controller only after its
                 // committed authority can no longer roll back. Fence that

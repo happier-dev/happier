@@ -1,3 +1,5 @@
+import { PluginDiagnosticError } from '../moduleFailure';
+import { collectBlockingPluginReloadDiagnostics } from './diagnostics';
 import { createMergedContributionRegistry, selectPluginContributionInputs } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { getResolvedContributionRegistry, readCurrentBundledPluginEnablement } from '@/plugins/projection/registry/builtIn/snapshot';
 import { arePluginEnablementsEqual } from '@/plugins/projection/registry/builtIn/enablement';
@@ -309,7 +311,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
         // Refuse a candidate with no adoptable source before the caller commits
         // installation authority. Publication repeats this same source check.
         if (!isDevelopmentCandidateCurrent(developmentCandidate)) {
-          throw new Error('Prepared plugin development candidate was superseded before preparation');
+          throw Object.assign(new Error('Prepared plugin development candidate was superseded before preparation'), { code: 'plugin_change_superseded' });
         }
       }
       let valid = true;
@@ -633,12 +635,19 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
       };
       try {
         const startupPluginIds = [...new Set(collectActivationTargets(registry.contributes)
-          .filter(target => changedPluginIds.has(target.pluginId) && shouldActivateTargetAtStartup(target))
+          .filter(target => changedPluginIds.has(target.pluginId)
+            && (target.pluginId === developmentCandidate?.pluginId || shouldActivateTargetAtStartup(target)))
           .map(target => target.pluginId))];
         await activatePluginRuntimeForReadiness({
           registry,
           pluginIds: startupPluginIds,
         });
+        if (developmentCandidate) {
+          // Validate authored replacements before retiring their serving occurrence,
+          // including plugins whose ordinary daemon activation is demand-driven.
+          const failure = collectBlockingPluginReloadDiagnostics(registry, [developmentCandidate.pluginId])[0]?.diagnostics[0];
+          if (failure) throw new PluginDiagnosticError(failure);
+        }
         const candidateDaemonDatabasePluginIds = changedPluginIdList.filter((pluginId) => (
           registry.contributes.activationTargets.some((target) => (
             target.pluginId === pluginId
