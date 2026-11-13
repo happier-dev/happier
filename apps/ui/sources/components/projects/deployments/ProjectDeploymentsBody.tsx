@@ -246,6 +246,7 @@ const ProjectDeploymentsPage = React.memo(
       const sameEnvironment = next.environmentId === current.environmentId;
       router.setParams({
         newDefinition: undefined,
+        deployMachine: undefined,
         deploymentSettings: next.defaults ? 'defaults' : undefined,
         deploymentEnvironment: next.environmentId ?? undefined,
         deployment: next.deploymentId ?? undefined,
@@ -407,6 +408,7 @@ const ProjectDeploymentsPage = React.memo(
         key={draftSource?.environment.id ?? 'new'}
         copyFrom={draftSource}
         definitionKind={newDefinition}
+        initialMachineId={readProjectRouteStringParam(params.deployMachine)}
         lifetime={props.lifetime}
         sourceId={props.sourceId}
         phone={phone}

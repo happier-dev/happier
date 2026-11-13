@@ -63,6 +63,7 @@ import { StoreAppDefinitionEntriesFor } from '@/components/store/StoreAppDefinit
 import { buildDeploymentRepositoryDraftHref } from '@/components/projects/deployments/deploymentNavigation';
 import { NewAppCodeSources } from './NewAppCodeSources';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
+import type { QualifiedMachineV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 
 import type { MachineCreationContinuationDraft } from '@/components/machines/add/MachineCreationContinuation';
 
@@ -99,6 +100,8 @@ export type NewAppScreenProps = Partial<
     starterId?: string | null;
     /** The ways to bring code you already have; offered when the entry that opened New app has them. */
     onClone?: (() => void) | null;
+    /** Deploy an app here (a Machine's Services): that Machine stays chosen through every source that places work. */
+    machine?: QualifiedMachineV1 | null;
   }>;
 
 function readMachineHomeDir(
@@ -152,7 +155,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   }, []);
   const [description, setDescription] = React.useState('');
   const [name, setName] = React.useState('');
-  const [machineId, setMachineId] = React.useState<string | null>(null);
+  const [machineId, setMachineId] = React.useState<string | null>(props.machine?.machineId ?? null);
   const [addingMachine, setAddingMachine] = React.useState(false);
   const [machineHomeMismatch, setMachineHomeMismatch] = React.useState(false);
   const [machineCreationDraft, setMachineCreationDraft] = React.useState<MachineCreationContinuationDraft | null>(null);
@@ -371,7 +374,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
           onPress: () => {
             if (codeSourceId !== null && scope) {
               stepAside();
-              router.push(buildDeploymentRepositoryDraftHref({ serverId: scope.serverId, projectSourceId: codeSourceId }) as never);
+              router.push(buildDeploymentRepositoryDraftHref({ serverId: scope.serverId, projectSourceId: codeSourceId,
+                machineId: props.machine?.machineId ?? null }) as never);
               return;
             }
             setStep('describe');
@@ -571,7 +575,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
                 title={t('newApp.fromCatalog')}
                 onPress={() => {
                   stepAside();
-                  router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app' }) as never);
+                  router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app', machine: props.machine ?? null }) as never);
                 }}
               />
               <StoreAppDefinitionEntriesFor scope={scope} onNavigate={stepAside} />

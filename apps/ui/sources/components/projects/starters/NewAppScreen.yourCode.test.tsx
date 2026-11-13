@@ -114,3 +114,31 @@ it("Deploy an app: your code opens that Project's new Environment, stepping asid
     await fixture.dispose();
   }
 });
+
+it('Deploy an app here keeps its Machine through Your code and the catalog (lab dMachine "Deploy an app here")', async () => {
+  const fixture = await createPlainPromptLibraryCatalogHomeFixture(
+    'https://deploy-here-machine.test',
+    { key: 'registry-sources', value: { v: 2, disabledSourceIds: [], sources: [] } },
+    'updated',
+    { handleRequest: async (path) => path.startsWith('/v1/projects/sources') ? Response.json({ ok: true,
+      sources: [{ id: 'source-invoices', revision: 2, name: 'invoices', repository, defaultRef: 'main', audience: [], createdByAccountId: 'alice' }],
+      coverage: { complete: true, nextCursor: null } }) : null },
+  );
+  try {
+    const machine = { serverId: fixture.home.id, machineId: 'hetzner-fsn1' };
+    routerMock.spies.push.mockClear();
+    const screen = await renderScreen(<NewAppScreen onClose={() => {}} machine={machine} />);
+    await waitForHomeGovernance(() => expect(screen.findByTestId('newApp.code:source-invoices')).toBeTruthy());
+    await screen.pressByTestIdAsync('newApp.code:source-invoices');
+    await screen.pressByTestIdAsync('newApp.continue');
+    expect(routerMock.spies.push).toHaveBeenCalledWith(
+      `/deployments/source-invoices?serverId=${encodeURIComponent(fixture.home.id)}&newDefinition=repository&deployMachine=hetzner-fsn1`);
+    routerMock.spies.push.mockClear();
+    await screen.pressByTestIdAsync('newApp.fromCatalog');
+    expect(routerMock.spies.push).toHaveBeenCalledWith(expect.stringMatching(/kind=app.*machine=/));
+    await screen.unmount();
+  } finally {
+    await standardCleanup();
+    await fixture.dispose();
+  }
+});

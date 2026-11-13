@@ -152,7 +152,8 @@ it.each([undefined, 'web'])('reads only the requested Environment services (comp
             serviceId: `instance/${name}` } }, serviceId: `instance/${name}` }));
     const unrelated = Array.from({ length: 4 }, (_, index) => service(`unrelated-${index}`, { environmentId: 'other-environment' }));
     const initial = MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [...rows, ...unrelated] });
-    const resource = answerResource(initial, 'machines.services.list', (value, reference) => {
+    if (initial.kind !== 'snapshot') throw new Error('Expected a Services snapshot');
+    const resource = answerResource<ReturnType<typeof MachineServicesListResultV1Schema.parse>>(initial, 'machines.services.list', (value, reference) => {
         if (value.kind !== 'snapshot' || reference.hostRead !== 'machines.services.list') return value;
         const selection = reference.input;
         return { ...value, services: value.services.filter(row => (!selection.environmentId || row.environmentId === selection.environmentId)
@@ -756,20 +757,22 @@ describe('MachineServicesTab rendered production wiring', () => {
         expect(screen.findHostByTestId('machine-services-recipient')).not.toBeNull();
     });
 
-    it('offers Deploy an app here, opening New app with this Machine chosen, on the empty and the listed page', async () => {
-        const { buildPluginsHomeRoute } = await import('@/components/settings/plugins/model/pluginsSurfaceRoutes');
-        const expected = buildPluginsHomeRoute('app', { view: 'kind', kind: 'app', machine: { serverId, machineId } });
+    it('offers Deploy an app here, opening the one Deploy an app flow with this Machine chosen, on the empty and the listed page', async () => {
+        const { Modal } = await import('@/modal');
+        // On a computer the flow opens as its dialog over the Machine page, carrying this Machine.
+        const expected = expect.objectContaining({ props: expect.objectContaining({ machine: { serverId, machineId } }) });
         const list = answerResource(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [] }));
         const { screen } = await mount();
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-services-empty')).not.toBeNull());
+        vi.mocked(Modal.show).mockClear();
         await screen.pressByTestIdAsync('machine-services-deploy-here');
-        await vi.waitFor(() => expect(router.push).toHaveBeenLastCalledWith(expected));
-        vi.mocked(router.push).mockClear();
+        await vi.waitFor(() => expect(Modal.show).toHaveBeenLastCalledWith(expected));
+        vi.mocked(Modal.show).mockClear();
         await list.publish(MachineServicesListResultV1Schema.parse({ kind: 'snapshot', services: [service('Web')] }));
         await measureMountedCollections(screen);
         await vi.waitFor(() => expect(screen.findHostByTestId('machine-service-web')).not.toBeNull());
         await screen.pressByTestIdAsync('machine-services-deploy-here');
-        await vi.waitFor(() => expect(router.push).toHaveBeenLastCalledWith(expected));
+        await vi.waitFor(() => expect(Modal.show).toHaveBeenLastCalledWith(expected));
     });
 
     it('offers Open on a listening service page through the shared port owner, reading Local services only there', async () => {

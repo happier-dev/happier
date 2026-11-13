@@ -790,6 +790,28 @@ describe('Environment draft Machine Home', () => {
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
 
+  it('starts on the Machine a Deploy an app here door names, not the first one that answers', async () => {
+    const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://draft-door-machine.test', accountId: 'alice',
+      serverIdentityId: `srv_${'q'.repeat(32)}`, currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const previous = storage.getState();
+    try {
+      homes.answer(serverId, 'GET /v1/projects/sources/source-app', { body: { ok: true, canManage: true, source: {
+        id: 'source-app', revision: 3, name: 'App', owner: { kind: 'account', accountId: 'alice' }, audience: [],
+        createdByAccountId: 'alice', repository, defaultRef: 'main' } } });
+      homes.answer(serverId, 'POST /v1/machines/managed/actions/list', { body: { machines: [] } });
+      await publishMachineInventoryForTest(account.accountLifetime.scope, [
+        createMachineFixture({ id: 'first', installationId: 'first-installation', activeAt: Date.now() }),
+        createMachineFixture({ id: 'chosen', installationId: 'chosen-installation', activeAt: Date.now() })]);
+      const screen = await renderScreen(<DeploymentEnvironmentDraft lifetime={account.accountLifetime} sourceId="source-app"
+        phone={false} actions={createDeploymentActions(account.accountLifetime, 'source-app')} initialMachineId="chosen"
+        onApprovalRequested={() => {}} onSaved={() => {}} onDiscard={() => {}} />);
+      const machine = () => screen.findAllByType(SessionMachineField).find(node => node.props.testID === 'project-deployments.draft.machine')!;
+      expect(machine().props.machineId).toBe('chosen');
+      await screen.unmount();
+    } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
+  });
+
   it('starts on an answering Machine, never an unreachable one, and says the typed remedy when the target is unavailable', async () => {
     const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://draft-reachable.test', accountId: 'alice',
       serverIdentityId: `srv_${'r'.repeat(32)}`, currentAccount: true });
@@ -989,6 +1011,7 @@ describe('Environment draft Machine Home', () => {
       await act(async () => {});
       expect(linkedArtifact).toBeTruthy();
       const linkedContent = await account.readArtifactContent(linkedArtifact!);
+      if (!linkedContent || typeof linkedContent.body !== 'string') throw new Error('Expected the saved link as a text Artifact');
       expect(linkedContent.header).toMatchObject({ kind: 'deployment-target-link.v1' });
       expect(JSON.parse(linkedContent.body)).toEqual({
           credentialPrincipal: { kind: 'account', accountId: 'alice',

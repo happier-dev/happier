@@ -37,9 +37,13 @@ export function buildDeploymentNewDefinitionHref(input: Readonly<{ serverId: str
 /** The draft door's value for a Project's own repository (Deploy an app → Your code); not a stored definition. */
 export const DEPLOYMENT_NEW_REPOSITORY_DRAFT = 'repository' as const;
 
-/** A Project's new-Environment draft on its repository: Deploy an app's Configure step for "Your code". */
-export function buildDeploymentRepositoryDraftHref(input: Readonly<{ serverId: string; projectSourceId: string }>): string {
-    return `/deployments/${encodeURIComponent(input.projectSourceId)}?serverId=${encodeURIComponent(input.serverId)}&newDefinition=${DEPLOYMENT_NEW_REPOSITORY_DRAFT}`;
+/**
+ * A Project's new-Environment draft on its repository: Deploy an app's Configure step for "Your code". `machineId` is the
+ * Machine a "Deploy an app here" door already chose; the draft starts on it and the person can still change it.
+ */
+export function buildDeploymentRepositoryDraftHref(input: Readonly<{ serverId: string; projectSourceId: string; machineId?: string | null }>): string {
+    return `/deployments/${encodeURIComponent(input.projectSourceId)}?serverId=${encodeURIComponent(input.serverId)}&newDefinition=${DEPLOYMENT_NEW_REPOSITORY_DRAFT}`
+        + (input.machineId ? `&deployMachine=${encodeURIComponent(input.machineId)}` : '');
 }
 
 /** The same address as a link path, for consumers that hold a path rather than a typed route. */

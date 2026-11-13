@@ -4,6 +4,7 @@ import { useLocalSearchParams } from '@/components/appShell/workspace/destinatio
 
 export { NewAppScreen as WorkspaceRouteBody };
 export default function RouteEntry() {
-  const params = useLocalSearchParams<{ starterId?: string }>();
-  return <WorkspaceRouteEntry Body={() => <NewAppScreen starterId={params.starterId ?? null} />} />;
+  const params = useLocalSearchParams<{ starterId?: string; serverId?: string; machineId?: string }>();
+  const machine = params.serverId && params.machineId ? { serverId: params.serverId, machineId: params.machineId } : null;
+  return <WorkspaceRouteEntry Body={() => <NewAppScreen starterId={params.starterId ?? null} machine={machine} />} />;
 }

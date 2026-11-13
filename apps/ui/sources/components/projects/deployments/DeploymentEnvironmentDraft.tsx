@@ -109,6 +109,8 @@ export const DeploymentEnvironmentDraft = React.memo(
       /** Whether this viewer can link a platform; without it the draft offers machines only. */
       platformAvailable?: boolean;
       onDiscard: () => void;
+      /** The Machine the door already chose (Deploy an app here); the person's own choice still wins. */
+      initialMachineId?: string | null;
     }>,
   ) {
     const { theme } = useUnistyles();
@@ -133,7 +135,7 @@ export const DeploymentEnvironmentDraft = React.memo(
     }, []);
     const [creatingMachine, setCreatingMachine] = React.useState(false);
     const [machineCreationDraft, setMachineCreationDraft] = React.useState<MachineCreationContinuationDraft | null>(null);
-    const [machineId, setMachineId] = React.useState<string | null>(null);
+    const [machineId, setMachineId] = React.useState<string | null>(props.initialMachineId ?? null);
     const router = useRouter();
     // Provider choices are prepared in the existing platform editor; Create links that exact result.
     const platforms = useDeploymentPlatformTargets(props.platformAvailable === true ? props.lifetime : null);

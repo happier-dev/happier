@@ -20,7 +20,7 @@ import type {
 import { MachinePortActionsProvider } from '@/components/machines/localServices/MachinePortActions';
 import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 import { describeMachineUptime, describeMachineUptimeSpan } from '@/components/machines/vitals/vitalsFormat';
-import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
+import { useOpenNewApp } from '@/components/projects/starters/newAppPresentation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
@@ -211,12 +211,14 @@ function MachineServicesList(
         onPress={onPress} />
     ) : null;
   }, [environmentTitle, openEnvironment]);
-  // Deploy an app here (lab `services/deployHere`): New app in the Store with this Machine already chosen; its
-  // preparation's own picker decides eligibility and nothing is created before its final review.
+  // Deploy an app here (lab `services/deployHere`, pfc-redesign flow 1): the one Deploy an app flow with this Machine
+  // already chosen through Your code, starters and the catalog; each next step's own picker decides eligibility and
+  // nothing is created before its review.
   const machineId = props.machineId;
+  const openNewApp = useOpenNewApp();
   const deployHere = React.useCallback(() => {
-    router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app', machine: { serverId, machineId } }) as never);
-  }, [machineId, router, serverId]);
+    openNewApp(null, { serverId, machineId });
+  }, [machineId, openNewApp, serverId]);
   const anatomy = React.useMemo<CollectionAnatomy<ServicesListItem>>(
     () => ({
       glyph: (item) => (
