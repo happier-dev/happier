@@ -57,6 +57,8 @@ export type ManagedMachineReconciliation = Readonly<{
     action: ManagedMachineActionIdV1;
     requestId: string;
     signal?: AbortSignal;
+    /** Passive controller refresh observes power without settling an admitted native operation. */
+    observationOnly?: boolean;
     /** Host-admitted selection: verified reviewed parent for Account placement, installed registry for native placement. */
     provisioner?: MachineProvisionerContributionV1;
     home: ManagedReconciliationHome;
@@ -211,7 +213,7 @@ export async function reconcileManagedBoundNativeIntent(input: Readonly<{
 
 /** Read retained native custody without allocating, waking or enrolling a guest. */
 export async function inspectManagedMachine(input: Pick<ManagedMachineReconciliation,
-    'machine' | 'requestId' | 'provisioner' | 'signal'> & Readonly<{
+    'machine' | 'requestId' | 'provisioner' | 'signal' | 'observationOnly'> & Readonly<{
         home: Pick<ManagedReconciliationHome, 'correlation' | 'row'>;
         invoke: ManagedNativeInvocation;
         complete?: ManagedMachineReconciliation['bootstrap']['complete'];
@@ -223,7 +225,7 @@ export async function inspectManagedMachine(input: Pick<ManagedMachineReconcilia
         return await reconcileManagedAcquisitionIdentity({ ...input, action: 'machines.managed.inspect' }, machine, input.invoke);
     }
     if (!machine.resource) return machine;
-    if (machine.submittedNativeEffect) return await reconcileManagedBoundNativeIntent({ ...input, resource: machine.resource,
+    if (machine.submittedNativeEffect && !input.observationOnly) return await reconcileManagedBoundNativeIntent({ ...input, resource: machine.resource,
         outstanding: machine.submittedNativeEffect });
     const observation = ProviderObservationV1Schema.parse(await input.invoke('inspect', { resource: machine.resource.value }));
     if (machine.enrolledMachineId && machine.observation?.reason?.startsWith('bootstrap.')

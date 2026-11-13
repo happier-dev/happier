@@ -8,18 +8,20 @@ import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v
 import { PluginJsonSchemaV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { rehydrateCanonicalProtocolComposableSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import { defineMachineProvisionerSchemas, defineMachineProvisionerReconciliationSchemas } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import { createManagedPolicyCensusProofV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
+import { createManagedPolicyCensusProofV1, createManagedPolicyProofV1, encodeManagedPolicyProofV1, MANAGED_POLICY_PROOF_HEADER } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createAuthenticatedRouteRequest } from '@/app/api/testkit/requestFixtures';
 import { createPluginAvailabilityOperations } from '@/app/plugins/availability/operations';
+import { createReleaseLessDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
 import { seedBundledManagedAvailability } from './managedProjectionVolume.testkit';
 import { readManagedProjectionFactsInTx } from './managedRows';
 import { admitManagedAcquire } from './managedAcquire';
 import { admitManagedControl, linkManagedEnrollmentInTx, reportManagedAcquire, reportManagedIntent, submitManagedAcquire, submitManagedIntent } from './managedMutations';
 import { registerManagedMachineRoutes } from './managedRoutes';
 import { limaAcquisitionResource } from '../../../../../../packages/plugins/machine-lima/src/machine/provider';
+import { LIMA_PLUGIN } from '../../../../../../packages/plugins/machine-lima/src/manifest';
 import { LimaResourceSchema } from '../../../../../../packages/plugins/machine-lima/src/machine/schemas';
 import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
@@ -32,6 +34,61 @@ describe('retained managed rows across declaration changes', () => {
             env: { HAPPIER_SERVER_IDENTITY_ID: homeId } });
     }, 120_000);
     afterAll(async () => { if (harness) await harness.close(); });
+
+    it.each([
+        { intent: 'start', result: 'refused', newerDelete: false },
+        { intent: 'start', result: 'unknown', newerDelete: false },
+        { intent: 'delete', result: 'refused', newerDelete: false },
+        { intent: 'delete', result: 'unknown', newerDelete: false },
+        { intent: 'start', result: 'refused', newerDelete: true },
+        { intent: 'start', result: 'unknown', newerDelete: true },
+    ] as const)('reserves cleanup responsibility for Delete after $intent is $result (newer Delete: $newerDelete)', async ({ intent, result, newerDelete }) => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const controller = { machineId: randomUUID(), installationId: randomUUID() };
+        await db.machine.create({ data: { id: controller.machineId, accountId: account.id, metadata: '{}', active: true,
+            installationId: controller.installationId, pluginMaterializationRevision: 1n } });
+        const manifest = PluginManifestV2Schema.parse(LIMA_PLUGIN.manifest);
+        const declaration = createReleaseLessDeclarationV1(manifest);
+        await db.accountPluginIntent.create({ data: { accountId: account.id, pluginId: manifest.id,
+            enabled: true, writableCollections: [], releaseLessDeclaration: declaration } });
+        await db.pluginMachineMaterialization.create({ data: { accountId: account.id, serverIdentityId: homeId,
+            machineId: controller.machineId, materializationId: controller.installationId, pluginId: manifest.id, version: manifest.version,
+            sourceClass: 'bundledFirstParty', portableRelease: false, archiveDigestSha256: declaration.manifestDigestSha256,
+            uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: new Date() } });
+        const choices = { store: '/tmp/managed-power-report', image: 'fixture:ubuntu', arch: 'x86_64' as const,
+            vmType: 'qemu' as const, cpus: 2, memoryGiB: 4, diskGiB: 16, mounts: [] };
+        const input = { enrollmentIdentity: { kind: 'existingUser' as const, role: 'adopted' as const },
+            selection: { kind: 'one-off' as const, homeId, controller,
+                launch: { provider: { pluginId: manifest.id, localId: 'lima' }, schemaVersion: 1, name: 'Power report', choices },
+                retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false } };
+        const requestId = randomUUID();
+        const created = await admitManagedAcquire({ requesterAccountId: account.id, custodianAccountId: account.id,
+            requestEnvelopeDigest: requestId, input: { requestId, input, continuationPresent: false } });
+        const correlation = { homeId, managedId: created.machine.id, requestId, controller, expectedIntentRevision: 0 };
+        const resource = { contributionRef: input.selection.launch.provider, schemaVersion: 1,
+            value: { ...limaAcquisitionResource(choices, created.machine.id), mounts: [] } };
+        await submitManagedAcquire(correlation);
+        await reportManagedAcquire({ ...correlation, result: { kind: 'bound', resource } });
+        const controlId = randomUUID();
+        const commonInput = { homeId, managedId: created.machine.id, expectedRevision: 0, when: 'now' as const };
+        const control = intent === 'delete'
+            ? { action: 'machines.managed.delete' as const, requestId: controlId,
+                input: { ...commonInput, intent, reviewedDependencies: true } }
+            : { action: 'machines.managed.power.set' as const, requestId: controlId, input: { ...commonInput, intent } };
+        await admitManagedControl({ actorAccountId: account.id, custodianAccountId: account.id, input: control });
+        const submitted = { ...correlation, requestId: controlId, expectedIntentRevision: 1 };
+        await submitManagedIntent(submitted);
+        if (newerDelete) await admitManagedControl({ actorAccountId: account.id, custodianAccountId: account.id,
+            input: { action: 'machines.managed.delete', requestId: randomUUID(),
+                input: { ...commonInput, expectedRevision: 1, intent: 'delete', reviewedDependencies: true } } });
+        const observation = { availability: 'unavailable' as const, reason: 'transport', observedAt: Date.now() };
+        const reported = await reportManagedIntent({ ...submitted, result: { kind: result, code: 'provider_unavailable' }, observation });
+        expect(reported.machine).toMatchObject({ resource, observation });
+        expect(Boolean(reported.machine.submittedNativeEffect)).toBe(result === 'unknown');
+        expect(reported.machine.cleanup).toEqual(newerDelete ? { disposition: 'pending', reason: 'delete_requested' } : intent === 'delete'
+            ? { disposition: result === 'refused' ? 'unavailable' : 'pending', reason: 'provider_unavailable' }
+            : undefined);
+    });
 
     it('reads the selected controller declaration when another Machine claims fewer provisioners', async () => {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -97,7 +154,7 @@ describe('retained managed rows across declaration changes', () => {
         // native-schema validation and the response's status are real.
         app.decorate('authenticate', async (request: FastifyRequest) => {
             Object.assign(request, createAuthenticatedRouteRequest({ userId: account.id,
-                externalActionExecutionAuthorized: true, externalActionExecutionMachineId: controller.machineId,
+                externalActionExecutionAuthorized: request.headers[MANAGED_POLICY_PROOF_HEADER] === undefined, externalActionExecutionMachineId: controller.machineId,
                 externalActionEffectActionId: 'machines.managed.acquire', externalActionExecutionRequestId: requestId,
                 externalActionExecutionCustodianAccountId: account.id }),
             { headers: request.headers, params: request.params, query: request.query });
@@ -110,6 +167,25 @@ describe('retained managed rows across declaration changes', () => {
             expect(present.statusCode, present.body).toBe(200);
             expect(present.json()).toMatchObject({ machine: { enrolledMachineId: guest.id,
                 observation: { availability: 'present', observedAt: 2 } } });
+            const path = '/v1/machines/managed/controller/report';
+            const observed = { ...current, result: { kind: 'bound', resource },
+                observation: { availability: 'present', power: 'stopped', observedAt: 3 } };
+            const proof = encodeManagedPolicyProofV1(createManagedPolicyProofV1({ correlation: current,
+                purpose: { kind: 'retention' }, resource, custodianAccountId: account.id, path, body: observed, privateKey: keys.secretKey }));
+            const refreshed = await app.inject({ method: 'POST', url: path, payload: observed,
+                headers: { [MANAGED_POLICY_PROOF_HEADER]: proof } });
+            expect(refreshed.statusCode, refreshed.body).toBe(200);
+            expect(refreshed.json()).toMatchObject({ machine: { desired: 'start', observation: { power: 'stopped', observedAt: 3 } } });
+            const completion = { ...observed, bootstrapInstalled: true };
+            const completionProof = encodeManagedPolicyProofV1(createManagedPolicyProofV1({ correlation: current,
+                purpose: { kind: 'retention' }, resource, custodianAccountId: account.id, path, body: completion, privateKey: keys.secretKey }));
+            const forbiddenCompletion = await app.inject({ method: 'POST', url: path, payload: completion,
+                headers: { [MANAGED_POLICY_PROOF_HEADER]: completionProof } });
+            expect(forbiddenCompletion.statusCode).toBe(403);
+            const forged = await app.inject({ method: 'POST', url: path,
+                payload: { ...observed, observation: { ...observed.observation, power: 'running' } },
+                headers: { [MANAGED_POLICY_PROOF_HEADER]: proof } });
+            expect(forged.statusCode).toBe(403);
             const invalid = await report({ ...current, result: { kind: 'bound',
                 resource: { ...resource, value: { ...resource.value, instance: 42 } } } });
             expect(invalid.statusCode).toBe(409);

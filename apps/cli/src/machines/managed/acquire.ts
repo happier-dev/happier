@@ -985,7 +985,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     ? ManagedMachineActionInputSchemasV1['machines.managed.bootstrap.retry'].parse(parsed)
                     : null;
                 const inspection = request ? null : ManagedMachineActionInputSchemasV1['machines.managed.inspect'].parse(parsed);
-                const inspected = request ? null : await client.post(managedMachineActionEndpointPathV1('machines.managed.get'),
+                const inspected = request ? null : options.policyMachine ?? await client.post(managedMachineActionEndpointPathV1('machines.managed.get'),
                     { homeId: inspection!.homeId, managedId: inspection!.managedId }, ManagedMachineV1Schema);
                 if (inspected) client.assertConnection(inspected);
                 const retained = await client.post('/v1/machines/managed/controller/context', {
@@ -1004,7 +1004,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                     await reconcileOnce({ input, options: recoveryOptions, client: recoveryClient, machine: retained.machine, action });
                     return accepted;
                 }
-                const result = retained.machine.submittedNativeEffect
+                const result = retained.machine.submittedNativeEffect && !options.policyPurpose
                     ? { machine: await reconcileManagedIntent({ input, options: recoveryOptions, client: recoveryClient, machine: retained.machine, action }) }
                     : await reconcileManagedMachine({ input, options: recoveryOptions, client: recoveryClient, machine: retained.machine, action });
                 if (result === null) return null;

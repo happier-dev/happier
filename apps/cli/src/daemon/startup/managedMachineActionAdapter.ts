@@ -1,6 +1,6 @@
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ManagedAcquireInputV1Schema, ManagedCredentialInstallInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAcquireInputV1Schema, ManagedCredentialInstallInputV1Schema, ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveAccountExecutionRuntime, type AccountExecutionRuntime } from '@/plugins/runtime/accountExecutionRuntime';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -50,6 +50,7 @@ type ManagedMachineActionAdapterParams = Readonly<{
     resolveCurrentMachineExecutionOriginContext?: (signal?: AbortSignal) => Promise<CurrentMachineExecutionOriginContext | null>;
     installationIdentity: Readonly<{ installationId: string; privateKey: ExternalActionMachineRequestSigningKey }> | null;
     managedProviderOperationAuthority?: ManagedProviderOperationAuthority;
+    executeTeamCredentialBrokerAction?: Parameters<typeof resolveAccountExecutionRuntime>[0]['executeTeamCredentialBrokerAction'];
     managedGuestLocalStop?: ManagedGuestLocalStop;
     observeActionExecution?: ApiMachineClient['observeActionExecution'];
     readPolicyCurrent?: (managedId: string, signal?: AbortSignal) => Promise<ManagedMachineV1 | null>;
@@ -105,6 +106,7 @@ async function withBoundDriver<T>(params: ManagedMachineActionAdapterParams, sig
                         isCurrent: async () => isCurrent() && lifetime === getActiveAccountSettingsSnapshotLifetimeToken(),
                     });
                     return await resolveAccountExecutionRuntime({ signal,
+                        executeTeamCredentialBrokerAction: params.executeTeamCredentialBrokerAction,
                         credentialRuntimeRegistry: lease.registry,
                         accountExecution: { credentials: controllerCredentials, serverUrl: params.serverBaseUrl,
                             serverId: params.serverId, serverIdentityId: origin.serverIdentityId,
@@ -214,7 +216,7 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                     if (!spawn.success) throw Object.assign(new Error('invalid_action_output'), { code: 'invalid_action_output' });
                     if (spawn.success && spawn.data.type === 'error') {
                         throw new ManagedMachineControllerError(spawn.data.code, undefined,
-                            typeof spawn.data.agentId === 'string'
+                            'agentId' in spawn.data && typeof spawn.data.agentId === 'string'
                                 ? { kind: 'managedAgentStart', machineId: machine.enrolledMachineId, agentId: spawn.data.agentId }
                                 : undefined);
                     }
@@ -268,10 +270,28 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
         return await executeNativeAction(request);
     };
     return Object.assign(actionAdapter, {
+        /**
+         * A Session placed on a managed target: the bound driver (and its runtime
+         * lease) stays held for the Session's lifetime, because the target's
+         * channels live as long as the Session; it is released when `lifetime` ends.
+         */
+        openSessionTarget: (request: import('@/machines/managed/acquire').ManagedSessionTargetRequest) =>
+            new Promise<import('@/machines/managed/acquire').ManagedSessionTarget>((resolve, reject) => {
+                void withBoundDriver(params, request.lifetime, async driver => {
+                    resolve(await driver.openSessionTarget(request));
+                    if (request.lifetime.aborted) return;
+                    await new Promise(settle => request.lifetime.addEventListener('abort', settle, { once: true }));
+                }).catch(reject);
+            }),
         snapshotAdmitted: async (request: import('@/machines/managed/acquire').ManagedNativeSnapshotRequest) =>
             withBoundDriver(params, request.options.signal, driver => driver.snapshotAdmitted(request)),
         supportsNativeLifetimeRenewal: async (machine: ManagedMachineV1, signal: AbortSignal): Promise<boolean> =>
             withBoundDriver(params, signal, async driver => driver.supportsNativeLifetimeRenewal(machine)),
+        reconcileObservation: async (machine: ManagedMachineV1, signal: AbortSignal): Promise<ManagedMachineV1> =>
+            withBoundDriver(params, signal, async driver => ManagedMachineActionOutputSchemasV1['machines.managed.inspect'].parse(
+                await driver.execute('machines.managed.inspect', { homeId: machine.homeId, managedId: machine.id }, {
+                    requestId: randomUUID(), signal, policyMachine: machine, policyPurpose: { kind: 'retention' },
+                })).machine),
         reconcileNativeCredentials: async (machine: ManagedMachineV1, signal: AbortSignal): Promise<void> =>
             serializeNativeCredentialWrite(machine.homeId, machine.id, signal, () =>
                 withBoundDriver(params, signal, driver => driver.reconcileNativeCredentials(machine, {

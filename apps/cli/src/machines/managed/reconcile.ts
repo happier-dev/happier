@@ -522,6 +522,7 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
     let native: ReturnType<typeof createManagedNativeInvocation>;
     const machine = await reconcileManagedMachineShared({ machine: params.machine, action: params.action,
         requestId: params.options.requestId, signal: params.options.signal, home: params.client,
+        observationOnly: params.action === 'machines.managed.inspect' && params.options.policyPurpose !== undefined,
         provisioner: retainedProvisioner?.definition,
         createNative: (readMachine, readRevision) => {
             native = createManagedNativeInvocation(params, readMachine, readRevision);

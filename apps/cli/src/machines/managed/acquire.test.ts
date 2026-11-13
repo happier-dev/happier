@@ -19,6 +19,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { createManagedMachineAcquisitionDriver, createManagedMachineControllerClient } from './acquire';
+import { createDaemonManagedMachinePolicyRuntime, readManagedMachinePolicyCensus } from '@/daemon/startup/managedMachinePolicyRuntime';
+import type { ManagedConnectionState } from '@happier-dev/connection-supervisor';
 import { readManagedMachine } from './readManagedMachine';
 import { createManagedNativeInvocation } from './reconcile';
 import { managedMachineActionEndpointPathV1, ManagedControllerMachineOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -169,6 +171,72 @@ function driver() {
     return createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example', homeId: 'home', controller, runtimeRegistry, ...accountInputs });
 }
 describe('creation environment stage', () => {
+    it('refreshes stopped native power after controller startup and reconnect without changing desired power', async () => {
+        let retained = ManagedMachineV1Schema.parse({ ...machine, allocation: 'bound',
+            resource: { contributionRef: machine.launch.provider, schemaVersion: 1, value: {} },
+            enrolledMachineId: 'guest', retention: { kind: 'until-delete' },
+            observation: { observedAt: 1, availability: 'present', power: 'running' } });
+        let nativeReads = 0;
+        let contextReads = 0;
+        const native = nativeFixture({ privateNative: true, nativeTransport: false, credentialPurposes: [],
+            nativeRoleResults: { inspect: { observedAt: 2, availability: 'present', power: 'stopped' } },
+            onInspect: () => { nativeReads += 1; },
+            onNativeRole: role => { throw new Error(`Unexpected native effect ${role}`); } });
+        vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+            const path = new URL(String(url)).pathname;
+            if (path.endsWith('/policies')) return { status: 200, data: { machines: [retained], targets: [] } };
+            if (path.endsWith('/context')) contextReads += 1;
+            if (path.endsWith('/report')) {
+                const report = body as { observation: unknown };
+                retained = ManagedMachineV1Schema.parse({ ...retained, observation: report.observation });
+            }
+            return { status: 200, data: { machine: retained, requestId: 'retained-request' } };
+        });
+        const privateKey = tweetnacl.sign.keyPair().secretKey;
+        const observer = createManagedMachineAcquisitionDriver({ token: 'token', serverUrl: 'https://home.example', homeId: 'home',
+            controller, runtimeRegistry: native.runtimeRegistry, ...accountInputs,
+            externalActionMachineRequestPrivateKey: privateKey });
+        let onConnection: ((state: ManagedConnectionState) => void) | undefined;
+        const runtime = createDaemonManagedMachinePolicyRuntime({
+            apiMachine: {
+                onUpdate: () => () => {}, onManagedMachinePolicyInvalidated: () => () => {},
+                onConnectionStateChange: listener => { onConnection = listener; return () => {}; },
+            },
+            readCensus: signal => readManagedMachinePolicyCensus({ homeId: 'home', controller, custodianAccountId: 'owner',
+                privateKey, token: 'token', serverUrl: 'https://home.example', signal }),
+            reconcileObservation: async (row, signal) => {
+                return ManagedControllerMachineOutputV1Schema.parse(await observer.execute('machines.managed.inspect',
+                    { homeId: row.homeId, managedId: row.id },
+                    { requestId: 'refresh', signal, policyMachine: row, policyPurpose: { kind: 'retention' } })).machine;
+            },
+            executePolicy: async () => { throw new Error('Observation must not issue power intent'); },
+        });
+        try {
+            await runtime.notifyChanged();
+            expect(retained.observation?.power).toBe('stopped');
+            expect(retained.desired).toBe('start');
+            await runtime.notifyChanged();
+            expect(nativeReads).toBe(1);
+            retained = ManagedMachineV1Schema.parse({ ...retained, observation: { observedAt: 1, availability: 'present', power: 'running' } });
+            onConnection!({ phase: 'online', reason: 'initial_connect', attempt: 0, nextRetryAt: null,
+                lastConnectedAt: null, lastDisconnectedAt: null, lastErrorMessage: null });
+            await vi.waitFor(() => expect(retained.observation?.power).toBe('stopped'));
+            expect(retained.desired).toBe('start');
+            await runtime.notifyChanged();
+            expect(nativeReads).toBe(2);
+            retained = ManagedMachineV1Schema.parse({ ...retained,
+                observation: { observedAt: 1, availability: 'present', power: 'running' }, submittedNativeEffect: {
+                intentRevision: retained.intentRevision, requestId: 'in-flight-start', intent: 'start', controller,
+            } });
+            onConnection!({ phase: 'online', reason: 'initial_connect', attempt: 0, nextRetryAt: null,
+                lastConnectedAt: null, lastDisconnectedAt: null, lastErrorMessage: null });
+            await runtime.notifyChanged();
+            expect(retained.observation?.power).toBe('stopped');
+            expect(nativeReads).toBe(3);
+            expect(contextReads).toBe(3);
+            expect(retained.submittedNativeEffect?.requestId).toBe('in-flight-start');
+        } finally { await runtime.stop(); }
+    });
     it('retries a transient final report on the enrolled resource without changing isolation', async () => {
         let retained = ManagedMachineV1Schema.parse({ ...machine, homeId: 'srv_retained_report', allocation: 'bound', enrolledMachineId: 'guest', bootstrapInstalled: true,
             enrollmentIdentity: { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'deployTarget', adminAccessAtCreation: 'preauthorized' },

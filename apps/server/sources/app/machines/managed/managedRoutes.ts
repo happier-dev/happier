@@ -474,6 +474,14 @@ export function registerManagedMachineRoutes(app: Fastify): void {
                 });
             });
         }
+        if (request.headers[MANAGED_POLICY_PROOF_HEADER] !== undefined) {
+            // Controller reconnection refreshes an existing native fact; it does
+            // not admit allocation, bootstrap completion or configuration changes.
+            if (!request.body.observation || request.body.result.kind !== 'bound'
+                || request.body.bootstrapInstalled || request.body.configurationFacts) throw new ManagedMachineError('permission_denied');
+            await requireManagedPolicyRequest(request, '/v1/machines/managed/controller/report', request.body, 'report');
+            return await reportManagedAcquire(request.body, { requestAuthority: 'intent' });
+        }
         const proof = await requireManagedOperationRequest(request, request.body, effects);
         return await reportManagedAcquire(request.body, { requestAuthority: proof.requestAuthority });
     }));

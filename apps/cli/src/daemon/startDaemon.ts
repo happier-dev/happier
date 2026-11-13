@@ -110,6 +110,9 @@ import { createDefaultTerminalHostAdapterInventory } from '@/integrations/termin
 import { createOnHappySessionWebhook } from './sessions/onHappySessionWebhook';
 import type { SessionAttachCleanupByKey, SpawnResourceCleanupByKey } from './sessions/cleanupSessionResources';
 import { createAcceptedSessionWorkspaceRegistration } from './sessions/registerAcceptedSessionWorkspace';
+import { createMachineSessionProjectReclassification, subscribeMachineSessionProjectReclassification } from './sessions/reclassifyMachineSessionProjects';
+import { subscribeActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
+import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { reconcileAgentRuntimeRestartDisposition } from './sessions/reconcileAgentRuntimeRestartDisposition';
 import { createDaemonSessionHandoffMetadataBridge } from './sessions/createDaemonSessionHandoffMetadataBridge';
 import { startDaemonHeartbeatLoop } from './lifecycle/heartbeat';
@@ -1523,6 +1526,20 @@ export async function startDaemon(
         onTrackedSessionPidPromoted(input);
       },
     });
+    // A folder opened as a Project (or a checkout forgotten) reclassifies this Machine's Sessions now,
+    // not at their next start; each Machine's daemon receives the same Project row change.
+    const stopSessionProjectReclassification = subscribeMachineSessionProjectReclassification({
+      subscribe: subscribeActiveProjectAccountRowsSnapshot,
+      reclassify: createMachineSessionProjectReclassification({
+        credentials, machineId, signal: homeTransportCancellation.signal,
+        resolveHomeServerId: () => resolveServerProfileHomeIdentityId(configuration.activeServerId),
+      }),
+      onError: (error) => {
+        if (homeTransportCancellation.signal.aborted) return;
+        logger.warn('[DAEMON RUN] Session Project reclassification failed', error);
+      },
+    });
+    void resolvesWhenShutdownRequested.then(stopSessionProjectReclassification);
     // A successor that connects to this daemon's server takes over its machine socket; until the
     // server moves it, the incumbent keeps serving (requestDaemonSelfRestart owns the handover).
     const withMachineConnectionHandover = (successorServerUrl?: string) => resolveMachineConnectionHandover({
@@ -4536,6 +4553,7 @@ export async function startDaemon(
               readCensus: readCurrentManagedMachinePolicies,
               executePolicy: managedMachinePolicyAdapter.executePolicy,
               onUnavailable: error => logger.debug('[DAEMON RUN] Managed policy execution unavailable', error),
+              reconcileObservation: managedMachinePolicyAdapter.reconcileObservation,
               reconcileNativeCredentials: managedMachinePolicyAdapter.reconcileNativeCredentials,
               supportsNativeLifetimeRenewal: managedMachinePolicyAdapter.supportsNativeLifetimeRenewal,
             });
