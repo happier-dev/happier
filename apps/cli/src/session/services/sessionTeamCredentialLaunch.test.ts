@@ -1,7 +1,23 @@
-import { createTeamCredentialDirectMaterialStoredV1, computeTeamCredentialSourceMemberKeyV1 } from '@happier-dev/protocol/teams';
+import { TeamCredentialSourceBindingV1Schema } from '@happier-dev/protocol/teams';
+import { projectTeamCredentialCatalogModels } from '../../../../server/sources/app/teams/credentials/catalogModels';
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn, resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
-import { createHttpTeamCredentialDirectMaterialClient } from '@/daemon/connectedServices/directMaterial/teamCredentialDirectMaterialClient';
+import { createRequesterTeamCredentialDirectMaterialClient } from '@/daemon/connectedServices/directMaterial/teamCredentialDirectMaterialClient';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import tweetnacl from 'tweetnacl';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import type { TeamCredentialDirectMaterialUpsertRequestV1 } from '@happier-dev/protocol/teams';
+import { ApiClient } from '@/api/api';
+import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '@/daemon/connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
+import { createDaemonConnectedAccountPurposeBindingRuntime } from '@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
+import { prepareDaemonConnectedServices } from '@/daemon/spawn/prepareDaemonConnectedServices';
+import { generateConnectedServiceMaterializationIdentityV1 } from '@/daemon/connectedServices/materialization/identity';
+import { createConnectedAccountTeamCredentialSourceSnapshot } from '@/providers/broker/teamCredentialSourceSnapshot';
+import { produceTeamCredentialDirectMaterial } from '@/daemon/connectedServices/directMaterial/teamCredentialDirectMaterialProducer';
 import { describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
@@ -515,9 +531,13 @@ describe('Session Team launch composition', () => {
   });
 });
 
-// Reproduced request shape: explicit purpose intent has no Team id and no
-// provider_model slot. HTTP is the only mocked boundary in this journey.
+// r1113d request shape: explicit Team purpose intent with no provider_model
+// slot. Home catalog and daemon RPC are network boundaries; both internal
+// catalog projectors, launch normalization and native preflight stay real.
 describe('Direct Team purpose selection through Agent preflight', () => {
+  // Fixture publication changes the active view; retain the admitted declaration
+  // universe used to author all seven selections before publishing any fixture.
+  const contributions = readCurrentContributionRegistry();
   it.each([
     ['copilot', 'happier.scm.forge.github', 'github-account', 'gpt-6-luna'],
     ['gemini', 'happier.agent.gemini', 'gemini-account', 'gemini-2.5-flash'],
@@ -527,7 +547,6 @@ describe('Direct Team purpose selection through Agent preflight', () => {
     ['pi', 'happier.voice.openai', 'openai', 'openai/gpt-4.1-mini'],
     ['qwen', 'happier.voice.openai', 'openai', undefined],
   ] as const)('keeps %s %s/%s on direct purpose preflight (%s)', async (agentId, pluginId, localId, modelId) => {
-    const contributions = readCurrentContributionRegistry();
     const declarations = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({ agentId, contributions });
     const scope = declarations?.authorizedPurposes.find(scope => scope.serviceRefs.some(ref => ref.pluginId === pluginId && ref.localId === localId));
     if (!scope) throw new Error('Fixture service must be declared by the real Agent: ' + agentId + '/' + pluginId + '/' + localId);
@@ -544,8 +563,26 @@ describe('Direct Team purpose selection through Agent preflight', () => {
         ...(modelId ? { modelSelection: { v: 1, updatedAt: 1, ref: { agentTargetKey, providerConnectionId: null, modelId } } } : {}),
         connectedServices: { v: 2, bindingsByServiceId: { [pluginId + '/' + localId]: directSelection } },
         teamCredentialBindings: [{ v: 1, slot: { kind: 'connected_service_purpose', purpose: scope.purpose },
-          resourceId: directResource.id, expectedResourceRevision: directResource.resourceRevision, deliveryMode: 'direct' }] },
-      readCatalog: async () => [directResource] });
+          resourceId: directResource.id, teamId: directResource.teamId, expectedResourceRevision: directResource.resourceRevision, deliveryMode: 'direct' }] },
+      readCatalog: () => readSessionTeamCredentialResourceCatalog({
+        applications: applications.map(application => ({ ...application, agentTargetKey })), teamIds: [directResource.teamId],
+        homeDomainAction: async request => {
+          const application = TeamCredentialResourceReadInputV1Schema.parse(request.input).application;
+          if (!application) throw new Error('Application catalog required to reproduce the direct-purpose refusal');
+          return await projectTeamCredentialCatalogModels({
+            forwardRpcForUser: async () => ({ ok: false, error: 'projection_unavailable' }),
+          }, { ok: true, page: { resources: [TeamCredentialResourceCatalogEntryV1Schema.parse(directResource)], nextCursor: null },
+            brokerReadinessRequests: [], projectionRequests: [{ resourceId: directResource.id, teamId: directResource.teamId,
+              resourceRevision: directResource.resourceRevision, custodianAccountId: 'custodian',
+              brokerMachineId: null, brokerPoolId: null, source: TeamCredentialSourceBindingV1Schema.parse({ v: 1,
+                kind: 'connected_account', credentialIncarnation: 'incarnation',
+                target: { kind: 'account', account: { service, accountId: 'source-account' } } }),
+              allowedModelIds: null, deliveryMode: 'direct', directMaterialReferences: [] }],
+            brokerReadiness: { unavailable: new Map(), poolSnapshots: new Map(),
+              presenceByAccount: new Map([['custodian', { state: 'known', machineIds: new Set(['machine']) }]]) },
+          }, application);
+        },
+      }) });
     expect(launch.teamModelRow).toBeNull();
     expect(launch.options.teamCredentialBindings).toEqual([expect.objectContaining({ teamId: resource.teamId,
       slot: { kind: 'connected_service_purpose', purpose: scope.purpose }, deliveryMode: 'direct' })]);
@@ -554,27 +591,89 @@ describe('Direct Team purpose selection through Agent preflight', () => {
     const origin = snapshot?.directMaterialOrigins?.find(origin => origin.purpose.purpose === scope.purpose.purpose);
     expect(origin).toMatchObject({ teamId: resource.teamId, resourceId: directResource.id });
     if (!origin) throw new Error('Direct origin required');
-    const payload = { v: 1 as const, domain: 'happier.team-credential-direct-material' as const,
-      homeServerIdentityId: 'home', teamId: resource.teamId, resourceId: directResource.id,
-      resourceRevision: resource.resourceRevision, recipientAccountId: 'recipient', sourceVersion: 'version',
-      sourceMember: { kind: 'connected_account' as const, service, connectedAccountId: 'source-account' },
-      material: { kind: 'qualified_connected_account' as const, credential: { v: 1 as const, values: { token: 'synthetic-key' } },
-        configuration: null, authenticationModeId: 'api-key' } };
-    const { material: _material, sourceMember: _member, v: _v, domain: _domain, ...expected } = payload;
-    const http = vi.spyOn(axios, 'post').mockResolvedValueOnce({ status: 200, data: { status: 'ready', recipientMode: 'plain',
-      stored: createTeamCredentialDirectMaterialStoredV1({ payload, recipientMode: 'plain' }),
-      expected: { ...expected, sourceMemberKey: computeTeamCredentialSourceMemberKeyV1(payload.sourceMember) } } })
-      .mockResolvedValueOnce({ status: 200, data: { status: 'unavailable', reason: 'access_removed' } });
+    const token = pluginId === 'happier.scm.forge.github' ? 'github_pat_synthetic-key' : 'synthetic-key';
+    const authenticationModeId = pluginId === 'happier.scm.forge.github' ? 'fine-grained-pat' : 'api-key';
+    const expectedEnvironmentKey = pluginId === 'happier.scm.forge.github' ? 'COPILOT_GITHUB_TOKEN'
+      : pluginId === 'happier.agent.gemini' ? 'GEMINI_API_KEY' : 'OPENAI_API_KEY';
+    const credentialValues: Readonly<Record<string, string>> = pluginId === 'happier.agent.gemini' ? { apiKey: token } : { token };
+    const source = TeamCredentialSourceBindingV1Schema.parse({ v: 1, kind: 'connected_account',
+      credentialIncarnation: 'incarnation', target: { kind: 'account', account: directSelection.disclosedMember } });
+    if (source.kind !== 'connected_account') throw new Error('Connected Account source required');
+    const sourceSnapshot = createConnectedAccountTeamCredentialSourceSnapshot({ source, authenticationKind: 'manual',
+      material: { credential: { v: 1, values: credentialValues }, configuration: null, authenticationModeId,
+        credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationRevision: null,
+        contributionContractVersion: 'fixture-service-contract',
+        directExport: { contractVersion: 'happier.team-credential-manual-connected-account-direct.v1' },
+        isCurrent: async () => true }, isPersistedSourceCurrent: () => true });
+    if (!sourceSnapshot) throw new Error('Declared manual export required');
+    const recoverySecret = new Uint8Array(32).fill(29);
+    const recipientContentPublicKey = tweetnacl.box.keyPair.fromSecretKey(
+      deriveAccountMachineKeyFromRecoverySecret(recoverySecret)).publicKey;
+    let publication: TeamCredentialDirectMaterialUpsertRequestV1['items'][number] | undefined;
+    const preparation = { sourceMember: sourceSnapshot.currentness.sourceMember, publishedSourceVersion: null,
+      expectedResourceRevision: resource.resourceRevision, expectedStoredSourceVersion: null,
+      recipientMode: 'e2ee' as const, recipientContentPublicKeyFingerprint: 'recipient-content-key', recipientContentPublicKey };
+    await expect(produceTeamCredentialDirectMaterial({ sourceSnapshot, expected: preparation,
+      readCurrentPreparation: async () => preparation, homeServerIdentityId: 'home', teamId: resource.teamId,
+      resourceId: directResource.id, recipientAccountId: 'recipient',
+      upsert: async item => { publication = item; return { ok: true }; } })).resolves.toMatchObject({ ok: true });
+    if (!publication) throw new Error('Producer publication required');
+    const published = publication;
+    let revoked = false;
+    // Only Home HTTP is substituted: the real producer's bytes enter the real recipient opener.
+    const http = vi.spyOn(axios, 'post').mockImplementation(async url => {
+      if (!String(url).endsWith('/direct-material')) throw new Error('Unexpected Home request in direct preflight');
+      return { status: 200, data: revoked ? { status: 'unavailable', reason: 'access_removed' } : {
+        status: 'ready', recipientMode: 'e2ee', stored: published.stored,
+        admittedResource: { displayName: directResource.displayName, teamId: directResource.teamId },
+        expected: { homeServerIdentityId: 'home', teamId: resource.teamId, resourceId: directResource.id,
+          resourceRevision: resource.resourceRevision, recipientAccountId: 'recipient',
+          sourceVersion: published.sourceVersion, sourceMemberKey: published.sourceMemberKey },
+      } };
+    });
+    const directory = await mkdtemp(join(tmpdir(), 'team-native-preflight-'));
+    const controller = pluginReloadController;
+    const credentials = { token: 'synthetic-token', encryption: { type: 'legacy' as const, secret: recoverySecret } };
+    const client = createRequesterTeamCredentialDirectMaterialClient({ credentials, serverHttpBaseUrl: 'https://home.test',
+      readAccountEncryptionMode: async () => 'e2ee' });
+    const established = createQualifiedConnectedAccountEstablishedRuntimeOwner({ credentials, reloadController: controller,
+      getAccountEncryptionMode: async () => 'e2ee',
+      configuration: { read: async () => null,
+        secrets: { admit: async () => undefined, has: async () => false, read: async () => null } } });
+    const purposes = createDaemonConnectedAccountPurposeBindingRuntime({ reloadController: controller,
+      establishedRuntimeOwner: established, resolveQualifiedConnectedAccountV4Support: () => 'advertised',
+      openTeamDirect: client.open });
+    let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
+    let cleanup: (() => void | Promise<void>) | null | undefined;
     try {
-      const client = createHttpTeamCredentialDirectMaterialClient({ token: 'synthetic-token', serverUrl: 'https://home.test',
-        readRecipientEncryptionMaterial: async () => ({ mode: 'plain' }) });
+      runtime = await createAdmittedPluginRuntimeFixture({ happyHomeDir: directory, controller,
+        runtimeOptions: { contributes: contributions,
+          pluginIds: [...new Set([pluginId, scope.purpose.consumer.pluginId])], connectedAccounts: purposes.owner } });
+      const prepared = await prepareDaemonConnectedServices({
+        options: { ...launch.options, directory,
+          connectedServiceMaterializationIdentityV1: generateConnectedServiceMaterializationIdentityV1() },
+        normalizedExistingSessionId: 'admitted-session', requestedSessionId: 'admitted-session', effectiveResume: '',
+        catalogAgentId: agentId, credentials, api: await ApiClient.create(credentials),
+        connectedAccountsOwner: purposes.owner, activatePurposeBindings: purposes.activatePurposeBindings,
+        activeServerDir: join(directory, 'server'), connectedServicesMaterializationBaseDir: join(directory, 'materialized'),
+        connectedServiceRefreshCoordinator: null, processEnv: {}, pluginRuntimeRegistry: runtime.registry,
+      });
+      expect(prepared).toMatchObject({ ok: true });
+      if (!prepared.ok) throw new Error('Direct Team native preflight refused');
+      cleanup = prepared.auth?.cleanupOnExit;
+      if (agentId !== 'qwen') expect(prepared.auth?.env).toMatchObject({ [expectedEnvironmentKey]: token });
+      // Qwen's later no-model Agent hook is outside this daemon preparation test.
+      // No model or environment-use declaration is manufactured here.
       const request = { teamId: origin.teamId, resourceId: origin.resourceId,
         consumer: { kind: 'session' as const, sessionId: 'admitted-session' },
         slot: { kind: 'connected_service_purpose' as const, purpose: origin.purpose }, disclosedMember: origin.disclosedMember };
-      expect(await client.open(request)).toMatchObject({ ok: true, payload });
-      // Withdrawal is enforced on the next open; no cached admission survives it.
+      expect(await client.open(request)).toMatchObject({ ok: true });
+      revoked = true;
       expect(await client.open(request)).toEqual({ ok: false, reason: 'access_removed' });
       expect(http.mock.calls[0]?.[0]).toContain('/teams/' + resource.teamId + '/');
-    } finally { http.mockRestore(); }
-  });
+    } finally {
+      await cleanup?.(); await runtime?.dispose();
+      await rm(directory, { recursive: true, force: true }); http.mockRestore();
+    }
+  }, 60_000);
 });

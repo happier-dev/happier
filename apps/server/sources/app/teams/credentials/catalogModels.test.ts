@@ -67,7 +67,10 @@ it.each([0, 1, 2])('keeps Direct declaration discovery separate from broker obse
         requests.push(DaemonProviderModelProjectionRequestV1Schema.parse(request.params));
         return { ok: false, error: 'projection_unavailable' };
     } };
-    await projectTeamCredentialCatalogModels(app, result, application);
+    const projected = await projectTeamCredentialCatalogModels(app, result, application);
+    expect(projected.resources[0]).toMatchObject({ providerModels: [],
+        readiness: count ? { kind: 'available' } : { kind: 'broker_unavailable', reason: 'projection_unavailable' },
+    });
     expect(requests).toHaveLength(2);
     expect(requests.filter(request => request.includeDirectMaterialization === true)).toHaveLength(1);
     expect(requests.filter(request => request.includeDirectMaterialization === undefined)).toHaveLength(1);

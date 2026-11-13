@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { FastifyRequest } from "fastify";
 import tweetnacl from "tweetnacl";
 import { signAccountContentKeyBindingV1 } from "@happier-dev/protocol";
-import { deriveBoxPublicKeyFromSeed } from "@happier-dev/protocol/crypto/boxBundle";
+import { deriveAccountMachineKeyFromRecoverySecret } from "@happier-dev/protocol/crypto/accountScopedCipher";
 import { createConnectedAccountEstablishedRuntimeOwner, type QualifiedConnectedAccountMaterialSnapshot,
     type ConnectedAccountEstablishedRuntimeRegistry, type ConnectedAccountEstablishedReadScope } from "@happier-dev/cli-common/connectedAccounts";
 import { PluginConnectedAccountDescriptorContributionV2Schema } from "@happier-dev/protocol/connect/plugin-connected-account-authentication-v2";
@@ -74,12 +74,15 @@ describe("Team credential direct material consumed boundary (SQLite integration)
 
     afterAll(async () => harness.close());
 
-    it("keeps two E2EE recipients ready across runtime occurrences and opens rotated Connected Account material", async () => {
+    it.each(["legacy", "dataKey"] as const)("keeps two %s E2EE recipients ready across runtime occurrences and opens rotated Connected Account material", async credentialKind => {
         const identities = [7, 9].map(value => {
             const seed = new Uint8Array(32).fill(value);
             const signing = tweetnacl.sign.keyPair();
-            const contentPublicKey = deriveBoxPublicKeyFromSeed(seed);
-            return { seed, signing, contentPublicKey, signature: signAccountContentKeyBindingV1({
+            const machineKey = credentialKind === "legacy" ? deriveAccountMachineKeyFromRecoverySecret(seed) : seed;
+            const contentPublicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
+            const encryption = credentialKind === "legacy" ? { type: "legacy" as const, secret: seed }
+                : { type: "dataKey" as const, machineKey, publicKey: contentPublicKey };
+            return { seed, encryption, signing, contentPublicKey, signature: signAccountContentKeyBindingV1({
                 accountSigningSecretKey: signing.secretKey, contentPublicKey,
             }) };
         });
@@ -95,7 +98,7 @@ describe("Team credential direct material consumed boundary (SQLite integration)
         } })));
         const account = { service: { pluginId: "example.accounts", localId: "service" }, accountId: "source" };
         let revision: string | null = null;
-        const cryptoMaterial = { type: "legacy" as const, secret: identities[0]!.seed };
+        const cryptoMaterial = identities[0]!.encryption;
         async function writeSource(value: string) {
             const content = sealQualifiedConnectedAccountContentEnvelope({ kind: "credential", accountMode: "e2ee",
                 material: cryptoMaterial, payload: { v: 1, values: { token: value } },
@@ -163,12 +166,15 @@ describe("Team credential direct material consumed boundary (SQLite integration)
             const serverUrl = `http://127.0.0.1:${address.port}`;
             const url = `${serverUrl}/v2/teams/${team.id}/credential-resources/${resource.id}/direct-material`;
             const headers = { Authorization: "Bearer custodian", "Content-Type": "application/json" };
-            const { createHttpTeamCredentialDirectMaterialClient } = await importTestModule<{
-                createHttpTeamCredentialDirectMaterialClient(input: Readonly<{ token: string; teamId: string; serverUrl: string;
-                    readRecipientEncryptionMaterial(): Promise<Readonly<{ mode: "e2ee"; secretKeyOrSeed: Uint8Array }>> }>): DirectMaterialClient;
+            const { createRequesterTeamCredentialDirectMaterialClient } = await importTestModule<{
+                createRequesterTeamCredentialDirectMaterialClient(input: Readonly<{
+                    credentials: Readonly<{ token: string; encryption: typeof identities[number]["encryption"] | null }>;
+                    serverHttpBaseUrl: string; readAccountEncryptionMode(): Promise<"e2ee" | "plain" | "unknown">;
+                }>): DirectMaterialClient;
             }>("../../../../../cli/src/daemon/connectedServices/directMaterial/teamCredentialDirectMaterialClient");
-            const client = createHttpTeamCredentialDirectMaterialClient({ token: "recipient", teamId: team.id, serverUrl,
-                readRecipientEncryptionMaterial: async () => ({ mode: "e2ee", secretKeyOrSeed: identities[1]!.seed }) });
+            const client = createRequesterTeamCredentialDirectMaterialClient({
+                credentials: { token: "recipient", encryption: identities[1]!.encryption }, serverHttpBaseUrl: serverUrl,
+                readAccountEncryptionMode: async () => "e2ee" });
             const descriptor = PluginConnectedAccountDescriptorContributionV2Schema.parse({ id: account.service.localId, title: "Source",
                 authentication: { defaultModeId: "api-key", modes: [{ id: "api-key", kind: "manual", fields: [],
                     outcomeReconciliation: "none", directExport: { contractVersion: TEAM_CREDENTIAL_MANUAL_CONNECTED_ACCOUNT_DIRECT_CONTRACT_V1 } }] } });
@@ -249,6 +255,17 @@ describe("Team credential direct material consumed boundary (SQLite integration)
                     disclosedMember: account });
                 expect(opened.ok, JSON.stringify(opened)).toBe(true);
                 expect(opened).toMatchObject({ payload: { material: { credential: { values: { token: value } } } } });
+            }
+            for (const unavailable of [
+                { encryption: null, mode: "e2ee" as const },
+                { encryption: identities[1]!.encryption, mode: "unknown" as const },
+            ]) {
+                const unavailableClient = createRequesterTeamCredentialDirectMaterialClient({
+                    credentials: { token: "recipient", encryption: unavailable.encryption }, serverHttpBaseUrl: serverUrl,
+                    readAccountEncryptionMode: async () => unavailable.mode });
+                await expect(unavailableClient.open({ teamId: team.id, resourceId: resource.id,
+                    consumer: { kind: "session", sessionId: session.id }, slot: { kind: "connected_service_purpose", purpose },
+                    disclosedMember: account })).resolves.toEqual({ ok: false, reason: "recipient_binding_changed" });
             }
         } finally {
             await app.close();
@@ -397,12 +414,11 @@ describe("Team credential direct material consumed boundary (SQLite integration)
         await app.listen({ host: "127.0.0.1", port: 0 });
 
         try {
-            const { createHttpTeamCredentialDirectMaterialClient } = await importTestModule<{
-                createHttpTeamCredentialDirectMaterialClient(params: Readonly<{
-                    token: string;
-                    teamId: string;
-                    serverUrl?: string;
-                    readRecipientEncryptionMaterial(signal?: AbortSignal): Promise<Readonly<{ mode: "plain" }>>;
+            const { createRequesterTeamCredentialDirectMaterialClient } = await importTestModule<{
+                createRequesterTeamCredentialDirectMaterialClient(params: Readonly<{
+                    credentials: Readonly<{ token: string; encryption: null }>;
+                    serverHttpBaseUrl: string;
+                    readAccountEncryptionMode(signal?: AbortSignal): Promise<"plain">;
                 }>): DirectMaterialClient;
             }>("../../../../../cli/src/daemon/connectedServices/directMaterial/teamCredentialDirectMaterialClient");
             const { resolveProviderCredentialPlaintextAsync } = await importTestModule<{
@@ -427,11 +443,12 @@ describe("Team credential direct material consumed boundary (SQLite integration)
             }>("../../../../../cli/src/providers/spawn/credentials");
             const address = app.server.address();
             if (!address || typeof address === "string") throw new Error("expected TCP test address");
-            const directClient = createHttpTeamCredentialDirectMaterialClient({
-                token: "test-token",
-                teamId: team.id,
-                serverUrl: `http://127.0.0.1:${address.port}`,
-                readRecipientEncryptionMaterial: async () => ({ mode: "plain" }),
+            const directClient = createRequesterTeamCredentialDirectMaterialClient({
+                credentials: { token: "test-token", get encryption(): never {
+                    throw new Error("Plain Account delivery must not read retained encryption material");
+                } },
+                serverHttpBaseUrl: `http://127.0.0.1:${address.port}`,
+                readAccountEncryptionMode: async () => "plain",
             });
             const openedDirect = await directClient.open({
                 teamId: team.id,

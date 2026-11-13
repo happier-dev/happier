@@ -173,7 +173,8 @@ export async function projectTeamCredentialCatalogModels(
             resource.recoveryAction = 'source_owner_action';
             continue;
         }
-        if (resource.providerModels.some(model => model.availability === 'available')) {
+        if (resource.providerModels.some(model => model.availability === 'available')
+            || (resource.mayReceiveDirect && resource.directMaterialState === 'current')) {
             resource.readiness = { kind: 'available' };
             resource.recoveryAction = null;
             delete resource.deliveryUnavailableReason;

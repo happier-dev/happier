@@ -9,7 +9,7 @@ import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import type { createDaemonConnectedAccountPurposeBindingRuntime } from '../connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime';
 import { createRequesterConnectedAccountPurposeBindingRuntime } from '../connectedServices/purposeBindings/createRequesterConnectedAccountPurposeBindingRuntime';
 import { readActiveConnectedAccountCatalog } from '@/settings/connectedAccounts/hydrateConnectedAccountCatalog';
-import { createHttpTeamCredentialDirectMaterialClient } from '../connectedServices/directMaterial/teamCredentialDirectMaterialClient';
+import { createRequesterTeamCredentialDirectMaterialClient } from '../connectedServices/directMaterial/teamCredentialDirectMaterialClient';
 import { createDaemonSessionMutationCustody } from '../connectedServices/usageLimitRecovery/createDaemonUsageLimitRecoveryMutationCustody';
 import type { ProviderAccountUsageStore } from '../connectedServices/accountUsage/store';
 import { createProviderAccountUsagePersistenceScheduler } from '../connectedServices/accountUsage/persistence';
@@ -152,16 +152,13 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
     return { ...readProfilesFromAccountSettings(readProfileSettingsFromAccountSnapshot(current), projection.artifactsById,
       { lastUsedProfile }, projection.catalog), artifactsById: projection.artifactsById };
   };
-  const token = bootstrap.credentials.token;
-  const directMaterial = createHttpTeamCredentialDirectMaterialClient({ token, serverUrl: bootstrap.serverHttpBaseUrl,
-    readRecipientEncryptionMaterial: async signal => {
+  const directMaterial = createRequesterTeamCredentialDirectMaterialClient({
+    credentials: bootstrap.credentials, serverHttpBaseUrl: bootstrap.serverHttpBaseUrl,
+    readAccountEncryptionMode: async signal => {
       signal?.throwIfAborted();
-      if (disposed) return { mode: 'e2ee_unavailable' };
-      const mode = await withHome(() => api.getAccountEncryptionMode({ signal }));
-      const encryption = bootstrap.credentials.encryption;
-      return mode === 'plain' ? { mode: 'plain' } : mode === 'e2ee' && encryption
-        ? { mode: 'e2ee', secretKeyOrSeed: encryption.type === 'dataKey' ? encryption.machineKey : encryption.secret }
-        : { mode: 'e2ee_unavailable' }; },
+      if (disposed) return 'unknown';
+      return await withHome(() => api.getAccountEncryptionMode({ signal }));
+    },
   });
   const { established, qualifiedConnectedAccountApi, purposes } = createRequesterConnectedAccountPurposeBindingRuntime({
     operationContext: savedSecrets, accountId: bootstrap.attribution.accountId, machineId: bootstrap.attribution.machineId,

@@ -1,8 +1,10 @@
 import type { StoredCredentials } from '@/persistence';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import type { ConnectedServiceAccountEncryptionMode } from '@/api/client/connectedServiceCredentialApi';
 import { computeTeamCredentialSourceMemberKeyV1, materializeTeamCredentialDirectMaterialV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 import type { TeamCredentialDirectMaterialExpected, TeamCredentialDirectMaterialPayloadV1, TeamCredentialDirectMaterialStoredV1, TeamCredentialDirectMaterialOpenRequestV1, TeamCredentialDirectMaterialMineResponseV1, TeamCredentialErrorCodeV1 } from '@happier-dev/protocol/teams';
 import {
+  type TeamCredentialOperationRequestHeaders,
   fetchTeamCredentialDirectMaterial,
   TeamCredentialDirectMaterialHttpContractError,
   TeamCredentialDirectMaterialHttpTransportError,
@@ -56,6 +58,7 @@ export type TeamCredentialDirectMaterialClient = Readonly<{
   open(input: TeamCredentialDirectMaterialOpenRequestV1 & Readonly<{
     teamId?: string;
     signal?: AbortSignal;
+    resolvePlatformOperationRequestHeaders?: TeamCredentialOperationRequestHeaders;
   }>): Promise<
     | Readonly<{ ok: true; payload: TeamCredentialDirectMaterialPayloadV1; admittedResource?: AdmittedResource }>
     | Readonly<{ ok: false; reason: TeamCredentialDirectMaterialUnavailableReason }>
@@ -72,6 +75,7 @@ export function createTeamCredentialDirectMaterialClient(dependencies: Readonly<
   fetchCurrent(input: TeamCredentialDirectMaterialOpenRequestV1 & Readonly<{
     teamId?: string;
     signal?: AbortSignal;
+    resolvePlatformOperationRequestHeaders?: TeamCredentialOperationRequestHeaders;
   }>): Promise<CurrentMaterialRead>;
   readRecipientEncryptionMaterial(signal?: AbortSignal): Promise<RecipientEncryptionMaterial>;
 }>): TeamCredentialDirectMaterialClient {
@@ -133,7 +137,7 @@ export function createHttpTeamCredentialDirectMaterialClient(params: Readonly<{
       try {
         const result = await fetchTeamCredentialDirectMaterial({
           token: params.token,
-          resolvePlatformOperationRequestHeaders: params.resolvePlatformOperationRequestHeaders,
+          resolvePlatformOperationRequestHeaders: input.resolvePlatformOperationRequestHeaders ?? params.resolvePlatformOperationRequestHeaders,
           teamId,
           resourceId: input.resourceId,
           request: {
@@ -178,14 +182,16 @@ export function createRequesterTeamCredentialDirectMaterialClient(input: Readonl
   readAccountEncryptionMode(signal?: AbortSignal): Promise<ConnectedServiceAccountEncryptionMode>;
 }>): TeamCredentialDirectMaterialClient {
   return createHttpTeamCredentialDirectMaterialClient({ token: input.credentials.token,
-    serverUrl: input.serverHttpBaseUrl,
+    get serverUrl() { return input.serverHttpBaseUrl; },
     resolvePlatformOperationRequestHeaders: input.resolvePlatformOperationRequestHeaders,
     readRecipientEncryptionMaterial: async signal => {
       const mode = await input.readAccountEncryptionMode(signal);
+      if (mode === 'plain') return { mode: 'plain' };
+      if (mode !== 'e2ee') return { mode: 'e2ee_unavailable' };
       const encryption = input.credentials.encryption;
-      return mode === 'plain' ? { mode: 'plain' } : mode === 'e2ee' && encryption
-        ? { mode: 'e2ee', secretKeyOrSeed: encryption.type === 'dataKey' ? encryption.machineKey : encryption.secret }
-        : { mode: 'e2ee_unavailable' };
+      if (!encryption) return { mode: 'e2ee_unavailable' };
+      return { mode: 'e2ee', secretKeyOrSeed: encryption.type === 'dataKey'
+        ? encryption.machineKey : deriveAccountMachineKeyFromRecoverySecret(encryption.secret) };
     },
   });
 }

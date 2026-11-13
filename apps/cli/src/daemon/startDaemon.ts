@@ -221,7 +221,8 @@ import { createMinuteHistoryStore } from './vitals/history/minuteHistoryStore';
 import { createMachineResourceSummary, type MachineResourceSummary } from './resources/machineResourceSummary';
 import { createMachineResourcesPolicyRuntime, type MachineResourcesPolicyRuntime } from './resources/machineResourcesPolicy';
 import { createMachineRolesRuntime, type MachineRolesRuntime } from './roles/machineRolesRuntime';
-import { machineRoleCatalogFromPluginsV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
+import { machineRoleCatalogFromPluginsV1, projectPublishedMachineRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
+import { bindMachineRoleAdmission } from '@/plugins/projection/registry/builtIn/machineRoles';
 import { createPersistedTakeoverAdmissionWaiter } from './spawn/persistedTakeoverAdmission';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
@@ -308,7 +309,7 @@ import {
   type TeamCredentialDirectMaterialWakeReason,
   type TeamCredentialDirectMaterialSourceWake,
 } from './connectedServices/directMaterial/daemonTeamCredentialDirectMaterialReconciler';
-import { createHttpTeamCredentialDirectMaterialClient } from './connectedServices/directMaterial/teamCredentialDirectMaterialClient';
+import { createRequesterTeamCredentialDirectMaterialClient } from './connectedServices/directMaterial/teamCredentialDirectMaterialClient';
 import { reconcileTeamCredentialNativeHomeCredentials } from './connectedServices/stateSharing/reconcileTeamCredentialNativeHomeCredentials';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { readProviderSettingsForCli } from '@/providers/settings/read';
@@ -461,6 +462,7 @@ export async function startDaemon(
   let machineResourcesPolicy: MachineResourcesPolicyRuntime | null = null;
   // The Machine's role set (OWNER-RULINGS 2026-11-12). Role registration (P03-HANDLER-SPLIT) reads activeRoles().
   let machineRoles: MachineRolesRuntime | null = null;
+  let releaseMachineRoleAdmission: (() => void) | null = null;
   let machineProcessesView: MachineProcessesView | null = null;
   let daemonKeepAwake: ReturnType<typeof createDaemonKeepAwake> | null = null;
   let daemonGuard: Awaited<ReturnType<typeof createDaemonGuard>> | null = null;
@@ -745,6 +747,8 @@ export async function startDaemon(
         } });
     })();
     machineRoles = bootMachineRoles;
+    // Plugin `machineRoles` resolve against this applied set at the bundled admission owner.
+    releaseMachineRoleAdmission = bindMachineRoleAdmission(() => bootMachineRoles.appliedMetadata());
     const requesterRuntimeServerId = configuration.activeServerId;
     const deviceLocalSecretStorage = bootstrapContext.deviceLocalSecretStorage;
 
@@ -952,7 +956,12 @@ export async function startDaemon(
     // control runtime exists, the same refresh also gives browser route owners a late-registration
     // chance if the server was temporarily unreachable during startup.
     const serverFeaturesSnapshotRefreshLoop = startServerFeaturesSnapshotRefreshLoop({
-      refresh: async () => { await serverFeaturesSnapshotStore.refresh(); },
+      refresh: async () => {
+        await serverFeaturesSnapshotStore.refresh();
+        // The webhook worker parks while `plugins.webhooks` is off; a refreshed
+        // snapshot is the only way that bit changes, so it is the worker's wake.
+        pluginWebhookWorker?.capabilityChanged();
+      },
       isTransitionActive: serverFeaturesSnapshotStore.isRefreshTransitionActive,
       transitionIntervalMs: minimumServerFeaturesSnapshotRefreshIntervalMs,
       onError: (error) => {
@@ -1157,7 +1166,27 @@ export async function startDaemon(
         } }).activity,
     ] });
     const releaseManagedActivityRegistryEdges = pluginReloadController.subscribe(() => serviceActivity.notifyChanged());
-    const releaseMachineRolesCatalogEdges = pluginReloadController.subscribe(() => machineRoles?.refreshCatalog());
+    // The Roles catalog: plugin role declarations this Machine admitted, published once per real
+    // change (and once per Machine connection) for the Account-side `machines.roles.list`.
+    let publishedPluginMachineRoles: Readonly<{ target: NonNullable<typeof apiMachine>; key: string }> | null = null;
+    const publishPluginMachineRoles = (): void => {
+      const target = apiMachine;
+      if (!target || admissionDrain.isPublicationQuiescing()) return;
+      const machineRolesPublication = projectPublishedMachineRolesV1((pluginReloadController.getState().activeRegistry?.contributes.machineRoles ?? [])
+        .map(entry => ({ pluginId: entry.pluginId, declaration: entry.definition })));
+      const key = JSON.stringify(machineRolesPublication);
+      if (publishedPluginMachineRoles?.target === target && publishedPluginMachineRoles.key === key) return;
+      publishedPluginMachineRoles = { target, key };
+      void target.updateDaemonState(state => ({ ...(state ?? { status: 'running' as const }), machineRoles: machineRolesPublication }))
+        .catch(error => {
+          if (publishedPluginMachineRoles?.key === key) publishedPluginMachineRoles = null;
+          logger.warn('[DAEMON RUN] Machine roles catalog publication failed', error);
+        });
+    };
+    const releaseMachineRolesCatalogEdges = pluginReloadController.subscribe(() => {
+      machineRoles?.refreshCatalog();
+      publishPluginMachineRoles();
+    });
     machineVitalsAlerts = createMachineVitalsAlerts({
       sampler: machineVitals, historyStore: machineVitalsHistory, policy: machineResourcesPolicy,
       emit: transition => {
@@ -1255,6 +1284,8 @@ export async function startDaemon(
         machineResourcesPolicy = null;
         machineRoles?.stop();
         machineRoles = null;
+        releaseMachineRoleAdmission?.();
+        releaseMachineRoleAdmission = null;
         await machineVitals?.stop();
         machineVitals = null;
         await managedMachinePolicyRuntime?.stop();
@@ -1316,6 +1347,8 @@ export async function startDaemon(
     const startupProcessMarkers = await listSessionMarkers();
     // Retain known lifecycle facts, not process membership or native handles. All membership is re-read.
     const endedProcessRoots = new Map<string, HappierProcessRootSource>();
+    // An ended owner is what lets managed-service recovery act; it re-reads native ownership only then.
+    let requestManagedServiceRecovery = (): void => {};
     const startupReattachResult = await reattachTrackedSessionsFromMarkers({
       trackedSessionsByKey,
       credentials,
@@ -1640,22 +1673,10 @@ export async function startDaemon(
           ? connectedServiceRefreshCoordinator.enrichQualifiedConnectedAccountCredentialContext(input)
           : Promise.resolve({ status: 'unavailable' as const }),
       });
-    const teamCredentialDirectMaterialClient = createHttpTeamCredentialDirectMaterialClient({
-      token: credentials.token,
-      get serverUrl() { return readDaemonHomeServerHttpBaseUrl(); },
-      async readRecipientEncryptionMaterial(signal) {
-        const mode = await api.getAccountEncryptionMode({ signal });
-        if (mode === 'plain') return { mode: 'plain' };
-        if (mode !== 'e2ee' || !credentials.encryption) {
-          return { mode: 'e2ee_unavailable' };
-        }
-        return {
-          mode: 'e2ee',
-          secretKeyOrSeed: credentials.encryption.type === 'dataKey'
-            ? credentials.encryption.machineKey
-            : credentials.encryption.secret,
-        };
-      },
+    const teamCredentialDirectMaterialClient = createRequesterTeamCredentialDirectMaterialClient({
+      credentials,
+      get serverHttpBaseUrl() { return readDaemonHomeServerHttpBaseUrl(); },
+      readAccountEncryptionMode: signal => api.getAccountEncryptionMode({ signal }),
     });
     const executeTeamCredentialBrokerAction = createTeamCredentialBrokerActionPurposeExecutor({
       initiatorMachineId: machineId,
@@ -1987,6 +2008,13 @@ export async function startDaemon(
         }
         return await currentApiMachine.resolvePluginResourceSessionAccess(input);
       },
+      // Automation Event Actions seal evidence with the Account id the Machine
+      // connection already verified; they never re-read the profile per call.
+      resolveAuthenticatedAccountId: async (signal) => {
+        const accountId = await apiMachineForSessions?.resolveAuthenticatedAccountId(signal);
+        if (!accountId) throw new Error('account_identity_unavailable');
+        return accountId;
+      },
       // Account Collection client preflight and plugin-facing feature decisions are
       // both advisory reads of this existing daemon-owned snapshot. Supplying it once
       // here keeps a single cache/currentness path; the resolved runtime fans it out.
@@ -2085,6 +2113,11 @@ export async function startDaemon(
     const pluginRuntimeInitialization = settleDaemonOptionalCapability(
       'plugin_runtime', pluginRuntimeOwner.initialize(), reportOptionalCapabilityUnavailable,
     );
+    // A role toggle republishes only the plugins whose role admission changed; no restart.
+    bootMachineRoles.subscribe(() => {
+      void pluginRuntimeInitialization.then(() => pluginRuntimeOwner.refreshMachineRoleAdmission())
+        .catch(error => logger.warn('[DAEMON RUN] Machine role plugin admission refresh failed', error));
+    });
     // Background, once per Machine: link.ensure keeps its scan fallback until
     // this Machine's released external-session identities are indexed.
     void pluginRuntimeInitialization.then((pluginRuntime) => {
@@ -2510,6 +2543,7 @@ export async function startDaemon(
       managedMachinePolicyAdapter,
       readManagedServiceCurrentLogPaths,
       retryOrphanedManagedServices,
+      requestManagedServiceRecovery: requestManagedServiceRecoveryFromSessionControl,
       refreshBrowserRouteOwners: refreshBrowserRouteOwnersFromSessionControl,
       processLeftBehindPass: sessionControlLeftBehindPass,
     } = await startDaemonSessionControlRuntime({
@@ -2530,6 +2564,7 @@ export async function startDaemon(
       endedProcessRoots: () => [...endedProcessRoots.values()],
       retainEndedProcessRoots: roots => {
         for (const root of roots) endedProcessRoots.set(`${processOwnerKey(root.owner)}:${root.pid}`, { ...root, live: false });
+        requestManagedServiceRecovery();
       },
       admissionDrain,
       requesterSessionCustodyServerId: requesterRuntimeServerId,
@@ -2820,6 +2855,7 @@ export async function startDaemon(
       isShuttingDown: isDaemonQuiescing,
       processEnv: process.env,
     });
+    requestManagedServiceRecovery = requestManagedServiceRecoveryFromSessionControl;
     machineRpcRouteAttachments.attachMachineReachabilityRoutes(createDaemonMachineReachabilityRoutes({
       getMachineClient: () => apiMachine, target: machineResourceTarget, agentIsolation, adminAccess: machineAdminAccessRoutes, ownerRemainder,
     }));
@@ -2867,6 +2903,7 @@ export async function startDaemon(
       prepareKill: processActionLifecycle.prepareKill,
       onRootEnded: root => {
         endedProcessRoots.set(`${processOwnerKey(root.owner)}:${root.pid}`, { ...root, live: false, endedAtMs: Date.now() });
+        requestManagedServiceRecovery();
       },
       stopOwner: async (root, execution) => {
         if (root.owner.kind === 'session') {
@@ -4256,7 +4293,7 @@ export async function startDaemon(
             return lease;
           };
           const host = { credentials, serverId: homeId, serverHttpBaseUrl: readDaemonHomeServerHttpBaseUrl(), machineId,
-            resolveRequesterIdentity: async () => ({ kind: 'unknown' as const, reason: 'requester_authority_unavailable' }),
+            resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' } as const),
             acquirePluginRuntimeRegistryLease };
           const dependencies = createDaemonDeploymentActionDeps({ ...host,
             runtime: createOwnServerDeploymentRuntimeForHost(host) });
@@ -4506,6 +4543,7 @@ export async function startDaemon(
             attemptedSessionSpawnDirectTargetTransport;
           resolveMachineProviderBindingSettled();
           await pluginRuntimeInitialization;
+          publishPluginMachineRoles();
           if (!pluginWebhookWorker) {
             const installationIdentity = await readOrCreateInstallationIdentity();
             pluginWebhookWorker = startPluginWebhookDaemonWorkerV1({
@@ -4731,6 +4769,8 @@ export async function startDaemon(
     machineResourcesPolicy = null;
     machineRoles?.stop();
     machineRoles = null;
+    releaseMachineRoleAdmission?.();
+    releaseMachineRoleAdmission = null;
     await disposePluginRuntimeRegistry().catch(stopError =>
       logger.warn('[DAEMON RUN] Plugin runtime retirement failed during startup cleanup', stopError));
     await machineVitals?.stop().catch((stopError) => {
