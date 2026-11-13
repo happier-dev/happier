@@ -103,6 +103,7 @@ async function projectDevelopmentContributes(
           devWatch: true,
         }),
       })],
+      materializationIdsByPluginId: active.materializationIdsByPluginId,
       diagnosticsByPluginId: Object.freeze({}),
     };
   const referenceGraph = { loadedPlugins: active.pluginDeclarations ?? [], diagnosticsByPluginId: active.pluginDiagnosticsByPluginId };
@@ -227,6 +228,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
     signal?: AbortSignal,
   ) => Promise<CurrentMachineExecutionOriginContext | null>;
   resolveSessionResourceAccess?: ResolveSessionResourceAccess;
+  resolveAuthenticatedAccountId?: (signal?: AbortSignal) => Promise<string>;
   /** Process-owned Account/system boundary dependencies for the canonical host. */
   accountStorageDependencies?: AccountPluginDataStorageHostDependencies;
   /** The daemon's one retained server features snapshot, forwarded unchanged. */
@@ -483,6 +485,9 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
             : {}),
           ...(params.resolveSessionResourceAccess
             ? { resolveSessionResourceAccess: params.resolveSessionResourceAccess }
+            : {}),
+          ...(params.resolveAuthenticatedAccountId
+            ? { resolveAuthenticatedAccountId: params.resolveAuthenticatedAccountId }
             : {}),
           ...(params.accountStorageDependencies
             ? { accountStorageDependencies: params.accountStorageDependencies }

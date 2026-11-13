@@ -1259,12 +1259,21 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
     }
   });
 
-  it('preserves an external installation materialization in the committed runtime registry', async () => {
+  it('preserves an external installation materialization across development reloads', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-daemon-plugin-origin-materialization-'));
+    const pluginId = 'acme.origin-materialization';
+    const fixture = await createExecutableInstallFixture(happyHomeDir, pluginId);
+    const authority = bindPluginRuntimeSourceAuthority({
+      custody: { kind: 'development', registeredRootId: fixture.pluginRoot },
+      resolvedRoot: fixture.pluginRoot,
+      observedRevision: 1,
+    });
+    if (authority.kind !== 'development') throw new Error('Expected development authority');
     const reloadController = createPluginReloadController({ happyHomeDir });
     const runtimeLifecycle = createDaemonPluginRegistryRuntimeLifecycle({
       happyHomeDir,
       reloadController,
+      resolveDevelopmentSourceAuthority: ({ rootPath }) => rootPath === fixture.pluginRoot ? authority : null,
       resolveCurrentMachineId: () => 'machine-lifecycle',
       resolveCurrentMachineExecutionOriginContext: async () => ({
         serverIdentityId: 'srv_lifecycle',
@@ -1272,8 +1281,6 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
       }),
     });
     const store = createPluginRegistryStateStore({ happyHomeDir, runtimeLifecycle });
-    const pluginId = 'acme.origin-materialization';
-    const fixture = await createExecutableInstallFixture(happyHomeDir, pluginId);
 
     await store.initialize();
     await expect(installFixtureCandidate(store, fixture.input)).resolves.toMatchObject({ status: 'committed' });
@@ -1283,36 +1290,61 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
 
     const lease = await reloadController.acquireRuntimeRegistry();
     try {
-      expect(lease.registry.contributes.materializationIdsByPluginId).toMatchObject({
-        [pluginId]: materializationId,
-      });
-      await expect(lease.registry.activateContributionsOnDemand([{
-        pluginId,
-        family: 'actions',
-        localId: 'identity',
-      }])).resolves.toEqual([{
-        pluginId,
-        diagnostics: [],
-      }]);
-      expect(lease.registry.activatedPluginIds).toContain(pluginId);
-      expect(lease.registry.resolveCurrentPluginMaterializationRef?.(pluginId)).toEqual({
-        pluginId,
-        machineId: 'machine-lifecycle',
-        materializationId,
-      });
-      await expect(invokeIdentity(lease.registry, pluginId)).resolves.toMatchObject({
-        status: 'executed',
-      });
-      await expect(lease.registry.resolveCurrentPluginExecutionOrigin?.(pluginId)).resolves.toEqual({
-        serverIdentityId: 'srv_lifecycle',
-        materializationRef: {
+      try {
+        expect(lease.registry.contributes.materializationIdsByPluginId).toMatchObject({
+          [pluginId]: materializationId,
+        });
+        await expect(lease.registry.activateContributionsOnDemand([{
+          pluginId,
+          family: 'actions',
+          localId: 'identity',
+        }])).resolves.toEqual([{
+          pluginId,
+          diagnostics: [],
+        }]);
+        expect(lease.registry.activatedPluginIds).toContain(pluginId);
+        expect(lease.registry.resolveCurrentPluginMaterializationRef?.(pluginId)).toEqual({
           pluginId,
           machineId: 'machine-lifecycle',
           materializationId,
-        },
+        });
+        await expect(invokeIdentity(lease.registry, pluginId)).resolves.toMatchObject({
+          status: 'executed',
+        });
+        await expect(lease.registry.resolveCurrentPluginExecutionOrigin?.(pluginId)).resolves.toEqual({
+          serverIdentityId: 'srv_lifecycle',
+          materializationRef: {
+            pluginId,
+            machineId: 'machine-lifecycle',
+            materializationId,
+          },
+        });
+      } finally {
+        await lease.release();
+      }
+      const entryPath = join(fixture.pluginRoot, 'daemon.mjs');
+      const manifest = JSON.parse(await readFile(join(fixture.pluginRoot, '.happier-plugin', 'plugin.json'), 'utf8'));
+      await writeFile(entryPath, `${await readFile(entryPath, 'utf8')}\nexport const manifest = ${JSON.stringify(manifest)};\n`);
+      const evaluated = await evaluatePluginDevelopmentCandidate({ locator: entryPath, sourceAuthority: authority });
+      const prepared = await runtimeLifecycle.prepareDevelopment!({
+        pluginId,
+        manifest: projectEvaluatedPluginDevelopmentSource(evaluated.evaluated).manifest,
+        sourceAuthority: authority,
+        preparedActivationGraph: evaluated.graph,
       });
+      await prepared.adopt();
+      const reloaded = await reloadController.acquireRuntimeRegistry();
+      try {
+        await expect(invokeIdentity(reloaded.registry, pluginId)).resolves.toMatchObject({ status: 'executed' });
+        expect(reloaded.registry.resolveCurrentPluginMaterializationRef?.(pluginId)).toEqual({
+          pluginId,
+          machineId: 'machine-lifecycle',
+          materializationId,
+        });
+      } finally {
+        await reloaded.release();
+      }
     } finally {
-      await lease.release();
       await reloadController.shutdown({ timeoutMs: 5_000 });
     }
   });
