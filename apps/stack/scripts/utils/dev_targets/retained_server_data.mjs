@@ -25,7 +25,30 @@ async function exists(path) {
 
 export async function hasRetainedServerData(dataDir) {
   if (!await exists(dataDir)) return false;
-  return (await readdir(dataDir)).length > 0;
+  const entries = await readdir(dataDir);
+  if (entries.length === 0) return false;
+  // Source preparation deploys the schema before startup creates signing material.
+  // Only that schema-only tree is fresh; other files or any application rows
+  // retain authority and must still pass the existing database/secret check.
+  const databaseFiles = new Set([DATABASE_FILE, `${DATABASE_FILE}-wal`, `${DATABASE_FILE}-shm`, `${DATABASE_FILE}-journal`]);
+  if (!entries.includes(DATABASE_FILE) || entries.some(entry => !databaseFiles.has(entry))) return true;
+  const { DatabaseSync } = await import('node:sqlite');
+  let database;
+  try {
+    database = new DatabaseSync(join(dataDir, DATABASE_FILE), { readOnly: true });
+    const tables = database.prepare("SELECT name FROM sqlite_schema WHERE type = 'table'").all();
+    if (!tables.some(table => table.name === '_prisma_migrations')) return true;
+    for (const { name } of tables) {
+      if (name === '_prisma_migrations' || name.startsWith('sqlite_')) continue;
+      if (database.prepare(`SELECT 1 FROM "${name.replaceAll('"', '""')}" LIMIT 1`).get()) return true;
+    }
+    return false;
+  } catch {
+    // Unreadable or malformed data is never permission to initialize a new Home.
+    return true;
+  } finally {
+    database?.close();
+  }
 }
 
 // Hash the complete retained tree, including empty directories and file modes.

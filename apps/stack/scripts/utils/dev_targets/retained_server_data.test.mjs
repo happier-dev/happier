@@ -245,3 +245,38 @@ test('readiness consumes worker JSON from a streaming supervisor transport', asy
   };
   assert.deepEqual(await ensureRemoteServerDataReady(options, { runCommand }), { retainedRemoteData: false });
 });
+
+// Fresh source preparation migrates before the server creates signing material.
+test('fresh migrated remote data admits first startup, while application rows without signing material refuse', async t => {
+  const { options, dependencies, sourceDir, paths } = await setup(t);
+  await rm(sourceDir, { recursive: true });
+  assert.deepEqual(await ensureRemoteServerDataReady(options, dependencies), { retainedRemoteData: false });
+  await mkdir(paths.serverLightDataDir, { recursive: true });
+  const database = new DatabaseSync(join(paths.serverLightDataDir, 'happier-server-light.sqlite'));
+  try {
+    database.exec(`CREATE TABLE _prisma_migrations (id TEXT PRIMARY KEY);
+      INSERT INTO _prisma_migrations VALUES ('schema-deployed');
+      CREATE TABLE Account (id TEXT PRIMARY KEY);
+      CREATE TABLE SimpleCache (key TEXT PRIMARY KEY, value TEXT)`);
+    assert.deepEqual(await ensureRemoteServerDataReady(options, dependencies), { retainedRemoteData: false });
+    database.exec("INSERT INTO SimpleCache VALUES ('server.identity.v1', 'retained-home')");
+    await assert.rejects(ensureRemoteServerDataReady(options, dependencies), /retained server data operation failed/);
+    database.exec('DELETE FROM SimpleCache');
+    database.exec("INSERT INTO Account VALUES ('retained-account')");
+    await assert.rejects(ensureRemoteServerDataReady(options, dependencies), /retained server data operation failed/);
+  } finally { database.close(); }
+});
+
+test('uninitialized remote schema never hides other retained files or recorded remote authority', async t => {
+  const { options, dependencies, sourceDir, paths } = await setup(t);
+  await rm(sourceDir, { recursive: true });
+  await mkdir(paths.serverLightDataDir, { recursive: true });
+  const database = new DatabaseSync(join(paths.serverLightDataDir, 'happier-server-light.sqlite'));
+  database.exec('CREATE TABLE _prisma_migrations (id TEXT PRIMARY KEY)');
+  database.close();
+  await writeFile(join(paths.serverLightDataDir, 'retained.bin'), Buffer.from([1, 2, 3]));
+  await assert.rejects(ensureRemoteServerDataReady(options, dependencies), /retained server data operation failed/);
+  await rm(join(paths.serverLightDataDir, 'retained.bin'));
+  options.config.runtimePlacement.server = { mode: 'prefer-target', target: options.target.name };
+  await assert.rejects(ensureRemoteServerDataReady(options, dependencies), /retained server data operation failed/);
+});
