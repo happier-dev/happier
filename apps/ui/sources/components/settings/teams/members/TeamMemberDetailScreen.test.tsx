@@ -35,6 +35,7 @@ installHomeGovernanceBoundaries(harness);
 vi.doUnmock('@/sync/domains/state/storage');
 const { resetTeamsSnapshotsForTests } = await import('@/sync/store/teams/teamsSnapshots');
 const { resetTeamsDirectoryEngineForTests } = await import('@/sync/engine/teams/teamsDirectoryEngine');
+const { TeamMemberDetailScreen } = await import('./TeamMemberDetailScreen');
 
 const TEAM_GET_PATH = '/v1/teams/get';
 const MEMBER_GET_PATH = '/v1/teams/members/get';
@@ -78,7 +79,6 @@ function directorySource(id: string, displayName: string) {
 }
 
 async function renderDetail(serverId: string) {
-    const { TeamMemberDetailScreen } = await import('./TeamMemberDetailScreen');
     return renderScreen(
         <TeamMemberDetailScreen serverId={serverId} teamId="team-1" membershipId="membership-1" />,
     );

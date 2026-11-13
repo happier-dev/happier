@@ -37,6 +37,9 @@ vi.mock('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts',
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+const { storage } = await import('@/sync/domains/state/storage');
+const { Modal } = await import('@/modal');
+const { SignInPolicyEditor } = await import('./HomeSignInPolicySections');
 
 const POLICY_PATH = '/v1/home/policy/set';
 
@@ -81,7 +84,6 @@ async function renderEditor(input: Readonly<{
     refresh?: () => void;
     mutationsAvailable?: boolean;
 }> = {}) {
-    const { SignInPolicyEditor } = await import('./HomeSignInPolicySections');
     const serverId = await harness.addHome({ name: 'Home A', serverUrl: 'https://home-a.example', accountId: 'owner' });
     const projection = homeGovernanceProjectionFixture({
         authenticationOptions: { ...BASE_OPTIONS, ...input.options },
@@ -104,17 +106,10 @@ async function renderEditor(input: Readonly<{
     return { screen, serverId, projection };
 }
 
-async function modal() {
-    const { Modal } = await import('@/modal');
-    return Modal;
-}
-
 beforeEach(async () => {
     routerPush.mockClear();
     await harness.reset();
-    const { storage } = await import('@/sync/domains/state/storage');
     storage.setState({ settingsScope: null, settings: {} as never });
-    const Modal = await modal();
     vi.mocked(Modal.confirm).mockReset();
     vi.mocked(Modal.confirm).mockResolvedValue(false);
     vi.mocked(Modal.alertAsync).mockClear();
@@ -138,7 +133,6 @@ describe('SignInPolicyEditor', () => {
     it('disables the inherited admission selector when Home mutations are unavailable', async () => {
         const { screen } = await renderEditor({ authentication: { status: 'inherited' }, mutationsAvailable: false });
         expect(renderedControlIsDisabled(screen.findHostByTestId('home-policy-auth-admission-trigger'))).toBe(true);
-        await screen.pressByTestIdAsync('home-policy-auth-admission-trigger');
         expect(screen.findByTestId('home-policy-auth-save')).toBeNull();
     });
 
@@ -164,7 +158,7 @@ describe('SignInPolicyEditor', () => {
                 signInService: null,
             },
         });
-        expect(vi.mocked((await modal()).confirm)).not.toHaveBeenCalled();
+        expect(vi.mocked(Modal.confirm)).not.toHaveBeenCalled();
     });
 
     it('names this Home inline at the row it widens, then resends the same document confirmed', async () => {
@@ -183,7 +177,7 @@ describe('SignInPolicyEditor', () => {
         // misplaced card fails on this assertion instead of the test deadline.
         await waitForHomeGovernance(() => expect(harness.requestsFor(POLICY_PATH).length).toBeGreaterThan(0));
         await vi.waitFor(() => expect(screen.findByTestId('home-policy-auth-widening:admission')).not.toBeNull(), CARD_WAIT);
-        expect(vi.mocked((await modal()).confirm)).not.toHaveBeenCalled();
+        expect(vi.mocked(Modal.confirm)).not.toHaveBeenCalled();
         const card = textUnder(screen.findByTestId('home-policy-auth-widening:admission'));
         expect(card).toContain('homeGovernance.signInPolicy.widening.titleAnyone');
         expect(card).toContain('homeGovernance.signInPolicy.widening.exposureAnyone(host=Home A)');
@@ -222,7 +216,7 @@ describe('SignInPolicyEditor', () => {
         // Declining writes nothing more and says nothing more: the owner chose not to.
         expect(screen.findByTestId('home-policy-auth-widening:github')).toBeNull();
         expect(harness.requestsFor(POLICY_PATH)).toHaveLength(1);
-        expect(vi.mocked((await modal()).alertAsync)).not.toHaveBeenCalled();
+        expect(vi.mocked(Modal.alertAsync)).not.toHaveBeenCalled();
         expect(screen.findByTestId('home-policy-auth-method:github-switch')?.props.value).toBe(true);
     });
 
