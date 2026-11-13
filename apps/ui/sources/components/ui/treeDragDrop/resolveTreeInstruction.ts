@@ -195,7 +195,7 @@ function resolveDropZoneInstruction(params: ResolveTreeInstructionParams, zone: 
 export function resolveTreeInstruction(params: ResolveTreeInstructionParams): TreeDropResult {
     if (!params.pointer) return idleResult;
 
-    const rowTarget = hitTestRowAtPointer(params.rows, params.pointer);
+    const rowTarget = hitTestRowAtPointer(params.rows, params.pointer, params.source.id);
     if (rowTarget) return resolveRowInstruction(params, rowTarget);
 
     const dropZoneTarget = hitTestDropZoneAtPointer(params.dropZones, params.pointer);

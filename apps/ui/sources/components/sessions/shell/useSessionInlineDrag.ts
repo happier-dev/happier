@@ -130,7 +130,7 @@ function pointerFromAbsoluteCoordinates(absoluteX: number | null | undefined, ab
  * the values are read by `useAnimatedStyle` in `TreeDropOverlay`, so the moving
  * line/outline never requires a React rerender of the list rows.
  */
-function writeOverlayGeometry(target: TreeDropOverlaySharedValues, geometry: TreeDropVisualGeometry): void {
+export function writeOverlayGeometry(target: TreeDropOverlaySharedValues, geometry: TreeDropVisualGeometry): void {
     if (geometry.kind === 'none') {
         hideOverlay(target);
         return;

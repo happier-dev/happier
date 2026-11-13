@@ -5,6 +5,7 @@ import { GestureDetector } from 'react-native-gesture-handler';
 
 import type { TreeDropOverlaySharedValues } from '@/components/ui/treeDragDrop';
 import { SessionItem, type SessionItemProps } from '../SessionItem';
+import { useSessionListTreeRowRegistration } from '../useSessionListTreeRowRegistration';
 import {
     useSessionInlineDrag,
     type UseSessionInlineDragCancelEvent,
@@ -67,7 +68,9 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
         ...itemProps
     } = props;
 
-    const wrapperRef = React.useRef<View>(null);
+    const { wrapperRef, setWrapperRef, handleLayout: handleRowLayout } = useSessionListTreeRowRegistration(
+        treeRowId, onRegisterTreeRowBounds, onUnregisterTreeRowBounds,
+    );
 
     const getCellWrapper = React.useCallback((): HTMLElement | null => {
         if (Platform.OS !== 'web') return null;
@@ -145,12 +148,6 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
         }
     }, [isBeingDragged, getCellWrapper]);
 
-    React.useEffect(() => {
-        return () => {
-            onUnregisterTreeRowBounds(treeRowId);
-        };
-    }, [onUnregisterTreeRowBounds, treeRowId]);
-
     const rowPointerEvents = Platform.OS === 'web' && isDragActive && !isBeingDragged
         ? 'none' as const
         : 'auto' as const;
@@ -164,13 +161,9 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
         />
     );
 
-    const handleRowLayout = React.useCallback(() => {
-        onRegisterTreeRowBounds(treeRowId, wrapperRef.current);
-    }, [onRegisterTreeRowBounds, treeRowId]);
-
     const rowNode = rowDragEnabled ? (
         <Animated.View
-            ref={wrapperRef}
+            ref={setWrapperRef}
             collapsable={false}
             style={animatedStyle}
             pointerEvents={rowPointerEvents}
@@ -180,7 +173,7 @@ export const SessionListRow = React.memo(function SessionListRow(props: SessionL
         </Animated.View>
     ) : (
         <View
-            ref={wrapperRef}
+            ref={setWrapperRef}
             collapsable={false}
             pointerEvents={rowPointerEvents}
             onLayout={handleRowLayout}
