@@ -38,6 +38,16 @@ const payload = {
 const authority = { payload, signature: { alg: 'Ed25519', keyId: 'home', valueBase64Url: 'A'.repeat(86) } };
 
 describe('Provider broker authority V1', () => {
+  it('preserves closed source-open reasons while accepting refusals without diagnostic fields', () => {
+    const legacy = { ok: false, reasonCode: 'resource_unavailable' };
+    expect(ProviderBrokerOpenResponseV1Schema.parse(legacy)).toEqual(legacy);
+    const failure = { ...legacy, sourceOpenFailureReason: 'managed_custody_unavailable' };
+    expect(ProviderBrokerOpenResponseV1Schema.parse(failure)).toEqual(failure);
+    expect(ProviderBrokerOpenResponseV1Schema.safeParse({
+      ...legacy, sourceOpenFailureReason: 'private upstream exception',
+    }).success).toBe(false);
+  });
+
   it('carries finite Action identity through the canonical consumer and admitted-operation response', async () => {
     const { ProviderBrokerConsumerV1Schema } = await import('./brokerRouteGrantV1.js');
     const operation = { kind: 'action_operation', operationId: 'request-1', actionId: 'example.cloud/actions/options', pluginVersion: '1.0.0',

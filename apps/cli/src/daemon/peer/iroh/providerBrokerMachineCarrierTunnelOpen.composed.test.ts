@@ -14,7 +14,7 @@ import {
 import { createProviderBrokerMachineCarrierTunnelOpen } from './providerBrokerMachineCarrierTunnelOpen';
 import type { DaemonMachineIrohRuntime } from './daemonMachineIrohRuntime';
 import { PROVIDER_BROKER_PRIVATE_CLOSE_PATH } from '@/providers/broker/providerBrokerPrivateProtocol';
-import { registerPidSpawnResourceCleanup, retireUpstreamAuthorityBeforeProcessStop } from '@/daemon/sessions/cleanupPidSessionResources';
+import { registerSessionSpawnResourceCleanup, retireUpstreamAuthorityBeforeProcessStop, type SpawnResourceCleanupByKey } from '@/daemon/sessions/cleanupSessionResources';
 import { createStopSession } from '@/daemon/sessions/stopSession';
 import { createOnChildExited } from '@/daemon/sessions/onChildExited';
 import { createDaemonControlApp } from '@/daemon/controlServer';
@@ -30,6 +30,7 @@ import type { SessionTurnMutationV1 } from '@happier-dev/protocol';
 import { presentSessionTeamCredentialDenial } from '../../../../../ui/sources/components/sessions/presentation/sessionTeamCredentialDenialPresentation';
 import { createSessionBrokerApplicationEvidence } from '@/providers/broker/sessionBrokerApplicationEvidence';
 import { createProviderBrokerRouteGrantSigningInputV2, type ProviderBrokerAccountOpenResponseV2, type SignedProviderBrokerRouteGrantV2 } from '@happier-dev/protocol/providers/brokerRouteGrantV1';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
 const key = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7));
 const root = { keyId: 'home', publicKey: Buffer.from(key.publicKey).toString('base64url') };
@@ -222,29 +223,29 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
           const pid = child.pid!;
           const identity = await readProcessIdentityByPid(pid);
           if (!identity) throw new Error('Missing owned test process identity');
-          const tracked: TrackedSession = { pid, childProcess: child, happySessionId: 'session-1', startedBy: 'daemon',
+          const tracked: TrackedSession = { trackingKey: legacyPidSessionTrackingKey(pid), pid, childProcess: child, happySessionId: 'session-1', startedBy: 'daemon',
             processStartTimeMs: identity.processStartTimeMs, processCommandHash: hashProcessCommand(identity.command) };
-          const sessions = new Map([[pid, tracked]]);
-          const cleanups = new Map<number, () => void | Promise<void>>();
+          const sessions = new Map([[tracked.trackingKey, tracked]]);
+          const cleanups: SpawnResourceCleanupByKey = new Map();
           const tunnel = await open({ brokerOpen: brokerOpen() });
-          registerPidSpawnResourceCleanup({ pid, label: 'provider_broker.binding.open', spawnResourceCleanupByPid: cleanups,
-            isCurrentPidOwner: () => sessions.get(pid) === tracked, cleanup: tunnel.retire });
-          const retainedCleanup = cleanups.get(pid)!;
-          const onExit = createOnChildExited({ pidToTrackedSession: sessions, spawnResourceCleanupByPid: cleanups,
-            sessionAttachCleanupByPid: new Map(), removeSessionMarkerFn: async () => {},
+          registerSessionSpawnResourceCleanup({ trackingKey: tracked.trackingKey, label: 'provider_broker.binding.open', spawnResourceCleanupByKey: cleanups,
+            isCurrentOwner: () => sessions.get(tracked.trackingKey) === tracked, cleanup: tunnel.retire });
+          const retainedCleanup = cleanups.get(tracked.trackingKey)!;
+          const onExit = createOnChildExited({ trackedSessionsByKey: sessions, spawnResourceCleanupByKey: cleanups,
+            sessionAttachCleanupByKey: new Map(), removeSessionMarkerFn: async () => {},
             getApiMachineForSessions: () => ({ captureMachineSessionTerminal: async () => {
               return { v: 1, status: 'already_inactive', sessionId: 'session-1' };
             }, finalizeMachineSessionTerminal: async () => { throw new Error('Already-inactive fixture needs no finalization'); },
               enqueueDaemonTerminalExactTurnEnd: async () => { throw new Error('Fixture has no active turn'); },
             }) });
-          const stop = createStopSession({ pidToTrackedSession: sessions,
+          const stop = createStopSession({ trackedSessionsByKey: sessions,
             readHostAttachmentState: async () => ({ status: 'absent' }), readTerminalAttachmentInfo: async () => null,
             areTrackedRunnersExited: async () => child.exitCode !== null || child.signalCode !== null,
-            retireUpstreamAuthorityBeforeProcessStop: pid => retireUpstreamAuthorityBeforeProcessStop({ pid, spawnResourceCleanupByPid: cleanups }),
+            retireUpstreamAuthorityBeforeProcessStop: trackingKey => retireUpstreamAuthorityBeforeProcessStop({ trackingKey, spawnResourceCleanupByKey: cleanups }),
             waitForTrackedRunnersExit: async () => {
               const [code, signal] = await exited;
               await onExit(pid, { reason: 'process-exited', code, signal });
-              return !sessions.has(pid);
+              return !sessions.has(tracked.trackingKey);
             },
           });
           if (surface === 'session') {
@@ -304,6 +305,8 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
     { failure: { ok: false as const, reasonCode: 'resource_forbidden' as const }, nativeRefusal: 'socket_close' },
     { failure: { ok: false as const, reasonCode: 'resource_forbidden' as const }, nativeRefusal: 'http_403' },
     { failure: { ok: false as const, reasonCode: 'broker_unavailable' as const }, nativeRefusal: 'http_403' },
+    { failure: { ok: false as const, reasonCode: 'resource_unavailable' as const,
+      sourceOpenFailureReason: 'managed_custody_unavailable' as const }, nativeRefusal: 'http_403' },
     { failure: { ok: false as const, reasonCode: 'team_credential_usage_limit' as const,
       usageLimit: { metric: 'total_tokens' as const, remaining: '0', resetsAtUtc: '2026-10-24T00:00:00.000Z' } }, nativeRefusal: 'http_403' },
   ])('carries a later Home refusal through native admission into the existing Session denial surface ($failure.reasonCode, $nativeRefusal)', async ({ failure, nativeRefusal }) => {
@@ -393,6 +396,9 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
         expect(nativeResponse?.status).toBe(403);
         expect(JSON.parse(nativeResponse!.body).error).toMatchObject({ type: 'permission_error',
           code: failure.reasonCode, resourceId: 'resource-1' });
+        if ('sourceOpenFailureReason' in failure) {
+          expect(JSON.parse(nativeResponse!.body).error.message).toContain(failure.sourceOpenFailureReason);
+        }
       }
       // The host retains its own admitted evidence. The native Agent may discard
       // every byte of the Provider body and emit only its generic diagnostic.
@@ -498,10 +504,10 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
         },
       });
       const tunnel = await open({ brokerOpen: brokerOpen() });
-      const cleanups = new Map<number, () => void | Promise<void>>();
-      registerPidSpawnResourceCleanup({ pid: 42, label: 'provider_broker.binding.open',
-        spawnResourceCleanupByPid: cleanups, isCurrentPidOwner: () => true, cleanup: tunnel.retire });
-      const failure = await Promise.resolve(cleanups.get(42)!()).then(() => null, (error: unknown) => error);
+      const cleanups: SpawnResourceCleanupByKey = new Map();
+      registerSessionSpawnResourceCleanup({ trackingKey: legacyPidSessionTrackingKey(42), label: 'provider_broker.binding.open',
+        spawnResourceCleanupByKey: cleanups, isCurrentOwner: () => true, cleanup: tunnel.retire });
+      const failure = await Promise.resolve(cleanups.get(legacyPidSessionTrackingKey(42))!()).then(() => null, (error: unknown) => error);
       // Local withdrawal still refuses stop; remote failure settles and retains
       // N3's structured original exception in the file diagnostic instead.
       const releaseFailure = phase === 'public_listener_withdrawal'
@@ -509,7 +515,7 @@ describe('createProviderBrokerMachineCarrierTunnelOpen', () => {
         : diagnostics.mock.calls.find(([label]) => label === '[provider-broker-release] Boundary failure')?.[1];
       expect(failure === null).toBe(phase !== 'public_listener_withdrawal');
       if (phase === 'public_listener_withdrawal') {
-        await expect(retireUpstreamAuthorityBeforeProcessStop({ pid: 42, spawnResourceCleanupByPid: cleanups })).resolves.toBe(false);
+        await expect(retireUpstreamAuthorityBeforeProcessStop({ trackingKey: legacyPidSessionTrackingKey(42), spawnResourceCleanupByKey: cleanups })).resolves.toBe(false);
         expect(opens).toBe(1); // Failed withdrawal never starts private control work.
       }
       expect(releaseFailure).toMatchObject({ cause: {

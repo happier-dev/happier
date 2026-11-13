@@ -74,19 +74,10 @@ export const ProviderBrokerApplicationBindingV1Schema = lazyZodSchema(() => z.ex
   agentTargetKey: ProviderAgentTargetKeySchema,
 }));
 
-/** Dedicated, recursively closed machine/1 authority. Mutable request policy is
- * deliberately absent: current Home admission owns it for every Provider call.
- *
- * The resource revision is intentionally absent too. It is a mutable policy
- * fact the Home rechecks online, against the revision each request presents, on
- * every open and every request; signing it would stale an otherwise active
- * Session-open or Run claim after a harmless resource edit without improving
- * revocation (`04-private-iroh-broker-transport.md:272`).
- *
- * The model id is absent for the same reason: it is a current request fact
- * (`04-private-iroh-broker-transport.md:270`). One open serves every model the
- * resource currently allows; the broker's request-policy owner evaluates each
- * request's model against the resource's current allowlist.
+/** Dedicated, recursively closed machine/1 authority. The Home admits the
+ * requested resource policy and model when the broker job opens or refreshes.
+ * The resource revision is bound inside the opaque job fingerprint below;
+ * current-resource lookup ends the admitted job after a revision change.
  */
 export const ProviderBrokerRouteGrantPayloadV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
@@ -97,8 +88,8 @@ export const ProviderBrokerRouteGrantPayloadV1Schema = lazyZodSchema(() => z.str
   teamId: IdentitySchema,
   resourceId: IdentitySchema,
   sourceRevision: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
-  /** Home-computed original resource placement, without disclosing a Pool id.
-   * Unlike policy revisions or membership, relocation ends this authority. */
+  /** Home-computed opaque job fingerprint binding placement and the admitted
+   * resource revision, without disclosing a Pool id. */
   brokerPlacementFingerprint: z.string().check(z.regex(/^[a-f0-9]{64}$/)),
   /** Epoch of the exact signed opening credential. Home rechecks revocation on every request. */
   initiatorTokenEpoch: z.number().check(z.int(), z.nonnegative()),
@@ -107,14 +98,9 @@ export const ProviderBrokerRouteGrantPayloadV1Schema = lazyZodSchema(() => z.str
   consumer: ProviderBrokerRuntimeConsumerV1Schema,
   executionRunOccurrenceId: z.optional(IdentitySchema),
   application: ProviderBrokerApplicationBindingV1Schema,
-  /** Immutable provenance: the authentication evidence of the exact credential
-   * that opened this operation, verified by the Home when it signed the open.
-   * It is not an authorization decision. Every request re-evaluates it against
-   * the Team's current policy and the evidence's current identity/connection
-   * state, so revoking or restricting ends the next request on an existing
-   * stream (`04-private-iroh-broker-transport.md` §5.6). Absent when the
-   * credential carried no evidence. Same carrier as the resource-test relay
-   * binding's `verifiedCredentialEvidence`. */
+  /** Immutable provenance: authentication evidence verified when the Home
+   * admitted this job. Absent when the credential carried no evidence. Same
+   * carrier as the resource-test relay binding's `verifiedCredentialEvidence`. */
   verifiedCredentialEvidence: z.optional(AuthTokenAuthenticationEvidenceSnapshotV1Schema),
 }).check(z.superRefine((payload, context) => {
   if (payload.expiresAt <= payload.issuedAt) {
@@ -213,9 +199,31 @@ export const ProviderBrokerAdmissionFailureCodeV1Schema = lazyZodSchema(() => z.
   'duplicate_request',
 ]));
 
+/** Closed source prerequisites safe for requester diagnostics; never raw exception text. */
+export const ProviderBrokerSourceOpenFailureReasonV1Schema = lazyZodSchema(() => z.enum([
+  'broker_machine_mismatch',
+  'request_cancelled',
+  'application_unavailable',
+  'source_protocol_mismatch',
+  'account_snapshot_unavailable',
+  'provider_catalog_unavailable',
+  'endpoint_resolution_unavailable',
+  'endpoint_selection_unavailable',
+  'activation_occurrence_unavailable',
+  'source_selection_unavailable',
+  'resource_not_current',
+  'purpose_binding_unavailable',
+  'source_currentness_unknown',
+  'source_not_current',
+  'projection_not_current',
+  'managed_custody_unavailable',
+]));
+export type ProviderBrokerSourceOpenFailureReasonV1 = z.infer<typeof ProviderBrokerSourceOpenFailureReasonV1Schema>;
+
 const ProviderBrokerAdmissionFailureV1Schema = lazyZodSchema(() => z.strictObject({
   ok: z.literal(false),
   reasonCode: ProviderBrokerAdmissionFailureCodeV1Schema,
+  sourceOpenFailureReason: z.optional(ProviderBrokerSourceOpenFailureReasonV1Schema),
   /** Present only for an exhausted Team-resource ceiling. It intentionally
    * excludes limit, audience and member identities. */
   usageLimit: z.optional(TeamCredentialUsageLimitDenialV1Schema),

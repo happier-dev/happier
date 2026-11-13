@@ -1988,7 +1988,11 @@ Managed source-acquisition refusals record the closed broker reason and,
 when available, the existing Provider error code in the daemon file log;
 Connected Account/Pool source opens also retain the failed prerequisite
 (selection, resource currentness, purpose binding or managed custody) through
-the existing application-refusal diagnostic. Coordinator start failures retain
+the existing application-refusal diagnostic. The optional closed
+`sourceOpenFailureReason` also survives the broker-open Protocol reader before
+Iroh stream admission, so the shared HTTP/carrier refusal formatter retains the
+same sanitized prerequisite. Refusals without this diagnostic remain valid.
+Coordinator start failures retain
 their closed phase code and a content-free startup cause: error class, known
 code, and available child exit code or signal. These diagnostics never record
 the caught message, source credentials, stderr or response body, and the public

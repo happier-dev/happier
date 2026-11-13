@@ -11563,3 +11563,16 @@ Matching Protocol, daemon, CLI and UI readers reload together under the unpublis
 rejects these additions; current development responses are not a supported reverse
 rollback direction. No input, authority, persistence format, wire epoch, error
 taxonomy, polling or compatibility adapter changes.
+
+
+## Team broker source-open refusal reason (unreleased 0.3)
+
+The broker admission failure adds optional `sourceOpenFailureReason`, using the
+existing closed source prerequisite vocabulary now owned by Protocol. The CLI
+source owner derives its type from that schema; HTTP and Iroh carrier refusals
+consume the same application-refusal formatter. Missing diagnostics remain valid.
+Matching development readers reload together: earlier strict 0.3 readers reject
+the added field. No reverse-development shim, epoch, authority or persistence
+change is introduced. The scoped-clean `../0.2` frontier at
+`dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no corresponding
+`packages/protocol/src/providers/brokerRouteGrantV1.ts` contract.
