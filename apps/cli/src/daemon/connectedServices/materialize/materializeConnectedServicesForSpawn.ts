@@ -37,7 +37,7 @@ import {
   applyConnectedServiceStateSharingDescriptor,
   resolveConnectedServiceNativeHomeRoot,
 } from '@/daemon/connectedServices/stateSharing/applyConnectedServiceStateSharingDescriptor';
-import { materializeConnectedServiceNativeHomeCredentials, readConnectedServiceNativeHomeCredentialFiles } from '@/daemon/connectedServices/stateSharing/materializeConnectedServiceNativeHomeCredentials';
+import { materializeConnectedServiceNativeHomeCredentials, readConnectedServiceNativeHomeCredentialFiles, removeConnectedServiceNativeHomeCredentials } from '@/daemon/connectedServices/stateSharing/materializeConnectedServiceNativeHomeCredentials';
 import type {
   ConnectedServiceResolvedSelection,
   ConnectedServiceMaterializedStateObservationBinding,
@@ -391,7 +391,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
       }
       const nativeRoot = durableTarget ?? targetMaterializedRoot;
       const durableNativeHome = nativeRoot !== params.rootDir;
-      const prepareNativeHome = async () => {
+      const prepareNativeHome = async (existingManifest: Awaited<ReturnType<typeof readConnectedServiceStateSharingManifest>> | undefined) => {
         signalController.signal.throwIfAborted();
         const allowNativeState = params.allowNativeAccountState !== false;
         const sourceEnvironment = Object.freeze(Object.fromEntries(
@@ -407,8 +407,6 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
         if (!allowNativeState && !params.previousMaterializedRoot) {
           throw new Error('Requester materialized home identity unavailable');
         }
-        const existingManifest = durableNativeHome
-          ? await readConnectedServiceStateSharingManifest(nativeRoot) : undefined;
         const sourceRoots = new Set<string>();
         if (params.probePurpose !== 'probe') {
           if (params.previousMaterializedRoot) sourceRoots.add(params.previousMaterializedRoot);
@@ -642,6 +640,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
           if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
           throw error;
         });
+        const previousManifest = await readConnectedServiceStateSharingManifest(nativeRoot);
         const previousCredentials = existingHome ? await readConnectedServiceNativeHomeCredentialFiles({
           targetRoot: nativeRoot,
           declaredSecretEntries: stateSharingDescriptor.authIsolation.secretEntries,
@@ -669,7 +668,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
         const previousObservationBinding = materializedStateObservationBinding;
         try {
           // Credential producers merge against this invocation's copied configuration.
-          const applyNativeHome = await prepareNativeHome();
+          const applyNativeHome = await prepareNativeHome(durableNativeHome ? previousManifest : undefined);
           await writeArtifacts(applyNativeHome);
           const preparedCredentialFiles = nativePurposes.length > 0
             ? await readConnectedServiceNativeHomeCredentialFiles({
@@ -766,6 +765,12 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
               existingFiles: preparedCredentialFiles,
             });
             const manifest = await readConnectedServiceStateSharingManifest(nativeRoot);
+            // Retire untouched Team files before dropping their delivery ownership.
+            await removeConnectedServiceNativeHomeCredentials({
+              targetRoot: nativeRoot,
+              declaredSecretEntries: (previousManifest.teamCredentialDeliveries ?? []).flatMap(delivery =>
+                delivery.credentialPaths.filter(fileId => !Object.hasOwn(nativeHomeFiles, fileId))),
+            });
             // Every credential admission replaces ownership, including personal
             // sign-in's empty set. Vendor refreshes keep this admission's ownership.
             await writeConnectedServiceStateSharingManifest(nativeRoot, { ...manifest, teamCredentialDeliveries }, undefined, manifest);
