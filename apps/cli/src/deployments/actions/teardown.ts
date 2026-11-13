@@ -88,7 +88,8 @@ export function createDeploymentTeardownExecutor(host: Pick<OwnServerDeploymentT
         const read = () => host.readReceipt({ environmentId: request.input.environmentId,
             deploymentId: request.receipt.deploymentId, context: request.context });
         let receipt = await read();
-        const environment = await host.readEnvironment({ environmentId: request.input.environmentId, context: request.context });
+        const environment = await host.readEnvironment({ environmentId: request.input.environmentId,
+            targetLinkId: request.input.targetLinkId, context: request.context });
         const link = environment.targetLinks.find(item => item.targetLink.id === request.input.targetLinkId)?.targetLink;
         const selected = environment.targetLinks.find(item => item.targetLink.id === environment.environment.runtimeTargetLinkId)?.targetLink;
         const intent = receipt.content.teardown;

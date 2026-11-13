@@ -1,4 +1,4 @@
-import type { RpcHandlerInvoker, RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { RpcHandler, RpcHandlerInvoker, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { configuration } from '@/configuration';
 
 import { registerReadFileHandler } from './readFileHandler';
@@ -56,6 +56,7 @@ export function registerFileSystemHandlers(
 ): Readonly<{
   transferSessionStore: TransferSessionStore;
   localUploadRpc: RpcHandlerInvoker;
+  rawTransferHandlers: ReadonlyMap<string, RpcHandler<unknown, unknown>>;
   dispose: () => Promise<void>;
 }> {
   const getAdditionalAllowedReadDirs = opts?.getAdditionalAllowedReadDirs;
@@ -115,7 +116,15 @@ export function registerFileSystemHandlers(
   const transferSessionStore = new TransferSessionStore({ ttlMs: configuration.filesTransferSessionTtlMs,
     ...(opts?.prepareNativeTransfer ? { expiryTrigger: 'self' as const } : {}) });
 
-  const transferRpcHandlerManager = opts?.prepareNativeTransfer ? rpcHandlerManager : filesystemRpcHandlerManager;
+  // Retain the installed handlers, including native custody and filesystem admission,
+  // when the prepared carrier later shares these public phase method ids.
+  const rawTransferHandlers = new Map<string, RpcHandler<unknown, unknown>>();
+  const rawTransferRegistrar: RpcHandlerRegistrar = { registerHandler(method, handler) {
+    rawTransferHandlers.set(method, handler as RpcHandler<unknown, unknown>);
+    rpcHandlerManager.registerHandler(method, handler);
+  } };
+  const transferRpcHandlerManager = opts?.prepareNativeTransfer ? rawTransferRegistrar
+    : createFilesystemEffectRpcRegistrar(rawTransferRegistrar, effectAdmission);
   const localUploadRpc = registerTransferUploadRpcHandlers(transferRpcHandlerManager, {
     workingDirectory,
     accessPolicy,
@@ -148,6 +157,7 @@ export function registerFileSystemHandlers(
   return {
     transferSessionStore,
     localUploadRpc,
+    rawTransferHandlers,
     dispose: () => transferSessionStore.dispose(),
   };
 }

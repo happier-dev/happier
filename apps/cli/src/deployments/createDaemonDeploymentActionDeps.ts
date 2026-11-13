@@ -12,6 +12,7 @@ import { decodeBase64 } from '@/api/encryption';
 import type { TcpTunnelServiceExportBindingV1 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantScopesV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import { projectDeploymentReceiptInvestigationV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { createDeploymentBackupActionForHost, createDeploymentBackupRecordedHealthForHost } from './actions/backups';
 import { createDeploymentBackupConfigureForHost } from './actions/backupConfigureForHost';
@@ -944,7 +945,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             // A changed head is only a retry candidate. Storage must resolve the
             // original requestKey and Artifact identity; new stale references
             // cannot pass storage admission. Execution then reads its pinned ref.
-            const environment = await targetHostReaders.readEnvironment({ environmentId: input.environmentId, context });
+            const environment = await targetHostReaders.readEnvironment({ environmentId: input.environmentId,
+                targetLinkId: input.targetLinkId, context });
             if (!host.teardownBoundary) {
                 const denied = await ownServerTeardown.admit(environment, input.targetLinkId, opened.content, input, context, retainedIntent);
                 if (denied) return denied;
@@ -1675,17 +1677,19 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             if (actionId === 'deployments.receipts.get') {
                 const selected = DeploymentActionInputSchemasV1[actionId].safeParse(input);
                 if (!selected.success) return failure('invalid_parameters');
-                const address = selected.data;
+                const { projection, ...address } = selected.data;
                 try {
                     const result = await storage(actionId, address, context);
                     if ('ok' in result && !result.ok && 'errorCode' in result) return result;
                     const detail = DeploymentReceiptGetResultV1Schema.parse(result);
-                    if (!detail.ok || detail.deployment.state === 'queued' || detail.deployment.state === 'succeeded'
-                        || detail.deployment.state === 'running_unverified') return detail;
+                    if (!detail.ok || projection === undefined && (detail.deployment.state === 'queued'
+                        || detail.deployment.state === 'succeeded' || detail.deployment.state === 'running_unverified')) return detail;
                     if (detail.deployment.id !== address.deploymentId || address.environmentId !== undefined
                         && detail.deployment.environmentId !== address.environmentId) return failure('target_mismatch');
                     const opened = await openReceipt(detail.deployment, context);
-                    const projected = { ...detail, ...(opened.cancellationConsequence
+                    const projected = { ...detail,
+                        ...(projection === 'investigation' ? { investigation: projectDeploymentReceiptInvestigationV1(opened.content) } : {}),
+                        ...(opened.cancellationConsequence
                         ? { cancellationConsequence: opened.cancellationConsequence } : {}) };
                     if (detail.deployment.state !== 'failed') return projected;
                     const recorded = opened.content.failure;

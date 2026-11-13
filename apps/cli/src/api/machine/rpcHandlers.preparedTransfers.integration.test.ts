@@ -2,14 +2,79 @@ import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
+import { z } from 'zod/mini';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { PreparedTransferRpcResponseV1Schema } from '@happier-dev/protocol/machines/transfer/preparedTransferRpcV1';
 import { TransferChunkEnvelopeSchema } from '@happier-dev/protocol/machines/transfer/transferStream';
 import { createEncryptedTransferChunkEnvelope, createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
+import { TransferSessionStore } from '@happier-dev/transfers/node';
+import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
+import { configuration } from '@/configuration';
+import { registerTransferUploadRpcHandlers } from '@/transfers/rpc/registerTransferUploadRpcHandlers';
+import { registerTransferDownloadRpcHandlers } from '@/transfers/rpc/registerTransferDownloadRpcHandlers';
+import { acquireDeploymentRestoreUpload } from '@/transfers/targets/deploymentRestoreUpload';
 import { createDirectTransferServerLifecycle } from '@/machines/transfer/directTransferServerLifecycle';
 import { prepareWorkspaceFileExport } from '@/machines/transfer/prepareWorkspaceFileExport';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { registerMachineRpcHandlers } from './rpcHandlers';
+
+it('keeps restore upload custody and raw downloads when the prepared carrier registers the same phase methods', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'happier-raw-prepared-rpc-seam-'));
+  const store = new TransferSessionStore({ ttlMs: configuration.filesTransferSessionTtlMs });
+  const lifecycle = createDirectTransferServerLifecycle({ bindPort: 0, listenerClasses: ['loopback_http'] });
+  const manager = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain', logger() {} });
+  const rawTransferHandlers = new Map<string, RpcHandler<unknown, unknown>>();
+  const registrar: RpcHandlerRegistrar = { registerHandler(method, handler) {
+    rawTransferHandlers.set(method, handler as RpcHandler<unknown, unknown>);
+    manager.registerHandler(method, handler);
+  } };
+  // This host-owned registration fixes the requester before the finite upload;
+  // crypto, transfer storage, completion and the full Machine registration stay real.
+  registerTransferUploadRpcHandlers(registrar, { workingDirectory: directory, store, requesterAccountId: 'account' });
+  registerTransferDownloadRpcHandlers(registrar, { workingDirectory: directory, store });
+  const registration = registerMachineRpcHandlers({ rpcHandlerManager: manager, handlers: {
+    spawnSession: async () => ({ type: 'error', errorCode: 'UNEXPECTED', errorMessage: 'Unavailable in transfer test' }),
+    stopSession: async () => true, requestShutdown() {},
+    preparedMachineTransfer: { request: lifecycle.requestPreparedTransfer, rawTransferHandlers },
+  } });
+  try {
+    const bytes = Buffer.from([0, 255, 128, 10]);
+    const opened: unknown = await manager.invokeLocal(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT,
+      { t: 'deployment_restore_upload_v1', environmentId: 'environment', sizeBytes: bytes.length });
+    if (!opened || typeof opened !== 'object' || !('uploadId' in opened) || typeof opened.uploadId !== 'string'
+      || !('recipientPublicKeyBase64' in opened) || typeof opened.recipientPublicKeyBase64 !== 'string') throw new Error('Restore upload was not opened');
+    const chunk = createEncryptedTransferChunkEnvelope({ transferId: opened.uploadId, sequence: 0,
+      payload: bytes, recipientPublicKeyBase64: opened.recipientPublicKeyBase64 });
+    await expect(manager.invokeLocal(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_CHUNK, { uploadId: opened.uploadId, index: 0,
+      payloadBase64: chunk.payloadBase64, encryptedDataKeyEnvelopeBase64: chunk.encryptedDataKeyEnvelopeBase64 }))
+      .resolves.toEqual({ success: true });
+    await expect(manager.invokeLocal(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_FINALIZE, { uploadId: opened.uploadId }))
+      .resolves.toMatchObject({ success: true, transferId: opened.uploadId, sizeBytes: bytes.length });
+    expect(acquireDeploymentRestoreUpload(store, { transferId: opened.uploadId, accountId: 'other', environmentId: 'environment' })).toBeNull();
+    const admitted = acquireDeploymentRestoreUpload(store, { transferId: opened.uploadId, accountId: 'account', environmentId: 'environment' });
+    if (!admitted) throw new Error('Completed restore source was not retained');
+    try { expect(await admitted.source.readChunk({ offset: 0, length: bytes.length })).toEqual(bytes); }
+    finally { admitted.release(); }
+    await expect(manager.invokeLocal(RPC_METHODS.DAEMON_TRANSFER_UPLOAD_ABORT, { uploadId: opened.uploadId }))
+      .resolves.toEqual({ success: true });
+
+    await writeFile(join(directory, 'download.bin'), bytes);
+    const recipient = createTransferRecipientKeyPair();
+    const download: unknown = await manager.invokeLocal(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_INIT,
+      { t: 'session_file_download_v1', path: 'download.bin', recipientPublicKeyBase64: recipient.recipientPublicKeyBase64 });
+    if (!download || typeof download !== 'object' || !('downloadId' in download) || typeof download.downloadId !== 'string') throw new Error('Raw download was not opened');
+    const downloaded = z.object({ success: z.literal(true), payloadBase64: z.string(), encryptedDataKeyEnvelopeBase64: z.string() })
+      .parse(await manager.invokeLocal(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_CHUNK, { downloadId: download.downloadId, index: 0 }));
+    expect(decryptEncryptedTransferChunkEnvelope({ transferId: download.downloadId, sequence: 0,
+      payloadBase64: downloaded.payloadBase64, encryptedDataKeyEnvelopeBase64: downloaded.encryptedDataKeyEnvelopeBase64,
+      recipientSecretKeySeed: recipient.recipientSecretKeySeed })).toEqual(bytes);
+    await expect(manager.invokeLocal(RPC_METHODS.DAEMON_TRANSFER_DOWNLOAD_FINALIZE, { downloadId: download.downloadId }))
+      .resolves.toEqual({ success: true });
+  } finally {
+    await registration.dispose(); await lifecycle.stop(); await store.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 it('serves an approved workspace export through registered prepared RPC phases and settles its original owner', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'happier-prepared-rpc-seam-'));

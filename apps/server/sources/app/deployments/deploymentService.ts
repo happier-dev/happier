@@ -127,9 +127,11 @@ export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
         }
         return receiptResult(repeated, loaded.row.revision);
     }
-    const link = await tx.deploymentTargetLink.findFirst({ where: { id: input.targetLinkId, environmentId: input.environmentId, deletedAt: null },
+    const link = await tx.deploymentTargetLink.findFirst({ where: { id: input.targetLinkId, environmentId: input.environmentId },
         include: { machines: { orderBy: { position: 'asc' } } } });
-    if (!link || link.revision !== input.expectedTargetLinkRevision) return deploymentFailure('deployment_conflict');
+    // Detach retires the association while retaining its native workload custody.
+    if (!link || link.revision !== input.expectedTargetLinkRevision
+        || link.deletedAt && !(operation === 'teardown' && link.detachedAt)) return deploymentFailure('deployment_conflict');
     const requiresBuilder = operation !== 'teardown' && isOwnServerDeploymentTarget(link);
     const accepted = executionBinding ? await resolveDeploymentAcceptedIdentityInTx(tx, {
         binding: executionBinding, actorAccountId, serverId: input.serverId, operation,
@@ -273,7 +275,8 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
     const loaded = await loadDeploymentEnvironmentCustodyInTx(tx, { serverId: input.serverId,
         environmentId: input.environmentId, includeRemoved: removedReplay });
     if (!loaded.ok) return loaded;
-    if ((link.deletedAt || link.detachedAt) && !removedReplay) return deploymentFailure('deployment_conflict');
+    if ((link.deletedAt || link.detachedAt) && !(row.operation === 'teardown' && link.detachedAt)
+        && !removedReplay) return deploymentFailure('deployment_conflict');
     if (row.operation !== 'teardown' && loaded.row.runtimeTargetLinkId !== link.id) return deploymentFailure('deployment_conflict');
     const native = executionBinding?.deploymentNativeAdmission;
     if (executionBinding?.actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1

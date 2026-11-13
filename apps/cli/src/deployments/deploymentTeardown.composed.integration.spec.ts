@@ -341,7 +341,7 @@ describe('deployment teardown through the canonical Action front door', () => {
                 }
             }, 180_000);
 
-        it.skipIf(process.platform === 'win32').each(['manual', 'workflow', 'partial', 'healthy', 'network-in-use', 'reviewed-ingress-domains', 'reviewed-ingress-domain-retirement-fails', 'retained-retry-failed', 'retained-retry-unknown'] as const)('tears down the actual retained native generation through the Action without a supplied cleanup boundary (%s)', async caller => withSocketTempDir(async socketDirectory => {
+        it.skipIf(process.platform === 'win32').each(['detached', 'manual', 'workflow', 'partial', 'healthy', 'network-in-use', 'reviewed-ingress-domains', 'reviewed-ingress-domain-retirement-fails', 'retained-retry-failed', 'retained-retry-unknown'] as const)('tears down the actual retained native generation through the Action without a supplied cleanup boundary (%s)', async caller => withSocketTempDir(async socketDirectory => {
             vi.stubEnv('HAPPIER_FEATURE_WORKFLOWS__ENABLED', '1');
             const root = await mkdtemp(join(tmpdir(), 'happier-teardown-native-'));
             const previousHome = configuration.happyHomeDir;
@@ -479,7 +479,7 @@ describe('deployment teardown through the canonical Action front door', () => {
                 await docker.seedNetwork(retainedNetworks[1]!); // external, without project ownership
                 const deletedVolume = `${identity.projectName}_delete`;
                 const keptVolume = `${identity.projectName}_keep`;
-                if (retainedRetry) {
+                if (retainedRetry || caller === 'detached') {
                     await docker.seedVolume(deletedVolume, identity.projectName);
                     await docker.seedVolume(keptVolume, identity.projectName);
                 }
@@ -521,16 +521,31 @@ describe('deployment teardown through the canonical Action front door', () => {
                                 contentHeaderVersion: target.contentHeaderVersion, contentBodyVersion: target.contentBodyVersion },
                         }] } });
                 }
+                if (caller === 'detached') {
+                    const beforeDetach = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: fixture.environment.environmentId } });
+                    const target = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: fixture.link.targetLinkId } });
+                    const detached = await fixture.invoke('deployments.targets.unlink', { serverId: home.serverId,
+                        environmentId: beforeDetach.id, expectedRevision: beforeDetach.revision,
+                        targetLinkId: target.id, expectedTargetLinkRevision: target.revision,
+                        requestKey: randomUUID(), detachKeepRunning: true });
+                    expect(detached, JSON.stringify(detached)).toMatchObject({ ok: true, result: { ok: true } });
+                    const preview = await fixture.invoke('deployments.teardown', { mode: 'preview', serverId: home.serverId,
+                        environmentId: beforeDetach.id, targetLinkId: target.id, reason: 'manual' });
+                    expect(preview, JSON.stringify(preview)).toMatchObject({ ok: true, result: { ok: true,
+                        volumes: expect.arrayContaining([{ name: deletedVolume, machineId: home.machineId }]) } });
+                }
                 const current = await fixture.invoke('deployments.environments.get', { serverId: home.serverId,
                     environmentId: fixture.environment.environmentId });
                 if (!current.ok) throw new Error(current.errorCode);
                 const detail = DeploymentEnvironmentGetResultV1Schema.parse(current.result);
                 if (!detail.ok) throw new Error(detail.error);
                 const link = detail.targetLinks.find(item => item.id === fixture.link.targetLinkId)!;
-                const refusedDelete = await fixture.invoke('deployments.environments.delete', { serverId: home.serverId,
-                    environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
-                    requestKey: randomUUID() });
-                expect(refusedDelete, JSON.stringify(refusedDelete)).toMatchObject({ ok: false, errorCode: 'deployment_teardown_required' });
+                if (caller !== 'detached') {
+                    const refusedDelete = await fixture.invoke('deployments.environments.delete', { serverId: home.serverId,
+                        environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
+                        requestKey: randomUUID() });
+                    expect(refusedDelete, JSON.stringify(refusedDelete)).toMatchObject({ ok: false, errorCode: 'deployment_teardown_required' });
+                }
                 const input = { serverId: home.serverId, environmentId: detail.environment.id,
                     targetLinkId: link.id, expectedRevision: detail.environment.revision,
                     expectedTargetLinkRevision: link.revision, requestKey: randomUUID(), reason: 'manual' };
@@ -557,10 +572,11 @@ describe('deployment teardown through the canonical Action front door', () => {
                     }
                     // UI and an unselected CLI name only the Environment; the
                     // controller prepares revisions, target and native inventory.
-                    const tornDown = await fixture.invoke('deployments.teardown', caller === 'healthy' || retainedDomain
+                    const tornDown = await fixture.invoke('deployments.teardown', caller === 'healthy' || retainedDomain || caller === 'detached'
                         ? { serverId: home.serverId, environmentId: detail.environment.id, reason: 'manual', requestKey: input.requestKey,
-                                ...(retainedDomain ? { removeEnvironment: true as const } : {}),
-                                ...(retainedRetry ? { volumes: [
+                                ...(retainedDomain || caller === 'detached' ? { removeEnvironment: true as const } : {}),
+                                ...(caller === 'detached' ? { targetLinkId: link.id } : {}),
+                                ...(retainedRetry || caller === 'detached' ? { volumes: [
                                     { name: deletedVolume, disposition: 'delete', confirmation: deletedVolume },
                                     { name: keptVolume, disposition: 'keep' },
                                 ] } : {}) }
@@ -671,8 +687,14 @@ describe('deployment teardown through the canonical Action front door', () => {
                         expect(await docker.readNetworkIds()).toContain(ownedNetworks[0]);
                         return;
                     }
-                    expect(tornDown, JSON.stringify(tornDown)).toMatchObject({ ok: true,
+                    expect(tornDown, JSON.stringify({ tornDown, homeResponses })).toMatchObject({ ok: true,
                         result: { ok: true, state: 'succeeded' } });
+                    if (caller === 'detached') {
+                        expect(await docker.readVolumeNames()).toEqual([keptVolume]);
+                        expect(await db.deploymentEnvironment.findUnique({ where: { id: detail.environment.id } }))
+                            .toMatchObject({ deletedAt: expect.any(Date) });
+                        return;
+                    }
                 } else {
                     await fixture.closeIngress();
                     const receiver = await createS0DeploymentDaemonIngress({ home,

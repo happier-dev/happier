@@ -20,7 +20,7 @@ import type { ExecutionRunMachineActivityV1 } from '@happier-dev/protocol/execut
 import { SCM_DIFF_SUMMARY_RESULT_UPDATED_EVENT, type ScmDiffSummaryResultRevisionHint } from '@happier-dev/protocol/scm/diffSummaryResult';
 import type { ExecutionRunResumeMaterializationAuthority } from '@/agent/runtime/bridges/executionRun/resumeBackendController';
 import type { ProviderBrokerRetainedCurrentnessInvalidation } from '@/providers/broker/brokerRetainedCurrentnessInvalidation';
-import { readConnectedServicesAccountChangeV1, readProviderAccountUsageRefreshRecordIdV1 } from '@happier-dev/protocol/changes';
+import { changeRowsAlreadyHeld, readConnectedServicesAccountChangeV1, readProviderAccountUsageRefreshRecordIdV1 } from '@happier-dev/protocol/changes';
 import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { PluginDomainChangeEntrySchema } from '@happier-dev/protocol/changes/pluginDomain';
 import { ManagedMachinePolicyChangeHintV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
@@ -39,6 +39,7 @@ import { createMachineDaemonStatePublication, projectMachineDaemonRunningState }
 import { projectMachineSetupAppliedObservation, projectMachineSetupUpdatesObservation } from './machine/machineSetupObservation';
 import { projectMachineMetadataChange, publishMachineMetadataOnce, publishMachineMetadataUpdate, readOpenedMachineMetadataSnapshot, type MachineMetadataChange } from './machine/machineMetadataPublication';
 import { createApiMachineServicesBinding } from './machine/machineServicesBinding';
+import { machineServiceAdmissionFailure } from '@/daemon/local/services/launch/machineServiceFailure';
 import type { MachineServiceActionDirectTargetInvocation } from '@/session/actions/createCliActionDeps';
 import { readAgentIsolationSnapshot, type AgentIsolationSnapshot } from '@/daemon/agentIsolation/agentIsolationPolicy';
 import { registerDaemonMachineAgentIsolationRpcHandlers } from '@/rpc/handlers/daemonMachineAgentIsolation';
@@ -656,6 +657,11 @@ const MACHINE_ACCOUNT_CHANGE_KINDS = [
     'pluginDomain', 'savedSecretResource', 'session', 'share',
 ] as const satisfies readonly ChangeKind[];
 
+/** `update-machine` fields the live handler applies to held Machine content. */
+const UPDATE_MACHINE_CONTENT_FIELDS_APPLIED_LIVE: ReadonlySet<string> = new Set([
+    't', 'machineId', 'metadata', 'daemonState', 'devcontainerChild', 'keyBasis', 'dataEncryptionKey',
+]);
+
 export class ApiMachineClient {
     private socket: Socket<ServerToDaemonEvents, DaemonToServerEvents> | null = null;
     private keepAliveInterval: NodeJS.Timeout | null = null;
@@ -718,6 +724,7 @@ export class ApiMachineClient {
     private readonly transientSessionMediaReadAllowance = createTransientSessionMediaReadAllowance();
     private readonly fileSystemTransferRelayOwner: TransferRelayV2DownloadSessionOwner;
     private readonly hostLocalUploadRpc: import('./rpc/types').RpcHandlerInvoker;
+    private readonly rawTransferHandlers: ReturnType<typeof registerFileSystemHandlers>['rawTransferHandlers'];
     private readonly rpcLifecycleRegistrations: MachineRpcLifecycleRegistration[] = [];
     private executionRunAccountSnapshots: ReturnType<typeof createExecutionRunAccountSettingsSnapshotResolver> | null = null;
     private readonly executionBudgetRegistry = createExecutionBudgetRegistry();
@@ -1030,6 +1037,13 @@ export class ApiMachineClient {
     private machineContentContext: Readonly<{ codec: MachineContentCodec; ready: boolean }>;
     private get machineContentCodec(): MachineContentCodec { return this.machineContentContext.codec; }
     private get machineContentReady(): boolean { return this.machineContentContext.ready; }
+    /**
+     * Highest Account change cursor of an `update-machine` for this Machine that its
+     * content already holds. The Home coalesces one change row per Machine at its
+     * latest cursor, so the feed's row for a write this client already applied
+     * (its own, echoed back) carries nothing new and needs no Machine re-read.
+     */
+    private heldOwnMachineChangeCursor: number | undefined;
     private readonly actionOperationRuntime: HostActionOperationRuntime;
     private agentIsolationMemberOperations: AgentIsolationMemberOperations | null = null;
     private agentIsolationEffects: AgentIsolationEffectDependencies | null = null;
@@ -1989,6 +2003,7 @@ export class ApiMachineClient {
             },
         });
         this.hostLocalUploadRpc = fileSystemHandlers.localUploadRpc;
+        this.rawTransferHandlers = fileSystemHandlers.rawTransferHandlers;
         this.fileSystemTransferRelayOwner = {
             store: fileSystemHandlers.transferSessionStore,
             lifecycle: createTransferSessionLifecycle({
@@ -2185,7 +2200,9 @@ export class ApiMachineClient {
                 ...(directPeerTransfer ? { directPeerTransfer } : {}),
                 ...(directTransferImport ? { directTransferImport } : {}),
                 ...(directTransferExport ? { directTransferExport } : {}),
-                ...(preparedMachineTransfer ? { preparedMachineTransfer } : {}),
+                ...(preparedMachineTransfer ? { preparedMachineTransfer: {
+                    ...preparedMachineTransfer, rawTransferHandlers: this.rawTransferHandlers,
+                } } : {}),
             },
             deps: {
                 ...deps,
@@ -2922,8 +2939,19 @@ export class ApiMachineClient {
                     role: 'manage' as const, encryptionMode: this.machineContentCodec.mode });
                 const request = { method: `${this.machine.id}:${method}`, params, machineAdmission, signal,
                     callerAuthority: options.verifiedPeerAuthority ?? 'account_automation' as const };
-                const admissionResult = await authorizeMachineRpcRequest(request, this.machineRpcAdmissionBoundary).catch(() => null);
-                if (!admissionResult?.ok || signal.aborted) return forbidden();
+                // The admission owner turns boundary failures into a typed refusal; anything it
+                // throws is a defect the direct route reports as a handler failure (flow.errored).
+                const admissionResult = await authorizeMachineRpcRequest(request, this.machineRpcAdmissionBoundary);
+                if (signal.aborted) return forbidden();
+                if (!admissionResult.ok) {
+                    // This path refuses before the RPC manager's request log; an unavailable
+                    // admission check is not an access decision, so record it here.
+                    if (admissionResult.admissionPredicate === 'authorization_unavailable') {
+                        logger.warn('[API MACHINE] Direct peer RPC admission unavailable', { method });
+                    }
+                    return { error: admissionResult.error, errorCode: admissionResult.errorCode ?? RPC_ERROR_CODES.FORBIDDEN,
+                        ...(admissionResult.failureCause ? { failureCause: admissionResult.failureCause } : {}) };
+                }
                 return await this.rpcHandlerManager.invokeLocal(method, params, { signal, admissionResult,
                     rpcContext: { machineAdmission, verifyMachineAdmissionCurrent: async () => !signal.aborted,
                         callerAuthority: options.verifiedPeerAuthority ?? 'account_automation' } });
@@ -3026,11 +3054,18 @@ export class ApiMachineClient {
             restoreEnvironmentServices: async (owner, signal) => {
                 const installationId = this.machineRuntimeInstallationId;
                 const serverId = await resolveServerProfileHomeIdentityId(this.machineRuntimeServerId);
-                if (!installationId || !serverId) throw Object.assign(new Error('admission_unavailable'), { code: 'admission_unavailable' });
+                if (!installationId || !serverId) throw machineServiceAdmissionFailure(
+                    !installationId ? 'service.installation' : 'service.home_identity');
                 const { restoreOwnServerServicesForHost } = await import('@/deployments/targets/ownServer/restoreOwnServerServicesForHost');
                 await restoreOwnServerServicesForHost({ serverId, machineId: this.machine.id, installationId, owner, signal,
                     acquireServiceExportForward: this.lifecycleDependencies.acquireServiceExportForward,
-                    resolveRuntime: workSignal => this.resolveInstalledAccountObservationRuntime(workSignal),
+                    resolveRuntime: async workSignal => {
+                        let reason = 'unavailable';
+                        const runtime = await this.resolveInstalledAccountRuntime(workSignal, undefined,
+                            unavailable => { reason = unavailable; });
+                        if (!runtime) throw machineServiceAdmissionFailure(`service.account.${reason}`);
+                        return runtime;
+                    },
                     isCurrent: () => !this.projectionSchedulingClosed && !signal.aborted
                         && configuration.activeServerId === this.machineRuntimeServerId
                         && readInstallationIdentityIfExistsSync()?.installationId === installationId });
@@ -3044,7 +3079,7 @@ export class ApiMachineClient {
     }
 
     async executeMachineServiceAction(request: MachineServiceActionDirectTargetInvocation) {
-        if (this.projectionSchedulingClosed) return { kind: 'unavailable' as const, reason: 'admission_unavailable' as const };
+        if (this.projectionSchedulingClosed) return machineServiceAdmissionFailure('service.runtime.closed');
         return await this.getMachineServicesBinding().execute(request);
     }
 
@@ -5664,7 +5699,11 @@ export class ApiMachineClient {
                     this.startKeepAlive();
 
                     if (params?.onConnect) {
-                        await Promise.resolve(params.onConnect()).catch(() => {});
+                        await Promise.resolve(params.onConnect()).catch((error: unknown) => {
+                            logger.warn('[API MACHINE] Machine connect hook failed', {
+                                message: error instanceof Error ? error.message : String(error),
+                            });
+                        });
                     }
                 },
                 onDisconnected: async () => {
@@ -5978,6 +6017,13 @@ export class ApiMachineClient {
                     this.machine.daemonStateVersion = update.daemonState.version;
                     if (this.machine.keyBasis) this.machine.keyBasis = { ...this.machine.keyBasis, daemonStateVersion: update.daemonState.version };
                 }
+                // Same key and ready content: when this publication carries only fields applied
+                // above, this write (or a newer one) is now held. Lifecycle fields (revocation,
+                // replacement, managed runtime) still reach the Machine read through the feed.
+                if (Number.isSafeInteger(data.seq) && data.seq > (this.heldOwnMachineChangeCursor ?? -1)
+                    && Object.keys(update).every(field => UPDATE_MACHINE_CONTENT_FIELDS_APPLIED_LIVE.has(field))) {
+                    this.heldOwnMachineChangeCursor = data.seq;
+                }
                 return;
             }
 
@@ -6180,6 +6226,11 @@ export class ApiMachineClient {
         });
     }
 
+    /** The Profile-verified Account id this Machine connection admitted; one read per lifetime. */
+    async resolveAuthenticatedAccountId(signal?: AbortSignal): Promise<string | null> {
+        return await runWithServerHttpBaseUrl(this.machineRuntimeServerHttpBaseUrl, () => this.getAccountId(signal));
+    }
+
     private async getAccountId(signal?: AbortSignal): Promise<string | null> {
         signal?.throwIfAborted();
         if (this.accountIdPromise) {
@@ -6254,6 +6305,7 @@ export class ApiMachineClient {
 
     private retireMachineContent(): void {
         const serviceWatchesChanged = this.machineContentReady;
+        this.heldOwnMachineChangeCursor = undefined;
         this.machineContentContext = { codec: this.machineContentCodec, ready: false };
         this.rpcHandlerManager.retireEncryptionContext();
         this.notifyMachineMetadataChanged({ serviceWatchesChanged });
@@ -6588,8 +6640,11 @@ export class ApiMachineClient {
                 const pluginAccountSettingsInvalidations = readPluginAccountSettingsWatchInvalidations(changes);
                 const pluginAccountCollectionInvalidations = readPluginAccountCollectionWatchInvalidations(changes);
 
-                const hasRelevantMachineChange = changes.some(
-                    (c) => c.kind === 'machine' && c.entityId === this.machine.id,
+                const ownMachineChanges = changes.filter(c => c.kind === 'machine' && c.entityId === this.machine.id);
+                const hasRelevantMachineChange = ownMachineChanges.length > 0 && !changeRowsAlreadyHeld(
+                    ownMachineChanges.map(change => change.entityId),
+                    Object.fromEntries(ownMachineChanges.map(change => [change.entityId, change.cursor])),
+                    () => true, () => this.heldOwnMachineChangeCursor,
                 );
                 const managedPolicyIds = changes.flatMap(change => {
                     if (change.kind !== 'account' || asRecord(change.hint)?.managedMachinePolicy !== true) return [];
@@ -6632,11 +6687,12 @@ export class ApiMachineClient {
                 }))];
                 const hasAutomationSourceChange = changes.some(change => change.kind === 'automation'
                     && change.entityId !== 'automation-source-status');
-                const hasWebhookAdmissionChange = changes.some(change => {
+                const webhookAdmissionPluginIds = [...new Set(changes.flatMap(change => {
                     const parsed = PluginDomainChangeEntrySchema.safeParse(change);
                     return parsed.success && (parsed.data.hint.pluginDomain === 'webhook'
-                        || parsed.data.hint.pluginDomain === 'availability');
-                });
+                        || parsed.data.hint.pluginDomain === 'availability') ? [parsed.data.hint.pluginId] : [];
+                }))];
+                const hasWebhookAdmissionChange = webhookAdmissionPluginIds.length > 0;
                 const changedProjectRowKeys = changes.flatMap((change) => {
                     if (change.kind !== 'account') return [];
                     const hint = ProjectAccountRowChangeHintV1Schema.safeParse(change.hint);
@@ -6909,10 +6965,16 @@ export class ApiMachineClient {
                     || highestAccountSettingsVersion !== null) {
                     // Credential/settings wakes can unpark observers without changing
                     // the admitted definition set. Only the feed owner classifies this.
+                    // A plugin's availability/webhook change can change only that plugin's
+                    // admitted definitions; every other observer keeps its adopted catalog.
+                    const onlyPluginScopedChange = reason === 'live' && hasWebhookAdmissionChange
+                        && !hasAutomationSourceChange && !hasConnectedServicesChange
+                        && !hasConnectedAccountCatalogChange && highestAccountSettingsVersion === null;
                     await this.notifyAutomationEventSourcesInvalidated(signal, {
                         ...(reason === 'reconnect' ? { reason: 'reconnect' as const } : {}),
                         ...(reason === 'live' && !hasAutomationSourceChange && !hasWebhookAdmissionChange
                             ? { definitionsChanged: false } : {}),
+                        ...(onlyPluginScopedChange ? { pluginIds: webhookAdmissionPluginIds } : {}),
                     });
                 }
                 if (reason !== 'live'
