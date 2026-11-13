@@ -1955,7 +1955,7 @@ and ordinary schema initialization must remain safe independently.
 | Machine-RPC route class for an Action-bearing method | `packages/protocol/src/machines/peer/mediation/rpc/routePolicyV1.ts` |
 
 In 0.3 development, `action.spec.get` returns input schemas, hints and examples.
-Agent, MCP and CLI discovery expose shared definitions as named `schemaSections`;
+Agent, MCP, CLI and Voice discovery expose shared definitions as named `schemaSections`;
 read a definition with the same Action `id` and its `schemaPath`. The response's
 `schemaSection.schema` contains that definition's root; nested definitions have
 their own advertised sections. Its local references

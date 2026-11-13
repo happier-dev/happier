@@ -515,11 +515,15 @@ describe('VoiceConversationController', () => {
       }
       callbacks.onDebug?.({ type: 'send_message_error', message: {
         message: { type: messageType, tool_call_id: 'dropped-tool', result: 'private-tool-output' },
-        error: new Error('Failed to send message via WebRTC: private-vendor-error'),
+        error: Object.assign(new Error('Failed to send message via WebRTC: private-vendor-error'),
+          { name: 'PublishDataError', code: 14 }),
       } });
       await vi.waitFor(() => expect(adapter.getSnapshot()).toMatchObject({ errorCode: code, errorRecoveryAction: 'retry' }));
       const snapshot = adapter.getSnapshot();
       expect(snapshot).toMatchObject({ errorCode: code, errorRecoveryAction: 'retry', canStop: false });
+      expect(snapshot.errorFailureCause).toEqual({ phase: messageType === 'client_tool_result'
+        ? 'elevenlabs.tool_result.publish' : 'elevenlabs.control.publish',
+        errorClass: 'Error', errorCode: null, httpStatus: null, nativeErrorCode: '14' });
       expect(resolveVoiceSurfaceState(snapshot)).toBe('error');
       expect(resolveVoiceAttemptControl({ ...snapshot, surfaceState: resolveVoiceSurfaceState(snapshot),
         tone: 'neutral', muted: false, capturing: false, startAdmitted: true, hasRecovery: true,

@@ -1,3 +1,4 @@
+import { ActionFailureCauseV1Schema } from '@happier-dev/plugin-sdk/errors';
 import {
   VoiceRealtimeJsonValueSchema,
   VoiceRealtimeToolCallV1Schema,
@@ -138,7 +139,9 @@ export function createElevenLabsProtocolAdapter(input: Readonly<{
     decodeControl: (event) => {
       const record = readObject(event);
       if (record.type === 'elevenlabs.send_error') {
+        const cause = ActionFailureCauseV1Schema.safeParse(record.failureCause);
         return [{ type: 'provider_error', terminal: true,
+          ...(cause.success ? { failureCause: cause.data } : {}),
           code: record.toolResult === true
             ? 'voice_tool_result_delivery_unrecoverable'
             : 'voice_service_unavailable',

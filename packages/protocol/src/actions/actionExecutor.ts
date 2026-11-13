@@ -5418,7 +5418,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           const schemaPath = typeof data.schemaPath === 'string' ? data.schemaPath : undefined;
           const includeOutputSchema = schemaPath?.startsWith('/outputSchema') === true || (typeof data.includeOutputSchema === 'boolean'
             ? data.includeOutputSchema
-            : ctx.surface !== 'agent' && ctx.surface !== 'mcp' && ctx.surface !== 'cli');
+            : ctx.surface !== 'agent' && ctx.surface !== 'mcp' && ctx.surface !== 'cli' && ctx.surface !== 'voice');
           const projectDiscovery = (definition: Parameters<typeof projectActionSpecSchemaSections>[0]): ActionExecuteResult => {
             const scope = deps.widgetAccountScope?.();
             const sessionId = ctx.defaultSessionId;
@@ -5427,7 +5427,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 owner: { kind: 'sessionBoard' as const, sessionId } } } : {}) } : undefined;
             try {
               return { ok: true, result: {
-                ...(schemaPath !== undefined || ctx.surface === 'agent' || ctx.surface === 'mcp'
+                ...(schemaPath !== undefined || ctx.surface === 'agent' || ctx.surface === 'mcp' || ctx.surface === 'voice'
                   ? projectActionSpecSchemaSections(definition, schemaPath) : { actionSpec: definition }),
                 ...(invocationContext ? { invocationContext } : {}),
               } };

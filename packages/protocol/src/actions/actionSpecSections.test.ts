@@ -6,6 +6,32 @@ import { freezeActionCompletionContractV1 } from './actionCompletion.js';
 import { createActionExecutor } from './actionExecutor.js';
 
 describe('Action schema sections', () => {
+  it.each(['voice', 'mcp'] as const)('serves the complete spawn grammar in retrievable sections for %s', async surface => {
+    const executor = createActionExecutor({ widgetAccountScope: () => ({
+      serverId: 'srv_delivery_fixture_1113', accountId: 'account_delivery_fixture_1113',
+    }) });
+    const context = { surface, defaultSessionId: 'session_delivery_fixture_1113' };
+    const root = await executor.execute('action.spec.get', { id: 'session.spawn_new' }, context);
+    if (!root.ok) throw new Error(root.errorCode);
+    const projected = root.result as ReturnType<typeof projectActionSpecSchemaSections>;
+    expect(Object.hasOwn(projected.actionSpec.inputSchema, 'definitions')).toBe(false);
+    expect(projected.schemaSections.length).toBeGreaterThan(0);
+    const full = actionSpecToActionDefinitionV1(getActionSpec('session.spawn_new'), { surface, includeOutputSchema: false });
+    expect(projected.actionSpec.inputSchema).toEqual(projectActionSpecSchemaSections(full).actionSpec.inputSchema);
+    const schemaPath = projected.schemaSections[0].path;
+    const section = await executor.execute('action.spec.get', { id: 'session.spawn_new', schemaPath }, context);
+    if (!section.ok) throw new Error(section.errorCode);
+    expect(section.result).toMatchObject(projectActionSpecSchemaSections(full, schemaPath));
+    // livekit-client 2.21.0 RTCEngine.sendDataPacket caps complete packets at
+    // 64,000 bytes. The incident's full result encoded to 215,763 bytes.
+    const wireBytes = [root.result, section.result].map(output => new TextEncoder().encode(JSON.stringify({
+      type: 'client_tool_result', tool_call_id: 'chatcmpl-tool-8db299df89f6584d',
+      result: JSON.stringify({ ok: true, ...output as Record<string, unknown> }), is_error: false,
+    })).byteLength);
+    expect(wireBytes.every(bytes => bytes < 64000)).toBe(true);
+    console.info(JSON.stringify({ surface, discoveryReads: 2, wireBytes }));
+  });
+
   it('stores the frozen deploy terminal schema once across output and completion', () => {
     const definition = actionSpecToActionDefinitionV1(getActionSpec('deployments.deploy'));
     const contract = freezeWorkflowActionContractV1(definition)!;

@@ -835,12 +835,13 @@ export function createBundledRealtimeProviderRuntime(
         }
         host.machine.transitionToDisconnected(controlSessionId, providerId, declineError, attemptId);
       },
-      failed: ({ controlSessionId, attemptId, code, diagnosticReason, providerCode }: Readonly<{
+      failed: ({ controlSessionId, attemptId, code, diagnosticReason, providerCode, failureCause }: Readonly<{
         controlSessionId: string;
         attemptId: number;
         code: string;
         diagnosticReason?: VoiceRuntimeFailureDiagnosticReason;
         providerCode?: string;
+        failureCause?: import('@happier-dev/protocol/actions/actionExecutionResult').ActionFailureCauseV1;
       }>) => {
         clearHostedLeaseNotices();
         activeHostedLease = null;
@@ -852,7 +853,7 @@ export function createBundledRealtimeProviderRuntime(
         host.machine.setError(
           controlSessionId,
           providerId,
-          host.createMachineError({ kind, reason: code }),
+          host.createMachineError({ kind, reason: code, ...(failureCause ? { cause: { failureCause } } : {}) }),
           attemptId,
         );
       },

@@ -1,3 +1,4 @@
+import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/plugin-sdk/errors';
 import { VoiceRealtimeToolResultV1Schema } from '@happier-dev/plugin-sdk/voice/client';
 import type {
   VoiceOutputFocusState,
@@ -88,8 +89,15 @@ export function createElevenLabsSdkConnection(input: Readonly<{
     await endLifecyclePromise;
   };
 
-  const reportSendFailure = (toolResult: boolean): void => {
-    publishControl?.({ type: 'elevenlabs.send_error', toolResult });
+  const reportSendFailure = (toolResult: boolean, error: unknown, phase: string) => {
+    const { errorClass, errorCode, httpStatus } = readUnexpectedActionErrorDiagnosticV1(error);
+    // Pinned LiveKit 2.21.0 PublishDataError carries code 14. Preserve that
+    // native identifier without accepting arbitrary vendor text or codes.
+    const vendor = readRecord(error);
+    const failureCause = { phase, errorClass, errorCode, httpStatus,
+      ...(vendor.name === 'PublishDataError' && vendor.code === 14 ? { nativeErrorCode: '14' } : {}) };
+    publishControl?.({ type: 'elevenlabs.send_error', toolResult, failureCause });
+    return failureCause;
   };
 
   return input.createSdkHandleConnection({
@@ -143,10 +151,12 @@ export function createElevenLabsSdkConnection(input: Readonly<{
               // SDK 1.18.0 completes clientTools before its asynchronous WebRTC
               // publishData settles. LiveKit reconnects without onDisconnect;
               // this callback is the SDK's delivery-failure signal. Project only
-              // the failed message kind, never its result or vendor exception.
+              // content-free exception facts, never its result or vendor text.
               if (readRecord(event.message).type === 'send_message_error') {
                 const failure = readRecord(readRecord(event.message).message);
-                reportSendFailure(readRecord(failure.message).type === 'client_tool_result');
+                const toolResult = readRecord(failure.message).type === 'client_tool_result';
+                reportSendFailure(toolResult, failure.error, toolResult
+                  ? 'elevenlabs.tool_result.publish' : 'elevenlabs.control.publish');
               }
               return;
             case 'tool_call':
@@ -224,9 +234,10 @@ export function createElevenLabsSdkConnection(input: Readonly<{
             default:
               throw new Error('elevenlabs_control_unsupported');
           }
-        } catch {
-          reportSendFailure(record.type === 'voice.tool_result');
-          throw new Error('voice_service_unavailable');
+        } catch (error) {
+          const failureCause = reportSendFailure(record.type === 'voice.tool_result', error, record.type === 'voice.tool_result'
+            ? 'elevenlabs.tool_result.settle' : 'elevenlabs.control.send');
+          throw Object.assign(new Error('voice_service_unavailable'), { failureCause });
         }
       },
       setOutputFocusState,

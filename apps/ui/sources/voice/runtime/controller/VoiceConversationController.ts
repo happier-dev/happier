@@ -89,6 +89,7 @@ export type VoiceConversationControllerMachinePort = Readonly<{
     code: string;
     diagnosticReason?: VoiceRuntimeFailureDiagnosticReason;
     providerCode?: string;
+    failureCause?: Extract<VoiceRealtimeCanonicalEvent, { type: 'provider_error' }>['failureCause'];
   }>): void;
 }>;
 
@@ -482,7 +483,12 @@ export function createVoiceConversationController(
     });
   };
 
-  const settleReconnectFailure = async (attempt: Attempt, code: string, providerCode?: string): Promise<void> => {
+  const settleReconnectFailure = async (
+    attempt: Attempt,
+    code: string,
+    providerCode?: string,
+    failureCause?: Extract<VoiceRealtimeCanonicalEvent, { type: 'provider_error' }>['failureCause'],
+  ): Promise<void> => {
     if (!owns(attempt) || attempt.terminalSettled) return;
     await closeAttempt(attempt, { code: 'error', detail: code });
     if (!owns(attempt) || attempt.terminalSettled) return;
@@ -493,6 +499,7 @@ export function createVoiceConversationController(
       attemptId: attempt.id,
       code,
       ...(providerCode === undefined ? {} : { providerCode }),
+      ...(failureCause ? { failureCause } : {}),
     });
   };
 
@@ -753,7 +760,7 @@ export function createVoiceConversationController(
           }
           if (event.type === 'provider_error') {
             if (event.terminal) {
-              await settleReconnectFailure(attempt, event.code, event.providerCode);
+              await settleReconnectFailure(attempt, event.code, event.providerCode, event.failureCause);
               return;
             }
             recordVoiceRuntimeFailure(

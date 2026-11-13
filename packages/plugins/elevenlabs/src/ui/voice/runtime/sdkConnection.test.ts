@@ -27,16 +27,24 @@ describe('createElevenLabsSdkConnection', () => {
     const handle = createElevenLabsConversationHandle({ tools: [], loadConversationSdk: async () => ({
       Conversation: { startSession: async () => ({
         getId: () => 'failed-send', endSession: async () => {}, setMicMuted: () => {}, setVolume: () => {},
-        sendUserMessage: () => { throw new Error('private-vendor-send-error'); }, sendContextualUpdate: () => {},
+        sendUserMessage: () => { throw new TypeError('private-vendor-send-error'); }, sendContextualUpdate: () => {},
       }) },
     }) as unknown as Pick<typeof import('@elevenlabs/client'), 'Conversation'> });
     const connection = createElevenLabsSdkConnection({ createSdkHandleConnection, handle, startConfig: {}, duckGain: 0.18 });
     try {
       await connection.connect(new AbortController().signal);
       await expect(connection.sendControl({ type: 'voice.user_text', text: 'hello' }))
-        .rejects.toMatchObject({ message: 'voice_service_unavailable' });
+        .rejects.toMatchObject({ message: 'voice_service_unavailable', failureCause: {
+          phase: 'elevenlabs.control.send', errorClass: 'TypeError', errorCode: null, httpStatus: null } });
       const control = connection.controlEvents(new AbortController().signal)[Symbol.asyncIterator]();
-      await expect(control.next()).resolves.toMatchObject({ value: { type: 'elevenlabs.send_error', toolResult: false } });
+      const failure = (await control.next()).value;
+      const { createElevenLabsVoiceProviderRuntime } = await import('../runtime.js');
+      const runtime = createElevenLabsVoiceProviderRuntime({ loadConversationSdk: () => import('@elevenlabs/client') });
+      expect(runtime.protocol.decodeControl(failure)).toEqual([{ type: 'provider_error', terminal: true,
+        code: 'voice_service_unavailable', failureCause: { phase: 'elevenlabs.control.send',
+          errorClass: 'TypeError', errorCode: null, httpStatus: null } }]);
+      expect(JSON.stringify(failure)).not.toContain('private-vendor');
+      await runtime.dispose();
     } finally {
       await connection.close({ code: 'user_stop' });
     }

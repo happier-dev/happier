@@ -340,6 +340,8 @@ export type VoiceRealtimeCanonicalEvent =
             | 'voice_response_incomplete';
         /** Content-free provider diagnostic code; never a message or payload. */
         providerCode?: string;
+        /** Producer-projected content-free cause; never vendor messages or tool output. */
+        failureCause?: import('@happier-dev/protocol/actions/actionExecutionResult').ActionFailureCauseV1;
         /** End the host attempt and offer recovery, even if the provider socket remains usable. */
         terminal: boolean;
     }>
