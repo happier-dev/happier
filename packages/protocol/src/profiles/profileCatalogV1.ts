@@ -111,15 +111,26 @@ export async function loadProfileCatalogV1(input: Readonly<{
     cursors.add(page.nextCursor);
     cursor = page.nextCursor;
   } while (true);
-  const guard = await input.readReferenceGuard();
-  if (input.signal?.aborted) return { status: 'unavailable', reason: 'cancelled' };
-  if (guard.status !== 'ready') return { status: 'unavailable', reason: guard.status };
-  if (guard.revision !== referenceGuardRevision) {
-    return { status: 'unavailable', reason: 'reference-conflict' };
+  // The census pages carry the guard revision and transfer control from their own read
+  // snapshot. Fence that cut once: now, or after the legacy source read when one follows.
+  if (!transfer || referenceGuardRevision === undefined) return { status: 'unavailable', reason: 'incomplete-pages' };
+  let guard: Readonly<{ status: 'ready'; revision: number | 'absent' }> = { status: 'ready', revision: referenceGuardRevision };
+  let currentTransfer: ProfileTransferRowReadResponseV1 = transfer;
+  const pageControl = transfer.status === 'present'
+    ? openProfileTransferContentV1({ mode: input.mode, material: input.material, content: transfer.content }) : null;
+  const pageControlActive = pageControl?.status === 'opened' && pageControl.record.phase === 'active';
+  if (!input.readSource || pageControlActive) {
+    const read = await input.readReferenceGuard();
+    if (input.signal?.aborted) return { status: 'unavailable', reason: 'cancelled' };
+    if (read.status !== 'ready') return { status: 'unavailable', reason: read.status };
+    if (read.revision !== referenceGuardRevision) {
+      return { status: 'unavailable', reason: 'reference-conflict' };
+    }
+    guard = read;
+    currentTransfer = await input.readTransfer();
+    if (input.signal?.aborted) return { status: 'unavailable', reason: 'cancelled' };
+    if (JSON.stringify(currentTransfer) !== JSON.stringify(transfer)) return { status: 'unavailable', reason: 'reference-conflict' };
   }
-  const currentTransfer = await input.readTransfer();
-  if (input.signal?.aborted) return { status: 'unavailable', reason: 'cancelled' };
-  if (JSON.stringify(currentTransfer) !== JSON.stringify(transfer)) return { status: 'unavailable', reason: 'reference-conflict' };
   let control: ProfileCatalogInventoryV1['control'] = null;
   let controlRevision: number | 'absent' = 'absent';
   if (currentTransfer.status === 'present') {

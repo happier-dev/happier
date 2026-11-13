@@ -4,6 +4,7 @@ import { readConnectedMetadataCatalogProjection } from '@/sync/api/account/apiCo
 import { createScopedSnapshotLoader, type ScopedLoadTarget } from '@/sync/engine/scope/scopedSnapshotLoader';
 import { subscribeAccountCatalogInvalidation } from './accountCatalogInvalidation';
 import { homeAccountChangeAffectsPrivateAccountRows } from '@/sync/runtime/orchestration/changesPlanner';
+import { homeAccountChangeRowsAlreadyHeld } from '@/sync/runtime/orchestration/homeAccountChange';
 import { applyConnectedMetadataCatalogSnapshot, beginConnectedMetadataCatalogLoad, getConnectedMetadataCatalog } from '@/sync/store/settings/connectedMetadataCatalogSnapshot';
 
 type Target = ScopedLoadTarget & Readonly<{ scope: ServerAccountScope }>;
@@ -41,6 +42,11 @@ const loader = createScopedSnapshotLoader<Target>({
     matchesWake: event => event.entityIds === undefined ? homeAccountChangeAffectsPrivateAccountRows(event)
         : event.entityIds.some(id => id === 'self' || id === CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1
             || id === CONNECTED_ACKNOWLEDGEMENTS_ACCOUNT_KV_KEY_V1),
+    // This client's own write echoes back; its acknowledged receipt already holds that revision.
+    prepareWake: (event, { scope }) => !homeAccountChangeRowsAlreadyHeld(event,
+        id => id === CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1 || id === CONNECTED_ACKNOWLEDGEMENTS_ACCOUNT_KV_KEY_V1,
+        id => id === CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1 ? getConnectedMetadataCatalog(scope).presentationRevision
+            : getConnectedMetadataCatalog(scope).acknowledgementsRevision),
     onCredentialMutation: (_event, { scope }) => {
         applyConnectedMetadataCatalogSnapshot(scope, { presentation: { status: 'unavailable', reason: 'unauthorized' },
             acknowledgements: { status: 'unavailable', reason: 'unauthorized' }, disclosure: [] }, true);

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { BOT_TEMPLATE_ARTIFACT_KIND_V1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
 import * as changePlanner from './changesPlanner';
+import { log } from '@/log';
 import { ACCOUNT_IDENTITIES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import {
@@ -80,6 +81,18 @@ describe('Home Account change subscriptions', () => {
             publishHomeAccountChange('secondary-home', undefined, { source: 'connected' });
             expect(reads).toEqual({ covered: 2, refresh: 4, recover: 3 });
         } finally { for (const release of releases) release(); }
+    });
+    it('reports an observer failure without suppressing its siblings', () => {
+        const logged = vi.spyOn(log, 'log');
+        const sibling = vi.fn();
+        const unsubscribeFailing = subscribeHomeAccountChange(() => { throw new Error('observer failed'); }, { serverIds: ['observer-home'] });
+        const unsubscribeSibling = subscribeHomeAccountChange(sibling, { serverIds: ['observer-home'] });
+        try {
+            publishHomeAccountChange('observer-home', ['session-a'], { source: 'socket', changeKinds: ['session'], sessionSystemRecords: [] });
+            expect({ siblingCalls: sibling.mock.calls.length,
+                failures: logged.mock.calls.filter(([line]) => line.includes('observer failed')).length })
+                .toEqual({ siblingCalls: 1, failures: 1 });
+        } finally { unsubscribeFailing(); unsubscribeSibling(); logged.mockRestore(); }
     });
     it('routes Session-only wakes without waking unrelated Home catalogs', () => {
         const event = publishHomeAccountChangeForRouting('session-home', ['session-a'], {

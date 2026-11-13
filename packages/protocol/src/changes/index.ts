@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 export { buildChangesReadRequest, CHANGES_AFTER_CURSOR_HTTP_HEADER } from './readRequest.js';
+export { changeRowsAlreadyHeld } from './heldRevisions.js';
 import { z } from '../zodRuntimePolicy.js';
 
 import { SessionIdSchema } from '../sessions/idsV1.js';

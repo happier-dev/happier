@@ -84,14 +84,17 @@ vi.mock('@/sync/domains/state/storage', async () => {
 });
 vi.mock('@/sync/sync', async () => {
     const { storage: store } = await import('@/sync/domains/state/storageStore');
+    const refreshAutomations = async () => {
+        server.refreshes += 1;
+        if (server.pending) await server.pending;
+        if (server.fail) throw new Error('offline');
+        store.getState().applyAutomations(server.automations as AutomationDefinition[], null);
+    };
     return {
         sync: {
-            refreshAutomations: async () => {
-                server.refreshes += 1;
-                if (server.pending) await server.pending;
-                if (server.fail) throw new Error('offline');
-                store.getState().applyAutomations(server.automations as AutomationDefinition[], null);
-            },
+            refreshAutomations,
+            // The orchestrator's not-yet-read path; its read-once reuse is covered by the Sync composed test.
+            ensureAutomationsRead: refreshAutomations,
             fetchAutomationRuns: async (automationId: string) => {
                 server.runReads.push(automationId);
                 if (server.fail) throw new Error('offline');

@@ -1,4 +1,5 @@
 import { parseConnectedAccountCatalogPhysicalKeyV1, type ConnectedAccountCatalogKeyV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { homeAccountChangeRowsAlreadyHeld } from '@/sync/runtime/orchestration/homeAccountChange';
 import { serverAccountScopeKeySuffix, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { readConnectedAccountCatalog, type ConnectedAccountCatalogSourceAdmission } from '@/sync/api/account/apiConnectedAccountCatalog';
 import { createScopedSnapshotLoader, type ScopedLoadTarget } from '@/sync/engine/scope/scopedSnapshotLoader';
@@ -33,8 +34,14 @@ const loader = createScopedSnapshotLoader<Target>({
     invalidateTarget: ({ scope, catalogKey }, reason) => beginConnectedAccountCatalogLoad(scope, catalogKey, reason !== 'reload'),
     matchesWake: event => event.entityIds === undefined || event.entityIds.some(id =>
         id === 'self' || parseConnectedAccountCatalogPhysicalKeyV1(id) !== null),
-    prepareWake: (event, { catalogKey }) => event.entityIds === undefined || event.entityIds.some(id =>
-        id === 'self' || parseConnectedAccountCatalogPhysicalKeyV1(id) === catalogKey),
+    prepareWake: (event, { scope, catalogKey }) => (event.entityIds === undefined || event.entityIds.some(id =>
+        id === 'self' || parseConnectedAccountCatalogPhysicalKeyV1(id) === catalogKey))
+        // This client's own write echoes back; its acknowledged receipt already holds that revision.
+        && !homeAccountChangeRowsAlreadyHeld(event, id => parseConnectedAccountCatalogPhysicalKeyV1(id) === catalogKey,
+            () => {
+                const held = getConnectedAccountCatalogSnapshot(scope, catalogKey);
+                return held && 'revision' in held ? numericRevision(held.revision) : undefined;
+            }),
     onCredentialMutation: (_event, { scope, catalogKey }) => {
         applyConnectedAccountCatalogSnapshot(scope, catalogKey, { status: 'unavailable', reason: 'unauthorized' }, true);
         return true;
@@ -64,3 +71,6 @@ export function invalidateConnectedAccountCatalogAfterAcknowledgedMutation(scope
     });
 }
 export function resetConnectedAccountCatalogEngineForTests(): void { loader.resetForTests(); publicationGuards.clear(); }
+function numericRevision(revision: number | 'absent' | undefined): number | undefined {
+    return typeof revision === 'number' ? revision : undefined;
+}

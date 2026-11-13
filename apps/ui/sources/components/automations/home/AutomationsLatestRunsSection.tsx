@@ -112,11 +112,12 @@ function AutomationsLatestRunsWidget(props: HubSectionProps) {
         return () => { mountedRef.current = false; };
     }, [presented]);
     const inFlightRef = React.useRef(new Map<string, Promise<unknown>>());
-    const refresh = React.useCallback(async () => {
+    const load = React.useCallback(async (retry: boolean) => {
         setRead((current) => ({ ...current, reading: true }));
         try {
             // The Account's Automations, then the Run pages the newest Runs can come from.
-            await sync.refreshAutomations();
+            // Presenting reuses the list Sync already keeps current; only Retry reads it again.
+            await (retry ? sync.refreshAutomations() : sync.ensureAutomationsRead());
             if (!mountedRef.current) return;
             const automationsNow = Object.values(storage.getState().automations);
             await readMissingRunPages(selectLatestRunAutomationIds(automationsNow, HOME_WIDGET_BODY_ROWS), inFlightRef.current);
@@ -125,9 +126,10 @@ function AutomationsLatestRunsWidget(props: HubSectionProps) {
             if (mountedRef.current) setRead((current) => ({ reading: false, failed: true, readAt: current.readAt }));
         }
     }, []);
+    const refresh = React.useCallback(() => load(true), [load]);
     React.useEffect(() => {
-        if (presented) void refresh();
-    }, [presented, refresh]);
+        if (presented) void load(false);
+    }, [presented, load]);
 
     // An Automation that newly counts among the latest (another one ran) has its first page read once;
     // one whose page this device already holds asks nothing.

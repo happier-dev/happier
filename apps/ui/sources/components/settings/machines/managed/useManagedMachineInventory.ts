@@ -267,6 +267,7 @@ function createInventoryReader(serverId: string, accountId: string, homeId: stri
     return {
         serverId,
         isAwaitingApproval: () => awaitingApproval,
+        isRefreshing: () => refreshing,
         get: () => entry,
         getMachine: (id: string) => machinesById.get(id),
         getEnrolledMachine: (id: string) => machinesByEnrolledId.get(id),
@@ -317,6 +318,16 @@ function getInventoryReader(serverId: string, accountId: string, homeId: string,
         let retained = current?.accountId === accountId && current.homeId === homeId && current.managedId === managedId && current.enrolledMachineId === enrolledMachineId
             && (current.includeArchived ?? false) === includeArchived ? current : undefined;
         let admitted = false;
+        if (!managedId && !includeArchived && !enrolledMachineId && !retained) {
+            // The archive-including inventory already read the current list. A settled
+            // receipt admits its current rows; later wakes refresh this reader itself.
+            const inventory = inventories.get(inventoryKey(serverId, accountId, homeId, undefined, true));
+            const receipt = inventory?.isCurrent() && !inventory.isRefreshing() ? inventory.get() : undefined;
+            if (receipt?.status === 'ready' && receipt.asOf !== undefined) {
+                retained = { ...receipt, includeArchived: false, machines: receipt.machines.filter(machine => machine.archivedAt === undefined) };
+                admitted = true;
+            }
+        }
         if (enrolledMachineId && !retained) {
             for (const archived of [false, true]) {
                 const inventory = inventories.get(inventoryKey(serverId, accountId, homeId, undefined, archived));

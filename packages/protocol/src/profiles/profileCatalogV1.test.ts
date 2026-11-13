@@ -199,6 +199,28 @@ describe('complete opened Profile catalog', () => {
     expect(result.records[256]).toMatchObject({ record: { id: 'profile-256' }, revision: 3 });
   });
 
+  it('fences one census cut once: after the legacy source read when one follows, otherwise after enumeration', async () => {
+    let guardReads = 0;
+    let transferReads = 0;
+    let guardRevision = 4;
+    let transfer: ProfileTransferRowReadResponseV1 = { status: 'absent' };
+    const input = { mode: 'plain' as const, material: null,
+      readPage: async () => ({ status: 'listed' as const, rows: [], nextCursor: null, complete: true,
+        diagnostics: [], referenceGuardRevision: 4, transferControl: { status: 'absent' as const } }),
+      readReferenceGuard: async () => { guardReads++; return { status: 'ready' as const, revision: guardRevision }; },
+      readTransfer: async () => { transferReads++; return transfer; },
+      readSource: async () => ({}),
+    };
+    expect(await loadProfileCatalogV1(input)).toMatchObject({ status: 'ready', referenceGuardRevision: 4 });
+    expect({ guardReads, transferReads }).toEqual({ guardReads: 1, transferReads: 1 });
+    // A row or control change anywhere after the census cut is still refused.
+    expect(await loadProfileCatalogV1({ ...input, readSource: async () => { guardRevision = 5; return {}; } }))
+      .toEqual({ status: 'unavailable', reason: 'reference-conflict' });
+    guardRevision = 4;
+    expect(await loadProfileCatalogV1({ ...input, readSource: async () => { transfer = { status: 'deleted', revision: 1 }; return {}; } }))
+      .toEqual({ status: 'unavailable', reason: 'reference-conflict' });
+  });
+
   it('refuses a phantom insertion after enumeration instead of admitting an incomplete reference census', async () => {
     const result = await loadProfileCatalogV1({ mode: 'plain', material: null,
       readPage: async () => ({ status: 'listed', rows: [], diagnostics: [], nextCursor: null,

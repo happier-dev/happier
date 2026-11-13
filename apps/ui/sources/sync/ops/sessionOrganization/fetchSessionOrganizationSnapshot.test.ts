@@ -65,6 +65,26 @@ describe('fetchAndApplySessionOrganizationSnapshot', () => {
         expect(getStorage().getState().sessionOrganizationFolderAssignmentsCompleteByServerId['server-a']).toBe(true);
     });
 
+    it('reads one snapshot for concurrent boot callers of the same Account request, and again after a Home wake', async () => {
+        const { fetchAndApplySessionOrganizationSnapshot } = await import('./fetchSessionOrganizationSnapshot');
+        const { invalidateHomeAccountReadJoins } = await import('@/sync/runtime/orchestration/homeAccountChange');
+        const snapshot = { schemaVersion: 1, version: 3, pins: [], folders: [], folderAssignments: [], tags: [],
+            tagAssignments: [], orderEntries: [], labels: [] };
+        mocks.serverFetch.mockImplementation(async () => jsonResponse({ snapshot }));
+        const credentials = { token: 'token-a', secret: 'secret-a' };
+        const request = { includeAllFolderAssignments: true };
+        const received: string[] = [];
+        const [sync, reminders] = await Promise.all(['sync', 'reminders'].map(caller => fetchAndApplySessionOrganizationSnapshot({
+            credentials, serverId: 'server-a', request, onSnapshotReceived: () => received.push(caller) })));
+        expect({ reads: mocks.serverFetch.mock.calls.length, sync: sync?.version, reminders: reminders?.version, received })
+            .toEqual({ reads: 1, sync: 3, reminders: 3, received: ['sync', 'reminders'] });
+        // A Home wake separates later demand from the incumbent read.
+        const first = fetchAndApplySessionOrganizationSnapshot({ credentials, serverId: 'server-a', request });
+        invalidateHomeAccountReadJoins('server-a');
+        await Promise.all([first, fetchAndApplySessionOrganizationSnapshot({ credentials, serverId: 'server-a', request })]);
+        expect(mocks.serverFetch).toHaveBeenCalledTimes(3);
+    });
+
     it('publishes the store only for snapshot content, not around each fetch', async () => {
         const { getStorage } = await import('@/sync/domains/state/storageStore');
         const { countStoreNotifications } = await import('@/dev/testkit/performance/counts');

@@ -804,12 +804,13 @@ export function planSyncActionsFromChanges(
                 continue;
             }
             invalidateSettings = true;
-            if (readAccountSettingsVersionChangeV1(change) === null) {
+            // Private Account catalog rows live beside, not in, the Account profile, and no
+            // server Machine projection reads them (a fresh Account's first boot initializes
+            // several). Unknown Account ids keep the conservative Settings + Profile recovery.
+            if (readAccountSettingsVersionChangeV1(change) === null && !isPrivateAccountRowEntityId(change.entityId)) {
                 machineResourcesAffect = true;
                 managedMachineInventoryAffect = true;
             }
-            // Private Account catalog rows live beside, not in, the Account profile; unknown
-            // Account ids keep the conservative Settings + Profile recovery.
             if (!isPrivateAccountRowEntityId(change.entityId)) {
                 invalidateProfile = true;
                 // Settings versions carry no public identity or publication change.
@@ -1022,7 +1023,10 @@ export function homeAccountChangeAffectsArtifactKinds(event: HomeAccountChangeEv
  * them; rows without kind hints stay conservative.
  */
 export function plannedChangesAffectProfileCatalog(planned: PlannedChangeActions): boolean {
-    if (planned.invalidate.settings || planned.invalidate.savedSecretResources
+    // The catalog reads the Settings document (its legacy source), not other private Account rows.
+    const settingsDocument = planned.invalidate.settings && planned.changes.some(change =>
+        change.kind === 'account' && !isPrivateAccountRowEntityId(change.entityId));
+    if (settingsDocument || planned.invalidate.savedSecretResources
         || planned.changes.some(change => change.kind === 'account' && isProfileCatalogAccountChangeEntityIdV1(change.entityId))) return true;
     return plannedArtifactChangesMayBeKind(planned, launchProfileArtifactSharingAdapterV1.kind);
 }

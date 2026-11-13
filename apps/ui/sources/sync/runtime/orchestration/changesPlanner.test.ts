@@ -30,6 +30,8 @@ import * as changePlanner from './changesPlanner';
 import { ACP_CATALOG_ACCOUNT_ROW_KEY_V1 } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { MCP_SERVER_CATALOG_ACCOUNT_KEY_V1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
+import { PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { REMOTE_HOST_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
 import { savedSecretDisclosureActivityEntityIdV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { CONNECTED_PRESENTATION_ACCOUNT_KV_KEY_V1, CONNECTED_ACKNOWLEDGEMENTS_ACCOUNT_KV_KEY_V1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import { buildDeploymentAccountChangeV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -674,6 +676,48 @@ describe('planSyncActionsFromChanges', () => {
         // Unknown Account ids keep the conservative Settings + Profile recovery.
         const unknown = planSyncActionsFromChanges([buildChange({ cursor: 2, kind: 'account', entityId: 'future-account-row' })]);
         expect(unknown.invalidate.profile).toBe(true);
+    });
+
+    it('keeps private Account catalog rows (first-boot catalog initialization) off Machine and Profile catalog reads', async () => {
+        // A fresh Account's first boot initializes these rows; each write echoes back as an
+        // Account change. Server Machine projections and the Profile catalog read none of them.
+        const { publishHomeAccountChangeWake, subscribeHomeAccountChange } = await import('./homeAccountChange');
+        const rows = [PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1, buildConnectedAccountCatalogPhysicalKeyV1('configurations'),
+            buildConnectedAccountCatalogPhysicalKeyV1('purposes'), ACP_CATALOG_ACCOUNT_ROW_KEY_V1, MCP_SERVER_CATALOG_ACCOUNT_KEY_V1,
+            NOTIFICATION_CHANNELS_ACCOUNT_KV_KEY_V1, REMOTE_HOST_ACCOUNT_KV_KEY_V1];
+        const wakes: HomeAccountChangeEvent[] = [];
+        const dispose = subscribeHomeAccountChange(event => wakes.push(event), { includeCatchUpPending: true });
+        try {
+            let machineReads = 0;
+            let profileCatalogReads = 0;
+            for (const entityId of rows) {
+                const planned = planSyncActionsFromChanges([buildChange({ cursor: 1, kind: 'account', entityId, hint: { revision: 1 } })]);
+                machineReads += Number(planned.machineResourcesAffect) + Number(planned.managedMachineInventoryAffect);
+                profileCatalogReads += Number(plannedChangesAffectProfileCatalog(planned));
+                // Row readers keep the Settings admission and readiness recovery they consume today.
+                expect(planned.invalidate.settings, entityId).toBe(true);
+                expect(changePlanner.plannedSessionReadinessChanges(planned), entityId).toBe('all');
+                publishHomeAccountChangeWake('boot-home', { t: 'account-change', changeKinds: ['account'], entityIds: [entityId] }, 'socket');
+            }
+            for (const wake of wakes) {
+                machineReads += Number(wake.machineResourcesAffect !== false) + Number(wake.managedMachineInventoryAffect !== false);
+                profileCatalogReads += Number(changePlanner.homeAccountChangeAffectsProfileCatalog(wake));
+            }
+            expect(wakes).toHaveLength(rows.length);
+            expect({ machineReads, profileCatalogReads }).toEqual({ machineReads: 0, profileCatalogReads: 0 });
+            // The Settings document itself and unknown Account ids keep the conservative recovery.
+            for (const change of [buildChange({ cursor: 2, kind: 'account', entityId: 'self' }),
+                buildChange({ cursor: 2, kind: 'account', entityId: 'future-account-row' })]) {
+                for (const planned of [planSyncActionsFromChanges([change]),
+                    planSyncActionsFromChanges([buildChange({ cursor: 1, kind: 'account', entityId: PROVIDER_CONNECTIONS_ACCOUNT_KV_KEY_V1 }), change])]) {
+                    expect(planned.machineResourcesAffect, change.entityId).toBe(true);
+                    expect(planned.managedMachineInventoryAffect, change.entityId).toBe(true);
+                    expect(plannedChangesAffectProfileCatalog(planned), change.entityId).toBe(true);
+                }
+            }
+        } finally {
+            dispose();
+        }
     });
 
     it('refreshes linked-identity currentness from its dedicated row without waking encrypted Settings', () => {

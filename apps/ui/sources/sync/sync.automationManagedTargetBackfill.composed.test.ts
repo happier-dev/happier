@@ -62,6 +62,37 @@ describe('Automation managed target migration at authenticated UI startup', () =
         else expect(listReads).toBeGreaterThan(0);
     });
 
+    it('lets a mounted reader use the Account Automations already read instead of reading the list again', async () => {
+        let listReads = 0;
+        const automations = createWorkflowAutomationHttpBoundary();
+        const home = await restoreServerAccountForTest({
+            serverUrl: 'https://automation-read-once.example.test', accountId: 'read-once',
+            configureSocket: configureConnectedServerSocketBoundary,
+            request: async (input, init) => {
+                const url = new URL(String(input));
+                const path = url.pathname;
+                if (path.startsWith('/v1/features')) {
+                    return Response.json(createRootLayoutFeaturesResponse({ features: { automations: { enabled: true } } }));
+                }
+                if (path === '/v1/account/profile') return Response.json({ ...profileDefaults, id: 'read-once' });
+                if (path === '/v2/account/settings') return Response.json({ content: null, version: 0 });
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
+                if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
+                if (path === '/v3/automations') listReads++;
+                const reply = await automations.handle(url, init);
+                return reply ?? createEmptyAccountBootstrapHttpResponse(path, init);
+            },
+        });
+        disposeHome = home.dispose;
+        const { sync } = await import('@/sync/sync');
+        await sync.refreshAutomations();
+        const read = listReads;
+        expect(read).toBeGreaterThan(0);
+        // Two widgets mount (Home latest runs, a picker) after the Account list is read.
+        await Promise.all([sync.ensureAutomationsRead(), sync.ensureAutomationsRead()]);
+        expect(listReads - read).toBe(0);
+    });
+
     it('uses the exact selector when an all-known first page hides an unknown later row', async () => {
         const automations = createWorkflowAutomationHttpBoundary();
         for (let index = 0; index < 100; index++) {

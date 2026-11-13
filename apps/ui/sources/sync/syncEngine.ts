@@ -1551,6 +1551,8 @@ class Sync {
     private pendingOutboxOperationRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
     private todosSync: ViewDemandSync;
     private automationsSync: InvalidateSync;
+    /** The credentials whose Automation list this Sync last read; wakes keep it current. */
+    private automationsReadForCredentials: AuthCredentials | null = null;
     // Stronger demand survives status-only arrivals, awaits and the queue's retry.
     private automationRunRefreshPending = false;
     // Traversal identity is only an in-process write fence. The store owns the
@@ -8920,6 +8922,19 @@ class Sync {
         return this.refreshAutomationsAndAwait();
     }
 
+    /**
+     * A mounted reader needs the Account's current Automations, not another list read:
+     * once this Account's list was read, Account wakes keep it current, so join any
+     * pending pass instead. Writers that just changed a definition use refreshAutomations.
+     */
+    public ensureAutomationsRead = async (): Promise<void> => {
+        if (this.automationsReadForCredentials !== null && this.automationsReadForCredentials === this.credentials) {
+            await this.automationsSync.awaitQueue();
+            return;
+        }
+        await this.refreshAutomationsAndAwait();
+    }
+
     private requestAutomationsRefresh(options?: AutomationRefreshOptions, coalesced = false): void {
         if (!options?.summariesOnly) this.automationRunRefreshPending = true;
         // A Run wake during a summary-only HTTP read requires the existing trailing
@@ -9912,6 +9927,7 @@ class Sync {
                     storage.getState().refreshAutomationRunsWindow(automationId, runs, nextCursor),
             });
             this.automationDefinitionTraversalToken = result.traversalToken;
+            if (shouldContinue()) this.automationsReadForCredentials = credentials;
         } catch (error) {
             if (refreshRuns && shouldContinue()) this.automationRunRefreshPending = true;
             throw error;

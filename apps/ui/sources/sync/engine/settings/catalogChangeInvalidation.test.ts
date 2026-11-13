@@ -546,6 +546,21 @@ describe('private catalog Account-change admission', () => {
                     currentness: currentnessGets - currentness,
                   });
                 }
+                if (domain !== 'remote-hosts' && domain !== 'acp') {
+                  // This client's own write echoes back with the revision its receipt already holds.
+                  const echoReads = new Map(catalogReads);
+                  const hint = domain === 'providers' ? { providerConnections: true, revision }
+                    : domain === 'metadata' ? { connectedMetadata: true, domain: 'presentation', revision }
+                      : { connectedAccountCatalog: true, key: domain, revision };
+                  await applyFeedChange({ kind: 'account', entityId: owner.rowIds[0]!, hint });
+                  await new Promise<void>((resolve) => setImmediate(resolve));
+                  expect([...catalogReads].filter(([path]) => path.startsWith('/v1/account/entity-rows/')),
+                    'an echo of a held row revision reads no catalog row').toEqual([...echoReads].filter(([path]) => path.startsWith('/v1/account/entity-rows/')));
+                  revision++;
+                  await applyFeedChange({ kind: 'account', entityId: owner.rowIds[0]!, hint: { ...hint, revision } });
+                  await settleCatalog();
+                  expect((catalogReads.get(route) ?? 0) - (echoReads.get(route) ?? 0), 'a newer revision still reads its row').toBe(1);
+                }
                 console.info(
                   'SELFWAKE_COUNTS',
                   JSON.stringify({

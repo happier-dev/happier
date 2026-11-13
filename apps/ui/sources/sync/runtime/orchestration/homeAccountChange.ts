@@ -1,4 +1,4 @@
-import { ChangeKindSchema, HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1, isAccountCurrentnessEntityIdV1, type ChangeEntry } from '@happier-dev/protocol/changes';
+import { ChangeKindSchema, HOME_GOVERNANCE_ACCOUNT_CHANGE_ENTITY_ID_V1, changeRowsAlreadyHeld, isAccountCurrentnessEntityIdV1, type ChangeEntry } from '@happier-dev/protocol/changes';
 import type { EphemeralUpdate } from '@happier-dev/protocol/updates';
 import type { SessionSystemRecordInvalidationV1 } from '@happier-dev/protocol/sessions/board/changeHint';
 import type { UpdateBody } from '@happier-dev/protocol/updates';
@@ -38,6 +38,7 @@ import {
     planSessionReadinessWake,
     type SessionReadinessChanges,
 } from './changesPlanner';
+import { log } from '@/log';
 
 /**
  * Observers of the content-free Account-change wake this owner already receives
@@ -225,6 +226,17 @@ const homeAccountReadRevisions = new Map<string, number>();
 
 export function readHomeAccountReadRevision(serverId: string): number {
     return homeAccountReadRevisions.get(resolveServerProfileScopeIdForIdentifier(serverId)) ?? 0;
+}
+
+/**
+ * A consumed feed page names rows by revision. True when every row this reader owns is
+ * already held at that revision or later (its own acknowledged write), so the wake
+ * carries nothing new for it. Unknown, coarse and Settings ('self') wakes never qualify.
+ */
+export function homeAccountChangeRowsAlreadyHeld(event: HomeAccountChangeEvent,
+    owns: (entityId: string) => boolean, heldRevision: (entityId: string) => number | undefined): boolean {
+    if (!event.feedPageConsumed || !event.entityIds || !event.entityRevisions) return false;
+    return changeRowsAlreadyHeld(event.entityIds, event.entityRevisions, owns, heldRevision);
 }
 
 /** Forget raw read joins without asserting that a domain mutation committed. */
@@ -585,9 +597,10 @@ export function publishHomeAccountChangeForRouting(
         try {
             if (!hearsHomeAccountChange(event, reconnect)) continue;
             observer(event);
-        } catch {
+        } catch (error) {
             // One observer cannot suppress the wake for its siblings or for
-            // this owner's own session-cache refresh.
+            // this owner's own session-cache refresh, but its failure is visible.
+            log.log(`[home-account-change] Account change observer failed reason=${error instanceof Error ? error.name : typeof error}`);
         }
     }
     return event;
