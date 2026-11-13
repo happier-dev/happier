@@ -25,13 +25,12 @@ import { unwrapActionInputSchema } from './actionInputSchemaPath.js';
 import { isSettingsDeclarationActionIdV1 } from './settingsDeclarationActionFamily.js';
 import { readBuiltInSettingDeclarationV1 } from './settings/settingsDeclarations.js';
 import {
-  readApprovalConnectedAccountTarget, readApprovalDeclaredModelSelection, readApprovalModelReference, readApprovalPurposeBindings, readApprovalSavedSecretReference,
+  readApprovalAgentReference, readApprovalConnectedAccountTarget, readApprovalDeclaredModelSelection, readApprovalModelReference, readApprovalPurposeBindings, readApprovalSavedSecretReference,
 } from './actionApprovalValueReferences.js';
 import { ReachPlaceV1Schema } from '../reach/reachPlaceV1.js';
 import { ReachRuleDraftV1Schema } from '../reach/reachRuleV1.js';
 import { ReachRulesChangeV1Schema } from '../reach/reachRulesChangeV1.js';
 import { PrincipalRefV1Schema } from '../teams/principal.js';
-import { BackendTargetRefV2InputSchema, parseBackendTargetKeyV2, readBackendTargetRefV2 } from '../backends/targets/backendTargetRefV2.js';
 import {
   PluginChangePendingReviewResultSchema,
   type PluginChangePendingReviewResult,
@@ -232,23 +231,6 @@ function isTechnicalApprovalKey(key: string | undefined): boolean {
     || key === 'creationKey' || key === 'idempotencyKey';
 }
 
-/** An Agent target (a target key or a typed target) read as the Agent it names. */
-function readApprovalAgentReference(value: unknown): ApprovalActionReference | undefined {
-  const target = BackendTargetRefV2InputSchema.safeParse(value);
-  if (!target.success) return undefined;
-  try {
-    return { kind: 'agent', id: readBackendTargetRefV2(target.data).backendId };
-  } catch {
-    // Non-bundled identities are resolved by the host's Agent catalog, not by a protocol registry.
-    try {
-      const persisted = typeof target.data === 'string' ? parseBackendTargetKeyV2(target.data) : target.data;
-      if (persisted.kind === 'agent' && 'identity' in persisted) return { kind: 'agent', id: persisted.definitionId
-        ?? `${persisted.identity.pluginId}/${persisted.identity.localId}` };
-    } catch { /* Malformed references remain literal approval context. */ }
-  }
-  return undefined;
-}
-
 /** A typed resource audience names the person, Team or Group itself, rather than its discriminator and keys. */
 function readApprovalPrincipalReference(value: unknown): ApprovalActionReference | undefined {
   if (!isRecord(value)) return undefined;
@@ -261,9 +243,11 @@ function readApprovalPrincipalReference(value: unknown): ApprovalActionReference
   }
 }
 
-function describeApprovalReference(actionId: string, field: ActionInputFieldHint, values: readonly unknown[], input: unknown): ApprovalActionReference | undefined {
+function describeApprovalReference(actionId: string, field: ActionInputFieldHint, values: readonly unknown[], input: unknown, referenceForField?: NonNullable<ActionSpec['approvalPresentation']>['referenceForField']): ApprovalActionReference | undefined {
   if (values.length !== 1) return undefined;
   const value = values[0];
+  const declaredReference = referenceForField?.(field.path, value, input);
+  if (declaredReference) return declaredReference;
   if ((actionId === 'skills.rules.set' || actionId === 'mcp.rules.set') && field.path === 'change.write.place') {
     return describeApprovalPlaceReference(value);
   }
@@ -316,26 +300,6 @@ function describeApprovalReference(actionId: string, field: ActionInputFieldHint
   if (actionId.startsWith('registries.sources.') && field.path === 'sourceId') return { kind: 'registrySource', id: value };
   if (field.path === 'anchor' && isSettingsDeclarationActionIdV1(actionId) && readBuiltInSettingDeclarationV1(value)) {
     return { kind: 'setting', id: value };
-  }
-  if (actionId.startsWith('providers.')) {
-    const catalogSourceKey = isRecord(input) && typeof input.catalogSourceKey === 'string'
-      ? { catalogSourceKey: input.catalogSourceKey } : {};
-    if (field.path === 'connectionId') {
-      // A connection being created has no row to read yet: it reads by the name it is created with.
-      const name = isRecord(input) && typeof input.displayName === 'string' ? input.displayName.trim()
-        : isRecord(input) && input.action === 'createCustom' && isRecord(input.template) && typeof input.template.name === 'string'
-          ? input.template.name.trim() : '';
-      const agentTargetKey = isRecord(input) && typeof input.agentTargetKey === 'string' ? input.agentTargetKey : null;
-      return { kind: 'providerConnection', id: value.trim(), ...catalogSourceKey, ...(name ? { displayName: name } : {}),
-        ...(agentTargetKey ? { agentTargetKey } : {}) };
-    }
-    if (field.path === 'contributionKey') return { kind: 'providerContribution', id: value.trim() };
-    if (field.path === 'modelId' && isRecord(input) && typeof input.connectionId === 'string'
-        && typeof input.agentTargetKey === 'string') {
-      return { kind: 'providerModel', id: value, connectionId: input.connectionId,
-        agentTargetKey: input.agentTargetKey, ...catalogSourceKey };
-    }
-    if (field.path === 'agentTargetKey') return readApprovalAgentReference(value);
   }
   const key = field.path.split('.').at(-1);
   const reference = field.inputType && 'hostType' in field.inputType && field.inputType.hostType === 'session'
@@ -1027,7 +991,7 @@ export function describeApprovalActionFields(input: Readonly<{
       }
     }
     if (value === null) continue;
-    const reference = reachPlace ? describeApprovalPlaceReference(values[0]) : describeApprovalReference(input.actionId, field, values, presentationInput);
+    const reference = reachPlace ? describeApprovalPlaceReference(values[0]) : describeApprovalReference(input.actionId, field, values, presentationInput, review?.referenceForField);
     // A typed value that reads as one word or path ("Directory  /repo") needs no entries under it.
     const kindValue = field.widget === 'json' && !reference && !referenceFields.has(field.path) && !place?.success && values.length === 1
       ? readApprovalKindValue(values[0]) : null;
@@ -1035,7 +999,7 @@ export function describeApprovalActionFields(input: Readonly<{
     let entries = (rulesAction && field.path === 'change.rules' || field.path === 'where.rules') ? describeApprovalRuleEntries(values)
       : (rulesAction && field.path.startsWith('items.') || referenceFields.get(field.path)) && values.length > 1 ? values.map(value => ({
         label: field.title, value: String(value), depth: 0,
-        reference: describeApprovalReference(input.actionId, field, [value], presentationInput),
+        reference: describeApprovalReference(input.actionId, field, [value], presentationInput, review?.referenceForField),
       }))
       : field.widget === 'json' && !reference && !place?.success ? describeApprovalStructuredValue(values,
         input.actionId.startsWith('widgets.') && (['instance', 'group', 'fragment', 'definition'].includes(field.path)

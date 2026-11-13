@@ -1,3 +1,5 @@
+import type { ApprovalActionReference } from '../actionApprovalPresentation.js';
+import { readApprovalConnectedAccountTarget, readApprovalAgentReference } from '../actionApprovalValueReferences.js';
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { PROVIDER_ACTION_INPUT_SCHEMAS_V1 as inputs, PROVIDER_ACTION_OUTPUT_SCHEMAS_V1 as outputs,
   isProviderActionMachineRequiredV1, resolveProviderActionExecutionPlacementsV1, parseProviderActionRequestV1, type ProviderActionIdV1 } from '../../providers/providerActionsV1.js';
@@ -84,10 +86,38 @@ function projectProviderApprovalInput(id: ProviderActionIdV1, input: unknown): u
   };
   // These schema-admitted model choices and exact visibility operands are
   // reviewed privately; shared observations keep their existing projection.
-  for (const key of ['ref', 'hidden', 'scope', 'models', 'changes', 'selection', 'manualModels']) {
+  for (const key of ['ref', 'hidden', 'scope', 'models', 'changes', 'selection', 'manualModels', 'connectedAccountTarget']) {
     if (value[key] !== undefined) projected[key] = value[key];
   }
   return projected;
+}
+
+/** Providers owns whether an operand names a saved connection or a Connected Account. */
+function providerApprovalReference(path: string, value: unknown, rawInput: unknown): ApprovalActionReference | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined;
+  const input = readRecord(rawInput);
+  const template = readRecord(input.template);
+  const catalogSourceKey = typeof input.catalogSourceKey === 'string'
+    ? { catalogSourceKey: input.catalogSourceKey } : {};
+  if (path === 'connectionId') {
+    const account = readApprovalConnectedAccountTarget(input.connectedAccountTarget);
+    if (account) return account.reference;
+    // A connection being created has no row to read yet: it reads by the name it is created with.
+    const name = typeof input.displayName === 'string' ? input.displayName.trim()
+      : input.action === 'createCustom' && typeof template.name === 'string'
+        ? template.name.trim() : '';
+    const agentTargetKey = typeof input.agentTargetKey === 'string' ? input.agentTargetKey : null;
+    return { kind: 'providerConnection', id: value.trim(), ...catalogSourceKey, ...(name ? { displayName: name } : {}),
+      ...(agentTargetKey ? { agentTargetKey } : {}) };
+  }
+  if (path === 'contributionKey') return { kind: 'providerContribution', id: value.trim() };
+  if (path === 'modelId' && typeof input.connectionId === 'string'
+      && typeof input.agentTargetKey === 'string') {
+    return { kind: 'providerModel', id: value, connectionId: input.connectionId,
+      agentTargetKey: input.agentTargetKey, ...catalogSourceKey };
+  }
+  if (path === 'agentTargetKey') return readApprovalAgentReference(value);
+  return undefined;
 }
 
 const templateFields = (prefix: string) => [
@@ -126,7 +156,7 @@ function providerFields(id: ProviderActionIdV1): readonly ActionInputFieldHint[]
   if (id === 'providers.models.experimental.confirm') return [
     { path: 'modelId', title: 'Model', widget: 'text' },
     { path: 'agentTargetKey', title: 'Agent', widget: 'text', required: true },
-    { path: 'subject', title: 'Team credential and reviewed source', widget: 'json' },
+    { path: 'connectedAccountTarget', title: 'Connected Account', widget: 'json' },
     ...target,
   ];
   const fields: Partial<Record<ProviderActionIdV1, readonly ActionInputFieldHint[]>> = {
@@ -185,7 +215,7 @@ function providerSpec<Id extends ProviderActionIdV1>(id: Id, title: string, summ
     bindings: { rpcMethod: id, mcpToolName: id.replaceAll('.', '_') },
     inputSchema: inputs[id], outputSchema: outputs[id],
     projectObservationInput: projectProviderInputObservation, projectObservationOutput: projectProviderObservation,
-    approvalPresentation: { summary: () => summary, projectInput: input => projectProviderApprovalInput(id, input) },
+    approvalPresentation: { referenceForField: providerApprovalReference, summary: () => summary, projectInput: input => projectProviderApprovalInput(id, input) },
     inputHints, cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
   } satisfies ProviderActionSpec<Id>;
 }

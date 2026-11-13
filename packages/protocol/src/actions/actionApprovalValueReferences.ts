@@ -3,6 +3,7 @@ import type { InputTypeReferenceV1 } from '../inputs/inputTypes.js';
 import { QualifiedConnectedAccountPurposeBindingTargetV1Schema } from '../connect/connectedAccountPurposeBindings.js';
 import { buildQualifiedPluginContributionKey } from '../plugins/contributionKey.js';
 import { SessionModelSelectionV1Schema } from '../providers/selection/v1.js';
+import { BackendTargetRefV2InputSchema, parseBackendTargetKeyV2, readBackendTargetRefV2 } from '../backends/targets/backendTargetRefV2.js';
 import type { ApprovalActionReference } from './actionApprovalPresentation.js';
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -138,4 +139,21 @@ export function readApprovalSavedSecretReference(
     // An id the reference codec refuses stays literal approval context.
     return undefined;
   }
+}
+
+/** An Agent target (a target key or a typed target) read as the Agent it names. */
+export function readApprovalAgentReference(value: unknown): ApprovalActionReference | undefined {
+  const target = BackendTargetRefV2InputSchema.safeParse(value);
+  if (!target.success) return undefined;
+  try {
+    return { kind: 'agent', id: readBackendTargetRefV2(target.data).backendId };
+  } catch {
+    // Non-bundled identities are resolved by the host's Agent catalog, not by a protocol registry.
+    try {
+      const persisted = typeof target.data === 'string' ? parseBackendTargetKeyV2(target.data) : target.data;
+      if (persisted.kind === 'agent' && 'identity' in persisted) return { kind: 'agent', id: persisted.definitionId
+        ?? `${persisted.identity.pluginId}/${persisted.identity.localId}` };
+    } catch { /* Malformed references remain literal approval context. */ }
+  }
+  return undefined;
 }

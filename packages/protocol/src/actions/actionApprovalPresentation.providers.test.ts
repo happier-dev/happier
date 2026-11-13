@@ -52,6 +52,25 @@ async function readReview(actionId: string, input: unknown) {
 }
 
 describe('an approval review reads values by meaning, from the real approval an Action creates', () => {
+  it.each([
+    { target: undefined, reference: { kind: 'providerConnection', id: 'saved-provider' } },
+    { target: { kind: 'account', account: { service: { pluginId: 'happier.agent.muse', localId: 'muse-account' }, accountId: 'personal-muse' } },
+      reference: { kind: 'connectedAccount', id: 'personal-muse', service: 'happier.agent.muse/muse-account' } },
+    { target: poolTarget, reference: { kind: 'connectedAccount', id: poolTarget.groupId, service: 'happier.agent.codex/openai-codex', pool: true } },
+  ])('reviews an experimental model source as its declared reference kind ($reference.kind)', async ({ target, reference }) => {
+    const connectionId = target ? 'connected-source:catalog-identity' : 'saved-provider';
+    const { rows } = await readReview('providers.models.experimental.confirm', {
+      action: 'confirmExperimental', connectionId, connectedAccountTarget: target,
+      catalogSourceKey: 's'.repeat(43), expectedConnectionRevision: 0, agentTargetKey: codex,
+      modelId: 'experimental-model', compatibilityFingerprint: 'compatibility:v1:experimental',
+    });
+    expect(rows).toContainEqual(expect.objectContaining({ path: 'connectionId', reference: expect.objectContaining(reference) }));
+    if (target) {
+      expect(rows).toContainEqual(expect.objectContaining({ path: 'connectedAccountTarget', reference: expect.objectContaining(reference) }));
+      expect(rows.filter(row => row.kind === 'value' && row.reference?.kind === 'providerConnection')).toEqual([]);
+    }
+  });
+
   it('reads an Add Provider gateway without stored ids, empty operands or raw binding members', async () => {
     const { rows, readable } = await readReview('providers.connections.create_contribution', gateway(null));
     // An operand that carries nothing is not a reading; it stays an exact literal in Details.
