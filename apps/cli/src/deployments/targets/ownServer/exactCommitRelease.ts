@@ -9,6 +9,7 @@ import { inspectCommittedWorkspaceTargetMaterialization, materializeWorkspaceExp
 import { buildScmWorkspaceIntegrationWorkspaceExportArtifactsWithBlobProviderFromTransferEntries } from '@/scm/workspace/workspaceExportArtifacts';
 import { admitStoredComposeDefinition, type StoredComposeDefinition } from '@/workspaces/projectSetup/nativeComposeSource';
 import { hashWorkspaceFile } from '@/scm/workspace/workspaceExportPackaging/hashWorkspaceFile';
+import { rethrowDeploymentSourceAcquisitionFailure } from '@/deployments/deploymentFailure';
 import { resolveDeploymentSourcePathForHost } from './paths';
 import { createDeploymentSourceOperationLogCustody, type DeploymentSourceProgress } from './sourceOperationLog';
 export { resolveDeploymentSourcePathForHost } from './paths';
@@ -222,13 +223,13 @@ export function createDeploymentSourceMaterializationPort(input: Readonly<{
                     }
                     await fetchWorkspaceCommitRef({ sourcePath: admitted.sourcePath, cloneUrl,
                         ref: `refs/pull/${number}/head`, expectedCommitSha: admitted.commitSha,
-                        registry: input.registry, signal: options?.signal });
+                        registry: input.registry, signal: options?.signal }).catch(rethrowDeploymentSourceAcquisitionFailure);
                     await assertCurrent();
                 }
                 const exported = admitted.definition
                     ? await exportStoredDefinition({ ...admitted, definition: admitted.definition })
                     : await exportWorkspaceCommit({ sourcePath: admitted.sourcePath, commitSha: admitted.commitSha,
-                        artifactDirectory: admitted.artifactDirectory, registry: input.registry, signal: options?.signal });
+                        artifactDirectory: admitted.artifactDirectory, registry: input.registry, signal: options?.signal }).catch(rethrowDeploymentSourceAcquisitionFailure);
                 try {
                     await assertCurrent();
                     const manifestFingerprint = exported.workspaceExportArtifacts.manifest.fingerprint!;

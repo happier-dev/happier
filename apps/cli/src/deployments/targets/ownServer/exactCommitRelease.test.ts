@@ -21,6 +21,8 @@ import { createScmBackendRegistry } from '@/scm/registry';
 import { readDeploymentSourceIdentityForHost, resolveDeploymentSourcePathForHost } from './paths';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import axios from 'axios';
+import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
+import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
 const git = (cwd: string, args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim();
 
@@ -277,6 +279,40 @@ describe('exact deployment source through the public port', () => {
             await release.abort();
         });
     });
+    it.each(['pull-request', 'commit'] as const)('reports an unavailable %s Source and recovers after its checkout is restored', async mode => {
+        await withCommittedSource(async source => {
+            const base = join(source.sourcePath, '..', 'base.git');
+            git(source.sourcePath, ['init', '--bare', '--quiet', base]);
+            const cloneUrl = 'https://github.example.test/base/project.git';
+            git(source.sourcePath, ['remote', 'add', 'base', cloneUrl]);
+            git(source.sourcePath, ['config', `url.${pathToFileURL(base).href}.insteadOf`, cloneUrl]);
+            git(source.sourcePath, ['push', 'base', `${source.commitSha}:refs/pull/7/head`]);
+            const repository = { provider: { id: 'github', kind: 'github' as const, displayName: 'GitHub', baseUrl: 'https://github.example.test' },
+                repository: { nameWithOwner: 'base/project', cloneUrl }, protocol: 'https' as const };
+            const registry = createDeploymentGitRegistry();
+            const port = createDeploymentSourceMaterializationPort({ registry, async admit() {
+                return { ...source, ...(mode === 'pull-request' ? { pullRequestHead: { number: 7 }, repository } : {}) };
+            } });
+            const held = `${source.sourcePath}.held`;
+            await rename(source.sourcePath, held);
+            try {
+                const error = await port.materialize(request).catch(error => error);
+                expect(error).toMatchObject({ code: 'deployment_source_unavailable' });
+                const failure = projectDeploymentFailure(error.code, error);
+                expect(failure.failureCause).toMatchObject({ errorCode: 'git_selection_unavailable' });
+                const recovery = readDeploymentRefusalRecoveryV1(failure.errorCode, failure.details,
+                    mode === 'pull-request' ? { pullRequestHead: true } : undefined);
+                expect(recovery?.nextAction.destination).toBe('source');
+                if (mode === 'pull-request') expect(recovery?.remedy).toMatch(/pull request/i);
+                await expect(resolveWorkspaceCommitRef({ sourcePath: source.sourcePath, ref: 'HEAD', registry }))
+                    .rejects.toMatchObject({ code: 'git_selection_unavailable' });
+            } finally { await rename(held, source.sourcePath); }
+            const restored = await port.materialize(request);
+            expect(await readFile(join(restored.rootPath, 'compose.yaml'), 'utf8')).toContain('example/commit-A');
+            expect(git(source.sourcePath, ['rev-parse', 'HEAD'])).toBe(source.commitSha);
+            await restored.abort();
+        });
+    });
     it('fetches the base PR ref and refuses a different approved SHA, advanced head, missing ref or withdrawn base access before materialization', async () => {
         await withCommittedSource(async source => {
             const base = join(source.sourcePath, '..', 'base.git');
@@ -482,7 +518,7 @@ describe('exact deployment source through the public port', () => {
             const port = createDeploymentSourceMaterializationPort({ registry: createDeploymentGitRegistry(), async admit() { return selected; } });
             for (const commitSha of ['HEAD', source.commitSha.slice(0, 12), '0'.repeat(40)]) {
                 selected = { ...source, commitSha };
-                await expect(port.materialize(request)).rejects.toMatchObject({ code: 'git_selection_unavailable' });
+                await expect(port.materialize(request)).rejects.toMatchObject({ code: 'deployment_source_unavailable' });
             }
             selected = source;
             const release = await port.materialize(request);

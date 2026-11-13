@@ -1,3 +1,4 @@
+import { rethrowDeploymentSourceAcquisitionFailure } from './deploymentFailure';
 import { refuseDeploymentAuthorization } from './deploymentAuthorizationFailure';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import { readHostAdmittedReviewedChildV1, readHostReviewedChildOriginalAuthorizationV1 } from '@happier-dev/protocol/actions/actionExecutor';
@@ -129,7 +130,8 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
             if (sourceRevision === undefined) return refuse('deployment_source_unavailable');
             let sha = request.sha;
             if (!sha) {
-                if (workspace) sha = await resolveWorkspaceCommitRef({ sourcePath: workspace.rootPath, ref: definition.ref, signal });
+                if (workspace) sha = await resolveWorkspaceCommitRef({ sourcePath: workspace.rootPath, ref: definition.ref, signal })
+                    .catch(rethrowDeploymentSourceAcquisitionFailure);
                 else if (sourceRepository && host.resolveRepositoryRef) {
                     sha = await host.resolveRepositoryRef(sourceRepository, definition.ref, request.context);
                 } else return refuse('deployment_source_unavailable');

@@ -1,7 +1,15 @@
 import type { ScmBackendRegistry } from '../registry';
 import { runWithScmBackendRegistryLease } from '../scmBackendCatalog';
-import { resolveScmSelection } from '../resolveScmSelection';
+import { resolveScmSelectionOutcome } from '../resolveScmSelection';
 import { buildScmWorkspaceIntegrationWorkspaceExportArtifactsWithBlobProviderFromTransferEntries } from './workspaceExportArtifacts';
+
+/** Missing or unreadable source is not an unsupported backend capability. */
+async function requireWorkspaceCommitSelection(sourcePath: string, registry: ScmBackendRegistry) {
+    const outcome = await resolveScmSelectionOutcome({ workingDirectory: sourcePath, cwd: sourcePath, registry });
+    if (outcome.kind === 'selected') return outcome;
+    throw Object.assign(new Error('SCM source is unavailable',
+        outcome.kind === 'undetermined' ? { cause: outcome.error } : undefined), { code: 'git_selection_unavailable' });
+}
 
 /** Configured-remote authority and fetched-ref verification stay with the selected SCM backend. */
 export async function fetchWorkspaceCommitRef(input: Readonly<{
@@ -10,9 +18,9 @@ export async function fetchWorkspaceCommitRef(input: Readonly<{
 }>): Promise<void> {
     await runWithScmBackendRegistryLease(input.registry, async registry => {
         input.signal?.throwIfAborted();
-        const resolved = await resolveScmSelection({ workingDirectory: input.sourcePath, cwd: input.sourcePath, registry });
-        const fetch = resolved?.selection.backend.workspaceIntegration?.fetchCommitRef;
-        if (!resolved || !fetch) throw Object.assign(new Error('SCM ref fetch is unavailable'), { code: 'unsupported' });
+        const resolved = await requireWorkspaceCommitSelection(input.sourcePath, registry);
+        const fetch = resolved.selection.backend.workspaceIntegration?.fetchCommitRef;
+        if (!fetch) throw Object.assign(new Error('SCM ref fetch is unavailable'), { code: 'unsupported' });
         await fetch({ context: resolved.context, cloneUrl: input.cloneUrl,
             ref: input.ref, expectedCommitSha: input.expectedCommitSha, signal: input.signal });
         input.signal?.throwIfAborted();
@@ -25,9 +33,9 @@ export async function resolveWorkspaceCommitRef(input: Readonly<{
 }>): Promise<string> {
     return runWithScmBackendRegistryLease(input.registry, async registry => {
         input.signal?.throwIfAborted();
-        const resolved = await resolveScmSelection({ workingDirectory: input.sourcePath, cwd: input.sourcePath, registry });
-        const resolver = resolved?.selection.backend.workspaceIntegration?.resolveCommitRef;
-        if (!resolved || !resolver) throw Object.assign(new Error('SCM ref resolution is unavailable'), { code: 'unsupported' });
+        const resolved = await requireWorkspaceCommitSelection(input.sourcePath, registry);
+        const resolver = resolved.selection.backend.workspaceIntegration?.resolveCommitRef;
+        if (!resolver) throw Object.assign(new Error('SCM ref resolution is unavailable'), { code: 'unsupported' });
         const sha = await resolver({ context: resolved.context, ref: input.ref, signal: input.signal });
         input.signal?.throwIfAborted();
         if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/u.test(sha)) throw Object.assign(new Error('An immutable commit is required'), { code: 'git_selection_unavailable' });
@@ -48,9 +56,9 @@ export async function exportWorkspaceCommit(input: Readonly<{
     }
     return runWithScmBackendRegistryLease(input.registry, async registry => {
         input.signal?.throwIfAborted();
-        const resolved = await resolveScmSelection({ workingDirectory: input.sourcePath, cwd: input.sourcePath, registry });
-        const exporter = resolved?.selection.backend.workspaceIntegration?.exportCommit;
-        if (!resolved || !exporter) throw Object.assign(new Error('SCM commit export is unavailable'), { code: 'unsupported' });
+        const resolved = await requireWorkspaceCommitSelection(input.sourcePath, registry);
+        const exporter = resolved.selection.backend.workspaceIntegration?.exportCommit;
+        if (!exporter) throw Object.assign(new Error('SCM commit export is unavailable'), { code: 'unsupported' });
         const exported = await exporter({ context: resolved.context, commitSha: input.commitSha,
             artifactDirectory: input.artifactDirectory, signal: input.signal });
         try {

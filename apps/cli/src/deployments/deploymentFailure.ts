@@ -25,6 +25,16 @@ export function privateServiceForwardAcquisitionError(error: unknown): Error & {
     return Object.assign(new Error(code, { cause: projectDeploymentFailure(code, error, 'deployment.reference.acquire') }), { code });
 }
 
+/** Source acquisition translates SCM selection failures once; capability and stale-approval refusals keep their codes. */
+export function rethrowDeploymentSourceAcquisitionFailure(error: unknown): never {
+    if (error instanceof Error && 'code' in error && error.code === 'git_selection_unavailable') {
+        throw Object.assign(new Error('Deployment source is unavailable', {
+            cause: projectDeploymentFailure('deployment_source_unavailable', error, 'deployment.source.acquire'),
+        }), { code: 'deployment_source_unavailable' });
+    }
+    throw error;
+}
+
 /** One receipt projection for provider failures, including their effect provenance. */
 export function projectDeploymentReceiptFailure(result: ActionExecuteFailure,
     fallbackPhase: DeploymentReceiptFailureV1['phase']): DeploymentReceiptFailureV1 {
