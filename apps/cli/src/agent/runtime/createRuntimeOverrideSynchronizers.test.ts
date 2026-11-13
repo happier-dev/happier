@@ -1,3 +1,7 @@
+import { SessionMessageMetaSchema } from '@happier-dev/protocol/sessions/messages/sessionMessageMeta';
+import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
+import type { RuntimeConfigUpdateOutcomeV1 } from '@happier-dev/agents';
+import type { RuntimeTranscriptProjectionSession } from './session/transcripts/projectRuntimeTranscriptEvent';
 import { describe, expect, it, vi } from 'vitest';
 import { setImmediate } from 'node:timers/promises';
 
@@ -7,6 +11,38 @@ import { createRuntimeOverrideSynchronizers } from './createRuntimeOverrideSynch
 import { writeSessionCapabilitySelectionToMetadataV1 } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
 
 describe('createRuntimeOverrideSynchronizers', () => {
+  it.each(['claude_model_option_unsupported', 'claude_provider_model_option_unsupported', null])(
+    'persists a readable configuration refusal with its sanitized typed cause (%s)', async (code) => {
+      const message = "Model 'muse-spark-1.2' does not support this Claude configuration option.";
+      // Recorded Claude producer shape: no option id/value or details are supplied.
+      const outcome: RuntimeConfigUpdateOutcomeV1 = { status: 'unsupported', reason: message,
+        ...(code ? { diagnostic: { code, severity: 'error', message } } : {}) };
+      const enqueueAgentMessageCommitted = vi.fn<NonNullable<RuntimeTranscriptProjectionSession['enqueueAgentMessageCommitted']>>(async () => ({ persisted: true, delivered: true }));
+      const session = { sessionId: 'config-refusal', enqueueAgentMessageCommitted,
+        getMetadataSnapshot: () => createTestMetadata({ sessionConfigOptionOverridesV1: {
+          v: 1, updatedAt: 11, overrides: { reasoning_effort: { value: 'minimal', updatedAt: 11 } },
+        } }) };
+      const sync = createRuntimeOverrideSynchronizers({ agentTargetKey: 'agent:happier.agent.claude/claude', session,
+        runtime: { setSessionMode: async () => {}, setSessionModelSelection: async () => {},
+          setSessionConfigOption: async () => outcome }, isStarted: () => true,
+        configOptionRejectionTranscript: { session, provider: 'claude' } });
+      sync.syncFromMetadata();
+      await sync.flushPendingAfterStart();
+      // A settled refusal writes one row, even when the unchanged intent is seen again.
+      sync.syncFromMetadata();
+      await sync.flushPendingAfterStart();
+      expect(enqueueAgentMessageCommitted).toHaveBeenCalledTimes(1);
+      const call = enqueueAgentMessageCommitted.mock.calls[0]!;
+      expect(call[1]).toEqual({ type: 'message', message });
+      const meta = createStoredReadSchema(SessionMessageMetaSchema).parse(call[2].meta ?? {});
+      if (code) {
+        expect(meta).toMatchObject({ source: 'runtime', runtimeIssueCode: code,
+          runtimeIssueV1: { code, source: 'agent_session_error', sanitizedPreview: message } });
+      } else {
+        expect(meta.runtimeIssueV1).toBeUndefined();
+      }
+    });
+
   it('holds the existing before-prompt override flush while a capability apply restart is in flight', async () => {
     let metadata = createTestMetadata();
     let release!: () => void;

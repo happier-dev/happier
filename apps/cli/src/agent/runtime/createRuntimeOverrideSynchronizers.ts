@@ -9,6 +9,7 @@ import {
   type RuntimeConfigUpdateOutcomeV1,
 } from '@happier-dev/agents';
 
+import { classifyPrimarySessionRuntimeIssue } from './session/errors/classifyPrimarySessionRuntimeIssue';
 import { createSessionConfigOptionOverrideSynchronizer } from './sessionConfigOptionOverrideSync';
 import { createSessionModeOverrideSynchronizer } from './sessionModeOverrideSync';
 import { createModelTransitionMetadataObserver } from './modelTransitionMetadataObserver';
@@ -154,9 +155,14 @@ export function createRuntimeOverrideSynchronizers(params: Readonly<{
     runtime: params.runtime,
     isStarted: params.isStarted,
     onConfigOptionRejected: rejectionTranscript ? async ({ outcome }) => {
+      const issue = outcome.diagnostic ? classifyPrimarySessionRuntimeIssue({
+        cause: 'session_error', error: outcome.diagnostic, occurredAt: Date.now(), provider: rejectionTranscript.provider,
+      }) : null;
       await commitRequiredRuntimeTranscriptMessage({
         ...rejectionTranscript,
-        body: { type: 'message', message: outcome.reason || 'The Agent could not apply this configuration change.' },
+        body: { type: 'message', message: issue?.sanitizedPreview || outcome.reason || 'The Agent could not apply this configuration change.' },
+        ...(issue ? { meta: { source: 'runtime', runtimeIssueCode: issue.code,
+          runtimeIssueSource: issue.source, runtimeIssueV1: issue } } : {}),
         localId: randomUUID(),
         provenance: { kind: 'non_dependent', source: 'background' },
         eventKind: 'session-configuration-rejected',
