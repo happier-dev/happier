@@ -4487,7 +4487,8 @@ describe('usage query captured Resource adapter', () => {
         const observer = new WeakRef(onProgress);
         let aborted = false;
         try {
-          await readUiUsageQueryBatch(captured, { queries: [query] }, controller.signal, undefined, { onProgress });
+          // Callers own this readonly options object; retirement must not mutate it.
+          await readUiUsageQueryBatch(captured, { queries: [query] }, controller.signal, undefined, Object.freeze({ onProgress }));
         } catch (error) {
           aborted = error instanceof Error && error.name === 'AbortError';
         }

@@ -1296,6 +1296,11 @@ export async function readUiUsageQueryBatch(
         retainedProjection?: UsageQueryReprojection;
     }>,
 ): Promise<UsageQueryBatchResult> {
+    // Keep the caller's object untouched. Hermes can retain Babel's optional-
+    // chain temporaries beside a cached projection, so retire the observer by
+    // clearing this private cell rather than only the parameter binding.
+    const readOptions = options ? { ...options } : undefined;
+    options = undefined;
     requireCurrent(context, signal);
     const { queries } = normalizeUsageQueryBatchInput(input);
     const calendarQueryKeys = new Set(queries.filter(query => query.includeAccounting && (query.includeActivity || query.includeModelTimeline))
@@ -1309,18 +1314,22 @@ export async function readUiUsageQueryBatch(
     const requests = reads.map(read => read.query);
     const periods = new Map([...queries.map(query => [getUsageQueryKey(query), resolveUsageQueryPeriod(query, accountingInstants.get(getUsageQueryKey(query))!)] as const),
         ...reads.map(read => [getUsageQueryKey(read.query), read.period] as const)]);
-    if (options?.retainedProjection) {
-        const retainedProjection = options.retainedProjection;
+    if (readOptions?.retainedProjection) {
+        const retainedProjection = readOptions.retainedProjection;
         let quota = readOpenedQuota(context, previous);
         const reproject: UsageQueryReprojection = projectionSignal => retainedProjection(projectionSignal, { quota, nowMs: accountingNowMs });
         let progress: void | Promise<void> = undefined;
-        quota = await readOpenedQuotaHistory(context, queries.filter(query => query.includeQuota !== false && query.includeQuotaHistory)
-            .map(query => periods.get(getUsageQueryKey(query))!), accountingNowMs, signal, value => {
-                quota = value;
-                progress = options.onProgress?.(reproject);
-            }, previous, quota, options.allowanceRecordIds);
-        await progress;
-        return reproject(signal);
+        try {
+            quota = await readOpenedQuotaHistory(context, queries.filter(query => query.includeQuota !== false && query.includeQuotaHistory)
+                .map(query => periods.get(getUsageQueryKey(query))!), accountingNowMs, signal, value => {
+                    quota = value;
+                    progress = readOptions.onProgress?.(reproject);
+                }, previous, quota, readOptions.allowanceRecordIds);
+            await progress;
+            return reproject(signal);
+        } finally {
+            readOptions.onProgress = undefined;
+        }
     }
     const priorAccounting = new Map(previous?.results.flatMap(slice => [
         [slice.key, { value: slice.accounting, asOfMs: slice.sources.find(source => source.source === 'accounting')?.asOfMs }] as const,
@@ -1426,10 +1435,10 @@ export async function readUiUsageQueryBatch(
     };
     const publish = (): void => {
         projectionPending = true;
-        if (!options?.onProgress) return;
+        if (!readOptions?.onProgress) return;
         // The Resource coalesces source progress. Compose only the revisions
         // that its existing drain consumes.
-        progress = options.onProgress(reproject);
+        progress = readOptions.onProgress(reproject);
     };
     // Available preference-backed facts can progress while another source's
     // read remains pending. The Account settings owner remains the authority.
@@ -1439,7 +1448,7 @@ export async function readUiUsageQueryBatch(
             focusedScope: state?.settingsScope, focusedSettings: state?.settings ?? settingsDefaults }).usageNightHoursV1;
     };
     let observedNightHours = readNightHours();
-    const unwatchNightHours = options?.onProgress ? subscribeRegisteredStorageState(() => {
+    const unwatchNightHours = readOptions?.onProgress ? subscribeRegisteredStorageState(() => {
         if (!context.accountLifetime.isCurrent() || signal?.aborted) return;
         const next = readNightHours();
         if (sameStrictJsonValue(observedNightHours, next)) return;
@@ -1519,7 +1528,7 @@ export async function readUiUsageQueryBatch(
                             howYouWork = [...howYouWorkByQuery.values()];
                         }
                         publish();
-                    }, { readUnconverted: options?.readUnconvertedHistory,
+                    }, { readUnconverted: readOptions?.readUnconvertedHistory,
                         coverage: (selected, notRead) => history.coverage(selected,
                             readsUnconvertedTranscriptsOnOpen(query) ? 0 : notRead),
                         converted: id => history.converted(id),
@@ -1558,9 +1567,9 @@ export async function readUiUsageQueryBatch(
         (async () => {
             // Acquisition follows the changed input, independently of whether
             // its retained observation is complete, stale, unavailable or failed.
-            if (quotaQueries.length && !options?.retainAllowance) {
+            if (quotaQueries.length && !readOptions?.retainAllowance) {
                 const settled = await readOpenedQuotaHistory(context, quotaQueries.filter(query => query.includeQuotaHistory).map(query => periods.get(getUsageQueryKey(query))!), accountingNowMs, signal,
-                    value => { quota = value; publish(); }, previous, quota, options?.allowanceRecordIds);
+                    value => { quota = value; publish(); }, previous, quota, readOptions?.allowanceRecordIds);
                 if (settled !== quota) { quota = settled; publish(); }
             }
         })(),
@@ -1582,9 +1591,9 @@ export async function readUiUsageQueryBatch(
         settleUsageQueryProjection(accounting, result);
         return result;
     } finally {
-        // A retained projection can outlive cancellation/failure too. Release
-        // the finite observer and its Resource frame on every settlement.
-        options = undefined;
+        // Native optional-chain lowering can retain aliases of readOptions.
+        // Clear the observer on its private cell, including on cancellation.
+        if (readOptions) readOptions.onProgress = undefined;
         sessionCurrentnessClosed = true;
         unwatchNightHours?.();
         // Construction is only a module import and local observation capture;
