@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   applyProviderDefaultModelSelectionV1,
+  readAgentDefaultModelSelectionV1,
   ProviderBoundModelRefSchema,
   SessionActiveModelSelectionV1Schema,
   SessionAppliedModelV1Schema,
@@ -863,6 +864,20 @@ describe('provider model selection contracts', () => {
 });
 
 describe('readAgentDefaultModelSelectionV1', () => {
+  it.each([false, true])('reads an external Agent default by contribution identity when saved=%s', saved => {
+    const target = { kind: 'agent', identity: { pluginId: 'acme.project-launch', localId: 'agent' } } as const;
+    const key = 'agent:acme.project-launch/agent';
+    const selection = { v: 1, ref: { agentTargetKey: key, providerConnectionId: null, modelId: 'native-model' }, updatedAt: 1 };
+    const defaults = saved ? { [key]: selection } : undefined;
+    expect(readAgentDefaultModelSelectionV1(defaults, target)).toEqual(saved ? selection : null);
+    expect(readAgentDefaultModelSelectionV1(defaults, key)).toEqual(saved ? selection : null);
+  });
+  it.each(['agent:codex', { kind: 'builtInAgent', agentId: 'codex' }] as const)(
+    'preserves a saved bundled Agent default for historical routing input %j', target => {
+      const key = 'agent:happier.agent.codex/codex';
+      const selection = { v: 1, ref: { agentTargetKey: key, providerConnectionId: null, modelId: 'native-model' }, updatedAt: 1 };
+      expect(readAgentDefaultModelSelectionV1({ [key]: selection }, target)).toEqual(selection);
+    });
   it('reads the Account default model for an Agent target by its canonical key, and nothing for others', async () => {
     const { readAgentDefaultModelSelectionV1 } = await import('./v1.js');
     const key = 'agent:happier.agent.codex/codex';

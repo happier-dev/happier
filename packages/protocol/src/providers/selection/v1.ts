@@ -9,7 +9,7 @@ import {
 } from '../../sessions/metadata/metadataOverridesV1.js';
 import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderModelIdSchema } from '../ids.js';
 import { NonBlankOpaqueIdentifierSchema, readNonBlankOpaqueIdentifier } from '../../strings/opaqueIdentifier.js';
-import { buildBackendTargetKeyV2, readBackendTargetRefV2, type BackendTargetRefV2Input } from '../../backends/targets/backendTargetRefV2.js';
+import { resolveBackendTargetKeyV2, type BackendTargetRefV2Input } from '../../backends/targets/backendTargetRefV2.js';
 
 const NativeModelRefSchema = lazyZodSchema(() => z.strictObject({
   agentTargetKey: ProviderAgentTargetKeySchema,
@@ -49,7 +49,7 @@ export const ProviderDefaultModelSelectionsByAgentTargetKeyV1StoredSchema = crea
  */
 export function readAgentDefaultModelSelectionV1(storedDefaults: unknown, backendTarget: BackendTargetRefV2Input): SessionModelSelectionV1 | null {
   const defaults = ProviderDefaultModelSelectionsByAgentTargetKeyV1StoredSchema.parse(storedDefaults ?? {});
-  return defaults[buildBackendTargetKeyV2(readBackendTargetRefV2(backendTarget))] ?? null;
+  return defaults[resolveBackendTargetKeyV2(backendTarget)] ?? null;
 }
 
 export const ProviderDefaultModelSelectionMutationV1Schema = lazyZodSchema(() => z.strictObject({
