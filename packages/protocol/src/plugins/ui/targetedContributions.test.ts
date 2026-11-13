@@ -80,6 +80,31 @@ const admittedSnapshot = {
 } as const;
 
 describe('targeted Host API contribution projection', () => {
+  it('projects admitted contributor order into the strict wire order across prefix plugin ids', () => {
+    const original = admittedSnapshot.points[0].protocols[0].contributions[0];
+    // Admission compares its own keys with localeCompare. With a prefix plugin
+    // id, that order can differ from the wire's ordinal identity tuple order.
+    const contributions = ['acme.provider.qa', 'acme.provider'].map(pluginId => ({
+      contributor: { ...original.contributor, pluginId, contributionId: 'source' },
+      protocol: original.protocol,
+      descriptor: { pluginId },
+      operations: [],
+      surfaces: [],
+    }));
+    const snapshot = projectPluginUiTargetedContributionsV1({
+      target: admittedSnapshot.target,
+      snapshots: [{
+        point: { pointId: 'connection', protocol: original.protocol },
+        snapshot: { target: { ...admittedSnapshot.target, pointId: 'connection' }, contributions },
+      }],
+      readSourceCustody: () => original.contributor.sourceCustody,
+    });
+    expect(PluginUiTargetedContributionsV1Schema.parse(snapshot).points[0]?.protocols[0]?.contributions
+      .map(contribution => contribution.contributor.pluginId)).toEqual(['acme.provider', 'acme.provider.qa']);
+    expect(contributions.map(contribution => contribution.contributor.pluginId))
+      .toEqual(['acme.provider.qa', 'acme.provider']);
+  });
+
   it('projects each admitted role with its own physical occurrence and custody', () => {
     const source = admittedSnapshot.points[0].protocols[0].contributions[0];
     const accountCustody = {

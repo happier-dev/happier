@@ -31,6 +31,7 @@
  */
 
 import * as React from 'react';
+import { TriageSourceReadFailureDetails } from '@happier-dev/triage-sources/ui';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import { createReviewCommentLinkedIssueIdV1 } from '@happier-dev/plugin-sdk/reviews';
 import {
@@ -167,7 +168,7 @@ function PageFailureBanner({
   const text = usePluginTranslation();
   if (state.failure === null) return null;
   return (
-    <Banner
+    <Stack gap="small"><Banner
       tone="warning"
       title="Showing what was read so far"
       titleKey="plugins.gitlab.ui.partial"
@@ -175,7 +176,7 @@ function PageFailureBanner({
         state.failure,
         text('plugins.gitlab.ui.readFailed', 'GitLab could not complete this read.'), text,
       )}
-    />
+    /><TriageSourceReadFailureDetails failures={[state.failure]} /></Stack>
   );
 }
 
@@ -339,8 +340,9 @@ function GitlabStoryChanges({ input }: Readonly<{ input: TriageDetailSurfaceInpu
   return <TriageDetailChangeSummary rows={state.kind === 'ready' ? rows : []}
     more={state.canLoadMore || state.incomplete !== null}>
     {state.kind === 'idle' || state.kind === 'loading' ? <LoadingState title="Reading changed files" titleKey="plugins.gitlab.ui.readingFiles" />
-      : state.kind === 'unavailable' ? <ErrorState title="The changed files are unavailable" titleKey="plugins.gitlab.ui.filesUnavailable"
+      : state.kind === 'unavailable' ? <><ErrorState title="The changed files are unavailable" titleKey="plugins.gitlab.ui.filesUnavailable"
         description={failureDescription(state.failure, text('plugins.gitlab.ui.readFailed', 'GitLab could not complete this read.'), text)} />
+        <TriageSourceReadFailureDetails failures={[state.failure]} /></>
       : <><PageFailureBanner state={state} />
         {controller.diffLimitStatus === 'reported' ? null : <Banner tone="warning" title="Diff-limit status unknown" titleKey="plugins.gitlab.ui.diffLimitUnknown"
           description="This deployment did not say whether it left any file out, so this list is not a claim that the diff is whole." descriptionKey="plugins.gitlab.ui.diffLimitUnknown.description" />}
@@ -412,6 +414,7 @@ function OverviewPanel({
             )}
           />
         )}
+        <TriageSourceReadFailureDetails failures={[controller.failure]} />
         {statusFields.length === 0 ? null : (
           <Row gap="small">
             {statusFields.map((field) => (
@@ -618,6 +621,7 @@ function GitlabActivityStream({
       header={(
         <Stack gap="small">
           {header}
+          <TriageSourceReadFailureDetails failures={walks.map(({ controller }) => controller.state.failure)} />
           {walks.map(({ key, controller }) => controller.state.kind === 'unavailable'
             ? (
               <Banner
@@ -748,10 +752,11 @@ function CommentsPanel(props: Readonly<{
 
 /* ---------------------------------------------------------------------- Changes */
 
+/** A row's second line speaks only when it says something: a plain modification is one line. */
 function changedFileSubtitle(
   text: PluginTranslate,
   row: GitlabProjectedChangedFileRowV1,
-): string {
+): string | undefined {
   if (row.tooLarge === true) {
     return text('plugins.gitlab.ui.files.tooLarge', 'Too large for GitLab to return a diff.');
   }
@@ -768,7 +773,7 @@ function changedFileSubtitle(
       previous: row.previousPath,
     });
   }
-  return text('plugins.gitlab.ui.files.modified', 'Modified');
+  return undefined;
 }
 
 function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>): React.ReactElement {
@@ -788,6 +793,7 @@ function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
   }
   if (state.kind === 'unavailable') {
     return (
+      <Stack gap="small">
       <ErrorState
         title="The changed files are unavailable"
         titleKey="plugins.gitlab.ui.filesUnavailable"
@@ -796,6 +802,8 @@ function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
           text('plugins.gitlab.ui.readFailed', 'GitLab could not complete this read.'), text,
         )}
       />
+        <TriageSourceReadFailureDetails failures={[state.failure]} />
+      </Stack>
     );
   }
   return (
@@ -826,26 +834,7 @@ function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
               )}
             />
           )}
-          {rawDiff.state.kind !== 'ready' ? null : (
-            <Stack gap="small">
-              <Text
-                variant="micro"
-                tone="neutral"
-                valueKey="plugins.gitlab.ui.rawDiffLabel"
-                fallback="Raw diff evidence · returned as text by GitLab"
-              />
-              {rawDiff.state.truncated ? (
-                <Banner
-                  tone="neutral"
-                  title="The raw diff was shortened"
-                  titleKey="plugins.gitlab.ui.rawDiffShortened"
-                  description="The returned prefix fits Happier’s Action-result boundary."
-                  descriptionKey="plugins.gitlab.ui.rawDiffShortened.description"
-                />
-              ) : null}
-              <Text variant="code" value={rawDiff.state.text} />
-            </Stack>
-          )}
+          {rawDiff.state.kind === 'unavailable' ? <TriageSourceReadFailureDetails failures={[rawDiff.state.failure]} /> : null}
           {controller.diffLimitStatus === 'reported'
             ? null
             : (
@@ -859,6 +848,26 @@ function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
                 descriptionKey="plugins.gitlab.ui.diffLimitUnknown.description"
               />
             )}
+        </Stack>
+      )}
+      endContent={rawDiff.state.kind !== 'ready' ? undefined : (
+        <Stack gap="small">
+          <Text
+            variant="micro"
+            tone="neutral"
+            valueKey="plugins.gitlab.ui.rawDiffLabel"
+            fallback="Raw diff evidence · returned as text by GitLab"
+          />
+          {rawDiff.state.truncated ? (
+            <Banner
+              tone="neutral"
+              title="The raw diff was shortened"
+              titleKey="plugins.gitlab.ui.rawDiffShortened"
+              description="The returned prefix fits Happier’s Action-result boundary."
+              descriptionKey="plugins.gitlab.ui.rawDiffShortened.description"
+            />
+          ) : null}
+          <Text variant="code" value={rawDiff.state.text} />
         </Stack>
       )}
       empty={(
@@ -876,10 +885,12 @@ function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
           onLoadMore={loadMore}
         />
       )}
-      renderItem={(row) => (
+      renderItem={(row) => {
+        const note = changedFileSubtitle(text, row);
+        return (
         <Item
           title={row.path}
-          subtitle={changedFileSubtitle(text, row)}
+          {...(note === undefined ? {} : { subtitle: note })}
           accessoryOutsidePressable
           accessory={<Row gap="small">
             <Action.Copy value={row.path} variant="plain" accessibilityLabel={text('plugins.gitlab.ui.copyValue', 'Copy {item}', { item: row.path })} />
@@ -892,7 +903,8 @@ function ChangesPanel({ input }: Readonly<{ input: TriageDetailSurfaceInputV1 }>
             )}
           </Row>}
         />
-      )}
+        );
+      }}
     />
   );
 }
@@ -919,6 +931,7 @@ function PipelinesPanel({
   }
   if (state.kind === 'unavailable') {
     return (
+      <Stack gap="small">
       <ErrorState
         title="The pipelines are unavailable"
         titleKey="plugins.gitlab.ui.pipelinesUnavailable"
@@ -927,6 +940,8 @@ function PipelinesPanel({
           text('plugins.gitlab.ui.readFailed', 'GitLab could not complete this read.'), text,
         )}
       />
+        <TriageSourceReadFailureDetails failures={[state.failure]} />
+      </Stack>
     );
   }
 
@@ -1034,6 +1049,7 @@ function ApprovalsSection({ input }: Readonly<{ input: TriageDetailSurfaceInputV
   }
   if (state.kind === 'unavailable') {
     return (
+      <Stack gap="small">
       <ErrorState
         title="The approvals are unavailable"
         titleKey="plugins.gitlab.ui.approvalsUnavailable"
@@ -1042,6 +1058,8 @@ function ApprovalsSection({ input }: Readonly<{ input: TriageDetailSurfaceInputV
           text('plugins.gitlab.ui.readFailed', 'GitLab could not complete this read.'), text,
         )}
       />
+        <TriageSourceReadFailureDetails failures={[state.failure]} />
+      </Stack>
     );
   }
 
@@ -1093,7 +1111,7 @@ function ApprovalsSection({ input }: Readonly<{ input: TriageDetailSurfaceInputV
                 fallback="Approval rules are a paid GitLab tier feature and are not available on this deployment. The approval state above is complete."
               />
           )
-          : (
+          : (<>
             <Banner
               tone="warning"
               title="The approval rules could not be read"
@@ -1103,7 +1121,8 @@ function ApprovalsSection({ input }: Readonly<{ input: TriageDetailSurfaceInputV
           text('plugins.gitlab.ui.readFailed', 'GitLab could not complete this read.'), text,
         )}
             />
-          )}
+            <TriageSourceReadFailureDetails failures={[view.rules.failure]} />
+          </>)}
       <RefreshRow
         onRefresh={controller.refresh}
         pending={false}

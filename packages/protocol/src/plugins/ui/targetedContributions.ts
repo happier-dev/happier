@@ -267,6 +267,10 @@ function compareText(left: string, right: string): number {
   return left === right ? 0 : left < right ? -1 : 1;
 }
 
+function contributorSortKey(contributor: PluginUiTargetedContributionV1['contributor']): string {
+  return [contributor.pluginId, contributor.contributionId, contributor.occurrenceId].join('\u0000');
+}
+
 function compareProtocol(
   left: PluginUiTargetedContributionProtocolV1,
   right: PluginUiTargetedContributionProtocolV1,
@@ -300,11 +304,7 @@ export const PluginUiTargetedContributionProtocolSnapshotV1Schema = lazyZodSchem
         message: 'A targeted contribution must use its point snapshot protocol.',
       });
     }
-    const key = [
-      contribution.contributor.pluginId,
-      contribution.contributor.contributionId,
-      contribution.contributor.occurrenceId,
-    ].join('\u0000');
+    const key = contributorSortKey(contribution.contributor);
     if (previousContributorKey !== undefined && compareText(previousContributorKey, key) >= 0) {
       ctx.addIssue({
         code: "custom",
@@ -499,7 +499,7 @@ export function projectPluginUiTargetedContributionsV1(input: Readonly<{
             role: surface.role,
             presentation: surface.presentation,
           })),
-        })),
+        })).sort((left, right) => compareText(contributorSortKey(left.contributor), contributorSortKey(right.contributor))),
       })),
     }));
   return PluginUiTargetedContributionsV1Schema.parse({ target: projectIdentity(input.target), points });

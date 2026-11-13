@@ -3224,6 +3224,143 @@ async function serveDeclarativeDaemonSettings(input: Readonly<{
 }
 
 describe('PluginSurfacePlacementHost', () => {
+
+    it('mounts the real Triage Composer picker and keeps SCM raw evidence in its List scroll owner', async () => {
+        const { renderSurface } = await import('../../../../../../packages/plugins/triage/src/composer/entryPicker');
+        const { projectPluginUiTargetedContributionsV1 } = await import('@happier-dev/protocol/plugins/ui/targetedContributions');
+        const { ComposerPluginSurface } = await import('@/components/sessions/presentation/ComposerPluginSurface');
+        const pluginId = 'happier.triage';
+        const occurrenceId = 'triage-picker-mount';
+        const custody = developmentSourceCustody('triage-picker-mount-root');
+        const protocol = { id: TriageSourcesContributionProtocolV1.id, version: TriageSourcesContributionProtocolV1.version };
+        const targetedContributions = projectPluginUiTargetedContributionsV1({
+            target: { pluginId, occurrenceId }, readSourceCustody: () => custody,
+            snapshots: [{ point: { pointId: 'sources', protocol }, snapshot: {
+                target: { pluginId, occurrenceId, pointId: 'sources' },
+                contributions: ['acme.provider.qa', 'acme.provider'].map(providerId => ({
+                    contributor: { pluginId: providerId, contributionId: 'source', occurrenceId: 'provider-current' },
+                    protocol, operations: [], surfaces: [],
+                })),
+            } }],
+        });
+        await pluginSurfaceAccountLifetime.setScope({ serverId: 'server-1', accountId: 'account-a' }, { serverIdentityId: 'srv_server_1' });
+        const scope = pluginSurfaceAccountLifetime.value!.scope;
+        registerScopedMountedComposerFixture({ kind: 'session', sessionId: 'session_1' });
+        const artifact = generatedReactNativeProjection.reactNativeBundlesById['reactNativeBundle:acme.browser:native-panel']!;
+        const catalog = DaemonPluginUiComposerSurfaceCatalogEntryV1Schema.parse({
+            contribution: { pluginId, localId: 'entry' }, occurrenceId, projectionGeneration: 1, role: 'attachmentPicker',
+            rendererChain: [{ pluginId, localId: 'native-panel' }],
+            selectedRenderer: { identity: { pluginId, localId: 'native-panel' },
+                renderer: { kind: 'reactNative', contributionId: 'native-panel' },
+                artifactProjection: { ...artifact, pluginId, occurrenceId, id: `reactNativeBundle:${pluginId}:native-panel` },
+                availability: { state: 'available', reason: 'available', diagnostics: [] } },
+            executionOrigin: mountedExecutionOrigin(pluginId, 'machine_1', 'triage-picker-mount'),
+            resourceCapability: { readable: false, dynamic: false }, contributorTargetedContributions: targetedContributions,
+        });
+        const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1 });
+        const inputs = publishDaemonMergedProjectionInputs({ projection, composerSurfaceCatalog: [catalog] });
+        // Only artifact evaluation crosses the fixture boundary. The physical
+        // Composer host, targeted projection and Triage/Plugin UI remain real.
+        reactNativeSurfaceRuntime.enabled = true;
+        reactNativeSurfaceRuntime.module = { renderSurface };
+        const screen = await renderScreen(<ComposerPluginSurface scope={pluginSurfaceAccountLifetime.value!.scope}
+            request={{ contribution: catalog.contribution, occurrenceId, role: 'attachmentPicker',
+                input: { v: 1, role: 'attachmentPicker', composer: { kind: 'session', sessionId: 'session_1' },
+                    attachmentLocalId: 'entry', instances: [] }, instanceKey: 'triage-picker-mount' }}
+            physicalTarget={{ kind: 'session', sessionId: 'session_1' }} projectionGeneration={1}
+            catalogEntries={inputs.composerSurfaceCatalog!} pluginProjectionById={inputs.pluginProjectionById}
+            pluginProjectionV2={projection} pluginUiProjection={inputs.pluginUiProjection}
+            actionInputSelectionFacts={inputs.composerSurfaceActionInputSelectionFacts}
+            machineId="machine_1" serverId={scope.serverId}
+            parentLifetime={{ isCurrent: () => true, onRetire: () => ({ dispose() {} }) }}
+            transactionApplier={{ apply: () => ({ status: 'composerUnavailable' }),
+                applyWithAttachmentCustody: async () => ({ status: 'composerUnavailable' }), resolveAttachmentIdentity: () => null }} />);
+        try {
+            await vi.waitFor(() => expect(screen.root.findAll(node => node.props.placeholder === 'Search by title, number or repository')
+                .length, surfaceFixtureDiagnostics(screen, pluginId)).toBeGreaterThan(0));
+        } finally { await screen.unmount(); }
+
+        const { renderSurface: renderGitlab } = await import('../../../../../../packages/plugins/scm-gitlab/src/ui/renderSurface');
+        const { GITLAB_PLUGIN_ID, GITLAB_TRIAGE_DETAIL_ACTION_IDS, GITLAB_CONNECTED_ACCOUNT_PURPOSE } = await import(
+            '../../../../../../packages/plugins/scm-gitlab/src/triage/contribution');
+        const { TriagePostMutationCompletionProvider } = await import('@happier-dev/triage-sources/ui');
+        const { DaemonPluginStructuredMessageActionExecuteRequestSchema } = await import('@happier-dev/protocol/plugins/actions/daemonInvocationV1');
+        const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
+        const scmOccurrence = 'gitlab-files-mount';
+        const scmTarget = { pluginId: GITLAB_PLUGIN_ID, occurrenceId: scmOccurrence,
+            sourceCustody: developmentSourceCustody(`${GITLAB_PLUGIN_ID}-test-root`) };
+        const scmContributions = { target: scmTarget, points: [] };
+        const actionIds = [GITLAB_TRIAGE_DETAIL_ACTION_IDS.listChanges, GITLAB_TRIAGE_DETAIL_ACTION_IDS.readRawDiff];
+        const scmProjection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
+            actionsById: Object.fromEntries(actionIds.map(localId => [`${GITLAB_PLUGIN_ID}/${localId}`,
+                { ...projectedDaemonUiAction({ pluginId: GITLAB_PLUGIN_ID, localId, machineId: 'machine_1',
+                    materializationId: 'gitlab-files-mount' }), occurrenceId: scmOccurrence,
+                    executionOrigin: mountedExecutionOrigin(GITLAB_PLUGIN_ID, 'machine_1', 'gitlab-files-mount') }])) });
+        realResourceTransport.settingsEnabled = true;
+        realResourceTransport.targetedEnabled = true;
+        realResourceTransport.actionsEnabled = true;
+        applyPluginSurfaceConnectivity();
+        const scmRequests: string[] = [];
+        realResourceTransport.request = async (method, payload) => {
+            scmRequests.push(method);
+            if (method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)
+                return { protocolVersion: 1, projection: scmProjection };
+            if (method === RPC_METHODS.DAEMON_PLUGIN_UI_TARGETED_CONTRIBUTIONS_READ)
+                return { status: 'current', targetedContributions: scmContributions, targetedSurfaceMounts: [] };
+            if (method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ)
+                return { ok: true, inputSchema: { type: 'object' }, outputSchema: { type: 'object' } };
+            if (method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) {
+                const request = DaemonPluginStructuredMessageActionExecuteRequestSchema.parse(payload);
+                return { ok: true, result: request.qualifiedActionId === `${GITLAB_PLUGIN_ID}/${GITLAB_TRIAGE_DETAIL_ACTION_IDS.readRawDiff}`
+                    ? { kind: 'rawDiff', text: 'diff --git a/src/provider.ts b/src/provider.ts', truncated: false }
+                    : { kind: 'changes', rows: [{ path: 'src/provider.ts', newFile: false, renamedFile: false,
+                        deletedFile: false, collapsed: false, tooLarge: false }], diffLimitStatus: 'reported',
+                        omittedRowCount: 0, projectionTruncated: false } };
+            }
+            throw new Error(`Unexpected SCM fixture transport method: ${method}`);
+        };
+        const placement = { ...surfacePlacementFixture({ binding: { pluginId: GITLAB_PLUGIN_ID, destinationId: 'page',
+            rendererId: 'native-panel', container: 'appPage', target: { kind: 'app' } },
+            renderer: { kind: 'reactNative', contributionId: 'native-panel' }, occurrenceId: scmOccurrence }), generatedV2: true };
+        const scmUi = withMountedTargetPackage({ ...generatedReactNativeProjection,
+            surfacePlacementsById: { [placement.id]: placement },
+            reactNativeBundlesById: { [`reactNativeBundle:${GITLAB_PLUGIN_ID}:native-panel`]: { ...artifact,
+                id: `reactNativeBundle:${GITLAB_PLUGIN_ID}:native-panel`, pluginId: GITLAB_PLUGIN_ID, occurrenceId: scmOccurrence } },
+        }, { mountedTarget: scmTarget, targetedContributions: scmContributions, projection: scmProjection },
+        { displayName: 'GitLab', version: '3.2.1' });
+        reactNativeSurfaceRuntime.module = { renderSurface: defineUiSurface(context => (
+            <TriagePostMutationCompletionProvider onComplete={async () => {}}>
+                {renderGitlab(context) as React.ReactNode}
+            </TriagePostMutationCompletionProvider>)) };
+        const source = { pluginId: GITLAB_PLUGIN_ID, localId: 'gitlab-forge' };
+        const scmScreen = await renderScreen(<PluginSurfacePlacementHost placement={placement} pluginUiProjection={scmUi}
+            machineId="machine_1" serverId={scope.serverId} platform="web" reactNativeLoaderBackend={{ backendId: 'commonJs', available: true }}
+            launchInput={{ v: 1, instance: { v: 1, instance: { source, sourceInstanceId: '9d2a6b1e-6c1a-4b7d-9f31-1d4a6c8b2e70' },
+                binding: { purpose: GITLAB_CONNECTED_ACCOUNT_PURPOSE, account: { service: { pluginId: GITLAB_PLUGIN_ID,
+                    localId: 'gitlab-account' }, accountId: 'account-1' } }, localInstanceKey: 'gitlab-com',
+                configuration: { v: 1, token: 'gitlab-configuration-token-v1' } },
+                observation: { entryRef: { source, kindId: 'merge-request', collisionScope: 'gitlab.com:group/project', entryId: '412' },
+                    observedAtMs: 1_760_000_700_000, locator: { v: 1, webUrl: 'https://gitlab.com/group/project/-/merge_requests/412',
+                        displayPath: 'group/project !412', routingToken: 'group/project' }, snapshot: { v: 1, title: 'Review raw evidence',
+                        scopeLabel: 'group/project', state: { presentation: 'active', nativeLabel: 'Opened' }, facts: [] },
+                    viewer: { involvement: ['reviewRequested'] } }, linkedSessions: [] }} />);
+        try {
+            await vi.waitFor(() => expect(scmScreen.root.findAll(node => node.props.accessibilityRole === 'tab'
+                && node.props.accessibilityLabel === 'Changes').length,
+                `${surfaceFixtureDiagnostics(scmScreen, GITLAB_PLUGIN_ID)}; RPCs=${JSON.stringify(scmRequests)}`).toBeGreaterThan(0));
+            const changes = scmScreen.root.findAll(node => node.props.accessibilityRole === 'tab'
+                && node.props.accessibilityLabel === 'Changes')[0]!;
+            await act(async () => { changes.props.onPress(); });
+            await vi.waitFor(() => expect(scmScreen.root.findAll(node => node.props.accessibilityLabel === 'Load raw diff evidence'
+                && typeof node.props.onPress === 'function')).not.toHaveLength(0));
+            await act(async () => { scmScreen.root.findAll(node => node.props.accessibilityLabel === 'Load raw diff evidence'
+                && typeof node.props.onPress === 'function')[0]!.props.onPress(); });
+            await vi.waitFor(() => expect(scmScreen.root.findAll(node => (node.props.role ?? node.props.accessibilityRole) === 'listitem'
+                && node.findAll(child => child.children.includes('diff --git a/src/provider.ts b/src/provider.ts')).length > 0))
+                .not.toHaveLength(0));
+        } finally { await scmScreen.unmount(); }
+    });
+
     it('mounts a public Machine page with its addressed identity and releases it on retirement', async () => {
         const { PluginPageContent } = await import('../pages/PluginPageContent');
         const { resolvePluginPages } = await import('../pages/pluginPages');

@@ -130,6 +130,10 @@ describe('the mounted GitLab raw-diff evidence read', () => {
       .resolves.toBeDefined();
     await expect(detail.getByText('diff --git a/src/provider.ts b/src/provider.ts'))
       .resolves.toBeDefined();
+    // Raw evidence grows with the merge request. It must share the Files
+    // collection's scroll owner instead of consuming its fixed header space.
+    expect([...document.querySelectorAll('[role="listitem"]')].some(row =>
+      row.textContent?.includes('diff --git a/src/provider.ts b/src/provider.ts'))).toBe(true);
     expect(dispatched.filter((id) => id === GITLAB_TRIAGE_DETAIL_ACTION_IDS.readRawDiff))
       .toHaveLength(1);
   });
