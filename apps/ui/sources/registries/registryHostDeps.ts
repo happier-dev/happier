@@ -189,7 +189,7 @@ async function composeUiRegistryHostV1(account: LazyActionAccountContext, port: 
                 account.assertCurrent(); context.signal?.throwIfAborted();
                 if (!result.ok) throw Object.assign(new Error(result.error), result, { code: result.errorCode });
                 const checked = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.updates.check'].parse(result.result);
-                return { ...checked, results: checked.results.map(item => item.kind === 'browserExtension'
+                return { ...checked, results: checked.results.map(item => item.kind === 'browserExtension' || item.kind === 'plugin'
                     ? { ...item, machineId: target } : item) };
             };
             // Account-owned catalog kinds need one successful carrier. A refused

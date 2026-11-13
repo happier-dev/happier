@@ -28,6 +28,8 @@ export type StoreUpdateKind = typeof STORE_UPDATE_KINDS[number];
 export type StoreUpdateEntry = Readonly<{
   key: string;
   row: InstalledRow;
+  /** Exact placement of a daemon-qualified observation; absent for Account-level observations. */
+  machineId?: string;
   /**
    * `available`: a newer version is waiting and the person never changed theirs. `needsChoice`: they changed it and
    * the source changed too (Skills asks per file). `removed`: the source no longer lists it. `unchecked`: the last
@@ -154,7 +156,11 @@ export function buildStoreUpdates(
   check?: Pick<RegistryUpdateCheckState, 'checkedAt' | 'failed' | 'basis' | 'attemptedAt'>,
   plugins: readonly StorePluginUpdateEntry[] = [],
 ): StoreUpdatesView {
-  const pluginUpdates = new Map(plugins.map((update) => [update.key, update]));
+  const pluginUpdates = new Map<string, StorePluginUpdateEntry[]>();
+  for (const update of plugins) {
+    const entries = pluginUpdates.get(update.key);
+    if (entries) entries.push(update); else pluginUpdates.set(update.key, [update]);
+  }
   const checked = new Map(
     results.map((result) => [result.kind === 'browserExtension'
       ? JSON.stringify([result.kind, result.machineId, result.key])
@@ -168,21 +174,25 @@ export function buildStoreUpdates(
   for (const row of rows) {
     if (row.kind === 'plugin') {
       tracked += 1;
-      const update = pluginUpdates.get(row.key);
-      if (!update?.observation) { complete = false; continue; }
-      if (update.state === 'unchecked') { unchecked += 1; complete = false; }
-      else successful += 1;
-      const pluginEntry: StoreUpdateEntry | null = update.state === 'unchecked'
-        ? { key: row.key, row, state: 'unchecked', reason: update.reason, from: update.from, to: null }
-        : update.state === 'available' && update.observation.state === 'update_available'
-          ? { key: row.key, row, state: 'available', from: update.from, to: update.observation.latest ? contentRefLabel(update.observation.latest) : null }
-          : update.state === 'removed'
-            ? { key: row.key, row, state: 'removed', status: { kind: 'removed' }, from: update.from, to: null }
-            : null;
-      if (pluginEntry) {
-        const entries = byKind.get('plugin');
-        if (entries) entries.push(pluginEntry);
-        else byKind.set('plugin', [pluginEntry]);
+      const updates = pluginUpdates.get(row.key);
+      if (!updates?.length) { complete = false; continue; }
+      if (updates.some(update => update.state === 'unchecked')) { unchecked += 1; complete = false; }
+      if (updates.every(update => update.observation && update.state !== 'unchecked')) successful += 1;
+      for (const update of updates) {
+        if (!update.observation) { complete = false; continue; }
+        const pluginEntry: StoreUpdateEntry | null = update.state === 'unchecked'
+          ? { key: row.key, row, state: 'unchecked', reason: update.reason, from: update.from, to: null }
+          : update.state === 'available' && update.observation.state === 'update_available'
+            ? { key: row.key, row, state: 'available', from: update.from, to: update.observation.latest ? contentRefLabel(update.observation.latest) : null }
+            : update.state === 'removed'
+              ? { key: row.key, row, state: 'removed', status: { kind: 'removed' }, from: update.from, to: null }
+              : null;
+        if (pluginEntry) {
+          const entries = byKind.get('plugin');
+          const placed = update.machineId ? { ...pluginEntry, key: JSON.stringify([row.key, update.machineId]), machineId: update.machineId } : pluginEntry;
+          if (entries) entries.push(placed);
+          else byKind.set('plugin', [placed]);
+        }
       }
       continue;
     }
@@ -269,4 +279,23 @@ export function describeUncheckedSources(
     lines.add(source ? `${source} · ${reason}` : reason);
   }
   return [...lines];
+}
+
+/** Placement comes from native inventory, never from the Machine being viewed or its availability. */
+export function readStoreUpdateMachineIds(entry: StoreUpdateEntry): readonly string[] {
+  const row = entry.row;
+  if (entry.machineId) return [entry.machineId];
+  switch (row.kind) {
+    case 'app': {
+      const link = row.native.runtimeTargetLink;
+      return link?.source.kind === 'host' ? link.machines : link?.machineId ? [link.machineId] : [];
+    }
+    case 'browserExtension': return [row.machineId];
+    case 'plugin': return [...new Set(row.installations.map(installation => installation.materialization.machineId))];
+    // Reach is an owner's explicit enabled placement, not a local availability inference.
+    case 'skill':
+    case 'mcpServer': return row.reach.filter(machine => machine.agents.some(agent => agent.enabled)).map(machine => machine.machineId);
+    // Account Agent definitions have no Machine membership; executable Agent CLIs already have their own update items.
+    default: return [];
+  }
 }

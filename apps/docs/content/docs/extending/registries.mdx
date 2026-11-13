@@ -177,9 +177,12 @@ function failedSources(check: RegistriesActionResultById['registries.updates.che
 
 Older results may omit the source labels; their reason remains usable. These
 labels do not grant permission to read or install from a source. Store Updates
-uses the existing Skills, MCP server and Agent observations; Plugins have no
-update-availability producer there and are excluded from its count. Plugin
-updates retain their installed-source installation and access review.
+uses reported App, Skill, MCP server, Agent, browser extension and Plugin
+observations in 0.3 development source. App checks review the installed
+Environment's template; Plugin observations retain their Machine placement.
+Plugin updates keep their existing installation and access review. Applied Machine
+recipes have no separate upstream-update observation; their provider Plugin
+uses the Plugin update flow.
 
 ### Chrome Web Store (development)
 

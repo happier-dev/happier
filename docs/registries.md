@@ -164,6 +164,19 @@ Unsupported helpers or mappings remain
 another registry kind. Their parsers do not own credentials, placement or
 deployment execution.
 
+In 0.3 development source, the selected Dokploy `supabase` app additionally maps
+HS256 JWTs and hexadecimal hash helpers to inert host profiles. JWT claims are
+restricted to Supabase's `anon`/`service_role` role, issuer and fixed expiry;
+timestamp substitution is accepted only inside those claims. Hash lengths count
+hexadecimal characters, and composite API-key prefixes remain literal. Preparation
+orders each generated signing secret before its tokens. Install and preview
+creation share signing material only within the admitted generation operation,
+then release it; results and bindings contain Saved Secret references only.
+Generating tokens from a caller-selected existing signing secret remains
+`template_needs_review`. Secret-bearing mount contents, unsupported helpers and
+unsupported environment-array entries also remain review diagnostics, so this
+exception does not make the full upstream Supabase template installable.
+
 In the development source, a selected app with available source bytes can carry
 `reviewSource` in its `needs_review` result. Store and Environment Add let the
 person edit those inert source bytes and explicitly check the mapping again.
@@ -636,8 +649,23 @@ The Store's passive column/phone count projects the same held Updates review
 entries only after a complete check and complete inventory coverage. Before a
 check or after an unchecked/failed result, the count is unknown. Its transient
 scalar survives leaving the page and is withdrawn with the active Account
-lifetime; badges issue no reads and schedule no refresh. Plugins have no update
-availability producer in this composition and are excluded.
+lifetime; badges issue no reads and schedule no refresh. Plugin observations retain
+their reporting Machine, so a current sibling does not erase another Machine's update.
+
+In unreleased 0.3 source, `updates/useInstalledUpdates.ts` is the shared installed-update
+acquisition owner for Store Updates and the Machine Updates model. Both consume
+`storeUpdatesModel.ts`, which projects registry-reported state without comparing versions
+on the client. App checks supply the installed Environment's exact id and revision to
+the existing app-check Action. Machine groups expose the same Store entry references in
+`storeItems`, placed by the Environment runtime link, browser inventory, Plugin
+materialization, or the native reach projection. Account Agent definitions have no
+Machine membership; executable Agent CLI updates retain their existing owner. Machine
+presentation of these Store entries remains a UI integration task.
+
+Applied Machine recipes record a qualified recipe reference and definition revision,
+with setup observations. They have no per-recipe registry provenance or upstream-update
+observation in this composition. Recipe-provider Plugin updates use the existing Plugin
+flow; definition revisions are not interpreted as locally available recipe updates.
 The registry Action declarations admit original Account roots so this transport
 can reach the daemon while retaining Account placement, strict inputs and the
 existing approval policy. Expected upstream failures return per-item `unchecked`

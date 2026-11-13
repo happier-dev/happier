@@ -1,3 +1,4 @@
+import { readStoreUpdateMachineIds, type StoreUpdateEntry, type StoreUpdatesView } from '@/components/store/updates/storeUpdatesModel';
 import type { MachineAgentUpdateFact } from '@/agents/machineAgents/useMachineAgents';
 import { buildMachineUpdateFactsRequest } from '@/capabilities/requests';
 import { getInstallablesRegistryEntries, type InstallableDepDataLike } from '@/capabilities/installablesRegistry';
@@ -28,6 +29,8 @@ export type UpdatesGroup = Readonly<{
     /** When the machine was last seen (its own `activeAt`); `null` for this app and this computer. */
     lastSeenAt: number | null;
     items: readonly UpdateItem[];
+    /** Shared Store items; placement is reported by the installed-item owner. */
+    storeItems?: readonly StoreUpdateEntry[];
 }>;
 
 type InstallableEntry = ReturnType<typeof getInstallablesRegistryEntries>[number];
@@ -90,6 +93,7 @@ function buildMachineRows(params: Readonly<{
 }
 
 type MachineUpdateGroupInputs = Readonly<{
+    storeUpdates?: StoreUpdatesView;
     accountScope: ServerAccountScope | null;
     thisMachineId: string | null;
     thisComputerItem: UpdateItem | null;
@@ -183,6 +187,21 @@ export function buildMachineUpdateGroups(params: MachineUpdateGroupInputs): Read
         for (const id of requestedIds) {
             const answeredAt = readProbe(snapshot, id)?.checkedAt;
             if (typeof answeredAt === 'number' && answeredAt > (checkedAt ?? 0)) checkedAt = answeredAt;
+        }
+    }
+    if (params.storeUpdates) {
+        const byMachine = new Map<string, StoreUpdateEntry[]>();
+        for (const section of params.storeUpdates.sections) {
+            for (const item of section.entries) {
+                for (const id of readStoreUpdateMachineIds(item)) {
+                    const entries = byMachine.get(id);
+                    if (entries) entries.push(item); else byMachine.set(id, [item]);
+                }
+            }
+        }
+        for (let index = 0; index < groups.length; index++) {
+            const group = groups[index]!;
+            groups[index] = { ...group, storeItems: group.machineId ? byMachine.get(group.machineId) ?? [] : [] };
         }
     }
     return { groups, remotes, uncheckedMachineCount, checkedAt };

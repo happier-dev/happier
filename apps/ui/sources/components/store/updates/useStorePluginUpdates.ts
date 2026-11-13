@@ -8,6 +8,7 @@ import type { InstalledPluginRow } from '../catalog/storeKinds';
 type Subject = Pick<InstalledPluginRow, 'key' | 'detail'> & Readonly<{ native: Pick<InstalledPluginRow['native'], 'pluginId'> }>;
 export type StorePluginUpdateEntry = Readonly<{
     key: string; pluginId: string;
+    machineId?: string;
     state: 'unknown' | 'current' | 'available' | 'removed' | 'unchecked';
     observation: RegistryUpstreamCheckV1 | null;
     reason?: Extract<RegistryUpstreamCheckV1, { state: 'unchecked' }>['reason'];
@@ -19,25 +20,28 @@ export type StorePluginUpdateEntry = Readonly<{
 export function useStorePluginUpdates(input: Readonly<{ rows: readonly Subject[]; check: RegistryUpdateCheckState }>) {
     const { rows, check } = input;
     return React.useMemo(() => {
-        // A plugin can be current on one Machine while another still needs review.
-        // Keep actionable or incomplete coverage ahead of a current sibling reply.
-        const priority = { current: 0, unchecked: 1, removed_from_source: 2, update_available: 3 };
-        const observations = new Map<string, RegistryUpstreamCheckV1>();
+        // Keep each daemon's observation qualified; a current sibling must not erase another placement's update.
+        const observations = new Map<string, { machineId?: string; upstream: RegistryUpstreamCheckV1 }[]>();
         for (const result of check.results) {
             if (result.kind !== 'plugin') continue;
-            const previous = observations.get(result.key);
-            if (!previous || priority[result.upstream.state] > priority[previous.state]) observations.set(result.key, result.upstream);
+            const entries = observations.get(result.key);
+            const observation = { machineId: result.machineId, upstream: result.upstream };
+            if (entries) entries.push(observation); else observations.set(result.key, [observation]);
         }
-        const entries = rows.map((row): StorePluginUpdateEntry => {
+        const entries = rows.flatMap((row): StorePluginUpdateEntry[] => {
             const pluginId = row.native.pluginId;
-            const observation = observations.get(pluginId) ?? null;
-            const state = observation?.state === 'update_available' ? 'available'
-                : observation?.state === 'removed_from_source' ? 'removed' : observation?.state ?? 'unknown';
-            return { key: row.key, pluginId, state, observation,
-                ...(observation?.state === 'unchecked' ? { reason: observation.reason } : {}),
-                from: row.detail?.version ?? null,
-                ...(row.detail && projectInstalledPluginLifecycleCapabilities(row.detail).canUpdate
-                    ? { review: { action: 'update', pluginId } } : {}) };
+            const reported = observations.get(pluginId);
+            return (reported?.length ? reported : [{ upstream: null }]).map((reported: Readonly<{ machineId?: string; upstream: RegistryUpstreamCheckV1 | null }>) => {
+                const observation = reported.upstream;
+                const machineId = reported.machineId;
+                const state = observation?.state === 'update_available' ? 'available'
+                    : observation?.state === 'removed_from_source' ? 'removed' : observation?.state ?? 'unknown';
+                return { key: row.key, pluginId, machineId, state, observation,
+                    ...(observation?.state === 'unchecked' ? { reason: observation.reason } : {}),
+                    from: row.detail?.version ?? null,
+                    ...(row.detail && projectInstalledPluginLifecycleCapabilities(row.detail).canUpdate
+                        ? { review: { action: 'update', pluginId } } : {}) };
+            });
         });
         const complete = check.checkedAt !== null && !check.failed
             && entries.every(entry => entry.state !== 'unknown' && entry.state !== 'unchecked');

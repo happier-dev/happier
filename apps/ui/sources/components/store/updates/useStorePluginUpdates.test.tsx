@@ -11,7 +11,7 @@ it.each([false, true])('keeps an update when another Machine is already current 
     const results = currentFirst ? [current, available] : [available, current];
     const hook = await renderHook(() => useStorePluginUpdates({ rows: [{ key: 'pl50', native: { pluginId: 'pl50.fixture' } }],
         check: { checking: false, checkedAt: 10, failed: false, code: null, results } }));
-    expect(hook.getCurrent().entries[0]).toMatchObject({ state: 'available', observation: available.upstream });
+    expect(hook.getCurrent().entries.find(entry => entry.state === 'available')).toMatchObject({ state: 'available', observation: available.upstream });
     expect(hook.getCurrent().count).toBe(1);
 });
 it('retains unknown coverage, supplies native update review props, and performs zero reads on open or idle', async () => {
@@ -41,4 +41,15 @@ it('retains unknown coverage, supplies native update review props, and performs 
         expect(fetches).not.toHaveBeenCalled();
         expect(vi.getTimerCount()).toBe(0);
     } finally { await hook.unmount(); vi.useRealTimers(); vi.restoreAllMocks(); }
+});
+
+it('retains separate owner observations for each Machine placement', async () => {
+    const hook = await renderHook(() => useStorePluginUpdates({ rows: [{ key: 'plugin:a', native: { pluginId: 'a' } }],
+        check: { checking: false, checkedAt: 10, failed: false, code: null, results: [
+            { kind: 'plugin', key: 'a', machineId: 'old-machine', upstream: { state: 'update_available', latest: { kind: 'version', version: '2' } } },
+            { kind: 'plugin', key: 'a', machineId: 'current-machine', upstream: { state: 'current' } },
+        ] } }));
+    expect(hook.getCurrent().entries).toMatchObject([
+        { machineId: 'old-machine', state: 'available' }, { machineId: 'current-machine', state: 'current' },
+    ]);
 });

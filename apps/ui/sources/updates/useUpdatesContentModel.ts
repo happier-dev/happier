@@ -1,3 +1,6 @@
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useOptionalScreenIsFocused } from '@/utils/navigation/useOptionalScreenIsFocused';
+import { useInstalledUpdates } from './useInstalledUpdates';
 import * as React from 'react';
 
 import { useReleaseNotesLauncher, useReleaseNotesUnread } from '@/changelog/releaseNotes';
@@ -97,6 +100,12 @@ export function useUpdatesContentModel(options: Readonly<{
     const execution = useMountedActionExecution(serverId);
     const updateScope = execution.ready && activeHomeScope?.accountId === execution.binding?.scope.accountId
         ? execution.binding?.scope ?? null : null;
+    const installedQuery = React.useMemo(() => ({ scope: activeHomeScope, machine: only
+        ? { serverIdentityId: serverId, machineId: only } : null, projectKey: null }), [activeHomeScope, only, serverId]);
+    const installedTarget = React.useMemo(() => only ? { kind: 'machine' as const, machineId: only } : undefined, [only]);
+    const layoutPresented = useLayoutPresentationActive();
+    const screenFocused = useOptionalScreenIsFocused() !== false;
+    const installed = useInstalledUpdates(installedQuery, layoutPresented && screenFocused, installedTarget);
     const reachabilityRevision = useMachineReachabilityRevision();
     const presenceNowMs = useMachinePresenceNowMs(machines);
     const { execute: executeAction, isCurrent } = execution;
@@ -128,6 +137,7 @@ export function useUpdatesContentModel(options: Readonly<{
     const { groups, remotes, uncheckedMachineCount, factsCheckedAt } = React.useMemo(() => {
         const built = buildMachineUpdateGroups({
             accountScope: updateScope,
+            storeUpdates: installed.view,
             machines,
             thisMachineId: ownsThisComputer ? thisComputer.machineId : null,
             thisComputerItem: ownsThisComputer ? thisComputer.item : null,
@@ -138,7 +148,7 @@ export function useUpdatesContentModel(options: Readonly<{
         });
         const app: UpdatesGroup = { id: 'app', kind: 'app', machineName: null, machineId: null, online: true, lastSeenAt: null, items: [appItem] };
         return { groups: only === null ? [app, ...built.groups] : built.groups, remotes: built.remotes, uncheckedMachineCount: built.uncheckedMachineCount, factsCheckedAt: built.checkedAt };
-    }, [appItem, installables, machineAgents, machines, only, ownsThisComputer, runs, snapshots, thisComputer.item, thisComputer.machineId, updateScope, reachabilityRevision, presenceNowMs, presence]);
+    }, [appItem, installed.view, installables, machineAgents, machines, only, ownsThisComputer, runs, snapshots, thisComputer.item, thisComputer.machineId, updateScope, reachabilityRevision, presenceNowMs, presence]);
 
     const allItems = React.useMemo(() => groups.flatMap((group) => group.items), [groups]);
     // Open Updates shows every result, so the pill's "Updated" is seen; a completion that lands
@@ -205,7 +215,7 @@ export function useUpdatesContentModel(options: Readonly<{
 
     const check = React.useCallback(async () => {
         if (!updateScope || !isCurrent()) return;
-        const requests = [app.checkNow()];
+        const requests = [app.checkNow(), installed.checkNow()];
         // Explicit Check is also recovery: its reply can clear a failed request observation.
         for (const machine of machines) {
             if (isMachineVisibleForLaunchSelection(machine) && machine.availability?.kind !== 'locked') {
@@ -214,7 +224,7 @@ export function useUpdatesContentModel(options: Readonly<{
         }
         const results = await Promise.allSettled(requests);
         for (const result of results) if (result.status === 'rejected') throw result.reason;
-    }, [app.checkNow, isCurrent, machines, serverId, updateScope]);
+    }, [app.checkNow, installed.checkNow, isCurrent, machines, serverId, updateScope]);
     const { checking, checkNow: runCheck } = useUpdateCheck(updateScope ? serverAccountScopeKeySuffix(updateScope) : serverId, check);
     const checkNow = React.useCallback(() => { void executeAction('updates.check', {}); }, [executeAction]);
     const skipAppVersion = React.useCallback(() => {

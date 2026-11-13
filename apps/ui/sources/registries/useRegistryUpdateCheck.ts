@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, type RegistryUpdateCheckResultV1, type RegistryKindV1 } from '@happier-dev/protocol/registries';
+import { REGISTRY_ACTION_OUTPUT_SCHEMAS_V1, type RegistryUpdateCheckResultV1, type RegistryKindV1, type RegistryAppUpdateDemandV1 } from '@happier-dev/protocol/registries';
 import type { MountedAuthoringActionExecute } from '@/sync/ops/actions/sessionAuthoringActions';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol';
 import { useRegistryActionRead } from './useRegistryActionRead';
@@ -27,13 +27,15 @@ export function useRegistryUpdateCheck(input: Readonly<{
     isCurrent: () => boolean;
     kind?: RegistryKindV1;
     keys?: readonly string[];
+    environments?: readonly RegistryAppUpdateDemandV1[];
     retry: () => void;
     enabled?: boolean;
     captureBasis?: () => ReadonlyMap<string, string>;
 }>) {
     const { scopeKey, execute, isCurrent, kind, retry } = input;
     const keysKey = JSON.stringify(input.keys ?? null);
-    const requestKey = JSON.stringify([scopeKey, kind ?? null, keysKey]);
+    const environmentsKey = JSON.stringify(input.environments ?? []);
+    const requestKey = JSON.stringify([scopeKey, kind ?? null, keysKey, environmentsKey]);
     const enabled = input.enabled !== false;
     const [state, setState] = React.useState(() => ({ key: requestKey, check: EMPTY_CHECK }));
     const latest = React.useRef({ requestKey, enabled, isCurrent, captureBasis: input.captureBasis });
@@ -45,7 +47,9 @@ export function useRegistryUpdateCheck(input: Readonly<{
         setState(previous => ({ key: requestKey, check: { ...(previous.key === requestKey ? previous.check : EMPTY_CHECK), checking: true } }));
         try {
             const keys: string[] | null = JSON.parse(keysKey);
-            const result = await execute('registries.updates.check', { ...(kind ? { kind } : {}), ...(keys ? { keys } : {}) });
+            const environments: RegistryAppUpdateDemandV1[] = JSON.parse(environmentsKey);
+            const result = await execute('registries.updates.check', kind === 'app' ? { kind, environments }
+                : { ...(kind ? { kind } : {}), ...(keys ? { keys } : {}) });
             if (!current()) return;
             const parsed = result.ok ? REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.updates.check'].safeParse(result.result) : null;
             setState(previous => {
@@ -64,7 +68,7 @@ export function useRegistryUpdateCheck(input: Readonly<{
             if (current()) setState(previous => ({ key: requestKey, check: { ...(previous.key === requestKey ? previous.check : EMPTY_CHECK),
                 checking: false, failed: true, code: error instanceof Error ? error.message : 'unknown' } }));
         }
-    }, [requestKey, execute, kind, keysKey, retry]);
+    }, [requestKey, execute, kind, keysKey, environmentsKey, retry]);
     return { check: enabled && isCurrent() && state.key === requestKey ? state.check : EMPTY_CHECK, checkNow };
 }
 
@@ -77,7 +81,8 @@ export function useRegistryAppUpdate(detail: DeploymentEnvironmentDetailV1 | nul
         ? [{ environmentId: environment.id, expectedRevision: environment.revision }] : [] }), [environment?.id, environment?.revision]);
     const read = useRegistryActionRead('registries.updates.check', input,
         value => value, sourceRevision, active);
-    return { upstream: active && !read.stale && read.error === null
-        ? read.value?.results.find(result => result.key === environment?.id)?.upstream ?? null : null,
+    const result = active && !read.stale && read.error === null
+        ? read.value?.results.find(result => result.key === environment?.id) : undefined;
+    return { upstream: result?.upstream ?? null, sourceTitle: result?.sourceTitle,
         loading: read.loading, error: read.error, status: read.status, refresh: read.refresh };
 }

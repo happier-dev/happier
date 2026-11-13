@@ -68,6 +68,10 @@ it.each([true, false])('keeps Account catalog checks across carriers (first unav
     try {
         const port = createUiPromptLibraryArtifactStore(captured.workflowArtifacts, captured).organization!;
         const host = await createUiRegistryHostV1(captured, port, {}, { explicitRefresh: true });
+        const placement = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.updates.check'].parse(
+            await host.execute('registries.updates.check', { kind: 'plugin' }));
+        expect(placement.results.find(item => item.key === pluginId)).toMatchObject({ machineId: installedMachine });
+
         const result = REGISTRY_ACTION_OUTPUT_SCHEMAS_V1['registries.updates.check'].parse(
             await host.execute('registries.updates.check', {}));
         expect(result.results.find(item => item.kind === 'plugin' && item.key === pluginId)).toMatchObject({ kind: 'plugin', key: pluginId,

@@ -1,3 +1,6 @@
+import { createDeploymentEnvironmentCollectionV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import type { InstalledAppRow } from '@/components/store/catalog/storeKinds';
+import { buildStoreUpdates } from '@/components/store/updates/storeUpdatesModel';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/text', async () => {
@@ -38,6 +41,23 @@ const NO_RUNS = new Map();
 
 describe('buildMachineUpdateGroups (what the always-mounted pill counts)', () => {
     beforeEach(clearMachineRequestReachabilityForTest);
+
+    it('places the same reported Store app update on its runtime Machine and in Store Updates', () => {
+        const detail = createDeploymentEnvironmentCollectionV1();
+        const native = detail.items[0]!;
+        const row: InstalledAppRow = { kind: 'app', key: 'app:environment', scope: { serverId: 'home-a', accountId: 'updates-account' },
+            native: { ...native, chip: null, runtimeTargetLink: createDeploymentTargetLinkHeaderV1() }, home: '/environment', projectKeys: null };
+        const store = buildStoreUpdates([row], [{ kind: 'app', key: native.environment.id,
+            upstream: { state: 'update_available', latest: { kind: 'version', version: '2.0' } } }]);
+        const params = { accountScope: row.scope, machines: [machine('machine-a'), machine('other')], thisMachineId: null,
+            thisComputerItem: null, runs: NO_RUNS, machineAgents: new Map(), snapshots: new Map(), installables: [], storeUpdates: store };
+        const built = buildMachineUpdateGroups(params);
+        expect(built.groups.find(group => group.machineId === 'machine-a')?.storeItems).toEqual(store.sections[0]!.entries);
+        expect(built.groups.find(group => group.machineId === 'machine-a')?.storeItems?.[0]).toBe(store.sections[0]!.entries[0]);
+        expect(built.groups.find(group => group.machineId === 'other')?.storeItems).toEqual([]);
+        expect(buildMachineUpdateGroups({ ...params, storeUpdates: buildStoreUpdates([row], []) })
+            .groups.every(group => group.storeItems?.length === 0)).toBe(true);
+    });
 
     it('keeps a managed guest CLI visible with its missing release reason instead of Nothing to update', () => {
         const guest = machine('d4bfcc61', { platform: 'linux', happyCliVersion: '0.2.10', cliUpdate: {

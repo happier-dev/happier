@@ -1,3 +1,4 @@
+import { useInstalledUpdates } from '@/updates/useInstalledUpdates';
 import { ManagedInventoryCoverage } from '@/components/store/inventory/ManagedInventoryCoverage';
 import * as React from 'react';
 import { StoreProjectScopeChip } from '../StoreProjectScopeChip';
@@ -19,7 +20,6 @@ import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { describeRegistrySourceStatus } from '@/registries/describeRegistrySourceStatus';
-import { useRegistryUpdateCheck } from '@/registries/useRegistryUpdateCheck';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { useStoreActionTarget, useStoreMachineScope } from '@/components/settings/plugins/model/useStoreMachineScope';
 import { t } from '@/text';
@@ -31,17 +31,13 @@ import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { RowMark } from '../inventory/ManagedInventoryDirectory';
 import { presentInventoryRow, type ManagedInventoryRowPresentation } from '../inventory/inventoryRows';
-import { storeKinds, type StoreInstalledInput } from '../catalog/storeKinds';
-import { useInstalledScope } from '../catalog/storeAccountAdmission';
+import type { StoreInstalledInput } from '../catalog/storeKinds';
 import {
   type StoreUpdateEntry,
   type StoreUpdateKind,
   STORE_UPDATE_KINDS,
-  captureStoreUpdateBasis,
   describeUncheckedSources,
 } from './storeUpdatesModel';
-import { useStorePluginUpdates } from './useStorePluginUpdates';
-import { useStoreUpdates } from './useStoreUpdates';
 import { submitBrowserExtensionMutation } from '../submitBrowserExtensionMutation';
 
 type Href = ManagedInventoryRowPresentation['home']['href'];
@@ -78,38 +74,10 @@ export function StoreUpdatesScreen(): React.ReactNode {
     () => ({ scope, machine: selectedMachine ? { serverIdentityId: selectedMachine.serverId, machineId: selectedMachine.machineId } : null, projectKey: null }),
     [scope, selectedMachine],
   );
-  const demand = React.useMemo(() => ({ presented }), [presented]);
-  const admitted = useInstalledScope(query);
-  const mcpServer = storeKinds.mcpServer.useInstalled(query, demand, admitted);
-  const skill = storeKinds.skill.useInstalled(query, demand, admitted);
-  const agent = storeKinds.agent.useInstalled(query, demand, admitted);
-  const browserExtension = storeKinds.browserExtension.useInstalled(query, demand, admitted);
-  const plugin = storeKinds.plugin.useInstalled(query, demand, admitted);
-  const families = { mcpServer, skill, agent, browserExtension, plugin };
-  const rows = React.useMemo(() => [...mcpServer.rows, ...agent.rows, ...skill.rows, ...browserExtension.rows, ...plugin.rows],
-    [mcpServer.rows, agent.rows, skill.rows, browserExtension.rows, plugin.rows]);
-  const execution = useMountedActionExecution(scope);
-  const executeCheck = React.useCallback<typeof execution.execute>((actionId, input, options) =>
-    execution.execute(actionId, input, { ...options, externalActionTarget }), [execution.execute, externalActionTarget]);
-  const refreshSkills = skill.continuation;
+  const { view, check, checkNow, execution, app, mcpServer, skill, agent, browserExtension, plugin } =
+    useInstalledUpdates(query, presented, externalActionTarget, true);
   const refreshBrowserExtensions = browserExtension.continuation;
-  const retry = React.useCallback(() => {
-    refreshSkills?.();
-    refreshBrowserExtensions?.();
-  }, [refreshSkills, refreshBrowserExtensions]);
-  const captureBasis = React.useCallback(() => captureStoreUpdateBasis(rows), [rows]);
-  const { check, checkNow } = useRegistryUpdateCheck({
-    scopeKey: JSON.stringify([scope, externalActionTarget]),
-    execute: executeCheck,
-    isCurrent: execution.isCurrent,
-    retry,
-    enabled: presented,
-    captureBasis,
-  });
-  const pluginUpdates = useStorePluginUpdates({ rows: plugin.rows, check });
-  const view = useStoreUpdates(rows, check, scope, presented,
-    [mcpServer, skill, agent, browserExtension, plugin]
-      .every(family => family.coverage === 'available'), pluginUpdates.entries);
+  const families = { app, mcpServer, skill, agent, browserExtension, plugin };
   const router = useRouter();
   const go = React.useCallback(
     (href: NonNullable<Href>) => {
@@ -122,7 +90,7 @@ export function StoreUpdatesScreen(): React.ReactNode {
 
   const loading =
     view.sections.length === 0 &&
-    [mcpServer, skill, agent, browserExtension, plugin].some((family) => family.coverage === 'loading');
+    [app, mcpServer, skill, agent, browserExtension, plugin].some((family) => family.coverage === 'loading');
   const coverageKinds = STORE_UPDATE_KINDS.filter((kind): kind is keyof typeof families => kind in families);
   const coverageFamilies = coverageKinds.map(kind => ({ kind, result: families[kind] }));
   const unresolved = coverageKinds.flatMap(kind => {
