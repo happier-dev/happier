@@ -151,12 +151,7 @@ export async function dispatchProjectsDispatch2(inv: Pick<CoreInvocation, 'actio
           if (!projectsList) {
             return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:projects.list' };
           }
-          const res = await projectsList({
-            ...(typeof data.serverId === 'string' ? { serverId: data.serverId } : {}),
-            ...((data.machineId) ? { machineId: String(data.machineId) } : {}),
-            ...(typeof data.limit === 'number' ? { limit: data.limit } : {}),
-            ...(typeof data.includeHidden === 'boolean' ? { includeHidden: data.includeHidden } : {}),
-          }, ctx);
+          const res = await projectsList(data as AdmittedActionInputById['projects.list'], ctx);
           return completeActionResult(res);
         }
   return null;

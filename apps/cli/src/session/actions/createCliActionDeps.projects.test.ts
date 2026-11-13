@@ -165,6 +165,27 @@ function accountBoundary(options?: Readonly<{
 }
 
 describe('projects.list through the real CLI Account composition', () => {
+  it('includes Session-only Projects only when includeUnlisted is admitted', async () => {
+    const { rows } = accountBoundary();
+    const key = { kind: 'workspace-ref' as const, serverId: 'home-a', id: 'session-only' };
+    rows.push(ProjectAccountRowV1Schema.parse({ key, revision: 0, content: { t: 'plain', v: {
+      key, value: { id: key.id, serverId: key.serverId, machineId: 'machine-a',
+        rootPath: '/work/session-only', projectKey: key.id, createdAtMs: 1 },
+    } } }));
+    const owner = executor();
+    for (const includeUnlisted of [undefined, false, true]) {
+      const result = await owner.execute('projects.list', {
+        ...(includeUnlisted === undefined ? {} : { includeUnlisted }),
+      }, { surface: 'mcp', bypassApprovals: true });
+      expect(result).toMatchObject({ ok: true, result: {
+        items: includeUnlisted
+          ? [{ projectKey: { id: 'session-only' } }, { projectKey: { id: 'visible' } }]
+          : [{ projectKey: { id: 'visible' } }],
+        truncated: false, coverage: 'complete',
+      } });
+    }
+  });
+
   it('projects an implicit same-Home profile context through the canonical Home identity', async () => {
     accountBoundary();
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'same-home-account' })).toString('base64url')}.signature`;
