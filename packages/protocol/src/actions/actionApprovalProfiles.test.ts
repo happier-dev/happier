@@ -119,7 +119,10 @@ describe('Account approval profiles at Action admission', () => {
       actionCaller: { kind: 'host' as const }, approvalProfileId: 'builtin:apply-safe', ...facts };
     const args = { actionId, spec: getActionSpec(actionId), input, settings, context };
     expect(resolveActionApprovalRouting(args)).toMatchObject({ required: false, uiConfirmationRequired: true });
-    const confirmed = resolveActionApprovalRouting({ ...args, context: { ...context, presentUserConfirmation: { actionId } } });
+    // A caller-authored marker cannot answer saved Ask; the executor admits exact consent.
+    expect(resolveActionApprovalRouting({ ...args, context: { ...context, presentUserConfirmation: { actionId } } }))
+      .toMatchObject({ required: false, uiConfirmationRequired: true });
+    const confirmed = resolveActionApprovalRouting({ ...args, reviewAdmitted: true });
     expect(confirmed.required).toBe(false);
     expect(confirmed.uiConfirmationRequired).toBeUndefined();
   });
