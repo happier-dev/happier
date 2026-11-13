@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { SessionPermissionRespondRpcParamsV1Schema } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import { NativePermissionChoiceAnswerV1Schema, type NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/nativeChoicesV1';
 import { createDeferred, waitForTestEvent } from '@/dev/testkit';
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
@@ -47,6 +48,75 @@ const run120Choices = buildCodexPermissionChoices('16367ecb-d8ca-463b-8155-cf0fd
 
 describe('native Voice permission input', () => {
   registerLocalVoiceEngineHarnessHooks();
+
+  it.each(["No, don't run it", 'NO DO NOT RUN IT I'])(
+    'settles the read-out native request from the R143 speech entry: %s', async answer => {
+      const storage = await getStorage();
+      const state = storage.getState();
+      const config = readLocalConversationVoiceSettings(state.settings.voice);
+      storage.__setState({ settings: { ...state.settings, voice: { ...state.settings.voice,
+        providerId: 'local_conversation', canApproveRequests: true,
+        providers: { ...state.settings.voice.providers, local_conversation: { schemaVersion: 1,
+          config: { ...config, conversationMode: 'agent', agent: { ...config.agent, prewarmOnConnect: false } } } },
+      } } });
+      const { createLocalConversationVoiceAdapter } = await import('@/voice/adapters/localConversation/localConversationAdapter');
+      const { registerVoiceAdapters } = await import('@/voice/session/voiceAdapterRegistry');
+      const { createVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleController');
+      const { setVoiceSessionLifecycleController } = await import('@/voice/session/voiceSessionLifecycleControllerStore');
+      const { voiceConversationBindingResolver } = await import('@/voice/binding/VoiceConversationBindingResolver');
+      registerVoiceAdapters([createLocalConversationVoiceAdapter()]);
+      const lifecycle = createVoiceSessionLifecycleController();
+      setVoiceSessionLifecycleController(lifecycle);
+      lifecycle.setConfiguredProviderId('local_conversation');
+      await lifecycle.toggle({ serverId: localVoiceHomeId, sessionId: 's1' });
+      const controlSessionId = lifecycle.getSnapshot().sessionId!;
+      const binding = voiceConversationBindingResolver.resolveByControlSessionId({ controlSessionId });
+      expect(binding?.transcriptMode).toBe('native_session');
+      const requestSessionId = binding!.conversationSessionId;
+      const session = storage.getState().sessions[requestSessionId]!;
+      await applyLocalVoiceSessionAgentState({ ...session, active: true,
+        agentStateVersion: (session.agentStateVersion ?? 0) + 1,
+        updatedAt: Math.max(Date.now(), session.updatedAt + 1),
+        agentState: { requests: { 'native-write': { kind: 'permission', tool: 'Write',
+          arguments: { file_path: '/tmp/native-voice-test' }, createdAt: Date.now(), nativeChoices: codexChoices } } },
+      });
+      const incumbent = sessionRpcWithServerScope.getMockImplementation()!;
+      sessionRpcWithServerScope.mockImplementation(async request => {
+        if (request.method !== RPC_METHODS.SESSION_PERMISSION_RESPOND) return incumbent(request);
+        const payload = SessionPermissionRespondRpcParamsV1Schema.parse(request.payload);
+        expect(payload).toMatchObject({ id: 'native-write', nativeChoice: {
+          requirementId: codexChoices.requirementId, choiceId: 'decline',
+        } });
+        const pending = storage.getState().sessions[requestSessionId]!;
+        await applyLocalVoiceSessionAgentState({ ...pending,
+          agentStateVersion: (pending.agentStateVersion ?? 0) + 1,
+          updatedAt: Math.max(Date.now(), pending.updatedAt + 1),
+          agentState: { requests: {}, completedRequests: { 'native-write': {
+            tool: 'Write', status: 'denied', completedAt: Date.now(), nativeChoice: 'nativeChoice' in payload ? payload.nativeChoice : undefined,
+          } } },
+        });
+        return { ok: true };
+      });
+      const { createNativeVoicePermissionInput } = await import('./nativeVoicePermissionInput');
+      const settled = vi.fn<Parameters<typeof createNativeVoicePermissionInput>[0]['onResponseSettled']>(async () => {});
+      const readOut = vi.fn<Parameters<typeof createNativeVoicePermissionInput>[0]['readOut']>(async (_text, _listen, isCurrent, onReady) => { if (isCurrent()) onReady(); });
+      const input = createNativeVoicePermissionInput({ controlSessionId,
+        signal: new AbortController().signal, isConversationTurnPending: () => false,
+        readOut, commitTranscript: async () => {}, onResponding() {}, onResponseSettled: settled,
+      });
+      try {
+        await input.waitForPendingReadout();
+        expect(input.canAccept()).toBe(true);
+        const respond = input.captureResponse();
+        expect(respond).not.toBeNull();
+        await respond!(answer);
+        expect(settled).toHaveBeenCalledWith({ ok: true, decision: 'denied' });
+        expect(storage.getState().sessions[requestSessionId]?.agentState?.requests?.['native-write']).toBeUndefined();
+        expect(storage.getState().sessions[requestSessionId]?.agentState?.completedRequests?.['native-write'])
+          .toMatchObject({ status: 'denied' });
+      } finally { input.dispose(); await lifecycle.stop(); }
+    },
+  );
 
   it.each([
     { label: 'RUN120 command preview with argument sharing off', enabled: true, answer: 'YES ALLOW THE COMMAND', approved: true, end: false, replaceRequest: false, delegated: true, carrierSettled: true, nativeOffer: true, run120: true },
