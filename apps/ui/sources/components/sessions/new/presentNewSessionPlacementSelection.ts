@@ -29,6 +29,7 @@ export function presentNewSessionPlacementSelection(
             // The picker lives for seconds, so what the Machines say as it opens is enough.
             rootStep: createNewSessionPlacementSelectionStep({ rows: readSessionPlacementCandidateRows(candidates), onSelect: settle }),
             onSelect: () => {},
+            onRequestClose: close,
             selectedOptionId: null,
             maxHeight: SELECTION_LIST_MODAL_MAX_HEIGHT,
             heightBehavior: resolveSelectionListModalHeightBehavior(),
