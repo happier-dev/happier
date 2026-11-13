@@ -411,7 +411,10 @@ export async function isDeploymentReadOperandInAdmittedScopeInTx(tx: Tx,
     if (scope.deploymentIds && owned.deployment.some(id => !scope.deploymentIds!.has(id))) return false;
     const [deployments, targetLinks, domains] = await Promise.all([
         owned.deployment.length === 0 ? 0 : tx.deployment.count({ where: { id: { in: owned.deployment }, environmentId: { in: environmentIds },
-            ...(scope.receiptTargets ? { OR: [...scope.receiptTargets] } : {}) } }),
+            ...(binding.deploymentNativeAdmission && 'kind' in binding.deploymentNativeAdmission && binding.deploymentNativeAdmission.kind === 'promote' ? { OR: [
+                { environmentId: binding.deploymentNativeAdmission.environmentId },
+                { environmentId: binding.deploymentNativeAdmission.sourceEnvironmentId, id: binding.deploymentNativeAdmission.sourceDeploymentId },
+            ] } : scope.receiptTargets ? { OR: [...scope.receiptTargets] } : {}) } }),
         owned.targetLink.length === 0 ? 0 : tx.deploymentTargetLink.count({ where: { id: { in: owned.targetLink }, environmentId: { in: environmentIds } } }),
         owned.domain.length === 0 ? 0 : tx.deploymentDomain.count({ where: { id: { in: owned.domain }, environmentId: { in: environmentIds } } }),
     ]);
@@ -1127,7 +1130,8 @@ export async function readDeploymentTargetRetentionHttpPurpose(tx: Tx, binding: 
         || proof.path !== '/v1/machines/managed/controller/admit-control') return null;
     const parsed = ManagedControlAdmissionInputV1Schema.safeParse(proof.body);
     return parsed.success && parsed.data.action === effectActionId
-        && parsed.data.input.homeId === binding.serverIdentityId && parsed.data.input.retention.kind === 'until-delete'
+        && parsed.data.input.homeId === binding.serverIdentityId
+        && 'retention' in parsed.data.input && parsed.data.input.retention.kind === 'until-delete'
         && computeActionInputApprovalDigestV1(effectActionId, parsed.data.input) === proof.reviewedChild.inputDigest
         ? { kind: 'reviewed-child', requestId: parsed.data.requestId } : null;
 }
@@ -1655,11 +1659,13 @@ export async function isDeploymentPreparationHttpPurposeInTx(tx: Tx,
         const native = DeploymentDeployAdmissionInputV1Schema.safeParse(proof.body);
         if (!native.success) return isNativeDeploymentPreparationRead(method, proof.path);
         const { actionOperationId: _operation, ...reviewedInput } = native.data;
+        // The declared effect list is untyped strings; the digest owner takes a catalog ActionId.
+        const effect = ActionIdSchema.safeParse(effectActionId);
         return native.data.environmentId === environmentId
             && native.data.requestKey === admission.deploy?.requestKey
             && (admission.target.kind !== 'existing' || native.data.targetLinkId === admission.target.targetLinkId)
-            && (!proof.reviewedChild
-                || computeActionInputApprovalDigestV1(effectActionId, reviewedInput) === proof.reviewedChild.inputDigest);
+            && (!proof.reviewedChild || effect.success
+                && computeActionInputApprovalDigestV1(effect.data, reviewedInput) === proof.reviewedChild.inputDigest);
     }
     if (admission.operation === 'template'
         && !await isAdmittedTemplateInstantiationScopeCurrentInTx(tx, binding, admission)) return false;

@@ -26,7 +26,8 @@ import { readDeploymentAcceptedExecution } from './deploymentAcceptedExecution';
 import { promoteDeploymentInTx } from './deploymentPromotionService';
 import { transitionDeploymentInTx } from './deploymentService';
 import { observePrismaRequests } from '@/testkit/observeSqliteRequests';
-import { bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { encodeExternalActionResolvedTargetV1, signExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 
 describe('stored promotion storage composition', () => {
     const serverId = `srv_${'a'.repeat(32)}`;
@@ -132,6 +133,55 @@ describe('stored promotion storage composition', () => {
                 ...receiptContent, sourceIntent: candidate.definition }) };
         return { owner, machine, keys, to, retained, serving, destinationContent, input };
     }
+
+    it('spends compact Promote source reads through the real signed HTTP decider without admitting unrelated Environments', async () => {
+        const { owner, machine, keys, to, input } = await promotionFixture();
+        await withAuthenticatedTestApp(app => { registerExternalActionRoutes(app); registerDeploymentRoutes(app); }, async app => {
+            const actionId = 'deployments.promote';
+            const token = await createAccountTokenForTests(owner.id, { kind: 'account', authority: 'present_user' });
+            const minted = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: 'Bearer ' + token }, payload: { v: 1, machineId: machine.id,
+                    envelope: { v: 1, requestId: randomUUID(), target: { kind: 'machine', machineId: machine.id },
+                        input: { serverId, environmentId: to.environmentId, sourceEnvironmentId: input.sourceEnvironmentId,
+                            sourceDeploymentId: input.sourceDeploymentId, artifact: 'image', requestKey: randomUUID() } } } });
+            expect(minted.statusCode, minted.body).toBe(200);
+            const root = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
+            const read = async (effectActionId: string, path: string) => app.inject({ method: 'GET', url: path, headers: {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: root.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: effectActionId,
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(root.binding.target),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({ authorizationToken: root.token,
+                    effectActionId, target: root.binding.target, installationId: machine.installationId!,
+                    requestId: root.binding.requestId, method: 'GET', path, privateKey: keys.secretKey }),
+            } });
+            for (const [effect, path] of [
+                ['deployments.environments.get', '/v1/deployments/environments/' + input.sourceEnvironmentId + '?serverId=' + serverId],
+                ['deployments.receipts.get', '/v1/deployments/receipts/' + input.sourceDeploymentId + '?serverId=' + serverId + '&environmentId=' + input.sourceEnvironmentId],
+                ['deployments.receipts.get', '/v1/deployments/receipts/' + input.sourceDeploymentId + '?serverId=' + serverId],
+                ['deployments.environments.get', '/v1/deployments/environments/' + to.environmentId + '?serverId=' + serverId],
+            ]) {
+                const response = await read(effect!, path!);
+                expect.soft(response.statusCode, response.body).toBe(200);
+            }
+            const sourceReceipt = await db.deployment.findUniqueOrThrow({ where: { id: input.sourceDeploymentId } });
+            const sibling = await db.deployment.create({ data: { environmentId: input.sourceEnvironmentId,
+                targetLinkId: sourceReceipt.targetLinkId, operation: 'deploy', state: 'succeeded', requestKey: randomUUID(),
+                requestedByAccountId: owner.id, actionOperationId: randomUUID(), contentArtifactId: sourceReceipt.contentArtifactId,
+                contentHeaderVersion: sourceReceipt.contentHeaderVersion, contentBodyVersion: sourceReceipt.contentBodyVersion } });
+            const unrelatedReceipt = await read('deployments.receipts.get', '/v1/deployments/receipts/' + sibling.id + '?serverId=' + serverId);
+            expect(unrelatedReceipt.statusCode, unrelatedReceipt.body).toBe(401);
+            const other = await promotionFixture();
+            const refused = await read('deployments.environments.get', '/v1/deployments/environments/' + other.to.environmentId + '?serverId=' + serverId);
+            expect(refused.statusCode, refused.body).toBe(401);
+            const foreignSource = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
+                headers: { authorization: 'Bearer ' + token }, payload: { v: 1, machineId: machine.id,
+                    envelope: { v: 1, requestId: randomUUID(), target: { kind: 'machine', machineId: machine.id },
+                        input: { serverId, environmentId: to.environmentId, sourceEnvironmentId: other.input.sourceEnvironmentId,
+                            sourceDeploymentId: other.input.sourceDeploymentId, artifact: 'image', requestKey: randomUUID() } } } });
+            expect(foreignSource.statusCode, foreignSource.body).toBe(403);
+            expect(foreignSource.json()).toMatchObject({ error: 'credential_scope_denied' });
+        }, { authentication: 'real' });
+    });
 
     it('admits promotion resources once and opens receipt content only for a content update', async () => {
         const { owner, machine, keys, to, input } = await promotionFixture();

@@ -6,7 +6,7 @@ import { DeploymentConfigurationDefaultsForV1Schema } from '../projects/deployme
 import { hasDeploymentEnvironmentContentPatchV1, omitDeploymentEnvironmentPrivateContentPatchV1 } from './deploymentEnvironmentContentPatchV1.js';
 import { computeCanonicalDomainSeparatedHexDigest } from '../crypto/canonicalDigest.js';
 import { isDeploymentDomainChildActionIdV1, isDeploymentBackupActionIdV1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
-  DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 } from './deploymentActionIdsV1.js';
+  DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, isDeploymentPromoteActionIdV1 } from './deploymentActionIdsV1.js';
 import { DeploymentBackupConfigureInputV1Schema, DeploymentBackupConfigureIntentV1Schema } from './deploymentBackupConfigureV1.js';
 import { DeploymentBackupHistoryInputV1Schema, DeploymentBackupTestInputV1Schema, DeploymentBackupInventoryInputV1Schema, DeploymentBackupRunInputV1Schema, DeploymentBackupVerifyInputV1Schema,
   DeploymentBackupPruneInputV1Schema, DeploymentBackupActionInputSchemasV1 } from './deploymentBackupActionsV1.js';
@@ -76,6 +76,7 @@ export const DeploymentEnvironmentUpdateNativeAdmissionV1Schema = lazyZodSchema(
 }));
 export const DeploymentNativeAdmissionV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ environmentId: id }),
+  z.strictObject({ kind: z.literal('promote'), environmentId: id, sourceEnvironmentId: id, sourceDeploymentId: id }),
   DeploymentEnvironmentUpdateNativeAdmissionV1Schema,
   DeploymentDomainNativeAdmissionV1Schema, DeploymentDomainDnsNativeAdmissionV1Schema, DeploymentRestartNativeAdmissionV1Schema, DeploymentRestoreNativeAdmissionV1Schema,
   DeploymentBackupNativeAdmissionV1Schema, DeploymentBackupConfigureNativeAdmissionV1Schema,
@@ -162,7 +163,12 @@ export function projectDeploymentNativeAdmissionV1(actionId: string, input: unkn
   }
   if (actionId === 'action.operations.get') return readRecord(input).environmentId === undefined
     ? undefined : DeploymentNativeAdmissionV1Schema.parse({ environmentId: readRecord(input).environmentId });
-  if (actionId !== 'deployments.deploy' && actionId !== 'deployments.rollback' && actionId !== 'deployments.promote'
+  if (isDeploymentPromoteActionIdV1(actionId)) {
+    const value = readRecord(input);
+    return DeploymentNativeAdmissionV1Schema.parse({ kind: 'promote', environmentId: value.environmentId,
+      sourceEnvironmentId: value.sourceEnvironmentId, sourceDeploymentId: value.sourceDeploymentId });
+  }
+  if (actionId !== 'deployments.deploy' && actionId !== 'deployments.rollback'
     && actionId !== 'deployments.teardown') return undefined;
   return DeploymentNativeAdmissionV1Schema.parse({ environmentId: readRecord(input).environmentId });
 }

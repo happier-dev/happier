@@ -77,6 +77,14 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
     authentication,
   );
   if (!environment.ok) return { ok: false };
+  if ('kind' in nativeAdmission && nativeAdmission.kind === 'promote') {
+    if (!environment.admission.canManage) return { ok: false };
+    const source = await loadDeploymentEnvironmentInTx(tx, root.accountId, root.serverIdentityId,
+      nativeAdmission.sourceEnvironmentId, authentication);
+    if (!source.ok || !canDeployDeploymentEnvironment(source.admission, source.row)
+      || !await tx.deployment.findFirst({ where: { id: nativeAdmission.sourceDeploymentId,
+        environmentId: source.row.id }, select: { id: true } })) return { ok: false };
+  }
   if (
     'kind' in nativeAdmission &&
     nativeAdmission.kind === 'restore' &&

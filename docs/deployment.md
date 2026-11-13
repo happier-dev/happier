@@ -1,5 +1,24 @@
 # Deployment
 
+## Prepare with an Agent (0.3 development)
+
+Project, Environment and creation-draft Prepare/Import entries use the returning
+Session recipe composer. Its shared Session authoring controls select the Agent,
+Connected Account and other launch choices for the workspace Machine. Cancelling
+the recipe starts no Session and does not change Account defaults.
+
+`deployments.prepare` takes either a canonical `sessionDraft` or an existing
+`sessionRef`. A fresh recipe must retain the reviewed workspace Home, Machine and
+directory; a changed placement returns `input_changed`. The ordinary Session
+creation owner handles authentication and launch. Continuing a returned Session
+uses its ordinary message Action. The preparation brief contains source intent,
+without copying the launch recipe or Connected Account references into messages.
+
+This unpublished 0.3 input cut requires matching UI, Protocol and daemon source;
+older development readers reject the added draft. The 0.2 predecessor has no
+Prepare Action contract. No persistence migration or compatibility adapter is
+introduced.
+
 ## Advisory deployment preflight (0.3 development)
 
 The Promote data hook compares the selected source and destination Environment's
@@ -313,6 +332,14 @@ recovery and keeps the open install result across modal remounts and pane resize
 
 ## Redeploy after teardown (0.3 development)
 
+Native removal releases unused Compose project networks after removing the
+witnessed containers. Service retirement, generation replacement, failed-deploy
+cleanup and full Environment teardown share this network owner. It includes
+stopped containers when checking network holders and preserves shared Caddy
+attachments while another workload still needs them. Service Stop deliberately
+keeps its containers and networks available for Start or Restart; Detach with
+keep-running also preserves the workload.
+
 The shared member-version projection treats successful teardown as proof of
 absence for its captured installations and ends their older activation/restoration
 history. A fresh deploy has no incumbent to restore. Failed or uncertain teardown
@@ -380,6 +407,19 @@ The native Domain Add form requires an explicit HTTP health path and expected
 status, validated by `DeploymentDomainHealthCheckV1Schema`. It does not infer a
 health endpoint from Compose argv or assume `/` and status 200. Provider-managed
 addresses retain their provider routing input instead of native health fields.
+
+Domain rows consume the successful native apply's `routedReplicas` snapshot: the
+recorded count and complete Machine/container-name list. Missing snapshots remain
+unknown; recorded routing does not establish current replica health or traffic.
+
+Own-server member reviews retain the observed Docker engine kind in each existing
+`approvedInputBasis.runtimeProjections` entry. Older receipts and generations
+without that observation remain unknown. Native Domain acquisition consumes
+`presentMachineAuthorityV1` and refuses Docker Desktop as `unsupported_platform`
+before route setup, secret acquisition or other Domain effects. The Domains panel
+uses the serving generation's same retained engine observation to show the
+Desktop unavailability state before Add. Before any native observation, or for
+older receipts, it keeps the engine unknown and relies on the native refusal.
 
 Custom certificates become due for replacement at two thirds of their observed
 lifetime. Known validity dates can advance the projected state when read, without
@@ -1277,6 +1317,10 @@ Action preparation and review path as Deploy. The stored-promotion owner derives
 the candidate from the selected receipt, preserves destination configuration and
 publishes both reviewed content references before approval. Storage and approved
 replay still require the prepared input; replay cannot regenerate candidates.
+Home projects the compact Promote source Environment and receipt into the closed
+native admission, admits their provenance at mint, and retains those operands in
+the signed binding. Preparation reads consume that same admitted scope through
+the existing ActionSpec transports.
 The current native producer supports recorded-image promotion between stored
 definitions; explicit rebuild remains typed unsupported until its producer lands.
 Compact requests require the corresponding protocol and controller reload;

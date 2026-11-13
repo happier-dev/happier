@@ -133,7 +133,7 @@ export function isExternalActionAuthorizationBoundToEnvelope(binding: ExternalAc
       && (binding.deploymentLinkAdmission === undefined
         || binding.deploymentLinkAdmission.environmentId === projectExternalActionDeploymentLinkEnvelopeEnvironmentIdV1(input))
       && (binding.actionId === 'deployments.environments.update' && nativeAdmission !== undefined
-        || isDeploymentDomainNativeAdmissionV1(nativeAdmission) || isDeploymentDomainDnsNativeAdmissionV1(nativeAdmission) || nativeAdmission !== undefined && 'kind' in nativeAdmission && (nativeAdmission.kind === 'restart' || nativeAdmission.kind === 'restore' || nativeAdmission.kind === 'backup' || nativeAdmission.kind === 'backupConfigure')
+        || isDeploymentDomainNativeAdmissionV1(nativeAdmission) || isDeploymentDomainDnsNativeAdmissionV1(nativeAdmission) || nativeAdmission !== undefined && 'kind' in nativeAdmission && (nativeAdmission.kind === 'restart' || nativeAdmission.kind === 'restore' || nativeAdmission.kind === 'backup' || nativeAdmission.kind === 'backupConfigure' || nativeAdmission.kind === 'promote')
         ? binding.environmentId === nativeAdmission.environmentId && sameStrictJsonValue(binding.deploymentNativeAdmission, nativeAdmission)
         : (binding.actionId === 'action.operations.get' || binding.actionId === 'deployments.teardown'
           ? binding.environmentId : binding.deploymentCandidatePublication?.environmentId) === nativeAdmission?.environmentId)

@@ -2,7 +2,8 @@ import { ExternalActionRequestIdV1Schema, ExternalActionPreOpenFailureCodeSchema
 import { ExternalActionWorkflowSessionLeafV1Schema } from './workflowSessionChildV1.js';
 export { ExternalActionWorkflowSessionLeafV1Schema, projectExternalActionWorkflowSessionLeafContextV1, type ExternalActionWorkflowSessionLeafV1,
   type InstalledWorkflowSessionLeafAdmission } from './workflowSessionChildV1.js';
-import { ACTION_INVOKE_ACTION_ID_V1, WorkflowActionIdV1Schema } from './actionIds.js';
+import { ACTION_INVOKE_ACTION_ID_V1, SESSION_PUBLIC_LINK_CREATE_ACTION_ID_V1, WorkflowActionIdV1Schema } from './actionIds.js';
+import { ARTIFACT_PUBLIC_LINK_CREATE_ACTION_ID_V1 } from '../artifacts/artifactActionIdsV1.js';
 export * from './externalActionHttpError.js';
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
@@ -31,7 +32,7 @@ import { deploymentOperationForRootActionV1, isDeploymentDomainChildActionIdV1, 
   isDeploymentEnvironmentMetadataReadActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
   DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1,
   DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_DELETE_ACTION_ID_V1,
-  DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
+  DEPLOYMENT_TARGET_UNLINK_ACTION_ID_V1, isDeploymentPromoteActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
 import { DeploymentReadAdmissionV1Schema, isDeploymentReadAdmissionActionIdV1, projectDeploymentReadAdmissionV1,
   type DeploymentReadAdmissionV1 } from '../deployments/deploymentReadAdmissionV1.js';
 export { DeploymentReadAdmissionV1Schema, isDeploymentNativeReadActionIdV1, isDeploymentReadActionIdV1, isDeploymentReadAdmissionActionIdV1, projectDeploymentReadAdmissionV1,
@@ -1043,6 +1044,7 @@ export function projectExternalActionDeploymentNativeEnvelopeAdmissionV1(input: 
   const admission = input.envelope.v === 1 ? projectDeploymentNativeAdmissionV1(input.actionId, input.envelope.input)
     : (operationRead || input.actionId === 'deployments.environments.update') && input.envelope.deploymentNativeAdmission === undefined ? undefined
       : DeploymentNativeAdmissionV1Schema.parse(input.envelope.deploymentNativeAdmission);
+  if (admission && 'kind' in admission && admission.kind === 'promote' && !isDeploymentPromoteActionIdV1(input.actionId)) throw new TypeError('Native deployment admission mismatch');
   if (isDeploymentDomainDnsNativeAdmissionV1(admission)
     ? input.actionId !== admission.actionId
     : isDeploymentDomainChildActionIdV1(input.actionId)
@@ -1211,6 +1213,8 @@ export function isExternalActionMachineWorkflowActionIdV1(actionId: string): boo
 /** The incumbent Workflow signed-root admission, shared by issuance and rechecks. */
 export function isExternalActionWorkflowActionIdV1(actionId: string): boolean {
   return WorkflowActionIdV1Schema.safeParse(actionId).success
+    || actionId === ARTIFACT_PUBLIC_LINK_CREATE_ACTION_ID_V1
+    || actionId === SESSION_PUBLIC_LINK_CREATE_ACTION_ID_V1
     || isExternalActionMachineWorkflowActionIdV1(actionId)
     || actionId.startsWith('session.') && isRoleActionIdV1(actionId);
 }
@@ -1307,7 +1311,10 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
     context.addIssue({ code: 'custom', path: ['workspaceSyncAdmission'], message: 'Sync source facts belong to their admitted requester.' });
   }
   const native = value.deploymentNativeAdmission;
-  if (value.actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 || isDeploymentBackupConfigureNativeAdmissionV1(native)
+  if (native && 'kind' in native && native.kind === 'promote'
+    ? !isDeploymentPromoteActionIdV1(value.actionId) || native.environmentId !== value.environmentId
+      || value.target.kind !== 'machine' || value.target.machineId !== value.machineId
+    : value.actionId === DEPLOYMENT_BACKUP_CONFIGURE_ACTION_ID_V1 || isDeploymentBackupConfigureNativeAdmissionV1(native)
     ? !isDeploymentBackupConfigureNativeAdmissionV1(native) || value.actionId !== native.actionId
       || native.environmentId !== value.environmentId || value.target.kind !== 'machine' || value.target.machineId !== value.machineId
     : isDeploymentEnvironmentUpdateNativeAdmissionV1(native)
