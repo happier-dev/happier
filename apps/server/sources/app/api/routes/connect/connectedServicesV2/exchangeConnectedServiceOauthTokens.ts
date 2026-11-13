@@ -13,6 +13,7 @@ import {
     extractOpenAiCodexEmail,
 } from "./openaiCodex/openaiCodexIdTokenClaims";
 import {
+    fetchConnectedServiceOauthEndpoint,
     resolveClaudeSubscriptionOauthClientId,
     resolveClaudeSubscriptionOauthProfileMetadata,
     resolveClaudeSubscriptionOauthTokenUrl,
@@ -279,7 +280,7 @@ function resolveConnectedServiceOauthExchangeHandler(serviceId: ConnectedService
 export async function exchangeConnectedServiceOauthTokens(params: OauthExchangeInput): Promise<Readonly<{
     bundleB64Url: string;
 }>> {
-    const baseFetcher = params.fetcher ?? fetch;
+    const baseFetcher = params.fetcher ?? fetchConnectedServiceOauthEndpoint;
     const timeoutMs = resolveOauthExchangeTimeoutMs(process.env);
     const fetcher = createFetchWithTimeout(baseFetcher, timeoutMs);
     const recipientPublicKey = parseRecipientPublicKey(params.publicKeyB64Url);

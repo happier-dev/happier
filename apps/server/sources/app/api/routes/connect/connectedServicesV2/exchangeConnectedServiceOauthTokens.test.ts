@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { createServer } from "node:http";
+
 import tweetnacl from "tweetnacl";
 
 import { decodeBase64, encodeBase64, openBoxBundle, BOX_BUNDLE_PUBLIC_KEY_BYTES } from "@happier-dev/protocol";
@@ -257,6 +259,38 @@ describe("exchangeConnectedServiceOauthTokens", () => {
         })).rejects.toThrow(/Gemini OAuth exchange is not supported/i);
 
         expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("sends an operator-configured token endpoint through the pinned outbound owner, which refuses redirects", async () => {
+        let tokenRequests = 0;
+        const server = createServer((request, response) => {
+            if (request.url === "/redirect") {
+                response.writeHead(302, { location: "/token" }).end();
+                return;
+            }
+            tokenRequests += 1;
+            response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({
+                access_token: "at", refresh_token: "rt", id_token: "id", expires_in: 3600,
+            }));
+        });
+        await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+        const address = server.address();
+        if (!address || typeof address === "string") throw new Error("Missing test listener");
+        resetOauthExchangeEnv({ HAPPIER_CONNECTED_SERVICES_OPENAI_CODEX_OAUTH_TOKEN_URL: `http://127.0.0.1:${address.port}/redirect` });
+        try {
+            const outcome = await exchangeConnectedServiceOauthTokens({
+                serviceId: "openai-codex",
+                publicKeyB64Url: buildRecipientPublicKeyB64Url(),
+                code: "c",
+                verifier: "v",
+                redirectUri: "http://localhost:54545/oauth2callback",
+                now: 1700000000000,
+            }).then(() => "exchanged", () => "refused");
+            expect({ outcome, tokenRequests }).toEqual({ outcome: "refused", tokenRequests: 0 });
+        } finally {
+            resetOauthExchangeEnv();
+            await new Promise<void>(resolve => server.close(() => resolve()));
+        }
     });
 
     it("passes an AbortSignal to token exchange fetch requests", async () => {

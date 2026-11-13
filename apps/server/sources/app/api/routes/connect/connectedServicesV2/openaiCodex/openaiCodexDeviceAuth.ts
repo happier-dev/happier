@@ -11,7 +11,7 @@ import {
   extractOpenAiCodexAccountId,
   extractOpenAiCodexEmail,
 } from "./openaiCodexIdTokenClaims";
-import { resolveOpenAiCodexOauthClientId, resolveOpenAiCodexOauthTokenUrl } from "../oauthConfig";
+import { fetchConnectedServiceOauthEndpoint, resolveOpenAiCodexOauthClientId, resolveOpenAiCodexOauthTokenUrl } from "../oauthConfig";
 
 export { OPENAI_CODEX_DEVICE_REDIRECT_URI, OPENAI_CODEX_DEVICE_VERIFICATION_URL };
 
@@ -55,7 +55,7 @@ export type OpenAiCodexDeviceAuthStartResult = Readonly<{
 }>;
 
 export async function startOpenAiCodexDeviceAuth(params: Readonly<{ fetcher?: typeof fetch }>): Promise<OpenAiCodexDeviceAuthStartResult> {
-  const fetcher = params.fetcher ?? fetch;
+  const fetcher = params.fetcher ?? fetchConnectedServiceOauthEndpoint;
   const response = await fetcher(OPENAI_CODEX_DEVICE_USER_CODE_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -86,7 +86,7 @@ export async function pollOpenAiCodexDeviceAuthOnce(params: Readonly<{
   userCode: string;
   intervalMs: number;
 }>): Promise<OpenAiCodexDeviceAuthPollResult> {
-  const fetcher = params.fetcher ?? fetch;
+  const fetcher = params.fetcher ?? fetchConnectedServiceOauthEndpoint;
   const response = await fetcher(OPENAI_CODEX_DEVICE_TOKEN_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -168,7 +168,7 @@ export async function exchangeOpenAiCodexDeviceAuthApprovalForBundle(params: Rea
   now: number;
   randomBytes?: (length: number) => Uint8Array;
 }>): Promise<Readonly<{ bundleB64Url: string }>> {
-  const fetcher = params.fetcher ?? fetch;
+  const fetcher = params.fetcher ?? fetchConnectedServiceOauthEndpoint;
   const recipientPublicKey = parseRecipientPublicKey(params.publicKeyB64Url);
   const payload = await exchangeOpenAiCodexAuthorizationCodeForTokens({
     fetcher,

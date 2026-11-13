@@ -1,3 +1,4 @@
+import { fetchConnectedServiceOauthEndpoint } from "../oauthConfig";
 import {
     exchangeOpenAiCodexDeviceAuthApprovalForBundle,
     pollOpenAiCodexDeviceAuthOnce,
@@ -54,7 +55,7 @@ export async function pollOpenAiCodexDeviceAuthTransaction(input: Readonly<{
     now: number;
     fetcher?: typeof fetch;
 }>): Promise<PollOpenAiCodexDeviceAuthTransactionResult> {
-    const fetcher = input.fetcher ?? fetch;
+    const fetcher = input.fetcher ?? fetchConnectedServiceOauthEndpoint;
     const work = await claimOpenAiCodexDeviceAuthTransactionWork({
         accountId: input.accountId,
         transactionId: input.transactionId,
