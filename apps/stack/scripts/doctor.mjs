@@ -138,7 +138,7 @@ async function main() {
   const runtimeSnapshotRequired = runtimeMode.mode === 'require' && !runtimeInspection.valid;
   const borrowedExpoProducerStackName = String(process.env.HAPPIER_STACK_EXPO_SOURCE_STACK ?? '').trim();
   const sourceUi = sourceSnapshot ? resolveSourceQaUiMode({
-    uiMode: runtimeState?.sourceUi === 'disabled' ? undefined : runtimeState?.sourceUi ?? undefined,
+    uiMode: runtimeState?.sourceUi === 'disabled' ? undefined : runtimeState?.sourceUi ?? 'borrowed',
     noUi: runtimeState?.sourceUi === 'disabled' || (runtimeState?.sourceUi == null
       && (runtimeState?.serveUi === false || process.env.HAPPIER_STACK_SERVE_UI === '0')),
     consumerStackName: stackName, producerStackName: borrowedExpoProducerStackName,

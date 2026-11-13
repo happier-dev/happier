@@ -63,8 +63,10 @@ honors an explicit `--source-after` value. General source starts
 and other non-reload adoption keep their newest-completed default. Check the
 printed capture time and input identity before attributing a loaded fix. A
 producer failure retains the incumbent and reports the reason and recovery
-action; it never falls back to a consumer compiler. Borrowed Expo remains the
-default; `--ui=export` requests a finite producer-owned web export. Registered
+action; it never falls back to a consumer compiler. QA defaults to a completed shared web export whose source inputs, options and
+capture boundary match on the serving host. Without one it reports the reason
+and falls back to borrowed Expo; default selection never builds. `--ui=export`
+explicitly requests a finite producer-owned web export. Registered
 built-runtime publication remains a separate supported contract.
 
 Do not create a dedicated stack merely because testing or QA involves stack services. When a human explicitly requests a dedicated, isolated, stable, controlled, snapshot-backed, or manual-restart QA stack, invoke `.agents/skills/happier-controlled-stack-qa`; that skill owns creation, session-wide reuse of one remembered stack, runtime selection, reload boundaries, borrowed Expo, and teardown. Additional or replacement stacks require an explicit human request.

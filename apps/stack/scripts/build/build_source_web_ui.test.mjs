@@ -21,6 +21,7 @@ import { runNodeCapture } from '../testkit/core/run_node_capture.mjs';
 import { sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 import { sanitizeStackTestRunnerEnv } from '../utils/test/test_env.mjs';
 import { recordStackRuntimeStart, readStackRuntimeStateFile } from '../utils/stack/runtime_state.mjs';
+import { resolveSourceQaUiMode } from '../runtime/shared/borrowed_expo.mjs';
 import { beginPendingSourceStart } from '../runtime/shared/pending_source_start.mjs';
 import { resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath, withDependencyRefreshLock } from '../utils/proc/dependency_refresh.mjs';
 import { withPatchedProcessEnv } from '../testkit/core/env_scope.mjs';
@@ -414,10 +415,13 @@ await writeFile(join(web,'app.js'),'globalThis.debug = '+JSON.stringify(process.
   await writeFile(publicOwner, relocateSourceOwnerImports(sourceOwnerText
     .replace("fileURLToPath(new URL('../../bin/hstack-exec', import.meta.url))", JSON.stringify(native?.launcher ?? fileURLToPath(new URL('../../bin/hstack-exec', sourceUrl)))),
   sourceUrl, sourceBoundaries));
-  const { exportSourceWebUi: exportShared, publishSourceWebUi: selectShared } = await import(pathToFileURL(publicOwner));
+  const { exportSourceWebUi: exportShared, publishSourceWebUi: selectShared, prepareSourceQaWebUi } = await import(pathToFileURL(publicOwner));
   pending = await beginPendingSourceStart({ stackBaseDir });
   const exports = async () => Number(await readFile(counter, 'utf8'));
   const env = { ...(native ? buildNativeAdmissionFixtureEnv() : process.env), EXPO_PUBLIC_DEBUG: '0',
+    // The fixture mounts installed tooling and authors tiny manifests. Package
+    // installation is an external boundary outside this export/reuse test.
+    HAPPIER_STACK_SKIP_REFRESH_DEPS: '1',
     GOMAXPROCS: '2', HAPPIER_STACK_EXPO_EXPORT_MAX_WORKERS: '',
     HAPPIER_STACK_STACK: 'consumer', HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'producer',
     HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks') };
@@ -425,6 +429,10 @@ await writeFile(join(web,'app.js'),'globalThis.debug = '+JSON.stringify(process.
     env };
   const otherStackBaseDir = fixture.path('stacks/independent');
   otherPending = await beginPendingSourceStart({ stackBaseDir: otherStackBaseDir });
+  const mode = resolveSourceQaUiMode({ consumerStackName: 'consumer', producerStackName: 'producer' });
+  assert.equal(mode, 'auto', 'QA default defers publication selection to the serving host');
+  const qaUiOptions = { ...options, mode };
+  assert.equal((await prepareSourceQaWebUi(qaUiOptions)).mode, 'borrowed', 'missing publication falls back without building');
   const completed = await Promise.allSettled([
     exportShared({ ...options, outputDir: fixture.path('first') }),
     exportShared({ ...options, stackBaseDir: otherStackBaseDir, pending: otherPending, baseDir: fixture.path('independent-state') }),
@@ -435,6 +443,11 @@ await writeFile(join(web,'app.js'),'globalThis.debug = '+JSON.stringify(process.
   });
   assert.equal(await readFile(fixture.path('export-owner'), 'utf8'), 'producer',
     'QA requests export work from the repository producer on this execution host');
+  const selectedUi = await prepareSourceQaWebUi(qaUiOptions);
+  assert.equal(selectedUi.mode, 'export', 'matching completed export is the QA default');
+  assert.equal(selectedUi.built.uiDir, first.uiDir);
+  assert.equal((await prepareSourceQaWebUi({ ...qaUiOptions, mode: 'borrowed' })).mode, 'borrowed');
+  assert.equal(await exports(), 1, 'UI provider selection never builds');
   const bundleRoot = fixture.path('stacks/source-bundles');
   const publicationLock = join(bundleRoot, 'publication.lock');
   const completedRecord = JSON.parse(await readFile(join(first.uiDir, '../source-bundle.json'), 'utf8'));
@@ -485,6 +498,11 @@ await writeFile(join(web,'app.js'),'globalThis.debug = '+JSON.stringify(process.
   const withoutBudget = await exportShared({ ...options, env: { ...env, GOMAXPROCS: '' } });
   assert.equal(withoutBudget.uiDir, first.uiDir, 'pre-admission lookup must reuse bytes without a CPU budget');
   assert.equal(await exports(), 1);
+  const disabledMaps = await exportShared({ ...options,
+    env: { ...env, HAPPIER_UI_EXPORT_SOURCE_MAPS: '0' } });
+  assert.equal(disabledMaps.uiDir, first.uiDir,
+    'remote diagnostic defaults must reuse the same export as omitted source maps');
+  assert.equal(await exports(), 1, 'disabled diagnostic defaults must not rebuild matching UI inputs');
   const sourceMaps = await exportShared({ ...options, outputDir: fixture.path('source-maps'),
     env: { ...env, HAPPIER_UI_EXPORT_SOURCE_MAPS: '1' } });
   assert.notEqual(sourceMaps.uiDir, first.uiDir, 'semantic source-map options must invalidate completed bytes');
@@ -526,6 +544,8 @@ await writeFile(join(web,'app.js'),'globalThis.debug = '+JSON.stringify(process.
   assert.equal(await exports(), 6);
   const member = join(repoDir, 'apps/ui/sources/completedWebMembership.ts');
   await writeFile(member, 'export const added = true;');
+  assert.equal((await prepareSourceQaWebUi(qaUiOptions)).mode, 'borrowed', 'changed UI inputs cannot default to a stale publication');
+  assert.equal(await exports(), 6, 'missing matching publication must not build in a QA consumer');
   const changed = await exportShared(options);
   assert.equal(changed.uiDir, repaired.uiDir, 'moving source must adopt the latest completed capture without a QA compiler');
   assert.equal(await exports(), 6);
@@ -534,6 +554,7 @@ await writeFile(join(web,'app.js'),'globalThis.debug = '+JSON.stringify(process.
   assert.notEqual(refreshed.uiDir, repaired.uiDir, 'an explicit freshness request waits for a newer producer capture');
   assert.ok(Date.parse(refreshed.sourceCapture.capturedAt) >= Date.parse(sourceCapturedAfter));
   assert.equal(await exports(), 7);
+  assert.equal((await prepareSourceQaWebUi(qaUiOptions)).built.uiDir, refreshed.uiDir, 'newly matching publication restores default export adoption');
   await rm(member);
   assert.equal((await exportShared(options)).uiDir, refreshed.uiDir, 'Undo still adopts the latest completed capture');
   assert.equal(await exports(), 7);

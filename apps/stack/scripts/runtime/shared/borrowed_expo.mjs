@@ -22,10 +22,10 @@ export function isBorrowedExpoConsumer({ consumerStackName, producerStackName })
   return Boolean(consumer && producer && consumer !== producer);
 }
 
-/** Source QA borrows dev Expo; frozen exports are an explicit acceptance mode. */
+/** Defer default QA selection to the serving host and its shared publication. */
 export function resolveSourceQaUiMode({ uiMode, noUi = false, consumerStackName, producerStackName }) {
-  const mode = uiMode ?? 'borrowed';
-  if (mode !== 'export' && mode !== 'borrowed') {
+  const mode = uiMode ?? 'auto';
+  if (uiMode !== undefined && mode !== 'export' && mode !== 'borrowed') {
     throw new Error('[start] source QA --ui must be export or borrowed');
   }
   if (noUi) return 'disabled';

@@ -232,3 +232,38 @@ test('fallback watcher retains package edits after an install replaces directori
     await rm(root, { recursive: true, force: true });
   }
 });
+
+
+test('finite CI exports close without starting a live Plugin UI inventory producer', async () => {
+  const previousCi = process.env.CI;
+  const previousInventory = process.env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY;
+  const root = await mkdtemp(join(tmpdir(), 'happier-finite-inventory-'));
+  let closed = false;
+  let watcherReads = 0;
+  try {
+    process.env.CI = '1';
+    process.env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY = join(root, 'inventory.js');
+    await writeFile(join(root, 'inventory.js'), 'export const BUNDLED_PLUGIN_UI_APP_ARTIFACTS = [];');
+    delete require.cache[require.resolve('../metro.config.js')];
+    const config = require('../metro.config.js');
+    // Metro is the external process boundary; the real config and dependency
+    // consumption owner run beneath it. Finite exports have no live watcher.
+    const metro = {
+      getBundler: () => ({
+        getDeltaBundler: () => ({ unstable_setDependencyConsumption() {} }),
+        getBundler: () => ({ getWatcher() { watcherReads++; throw new Error('finite Metro has no live watcher'); } }),
+      }),
+      async end() { closed = true; },
+    };
+    config.server.enhanceMiddleware((_req, _res, next) => next(), metro);
+    await metro.end();
+    assert.equal(closed, true);
+    assert.equal(watcherReads, 0, 'finite exports consume the prepared inventory without a live producer');
+  } finally {
+    if (previousCi === undefined) delete process.env.CI; else process.env.CI = previousCi;
+    if (previousInventory === undefined) delete process.env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY;
+    else process.env.HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY = previousInventory;
+    delete require.cache[require.resolve('../metro.config.js')];
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -2397,7 +2397,9 @@ export function buildRemoteRuntimeSnapshotProbeCommand(target, { stackName, snap
     'const observed = { sourceRuntimeIdentities, startedAt: s.startedAt };',
     ...daemonEndpointProbe,
     ...(services.server ? [
-      `if (s.sourceUi !== ${JSON.stringify(sourceUi === 'export' ? 'export' : 'disabled')}) fail('runtime_ui_mode_mismatch'); observed.sourceUi = s.sourceUi;`,
+      sourceUi === 'auto'
+        ? "if (s.sourceUi !== 'export' && s.sourceUi !== 'borrowed') fail('runtime_ui_mode_mismatch'); observed.sourceUi = s.sourceUi;"
+        : `if (s.sourceUi !== ${JSON.stringify(sourceUi === 'export' ? 'export' : 'disabled')}) fail('runtime_ui_mode_mismatch'); observed.sourceUi = s.sourceUi;`,
       "if (s.sourceUi === 'export') {",
       "  if (typeof s.sourceUiLaunch?.uiDir !== 'string' || !s.sourceUiLaunch.uiDir.trim()) fail('runtime_ui_launch_missing');",
       '  observed.sourceUiLaunch = { uiDir: s.sourceUiLaunch.uiDir };',
@@ -2667,8 +2669,8 @@ function resolveRemoteStackStartInvocation(target, {
   stackEnvLines.push(...operatorEnvironment.map(([key, value]) => `${key}=${value}`));
   const devArgs = usesRetainedRemoteStackState(runtimeMode)
     ? [runtimeMode === 'source-snapshot' ? '--runtime=source' : '--runtime', '--no-dev-targets', '--no-browser',
-      // Source startup defaults to borrowed Expo; carry the explicit export
-      // choice to the server host that builds and serves its own UI.
+      // Leave automatic selection to the serving host's shared publication.
+      // Explicit export continues to request finite producer work.
       ...(runtimeMode === 'source-snapshot' && normalizedServices.server && sourceUi === 'export' ? ['--ui=export'] : []),
       ...(runtimeMode === 'source-snapshot' && sourceStartRequestId ? [`--source-start-request-id=${sourceStartRequestId}`] : []),
       ...(runtimeMode === 'source-snapshot' ? ['--restart'] : []),
@@ -2679,7 +2681,7 @@ function resolveRemoteStackStartInvocation(target, {
       ...(!normalizedServices.server ? ['--no-server', `--server-url=${serverUrl}`] : []),
       ...(!normalizedServices.daemon ? ['--no-daemon'] : []),
       ...(!normalizedServices.server || (runtimeMode === 'source-snapshot'
-        ? sourceUi !== 'export' : Boolean(borrowedExpoProducerStackName)) ? ['--no-ui'] : [])]
+        ? sourceUi !== 'export' && sourceUi !== 'auto' : Boolean(borrowedExpoProducerStackName)) ? ['--no-ui'] : [])]
     : buildRemoteDevArgs({
     services: normalizedServices,
     serverUrl,

@@ -6,7 +6,7 @@ import { PassThrough } from 'node:stream';
 import { format } from 'node:util';
 
 import { prepareSourceRuntimeProducer, admitSourceRuntimeReload, normalizeSourceCapturedAfter } from '../../build/build_source_runtime.mjs';
-import { exportSourceWebUi } from '../../build/build_source_web_ui.mjs';
+import { prepareSourceQaWebUi } from '../../build/build_source_web_ui.mjs';
 import { parseArgs } from '../../utils/cli/args.mjs';
 import { resolveSourceQaUiMode } from '../shared/borrowed_expo.mjs';
 import { beginPendingSourceStart, emitSourcePreparationPhase } from '../shared/pending_source_start.mjs';
@@ -127,9 +127,9 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       const [{ server, daemon }] = await Promise.all(preparations);
       if (server) components.server = server;
       if (daemon) components.daemon = daemon;
-      const ui = components.server && uiMode === 'export' ? await exportSourceWebUi({ repoDir, baseDir: sourceRoot,
+      const ui = components.server ? (await prepareSourceQaWebUi({ mode: uiMode, repoDir, baseDir: sourceRoot,
         stackBaseDir, pending, env, signal: pending.signal, sourceCapturedAfter,
-        requireLastGreen: sourceCapturedAfter == null, loadSentinelPasses }) : null;
+        requireLastGreen: sourceCapturedAfter == null, loadSentinelPasses })).built : null;
       await log('[reload] producer capture adopted; checking replacement daemon loader, server health and UI boot');
       await pending.setPhase({ phase: 'checking' });
       let admitted;

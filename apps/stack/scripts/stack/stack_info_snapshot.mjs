@@ -225,7 +225,7 @@ export async function readStackInfoSnapshot({
   // than consuming the source-QA borrowed/export selection.
   const devExpoUi = sourceSnapshot && runtimeState?.script === 'dev.mjs';
   const sourceUi = sourceSnapshot && !devExpoUi ? resolveSourceQaUiMode({
-    uiMode: runtimeState?.sourceUi === 'disabled' ? undefined : runtimeState?.sourceUi ?? undefined,
+    uiMode: runtimeState?.sourceUi === 'disabled' ? undefined : runtimeState?.sourceUi ?? 'borrowed',
     noUi: runtimeState?.sourceUi === 'disabled' || (runtimeState?.sourceUi == null && !serveUiConfigured),
     consumerStackName: stackName, producerStackName: borrowedExpoProducerStackName,
   }) : null;

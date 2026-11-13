@@ -7,6 +7,8 @@ const { createHash } = require('node:crypto');
 const { createMetroCacheStore } = require('./scripts/metroCache.cjs');
 const { protectMetroDependencyConsumption, processMetroDependencyChanges } = require('./scripts/metroDependencyConsumption.cjs');
 const { builtinModules } = require("node:module");
+const { createNodeBuiltinBoundary } = require('./scripts/metroNodeBuiltinBoundary.cjs');
+const { matchPackageExport, substitutePackageExportTarget } = require('../../packages/cli-common/packageExportMatch.cjs');
 const {
   getSentryExpoConfig
 } = require("@sentry/react-native/metro");
@@ -883,9 +885,13 @@ function resolveInternalWorkspacePackageExport(moduleName, blockList, platform, 
     : safeReadJson(packageJsonPath);
   if (!packageJson || typeof packageJson !== "object") return null;
   const exportKey = subpath.length > 0 ? `./${subpath}` : ".";
-  const exportEntry = packageJson.exports?.[exportKey] ?? (subpath.length === 0 ? packageJson.main : null);
+  const exportsMap = packageJson.exports;
+  // Subpath maps use the repository's single Node-precedence matcher (exact key, then `*` patterns).
+  const exportMatch = exportsMap && typeof exportsMap === "object" && Object.keys(exportsMap).some((key) => key.startsWith("."))
+    ? matchPackageExport(exportsMap, exportKey) : null;
+  const exportEntry = exportMatch?.declaration ?? (subpath.length === 0 ? packageJson.main : null);
   if (!exportEntry) return null;
-  const exportTarget = resolvePackageSourceExportTarget(exportEntry, platform);
+  const exportTarget = substitutePackageExportTarget(resolvePackageSourceExportTarget(exportEntry, platform), exportMatch?.replacement);
   if (!exportTarget) {
     throw new Error(`Workspace export ${moduleName} must declare a happier-source target for ${platform ?? "default"}`);
   }
@@ -933,7 +939,7 @@ function resolvePackageNameShadowedByArtifactAssetExt(context, moduleName) {
 
 const defaultResolveRequest = config.resolver.resolveRequest;
 const shikiGrammarRegistryPath = require('./scripts/shikiGrammarRegistry.cjs').resolveShikiGrammarRegistry(__dirname);
-config.resolver.resolveRequest = (context, moduleName, platform) => {
+const resolveAppRequest = (context, moduleName, platform) => {
   if (platform === 'web' && context?.originModulePath && moduleName.startsWith('.')
     && path.resolve(path.dirname(context.originModulePath), moduleName) === shikiGrammarRegistryPath) {
     return { type: 'sourceFile', filePath: path.join(__dirname,
@@ -1240,6 +1246,13 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   );
 };
 
+const refuseStubbedFirstPartyNodeBuiltin = createNodeBuiltinBoundary({
+  repoRoot: monorepoRoot,
+  stubDirectory: path.dirname(nodeEmptyBuiltinShim),
+});
+config.resolver.resolveRequest = (context, moduleName, platform) =>
+  refuseStubbedFirstPartyNodeBuiltin(context, moduleName, platform, resolveAppRequest(context, moduleName, platform));
+
 // A source Expo owns its inventory for its entire serving lifetime. Reuse
 // Metro's change feed and the startup producer for managed and standalone dev.
 config.watcher.unstable_processFileChanges = (processChanges, signal) =>
@@ -1250,7 +1263,9 @@ config.server.enhanceMiddleware = (middleware, metroServer) => {
   protectMetroDependencyConsumption(metroServer, config.projectRoot);
   const upstream = enhanceMiddleware ? enhanceMiddleware(middleware, metroServer) : middleware;
   let enhanced = upstream;
-  if (privatePluginUiInventory) {
+  // Expo disables Metro watching in CI, including finite source exports.
+  // Their inventory is already prepared and must not start a live producer.
+  if (privatePluginUiInventory && !parseBooleanEnv('CI', false)) {
     const refresh = import(require('node:url').pathToFileURL(path.join(__dirname, 'scripts/ensureWorkspacePackagesBuilt.mjs')).href)
       .then(({ watchUiSourcePluginInventory }) => watchUiSourcePluginInventory({ metroServer, metroConfig: config, uiPackageDir: __dirname }));
     void refresh.catch(error => console.error('[plugin-ui] source inventory watcher failed:', error));

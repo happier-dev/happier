@@ -3262,6 +3262,8 @@ test('source snapshot server placement exports its UI unless borrowed or disable
     assert.match(decode(buildRemoteStackCommand(target, options)), /--ui=.*export/);
     assert.doesNotMatch(decode(buildRemoteStackCommand(target, options)), /--no-ui/);
     assert.doesNotMatch(decode(buildRemoteStackCommand(target, { ...options, borrowedExpoProducerStackName: 'repo-producer' })), /--no-ui/);
+    const automatic = decode(buildRemoteStackCommand(target, { ...options, sourceUi: 'auto' }));
+    assert.doesNotMatch(automatic, /--no-ui|--ui=/, 'the serving host selects an available export for automatic QA');
     for (const sourceUi of ['borrowed', 'disabled']) assert.match(decode(buildRemoteStackCommand(target, { ...options, sourceUi })), /--no-ui/);
     assert.match(decode(buildRemoteStackCommand(target, { ...options, services: { server: false, expo: false, daemon: true } })), /--no-ui/);
   }
@@ -5377,6 +5379,7 @@ test('agents and ElevenLabs shared source resolvers skip publication in both dis
     assert.equal(resolveRemoteCommandPolicy(unknown, { repoRoot: root, cwd }).kind, 'runtime');
   }
 });
+
 
 test('ordinary source starts transport sentinel facts without retaining them in stack environment on both platforms', () => {
   const loadSentinelPasses = [{ startedAt: '2026-11-12T16:30:26.000Z', endedAt: '2026-11-12T16:31:26.000Z' }];

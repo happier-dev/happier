@@ -32,14 +32,25 @@ import { SOURCE_WEB_EXPORT_ADMISSION_CLASS } from '../utils/dev_targets/remote_c
 import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { rememberSourceCaptureFailure, withSourceCaptureRetry } from './source_capture_retry.mjs';
 
+/** Default QA adopts a matching publication; only explicit export requests
+ * admit producer work. Consumers keep the selected result through publication. */
+export async function prepareSourceQaWebUi({ mode, ...options }) {
+  if (mode === 'disabled' || mode === 'borrowed') return { mode, built: null };
+  const built = await exportSourceWebUi({ ...options, reuseOnly: mode === 'auto' });
+  if (built) return { mode: 'export', built };
+  console.error('[source-ui] borrowed Expo fallback: no completed shared export matches the source inputs, options and capture boundary');
+  return { mode: 'borrowed', built: null };
+}
+
 /** Stack starts reuse completed account-free exports through source publication.
  * Explicit outputDir callers keep their private finite producer boundary. */
 export async function exportSourceWebUi({ repoDir, baseDir, outputDir, stackBaseDir, pending,
-  replaceUiDir = null, env = process.env, signal = pending?.signal, runImpl, sourceCapturedAfter, requireLastGreen = false, loadSentinelPasses }) {
+  replaceUiDir = null, env = process.env, signal = pending?.signal, runImpl, sourceCapturedAfter, requireLastGreen = false, loadSentinelPasses, reuseOnly = false }) {
   if (stackBaseDir && !pending?.requestId) throw new Error('[source-ui] shared export requires its pending Stack start');
   if (stackBaseDir) {
     let built = await exportSharedSourceWebUi({ repoDir, stackBaseDir, requestId: pending.requestId,
-      env, signal, sourceCapturedAfter, requireLastGreen, loadSentinelPasses });
+      env, signal, sourceCapturedAfter, requireLastGreen, loadSentinelPasses, reuseOnly });
+    if (!built) return null;
     if (replaceUiDir) built = await pending.publishPreparation(() =>
       replaceSourceWebUi({ built, replaceUiDir, repoDir, env, signal }));
     await pending.setPhase({ phase: 'prepared', component: 'ui' });
@@ -104,7 +115,8 @@ async function sourceWebBuildOptions({ repoDir, env }) {
   const options = Object.entries(effective).filter(([key]) =>
     /^(?:EXPO_|HAPPIER_UI_|HAPPIER_APP_|HAPPIER_EXPO_|HAPPIER_TERMINAL_NATIVE_|HAPPIER_ANDROID_|HAPPY_STACKS_|EAS_)/.test(key)
     || ['APP_ENV', 'NODE_ENV', 'BABEL_ENV', 'CI', 'EX_UPDATES_NATIVE_DEBUG', 'HAPPIER_ENABLE_TERMINAL_NATIVE', 'HAPPIER_SYNC_TUNING_JSON'].includes(key))
-    .filter(([key]) => key !== 'HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY')
+    // Source-map content is represented by sourceWebExportArgs below.
+    .filter(([key]) => key !== 'HAPPIER_UI_PLUGIN_ARTIFACT_INVENTORY' && key !== 'HAPPIER_UI_EXPORT_SOURCE_MAPS')
     .sort(([left], [right]) => left.localeCompare(right));
   return createHash('sha256').update(JSON.stringify([process.version, process.platform, process.arch, options,
     // Worker fanout is execution policy, not bundle content. Lookup happens
@@ -211,14 +223,14 @@ async function adoptReusableSourceWebUi({ repoDir, bundleRoot, stackBaseDir, req
   return null;
 }
 
-async function exportSharedSourceWebUi({ repoDir, stackBaseDir, requestId, env, signal, sourceCapturedAfter, requireLastGreen, loadSentinelPasses }) {
+async function exportSharedSourceWebUi({ repoDir, stackBaseDir, requestId, env, signal, sourceCapturedAfter, requireLastGreen, loadSentinelPasses, reuseOnly }) {
   repoDir = resolve(repoDir);
   stackBaseDir = resolve(stackBaseDir);
   const bundleRoot = join(dirname(stackBaseDir), 'source-bundles');
   sourceCapturedAfter = normalizeSourceCapturedAfter(sourceCapturedAfter);
   const context = resolveSourceRuntimeProducerContext({ repoDir, stackBaseDir, env });
   const buildOptions = await sourceWebBuildOptions({ repoDir, env: context.env });
-  const requireCurrentSource = context.consumerStackName === context.producerStackName;
+  const requireCurrentSource = reuseOnly || context.consumerStackName === context.producerStackName;
   const adopt = async () => {
     const built = await adoptReusableSourceWebUi({ repoDir, bundleRoot, stackBaseDir, requestId, buildOptions,
       env: context.env, signal, sourceCapturedAfter, requireCurrentSource, requireLastGreen, loadSentinelPasses });
@@ -228,6 +240,7 @@ async function exportSharedSourceWebUi({ repoDir, stackBaseDir, requestId, env, 
   await updatePendingSourcePreparationPhase({ stackBaseDir, requestId, phase: 'queued', component: 'ui', signal });
   const cached = await adopt();
   if (cached) return cached;
+  if (reuseOnly) return null;
   try {
     if (requireLastGreen) throw sourceRuntimeLastGreenUnavailable();
     const inputs = { repoDir, baseDir: join(context.producerStackBaseDir, 'source-runtime'),

@@ -403,7 +403,7 @@ node ./apps/stack/scripts/repo_local.mjs stack stop agent-qa-shared --json
 
 ### Default browser QA with the repository Expo server
 
-Source QA borrows dev Expo/Metro by default while keeping its source-bundled server and daemon. New QA stacks record their checkout's repository producer; configure it explicitly when adopting a retained stack:
+In 0.3 development, source QA uses a completed shared web export when its captured inputs, build options and requested capture boundary match on the serving host. Otherwise it reports the missing match and falls back to borrowed dev Expo/Metro. Default selection never builds an export. Both modes keep the source-bundled server and daemon. New QA stacks record their checkout's repository producer; configure it explicitly when adopting a retained stack:
 
 ```bash
 node ./apps/stack/scripts/repo_local.mjs stack list
@@ -415,7 +415,7 @@ For a development-only desktop shell that also borrows Expo, prepare its native 
 
 The TUI reports Expo as borrowed, displays the producer's Expo logs in the Expo pane, and routes the browser or development client to the consumer stack's server. Even with `--mobile`, the consumer does not start, own, restart, or stop Expo; the producer is its sole lifecycle owner. Browser URLs use the consumer's named `.localhost` origin, include its `server` URL, and set `happier_hmr=0`; the tab stays on its currently loaded UI until you reload it manually. On reload it receives the producer's latest development bundle, so this is intentionally controlled-live rather than immutable.
 
-Borrowers share the producer's bundle per platform: server and Account/stack URLs are runtime parameters, outside its bundle identity. If Expo is down, server/daemon starts and reloads continue normally; park only UI/QA-UI until `Expo READY`. Stack info shows UI `waiting for dev Expo` and detects recovery without a consumer restart. Never start Metro or a fresh export as fallback. Use `--ui=export` only for explicit release/boundary acceptance; unchanged captured inputs/options reuse the completed validated export through the same publication owner, with independent serving paths. Use `--no-ui` for headless workers. `happier_hmr=0` is web-only; an installed native development client can use the producer's advertised/tunnelled Metro URL, but its native Fast Refresh behavior is unchanged.
+Borrowers share the producer's bundle per platform: server and Account/stack URLs are runtime parameters, outside its bundle identity. If Expo is down, server/daemon starts and reloads continue normally; park only UI/QA-UI until `Expo READY`. Stack info shows UI `waiting for dev Expo` and detects recovery without a consumer restart. Never start Metro or a fresh export as fallback. Use `--ui=export` to explicitly request producer work; unchanged captured inputs/options reuse the completed validated export through the same publication owner, with independent serving paths. Use `--no-ui` for headless workers. `happier_hmr=0` is web-only; an installed native development client can use the producer's advertised/tunnelled Metro URL, but its native Fast Refresh behavior is unchanged.
 
 Doctor:
 

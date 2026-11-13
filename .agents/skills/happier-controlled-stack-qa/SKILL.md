@@ -147,9 +147,9 @@ The shared preset retains the server's data host and the daemon's fixed Machine.
 
 ## Select the UI provider
 
-Source QA defaults to borrowed dev Expo. New QA stacks record their checkout's repository producer; retained stacks can set it below. Use the reported consumer UI URL: its `server` and Account/stack URLs are runtime parameters, never bundle inputs, so borrowers share the producer's bundle per platform.
+Source QA defaults to an existing shared web export when its captured inputs, build options and requested capture boundary match on the serving host. Without a matching publication, it reports why and falls back to borrowed dev Expo. Default selection never builds a new export. New QA stacks record their checkout's repository producer; retained stacks can set it below. Use the reported consumer UI URL: its `server` and Account/stack URLs are runtime parameters, never bundle inputs, so borrowers share the producer's bundle per platform.
 
-`--ui=export` opts into a finite frozen web export only for explicit release/boundary acceptance. Unchanged captured inputs/options reuse the validated export through the existing source-bundle publication owner; each stack retains its own serving path. Executable app-local configuration remains private because its inputs are not captured. `--no-ui` requests a headless source worker.
+`--ui=export` explicitly requests a finite producer-owned web export; `--ui=borrowed` explicitly selects live dev Expo. Unchanged captured inputs/options reuse the validated export through the existing source-bundle publication owner; each stack retains its own serving path. Executable app-local configuration remains private because its inputs are not captured. `--no-ui` requests a headless source worker.
 
 The producer stack is human-owned infrastructure. Unless the human explicitly asks you to operate that producer, never run `dev`, `start`, `stop`, or `restart` against it. If its required server, daemon, or Expo endpoint is unavailable, report the producer prerequisite and continue only the consumer work that remains valid; do not recover the producer by taking over its lifecycle.
 
@@ -232,7 +232,7 @@ Server and daemon run from retained source bundles (or explicitly selected built
 
 Source QA's server and daemon remain unchanged until explicit restart. Borrowed Expo is moving UI, including lazy chunks; HMR off is not proof of frozen UI.
 
-For explicit release/boundary acceptance, use the same source start with `--ui=export`; matching inputs/options reuse its completed export. This path prepares the canonical plugin UI projection without building or selecting a native runtime snapshot.
+To request producer work when no matching export exists, use the same source start with `--ui=export`; matching inputs/options reuse its completed export. This path prepares the canonical plugin UI projection without building or selecting a native runtime snapshot.
 
 ### Explicit strict snapshot UI
 

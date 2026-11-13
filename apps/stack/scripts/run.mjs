@@ -241,7 +241,7 @@ async function main() {
   if (flags.has('--reuse-source-runtime') && (!sourceSnapshot || !flags.has('--no-dev-targets'))) {
     throw new Error('[source-bundle] runtime reuse requires a source runtime with --no-dev-targets');
   }
-  const sourceUi = sourceSnapshot ? resolveSourceQaUiMode({ uiMode: kv.get('--ui') ?? (flags.has('--ui') ? '' : undefined),
+  let sourceUi = sourceSnapshot ? resolveSourceQaUiMode({ uiMode: kv.get('--ui') ?? (flags.has('--ui') ? '' : undefined),
     noUi: flags.has('--no-ui'), consumerStackName: autostart.stackName,
     producerStackName: process.env.HAPPIER_STACK_EXPO_SOURCE_STACK }) : null;
   if (sourceSnapshot && controlledPlacement?.target) {
@@ -327,23 +327,33 @@ async function main() {
     }
     // A one-shot builder releases its esbuild service before the next phase;
     // the long-lived Stack owner must not retain their large idle heaps.
-    if (sourceUi === 'export' && serverRequested) {
-      if (reuseSourceRuntime) {
-        const uiDir = kv.get('--source-ui-dir')
-          ?? (await readJsonIfExists(join(sourceRoot, 'selected-ui.json')))?.uiDir;
+    if ((sourceUi === 'auto' || sourceUi === 'export') && serverRequested) {
+      const selectedUi = reuseSourceRuntime
+        ? kv.get('--source-ui-dir') ?? (sourceUi === 'export'
+          ? (await readJsonIfExists(join(sourceRoot, 'selected-ui.json')))?.uiDir : null) : null;
+      if (reuseSourceRuntime && (sourceUi === 'export' || selectedUi)) {
+        const uiDir = selectedUi;
         if (!uiDir || !await pathExists(uiDir)) {
           throw new Error('[source-bundle] selected source UI is unavailable; explicitly restart the Stack to select current source');
         }
         const { publishSourceWebUi } = await import('./build/build_source_web_ui.mjs');
+        sourceUi = 'export';
         sourceUiLaunch = await publishSourceWebUi({ built: { uiDir }, uiDir: join(sourceRoot, 'ui'), pending: pendingSourceStart });
       } else {
-        const { exportSourceWebUi, publishSourceWebUi } = await import('./build/build_source_web_ui.mjs');
-        const built = await exportSourceWebUi({ repoDir, baseDir: sourceRoot,
+        const { prepareSourceQaWebUi, publishSourceWebUi } = await import('./build/build_source_web_ui.mjs');
+        const { mode, built } = await prepareSourceQaWebUi({ mode: sourceUi, repoDir, baseDir: sourceRoot,
           stackBaseDir: autostart.baseDir, pending: pendingSourceStart, env: process.env,
           signal: pendingSourceStart?.signal, sourceCapturedAfter: kv.get('--source-after') });
-        sourceUiLaunch = await publishSourceWebUi({ built, uiDir: join(sourceRoot, 'ui'), pending: pendingSourceStart });
+        sourceUi = mode;
+        if (built) sourceUiLaunch = await publishSourceWebUi({ built, uiDir: join(sourceRoot, 'ui'), pending: pendingSourceStart });
       }
     }
+  }
+  if (sourceUi === 'auto') sourceUi = serverRequested ? 'borrowed' : 'disabled';
+  if (sourceUi === 'borrowed') {
+    const projected = await projectBorrowedExpoWebappEnv({ rootDir, consumerStackName: autostart.stackName,
+      producerStackName: process.env.HAPPIER_STACK_EXPO_SOURCE_STACK, env: process.env });
+    if (projected.HAPPIER_WEBAPP_URL) process.env.HAPPIER_WEBAPP_URL = projected.HAPPIER_WEBAPP_URL;
   }
   pendingSourceStart?.signal.throwIfAborted();
   const cliRuntimeProvenance = resolveCliRuntimeLaunchProvenance(cliLaunchSpec);
@@ -1314,7 +1324,7 @@ async function main() {
 async function runControlledRemoteStack({ rootDir, flags, json, autostart, runtimeSnapshot, runtimeLaunchContext, placement, serverComponentName, sourceSnapshot = false, sourceUi = null, pendingSourceStart = null, sourceCapturedAfter }) {
   let env = { ...process.env, HAPPIER_STACK_DAEMON_WAIT_FOR_AUTH: '1' };
   const context = resolveStackContext({ env, autostart });
-  const borrowedExpoProducerStackName = !sourceSnapshot || sourceUi === 'borrowed'
+  const borrowedExpoProducerStackName = !sourceSnapshot || sourceUi === 'borrowed' || sourceUi === 'auto'
     ? String(env.HAPPIER_STACK_EXPO_SOURCE_STACK ?? '').trim() : '';
   if (!sourceSnapshot && isBorrowedExpoConsumer({
     consumerStackName: context.stackName,
@@ -1378,7 +1388,7 @@ async function runControlledRemoteStack({ rootDir, flags, json, autostart, runti
     runtimeMode: sourceSnapshot ? 'source-snapshot' : 'controlled',
     serverConnection: null,
     runtimeSnapshotId: null, serveUi: sourceSnapshot ? sourceUi === 'export' : !flags.has('--no-ui'),
-    sourceUi,
+    sourceUi: sourceUi === 'auto' ? 'borrowed' : sourceUi,
     sourceUiLaunch: null,
     sourceRuntimeIdentities: sourceSnapshot ? localSourceIdentity ? { daemon: localSourceIdentity } : {} : null,
     sourceRuntimeLaunch: sourceSnapshot && localCli ? { entrypoint: localCli.entrypoint, cliDir: localCli.cliDir, env: localCli.env } : null,
@@ -1420,8 +1430,8 @@ async function runControlledRemoteStack({ rootDir, flags, json, autostart, runti
         await recordStackRuntimeUpdate(context.runtimeStatePath, {
           remoteTargets: { [name]: state },
           ...(sourceSnapshot && state.sourceRuntimeIdentities ? { sourceRuntimeIdentities: state.sourceRuntimeIdentities } : {}),
-          ...(sourceSnapshot && state.services?.server && state.sourceUiLaunch
-            ? { sourceUiLaunch: state.sourceUiLaunch } : {}),
+          ...(sourceSnapshot && state.services?.server && state.sourceUi
+            ? { sourceUi: sourceUi === 'auto' ? state.sourceUi : sourceUi, serveUi: state.sourceUi === 'export', sourceUiLaunch: state.sourceUiLaunch ?? null } : {}),
           ...(state.services?.server && state.runtimeSnapshotId ? { runtimeSnapshotId: state.runtimeSnapshotId } : {}),
         });
         // Remote dispatch returns before health readiness. Retire this
