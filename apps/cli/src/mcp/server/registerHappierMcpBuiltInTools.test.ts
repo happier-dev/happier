@@ -213,8 +213,8 @@ describe('registerHappierMcpBuiltInTools', () => {
       const inline = zodSchemaToJsonSchemaObject(spec.inputSchema,
         { target: 'draft-7', reused: 'inline' });
       expect(JSON.stringify(advertised.inputSchema).length).toBeLessThan(JSON.stringify(inline).length);
-      // Discovery must carry the definitions consumed by its advertised references.
-      expect(() => new Ajv({ strict: false, validateFormats: false }).compile({ ...advertised.inputSchema, definitions: {} })).toThrow();
+      // Named grammar is read through action_spec_get, rather than eagerly advertised.
+      expect(advertised.inputSchema.definitions).toBeUndefined();
     } finally { await client.close(); await server.close(); }
   });
 
@@ -475,7 +475,7 @@ describe('registerHappierMcpBuiltInTools', () => {
       const validatePlugin = compilePluginJsonSchema(advertisedPluginSchema);
       expect(validatePlugin({ label: 'kept' })).toBe(true);
       expect(validatePlugin({ label: '' })).toBe(false);
-      expect(() => compilePluginJsonSchema({ ...advertisedPluginSchema, definitions: {} })).toThrow();
+      expect(advertisedPluginSchema.definitions).toBeUndefined();
       for (const registration of registrations) {
         expect(() => registration.meta.inputSchema
           ? z.toJSONSchema(registration.meta.inputSchema, { target: 'draft-7', io: 'input' })
@@ -668,14 +668,12 @@ describe('registerHappierMcpBuiltInTools', () => {
       additionalProperties: false,
     });
     const advertisedOutput = meta?.outputSchema ? z.toJSONSchema(meta.outputSchema, { target: 'draft-7' }) : null;
-    expect(advertisedOutput).toMatchObject({
-      type: 'object',
-      anyOf: [
-        { properties: { completed: { $ref: '#/anyOf/0/definitions/completion' },
-          literal: { const: { $ref: '#/definitions/literal-data' } } }, required: ['completed'], additionalProperties: false },
-        { properties: { kind: { const: 'approval_request_created' } }, required: ['kind', 'artifactId', 'actionId'], additionalProperties: false },
-      ],
-    });
+    expect(advertisedOutput).toMatchObject({ type: 'object' });
+    const outputBranches = advertisedOutput?.anyOf as readonly unknown[];
+    expect(outputBranches[0]).toMatchObject({ properties: { completed: { type: 'boolean' },
+      literal: { const: { $ref: '#/definitions/literal-data' } } }, required: ['completed'], additionalProperties: false });
+    expect(outputBranches[1]).toMatchObject({ properties: { kind: { const: 'approval_request_created' } },
+      required: ['kind', 'artifactId', 'actionId'], additionalProperties: false });
     if (!advertisedOutput) throw new Error('Expected advertised output schema');
     const validateAdvertisedOutput = compilePluginJsonSchema(JSON.parse(JSON.stringify(advertisedOutput)));
     expect(validateAdvertisedOutput({ completed: true, literal: { $ref: '#/definitions/literal-data' } })).toBe(true);

@@ -1,6 +1,56 @@
 import type { ActionDiscoveryDefinitionV1 } from './actionDefinitionV1.js';
-import type { JsonSchemaObject } from './actionInputJsonSchema.js';
+import { forEachJsonSchemaChild, type JsonSchemaObject } from './actionInputJsonSchema.js';
+import { ACTION_IDS } from './actionIds.js';
 import { PUBLIC_ACTION_OUTPUT_SCHEMAS } from './actionSpecs.js';
+
+const ACTION_ID_SET = new Set<string>(ACTION_IDS);
+
+/**
+ * Named grammar belongs to sectioned discovery, not every tool advertisement.
+ * Keep inline fields and scalar choices; references to named sections advertise
+ * their value type. The executable parser and section reader remain unchanged.
+ */
+export function projectActionSchemaForToolAdvertisement(schema: JsonSchemaObject): JsonSchemaObject {
+  const document = JSON.parse(JSON.stringify(schema)) as JsonSchemaObject;
+  const guidance = 'Read the full Action schema and its named sections with action_spec_get (getActionSpec in Voice).';
+  let sectioned = false;
+  const visit = (value: unknown): void => {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return;
+    const node = value as Record<string, unknown>;
+    const ref = node.$ref;
+    if (typeof ref === 'string' && /^#\/(?:definitions|\$defs)\//.test(ref)) {
+      let target: unknown = schema;
+      for (const part of ref.slice(2).split('/')) {
+        const key = part.replace(/~1/g, '/').replace(/~0/g, '~');
+        target = target && typeof target === 'object' && Object.hasOwn(target, key)
+          ? Reflect.get(target, key) : undefined;
+      }
+      if (target && typeof target === 'object' && !Array.isArray(target)) {
+        const type = Reflect.get(target, 'type');
+        delete node.$ref;
+        // Scalar constraints are useful inline choices, rather than nested grammar.
+        if (typeof type === 'string' && type !== 'object' && type !== 'array') {
+          Object.assign(node, { ...target, ...node });
+        }
+        if (type !== undefined && node.type === undefined) node.type = type;
+        if (type === 'array' && node.items === undefined) node.items = {};
+        sectioned = true;
+      }
+    }
+    // A catalog identifier is discovered, rather than enumerated on every turn.
+    if (Array.isArray(node.enum) && node.enum.length === ACTION_ID_SET.size
+        && node.enum.every(id => typeof id === 'string' && ACTION_ID_SET.has(id))) {
+      delete node.enum;
+      node.type = 'string';
+      sectioned = true;
+    }
+    delete node.definitions;
+    delete node.$defs;
+    forEachJsonSchemaChild(node, visit);
+  };
+  visit(document);
+  return sectioned ? { ...document, description: [document.description, guidance].filter(Boolean).join(' ') } : document;
+}
 
 function escapePointer(value: string): string {
   return value.replace(/~/g, '~0').replace(/\//g, '~1');

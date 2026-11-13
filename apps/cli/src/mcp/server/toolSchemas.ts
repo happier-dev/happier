@@ -2,6 +2,7 @@ import { z } from 'zod/mini';
 import { createPluginJsonSchemaZodObjectAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { zodSchemaToJsonSchemaObject, type JsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
 import { projectActionOutputJsonSchema } from '@happier-dev/protocol/actions/actionCatalog';
+import { projectActionSchemaForToolAdvertisement } from '@happier-dev/protocol/actions/actionSpecSections';
 import { ActionApprovalRequestCreatedResultSchema, ActionOperationAcceptedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { HappierBuiltInToolDefinition } from '@/agent/tools/happierTools/types';
 import { projectSessionBoundActionToolInputSchema } from '@/agent/tools/happierTools/actionToolContext';
@@ -52,9 +53,9 @@ export function toMcpToolObjectSchema(schema: unknown, field: 'inputSchema' | 'o
         const completed = schema instanceof z.core.$ZodType
             ? schema
             : createPluginJsonSchemaZodObjectAdapter(schema);
-        const completedJsonSchema = projectActionOutputJsonSchema(completed, { target: 'draft-7' });
+        const completedJsonSchema = projectActionOutputJsonSchema(completed, { target: 'draft-7', reused: 'ref' });
         if (completedJsonSchema === undefined) return undefined;
-        const completedMcpJsonSchema = nestMcpOutputJsonSchema(completedJsonSchema);
+        const completedMcpJsonSchema = nestMcpOutputJsonSchema(projectActionSchemaForToolAdvertisement(completedJsonSchema));
         // Admission and approval creation are execution outcomes, separate from
         // completed output. Canonical dispatch decides which receipt is valid.
         const output = z.union([completed, ActionApprovalRequestCreatedResultSchema, ActionOperationAcceptedResultSchema]);

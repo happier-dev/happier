@@ -18,6 +18,7 @@ import { SessionLookupByTagsResponseV2Schema } from '@happier-dev/protocol/sessi
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import type { VoiceRealtimeJsonValue } from '@happier-dev/protocol/voice/realtime/events';
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
+import { projectActionSchemaForToolAdvertisement } from '@happier-dev/protocol/actions/actionSpecSections';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import type { ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { VoiceHostedConversationService } from '@happier-dev/plugin-sdk/voice/client';
@@ -465,7 +466,7 @@ function createRealtimeClientToolParameters(
   // Action schemas are host-generated strict JSON metadata. The realtime
   // argument/result bounds apply to live provider values, not to the depth of
   // this canonical schema description.
-  const value = StrictJsonValueSchema.parse(zodSchemaToJsonSchemaObject(inputSchema, { reused: 'ref' }));
+  const value = StrictJsonValueSchema.parse(projectActionSchemaForToolAdvertisement(zodSchemaToJsonSchemaObject(inputSchema, { reused: 'ref' })));
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
     throw new Error('voice_client_tool_parameters_invalid');
   }

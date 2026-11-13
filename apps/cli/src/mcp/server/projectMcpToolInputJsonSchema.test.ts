@@ -115,7 +115,7 @@ describe('MCP provider input projection', () => {
         expect(schema.properties.count.enum).toEqual([1, 2]);
     });
 
-    it('advertises draft-7 tuples as homogeneous items while retaining references and server tuple validation', () => {
+    it('advertises draft-7 tuples as homogeneous items while deferring named grammar and retaining server tuple validation', () => {
         const parser = z.object({ executionRunContext: z.object({ versions: z.tuple([z.literal(1)]) }) });
         const source = zodSchemaToJsonSchemaObject(parser, { target: 'draft-7' });
         const schema = { ...source, definitions: { pair: { type: 'array', items: [{ type: 'string' }, { type: 'number' }], additionalItems: false } },
@@ -126,9 +126,9 @@ describe('MCP provider input projection', () => {
         const projected = projectMcpToolInputJsonSchema(schema);
         expect(projected).toMatchObject({ properties: {
             executionRunContext: { properties: { versions: { items: { anyOf: [{ type: 'number' }, false] } } } },
-            label: { $ref: '#/definitions/pair/items/anyOf/0' },
+            label: { type: 'string' },
             count: { $ref: '#/properties/open/items/anyOf/1' },
-            open: { items: { anyOf: [{ type: 'string' }, { $ref: '#/definitions/pair/items/anyOf/1' }] } },
+            open: { items: { anyOf: [{ type: 'string' }, { type: 'number' }] } },
         }, default: schema.default });
         const validate = new Ajv({ strict: false }).compile(projected);
         expect(validate({ executionRunContext: { versions: [1] }, label: 'ok', count: 2, open: ['a', 2] })).toBe(true);
@@ -191,7 +191,7 @@ describe('MCP provider input projection', () => {
         expect(schema.properties.many.items.enum).toEqual(large);
     });
 
-    it('breaks root, indirect and escaped definition cycles while keeping shared references and literal data', () => {
+    it('breaks root, indirect and escaped definition cycles while deferring named grammar and keeping literal data', () => {
         const schema = { type: 'object', properties: {
             tupleBranch: { $ref: '#/$defs/union/anyOf/0' }, child: { $ref: '#' }, first: { $ref: '#/$defs/a~1b' }, second: { $ref: '#/$defs/label' },
         }, $defs: {
@@ -205,7 +205,7 @@ describe('MCP provider input projection', () => {
         expect(recursiveReferences(projected)).toEqual([]);
         expect(projected).toMatchObject({ properties: {
             child: { type: 'object', description: expect.stringContaining('action_spec_get') },
-            second: { $ref: '#/$defs/label' },
+            second: { type: 'string' },
         }, default: { $ref: '#' } });
         expect(new Ajv({ strict: false }).compile(projected)({ child: { child: {} }, first: { next: [{ next: [] }] }, second: 'label' })).toBe(true);
     });
