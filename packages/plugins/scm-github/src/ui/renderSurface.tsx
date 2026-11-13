@@ -50,7 +50,6 @@ import {
   Badge,
   Banner,
   Button,
-  ChangedFilesReview,
   Divider,
   EmptyState,
   ErrorState,
@@ -88,8 +87,6 @@ import {
   type MetadataEntry,
   type PluginActionExecution,
   type PluginTranslate,
-  type ChangedFile,
-  type ChangedFileDiff,
 } from '@happier-dev/plugin-ui';
 import {
   TriageDetailSurfaceInputV1Schema,
@@ -152,7 +149,7 @@ import {
   type TriagePullRequestOperationOfferV1,
 } from '@happier-dev/triage-protocol/v1';
 
-import { orderGithubChangedFiles } from '../triage/detail/files/orderChangedFiles.js';
+import { GithubFilesList } from './detail/filesList.js';
 import type {
   GithubProjectedCheckRowV1,
   GithubProjectedTimelineRowV1,
@@ -171,6 +168,7 @@ import { decodeGithubTriageConfiguration } from '../triage/configuration.js';
 import { readGithubResourceIntent } from '../triage/locator.js';
 import type { GithubFeedbackCommentV1 } from '../triage/feedback.js';
 import { GITHUB_WRITE_REFUSAL_COPY_V1 as WRITE_REFUSAL_COPY } from '../triage/mutations/outcome.js';
+import { GITHUB_PRIMARY_WRITE_REASON_COPY_V1 as PRIMARY_WRITE_REASON } from '../triage/pullRequestOperations.js';
 import { GithubSecurityAlertBody, type GithubSecurityAlertRenderersV1 } from './securityAlerts/detail.js';
 import {
   githubReviewPublicationCredential,
@@ -222,11 +220,9 @@ import {
   useGithubTimeline,
 } from './detail/resourceOwners.js';
 import {
-  useGithubChangedFileDiffLoader,
   useGithubCapabilities,
   useGithubFeedbackThreadReplies,
   useGithubOverview,
-  type GithubChangedFileViewV1,
   type GithubChecksViewV1,
   type GithubOverviewControllerV1,
   type GithubPagedControllerV1,
@@ -677,12 +673,12 @@ function useGithubPrimaryWrite(input: TriageDetailSurfaceInputV1,
     return () => { activeSignal.removeEventListener('abort', retire); retire(); };
   }, [activeSignal, offeredRequest]);
   const readReason = overview.failure === null && overview.value === null
-    ? text('plugins.github.ui.primaryWrite.reading', 'Reading the current pull request…')
-    : text('plugins.github.ui.primaryWrite.unavailable', 'The current pull request could not be read.');
+    ? text('plugins.github.ui.primaryWrite.reading', PRIMARY_WRITE_REASON.reading)
+    : text('plugins.github.ui.primaryWrite.unavailable', PRIMARY_WRITE_REASON.unavailable);
   const unavailableReason = !active ? text('plugins.github.ui.primaryWrite.inactive', 'Open the source detail to make this change.')
     : overview.failure !== null || operations === undefined ? readReason
       : head !== undefined && observedStatus?.branch?.headRevision !== undefined && observedStatus.branch.headRevision !== head
-        ? text('plugins.github.ui.primaryWrite.headChanged', 'New commits arrived. Re-read this pull request before changing it.') : undefined;
+        ? text('plugins.github.ui.primaryWrite.headChanged', PRIMARY_WRITE_REASON.headChanged) : undefined;
   const execute = React.useCallback(async (operationId: string, variantId?: string): Promise<unknown> => {
     if (offeredRequest.signal.aborted || currentOffer.current !== offerScope || unavailableReason !== undefined || !operations) {
       return { kind: 'unavailable', reason: 'operationUnavailable' };
@@ -708,12 +704,15 @@ function useGithubPrimaryWrite(input: TriageDetailSurfaceInputV1,
     // Keep an unknown read explainable, but respect the producer's closed-state absence.
     // While the first read is out Merge keeps its place, quietly: the reason is said only once the read has an answer.
     const reading = overview.failure === null && overview.value === null;
-    if (controller.primaryWrite !== null) return reading ? { ...controller.primaryWrite, reading: true } : controller.primaryWrite;
+    // A failed read is answered by reading again: the header offers this detail's own refresh beside the reason.
+    const retry = overview.failure === null ? {} : { retry: overview.refresh };
+    if (controller.primaryWrite !== null) return reading ? { ...controller.primaryWrite, reading: true }
+      : controller.primaryWrite.disabledReason === null ? controller.primaryWrite : { ...controller.primaryWrite, ...retry };
     if (overview.value?.state === 'closed') return null;
     return { title: text('plugins.github.ui.primaryWrite.merge', 'Merge'),
       disabledReason: readReason, pending: false, execute: async () => {}, ...(reading ? { reading: true } : {}),
-      ...(nativeStatus === null ? {} : { nativeStatus }), readRequirements: controller.refresh };
-  }, [controller.primaryWrite, controller.refresh, input.observation.entryRef.kindId, presentation, overview.failure, overview.value, nativeStatus, readReason, text]);
+      ...(nativeStatus === null ? {} : { nativeStatus }), readRequirements: controller.refresh, ...retry };
+  }, [controller.primaryWrite, controller.refresh, input.observation.entryRef.kindId, presentation, overview.failure, overview.value, overview.refresh, nativeStatus, readReason, text]);
   return React.useMemo(() => ({ value, refresh: controller.refresh }), [value, controller.refresh]);
 }
 
@@ -2849,45 +2848,22 @@ function quietRowActions(
   };
 }
 
-/** A changed file's GitHub status in the shared review's vocabulary. */
-function toReviewChangedFile(
-  text: PluginTranslate,
-  row: GithubChangedFileViewV1,
-): ChangedFile {
-  const status = row.status === 'added' ? 'added' as const
-    : row.status === 'removed' ? 'deleted' as const
-      : row.status === 'renamed' ? 'renamed' as const
-        : row.status === 'copied' ? 'copied' as const : 'modified' as const;
-  return {
-    path: row.path,
-    status,
-    additions: row.additions,
-    deletions: row.deletions,
-    ...(row.previousPath === undefined ? {} : { previousPath: row.previousPath }),
-    ...(row.webUrl === undefined ? {} : { webUrl: row.webUrl }),
-    // A file GitHub omitted the patch for is a real provider fact: it stays listed and says so.
-    ...(row.diffAvailable
-      ? {}
-      : { diffUnavailableReason: text('plugins.github.ui.fileDiffNone', 'GitHub has no diff for this file.') }),
-  };
-}
-
-/**
- * The pull request's changed files in Happier's one changed-files review (the Session review tab's
- * index, tree/list modes and continuous diffs). GitHub lists the files and answers one file's diff
- * when the review reaches it; the host's Viewed source supplies the marks.
- */
+/** The source List, with one disclosed file and the existing paging lifecycle. */
 function FilesPanel({
   input,
   focusPath,
   onFocusPath,
+  totalFiles,
 }: Readonly<{
   input: TriageDetailSurfaceInputV1;
+  /** GitHub's count of every file the pull request changes, from the Overview read when it has answered. */
+  totalFiles: number | undefined;
   /** The detail's one "which file Files opens" fact: the reader's pick in Overview or an agent's open intent. */
   focusPath: string | null;
   onFocusPath: (path: string | null) => void;
 }>): React.ReactElement {
   const text = usePluginTranslation();
+  const { locale } = useSurfaceContext();
   const controller = useGithubChangedFiles();
   const { state } = controller;
   const { active } = useTabPanelActivity();
@@ -2895,9 +2871,7 @@ function FilesPanel({
   const viewed = useGithubFileViewedSource(input);
   // The page's one refresh re-reads the files and their Viewed marks; this panel draws no refresh of its own.
   useTriagePageRefresh(() => { controller.refresh(); void viewed?.refresh(); });
-  // A file the reader or an agent asked to open: the shared review opens it and brings it into view.
-  // Folding stays the review's own, so an agent's close is refused rather than claimed. The request is
-  // spent once the reader leaves Files, so asking for the same file again brings it back into view.
+  // One disclosed file for reader and agent intents; leaving Files releases its body.
   const wasActive = React.useRef(active);
   React.useEffect(() => {
     if (wasActive.current && !active) onFocusPath(null);
@@ -2907,37 +2881,13 @@ function FilesPanel({
     .filter(row => row.diffAvailable).map(row => ({ title: row.path,
       operation: { kind: 'setSourceItemExpanded', list: 'files', itemId: row.path, expanded: true } })), [state.rows]);
   useTriageSourcePanelIntentV1({ kind: 'setSourceItemExpanded', list: 'files' }, async (operation) => {
-    if (operation.kind !== 'setSourceItemExpanded' || !operation.expanded
+    if (operation.kind !== 'setSourceItemExpanded'
       || !state.rows.some(row => row.path === operation.itemId && row.diffAvailable)) return { status: 'unavailable' };
-    onFocusPath(operation.itemId);
+    onFocusPath(operation.expanded ? operation.itemId : null);
     return { status: 'applied' };
   }, openCommands);
-  const loadMore = useTriageSourcePanelPagingV1('files', text('plugins.github.ui.loadMoreFiles', 'Load more files'),
+  const loadMore = useTriageSourcePanelPagingV1('files', text('plugins.github.ui.showMoreFiles', 'Show more files'),
     state.canLoadMore, state.pending, controller.loadMore);
-  // The reading order is a source-owned fact computed over everything read so far.
-  const rows = React.useMemo(() => orderGithubChangedFiles(state.rows).map((entry) => entry.row), [state.rows]);
-  const files = React.useMemo(() => rows.map((row) => toReviewChangedFile(text, row)), [rows, text]);
-  const rowsRef = React.useRef(rows);
-  rowsRef.current = rows;
-  const readDiff = useGithubChangedFileDiffLoader(input);
-  const loadDiff = React.useCallback(async (path: string, signal: AbortSignal): Promise<ChangedFileDiff> => {
-    const row = rowsRef.current.find((candidate) => candidate.path === path);
-    if (row === undefined) return { state: 'unavailable', reason: text('plugins.github.ui.fileDiffNone', 'GitHub has no diff for this file.') };
-    const read = await readDiff(row, signal);
-    if (read.kind === 'failed') {
-      return { state: 'unavailable', reason: failureDescription(read.failure, text('plugins.github.ui.readFailed', 'GitHub could not complete this read.'), text) };
-    }
-    const { evidence, unifiedDiff } = read.value;
-    if (evidence.state === 'unavailable' || unifiedDiff === null) {
-      return { state: 'unavailable', reason: text('plugins.github.ui.fileDiffNone', 'GitHub has no diff for this file.') };
-    }
-    return evidence.state === 'truncated'
-      ? { state: 'truncated', unifiedDiff, reason: text('plugins.github.ui.fileDiffTruncated', 'GitHub shortened this diff. The rest is on GitHub.') }
-      : { state: 'available', unifiedDiff };
-  }, [readDiff, text]);
-  const { localRef } = useTriageDetailRequest(input);
-  const headSha = input.observation.snapshot.reviewRevision?.headSha ?? '';
-  const identity = `github:${input.observation.locator.routingToken ?? ''}#${localRef.entryId}@${headSha}`;
 
   if (state.kind === 'idle' || state.kind === 'loading') {
     return <LoadingState title="Reading the changed files from GitHub" titleKey="plugins.github.ui.readingFiles" />;
@@ -2975,8 +2925,12 @@ function FilesPanel({
     );
   }
 
+  // GitHub's own total when the Overview has it; else the rows read, but only once the walk has no page left.
+  const total = totalFiles ?? (state.canLoadMore ? undefined : state.rows.length);
   const notices = (
     <>
+      <Text variant="label" value={total === undefined ? text('plugins.github.ui.changedFiles', 'Changed files')
+        : `${text('plugins.github.ui.changedFiles', 'Changed files')} · ${new Intl.NumberFormat(locale).format(total)}`} />
       <PageFailureBanner state={state} />
       {incomplete === null
         ? null
@@ -3002,8 +2956,8 @@ function FilesPanel({
         {state.canLoadMore
           ? (
             <Button
-              title="Load more files"
-              titleKey="plugins.github.ui.loadMoreFiles"
+              title="Show more files"
+              titleKey="plugins.github.ui.showMoreFiles"
               variant="secondary"
               busy={state.pending}
               onPress={loadMore}
@@ -3015,18 +2969,8 @@ function FilesPanel({
     : undefined;
 
   return (
-    <ChangedFilesReview
-      identity={identity}
-      label={text('plugins.github.ui.filesLabel', 'Files this pull request changes')}
-      files={files}
-      loadDiff={loadDiff}
-      fileViewed={viewed}
-      focusPath={focusPath}
-      openOnSourceLabel={text('plugins.github.ui.openFileOnGithub', 'Open on GitHub')}
-      leadingContent={notices}
-      {...(more === undefined ? {} : { trailingContent: more })}
-      active={active}
-    />
+    <GithubFilesList input={input} rows={state.rows} focusPath={focusPath} onFocusPath={onFocusPath}
+      viewed={viewed} active={active} header={notices} endContent={more} />
   );
 }
 
@@ -4579,7 +4523,7 @@ function GithubChangeStep({ overview, onOpenFile }: Readonly<{
       onOpenChanges={openFiles}
       onOpenFile={openFiles === undefined ? undefined : onOpenFile}
       loadMore={files.state.canLoadMore
-        ? { title: text('plugins.github.ui.loadMoreFiles', 'Load more files'), pending: files.state.pending, onLoadMore: files.loadMore }
+        ? { title: text('plugins.github.ui.showMoreFiles', 'Show more files'), pending: files.state.pending, onLoadMore: files.loadMore }
         : undefined}>
       {pullRequest?.headBranch === undefined || pullRequest.baseBranch === undefined ? null
         : <Text variant="code" tone="secondary" value={`${pullRequest.headBranch} → ${pullRequest.baseBranch}`} />}
@@ -4889,7 +4833,8 @@ function GithubDetailBody({
       />
     ),
     timeline: <TimelinePanel locale={locale} nowMs={nowMs} />,
-    files: <FilesPanel input={input} focusPath={focusPath} onFocusPath={setFocusPath} />,
+    files: <FilesPanel input={input} focusPath={focusPath} onFocusPath={setFocusPath}
+      totalFiles={overview.value?.kindId === 'pull-request' ? overview.value.changedFiles : undefined} />,
     checks: <ChecksPanel locale={locale} nowMs={nowMs} signal={detailActivity.activeSignal} />,
     feedback: (
       <FeedbackPanel

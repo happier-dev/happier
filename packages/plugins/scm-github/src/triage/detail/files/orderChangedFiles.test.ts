@@ -39,7 +39,7 @@ describe('GitHub changed-file reading order', () => {
       if (result.kind !== 'changedFiles') throw new Error('Expected changed files');
       return orderGithubChangedFiles(result.rows).map((entry) => entry.row.path);
     };
-    expect(readOrder(raw)).toEqual(['src/z.ts', 'src/a.ts', 'src/z.test.ts', 'src/a.test.ts', 'yarn.lock']);
+    expect(readOrder(raw)).toEqual(['src/z.ts', 'src/z.test.ts', 'src/a.ts', 'src/a.test.ts', 'yarn.lock']);
     expect(readOrder([...raw].reverse())).toEqual(readOrder(raw));
   });
 
@@ -98,14 +98,14 @@ describe('GitHub changed-file reading order', () => {
 
     expect(ordered.map((entry) => entry.row.path)).toEqual([
       'src/a.ts',
-      'src/z.ts',
       'src/a.test.ts',
+      'src/z.ts',
       'src/z.test.ts',
     ]);
     expect(ordered.map((entry) => entry.pairedSourcePath)).toEqual([
       null,
-      null,
       'src/a.ts',
+      null,
       'src/z.ts',
     ]);
   });
@@ -172,7 +172,7 @@ describe('GitHub changed-file reading order', () => {
       row('src/a.ts'),
       row('src/a.test.ts'),
     ]));
-    expect(sections.map((section) => section.band)).toEqual(['source', 'test']);
-    expect(sections.map((section) => section.rows.length)).toEqual([1, 1]);
+    expect(sections.map((section) => section.band)).toEqual(['source']);
+    expect(sections.map((section) => section.rows.length)).toEqual([2]);
   });
 });

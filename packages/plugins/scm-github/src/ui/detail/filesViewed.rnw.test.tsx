@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';
-import { defineUiSurface } from '@happier-dev/plugin-ui';
+import { Button, defineUiSurface } from '@happier-dev/plugin-ui';
+import type { HappierChangedFilesReviewRequest } from '@happier-dev/plugin-ui/presentation';
+import { TriageActivityAgentProvider } from '@happier-dev/triage-sources/ui';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type {
   ScmFileViewedFile,
@@ -104,93 +106,42 @@ const FILES_PAGE = {
   projectionTruncated: false,
 } as JsonValue;
 
-/**
- * The host's Viewed source for one PR, as the app's keyed owner presents it: per-path files, one status, and a
- * write that settles later. It is the host boundary the plugin consumes, not plugin logic.
- */
+/** A host boundary fixture; Viewed mutation and refusal behavior belongs to the app owner. */
 function createHostViewedSource(
   initial: Readonly<Record<string, ScmFileViewedFile['state']>>,
 ) {
   const files = new Map<string, ScmFileViewedFile>(
-    PATHS.map((path) => [
-      path,
-      {
-        state: initial[path] ?? null,
-        pending: false,
-        errorCode: null,
-      },
-    ]),
+    PATHS.map(path => [path, { state: initial[path] ?? null, pending: false, errorCode: null }]),
   );
-  const fileListeners = new Map<string, Set<() => void>>();
-  const changeListeners = new Set<(path: string) => void>();
-  const writes: Array<
-    Readonly<{ path: string; viewed: boolean; settle(accepted: boolean): void }>
-  > = [];
-  const put = (path: string, next: ScmFileViewedFile) => {
-    files.set(path, next);
-    for (const listener of fileListeners.get(path) ?? []) listener();
-    for (const listener of changeListeners) listener(path);
-  };
+  const writes: Array<Readonly<{ path: string; viewed: boolean }>> = [];
   const snapshot = { status: 'ready' as const, headOid: HEAD, errorCode: null };
+  let refreshes = 0;
   const source: ScmFileViewedSource = {
-    getFile: (path) =>
-      files.get(path) ?? { state: null, pending: false, errorCode: null },
-    subscribeFile: (path, listener) => {
-      const set = fileListeners.get(path) ?? new Set();
-      set.add(listener);
-      fileListeners.set(path, set);
-      return () => {
-        set.delete(listener);
-      };
-    },
+    getFile: path => files.get(path) ?? { state: null, pending: false, errorCode: null },
+    subscribeFile: () => () => {},
     getSnapshot: () => snapshot,
     subscribeStatus: () => () => {},
-    subscribeChanges: (listener) => {
-      changeListeners.add(listener);
-      return () => {
-        changeListeners.delete(listener);
-      };
-    },
-    getViewedPaths: () =>
-      new Set(
-        [...files]
-          .filter(([, file]) => file.state === 'viewed')
-          .map(([path]) => path),
-      ),
-    setViewed: (path, viewed) =>
-      new Promise<boolean>((resolve) => {
-        const before = files.get(path)!;
-        put(path, { ...before, pending: true, errorCode: null });
-        writes.push({
-          path,
-          viewed,
-          settle: (accepted) => {
-            put(
-              path,
-              accepted
-                ? {
-                    state: viewed ? 'viewed' : 'unviewed',
-                    pending: false,
-                    errorCode: null,
-                  }
-                : {
-                    state: before.state,
-                    pending: false,
-                    errorCode: 'github_write_refused',
-                  },
-            );
-            resolve(accepted);
-          },
-        });
-      }),
-    refresh: async () => {},
+    subscribeChanges: () => () => {},
+    getViewedPaths: () => new Set([...files].filter(([, file]) => file.state === 'viewed').map(([path]) => path)),
+    setViewed: async (path, viewed) => { writes.push({ path, viewed }); return false; },
+    refresh: async () => { refreshes++; },
   };
-  return { source, writes };
+  return { source, writes, refreshes: () => refreshes };
 }
 
 const requests: ScmFileViewedRequest[] = [];
+const reviews: HappierChangedFilesReviewRequest[] = [];
 const dispatched: string[] = [];
 const mounted: PluginUiTestkit[] = [];
+
+/** The parent page owns refresh; the plugin joins it through the real public provider. */
+function PageFrame({ children }: Readonly<{ children: React.ReactNode }>) {
+  const [refreshGeneration, setRefreshGeneration] = React.useState(0);
+  return <TriageActivityAgentProvider value={{ events: [], tail: null, refreshGeneration }}>
+    <Button title="Refresh page" onPress={() => setRefreshGeneration(value => value + 1)} />
+    {children}
+  </TriageActivityAgentProvider>;
+}
 
 async function mountFiles(
   source: ScmFileViewedSource,
@@ -204,9 +155,11 @@ async function mountFiles(
         mountNonce: 'fixture-mount-viewed',
       },
       authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
-      surface: defineUiSurface(context => <SourcePanelActionsFixture scope={scope}>{renderSurface(context)}</SourcePanelActionsFixture>),
+      surface: defineUiSurface(context => <PageFrame><SourcePanelActionsFixture scope={scope}>{renderSurface(context)}</SourcePanelActionsFixture></PageFrame>),
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter({
+        changedFilesReview: true,
+        observeChangedFilesReview: request => { reviews.push(request); },
         scmFileViewed: (request) => {
           requests.push(request);
           return request.comparison === null ? null : source;
@@ -255,6 +208,7 @@ async function mountFiles(
 
 afterEach(async () => {
   requests.splice(0);
+  reviews.splice(0);
   dispatched.splice(0);
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
@@ -284,90 +238,38 @@ describe('GitHub Files panel Viewed marks', () => {
     expect(locator?.headOid).toBe(HEAD);
   });
 
-  it('draws GitHub’s marks per file and counts them in the panel header', async () => {
-    const { source } = createHostViewedSource({
+  it('lists every changed file without mounting the shared review', async () => {
+    const { source, writes } = createHostViewedSource({
       'src/alpha.ts': 'viewed',
       'src/beta.ts': 'unviewed',
       'src/gamma.ts': 'dismissed',
     });
     const files = await mountFiles(source);
-    expect(document.body.textContent).toContain('1 of 4 viewed');
-    expect(
-      (
-        await files.getByRole('checkbox', {
-          name: 'alpha.ts, viewed on GitHub',
-        })
-      ).state?.checked,
-    ).toBe(true);
-    expect(
-      (await files.getByRole('checkbox', { name: 'beta.ts, viewed on GitHub' }))
-        .state?.checked,
-    ).toBe(false);
-    // Dismissed: unchecked, with a quiet note that the file changed after it was viewed.
-    expect(
-      (
-        await files.getByRole('checkbox', {
-          name: 'gamma.ts, viewed on GitHub',
-        })
-      ).state?.checked,
-    ).toBe(false);
-    expect(document.body.textContent).toContain('Changed since viewed');
-    // Unknown: the slot is reserved but offers no checkbox that would read as unviewed.
-    await expect(
-      files.getByRole('checkbox', { name: 'delta.ts, viewed on GitHub' }),
-    ).rejects.toThrow();
+    expect(reviews).toHaveLength(0);
+    const rows = await files.queryAllByRole('button');
+    for (const path of PATHS) expect(rows.some(row => row.name?.startsWith(path))).toBe(true);
+    expect(writes).toEqual([]);
+    expect(dispatched).not.toContain(GITHUB_FILE_VIEWED_ACTION_IDS_V1.read);
+    expect(dispatched).not.toContain(GITHUB_FILE_VIEWED_ACTION_IDS_V1.set);
+    const first = rows.find(row => row.name?.startsWith('src/alpha.ts'))!;
+    await act(async () => { await files.press(first); });
+    await act(async () => { await files.press(await files.getByRole('button', { name: 'Mark unviewed' })); });
+    expect(writes).toEqual([{ path: 'src/alpha.ts', viewed: false }]);
+    // The host owns pending writes and refusals. Its real owner coverage lives in
+    // apps/ui/sources/sync/ops/scmDiffSummary/fileViewed.test.ts and review/hunkReview/
+    // useHunkReviewController.fileViewed.test.tsx; the List consumes that owner unchanged.
   });
 
-  it('saves a toggle with a pending box, without opening the file, and keeps the mark when GitHub refuses', async () => {
-    const { source, writes } = createHostViewedSource({
-      'src/alpha.ts': 'viewed',
-      'src/beta.ts': 'unviewed',
-    });
-    const files = await mountFiles(source);
-    const readsBefore = dispatched.length;
-    await act(async () => {
-      await files.press(
-        await files.getByRole('checkbox', {
-          name: 'beta.ts, viewed on GitHub',
-        }),
-      );
-    });
-    expect(writes.map(({ path, viewed }) => ({ path, viewed }))).toEqual([
-      { path: 'src/beta.ts', viewed: true },
-    ]);
-    expect(
-      (await files.getByRole('checkbox', { name: 'beta.ts, viewed on GitHub' }))
-        .state?.busy,
-    ).toBe(true);
-    // The checkbox is its own control: the row did not open its diff.
-    expect(dispatched.slice(readsBefore)).toEqual([]);
-    await act(async () => {
-      writes[0]!.settle(true);
-    });
-    expect(
-      (await files.getByRole('checkbox', { name: 'beta.ts, viewed on GitHub' }))
-        .state?.checked,
-    ).toBe(true);
-    expect(document.body.textContent).toContain('2 of 4 viewed');
-
-    await act(async () => {
-      await files.press(
-        await files.getByRole('checkbox', {
-          name: 'alpha.ts, viewed on GitHub',
-        }),
-      );
-    });
-    await act(async () => {
-      writes[1]!.settle(false);
-    });
-    expect(
-      (
-        await files.getByRole('checkbox', {
-          name: 'alpha.ts, viewed on GitHub',
-        })
-      ).state?.checked,
-    ).toBe(true);
-    expect(document.body.textContent).toContain('Not saved to GitHub');
+  it('refreshes the files and the same host Viewed source through the parent page refresh', async () => {
+    const viewed = createHostViewedSource({ 'src/alpha.ts': 'viewed' });
+    const files = await mountFiles(viewed.source);
+    const readsBefore = dispatched.filter(id => id === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles).length;
+    const refreshesBefore = viewed.refreshes();
+    await act(async () => { await files.press(await files.getByRole('button', { name: 'Refresh page' })); });
+    expect(viewed.refreshes()).toBe(refreshesBefore + 1);
+    expect(dispatched.filter(id => id === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles)).toHaveLength(readsBefore + 1);
+    expect(reviews).toHaveLength(0);
+    expect(viewed.writes).toEqual([]);
   });
 
   it('keeps the plain file list when the host has no Viewed source', async () => {
@@ -381,7 +283,7 @@ describe('GitHub Files panel Viewed marks', () => {
         authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
         surface: renderSurface,
         surfaceContext: createSurfaceContextFixture(),
-        adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+        adapter: createPluginUiRnwSemanticSurfaceAdapter({ changedFilesReview: true, observeChangedFilesReview: request => { reviews.push(request); } }),
         launchInput: launchInput(),
         handlers: { executeAction: async () => FILES_PAGE },
       })) as PluginUiTestkit;
@@ -392,6 +294,6 @@ describe('GitHub Files panel Viewed marks', () => {
     });
     expect(document.body.textContent).toContain('src/alpha.ts');
     await expect(fixture.getByRole('checkbox')).rejects.toThrow();
-    expect(document.body.textContent).not.toContain('of 4 viewed');
+    expect(reviews).toHaveLength(0);
   });
 });

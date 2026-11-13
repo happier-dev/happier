@@ -94,8 +94,9 @@ export function projectGithubPrimaryWriteFactsV1(input: Readonly<{
   return answer(methods.length === 0 ? 'methodsUnknown' : null);
 }
 
-const REASONS: Readonly<Record<GithubPrimaryWriteReasonV1, string>> = {
-  reading: 'Reading the current pull request…', unavailable: 'The current pull request could not be read.',
+/** The one copy of each reason; the mounted detail translates these same words rather than keeping its own. */
+export const GITHUB_PRIMARY_WRITE_REASON_COPY_V1: Readonly<Record<GithubPrimaryWriteReasonV1, string>> = {
+  reading: 'Reading the current pull request…', unavailable: 'Needs a fresh read of this pull request.',
   headUnknown: 'The head commit is not known yet.', headChanged: 'New commits arrived. Re-read this pull request before changing it.',
   conflicts: 'This pull request has merge conflicts.', blocked: 'GitHub is blocking this merge.',
   checksFailed: 'Required checks are failing.', checksPending: 'Required checks are still running.',
@@ -134,7 +135,7 @@ export function buildGithubPullRequestOperationsV1(input: Readonly<{
   const offer = (id: string, title: string, actionId: string, reason: GithubPrimaryWriteReasonV1 | null,
     variants: readonly Variant[]): TriagePullRequestOperationOfferV1 => ({
     id, title, titleKey: `plugins.github.ui.primaryWrite.${id}`,
-    disabledReason: reason === null ? null : REASONS[reason],
+    disabledReason: reason === null ? null : GITHUB_PRIMARY_WRITE_REASON_COPY_V1[reason],
     ...(reason === null ? {} : { disabledReasonKey: `plugins.github.ui.primaryWrite.${reason}` }),
     actionRef: { pluginId: GITHUB_PLUGIN_ID, localId: actionId }, variants,
   });

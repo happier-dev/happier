@@ -30,10 +30,10 @@ function listedText(): string {
   return document.body.textContent ?? '';
 }
 
-/** The hosted review exposes each retained file, independently of its count caption. */
+/** The List exposes each retained file, independently of its count caption. */
 async function expectFiles(detail: PluginUiTestkit, paths: readonly string[]): Promise<void> {
-  const files = (await detail.queryAllByRole('button')).filter(button => button.name?.startsWith('Open src/'));
-  expect(files.map(file => file.name)).toEqual(paths.map(path => `Open ${path}`));
+  const files = (await detail.queryAllByRole('button')).filter(button => button.name?.startsWith('src/'));
+  expect(files.map(file => file.name?.match(/^src\/[^ ]+?\.ts/u)?.[0])).toEqual(paths);
 }
 
 const SOURCE_CONTRIBUTION = Object.freeze({
@@ -158,7 +158,7 @@ function PageFrame({ children }: Readonly<{ children: React.ReactNode }>) {
   </TriageActivityAgentProvider>;
 }
 
-async function mountDetail(): Promise<PluginUiTestkit> {
+async function mountDetail(firstPage: JsonValue = FIRST_PAGE): Promise<PluginUiTestkit> {
   const scope = createTriageEphemeralSharedScopeFixture();
   let fixture!: PluginUiTestkit;
   await act(async () => {
@@ -167,7 +167,7 @@ async function mountDetail(): Promise<PluginUiTestkit> {
       authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
       surface: defineUiSurface(context => <PageFrame><SourcePanelActionsFixture scope={scope}>{renderSurface(context)}</SourcePanelActionsFixture></PageFrame>),
       surfaceContext: createSurfaceContextFixture(),
-      adapter: createPluginUiRnwSemanticSurfaceAdapter({ changedFilesReview: true }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput: launchInput(),
       handlers: {
         executeAction: async ({ action, input, signal }) => {
@@ -183,7 +183,7 @@ async function mountDetail(): Promise<PluginUiTestkit> {
             ) {
               await refreshedFirstPageGate;
             }
-            if (continuation === undefined) return FIRST_PAGE;
+            if (continuation === undefined) return firstPage;
             if (secondPageGate !== null) await secondPageGate;
             return secondPageAnswers.shift() ?? SECOND_PAGE;
           }
@@ -232,7 +232,7 @@ async function openTab(detail: PluginUiTestkit, name: string): Promise<void> {
 
 async function pressLoadMore(detail: PluginUiTestkit): Promise<void> {
   await act(async () => {
-    await detail.press(await detail.getByRole('button', { name: 'Load more files' }));
+    await detail.press(await detail.getByRole('button', { name: 'Show more files' }));
   });
 }
 
@@ -408,4 +408,90 @@ describe('the mounted GitHub Files panel across a tab leave', () => {
     expect(listedText()).toContain('needs-review');
     expect(readCount(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listTimeline)).toBe(1);
   });
+});
+
+// QB-72: the native detail entry must consume List, not the Session review host.
+it('mounts GitHub Files as List sections with adjacent tests, import order and no tree', async () => {
+  const paths = ['yarn.lock', 'src/a.test.ts', 'src/orphan.test.ts', 'src/a.ts', 'src/z.ts'];
+  const page = {
+    kind: 'changedFiles',
+    rows: paths.map(path => ({ path, status: 'modified', additions: 1, deletions: 1, changes: 2,
+      diffAvailable: true, ...(path === 'src/a.ts' ? { importSpecifiers: ['./z'] } : {}) })),
+    omittedRowCount: 0, projectionTruncated: false,
+  } satisfies JsonValue;
+  for (const rows of [page.rows, [...page.rows].reverse()]) {
+    const detail = await mountDetail({ ...page, rows });
+    await openTab(detail, 'Files');
+    const list = document.querySelector('ul[aria-label="Files this pull request changes"]');
+    expect(list).not.toBeNull();
+    const content = list!.textContent ?? '';
+    expect(content).toContain('Source');
+    expect(content).toContain('Tests');
+    expect(content).toContain('Generated and lockfiles');
+    // The whole walk is read, so the count it states is the pull request's total.
+    expect(listedText()).toContain('Changed files · 5');
+    const expected = ['src/z.ts', 'src/a.ts', 'src/a.test.ts', 'src/orphan.test.ts', 'yarn.lock'];
+    expect(expected.map(path => content.indexOf(path))).toEqual(
+      [...expected.map(path => content.indexOf(path))].sort((a, b) => a - b));
+    for (const path of expected) expect(content).toContain(path);
+    expect(document.querySelector('[role="tree"]')).toBeNull();
+    expect(document.querySelector('[role="radio"][aria-label="Tree"]')).toBeNull();
+    const readsBeforeOpen = readCount(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles);
+    const open = async (path: string) => {
+      const row = (await detail.queryAllByRole('button')).find(button => button.name?.startsWith(path));
+      expect(row).toBeDefined();
+      await act(async () => { await detail.press(row!); });
+    };
+    await open('src/a.ts');
+    expect(list!.querySelectorAll('[aria-expanded="true"]')).toHaveLength(1);
+    await open('src/z.ts');
+    expect(list!.querySelectorAll('[aria-expanded="true"]')).toHaveLength(1);
+    // No whole-PR body prefetch: only the two explicit disclosures ask for evidence.
+    expect(readCount(GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles)).toBe(readsBeforeOpen + 2);
+
+    await detail.dispose();
+    mounted.splice(mounted.indexOf(detail), 1);
+  }
+});
+
+// Opus review (SCM-FILES-REVIEW-1113): collapsed rows announce their disclosure, the paging control scrolls with the
+// rows, the total leads the notices, one band draws no band title, and a modified row is one line.
+it('lists GitHub Files as expandable rows under a total, with Show more inside the scrolling list', async () => {
+  const row = (path: string, extra: Record<string, JsonValue> = {}) => ({ path, status: 'modified', additions: 2,
+    deletions: 1, changes: 3, diffAvailable: true, ...extra });
+  const detail = await mountDetail({
+    kind: 'changedFiles',
+    rows: [row('src/alpha.ts'), row('src/added.ts', { status: 'added' }), row('src/gone.ts', { status: 'removed' }),
+      row('src/moved.ts', { status: 'renamed', previousPath: 'src/was.ts' }), row('src/logo.ts', { diffAvailable: false })],
+    omittedRowCount: 0, projectionTruncated: false, continuation: 'github-files-page-2',
+  } as JsonValue);
+  await openTab(detail, 'Files');
+  const list = document.querySelector('ul[aria-label="Files this pull request changes"]');
+  expect(list).not.toBeNull();
+  // Five read, more to come: the loaded count is not presented as the pull request's total.
+  expect(listedText()).toContain('Changed files');
+  expect(listedText()).not.toContain('Changed files · 5');
+  // One band: its rows need no band title.
+  expect(list!.textContent).not.toContain('Source');
+  // The file rows' own disclosure state (each row's ⋯ trigger carries one too, for its menu).
+  const toggles = [...list!.querySelectorAll('[aria-expanded]')].filter(node => node.textContent?.startsWith('src/'));
+  expect(toggles.map(node => node.getAttribute('aria-expanded'))).toEqual(['false', 'false', 'false', 'false', 'false']);
+  // Status speaks only when it says something: a plain modification is one line.
+  const content = list!.textContent ?? '';
+  expect(content).not.toContain('Modified');
+  for (const words of ['Added', 'Deleted', 'Renamed from src/was.ts']) expect(content).toContain(words);
+  expect(content.split('GitHub has no diff for this file.')).toHaveLength(2);
+  // Show more scrolls with the rows rather than standing fixed under the scroller.
+  const more = [...document.querySelectorAll('[role="button"],button')].find(node => node.textContent === 'Show more files');
+  expect(more).toBeDefined();
+  expect(list!.contains(more!)).toBe(true);
+
+  const first = toggles.find(node => node.textContent?.startsWith('src/alpha.ts'))!;
+  await act(async () => {
+    await detail.press((await detail.queryAllByRole('button')).find(button => button.name?.startsWith('src/alpha.ts'))!);
+  });
+  // The pressed row is the same node, now open: it was never swapped for another element (focus stays on it).
+  expect(list!.contains(first)).toBe(true);
+  expect(first.getAttribute('aria-expanded')).toBe('true');
+  expect(toggles.filter(node => node.getAttribute('aria-expanded') === 'true')).toEqual([first]);
 });

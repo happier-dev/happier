@@ -282,12 +282,9 @@ function findPairedSourcePath(
 /**
  * Orders one changed-file set into its deterministic reading order.
  *
- * Bands run source, then tests, then generated output. Source dependencies
+ * Sources and their paired tests run first, then unpaired tests, then generated output. Source dependencies
  * precede their importers when the patch proves the relationship; otherwise
- * normalized path order breaks ties. Generated paths stay lexical. In the test band a
- * paired test follows its source file's position, so the tests read in the same
- * order as the code they cover, and an unpaired test sorts after every paired
- * one in path order rather than being interleaved on a guess.
+ * normalized path order breaks ties. Generated paths stay lexical. A paired test immediately follows its source; an unpaired test stays in the test band.
  */
 export function orderGithubChangedFiles<TRow extends GithubProjectedChangedFileRowV1>(
   rows: readonly TRow[],
@@ -339,9 +336,16 @@ export function orderGithubChangedFiles<TRow extends GithubProjectedChangedFileR
     left.rank - right.rank || comparePaths(left.row.path, right.row.path)
   ));
 
+  const paired = new Map<string, GithubOrderedChangedFileV1<TRow>[]>();
+  for (const entry of tests) {
+    if (entry.pairedSourcePath === null) continue;
+    const group = paired.get(entry.pairedSourcePath) ?? [];
+    group.push(entry);
+    paired.set(entry.pairedSourcePath, group);
+  }
   return Object.freeze([
-    ...source,
-    ...tests.map((entry) => Object.freeze({
+    ...source.flatMap((entry) => [entry, ...(paired.get(entry.row.path) ?? [])]),
+    ...tests.filter(entry => entry.pairedSourcePath === null).map((entry) => Object.freeze({
       row: entry.row,
       band: entry.band,
       pairedSourcePath: entry.pairedSourcePath,
@@ -359,7 +363,7 @@ export function groupGithubChangedFiles<TRow extends GithubProjectedChangedFileR
 ): readonly GithubChangedFileSectionV1<TRow>[] {
   const bands: readonly GithubChangedFileBandV1[] = Object.freeze(['source', 'test', 'generated']);
   return Object.freeze(bands.flatMap((band) => {
-    const rows = ordered.filter((entry) => entry.band === band).map((entry) => entry.row);
+    const rows = ordered.filter((entry) => (entry.pairedSourcePath === null ? entry.band : 'source') === band).map((entry) => entry.row);
     return rows.length === 0
       ? []
       : [Object.freeze({ band, title: BAND_TITLES[band], rows: Object.freeze(rows) })];
