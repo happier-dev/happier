@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -18,6 +18,7 @@ vi.mock('react-native-svg', async (importOriginal) => ({
 }));
 
 import { ProviderIcon } from './ProviderIcon';
+import { readAccountProviderDeclarations } from '@/providers/catalog/accountProviderDeclarations';
 
 bundledBrands.push({
     pluginId: 'happier.provider.deepseek', resourceId: 'brand-icon', releaseVersion: '0.0.0',
@@ -42,14 +43,36 @@ describe('ProviderIcon', () => {
         const tokenOnly = await renderScreen(<ProviderIcon icon="deepseek" size={24} color="#123456" />);
         expect(tokenOnly.findByType(Icon).props.name).toBe('cube');
     });
-    it('draws one identity for every bundled Provider: its plugin\'s admitted artwork, else the shared letter, never the cube', async () => {
-        // Anthropic is contributed by the Claude plugin, whose admitted artwork is its brand.
-        const anthropic = await renderScreen(<ProviderIcon contributionKey="happier.agent.claude/anthropic" icon={null} size={24} color="#123456" />);
-        expect(anthropic.findAllByType(Icon)).toHaveLength(0);
-        expect(anthropic.findAllByType('Image').length + anthropic.findAllByType('SvgXml').length).toBeGreaterThan(0);
-        // No artwork is admitted for Cloudflare AI Gateway: the same bare grapheme every other unmarked item draws.
-        const gateway = await renderScreen(<ProviderIcon contributionKey="happier.provider.cloudflare-ai-gateway/cloudflare-ai-gateway" icon={null} size={24} color="#123456" />);
-        expect(gateway.findAllByType(Icon)).toHaveLength(0);
-        expect(gateway.getTextContent()).toContain('C');
+    it('draws every bundled Provider with its plugin\'s packaged artwork, never a letter or the cube', async () => {
+        // The byte inventory comes from each first-party package's published manifest brand (the tracked catalog
+        // projection, one file per package directory), as the app publisher reads it.
+        const pluginsRoot = new URL('../../../../../packages/plugins/', import.meta.url);
+        const manifestsRoot = new URL('../../../../cli/assets/bundled-plugin-manifests/', import.meta.url);
+        bundledBrands.length = 0;
+        for (const file of readdirSync(manifestsRoot).filter((name) => name.endsWith('.json'))) {
+            const directory = file.slice(0, -'.json'.length);
+            const manifest = JSON.parse(readFileSync(new URL(file, manifestsRoot), 'utf8'));
+            const resource = manifest.brand
+                ? manifest.contributes?.resources?.find((entry: { id: string }) => entry.id === manifest.brand.iconResourceId)
+                : null;
+            if (!resource) continue;
+            bundledBrands.push({
+                pluginId: manifest.id, resourceId: resource.id, releaseVersion: '0.0.0', displayName: manifest.displayName,
+                digest: '', monochrome: manifest.brand.monochrome === true,
+                bytes: new Uint8Array(readFileSync(new URL(`${directory}/${resource.path}`, pluginsRoot))),
+            });
+        }
+        const declarations = readAccountProviderDeclarations({ kind: 'account' });
+        expect(declarations.map((declaration) => declaration.contributionKey)).toEqual(expect.arrayContaining([
+            expect.stringContaining('cloudflare-ai-gateway'), expect.stringContaining('vercel-ai-gateway'),
+        ]));
+        const unmarked: string[] = [];
+        for (const { contributionKey } of declarations) {
+            // Anthropic is contributed by the Claude plugin, whose admitted artwork is its Agent brand.
+            const rendered = await renderScreen(<ProviderIcon contributionKey={contributionKey} icon={null} size={24} color="#123456" />);
+            const artwork = rendered.findAllByType('Image').length + rendered.findAllByType('SvgXml').length;
+            if (artwork === 0 || rendered.findAllByType(Icon).length > 0) unmarked.push(contributionKey);
+        }
+        expect(unmarked).toEqual([]);
     });
 });

@@ -6,6 +6,10 @@ export const { manifest: PLUGIN_MANIFEST, activate } = definePlugin({
   version: '0.0.0',
   displayName: 'Cloudflare AI Gateway',
   description: 'Use Cloudflare AI Gateway with an account gateway token; Claude pass-through also uses your own Anthropic API key.',
+  brand: { iconResourceId: 'brand-icon', monochrome: true },
+  resources: {
+    'brand-icon': { kind: 'asset', path: 'assets/brand.png', contentType: 'image/png' },
+  },
   entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
   hostAccess: { required: [], optional: [] },
   providers: {

@@ -1944,7 +1944,10 @@ function VirtualizedList<Item>(
     accessibilityLabel: props.accessibilityLabel,
     testID: props.testID,
     style: emptyFillsRegion ? [props.style, emptyScrollerStyle] : props.style,
-    contentContainerStyle: [densityStyle, props.contentContainerStyle],
+    // An ungrouped directory stands the header gap below its search whether or not its rows are windowed.
+    contentContainerStyle: visibleSections === undefined && catalogDirectory !== undefined
+      ? [densityStyle, flatPageSheetStyle, props.contentContainerStyle]
+      : [densityStyle, props.contentContainerStyle],
     extraData,
     endContent: collectionEndContent,
     preserveVisibleContentPositionOnPrepend:
