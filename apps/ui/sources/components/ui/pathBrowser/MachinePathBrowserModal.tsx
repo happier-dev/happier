@@ -515,17 +515,24 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
 
     const typedPath = React.useMemo(() => readTypedMachinePath(searchQuery), [searchQuery]);
     const deepSearchEnabled = typedPath === null && deepSearchRootDirectoryPath !== '' && searchQuery.trim().length > 0;
+    // A typed name in a folder whose listing is capped may sit past the first page: ask the Machine for
+    // that name among the folder's children instead of filtering the capped page (QA-BREADTH Q11).
+    const typedDirectoryCapped = typedPath !== null && rawNodes.some((node) => node.type === 'info'
+        && node.infoKind === 'truncated' && node.parentDirectoryPath === typedPath.directory);
+    const typedLookup = typedPath !== null && typedPath.prefix !== '' && typedDirectoryCapped ? typedPath : null;
     const enableRowLongPressContextMenu = enableContextMenu && Platform.OS !== 'web';
 
     const activeServer = useActiveServerSnapshot(props.serverId == null);
     const deepSearchServerId = props.serverId ?? activeServer.serverId;
+    const queryRootDirectoryPath = typedLookup ? typedLookup.directory : deepSearchRootDirectoryPath;
     const deepSearchScope = React.useMemo(() => ({
-        machineId: props.machineId, serverId: deepSearchServerId, rootPath: deepSearchRootDirectoryPath,
-    }), [props.machineId, deepSearchServerId, deepSearchRootDirectoryPath]);
+        machineId: props.machineId, serverId: deepSearchServerId, rootPath: queryRootDirectoryPath,
+    }), [props.machineId, deepSearchServerId, queryRootDirectoryPath]);
     const { binding: deepSearchAccountLifetime } = useServerCredentialAccountScopeBinding(deepSearchServerId);
     const deepSearch = useWorkspaceFileQuery({
-        scope: deepSearchScope, query: searchQuery,
-        enabled: deepSearchEnabled && deepSearchAccountLifetime?.isCurrent() === true, mode: 'glob',
+        scope: deepSearchScope, query: typedLookup ? typedLookup.prefix : searchQuery,
+        ...(typedLookup ? { maxDepth: 1 } : {}),
+        enabled: (deepSearchEnabled || typedLookup !== null) && deepSearchAccountLifetime?.isCurrent() === true, mode: 'glob',
         accountLifetime: deepSearchAccountLifetime ?? undefined,
         includeHidden: showHidden, resultType: selectionMode === 'file' ? 'file' : 'folder',
         reloadToken: queryRead.nonce,
@@ -542,12 +549,20 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         const relative = item.fullPath.replace(/\/+$/, '');
         return {
             type: item.fileType === 'file' ? 'file' : 'directory',
-            path: joinMachinePath(deepSearchRootDirectoryPath, relative),
+            path: joinMachinePath(queryRootDirectoryPath, relative),
             name: item.fileType === 'file' ? relative : item.fileName.replace(/\/+$/, ''),
             depth: 0, isExpanded: false, isLoadingChildren: false,
-            parentDirectoryPath: deepSearchRootDirectoryPath, source: 'remote',
+            parentDirectoryPath: queryRootDirectoryPath, source: 'remote',
         };
-    }), [deepSearch.items, deepSearchRootDirectoryPath]);
+    }), [deepSearch.items, queryRootDirectoryPath]);
+    // The typed folder's children the Machine found by name, placed in the tree under that folder.
+    const typedLookupNodes = React.useMemo((): FilesystemBrowserNode[] => {
+        if (!typedLookup) return [];
+        const prefix = typedLookup.prefix.toLowerCase();
+        const depth = (nodesByPath.get(typedLookup.directory)?.depth ?? 0) + 1;
+        return deepSearchNodes.filter((node) => !node.name.includes('/') && node.name.toLowerCase().startsWith(prefix)
+            && !nodesByPath.has(node.path)).map((node) => ({ ...node, depth }));
+    }, [deepSearchNodes, nodesByPath, typedLookup]);
 
     const nodes = React.useMemo(() => {
         if (deepSearchEnabled) {
@@ -572,9 +587,10 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             // The way to the typed folder, then its children whose names start as typed.
             const way = new Set(buildInitialExpandedPaths(typedPath.directory));
             const prefix = typedPath.prefix.toLowerCase();
-            return base.filter((node) => (node.type === 'file' || node.type === 'directory')
+            const typedNodes = base.filter((node) => (node.type === 'file' || node.type === 'directory')
                 ? way.has(node.path) || (node.parentDirectoryPath === typedPath.directory && node.name.toLowerCase().startsWith(prefix))
                 : node.parentDirectoryPath !== undefined && node.parentDirectoryPath !== null && way.has(node.parentDirectoryPath));
+            return typedLookupNodes.length > 0 ? [...typedNodes, ...typedLookupNodes] : typedNodes;
         }
 
         const keep = new Set<string>();
@@ -603,7 +619,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
             }
             return false;
         });
-    }, [deepSearchEnabled, deepSearchNodes, isHiddenByAncestors, nodesByPath, rawNodes, searchQuery, showHidden, typedPath]);
+    }, [deepSearchEnabled, deepSearchNodes, isHiddenByAncestors, nodesByPath, rawNodes, searchQuery, showHidden, typedLookupNodes, typedPath]);
 
     // Typing or pasting a path opens the folders on the way to it, and picks it once it is there.
     React.useEffect(() => {
@@ -612,7 +628,8 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
         setExpandedPaths((current) => way.every((path) => current.includes(path)) ? current : [...new Set([...current, ...way])]);
     }, [typedPath]);
     const typedTarget = typedPath ? (typedPath.prefix ? joinMachinePath(typedPath.directory, typedPath.prefix) : typedPath.directory) : null;
-    const typedTargetNode = typedTarget ? nodesByPath.get(typedTarget) : undefined;
+    const typedTargetNode = typedTarget
+        ? nodesByPath.get(typedTarget) ?? typedLookupNodes.find((node) => node.path === typedTarget) : undefined;
     const typedTargetPickable = typedTargetNode !== undefined && typedTargetNode.source !== 'preview'
         && typedTargetNode.type === (selectionMode === 'file' ? 'file' : 'directory');
     React.useEffect(() => {
@@ -1084,7 +1101,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
                     overflowTriggerTestID="path-browser-more"
                 />
 
-                {deepSearchEnabled && nodes.length > 0 ? (
+                {(deepSearchEnabled || typedLookup !== null) && nodes.length > 0 ? (
                     deepSearchLoading ? <SurfaceStateCard size="line" kind="loading" title={t('files.searching')} />
                         : deepSearchError ? <SurfaceStateCard testID="path-browser-search-error" size="line" kind="unavailable"
                             title={deepSearchError} action={{ label: t('common.retry'), onPress: async () => { await invokeBrowserCommand('retrySearch'); } }} />

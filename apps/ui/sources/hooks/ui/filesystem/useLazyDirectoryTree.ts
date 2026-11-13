@@ -220,6 +220,12 @@ export function useLazyDirectoryTree<LoadContext = undefined>(input: {
         rootDirectoryPathRef.current = rootDirectoryPath;
     }, [directoryEntriesByPath, directoryErrors, rootDirectoryPath]);
     React.useEffect(() => {
+        if (previousReloadTokenRef.current !== reloadToken) {
+            // A reload covers every expanded folder. The expanded-folder pass below is cancelled and
+            // re-run whenever a listing lands, so a one-render force flag alone left nested folders
+            // stale; marking them stale lets any later pass re-read them once.
+            for (const path of expandedDirectoriesRef.current) staleDirectoriesRef.current.add(path);
+        }
         previousReloadTokenRef.current = reloadToken;
     }, [reloadToken]);
 

@@ -636,6 +636,20 @@ still aborts the process tree. A caller timeout alone does not establish Machine
 unavailability. Filename enumeration uses newline-framed, line-buffered output
 to retain complete paths found before expiry; filenames containing newline
 characters are unsupported.
+
+Folder results (`resultType: 'folder'`, used by the path browser in folder mode)
+do not come from the ripgrep file list, which cannot return an empty folder and on
+a large home spends the whole budget before a shallow match. The same
+`daemon.filesystem.listFiles` handler walks folder entries breadth-first through the
+admitted workspace source, with the same exclusions, never following links, and
+returns `name/` folder records. The page ends after the shallowest level that
+matched (`truncated: true` while deeper folders are unread), at `limit`, at the
+reply byte budget or at `budgetMs`. `maxDepth: 1` restricts either mode to the
+root's direct children. The daemon file log records only the folders read, the
+match count, completeness and elapsed time. A typed absolute path whose parent
+listing is capped (`truncated`, 500 entries by `HAPPIER_FILES_DIRECTORY_LIST_MAX_ENTRIES`)
+asks that folder for the typed name with `maxDepth: 1` instead of filtering the
+capped page.
 `WorkspaceFileSearchUnavailableError` carries typed failures to the UI instead
 of turning a failed search into an empty result. Source integration and focused
 owner checks do not substitute for the lane's remaining package and

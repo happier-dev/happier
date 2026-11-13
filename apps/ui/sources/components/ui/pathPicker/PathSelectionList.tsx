@@ -40,6 +40,7 @@ import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToH
 import { InputBrowseButton } from '@/components/ui/buttons/InputBrowseButton';
 import { useModalPortalTarget } from '@/modal/portal/ModalPortalTarget';
 import { listMachineFileBrowserDirectoryEntries } from '@/sync/domains/input/machineFileBrowser';
+import { searchWorkspaceFiles } from '@/sync/domains/workspaces/files/workspaceFileSearch';
 import { t } from '@/text';
 
 import { FavoriteToggleButton } from '@/components/ui/buttons/FavoriteToggleButton';
@@ -262,6 +263,13 @@ function resolveSavedPathOptionId(params: Readonly<{
     return null;
 }
 
+/** Joins a capped folder's seed and the typed name into one resolver seed (NUL never occurs in paths). */
+const CAPPED_FOLDER_LOOKUP_SEPARATOR = '\u0000';
+const EMPTY_CAPPED_FOLDERS: ReadonlySet<string> = new Set();
+function buildCappedFolderKey(machineId: string, folderSeed: string): string {
+    return `${machineId}${CAPPED_FOLDER_LOOKUP_SEPARATOR}${folderSeed}`;
+}
+
 export function PathSelectionList(props: PathSelectionListProps): React.ReactElement {
     // Destructure cleanly so memo deps aren't fed `props` itself (which would
     // re-run effects on every parent render).
@@ -294,6 +302,8 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
         initialSuggestionMode,
     }));
     const [hasUserEditedInput, setHasUserEditedInput] = React.useState(false);
+    // Folders on this Machine whose listing came back capped; a name typed in one is looked up.
+    const [cappedFolders, setCappedFolders] = React.useState<ReadonlySet<string>>(EMPTY_CAPPED_FOLDERS);
     const handleChangeInputValue = React.useCallback((nextValue: string) => {
         setHasUserEditedInput(true);
         setInputValue(nextValue);
@@ -448,6 +458,10 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
         }),
         [hasUserEditedInput, initialSuggestionMode, initialValue, machineHomeDir, machinePlatform],
     );
+    const currentFolderSeed = inputBehavior.getDynamicSectionSeed?.(inputValue) ?? inputValue;
+    // Only a typed name changes what a capped folder resolves; its plain listing stays as fetched.
+    const currentFolderCapped = machineId !== null && (inputBehavior.getFilterQueryFromInput?.(inputValue) ?? '') !== ''
+        && cappedFolders.has(buildCappedFolderKey(machineId, currentFolderSeed.length > 0 ? currentFolderSeed : '~'));
 
     const canBrowseMachine = machineId !== null;
 
@@ -492,7 +506,7 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
     // changes (machine swap → resolverKey changes → cache invalidates), but a
     // plain parent re-render does NOT cause a re-fetch.
     const inThisFolderResolver = React.useCallback(
-        async (seed: string, signal: AbortSignal) => {
+        async (rawSeed: string, signal: AbortSignal) => {
             const currentMachineId = machineIdRef.current;
             const currentMachineHomeDir = machineHomeDirRef.current;
             const currentServerId = serverIdRef.current;
@@ -500,7 +514,41 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
             if (currentMachineId === null) {
                 return { options: [] };
             }
+            const [seed, lookupName] = rawSeed.split(CAPPED_FOLDER_LOOKUP_SEPARATOR) as [string, string | undefined];
             const directoryPath = seed.length > 0 ? seed : '~';
+            const toFolderOption = (name: string, path: string): SelectionListOption => ({
+                // Bug 4b fix: append with `kind: 'directory'` so accepting the autocomplete
+                // yields a value with a trailing separator (e.g. `~/Documents/`), which
+                // re-fires IN THIS FOLDER for the new dir. The user-visible shorthand is
+                // preserved (the seed is in shorthand form); commit on row press resolves
+                // to the absolute path.
+                id: `in-folder:${path}`,
+                label: name,
+                subtitle: formatPathRelativeToHome(path, currentMachineHomeDir),
+                labelEllipsizeMode: 'head',
+                subtitleEllipsizeMode: 'head',
+                autocompleteValue: appendSegment(directoryPath, name, currentMachinePlatform, 'directory'),
+            });
+            if (lookupName !== undefined && currentServerId) {
+                // This folder lists more than one page: ask the Machine for the typed name among its
+                // children (the shared folder-search owner) instead of filtering the capped page.
+                const absoluteDirectory = resolveAbsolutePath(directoryPath, currentMachineHomeDir)
+                    .replace(/(?<=.)[\\/]+$/u, '');
+                const separator = currentMachinePlatform === 'windows' ? '\\' : '/';
+                const page = await searchWorkspaceFiles({
+                    scope: { serverId: currentServerId, machineId: currentMachineId, rootPath: absoluteDirectory },
+                    query: lookupName, mode: 'glob', resultType: 'folder', maxDepth: 1, includeHidden: true,
+                    includeCoverage: true, signal,
+                });
+                return {
+                    options: page.items.map((item) => {
+                        const name = item.fileName.replace(/\/+$/u, '');
+                        return toFolderOption(name, `${absoluteDirectory}${absoluteDirectory.endsWith(separator) ? '' : separator}${name}`);
+                    }),
+                    emptyHint: t('newSession.pathPicker.emptyNewFolder'),
+                    ...(page.hasMore ? { resultHint: t('universalSearch.moreResultsAvailable') } : {}),
+                };
+            }
             const result = await listMachineFileBrowserDirectoryEntries({
                 machineId: currentMachineId,
                 serverId: currentServerId ?? null,
@@ -526,36 +574,19 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
                 // falls back to the i18n-keyed `selectionList.dynamicSectionError`.
                 throw new Error('');
             }
-            const directorySeed = directoryPath;
             const options: SelectionListOption[] = result.entries
                 .filter((entry) => entry.type === 'directory')
-                .map((entry) => {
-                    // Bug 4b fix: append with `kind: 'directory'` so
-                    // accepting the autocomplete yields a value with
-                    // a trailing separator (e.g. `~/Documents/`),
-                    // which re-fires IN THIS FOLDER for the new dir.
-                    // The user-visible shorthand is preserved (the
-                    // seed is in shorthand form); commit on row press
-                    // resolves to the absolute path.
-                    const drillValue = appendSegment(
-                        directorySeed,
-                        entry.name,
-                        currentMachinePlatform,
-                        'directory',
-                    );
-                    return {
-                        id: `in-folder:${entry.path}`,
-                        label: entry.name,
-                        subtitle: formatPathRelativeToHome(entry.path, currentMachineHomeDir),
-                        labelEllipsizeMode: 'head',
-                        subtitleEllipsizeMode: 'head',
-                        autocompleteValue: drillValue,
-                    };
-                });
+                .map((entry) => toFolderOption(entry.name, entry.path));
+            if (result.truncated) {
+                // The page is capped: typed names in this folder are looked up on the Machine from now on.
+                const cappedKey = buildCappedFolderKey(currentMachineId, directoryPath);
+                setCappedFolders((previous) => previous.has(cappedKey) ? previous : new Set(previous).add(cappedKey));
+            }
             return {
                 options,
                 // Enter commits the typed path whether or not it exists yet; the empty state says so.
                 emptyHint: t('newSession.pathPicker.emptyNewFolder'),
+                ...(result.truncated ? { resultHint: t('universalSearch.moreResultsAvailable') } : {}),
             };
         },
         // Empty deps — the closure is anchored at mount and reads volatile
@@ -595,7 +626,15 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
                     `home:${machineHomeDir ?? ''}`,
                     `platform:${machinePlatform}`,
                     `server:${serverId ?? ''}`,
+                    // A typed name in a folder learned to be capped re-resolves it as a name lookup.
+                    `capped:${currentFolderCapped ? 1 : 0}`,
                 ].join('::'),
+                seedFromInput: (input) => {
+                    const directory = inputBehavior.getDynamicSectionSeed?.(input) ?? input;
+                    const name = inputBehavior.getFilterQueryFromInput?.(input) ?? '';
+                    return name && machineId && cappedFolders.has(buildCappedFolderKey(machineId, directory.length > 0 ? directory : '~'))
+                        ? `${directory}${CAPPED_FOLDER_LOOKUP_SEPARATOR}${name}` : directory;
+                },
                 // Only show when the input shape suggests a path AND a machine
                 // is bound. NEVER infer the target platform from the local
                 // browser — always thread the machine's platform.
@@ -651,6 +690,9 @@ export function PathSelectionList(props: PathSelectionListProps): React.ReactEle
         };
     }, [
         canBrowseMachine,
+        cappedFolders,
+        currentFolderCapped,
+        inputBehavior,
         hasUserEditedInput,
         inThisFolderResolver,
         initialSuggestionMode,

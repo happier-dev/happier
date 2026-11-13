@@ -7,6 +7,7 @@ import type { DaemonWorkspaceFileListResponse } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isSafeRelativeWorkspacePath, workspaceFileExclusionArguments } from './workspaceFilePaths';
 import { logger } from '@/ui/logger';
+import { listWorkspaceFolders } from './workspaceFolderList';
 
 
 function escapeRipgrepGlob(input: string): string {
@@ -20,11 +21,12 @@ function escapeRipgrepGlob(input: string): string {
         .replace(/\}/g, '\\}');
 }
 
-function buildWorkspaceFileListArguments(query: string | undefined, includeHidden: boolean): string[] {
+function buildWorkspaceFileListArguments(query: string | undefined, includeHidden: boolean, maxDepth: number | undefined): string[] {
     const args = [
         '--no-config',
         '--files',
         ...(includeHidden ? ['--hidden'] : []),
+        ...(maxDepth === undefined ? [] : ['--max-depth', String(maxDepth)]),
         // Native line buffering flushes each filename before traversal completes.
         '--line-buffered',
     ];
@@ -98,11 +100,30 @@ export function registerWorkspaceFileListHandler(
             });
             if (!authorization.valid) return { ok: false, errorCode: 'path_not_allowed' };
 
+            const deadlineAtMs = parsed.data.budgetMs === undefined ? undefined
+                : (context?.requestStartedAtMs ?? Date.now()) + parsed.data.budgetMs;
             try {
                 context?.signal.throwIfAborted();
+                if (parsed.data.resultType === 'folder') {
+                    const startedAtMs = Date.now();
+                    const folders = await listWorkspaceFolders({
+                        rootPath: authorization.resolvedPath,
+                        query: parsed.data.query ?? '',
+                        includeHidden: parsed.data.includeHidden === true,
+                        ...(parsed.data.limit === undefined ? {} : { limit: parsed.data.limit }),
+                        ...(parsed.data.maxDepth === undefined ? {} : { maxDepth: parsed.data.maxDepth }),
+                        ...(deadlineAtMs === undefined ? {} : { deadlineAtMs }),
+                        ...(context?.signal ? { signal: context.signal } : {}),
+                    });
+                    // Counts only: what the page cost and whether it is complete; never paths.
+                    logger.infoFile('[WORKSPACE FILE LIST] Folder search', { scannedDirectories: folders.scannedDirectories,
+                        matched: folders.paths.length, truncated: folders.truncated, elapsedMs: Date.now() - startedAtMs });
+                    return { ok: true, paths: folders.paths, truncated: folders.truncated };
+                }
                 const result = await runRipgrep(buildWorkspaceFileListArguments(
                     parsed.data.query,
                     parsed.data.includeHidden === true,
+                    parsed.data.maxDepth,
                 ), {
                     cwd: authorization.resolvedPath,
                     ...(context?.signal ? { signal: context.signal } : {}),
@@ -111,9 +132,7 @@ export function registerWorkspaceFileListHandler(
                     // only OS codes are retained in the file log, never paths/prose.
                     maxStderrBytes: WORKSPACE_FILE_LIST_MAX_RESPONSE_UTF8_BYTES,
                     terminateOnStdoutLimit: true,
-                    ...(parsed.data.budgetMs === undefined ? {} : {
-                        deadlineAtMs: (context?.requestStartedAtMs ?? Date.now()) + parsed.data.budgetMs,
-                    }),
+                    ...(deadlineAtMs === undefined ? {} : { deadlineAtMs }),
                 });
                 context?.signal.throwIfAborted();
                 if (result.deadlineExceeded) logger.infoFile('[WORKSPACE FILE LIST] Budget exhausted');
@@ -143,8 +162,13 @@ export function registerWorkspaceFileListHandler(
                 };
             } catch (error) {
                 if (context?.signal?.aborted || isAbortError(error)) throw error;
-                if (error instanceof Error && 'code' in error && error.code === 'WORKSPACE_ROOT_NOT_FOUND') {
+                if (error instanceof Error && 'code' in error && (error.code === 'WORKSPACE_ROOT_NOT_FOUND'
+                    || (parsed.data.resultType === 'folder' && (error.code === 'ENOENT' || error.code === 'ENOTDIR')))) {
                     return { ok: false, errorCode: 'root_not_found' };
+                }
+                if (parsed.data.resultType === 'folder') {
+                    return { ok: false, errorCode: error instanceof Error && 'code' in error
+                        && (error.code === 'EACCES' || error.code === 'EPERM') ? 'path_not_allowed' : 'ripgrep_failed' };
                 }
                 return { ok: false, errorCode: 'ripgrep_unavailable' };
             }

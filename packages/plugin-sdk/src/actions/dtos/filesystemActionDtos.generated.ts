@@ -153,6 +153,8 @@ export type FilesystemActionInputById = {
         query?: string | undefined;
         includeHidden?: boolean | undefined;
         limit?: number | undefined;
+        resultType?: 'file' | 'folder' | undefined;
+        maxDepth?: number | undefined;
         budgetMs?: number | undefined;
     };
 };

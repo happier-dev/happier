@@ -112,6 +112,13 @@ function buildFileItemsFromPaths(filePaths: string[]): FileSearchItem[] {
         if (!fullPath) continue;
         const parts = fullPath.split('/').filter(Boolean);
         if (parts.length === 0) continue;
+        if (fullPath.endsWith('/')) {
+            // A folder record (`a/b/`): the folder itself, empty or not, with its ancestors.
+            for (let dirPath = parts.join('/'); dirPath && !directories.has(dirPath); dirPath = dirPath.slice(0, Math.max(0, dirPath.lastIndexOf('/')))) {
+                directories.add(dirPath);
+            }
+            continue;
+        }
 
         const fileName = parts[parts.length - 1] ?? fullPath;
         const parentPath = parts.slice(0, -1).join('/');
@@ -596,6 +603,8 @@ export type WorkspaceFileSearchInput = Readonly<{
     /** Arbitrary directory browsers query the daemon glob directly, without a workspace index. */
     mode?: 'fuzzy' | 'glob';
     includeHidden?: boolean;
+    /** Glob mode: levels below the root to search (`1` = its direct children). */
+    maxDepth?: number;
 }>;
 
 export function searchWorkspaceFiles(
@@ -625,6 +634,8 @@ export async function searchWorkspaceFiles(
             rootPath: input.scope.rootPath,
             query: input.query.trim(),
             includeHidden: input.includeHidden ?? true,
+            ...(input.resultType ? { resultType: input.resultType } : {}),
+            ...(input.maxDepth === undefined ? {} : { maxDepth: input.maxDepth }),
             ...(input.limit === undefined ? {} : { limit: Math.max(1, Math.floor(input.limit)) }),
         }, {
             serverId: input.scope.serverId,

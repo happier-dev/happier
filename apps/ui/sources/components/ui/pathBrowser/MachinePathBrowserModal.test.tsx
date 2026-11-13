@@ -912,7 +912,7 @@ describe('MachinePathBrowserModal', () => {
 
         expect(machineWorkspaceFileListMock).toHaveBeenCalledWith(
             'machine-1',
-            { rootPath: '/repo', query: 'readme', includeHidden: true, budgetMs: expect.any(Number) },
+            { rootPath: '/repo', query: 'readme', includeHidden: true, resultType: 'file', budgetMs: expect.any(Number) },
             expect.anything(),
         );
 
@@ -954,9 +954,10 @@ describe('MachinePathBrowserModal', () => {
             truncated: false,
         });
 
+        // A folder search returns folder records, empty folders included (QA-BREADTH Q11).
         machineWorkspaceFileListMock.mockResolvedValueOnce({
             ok: true,
-            paths: ['leeroy/.ssh/config'],
+            paths: ['leeroy/.ssh/'],
             truncated: false,
         });
 
@@ -986,7 +987,7 @@ describe('MachinePathBrowserModal', () => {
 
         expect(machineWorkspaceFileListMock).toHaveBeenCalledWith(
             'machine-1',
-            { rootPath: '/Users', query: 'ssh', includeHidden: true, budgetMs: expect.any(Number) },
+            { rootPath: '/Users', query: 'ssh', includeHidden: true, resultType: 'folder', budgetMs: expect.any(Number) },
             expect.anything(),
         );
 
@@ -1150,6 +1151,40 @@ describe('MachinePathBrowserModal', () => {
         await screen.pressByTestIdAsync(PATH_BROWSER_CONFIRM_TEST_ID);
         expect(onResolve).toHaveBeenCalledWith('/var/tmp/project', 'machine-1');
         expect(machineWorkspaceFileListMock).not.toHaveBeenCalled();
+    });
+
+    it('finds a typed path inside a capped folder by asking the Machine for that name (QA-BREADTH Q11)', async () => {
+        // `/tmp` has more entries than one listing carries; the typed folder is not in the first page.
+        const capped = Array.from({ length: 500 }, (_, index) => ({ name: `a-${index}`, path: `/tmp/a-${index}`, type: 'directory' as const }));
+        listMachineFileBrowserDirectoryEntriesMock.mockImplementation(async (input) => input.directoryPath === '/'
+            ? { ok: true as const, entries: [{ name: 'tmp', path: '/tmp', type: 'directory' as const }], truncated: false }
+            : input.directoryPath === '/tmp' ? { ok: true as const, entries: capped, truncated: true }
+                : { ok: true as const, entries: [], truncated: false });
+        machineWorkspaceFileListMock.mockResolvedValue({ ok: true, paths: ['p03-qab-join/', 'p03-qab-join2/'], truncated: false });
+        const onResolve = vi.fn();
+        const screen = await renderInModalChrome(<MachinePathBrowserModal machineId="machine-1" onResolve={onResolve} onClose={vi.fn()} />);
+        await waitForTestId(screen, getPathBrowserToggleTestId('/'));
+
+        await act(async () => { screen.changeTextByTestId('path-browser-search', '/tmp/p03-qab-join'); });
+        // The capped listing arrives, then the name lookup runs after the query's input debounce.
+        await vi.waitFor(async () => {
+            await flushHookEffects({ cycles: 1, turns: 1 });
+            expect(screen.findByTestId(getPathBrowserRowTestId('/tmp/p03-qab-join'))).not.toBeNull();
+        }, { timeout: 3_000, interval: 50 });
+        expect(screen.findByTestId(getPathBrowserRowTestId('/tmp/p03-qab-join2'))).not.toBeNull();
+        expect(screen.findByTestId(getPathBrowserRowTestId('/tmp/a-1'))).toBeNull();
+        // One name lookup in the typed folder, not a walk below it.
+        expect(machineWorkspaceFileListMock).toHaveBeenCalledTimes(1);
+        expect(machineWorkspaceFileListMock.mock.calls[0]?.[1]).toMatchObject(
+            { rootPath: '/tmp', query: 'p03-qab-join', resultType: 'folder', maxDepth: 1 });
+
+        let confirm = screen.findByTestId(PATH_BROWSER_CONFIRM_TEST_ID);
+        for (let index = 0; index < 8 && confirm?.props?.disabled !== false; index += 1) {
+            await flushHookEffects({ cycles: 1, turns: 1 });
+            confirm = screen.findByTestId(PATH_BROWSER_CONFIRM_TEST_ID);
+        }
+        await screen.pressByTestIdAsync(PATH_BROWSER_CONFIRM_TEST_ID);
+        expect(onResolve).toHaveBeenCalledWith('/tmp/p03-qab-join', 'machine-1');
     });
 
     it('pre-expands and preselects the current directory path so the user can navigate up or elsewhere', async () => {

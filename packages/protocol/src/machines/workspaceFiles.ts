@@ -38,6 +38,13 @@ export const DaemonWorkspaceFileListRequestSchema = lazyZodSchema(() => z.strict
   query: z.optional(z.string().check(maxCodeUnits(WORKSPACE_FILE_LIST_MAX_QUERY_CODE_UNITS))),
   includeHidden: z.optional(z.boolean()),
   limit: z.optional(z.number().check(z.int(), z.positive())),
+  /**
+   * `folder` matches folder names breadth-first and returns folder records (`name/`), empty folders
+   * included; the page ends after the shallowest level that matched. Otherwise filenames are listed.
+   */
+  resultType: z.optional(z.enum(['file', 'folder'])),
+  /** Levels below `rootPath` to search; `1` is its direct children. */
+  maxDepth: z.optional(z.number().check(z.int(), z.positive())),
   /** Remaining caller operation budget at dispatch; expiry returns an incomplete page. */
   budgetMs: z.optional(z.number().check(z.int(), z.nonnegative(), z.int())),
 }));

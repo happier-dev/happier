@@ -1,6 +1,9 @@
 /** Shared admission and exclusions for the two workspace-file ripgrep operations. */
+/** Folders no workspace-file operation walks into. */
+export const WORKSPACE_FILE_EXCLUDED_DIRECTORY_NAMES: ReadonlySet<string> = new Set(['.git', 'node_modules']);
+
 export function workspaceFileExclusionArguments(globFlag: '--glob' | '--iglob' = '--glob'): string[] {
-    return [globFlag, '!**/.git/**', globFlag, '!**/node_modules/**'];
+    return [...WORKSPACE_FILE_EXCLUDED_DIRECTORY_NAMES].flatMap((name) => [globFlag, `!**/${name}/**`]);
 }
 
 export function isSafeRelativeWorkspacePath(value: string): boolean {

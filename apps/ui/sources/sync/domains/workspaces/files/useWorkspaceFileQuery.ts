@@ -33,7 +33,7 @@ export function useWorkspaceFileQuery(input: Omit<WorkspaceFileSearchInput, 'sco
         machineId: input.scope.machineId,
         rootPath: input.scope.rootPath,
     } : null, [input.scope?.serverId, input.scope?.machineId, input.scope?.rootPath, input.contextKey,
-        input.mode, input.includeHidden, input.resultType]);
+        input.mode, input.includeHidden, input.resultType, input.maxDepth]);
     const [retryToken, setRetryToken] = React.useState(0);
     const [paging, setPaging] = React.useState<WorkspaceFileQueryPaging | null>(null);
     const requestedLimit = resolveWorkspaceFileQueryLimit({ scope, query, pageSize: input.pageSize, limit: input.limit, paging });
@@ -72,6 +72,7 @@ export function useWorkspaceFileQuery(input: Omit<WorkspaceFileSearchInput, 'sco
                     const page = await searchWorkspaceFiles({
                         scope, query, limit: requestedLimit, resultType: input.resultType,
                         mode: input.mode, includeHidden: input.includeHidden, accountLifetime,
+                        ...(input.maxDepth === undefined ? {} : { maxDepth: input.maxDepth }),
                         signal: controller.signal, includeCoverage: true,
                         callerContext: input.callerContext,
                     });
@@ -88,7 +89,7 @@ export function useWorkspaceFileQuery(input: Omit<WorkspaceFileSearchInput, 'sco
         }, input.mode === 'glob' ? 200 : 120);
         return () => { controller.abort(); clearTimeout(handle); retirement?.dispose(); };
     }, [scope, query, enabled, accountLifetime, credentialsResolving, requestedLimit, input.resultType, input.mode,
-        input.includeHidden, input.reloadToken, input.callerContext, retryToken]);
+        input.includeHidden, input.maxDepth, input.reloadToken, input.callerContext, retryToken]);
 
     const current = enabled && state?.scope === scope && state.lifetime === accountLifetime ? state : null;
     const items = React.useMemo(() => current?.page ? [...current.page.items] : EMPTY_ITEMS, [current?.page]);

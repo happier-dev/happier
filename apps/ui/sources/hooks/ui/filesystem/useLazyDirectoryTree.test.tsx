@@ -60,6 +60,32 @@ describe('useLazyDirectoryTree', () => {
         expect(hook.getCurrent().nodes.map(node => node.path)).toEqual(['src', 'src/new.ts']);
     });
 
+    it('re-reads every expanded folder, nested ones included, on a reload (QA-BREADTH Q11 stale home)', async () => {
+        const entries = new Map<string, LazyDirectoryTreeEntry[]>([
+            ['', [directory('home')]],
+            ['home', [directory('home/me')]],
+            ['home/me', [directory('home/me/old')]],
+        ]);
+        const loaded: string[] = [];
+        const loadDirectoryEntries = async (path: string): Promise<LazyDirectoryTreeLoadResult> => {
+            loaded.push(path);
+            return { ok: true, entries: entries.get(path) ?? [] };
+        };
+        const getCachedEntries = () => null;
+        const hook = await renderHook(({ reloadToken }: { reloadToken: number }) => useLazyDirectoryTree({
+            scopeKey: 'machine', enabled: true, rootDirectoryPath: '', getCachedEntries,
+            loadDirectoryEntries, reloadToken,
+        }), { initialProps: { reloadToken: 0 } });
+        await act(async () => { await hook.getCurrent().toggleDirectory('home'); });
+        await act(async () => { await hook.getCurrent().toggleDirectory('home/me'); });
+        entries.set('home/me', [directory('home/me/new'), directory('home/me/old')]);
+        loaded.length = 0;
+        await hook.rerender({ reloadToken: 1 });
+        for (let index = 0; index < 5; index += 1) await act(async () => { await Promise.resolve(); });
+        expect(loaded.filter(path => path === 'home/me')).toHaveLength(1);
+        expect(hook.getCurrent().nodes.map(node => node.path)).toContain('home/me/new');
+    });
+
     it('prunes removed directory descendants so recreating the directory cannot resurrect old rows', async () => {
         let root = [directory('src')];
         let children = [file('src/old.ts')];

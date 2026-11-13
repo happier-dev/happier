@@ -16,6 +16,8 @@ import { DaemonFilesystemListDirectoryRequestSchema, DaemonFilesystemListDirecto
     type DaemonFilesystemListDirectoryResponse } from '@happier-dev/protocol/machines/fileBrowser';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/filesystemActionIdsV1';
+import { DaemonWorkspaceFileListRequestSchema, type DaemonWorkspaceFileListRequest,
+    type DaemonWorkspaceFileListResponse } from '@happier-dev/protocol/machines/workspaceFiles';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { t } from '@/text';
 
@@ -30,10 +32,12 @@ installNewSessionComponentsCommonModuleMocks({
 // The Account Action HTTP reply is the network boundary; sorting, caching,
 // Home/Account admission and the picker lifecycle remain real.
 const openMachinePathBrowserModalMock = vi.hoisted(() => vi.fn());
-type DirectoryReply = Pick<Extract<DaemonFilesystemListDirectoryResponse, { ok: true }>, 'ok' | 'entries'>
+type DirectoryReply = (Pick<Extract<DaemonFilesystemListDirectoryResponse, { ok: true }>, 'ok' | 'entries'>
+    & Partial<Pick<Extract<DaemonFilesystemListDirectoryResponse, { ok: true }>, 'truncated'>>)
     | Extract<DaemonFilesystemListDirectoryResponse, { ok: false }>;
 type DirectoryRequest = Pick<SessionOpsRpcRequest, 'serverUrl' | 'targetId' | 'method' | 'payload'>;
 const listMachineFileBrowserDirectoryEntriesMock = vi.hoisted(() => vi.fn<(request: DirectoryRequest) => Promise<DirectoryReply>>());
+const listWorkspaceFilesMock = vi.hoisted(() => vi.fn<(request: DaemonWorkspaceFileListRequest) => Promise<DaemonWorkspaceFileListResponse>>());
 
 vi.mock('@/components/ui/pathBrowser/openMachinePathBrowserModal', () => ({
     openMachinePathBrowserModal: (input: unknown) => openMachinePathBrowserModalMock(input),
@@ -48,6 +52,7 @@ afterEach(() => { accountScope?.dispose(); accountScope = null; });
 beforeEach(async () => {
     openMachinePathBrowserModalMock.mockReset();
     listMachineFileBrowserDirectoryEntriesMock.mockReset().mockResolvedValue({ ok: true, entries: [] });
+    listWorkspaceFilesMock.mockReset().mockResolvedValue({ ok: true, paths: [], truncated: false });
     network.resetRequests();
     const home = await network.addHome('https://srv-a', 'account-a', { serverIdentityId: 'srv_a' });
     await network.addHome('https://srv-b', 'account-b', { serverIdentityId: 'srv_b' });
@@ -68,6 +73,12 @@ beforeEach(async () => {
                 ? { path: payload.path, truncated: false, ...reply } : reply);
         },
     })));
+    // The same Machine answers the folder-name lookup (`daemon.filesystem.listFiles`).
+    boundaries.push(await createExternalActionAccountHttpBoundary({
+        serverUrl: 'https://srv-1', serverIdentityId: 'srv_1', accountId: 'account-c',
+        machineId: 'm-1', actionId: FILESYSTEM_BROWSER_ACTION_IDS_V1.listFiles, tokenEpoch: 0,
+        execute: async (input) => listWorkspaceFilesMock(DaemonWorkspaceFileListRequestSchema.parse(input)),
+    }));
     network.setHttpResponder(async (input, init) => {
         const url = new URL(String(input));
         if (url.origin === 'https://srv-1' && url.pathname === '/v1/machines/read-batch') {
@@ -576,6 +587,33 @@ describe('PathSelectionList', () => {
         expect(screen.findByTestId(
             'path-selection-list:path-root:option:in-folder:/Users/leeroy/current/Archive',
         )).toBeNull();
+        act(() => screen.tree.unmount());
+    });
+
+    it('finds a typed name past the first listing page of a capped folder by asking the Machine (QA-BREADTH Q11)', async () => {
+        // `/tmp` lists more folders than one page carries (`truncated`); the typed one is not on the page.
+        listMachineFileBrowserDirectoryEntriesMock.mockResolvedValue({ ok: true, truncated: true,
+            entries: Array.from({ length: 3 }, (_, index) => ({ type: 'directory' as const, name: `a-${index}`, path: `/tmp/a-${index}` })) });
+        listWorkspaceFilesMock.mockResolvedValue({ ok: true, paths: ['p03-qab-join/', 'p03-qab-join2/'], truncated: false });
+        const { PathSelectionList } = await import('./PathSelectionList');
+        const screen = await renderScreen(
+            <PathSelectionList initialValue="/tmp/" initialSuggestionMode="browse" favorites={[]} recents={[]}
+                machineHomeDir="/home/me" machineId="m-1" serverId="srv_1" machinePlatform="unix"
+                onCommit={() => {}} onRequestClose={() => {}} />,
+        );
+        await act(async () => { screen.changeTextByTestId('path-selection-list:header:input', '/tmp/'); });
+        await flushPathSelectionDynamicResolver();
+        await act(async () => { screen.changeTextByTestId('path-selection-list:header:input', '/tmp/p03-qab-join'); });
+        await flushPathSelectionDynamicResolver();
+        await flushPathSelectionDynamicResolver();
+
+        expect(screen.findByTestId('path-selection-list:path-root:option:in-folder:/tmp/p03-qab-join2')).not.toBeNull();
+        expect(screen.findByTestId('path-selection-list:path-root:option:in-folder:/tmp/a-1')).toBeNull();
+        // The capped folder was listed once, not once per keystroke; the typed name was looked up once.
+        expect(listMachineFileBrowserDirectoryEntriesMock).toHaveBeenCalledTimes(1);
+        expect(listWorkspaceFilesMock).toHaveBeenCalledTimes(1);
+        expect(listWorkspaceFilesMock.mock.calls[0]?.[0]).toMatchObject(
+            { rootPath: '/tmp', query: 'p03-qab-join', resultType: 'folder', maxDepth: 1 });
         act(() => screen.tree.unmount());
     });
 
