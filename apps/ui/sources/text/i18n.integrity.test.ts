@@ -2221,10 +2221,6 @@ import ts from 'typescript';
 
 
 const ROUTED_LITERAL_TRANSLATION_KEYS = new Set([
-    // Store owner — TH routes common.working.
-    "apps/ui/sources/components/store/StoreAppPreparation.tsx:common.working",
-    // Workflow test owner — TH routes the stale cancellation assertion.
-    "apps/ui/sources/components/workflows/run/workflowRunDetailPresentation.test.ts:errors.actionCanceled",
     // Plugin owners — explicit English fallback keys; TH routes locale coverage.
     "packages/plugins/channels/src/ui/bindingTargetCandidates.tsx:plugins.channels.surface.bindingDiscussionEmpty",
     "packages/plugins/channels/src/ui/bindingTargetCandidates.tsx:plugins.channels.surface.bindingDiscussionIncomplete",
