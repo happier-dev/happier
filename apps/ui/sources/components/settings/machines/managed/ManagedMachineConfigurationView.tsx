@@ -76,6 +76,7 @@ import { ManagedMachineConfigurator } from './ManagedMachineConfigurator';
 import { ManagedCreationDisabledBanner } from './ManagedMachineStateRow';
 import { useManagedControllerScope } from './useManagedControllerScope';
 import { buildManagedConfigurationReceipt, describeLocalHeadroom, describeManagedConfigurationSummary, formatManagedSizeBytes, managedAgentSignInReceiptFacts, managedCredentialReceiptTargets, managedCredentialPresentations } from './managedConfigurationPresentation';
+import { describeManagedPresetAvailabilityFailure } from './managedNativeFailurePresentation';
 import { MachineSetupSection, describeMachineSetup } from './MachineSetupSection';
 import { ManagedEnrollmentIdentitySection, isManagedEnrollmentIdentityReviewed } from './ManagedEnrollmentIdentitySection';
 import { ManagedFieldRow, managedPresetLimitRow } from './MachinePresetDetail';
@@ -321,10 +322,12 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         return [String(index), selected ? readManagedCredentialSelectionValueV1(selected) : undefined];
     })), [credentialPurposes, credentialSelections]);
     // A retained draft describes what was reviewed; only the current catalog admits new reads or mutations.
-    const provisioner = catalogProvisioner ?? draft?.provisioner;
+    const retainedProvisioner = catalogProvisioner ?? draft?.provisioner;
     const controller = hostAvailability ? hostAvailability.controller : requestedController;
-    const presentation = useManagedProvisionerPresentation({ serverId: props.serverId, controller: catalogController, accountScope: catalog.binding?.scope, provisioner, refreshKey: readRevision,
+    const presentation = useManagedProvisionerPresentation({ serverId: props.serverId, controller: catalogController, accountScope: catalog.binding?.scope, provisioner: retainedProvisioner, refreshKey: readRevision,
+        provider: creationPreset?.launch.provider, schemaVersion: creationPreset?.launch.schemaVersion,
         purpose: props.presetOnly ? 'presentation' : 'repair', declarationsOnly: props.presetOnly, onApprovalPending });
+    const provisioner = retainedProvisioner ?? projectManagedPresetProvisioner(creationPreset, presentation.descriptor);
     const optionsInput = useManagedProvisionerOptionsInput({ binding: catalog.binding, controller: catalogController,
         provisioner: delegatedAcquire && !props.presetOnly ? undefined : catalogProvisioner,
         declarationsOnly: props.presetOnly, refreshKey: readRevision });
@@ -456,7 +459,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             credentials: delegatedAcquire && !props.presetOnly ? undefined : seed.launch.credentials, setup: handOff ? continuationSeed : preset.setup,
             delegatedFacts: delegatedReview?.reviewedFacts,
             preset: { id: preset.id, revision: handOff?.preset?.revision ?? preset.revision, name: preset.name, retention: seed.retention, wakeOnAcceptedMessage: seed.wakeOnAcceptedMessage } });
-        setDraft(current => current ?? { ...initial, delegatedFacts: props.presetOnly ? undefined : initial.delegatedFacts,
+        setDraft(current => current ?? { ...initial, optionStatus: delegatedAcquire?.kind === 'unavailable' ? 'unavailable' : initial.optionStatus, delegatedFacts: props.presetOnly ? undefined : initial.delegatedFacts,
             selected: delegatedReview ? initial.selected : { id: `preset:${preset.id}`, title: preset.name, launch: seed.launch.choices } });
         if (handOff && !continuationEntered.current) {
             continuationEntered.current = true;
@@ -838,6 +841,11 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
             enrollmentIdentity: props.presetOnly ? undefined : draft?.enrollmentIdentity })
             // Before choices exist the receipt still tells the truth: a local VM bills nobody, and an unnamed draft
             // names its kind under the provider rather than repeating the provider twice.
+            : creationPreset && presentation.descriptor ? buildManagedConfigurationReceipt({
+                caption: receiptCaption, launch: creationPreset.launch, providerTitle: title, declaredBilling: presentation.billing,
+                savedLaunchPresentation: { schema: presentation.descriptor.launchSchema },
+                controllerName, homeName, mark: receiptMark, localized, preset: { id: creationPreset.id, revision: creationPreset.revision, name: creationPreset.name },
+            })
             : { caption: receiptCaption ?? t('managedMachines.receipt.yourNewMachine'), mark: receiptMark, name: draft?.name ?? title,
                 spec: (draft?.name ?? title) === title ? presentation.kindTitle ?? '' : title, facts: managedAgentSignInReceiptFacts(agentSignIn),
                 cost: billing?.location === 'local' && (pooledDraft || knownControllerName)
@@ -904,7 +912,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         <SurfaceStateCard kind="error" size="line" title={error.code === 'conflict' ? t('machinePresets.conflict')
             : error.code === 'machine_setup_conflict' ? t('machinePresets.setup.itemConflict')
             : error.during === 'create' ? resolveSystemTaskFailureMessage({ code: error.code, message: null }) ?? t('managedMachines.options.createFailed')
-            : error.during === 'save' ? t('managedMachines.options.saveFailed') : t('managedMachines.options.error')}
+            : error.during === 'save' ? t('managedMachines.options.saveFailed') : delegatedAcquire?.kind === 'unavailable' ? describeManagedPresetAvailabilityFailure(delegatedAcquire.code) : t('managedMachines.options.error')}
             diagnosticCode={error.code === 'conflict' || error.code === 'machine_setup_conflict' ? undefined : error.code} diagnosticDetail={error.diagnosticDetail} testID="managed-config.error"
             {...(error.code === 'conflict' || error.during === 'read' ? { action: { label: t(error.code === 'conflict' ? 'managedMachines.actions.review'
                 : 'managedMachines.actions.tryAgain'), onPress: retry } } : {})} />

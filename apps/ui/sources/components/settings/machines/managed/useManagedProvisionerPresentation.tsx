@@ -60,9 +60,12 @@ export function describeManagedProvisionerFailure(code: string): string {
         ?? t('managedMachines.providers.unavailable');
 }
 /** Public descriptor only; a preset projection never carries credential options or a native catalog occurrence. */
-export function projectManagedPresetProvisioner(preset: Pick<ManagedMachinePresetV1, 'launch' | 'controller' | 'delegatedAcquire'> | null | undefined): Provisioner | undefined {
-    return hasManagedMachinePresetCreationV1(preset) && preset.delegatedAcquire?.kind === 'ready' ? { contribution: preset.launch.provider,
-        occurrenceId: 'preset', descriptor: preset.delegatedAcquire.provisioner, credentialPurposes: [] } : undefined;
+export function projectManagedPresetProvisioner(preset: Pick<ManagedMachinePresetV1, 'launch' | 'controller' | 'delegatedAcquire'> | null | undefined,
+    savedDescriptor?: Provisioner['descriptor']): Provisioner | undefined {
+    if (!hasManagedMachinePresetCreationV1(preset) || !preset.delegatedAcquire) return undefined;
+    // An unavailable use-time review still has a saved launch to present. This declaration grants no execution availability.
+    const descriptor = preset.delegatedAcquire.kind === 'ready' ? preset.delegatedAcquire.provisioner : savedDescriptor;
+    return descriptor ? { contribution: preset.launch.provider, occurrenceId: 'preset', descriptor, credentialPurposes: [] } : undefined;
 }
 // Identity, translations, credential titles and repair/option Actions are the
 // presented question. Other Agent, tool and workflow inventories are unrelated.

@@ -792,6 +792,8 @@ describe('reachable preset detail', () => {
     await screen.unmount();
   });
   it.each([
+    ['unavailable', 'https://cloud-images.ubuntu.com/releases/resolute/release-20260927/ubuntu-26.04-server-cloudimg-amd64.img'],
+    ['options-unavailable', 'https://cloud-images.ubuntu.com/releases/resolute/release-20260927/ubuntu-26.04-server-cloudimg-amd64.img'],
     ['fixed', 'https://cloud-images.ubuntu.com/releases/resolute/release-20260927/ubuntu-26.04-server-cloudimg-amd64.img'],
     ['failing', 'template:fixture-missing-g1-options-1111'],
   ] as const)('keeps saved Lima launch facts in the expanded Summary before and after a typed use failure (%s)', async (_kind, image) => {
@@ -811,7 +813,13 @@ describe('reachable preset detail', () => {
         installationPublicKey: encodeBase64(tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(7)).publicKey, 'base64url'),
       });
       await publishMachineInventoryForTest({ serverId: scopeId, accountId: 'owner' }, []);
-      harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: saved } });
+      const unavailable = _kind === 'unavailable' || _kind === 'options-unavailable';
+      const review = saved.delegatedAcquire;
+      if (review?.kind !== 'ready') throw new Error('Expected the saved review');
+      const returnedPreset = ManagedMachinePresetV1Schema.parse(_kind === 'unavailable'
+        ? { ...saved, delegatedAcquire: { kind: 'unavailable', code: 'controller_unavailable' } }
+        : _kind === 'options-unavailable' ? { ...saved, delegatedAcquire: { ...review, reviewedFacts: { ...review.reviewedFacts, optionStatus: 'unavailable' } } } : saved);
+      harness.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: returnedPreset } });
       const { bindHomeDomainActionHttpRequestV1 } = await import('@happier-dev/protocol/actions/homeDomainActionFamily');
       const teamRequest = bindHomeDomainActionHttpRequestV1('teams.get', { v: 1, teamId: 'team-1' });
       harness.answer(serverId, teamRequest.path, { body: teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ manageSettings: false }) }) });
@@ -838,7 +846,8 @@ describe('reachable preset detail', () => {
       const screen = await renderSettingsView(<ManagedMachineConfigurationView serverId={scopeId}
         provisioner={buildQualifiedPluginContributionKey(lima.contribution)} presetId={preset.id} />,
       { wrapper: ({ children }) => <ModalProvider>{children}</ModalProvider> });
-      await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
+      if (!unavailable) await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled).toBe(false));
+      else await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.summary')).not.toBeNull());
       await act(async () => screen.pressByTestId('managed-config.summary'));
       await waitForHomeGovernance(() => expect(screen.tree.findAllByType(MachineConfigurationReceipt)).toHaveLength(1));
       const expectSavedSummary = (rendered = screen) => {
@@ -855,6 +864,14 @@ describe('reachable preset detail', () => {
         expect(receipt.cost?.kind).toBe('local');
       };
       expectSavedSummary();
+      if (unavailable) {
+        if (_kind === 'unavailable') expect(screen.tree.findAll(node => node.props.testID === 'managed-config.error'
+          && node.props.diagnosticCode === 'controller_unavailable').length).toBeGreaterThan(0);
+        expect(screen.tree.findByType(MachineConfigurationReceipt).props.model.primary?.disabled).toBe(true);
+        expect(harness.requestsFor('/v1/actions/machines.managed.acquire')).toHaveLength(0);
+        await screen.unmount();
+        return;
+      }
       await act(async () => screen.pressByTestId('managed-config.create'));
       await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.testID === 'managed-config.error'
         && node.props.diagnosticCode === 'controller_unavailable').length).toBeGreaterThan(0));
