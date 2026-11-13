@@ -1,4 +1,5 @@
 import type { SystemTaskEvent, SystemTaskJsonObject, SystemTaskResult, SystemTaskSpec } from '@happier-dev/protocol/system/tasks/spec';
+import type { NATIVE_SSH_SUPPORTED_TASK_KINDS } from './bridges/native';
 
 export type SystemTaskRunnerMode = 'tauri' | 'native' | 'dev' | 'unavailable';
 
@@ -13,7 +14,7 @@ export type NativeSshSystemTaskCapability = Readonly<{
         | 'engine-unavailable'
         | 'missing-credentials'
         | 'host-key-untrusted';
-    supportedTaskKinds: readonly ['remote.ssh.bootstrapMachine.v1'];
+    supportedTaskKinds: typeof NATIVE_SSH_SUPPORTED_TASK_KINDS;
 }>;
 
 export type SystemTaskBridgeCapabilities = Readonly<{

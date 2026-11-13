@@ -5,20 +5,9 @@ import {
 } from '@happier-dev/cli-common/firstPartyRuntime/personalHome/runtimeSpec';
 
 import { resolvePreferredPublicReleaseRingLabelForCurrentApp } from '@/sync/runtime/resolvePublicReleaseRing';
+import type { LOCAL_RELAY_RUNTIME_ACTION_IDS } from '@/sync/ops/actions/homeRuntimeTaskActions';
 
-type LocalRelayRuntimeTaskKind =
-    | 'relay.runtime.status.v1'
-    | 'relay.runtime.installOrUpdate.v1'
-    | 'relay.runtime.start.v1'
-    | 'relay.runtime.restart.v1'
-    | 'relay.runtime.stop.v1'
-    | 'relay.runtime.uninstall.v1'
-    | 'relay.runtime.personal_home.inspect.v1'
-    | 'relay.runtime.personal_home.backup.v1'
-    | 'relay.runtime.personal_home.verify_backup.v1'
-    | 'relay.runtime.personal_home.restore.v1'
-    | 'relay.runtime.personal_home.erase.v1'
-    | 'relay.runtime.personal_home.claim_owner.v1';
+type LocalRelayRuntimeTaskKind = keyof typeof LOCAL_RELAY_RUNTIME_ACTION_IDS;
 
 export type LocalRelayRuntimePurpose = Readonly<{
     kind: 'personal-home';
