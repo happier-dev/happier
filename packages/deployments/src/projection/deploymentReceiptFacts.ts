@@ -88,12 +88,17 @@ export type DeploymentReceiptFactsV1 = Readonly<{
 
 /** The small history projection avoids preparing unconsumed step/log trees for every visible attempt.
  * The title names what was deployed; the recorded failure stays a typed fact for the client's own words. */
-export function projectDeploymentReceiptHistoryEntryV1({ content }: DeploymentReceiptDetailV1):
-    Readonly<{ source: DeploymentReceiptFactsV1['source']; historyTitle: string | null; failure: DeploymentReceiptFailureV1 | null }> {
+export function projectDeploymentReceiptHistoryEntryV1({ content, deployment }: DeploymentReceiptDetailV1):
+    Readonly<{ source: DeploymentReceiptFactsV1['source']; historyTitle: string | null; failure: DeploymentReceiptFailureV1 | null;
+        machineIds: readonly string[] }> {
     const source = content.sourceIntent ? projectDeploymentReviewRevisionV1(content.sourceIntent, content.commitSubject) : null;
     const historyTitle = [source ? deploymentRevisionLabelV1(source) : null, content.commitSubject]
         .filter(Boolean).join(' · ') || null;
-    return { source, historyTitle, failure: content.failure ?? null };
+    const execution = deployment.acceptedExecution;
+    const machineIds = [...new Set([...content.machines,
+        ...(content.buildMachineId ? [content.buildMachineId] : []),
+        ...(execution ? [execution.controller.machineId, ...(execution.builder ? [execution.builder.machineId] : [])] : [])])];
+    return { source, historyTitle, failure: content.failure ?? null, machineIds };
 }
 
 /** Historical evidence comes from the receipt; optional current retention facts share the opened history page. */

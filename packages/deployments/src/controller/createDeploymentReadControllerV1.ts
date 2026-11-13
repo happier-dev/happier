@@ -367,7 +367,8 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
             acquire: (cursor, pageDemand) => acquire<T>({ key: key(cursor), kind, previousPage: cursor !== undefined,
                 read: signal => {
                     const read = kind === 'domainPage' ? transport.listDomainPage : transport.listDataServicePage;
-                    return read?.(scope, { ...query, cursor }, { signal }) ?? Promise.resolve({ ok: false,
+                    const prior = entries.get(key(cursor))?.projection.getSnapshot().value as DeploymentDataServiceReadPageV1 | undefined;
+                    return read?.(scope, { ...query, cursor }, { signal, ...(kind === 'dataServicePage' && prior ? { previousItems: prior.items } : {}) }) ?? Promise.resolve({ ok: false,
                         failure: withActionFailureDiagnostic({ code: 'deployment_unavailable', retryable: false },
                             { phase: `deployment.read.${kind}`, causeKind: 'client_required' }) });
                 },

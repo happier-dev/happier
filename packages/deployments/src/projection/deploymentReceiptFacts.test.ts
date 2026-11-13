@@ -4,6 +4,15 @@ import { DeploymentDataTeardownContentV1Schema } from '@happier-dev/deployment-p
 import { projectDeploymentReceiptFactsV1, projectDeploymentReceiptHistoryEntryV1, selectDeploymentReceiptRetainedHistoryV1 } from './deploymentReceiptFacts';
 
 describe('receipt facts', () => {
+    it('projects historical Machines from opened receipt content without consulting current placement', () => {
+        const receipt = createDeploymentReceiptDetailV1();
+        receipt.content.machines = ['former-runtime'];
+        receipt.content.buildMachineId = 'former-builder';
+        receipt.deployment.acceptedExecution = { v: 1,
+            controller: { machineId: 'former-controller', installationId: 'install-controller' } };
+        expect(projectDeploymentReceiptHistoryEntryV1(receipt).machineIds)
+            .toEqual(['former-runtime', 'former-builder', 'former-controller']);
+    });
     it.each([
         { phase: 'restore', restoration: 'succeeded', health: 'unverified', expected: { kind: 'failed' } },
         { phase: 'activate', restoration: 'succeeded', health: 'unhealthy', expected: { kind: 'failed' } },

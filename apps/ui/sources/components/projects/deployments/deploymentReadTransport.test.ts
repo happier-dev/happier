@@ -35,6 +35,44 @@ describe('deployment scoped read transport', () => {
     beforeEach(() => homes.reset());
     afterEach(() => standardCleanup());
 
+    it.each(['plain', 'e2ee'] as const)('reads %s Activity through the existing mode-aware receipt transport', async mode => {
+        const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-owner' })).toString('base64url')}.signature`;
+        const secret = new Uint8Array(32).fill(11);
+        const serverId = await homes.addHome({ name: 'Activity', serverUrl: 'https://activity-deployments.test',
+            accountId: 'account-owner', accountEncryptionMode: mode,
+            ...(mode === 'e2ee' ? { credentials: { token, secret: encodeBase64(secret, 'base64url') } } : {}) });
+        if (mode === 'e2ee') homes.answer(serverId, '/v1/account/encryption/currentness', { body: {
+            mode: 'e2ee', version: 1, signingKeyFingerprint: 'signing-fingerprint',
+            contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+                createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material: { type: 'legacy', secret } }).contentPublicKeyFingerprint),
+            updatedAt: 1, recipientEnvelopeReadiness: { status: 'available' },
+        } });
+        const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
+        const receipt = createDeploymentReceiptDetailV1();
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const account = await captureLazyActionAccountContext(serverId);
+        try {
+            await account.createArtifactDocument({ artifactId: detail.environment.contentArtifactId,
+                header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: detail.content.name }, body: JSON.stringify(detail.content) });
+            await account.createArtifactDocument({ artifactId: receipt.deployment.contentArtifactId,
+                header: { kind: DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, title: 'Deploy', steps: receipt.content.steps }, body: JSON.stringify(receipt.content) });
+        } finally { account.dispose(); }
+        const root = '/v1/deployments/environments';
+        homes.answer(serverId, root, { body: { ok: true, items: [detail.environment], nextCursor: null } });
+        homes.answer(serverId, `${root}/${detail.environment.id}`, { body: { ok: true, environment: detail.environment,
+            targetLinks: detail.targetLinks.map(item => item.targetLink) } });
+        homes.answer(serverId, `${root}/${detail.environment.id}/deployments`, {
+            body: { ok: true, items: [receipt.deployment], nextCursor: null } });
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'account-owner' },
+            isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const { readDeploymentActivityPage } = await import('./deploymentActivityRead');
+        const page = await readDeploymentActivityPage(lifetime, { limit: 10, projectSourceId: detail.environment.projectSourceId }, [],
+            { signal: new AbortController().signal });
+        expect(page.unavailableSources).toEqual([]);
+        expect(page).toMatchObject({ coverage: 'complete', nextCursor: null,
+            items: [{ kind: 'receipt', receipt: { id: receipt.deployment.id } }] });
+    });
+
     it.each(['plain', 'e2ee'] as const)('opens the exact %s protected pending request without blanking the Environment', async mode => {
         const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-owner' })).toString('base64url')}.signature`;
         const secret = new Uint8Array(32).fill(11);

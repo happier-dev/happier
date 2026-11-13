@@ -38,6 +38,8 @@ export type DeploymentEnvironmentCollectionV1 = z.infer<typeof DeploymentEnviron
 /** Visible history facts projected from the page's opened contents; older transports may omit them. */
 export const DeploymentReceiptHistoryV1Schema = z.strictObject({
     ok: z.literal(true), items: z.array(z.extend(DeploymentReceiptHeaderV1Schema, { title: z.optional(z.string()),
+        /** Historical execution placement from this receipt's opened content, never today's target link. */
+        machineIds: z.optional(z.array(DeploymentIdentifierV1Schema)),
         source: z.optional(z.nullable(DeploymentReviewRevisionV1Schema)),
         failure: z.optional(z.nullable(DeploymentReceiptFailureV1Schema)) })),
     nextCursor: z.nullable(DeploymentIdentifierV1Schema),

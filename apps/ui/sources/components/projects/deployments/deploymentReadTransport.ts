@@ -20,7 +20,7 @@ import { captureLazyActionAccountContext, type LazyActionAccountContext } from '
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { HappyError } from '@/utils/errors/errors';
 import { domainHealthObserver, environmentHealthObserver } from './observeEnvironmentHealth';
-import { projectDeploymentReceiptHistoryEntryV1 } from '@happier-dev/deployments';
+import { projectDeploymentReceiptHistoryEntryV1, readDeploymentDatabaseSizesV1 } from '@happier-dev/deployments';
 
 function failure(code: string, retryable = false): Extract<DeploymentReadResultV1<never>, { ok: false }> {
     return { ok: false, failure: { code, retryable } };
@@ -119,11 +119,22 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             const byId = new Map(page.artifacts.map((artifact, index) => [artifact.id, opened[index]]));
             const items = [];
             let coverage = page.coverage;
+            const previousById = new Map(options.previousItems?.map(item => [item.environment.id, item]));
             for (const { environment } of page.items) {
                 const artifact = byId.get(environment.contentArtifactId);
                 const row = readDeploymentEnvironmentArtifactV1(environment, artifact?.status === 'fulfilled' ? artifact.value : null);
                 if (!row.ok) { coverage = 'partial'; continue; }
-                items.push({ environment, title: row.title, content: row.content });
+                const previous = previousById.get(environment.id);
+                // Placement headers are needed only for database-bearing rows; Artifact content is already opened above.
+                const databaseSizes = await readDeploymentDatabaseSizesV1({ environment, content: row.content,
+                    previous: previous?.databaseSizes,
+                    readTargetLinks: async () => {
+                        const placement = await readEnvironmentMetadata(scope, environment.id, options);
+                        if (!placement.ok) throw Object.assign(new Error(placement.failure.code), { code: placement.failure.code });
+                        return placement.value.targetLinks;
+                    },
+                    run: input => execute('deployments.data.query', input, { signal: options.signal }) });
+                items.push({ environment, title: row.title, content: row.content, databaseSizes });
             }
             return { ok: true, value: { items, nextCursor: page.nextCursor, ...(coverage === undefined ? {} : { coverage }) } };
         }),
@@ -268,7 +279,8 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 const opened = readDeploymentReceiptArtifactV1(receipt, read.value);
                 if (!opened.ok) { coverage = 'partial'; continue; }
                 const facts = projectDeploymentReceiptHistoryEntryV1({ deployment: receipt, content: opened.content });
-                items.push({ ...receipt, title: facts.historyTitle ?? opened.title, source: facts.source, failure: facts.failure });
+                items.push({ ...receipt, title: facts.historyTitle ?? opened.title, source: facts.source, failure: facts.failure,
+                    machineIds: [...facts.machineIds] });
             }
             return { ok: true, value: { ...page, items, ...(coverage === undefined ? {} : { coverage }) } };
         }),
@@ -314,7 +326,7 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             const page = await transport.listEnvironments(scope, { ...pageQuery, cursor }, options);
             if (!page.ok) return page;
             items.push(...page.value.items);
-            if (page.value.coverage === 'partial') coverage = 'partial';
+            if ('coverage' in page.value && page.value.coverage === 'partial') coverage = 'partial';
             cursor = page.value.nextCursor ?? undefined;
         } while (cursor !== undefined);
         return { ok: true, value: { items, nextCursor: null, ...(coverage === undefined ? {} : { coverage }) } };

@@ -12,7 +12,7 @@ import type {
 } from '@happier-dev/deployment-protocol/v1';
 import type { DeploymentDomainHeaderV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { DeploymentEnvironmentListInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import type { DeploymentDomainHealthFactsV1, DeploymentSecretRevisionFactV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
+import type { DeploymentDatabaseSizeV1, DeploymentDomainHealthFactsV1, DeploymentSecretRevisionFactV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import type { DeploymentMemberVersionV1 } from '../projection/deploymentStepProjection.js';
 import type { DeploymentActivityV1, DeploymentChipV1 } from '../projection/deploymentSurfaceFacts.js';
 import type { DeploymentReceiptFactsV1 } from '../projection/deploymentReceiptFacts.js';
@@ -95,6 +95,7 @@ export type DeploymentAccountPageQueryV1 = Readonly<{ cursor?: string | undefine
 export type DeploymentAccountDomainReadItemV1 = DeploymentDomainReadItemV1 & Readonly<{ environment: DeploymentEnvironmentHeaderV1 }>;
 export type DeploymentDataServiceReadItemV1 = Readonly<{
     environment: DeploymentEnvironmentHeaderV1; title: string; content: DeploymentEnvironmentContentV1;
+    databaseSizes?: readonly DeploymentDatabaseSizeV1[];
 }>;
 export type DeploymentAccountReadPageV1<T> = Readonly<{ items: readonly T[]; nextCursor: string | null }>
     & Pick<DeploymentEnvironmentCollectionV1, 'coverage'>;
@@ -119,7 +120,7 @@ export type DeploymentReadOptionsV1 = Readonly<{ signal: AbortSignal }>;
 /** The host binds this network boundary to its current authenticated Home. */
 export type DeploymentReadTransportV1 = Readonly<{
     listDomainPage?(scope: DeploymentReadScopeV1, query: DeploymentAccountPageQueryV1, options: DeploymentReadOptionsV1): Promise<DeploymentReadResultV1<DeploymentAccountReadPageV1<DeploymentAccountDomainReadItemV1>>>;
-    listDataServicePage?(scope: DeploymentReadScopeV1, query: DeploymentAccountPageQueryV1, options: DeploymentReadOptionsV1): Promise<DeploymentReadResultV1<DeploymentAccountReadPageV1<DeploymentDataServiceReadItemV1>>>;
+    listDataServicePage?(scope: DeploymentReadScopeV1, query: DeploymentAccountPageQueryV1, options: DeploymentReadOptionsV1 & Readonly<{ previousItems?: readonly DeploymentDataServiceReadItemV1[] }>): Promise<DeploymentReadResultV1<DeploymentAccountReadPageV1<DeploymentDataServiceReadItemV1>>>;
     /** One selected Domain page, opened by the host's mode-aware Artifact owner. */
     listDomains?(scope: DeploymentReadScopeV1, environmentId: string, query: DeploymentHistoryQueryV1,
         options: DeploymentReadOptionsV1): Promise<DeploymentReadResultV1<DeploymentDomainPageV1>>;

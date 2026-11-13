@@ -163,3 +163,20 @@ export type DeploymentDataQueryUnavailableV1 = z.infer<typeof DeploymentDataQuer
 export const DeploymentDataQueryStatementV1ProtocolSchema = projectZodProtocolSchema(DeploymentDataQueryStatementV1Schema);
 export const DeploymentDataQuerySuccessV1ProtocolSchema = projectZodProtocolSchema(DeploymentDataQuerySuccessV1Schema);
 export const DeploymentDataQueryUnavailableV1ProtocolSchema = projectZodProtocolSchema(DeploymentDataQueryUnavailableV1Schema);
+
+/** Engine-native size and change since the previous observation in this read lifetime.
+ * This projection never implies a retained daily growth history. */
+export const DeploymentDatabaseSizeV1Schema = lazyZodSchema(() => z.strictObject({
+  service: id,
+  deploymentId: z.optional(id),
+  size: z.discriminatedUnion('status', [
+    z.strictObject({ status: z.literal('available'), bytes: z.number().check(z.int(), z.gte(0), z.lte(Number.MAX_SAFE_INTEGER)),
+      measurement: z.enum(['database_bytes', 'table_bytes_estimate']), observedAtMs: timestamp }),
+    z.strictObject({ status: z.literal('unavailable'), reason: id }),
+  ]),
+  growth: z.discriminatedUnion('status', [
+    z.strictObject({ status: z.literal('available'), bytes: z.number().check(z.int()), fromMs: timestamp, toMs: timestamp }),
+    z.strictObject({ status: z.literal('unavailable'), reason: id }),
+  ]),
+}));
+export type DeploymentDatabaseSizeV1 = z.infer<typeof DeploymentDatabaseSizeV1Schema>;
