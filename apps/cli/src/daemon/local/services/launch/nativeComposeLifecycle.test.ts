@@ -27,7 +27,7 @@ describe('Compose exact native resource lifetime', () => {
             environment: { composeService: 'worker', containerIds: rows.map(row => row.Id) }, io: {
                 async events() { return { async dispose() {} }; }, async run(request) {
                 requests.push(request);
-                if (request.args.includes('info')) return { exitCode: 0, stdout: JSON.stringify({ ID: 'selected-engine' }) };
+                if (request.args.includes('info')) return { exitCode: 0, stdout: JSON.stringify({ ID: 'selected-engine', OperatingSystem: 'Docker Desktop' }) };
                 if (request.args.includes('ps')) return { exitCode: 0, stdout: rows.map(row => row.Id).join('\n') };
                 if (request.args.includes('inspect')) return { exitCode: 0, stdout: JSON.stringify(rows) };
                 return { exitCode: 0, stdout: 'native-result' };
@@ -40,6 +40,7 @@ describe('Compose exact native resource lifetime', () => {
         })));
         const docker = await capture.lifecycle.nativeDocker?.();
         expect(docker?.engineId).toBe('selected-engine');
+        expect(docker?.engineKind).toBe('dockerDesktop');
         expect(await docker?.run(['container', 'ls'])).toMatchObject({ exitCode: 0, stdout: 'native-result' });
         expect(requests.at(-1)).toMatchObject({ command: '/owned/docker', args: ['--context', 'selected', 'container', 'ls'],
             cwd: '/release', env: { DOCKER_CONFIG: '/owned/config' } });
@@ -58,6 +59,7 @@ describe('Compose exact native resource lifetime', () => {
                 requests.push([...request.args]);
                 if (request.args[0] === 'info') return { exitCode: 0, stdout: JSON.stringify({ ID: engine }) };
                 if (request.args[0] === 'ps') return { exitCode: 0, stdout: present ? id : '' };
+                if (request.args[0] === 'network' && request.args[1] === 'ls') return { exitCode: 0, stdout: '' };
                 if (request.args[0] === 'container' && request.args[1] === 'rm') {
                     present = false;
                     return { exitCode: 0, stdout: '' };
@@ -126,6 +128,7 @@ describe('Compose exact native resource lifetime', () => {
                 }
                 if (unavailable) return { exitCode: 1, stdout: '[]' };
                 if (request.args[0] === 'ps') return { exitCode: 0, stdout: present ? id : '' };
+                if (request.args[0] === 'network' && request.args[1] === 'ls') return { exitCode: 0, stdout: '' };
                 return { exitCode: 0, stdout: JSON.stringify(present ? [container('a', 'running')] : []) };
             } } });
         capture.bindLaunch({ command: '/docker', args, cwd: '/release', env: {}, release() {} });
@@ -159,6 +162,7 @@ describe('Compose exact native resource lifetime', () => {
                     return { exitCode: 0, stdout: '' };
                 }
                 if (nativeArgs[0] === 'ps') return { exitCode: 0, stdout: present && actualEngine === 'retained-engine' ? 'a'.repeat(64) : '' };
+                if (nativeArgs[0] === 'network' && nativeArgs[1] === 'ls') return { exitCode: 0, stdout: '' };
                 return { exitCode: 0, stdout: JSON.stringify(present && actualEngine === 'retained-engine' ? [container('a', 'running')] : []) };
             } } });
         capture.bindLaunch({ command: '/docker', args: [...prefix, ...args], cwd: '/release', env: { DOCKER_CONTEXT: 'retained-context' }, release() {} });

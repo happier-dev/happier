@@ -1,5 +1,4 @@
 import { isDeepStrictEqual } from 'node:util';
-import { disconnectNativeCaddyNetworks } from '@happier-dev/cli-common/machineSetup';
 import { randomUUID } from 'node:crypto';
 import { DeploymentChildRpcV1Schema, type DeploymentChildRpcV1, type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { ActionExecuteFailureSchema, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -13,6 +12,7 @@ import { authorizePluginExecLaunchForHost } from '@/plugins/runtime/invocation/s
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { readNativeComposeEngine } from '@/daemon/local/services/launch/nativeComposeEngine';
 import { removeWitnessedContainers, resolveNativeComposeCandidateProjectName } from '@/daemon/local/services/launch/nativeComposeLifecycle';
+import { removeUnusedNativeComposeNetworks } from '@/daemon/local/services/launch/nativeComposeNetworks';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { createDeploymentTeardownExecutor, DeploymentTeardownObservationSchema, selectDeploymentTeardownStepResources, type DeploymentTeardownBoundary } from '../../actions/teardown';
 import type { DeploymentReceiptDispatchV1 } from '../../createCliDeploymentActionDeps';
@@ -185,30 +185,10 @@ export function createOwnServerTeardownForHost(host: Host) {
                                 return { kind: 'unknown' as const, reason: 'removal_unproved' };
                             }
                         }
-                        // Retained generations can share a network: detach all
-                        // owned workloads before removing any owned network.
-                        const networkIds: string[] = [];
-                        for (const project of projects) {
-                            const networks = await run(['network', 'ls', '--no-trunc', '--filter',
-                                `label=com.docker.compose.project=${project}`, '--format', '{{.ID}}']);
-                            if (networks.exitCode !== 0) return { kind: 'unknown' as const, reason: 'network_observation_unavailable' };
-                            networkIds.push(...(networks.stdout.trim() ? networks.stdout.trim().split('\n') : []));
-                        }
-                        if (networkIds.length) {
-                            // The root dispatcher retired every Environment Domain
-                            // before native teardown. Caddy itself remains shared.
-                            const detached = await disconnectNativeCaddyNetworks({ networkIds }, {
-                                ...(request.context.signal ? { signal: request.context.signal } : {}),
-                                run: async command => {
-                                    const result = await run(command.args);
-                                    return { code: result.exitCode, stdout: result.stdout, stderr: result.stderr };
-                                },
-                            });
-                            if (detached.status !== 'ready') return { kind: 'unknown' as const, reason: detached.reason };
-                            if ((await run(['network', 'rm', ...networkIds])).exitCode !== 0) {
-                                return { kind: 'unknown' as const, reason: 'network_removal_unproved' };
-                            }
-                        }
+                        // Revisit shared networks after every retained generation
+                        // has been removed. The native owner also handles empty projects.
+                        const networkFailure = await removeUnusedNativeComposeNetworks({ projects: [...projects], run });
+                        if (networkFailure) return { kind: 'unknown' as const, reason: networkFailure };
                         const volumeFailure = await settleOwnServerTeardownVolumes({ resources: operation.resources, run });
                         if (volumeFailure) return volumeFailure;
                         return boundary.observe(operation);

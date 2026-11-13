@@ -80,6 +80,7 @@ describe('Environment start-first native generation', () => {
             const initial = await first.render();
             let incumbent = await machineNativeEffectAdmission.run({ operation: { operationId: 'A', kind: 'deploy' }, keys: initial.keys },
                 context => first.activate({ render: initial, context }));
+            const incumbentNetworkIds = await docker.readNetworkIds();
             let observeIncumbent: (() => Promise<Readonly<{ kind: 'active'; activation: NativeComposeActivatedProject }>
                 | Readonly<{ kind: 'absent' | 'unknown' }>>) | undefined;
             if (outcome === 'switched' || rollback) {
@@ -182,6 +183,10 @@ describe('Environment start-first native generation', () => {
             }
             expect(await first.observe({ render: initial })).toMatchObject({ status: 'different' });
             expect(await observeIncumbent!()).toMatchObject({ kind: 'absent' });
+            const networks = await docker.readNetworkIds();
+            expect(incumbentNetworkIds.length).toBeGreaterThan(0);
+            expect(networks.some(id => incumbentNetworkIds.includes(id))).toBe(false);
+            expect(networks.length).toBeGreaterThan(0);
             expect(incumbentIds).not.toEqual(['web', 'api'].flatMap(service => activated.nativeIdsForService(service)));
             const up = (await docker.readInvocations()).filter(call => call.args.includes('up'));
             expect(up).toHaveLength(2);

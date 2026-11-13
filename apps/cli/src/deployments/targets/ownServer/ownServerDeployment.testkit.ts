@@ -496,7 +496,10 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
                                 : (state.nextPublishedPort = (state.nextPublishedPort || 49151) + 1);
                             return { HostIp: port.host_ip || '0.0.0.0', HostPort: String(published) };
                         })])),
-                Networks: { [project + '_default']: {} } } };
+                Networks: Object.fromEntries(Object.keys(definition.networks || {}).map(key => {
+                    const name = model.networks[key].name;
+                    return [name, { NetworkID: hash(name) }];
+                })) } };
         });
     })];
     // Compose creates a project-labelled named volume when it starts the first
@@ -689,9 +692,12 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
     } else complete();
 } else if (args[0] === 'ps') {
     const filters = args.flatMap((arg, index) => arg === '--filter' ? [args[index + 1]] : []);
-    write(state.containers.filter(row => (args.includes('--all') || row.State.Status === 'running') && filters.every(filter => {
+    const rows = [...state.containers, ...(state.nativeCaddy && filters.some(filter => filter.startsWith('network=')) ? [state.nativeCaddy] : [])];
+    write(rows.filter(row => (args.includes('--all') || row.State.Status === 'running' || row.State.Running === true) && filters.every(filter => {
         if (filter.startsWith('volume=')) return row.Mounts.some(mount => mount.Name === filter.slice('volume='.length));
         if (filter.startsWith('id=')) return row.Id === filter.slice('id='.length);
+        if (filter.startsWith('network=')) return Object.entries(row.NetworkSettings.Networks).some(([name, attachment]) =>
+            name === filter.slice('network='.length) || attachment.NetworkID === filter.slice('network='.length));
         const label = filter.slice('label='.length);
         const separator = label.indexOf('=');
         return separator < 0 ? Object.hasOwn(row.Config.Labels, label)
@@ -742,9 +748,11 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
 } else if (args[0] === 'network' && args[1] === 'rm') {
     for (const id of args.slice(2)) {
         const network = state.networks.find(row => row.Id === id);
-        // Docker refuses a network with active endpoints, without force or
-        // touching another attached workload.
-        if (!network || Object.keys(network.Containers).length) { process.exitCode = 1; continue; }
+        // Docker also retains stopped container references omitted by network inspect.
+        if (!network || Object.keys(network.Containers).length || state.containers.some(row =>
+            Object.values(row.NetworkSettings.Networks).some(attachment => attachment.NetworkID === id))) {
+            process.exitCode = 1; continue;
+        }
         state.networks = state.networks.filter(row => row.Id !== id);
     }
     save();
@@ -1159,6 +1167,10 @@ else throw new Error('fixture_unexpected_docker_command:' + JSON.stringify(args)
             state.operationOutputs = { ...state.operationOutputs, [pending.row.Id]: pending.output };
             state.holdOperationConstruction = false;
             await writeState(state);
+        },
+        async readContainerIds(): Promise<readonly string[]> {
+            const state = JSON.parse(await readFile(statePath, 'utf8')) as { containers: Array<{ Id: string }> };
+            return state.containers.map(row => row.Id);
         },
         async readOperationContainerIds(): Promise<readonly string[]> {
             const state = JSON.parse(await readFile(statePath, 'utf8')) as { containers: Array<{ Id: string; Config: { Labels: Record<string, string> } }> };

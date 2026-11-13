@@ -182,7 +182,7 @@ export async function connectNativeCaddyNetworks(input: Readonly<{ dockerHost?: 
 
 /** Target teardown calls after its Environment Domains retire. Release only the
  * selected owned workload networks; shared Caddy and sibling attachments stay. */
-export async function disconnectNativeCaddyNetworks(input: ContainerInput & Readonly<{ networkIds: readonly string[] }>,
+export async function disconnectNativeCaddyNetworks(input: ContainerInput & Readonly<{ networkIds: readonly string[]; onlyUnused?: true }>,
     options: NativeOptions = {}): Promise<Readonly<{ status: 'ready' }>
     | Readonly<{ status: 'unavailable'; reason: 'required_fact_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' }>> {
     if (!input.networkIds.length) return { status: 'ready' };
@@ -194,6 +194,13 @@ export async function disconnectNativeCaddyNetworks(input: ContainerInput & Read
     for (const network of Object.values(owned.networks)) {
         const networkId = object(network)?.NetworkID;
         if (typeof networkId !== 'string' || !retired.has(networkId)) continue;
+        if (input.onlyUnused) {
+            const holders = await run(['ps', '--all', '--no-trunc', '--filter', `network=${networkId}`, '--format', '{{.ID}}']);
+            if (holders.code !== 0) return { status: 'unavailable', reason: 'required_fact_unavailable' };
+            // A replacement generation may still use this network and its ingress.
+            // Include stopped containers: network inspect omits their endpoints.
+            if (holders.stdout.trim().split('\n').filter(Boolean).some(id => id !== owned.containerId)) continue;
+        }
         const disconnected = await run(['network', 'disconnect', networkId, owned.containerId]);
         if (disconnected.code !== 0) return { status: 'unavailable', reason: 'native_effect_failed' };
     }

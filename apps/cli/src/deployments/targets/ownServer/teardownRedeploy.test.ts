@@ -43,7 +43,7 @@ it('deploys after native teardown and preserves a later activation failure witho
     const settings = await persistence.readSettings();
     vi.spyOn(persistence, 'readSettings').mockResolvedValue({ ...settings, servers: { home: {
         id: 'home', name: 'Home', serverUrl: 'https://redeploy-home.test', webappUrl: 'https://redeploy-home.test',
-        createdAt: 1, updatedAt: 1, lastUsedAt: 1, homeConnectionDescriptorAuthority: 'exact',
+        createdAt: 1, updatedAt: 1, homeConnectionDescriptorAuthority: 'exact',
         homeConnectionDescriptor: HomeConnectionDescriptorV1Schema.parse({ v: 1, homeServerIdentityId: 'srv_redeploy_home',
             canonicalServerUrl: 'https://redeploy-home.test', revision: 1,
             endpoints: [{ kind: 'https', url: 'https://redeploy-home.test' }] }),
@@ -149,9 +149,13 @@ it('deploys after native teardown and preserves a later activation failure witho
                 .toMatchObject({ ok: true, state: 'succeeded' });
             expect(link.activeDeploymentId).toBeUndefined();
             expect(await docker.readRunningImageConfig('app')).toBeNull();
+            expect(await docker.readContainerIds()).toEqual([]);
+            expect(await docker.readNetworkIds()).toEqual([]);
         };
         const first = await candidate('v1');
         expect(await target.execute(first.request)).toMatchObject({ ok: true, state: 'succeeded' });
+        await docker.stopCurrentContainers();
+        expect((await docker.readContainerIds()).length).toBeGreaterThan(0);
         await stop('stop-v1');
         for (const unhealthy of [false, true]) {
             if (unhealthy) await stop('stop-v2');

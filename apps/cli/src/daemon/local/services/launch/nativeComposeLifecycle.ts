@@ -1,4 +1,5 @@
 import { classifyNativeComposeFailure } from './nativeComposeFailure';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { SQLITE_RUNTIME_V1 } from '@happier-dev/deployments';
 import type { ManagedServiceNativeObservationV1 } from '@happier-dev/plugin-sdk/managed-services';
 import { tmpdir } from 'node:os';
@@ -15,7 +16,7 @@ import type { ManagedServiceNativeLogReadForHost } from '@/plugins/runtime/invoc
 import type { ProjectBuiltinNativeLifecycle, ProjectNativeContainerObservation, ProjectNativeAccountingResult, ProjectNativeRuntimeFacts, ProjectNativeStageOutput } from '@/plugins/runtime/invocation/services/managedProcessSupervisor';
 import type { ProjectNativeToolchainIo } from '@/workspaces/toolchain/prepareProjectNativeToolchain';
 import type { DeploymentImageV1, OwnServerDeploymentInputBasisV1, OwnServerDeploymentSourceV1 } from '@happier-dev/deployment-protocol';
-import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk/services';
+import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
 import type { DeploymentExecEnvPortV1, ExecService } from '@happier-dev/plugin-sdk/exec';
 import type { MachineNativeEffectContext, MachineNativeEffectKey } from './machineNativeEffectAdmission';
 import { machineNativeEffectAdmission, MachineNativeEffectAdmissionError } from './machineNativeEffectAdmission';
@@ -28,6 +29,7 @@ import { createNativeComposeImageIdentity, resolveNativeComposeDeploymentImageRe
     type NativeComposeImageAcquisition, type NativeComposeRegistryAcquisition, type NativeComposeEffectAuthority } from './nativeComposeImageIdentity';
 import { inspectNativeComposeStorage, type NativeComposeStorageReview } from './nativeComposeStorage';
 import { readNativeComposeProjectVolumeNames, selectNativeComposePreviewVolumeNames, settleNativeComposeVolumeRemoval } from './nativeComposeVolumes';
+import { removeUnusedNativeComposeNetworks } from './nativeComposeNetworks';
 import { assertNativeComposeSharedDataPaths, createNativeComposeIncumbentBindReader, projectNativeComposeSharedData, seedNativeComposeSharedData,
     type NativeComposeSharedDataInput, type NativeComposeSharedDataPlan } from './nativeComposeSharedData';
 import { isDeploymentSourceUnchangedManifestInput } from '@/deployments/targets/ownServer/exactCommitRelease';
@@ -159,7 +161,7 @@ export type NativeComposeEnvironmentProject = Readonly<{
         purpose?: 'retire' }>): Promise<NativeComposeObservedActivation>;
     admitResticCommand(input: NativeResticCommandInput): Promise<AdmittedServiceExecContextV1>;
     admitVolumeRestoreCommand(input: NativeResticCommandInput & Readonly<{ physicalName: string }>): Promise<AdmittedServiceExecContextV1>;
-    openVolumeRestoreStage(input: Readonly<{ render: NativeComposeProjectRender; context: MachineNativeEffectContext;
+    openVolumeRestoreStage(input: Readonly<{ render: NativeResticCommandInput['render']; context: MachineNativeEffectContext;
         operationId: string; physicalName: string; mode: 'fresh' | 'existing'; signal?: AbortSignal }>): Promise<Readonly<{
             admit(input: NativeResticCommandInput): Promise<AdmittedServiceExecContextV1>; dispose(): Promise<void>;
         }>>;
@@ -230,6 +232,11 @@ export async function removeWitnessedContainers(input: Readonly<{ ids: readonly 
     if (after.exitCode !== 0) return false;
     const remaining = after.stdout.trim() ? after.stdout.trim().split('\n') : [];
     return remaining.every(id => /^[a-f0-9]{64}$/u.test(id) && !input.ids.includes(id));
+}
+
+async function removeWitnessedProjectResources(input: Parameters<typeof removeWitnessedContainers>[0]): Promise<boolean> {
+    return await removeWitnessedContainers(input)
+        && await removeUnusedNativeComposeNetworks({ projects: [input.project], run: input.run }) === null;
 }
 
 /** Docker CLI stats --format emits humanized native units, not host RSS. */
@@ -423,7 +430,9 @@ export function createNativeComposeLifecycle(input: Omit<NativeComposeEnvironmen
 export function createNativeComposeLifecycle(input: NativeComposeEnvironmentProjectInput): NativeComposeEnvironmentProject;
 export function createNativeComposeLifecycle(input: NativeComposeServiceInput): ReturnType<typeof createNativeComposeServiceCapture>;
 export function createNativeComposeLifecycle(input: NativeComposeServiceInput | NativeComposeEnvironmentProjectInput
-    | (Omit<NativeComposeEnvironmentProjectInput, 'kind' | 'envPort' | 'images'> & Readonly<{ kind: 'environmentDefinition' }>)) {
+    | (Omit<NativeComposeEnvironmentProjectInput, 'kind' | 'envPort' | 'images'> & Readonly<{ kind: 'environmentDefinition' }>)):
+    NativeComposeEnvironmentProject | Pick<NativeComposeEnvironmentProject, 'reviewDefinition' | 'dispose'>
+    | ReturnType<typeof createNativeComposeServiceCapture> {
     return 'kind' in input ? createEnvironmentProject(input.kind === 'environmentDefinition'
         ? { ...input, kind: 'environmentProject', images: [] } : input) : createNativeComposeServiceCapture(input);
 }
@@ -740,8 +749,10 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
                 options?.signal?.throwIfAborted();
                 const current = await readRemoval(options?.signal);
                 if (!current) return { status: 'termination_incomplete' as const };
-                if (current.length && !await removeWitnessedContainers({ ids: current.map(row => row.id), project, services: [target],
+                if (current.length && !await removeWitnessedProjectResources({ ids: current.map(row => row.id), project, services: [target],
                     run: args => run(args, options?.signal, args[0] === 'container' && args[1] === 'rm' ? options?.stageOutput : undefined) })) return { status: 'termination_incomplete' as const };
+                if (!current.length && await removeUnusedNativeComposeNetworks({ projects: [project],
+                    run: args => run(args, options?.signal) }) !== null) return { status: 'termination_incomplete' as const };
                 if ((await readRemoval(options?.signal))?.length !== 0) {
                     return { status: 'termination_incomplete' as const };
                 }
@@ -796,7 +807,7 @@ function createNativeComposeServiceCapture(input: NativeComposeServiceInput) {
 
 function nativeRefusal(reason: string, step = 'deployment.native', errorCode: string | null = null,
     effectAttempted?: true): never {
-    const failureCause = { phase: `${step}.${reason}`, errorClass: 'Error', errorCode, httpStatus: null };
+    const failureCause: ActionFailureCauseV1 = { phase: `${step}.${reason}`, errorClass: 'Error', errorCode, httpStatus: null };
     throw new PluginError({ code: 'native_failed', message: 'Native Compose operation could not be completed', details: { reason },
         failureCause }, effectAttempted === undefined ? undefined : { cause: {
             ok: false, errorCode: 'native_failed', error: 'native_failed', failureCause, effectAttempted,
@@ -832,7 +843,7 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
         identity: ReturnType<typeof createNativeComposeImageIdentity>;
         localImages: ReadonlyMap<string, Readonly<{ reference: string; config: Record<string, unknown> }>>;
         prepared?: Readonly<{ render: NativeComposeProjectRender; context: MachineNativeEffectContext }> };
-    const renderedCaptures = new WeakMap<NativeComposeProjectRender, RenderCapture>();
+    const renderedCaptures = new WeakMap<NativeResticCommandInput['render'], RenderCapture>();
     let root: string | undefined;
     let closed = false;
     let activation: NativeComposeActivatedProject | undefined;
@@ -997,7 +1008,7 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
             await machineNativeEffectAdmission.runStage(options.context, async () => {
                 signal?.throwIfAborted();
                 const ids = current.services.flatMap(service => [...proof.serviceNativeIds.get(service)!]);
-                if (!await removeWitnessedContainers({ ids, project: projectName, services: current.services,
+                if (!await removeWitnessedProjectResources({ ids, project: projectName, services: current.services,
                     stopWithNativeGrace: true, run: args => input.io.run({ command: launch.command, args: [...prefix, ...args],
                         cwd: launch.cwd!, env: launch.env, ...(signal ? { signal } : {}) }) })) return nativeRefusal('deployment_generation_unavailable');
             });
@@ -1299,7 +1310,7 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
             } catch (error) { await launch.release(); throw error; }
             const tuple = authorizedPrefixes.get(launch)!;
             const cwd = launch.cwd!;
-            return { engineId: request.render.engineId, dispose: () => launch.release(),
+            return { engineId: request.render.engineId, dispose: async () => { await launch.release(); },
                 run: async (args, signal, inputBytes, options) => {
                     const effectiveSignal = signal ?? request.signal;
                     assertOpen(effectiveSignal);
@@ -1387,7 +1398,10 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
                 admit: command => admitNativeResticCommand({ ...command, render: request.render, context: request.context }, {
                     source: input.source, exec: input.exec, io: input.io, model: capture.model, identity: capture.identity,
                     assertCurrent: () => assertCurrent(request.signal),
-                    containerIds: () => activation ? activation.services.flatMap(service => [...activation.nativeIdsForService(service)]) : [],
+                    containerIds: () => {
+                        const current = activation;
+                        return current ? current.services.flatMap(service => [...current.nativeIdsForService(service)]) : [];
+                    },
                     targetVolume: request.physicalName, run: args => run(args, request.signal),
                 }),
                 async dispose() {
@@ -1648,8 +1662,10 @@ function createEnvironmentProject(input: Omit<NativeComposeEnvironmentProjectInp
                             ownedNames: await readNativeComposeProjectVolumeNames({ projects: [projectName],
                                 run: args => run(args, request.signal) }),
                         }).filter(name => !preexistingPreviewVolumes.has(name)) : [];
-                        const removed = !introduced.length || await removeWitnessedContainers({ ids: introduced, project: projectName, services: current.services,
-                            run: args => run(args, request.signal, undefined, false, authority) });
+                        const cleanupRun = (args: readonly string[]) => run(args, request.signal, undefined, false, authority);
+                        const removed = introduced.length
+                            ? await removeWitnessedProjectResources({ ids: introduced, project: projectName, services: current.services, run: cleanupRun })
+                            : await removeUnusedNativeComposeNetworks({ projects: [projectName], run: cleanupRun }) === null;
                         const volumeFailure = removed ? await settleNativeComposeVolumeRemoval({ names: freshPreviewVolumes,
                             run: args => run(args, request.signal, undefined, false, authority) }) : undefined;
                         if (removed && !volumeFailure) throw new PluginError({ code: 'native_failed', message: 'First deployment failed; introduced resources were removed',

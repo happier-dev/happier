@@ -727,6 +727,19 @@ it('releases exact retired network IDs while preserving shared Caddy and sibling
         networkIds: ['retired-network'] }, { run: f.run })).toEqual({ status: 'ready' });
 });
 
+it('preserves Caddy on a network still used by another generation', async () => {
+    const f = await fixture(); await f.setup();
+    await ensureNativeCaddyContainer(f.input, f.options());
+    const retained = f.readContainer();
+    retained.NetworkSettings.Networks = { retired: { NetworkID: 'retired-network' }, shared: { NetworkID: 'shared-network' } };
+    expect(await disconnectNativeCaddyNetworks({ networkIds: ['retired-network', 'shared-network'], onlyUnused: true }, {
+        run: command => command.args[0] === 'ps'
+            ? Promise.resolve({ code: 0, stderr: '', stdout: [retained.Id,
+                ...(command.args.includes('--all') && command.args.includes('network=shared-network') ? ['stopped-successor'] : [])].join('\n') }) : f.run(command),
+    })).toEqual({ status: 'ready' });
+    expect(retained.NetworkSettings.Networks).toEqual({ shared: { NetworkID: 'shared-network' } });
+});
+
 it.each(['foreign-container', 'disconnect-denied'] as const)('retains attachments when Caddy release is refused: %s', async refusal => {
     const f = await fixture(); await f.setup();
     await ensureNativeCaddyContainer(f.input, f.options());
