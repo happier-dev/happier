@@ -71,7 +71,7 @@ async function createRecoveryFixture(publishCatalog = false) {
         entrypoints: { daemon: './daemon.mjs' }, agents: { agent: {
             declaration: { title: 'Boundary Agent', runtime: { kind: 'custom' }, primary: 'sessions',
                 capabilities: { sessions: { open: ['create', 'resume'], delivery: ['newTurn'], cancel: true } },
-                connectedAccounts: [{ purpose: 'primary', service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' } }],
+                connectedAccounts: [{ purpose: 'primary', service: { pluginId: 'happier.agent.claude', localId: 'claude-subscription' }, credentialKinds: ['oauth', 'token'] }],
                 providerRequirements: support },
             factory: () => ({ sessions: { open } }),
             sessionRunnerFactory: { module: './runtime.mjs', export: 'createRuntime', runtimeApiVersion: 1 },

@@ -13,10 +13,10 @@ import './daemonSystemTask';
 async function runDesktopTask(kind: string, params: Record<string, unknown>) {
   // stdin/stdout are the process boundary. Keep the command and live task registry real.
   const input = Readable.from([JSON.stringify({ protocolVersion: 1, kind, params })]);
-  const stdin = vi.spyOn(process, 'stdin', 'get').mockReturnValue(input as NodeJS.ReadStream);
+  const stdin = vi.spyOn(process, 'stdin', 'get').mockReturnValue(Object.assign(input as NodeJS.ReadStream, { fd: 0 as const }));
   let output = '';
   const outputStream = new Writable({ write(chunk, _encoding, callback) { output += String(chunk); callback(); } });
-  const stdout = vi.spyOn(process, 'stdout', 'get').mockReturnValue(outputStream as NodeJS.WriteStream);
+  const stdout = vi.spyOn(process, 'stdout', 'get').mockReturnValue(Object.assign(outputStream as NodeJS.WriteStream, { fd: 1 as const }));
   try {
     await handleDaemonCliCommand({ args: ['daemon', 'system-task', '--json'], rawArgv: [], terminalRuntime: null });
     return JSON.parse(output) as unknown;
