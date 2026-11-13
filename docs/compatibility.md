@@ -28,7 +28,10 @@ in socket and HTTP mutation failures. The CLI preserves that cause through Turn
 publication and ends the input's Pending settlement. Readers also settle a final
 rejection without a reason, retaining an unknown cause rather than inventing a
 withdrawal. The new Pending presentation reason `team_access_removed` maps to the
-existing Send rejection `session_input_unauthorized`.
+existing Send rejection `session_input_unauthorized`. A committed user row does
+not end delivery observation: Send keeps following Pending to settlement. A
+retained Team refusal does not fence fresh input after regrant or automatically
+retry the refused original.
 
 Home, CLI and UI refresh together under the unpublished 0.3 direct cut. The
 Pending reason is a bounded presentation addition, with no new authority,
@@ -8345,6 +8348,24 @@ The scoped-clean `../0.2` frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf`
 has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
+
+Unreleased 0.3 plugin exec requests add optional `requiredFiles`, carried by the
+runner writer and strict daemon reader together. It declares transient launch
+dependencies for the native selected-material owner’s pre-spawn refusal; it adds
+no persistence, capability, wire epoch, adapter or retry. Older strict development
+readers reject the field and must reload with the matching writer. Requests
+without the field remain valid. The scoped 0.2 frontier
+`dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no runner/daemon plugin-service
+protocol module.
+
+
+Unreleased 0.3 `ScmHostingRepositoryGetResponseV1` failures may carry the
+existing optional `ActionFailureCauseV1`. Both objects remain closed. Matching
+SCM RPC and Public Profile readers refresh together under the unpublished 0.3
+direct cut; older strict development readers reject the added field. Responses
+without a cause remain valid. This diagnostic adds no authority, retry policy,
+persisted format, wire epoch or capability. The scoped `../0.2` frontier
+`dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no hosting-repository read contract.
 
 Unreleased 0.3 Action failure causes add optional `nativeErrorReason`, a
 producer-projected diagnostic code using the existing native-code alphabet.

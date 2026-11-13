@@ -49,6 +49,26 @@ function owner() {
 }
 
 describe('public-profile Actions through the shared executor', () => {
+  it.each(['account.public_profile.preview', 'account.public_profile.update', 'account.public_profile.publish'] as const)(
+    'retains the repository authentication cause when %s metadata cannot be prepared', async actionId => {
+    const failureCause = { phase: 'scm.repository.read', errorClass: 'Error', errorCode: 'authentication_required',
+      httpStatus: null };
+    const homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']> = async () => owner();
+    const executor = createActionExecutor({ homeDomainAction, isActionApprovalRequired: approvalRequired,
+      publicProfileActions: bindPublicProfileActionPorts({ homeDomainAction, assertCurrent: () => {},
+        getRepository: async () => ({ success: false, kind: 'failed', code: 'repository_unavailable', failureCause }),
+      }),
+    } as ActionExecutorDeps);
+    const result = await executor.execute(actionId, {
+      ...(actionId === 'account.public_profile.publish' ? { intent: 'publish' } : {}),
+      policy: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1, fields: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields, projects: true } }, metadataSelection: { projectSelections: [{
+        provider: { id: 'example/forge', kind: 'custom', displayName: 'Forge', baseUrl: 'https://forge.test' },
+        repository: { nameWithOwner: 'owner/repository' }, protocol: 'https',
+      }] }, query: normalizeUsageQuery({ period: { relative: 'all' } }), layout,
+      appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1,
+    }, context);
+    expect(result).toMatchObject({ ok: false, failureCause });
+  });
   it('prepares metadata-only All with the incumbent bounded artifact period and no Usage read', async () => {
     const current = owner();
     const policy = { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1, fields: { ...DEFAULT_PUBLIC_PROFILE_POLICY_V1.fields } };
@@ -288,7 +308,7 @@ describe('public-profile Actions through the shared executor', () => {
   });
   it.each([
     { surface: 'ui', authority: 'present_user', caller: 'host', ask: false, succeeds: true },
-    { surface: 'ui', authority: 'present_user', caller: 'host', ask: true, succeeds: false },
+    { surface: 'ui', authority: 'present_user', caller: 'host', ask: true, succeeds: true },
     { surface: 'agent', authority: 'account_automation', caller: 'host', ask: false, succeeds: false },
     { surface: 'ui', authority: 'account_automation', caller: 'host', ask: false, succeeds: false },
     { surface: 'ui', authority: 'present_user', caller: 'plugin', ask: false, succeeds: false },

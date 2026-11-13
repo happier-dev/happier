@@ -18,15 +18,19 @@ import { createCommittedContributedActionInvoker, listRuntimeContributedActionDe
 vi.mock('@/persistence', async original => ({ ...await original<typeof import('@/persistence')>(), readStoredCredentials: async () => null }));
 afterEach(() => vi.unstubAllEnvs());
 
-it('preserves only the canonical published PluginError envelope across committed Action normalization', async () => {
+it.each(['provider_request_failed', 'plugin_disabled', 'authentication_required', 'present_user_required',
+  'admission_unavailable', 'approval_execution_outcome_unknown'])(
+  'preserves only the canonical published PluginError envelope across committed Action normalization (%s)', async code => {
   vi.stubEnv('HAPPIER_ACCOUNT_SETTINGS_MODE', 'never');
   vi.stubEnv('HAPPIER_ACTIONS_SETTINGS_V1', '');
+  const causeCode = code === 'approval_execution_outcome_unknown' ? 'present_user_required' : code;
   const closed = { type: 'object', properties: {}, additionalProperties: false } as const;
   const shared = { title: 'Fail', dangerLevel: 'safe', scopes: ['global'], surfaces: ['cli'], inputSchema: closed } as const;
   const authored = definePlugin({ id: 'example.committed-failure', version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
     actions: {
-      published: { ...shared, run: async () => { throw new PluginError({ code: 'provider_request_failed', retryable: false,
-        details: { phase: 'send' }, remediation: { kind: 'openSettings', path: 'accounts/provider' } }); } },
+      published: { ...shared, run: async () => { throw new PluginError({ code, retryable: false,
+        failureCause: { phase: 'send', errorClass: 'Error', errorCode: causeCode, httpStatus: null },
+        details: { phase: 'send', requestId: 'adapter-authored-request' }, remediation: { kind: 'openSettings', path: 'accounts/provider' } }); } },
       unpublished: { ...shared, run: async () => { throw Object.assign(new Error('unpublished transport failure'), {
         data: { name: 'PluginError', code: 'provider_request_failed', details: { phase: 'send', rawPayload: 'unpublished' } },
       }); } },
@@ -40,9 +44,10 @@ it('preserves only the canonical published PluginError envelope across committed
     const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
       invokeContributedAction: createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: () => fixture.controller.acquireRuntimeRegistry() }) });
     const published = await executor.execute('action.invoke', { action: { pluginId: authored.manifest.id, localId: 'published' }, input: {} }, { surface: 'cli' });
-    expect(ActionExecuteFailureSchema.parse(published)).toMatchObject({ ok: false, errorCode: 'provider_request_failed',
-      details: { name: 'PluginError', code: 'provider_request_failed', retryable: false,
-        details: { phase: 'send' }, remediation: { kind: 'openSettings', path: 'accounts/provider' } } });
+    expect(ActionExecuteFailureSchema.parse(published)).toMatchObject({ ok: false, errorCode: code,
+      failureCause: { errorCode: causeCode },
+      details: { name: 'PluginError', code, retryable: false,
+        details: { phase: 'send', requestId: 'adapter-authored-request' }, remediation: { kind: 'openSettings', path: 'accounts/provider' } } });
     const unpublished = await executor.execute('action.invoke', { action: { pluginId: authored.manifest.id, localId: 'unpublished' }, input: {} }, { surface: 'cli' });
     expect(ActionExecuteFailureSchema.parse(unpublished)).toMatchObject({ ok: false, errorCode: 'plugin_action_execution_failed' });
     expect(unpublished).not.toHaveProperty('details.details.rawPayload');

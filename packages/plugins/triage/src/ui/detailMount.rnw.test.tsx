@@ -772,6 +772,7 @@ function createHarness(options: Readonly<{
             return { ...result, entryRef, observation: toTriageWireObservation(observation) };
         }
         return await listTriageEntries(TriageListEntriesInputV1Schema.parse(request.input), {
+            requestId: 'disabled-source-invocation',
             sourceInstances: collections.sourceInstances,
             readSourceSnapshot: async () => options.unavailableSourceCode === undefined
                 ? { contributions: admitted }
@@ -1615,7 +1616,8 @@ describe('opening a row into the source detail', () => {
             await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Details' })); });
             await expect(shell.getByText(code)).resolves.toBeDefined();
             await expect(shell.getByText(SOURCE.pluginId)).resolves.toBeDefined();
-            await expect(shell.queryByText('Request ID')).resolves.toBeUndefined();
+            await expect(shell.getByText('Request ID')).resolves.toBeDefined();
+            await expect(shell.getByText('disabled-source-invocation')).resolves.toBeDefined();
             expect(currentHarness!.exactReads).toEqual([]);
         },
     );

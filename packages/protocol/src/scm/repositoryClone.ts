@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
+import { ActionFailureCauseV1Schema } from '../actions/actionExecutionResult.js';
 import { ScmCommitOidSchema } from './commitPublication.js';
 
 import {
@@ -91,7 +92,8 @@ export const ScmHostingRepositoryGetResponseV1Schema = lazyZodSchema(() => z.dis
   z.strictObject({ success: z.literal(true), kind: z.literal('private') }),
   z.strictObject({ success: z.literal(true), kind: z.literal('unknown') }),
   z.strictObject({ success: z.literal(true), kind: z.literal('unsupported') }),
-  z.strictObject({ success: z.literal(false), kind: z.literal('failed'), code: z.literal('repository_unavailable') }),
+  z.strictObject({ success: z.literal(false), kind: z.literal('failed'), code: z.literal('repository_unavailable'),
+    failureCause: z.optional(ActionFailureCauseV1Schema) }),
 ]));
 export type ScmHostingRepositoryGetResponseV1 = z.infer<typeof ScmHostingRepositoryGetResponseV1Schema>;
 

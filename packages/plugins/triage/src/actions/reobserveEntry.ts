@@ -48,6 +48,7 @@ export type TriageReobserveEntryResultV1 =
   | Readonly<{ kind: 'rejected'; reason: CorpusQualificationRejectionV1 }>;
 
 export type TriageReobserveEntryDepsV1 = Readonly<{
+  requestId?: string;
   /** Exact active configured-instance storage read. */
   readConfiguredInstance(
     sourceInstanceId: string,
@@ -100,7 +101,7 @@ export async function reobserveTriageEntry(
     const contribution = indexTriageAdmittedSourcesV1(sourceSnapshot.contributions)
       .get(renderSourceQualifiedId(input.entryRef.source));
     if (contribution === undefined) {
-      const failure = indexTriageSourceAvailabilityFailuresV1(sourceSnapshot).get(input.entryRef.source.pluginId);
+      const failure = indexTriageSourceAvailabilityFailuresV1(sourceSnapshot, deps.requestId).get(input.entryRef.source.pluginId);
       return { kind: 'unavailable', ...(failure === undefined ? {} : { failure }) };
     }
 
@@ -148,6 +149,7 @@ export function createTriageReobserveEntryActionHandler(): TriageDataActionHandl
   return async (input, context: TriageDataActionContext) => {
     const { sourceInstances } = bindCorpusCollections(requireTriageAccountStorage(context));
     const result = await reobserveTriageEntry(input, {
+      requestId: context.requestId,
       readConfiguredInstance: async (sourceInstanceId, options) => {
         const row = input.sourceInstanceRowId === undefined
           ? await findConfiguredSourceInstanceRow(sourceInstances, sourceInstanceId, options)

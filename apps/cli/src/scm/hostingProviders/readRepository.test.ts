@@ -3,6 +3,7 @@ import { registerScmHandlers } from '@/rpc/handlers/scm';
 import type { RpcHandler } from '@/api/rpc/types';
 import type { ScmHostingRepositorySummary } from '@happier-dev/plugin-sdk/scm';
 import { createScmHostingProviderRegistry } from './registry';
+import { PluginError } from '@happier-dev/plugin-sdk';
 
 const selector = {
     provider: { id: 'example.forge/forge', kind: 'custom', displayName: 'Forge', baseUrl: 'https://forge.test' },
@@ -49,6 +50,13 @@ function handler(supported = true) {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('SCM authoritative repository read', () => {
+    it('retains an authored authentication cause through the repository RPC boundary', async () => {
+        const read = handler();
+        vi.stubGlobal('fetch', async () => { throw new PluginError({ code: 'authentication_required',
+            message: 'private provider diagnostic', details: { requestId: 'repository-auth-request' }, retryable: false }); });
+        expect(await read()).toMatchObject({ success: false, kind: 'failed', code: 'repository_unavailable',
+            failureCause: { errorCode: 'authentication_required' } });
+    });
     it('admits only observed public metadata and removes it on the next private observation', async () => {
         const read = handler();
         let visibility: string | undefined = 'public';
@@ -75,7 +83,8 @@ describe('SCM authoritative repository read', () => {
         expect(await read()).toEqual({ success: true, kind: 'unknown' });
         expect(await handler(false)()).toEqual({ success: true, kind: 'unsupported' });
         vi.stubGlobal('fetch', async () => new Response('', { status: 403 }));
-        expect(await read()).toEqual({ success: false, kind: 'failed', code: 'repository_unavailable' });
+        expect(await read()).toMatchObject({ success: false, kind: 'failed', code: 'repository_unavailable',
+            failureCause: { phase: 'scm.repository.read', errorClass: 'Error' } });
         for (const webUrl of ['http://forge.test/repository', 'https://user:secret@forge.test/repository']) {
             vi.stubGlobal('fetch', async () => Response.json({ nameWithOwner: 'group/repository', webUrl, visibility: 'public' }));
             expect(await read()).toEqual({ success: true, kind: 'unknown' });

@@ -9,6 +9,7 @@ import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtim
 import { createHostScmHostingProviderRuntimeServices } from './runtimeServices';
 import type { HostingProviderResolvedRegistry } from '@happier-dev/plugin-sdk/scm/hosting';
 import type { ResolvedScmHostingProviderRegistry } from './registry';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 /** Registry routing and the contributed getRepository own identity and visibility. */
 export async function readScmHostingRepository(input: Readonly<{
@@ -53,8 +54,9 @@ export async function readScmHostingRepository(input: Readonly<{
             const services = createHostScmHostingProviderRuntimeServices(lease.registry);
             return await read(await services.resolveScmHostingProviderRegistry!());
         } finally { await lease.release(); }
-    } catch {
+    } catch (error) {
         current();
-        return { success: false, kind: 'failed', code: 'repository_unavailable' };
+        return { success: false, kind: 'failed', code: 'repository_unavailable',
+            failureCause: normalizeActionExecutorThrownError(error, 'scm.repository.read').failureCause };
     }
 }

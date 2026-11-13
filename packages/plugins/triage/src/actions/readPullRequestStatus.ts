@@ -33,7 +33,7 @@ async function resolveConfiguredStatusSource(input: TriageReobserveEntryActionIn
     if (configured === null || row === null || configured.instance.sourceInstanceId !== input.sourceInstanceId
         || !configuredSourceInstanceIsOwnedBy(row.value, input.entryRef.source)) return null;
     if (source === undefined) {
-        const failure = indexTriageSourceAvailabilityFailuresV1(admitted).get(input.entryRef.source.pluginId);
+        const failure = indexTriageSourceAvailabilityFailuresV1(admitted, context.requestId).get(input.entryRef.source.pluginId);
         return failure === undefined ? null : { kind: 'unavailable' as const, failure };
     }
     if (operation === undefined

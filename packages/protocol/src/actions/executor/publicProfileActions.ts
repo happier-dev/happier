@@ -104,6 +104,11 @@ async function resolveMetadata(input: PublicProfileMetadataSelectionV1, policy: 
   throwIfAborted(context.signal);
   const projects: NonNullable<PublicProfileMetadataV1['projects']> = [];
   for (const observation of observed) {
+    const refused = readActionFailureEnvelope(observation);
+    if (refused) return refused;
+    if ('kind' in observation && observation.kind === 'failed') return {
+      ...failure(observation.code), ...(observation.failureCause ? { failureCause: observation.failureCause } : {}),
+    };
     if (!('kind' in observation) || observation.kind !== 'public') return null;
     const link = PublicProfileLinkV1Schema.safeParse(observation.repository);
     if (!link.success) return null;
@@ -191,6 +196,7 @@ export async function preparePublicProfileAction(actionId: PublicProfilePreparat
     const policy = intent.policy ?? record.policy;
     const metadata = intent.metadataSelection ? await resolveMetadata(intent.metadataSelection, policy, ports, context) : undefined;
     if (metadata === null) return unavailable('project_visibility_unavailable');
+    if (metadata && 'ok' in metadata) return { kind: 'settled', result: metadata };
     throwIfAborted(context.signal);
     const query = intent.query ? publicQuery(intent.query) : record.query ? publicQuery(record.query) : null;
     const needsSnapshot = hasWiderPublicProfileUsageFields(record.policy, policy)
@@ -235,6 +241,7 @@ export async function preparePublicProfileAction(actionId: PublicProfilePreparat
   const policy = PublicProfilePolicyV1Schema.parse(intent.policy);
   const metadata = await resolveMetadata(intent.metadataSelection, policy, ports, context);
   if (!metadata) return unavailable('project_visibility_unavailable');
+  if ('ok' in metadata) return { kind: 'settled', result: metadata };
   const query = publicQuery(intent.query);
   const preview = actionId === 'account.public_profile.publish' ? await context.publicProfilePreviewAdmission : null;
   throwIfAborted(context.signal);

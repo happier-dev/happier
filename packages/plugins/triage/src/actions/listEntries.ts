@@ -75,9 +75,10 @@ export type TriageAdmittedSourceV1 =
 export type TriageSourceSnapshotV1 = Pick<TargetedContributionSnapshot<TriageAdmittedSourceV1>,
     'contributions' | 'unavailablePlugins'>;
 
-export function indexTriageSourceAvailabilityFailuresV1(snapshot: TriageSourceSnapshotV1): ReadonlyMap<string, TriageSourceFailureV1> {
+export function indexTriageSourceAvailabilityFailuresV1(snapshot: TriageSourceSnapshotV1, requestId?: string): ReadonlyMap<string, TriageSourceFailureV1> {
     return new Map((snapshot.unavailablePlugins ?? []).map(cause => [cause.pluginId, {
         class: 'unknown' as const, code: cause.code, detail: cause.pluginId,
+        ...(requestId === undefined ? {} : { requestId }),
     }]));
 }
 
@@ -117,6 +118,7 @@ export type TriageAdmittedOperationExecutorV1 = (
 ) => Promise<TriageScanResultV1>;
 
 export type TriageListEntriesDepsV1 = Readonly<{
+    requestId?: string;
     /** The `source-instances` Collection. This Action never writes it. */
     sourceInstances: Pick<CorpusCollectionHandleV1, 'query' | 'get' | 'identityTag'>;
     /** The current admitted view of this target's own sources point. */
@@ -246,7 +248,7 @@ export async function assembleTriageListPass(
     const configuredSourcesNextCursor = 'nextCursor' in configured ? configured.nextCursor : undefined;
 
     const admittedByQualifiedId = indexTriageAdmittedSourcesV1(sourceSnapshot.contributions);
-    const availabilityFailures = indexTriageSourceAvailabilityFailuresV1(sourceSnapshot);
+    const availabilityFailures = indexTriageSourceAvailabilityFailuresV1(sourceSnapshot, deps.requestId);
 
     const configuredSources: TriageListEntriesResultV1['configuredSources'][number][] = [];
     /** Every instance this request set out to cover, invocable or not. */
@@ -565,6 +567,7 @@ export function createTriageListEntriesDeps(
             .executeAdmittedTargetedOperation(operation, scopeInput, { ...options, machineAvailability: 'current' }),
         nowMs: () => Date.now(),
         taskOnly: lens?.taskOnly,
+        requestId: context.requestId,
         signal: context.signal,
     };
 }
