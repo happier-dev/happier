@@ -4,6 +4,7 @@ import { ManagedMachineActionInputSchemasV1, resolveManagedAcquireReviewV1,
 import type { ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { ExternalActionRequesterInvocationV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import type { LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { ManagedMachinePresetGetResultV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
@@ -25,7 +26,7 @@ import { executeUiManagedAccountControl } from './managedMachineAccountControl';
 import type { UiManagedMachineEnrollmentDependencies } from './managedMachineEnrollment';
 import { isHostAdmittedReviewedChildPolicyV1, readHostReviewedChildOperationV1,
     readHostReviewedParentV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { isOrdinaryMachineSetupNativeActionIdV1, MACHINE_SETUP_APPLY_ACTION_ID_V1,
+import { isOrdinaryMachineSetupNativeActionIdV1, isMachineSetupCombinedActionIdV1, MACHINE_SETUP_APPLY_ACTION_ID_V1,
     SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 
 const failure = (errorCode: string): ActionExecuteResult => ({ ok: false, errorCode, error: errorCode });
@@ -86,7 +87,7 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
             : readManagedMachineActionOutputV1(actionId, execution.result);
         return output.success ? { ok: true, result: output.data } : failure('managed_response_invalid');
     };
-    if (isOrdinaryMachineSetupNativeActionIdV1(actionId)) {
+    if (isOrdinaryMachineSetupNativeActionIdV1(actionId) || isMachineSetupCombinedActionIdV1(actionId)) {
         const selected = ManagedMachineActionInputSchemasV1[actionId].parse(input);
         const addressedContext = { ...context, externalActionTarget: context.externalActionTarget?.kind === 'machine'
             ? context.externalActionTarget : { kind: 'machine' as const, machineId: selected.machineId } };
@@ -194,7 +195,9 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
                 signal: params.signal, installNativePayload: params.installNativePayload,
             }) });
         } catch (error) {
-            if (error instanceof ManagedMachineControllerError || error instanceof SystemTaskExecutionError) return failure(error.code);
+            if (error instanceof ManagedMachineControllerError || error instanceof SystemTaskExecutionError) {
+                return { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
+            }
             throw error;
         }
     }
@@ -233,7 +236,9 @@ export async function executeManagedMachineNativeAction(params: ManagedMachineNa
                 machine: retainedMachine, signal: params.signal, installNativePayload: params.installNativePayload,
             }) });
         } catch (error) {
-            if (error instanceof ManagedMachineControllerError || error instanceof SystemTaskExecutionError) return failure(error.code);
+            if (error instanceof ManagedMachineControllerError || error instanceof SystemTaskExecutionError) {
+                return { ok: false, ...normalizeActionExecutorThrownError(error, actionId) };
+            }
             throw error;
         }
     }

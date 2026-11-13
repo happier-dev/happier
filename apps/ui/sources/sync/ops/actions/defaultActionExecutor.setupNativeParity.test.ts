@@ -21,6 +21,8 @@ describe('ordinary native setup parity through the UI Action executor', () => {
         ['ui', 'machines.setup.remove'], ['voice', 'machines.setup.remove'],
         ['ui', 'machines.setup.updates.apply'], ['voice', 'machines.setup.updates.apply'],
         ['captured-ui', 'machines.setup.remove'], ['captured-ui', 'machines.setup.updates.apply'],
+        ['ui', 'machines.setup.updates.rollout'], ['voice', 'machines.setup.updates.rollout'],
+        ['captured-ui', 'machines.setup.updates.rollout'],
     ] as const)('retains the exact reviewed operand and approval for %s %s', async (entry, actionId) => {
         const surface = entry === 'captured-ui' ? 'ui' : entry;
         const homeId = 'srv_setup_parity';
@@ -34,12 +36,19 @@ describe('ordinary native setup parity through the UI Action executor', () => {
         const input = actionId === 'machines.setup.remove'
             ? ManagedMachineActionInputSchemasV1[actionId].parse({ homeId, machineId: 'controller',
                 sources: [{ kind: 'direct', setup: {} }], desiredRevision: 0, removeItemKeys: [], removalPlans: [] })
+            : actionId === 'machines.setup.updates.rollout'
+              ? ManagedMachineActionInputSchemasV1[actionId].parse({ homeId, machineId: 'controller', failurePolicy: 'fail_stop',
+                  batches: [[{ homeId, machineId: 'controller', scope: 'security',
+                    plan: { v: 1, basis: { kind: 'updates', machineId: 'controller', scope: 'security' },
+                      steps: [], nativeFacts: [], planDigest: 'a'.repeat(64) } }]] })
             : ManagedMachineActionInputSchemasV1[actionId].parse({ homeId, machineId: 'controller', scope: 'security',
                 plan: { v: 1, basis: { kind: 'updates', machineId: 'controller', scope: 'security' },
                     steps: [], nativeFacts: [], planDigest: 'a'.repeat(64) } });
         const result = entry !== 'ui'
             ? { kind: 'approval_request_created', actionId, artifactId: 'setup-approval' }
-            : { operationId: 'setup-operation', terminalId: 'setup-terminal' };
+            : actionId === 'machines.setup.updates.rollout'
+              ? { operationId: 'setup-operation', runId: '22222222-2222-4222-8222-222222222222' }
+              : { operationId: 'setup-operation', terminalId: 'setup-terminal' };
         const effects: unknown[] = [];
         // HTTP is the boundary. Account capture, policy, dispatch and native origination remain real.
         setRuntimeFetch(async (rawUrl, init) => {

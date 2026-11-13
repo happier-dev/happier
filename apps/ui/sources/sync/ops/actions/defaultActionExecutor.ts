@@ -834,6 +834,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
   machineVitalsAction?: NonNullable<ActionExecutorDeps['machineVitalsAction']>;
   machineStorageAction?: NonNullable<ActionExecutorDeps['machineStorageAction']>;
   machineGuardAction?: NonNullable<ActionExecutorDeps['machineGuardAction']>;
+  machineScheduledAction?: NonNullable<ActionExecutorDeps['machineScheduledAction']>;
   machineProcessesAction?: NonNullable<ActionExecutorDeps['machineProcessesAction']>;
   machineServiceAction?: NonNullable<ActionExecutorDeps['machineServiceAction']>;
   machineServiceControl?: NonNullable<ActionExecutorDeps['machineServiceControl']>;
@@ -3637,6 +3638,9 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     ...(opts?.machineGuardAction ?? capturedFamilyPorts?.machineGuardAction
       ? { machineGuardAction: opts?.machineGuardAction ?? capturedFamilyPorts!.machineGuardAction }
       : {}),
+    ...(opts?.machineScheduledAction ?? capturedFamilyPorts?.machineScheduledAction
+      ? { machineScheduledAction: opts?.machineScheduledAction ?? capturedFamilyPorts!.machineScheduledAction }
+      : {}),
     ...(opts?.machineProcessesAction ?? capturedFamilyPorts?.machineProcessesAction
       ? { machineProcessesAction: opts?.machineProcessesAction ?? capturedFamilyPorts!.machineProcessesAction }
       : {}),
@@ -3757,6 +3761,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     machineSetupApply: async (args) => await deps.managedMachineAction!({ actionId: 'machines.setup.apply', ...args }),
     machineSetupRemove: async (args) => await deps.managedMachineAction!({ actionId: 'machines.setup.remove', ...args }),
     machineSetupUpdatesApply: async (args) => await deps.managedMachineAction!({ actionId: 'machines.setup.updates.apply', ...args }),
+    machineSetupUpdatesRollout: async (args) => await deps.managedMachineAction!({ actionId: 'machines.setup.updates.rollout', ...args }),
     machinePresetAction: async (args) => {
       if (!accountContext) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
       accountContext.assertCurrent();
@@ -5283,6 +5288,7 @@ function createCapturedScopeFamilyPorts(account: LazyActionAccountContext,
   machineVitalsAction: NonNullable<ActionExecutorDeps['machineVitalsAction']>;
   machineStorageAction: NonNullable<ActionExecutorDeps['machineStorageAction']>;
   machineGuardAction: NonNullable<ActionExecutorDeps['machineGuardAction']>;
+  machineScheduledAction: NonNullable<ActionExecutorDeps['machineScheduledAction']>;
   machineProcessesAction: NonNullable<ActionExecutorDeps['machineProcessesAction']>;
   machineServiceAction: NonNullable<ActionExecutorDeps['machineServiceAction']>;
   machineServiceControl: NonNullable<ActionExecutorDeps['machineServiceControl']>;
@@ -5369,6 +5375,7 @@ function createCapturedScopeFamilyPorts(account: LazyActionAccountContext,
       return await executeMembershipHistoryActionForScope({ scope, isCurrent, actionId: args.actionId, input: args.input,
         availability: await readCollaborationAvailability(), ...(args.signal ? { signal: args.signal } : {}) });
     },
+    machineScheduledAction: ({ actionId, input, context, signal }) => machineActionRpc(actionId, input, signal, context.actionRequestId ?? undefined, null),
     machineProcessesAction: ({ actionId, input, context, signal }) => machineActionRpc(actionId, input, signal, context.actionRequestId ?? undefined),
     machineServiceAction: ({ actionId, input, context, signal }) => machineActionRpc(actionId, input, signal, context.actionRequestId ?? undefined),
     machineServiceControl: async ({ input, context, signal }) => {

@@ -80,7 +80,7 @@ const SequenceSchema = lazyZodSchema(() => z.number().check(z.int(), z.minimum(0
  * it reaches the storage route. A plaintext Action input is never registered as
  * the encrypted storage-route schema.
  */
-const DiscussionActionTitleSchema = DiscussionTitleV1Schema.shape.title;
+const DiscussionActionTitleSchema = lazyZodSchema(() => DiscussionTitleV1Schema.shape.title);
 
 function attachmentSourcesMatchContent(content: DiscussionMessageContentV1,
   sources: readonly DiscussionAttachmentSourceV1[] | undefined): boolean {
