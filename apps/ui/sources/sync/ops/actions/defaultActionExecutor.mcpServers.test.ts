@@ -18,6 +18,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { PluginProjectionV2Schema, buildDeferredDaemonProjectionSections,
     DaemonContributionRegistryProjectionDescribeResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { PLUGIN_PROVIDER_DAEMON_PROJECTION_FIXTURE } from '@/dev/testkit/fixtures/pluginProviderDaemonProjection';
 import { MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/mcp/servers/serverActionsV1';
 import { parseMcpServerImportV1 } from '@happier-dev/protocol/mcp/servers/import/parseMcpServerImportV1';
@@ -100,6 +101,8 @@ async function prepareToolFactsHome(includeMachine = true, installedAgentIds = O
     const machines = includeMachine ? [createMachineFixture({ id: 'facts-machine', activeAt: Date.now(),
         access: { custodian: { accountId: 'tool-owner', displayName: 'Owner' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' },
         metadata: { ...createMachineFixture().metadata!, agentInventory: { checkedAt: Date.now(), installedAgentIds } } })] : [];
+    // These rows arrive from a live Machine response, rather than a warm hydration.
+    for (const machine of machines) publishMachineActivity(machine, machine, []);
     getStorage().setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
         machineListByServerId: { [home.id]: machines }, machineListStatusByServerId: { [home.id]: 'idle' } });
     if (includeMachine) expect(resolveUiAccountActionFallbackMachineId({ serverId: home.id, accountId: 'tool-owner' })).toBe('facts-machine');
@@ -217,6 +220,7 @@ describe('UI MCP per-Agent tool facts', () => {
     it.each([false, true])('reads plugin declarations from the MCP Administration target (explicit=%s)', async explicit => {
         const home = await prepareToolFactsHome();
         const selected = createMachineFixture({ id: 'mcp-machine', active: true, activeAt: Date.now() });
+        publishMachineActivity(selected, selected, []);
         const state = getStorage().getState();
         const machines = [...Object.values(state.machines), selected];
         getStorage().setState({ machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
@@ -357,13 +361,15 @@ describe('UI MCP per-Agent tool facts', () => {
         } finally { account.dispose(); }
     });
 
-    it('uses the saved second MCP Machine for diagnostics, not the first online presentation row', async () => {
+    it.each(['saved', 'observed'] as const)('uses the %s second MCP Machine for diagnostics, not the first online presentation row', async selection => {
+        const { rememberMachineAdministrationTargetObservation, clearMachineAdministrationTargetObservation } = await import('@/sync/domains/state/machineAdministrationUiState');
         const server = { id: 'server', name: 'server', transport: 'http' as const,
             remote: { url: 'https://mcp.fixture.test/mcp', headers: {}, auth: { kind: 'oauth' as const } },
             env: {}, createdAt: 1, updatedAt: 1 };
         const home = await prepareToolFactsHome(true, [], undefined, undefined,
             { catalog: () => ({ v: 1, bindings: [], servers: [server] }) });
         const selected = createMachineFixture({ id: 'selected-second', active: true, activeAt: Date.now() });
+        publishMachineActivity(selected, selected, []);
         const machines = [...Object.values(getStorage().getState().machines), selected];
         const scope = { serverId: home.serverIdentityId!, accountId: 'tool-owner' };
         const grant = QualifiedConnectedAccountProfileV4Schema.parse({
@@ -376,9 +382,12 @@ describe('UI MCP per-Agent tool facts', () => {
             profile: { ...getStorage().getState().profile, connectedAccountsV4: [grant] },
             machines: Object.fromEntries(machines.map(machine => [machine.id, machine])),
             machineListByServerId: { [home.id]: machines }, settings: { ...getStorage().getState().settings,
-                machineAdministrationTargetsLocalV1: { 'mcpServers.settings': {
+                machineAdministrationTargetsLocalV1: selection === 'saved' ? { 'mcpServers.settings': {
                     serverIdentityId: home.serverIdentityId!, machineId: selected.id,
-                } } } });
+                } } : {} } });
+        rememberMachineAdministrationTargetObservation(scope, 'mcpServers.settings', {
+            serverIdentityId: home.serverIdentityId!, machineId: selection === 'observed' ? selected.id : machines[0]!.id,
+        });
         const observed: Array<{ operation: string; machineId: string }> = [];
         projectionRpc.mockImplementation(async request => {
             const command = request.payload.command;
@@ -400,8 +409,9 @@ describe('UI MCP per-Agent tool facts', () => {
         const hook = await renderHook(() => useMcpServerSignIn(server,
             machines.map(machine => ({ machineId: machine.id, name: machine.id, online: true })), { scope }));
         try {
-            await vi.waitFor(() => expect(hook.getCurrent().view?.state).toBe('connected'));
+            await vi.waitFor(() => expect(observed.length).toBeGreaterThan(0));
             expect(observed).toEqual([{ operation: 'readConfiguration', machineId: selected.id }]);
+            await vi.waitFor(() => expect(hook.getCurrent().view?.state).toBe('connected'));
             await act(async () => {
                 const revoked = { ...selected, revokedAt: Date.now() };
                 const current = [machines[0]!, revoked];
@@ -413,7 +423,10 @@ describe('UI MCP per-Agent tool facts', () => {
             expect(hook.getCurrent().view?.state).toBe('did_not_finish');
             await act(async () => { expect(await hook.getCurrent().signOut()).toBe(false); });
             expect(observed).toEqual([{ operation: 'readConfiguration', machineId: selected.id }]);
-        } finally { await hook.unmount(); disposeLoader(); }
+        } finally {
+            await hook.unmount(); disposeLoader();
+            clearMachineAdministrationTargetObservation(scope, 'mcpServers.settings');
+        }
     });
 
     it('retries sign-in on the saved MCP Machine after a failed request without rerouting', async () => {

@@ -1,7 +1,8 @@
 import type { SettingsMutationServices } from '@/components/settings/catalog/settingDeclarations';
 import { decodeScmDiffSummaryModelOverride, ScmDiffSummaryModelCatalogObservationV1Schema } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
 import type { ScmDiffSummaryModelSelector } from '@happier-dev/protocol/scm/diffSummary';
-import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 } from '@/sync/domains/machines/administration/selectionPreferences';
+import { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1, readSelectedMachineAdministrationTarget } from '@/sync/domains/machines/administration/selectionPreferences';
+import { readMachineAdministrationTargetObservation } from '@/sync/domains/state/machineAdministrationUiState';
 import { resolveFreshMachineAdministrationExecutionTarget } from '@/sync/domains/machines/administration/useTargetSelection';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { areAccountSettingsJsonValuesEqual } from '@/sync/domains/settings/accountSettingsStructuralEquality';
@@ -34,7 +35,9 @@ export function createScmDiffSummarySettingsCatalogReader(account: ActionAccount
         if (!account) return null;
         account.assertCurrent();
         const selectionKey = MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.sourceControl;
-        const selectedMachine = storage.getState().settings.machineAdministrationTargetsLocalV1[selectionKey] ?? null;
+        const readSelectedTarget = () => readSelectedMachineAdministrationTarget(storage.getState().settings.machineAdministrationTargetsLocalV1,
+            selectionKey, readMachineAdministrationTargetObservation(account.accountLifetime.scope, selectionKey));
+        const selectedMachine = readSelectedTarget();
         const executionTarget = resolveFreshMachineAdministrationExecutionTarget(selectedMachine, { accountScope: account.accountLifetime.scope });
         if (!executionTarget || !areServerProfileIdentifiersEquivalent(executionTarget.serverId, account.serverId)) return null;
         const catalog = await readScmDiffSummaryModelCatalogForMachine(account, executionTarget.machine.id, undefined,
@@ -42,6 +45,6 @@ export function createScmDiffSummarySettingsCatalogReader(account: ActionAccount
         if (!catalog) return null;
         return { profiles: storedValue ? catalog.profiles : catalog.automaticProfiles, isCurrent: current => account.accountLifetime.isCurrent()
                 && areAccountSettingsJsonValuesEqual(current.backendEnabledByTargetKey, settings.backendEnabledByTargetKey)
-                && areAccountSettingsJsonValuesEqual(storage.getState().settings.machineAdministrationTargetsLocalV1[selectionKey] ?? null, selectedMachine) };
+                && areAccountSettingsJsonValuesEqual(readSelectedTarget(), selectedMachine) };
     };
 }
