@@ -1,5 +1,6 @@
-import { cp, mkdir, rm, stat } from 'node:fs/promises';
+import { copyFile, cp, mkdir, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 
 import { SERVER_BINARY_TARGETS, resolveCurrentBinaryTarget, resolveExecutableName, type BinaryTarget } from './targets.js';
@@ -20,6 +21,17 @@ import {
 } from './serverSidecars.js';
 
 export const SERVER_BINARY_DEFAULT_EXTERNALS = Object.freeze(['redis']);
+
+export type PublicProfileAssetFile = Readonly<{ filename: string; sourcePath: string }>;
+
+/** The server owns the face list; the esbuild and source runtimes stage from the same module. */
+async function readServerPublicProfileAssetFiles(repoRoot: string): Promise<readonly PublicProfileAssetFile[]> {
+  const owner = pathToFileURL(join(repoRoot, 'apps', 'server', 'scripts', 'publicProfileAssetFiles.mjs')).href;
+  const { readPublicProfileAssetFiles } = await import(owner) as {
+    readPublicProfileAssetFiles: (input: { projectDir: string }) => Promise<readonly PublicProfileAssetFile[]>;
+  };
+  return await readPublicProfileAssetFiles({ projectDir: join(repoRoot, 'apps', 'server') });
+}
 
 async function ensureFile(path: string, message: string): Promise<void> {
   const info = await stat(path).catch(() => null);
@@ -154,6 +166,7 @@ export async function buildServerBinaryArtifactPayload({
   compilePrismaBinary = compilePrismaMigrateBinary,
   copyPath = defaultCopyPath,
   includeIrohNativeReleaseEvidence = false,
+  readPublicProfileAssetFiles = readServerPublicProfileAssetFiles,
 }: {
   repoRoot: string;
   payloadDir: string;
@@ -171,6 +184,7 @@ export async function buildServerBinaryArtifactPayload({
   compilePrismaBinary?: typeof compilePrismaMigrateBinary;
   copyPath?: (entry: { sourcePath: string; destPath: string; recursive: boolean }, fallbackCopyPath: typeof defaultCopyPath) => Promise<void>;
   includeIrohNativeReleaseEvidence?: boolean;
+  readPublicProfileAssetFiles?: (repoRoot: string) => Promise<readonly PublicProfileAssetFile[]>;
 }): Promise<{ executableName: string; entrypoint: string; migrationEntrypoint?: string }> {
   const bunCommand = resolveBunCommand({ commandProbe, processEnv: env });
   if (!bunCommand) {
@@ -215,6 +229,14 @@ export async function buildServerBinaryArtifactPayload({
     runCommand,
     buildRunnerEntrypoint: join(repoRoot, 'packages', 'cli-common', 'scripts', 'buildServerBunBinary.mjs'),
   });
+
+  // The compiled executable's import.meta.url is Bun's virtual /$bunfs root, so the server
+  // reads public-profile faces beside the executable (publicProfileFonts.ts).
+  const publicProfileAssetsDir = join(payloadDir, 'assets', 'public-profile');
+  await mkdir(publicProfileAssetsDir, { recursive: true });
+  for (const { filename, sourcePath } of await readPublicProfileAssetFiles(repoRoot)) {
+    await copyFile(sourcePath, join(publicProfileAssetsDir, filename));
+  }
 
   let migrationEntrypoint: string | undefined;
   if (serverRuntimeSupportNeedsPackagedMigration(effectiveBuildDbProviders)) {

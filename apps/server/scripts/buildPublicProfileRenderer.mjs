@@ -1,8 +1,9 @@
 import { build } from 'esbuild';
-import { copyFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { readPublicProfileAssetFiles } from './publicProfileAssetFiles.mjs';
 import { createPublicRendererProtocolSourcePlugin } from './publicRendererProtocolSource.mjs';
 
 const defaultProjectDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -39,15 +40,7 @@ export async function buildPublicProfileRenderer({ projectDir = defaultProjectDi
     } else await writeFile(target, source);
 }
 
-/** One physical input list owns font staging and source-bundle capture. */
-export async function readPublicProfileAssetFiles({ projectDir = defaultProjectDir } = {}) {
-    const interRoot = resolve(projectDir, '../ui/sources/assets/fonts');
-    const source = resolve(projectDir, 'assets/public-profile');
-    return [
-        ...['Inter-Regular.ttf', 'Inter-Medium.ttf', 'Inter-SemiBold.ttf'].map(filename => ({ filename, sourcePath: resolve(interRoot, filename) })),
-        ...(await readdir(source)).map(filename => ({ filename, sourcePath: resolve(source, filename) })),
-    ];
-}
+export { readPublicProfileAssetFiles };
 
 /** Retain the exact shipped faces and licenses, without a runtime source-tree dependency. */
 export async function stagePublicProfileAssets({ projectDir = defaultProjectDir, outDir }) {

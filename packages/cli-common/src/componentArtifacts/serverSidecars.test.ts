@@ -27,6 +27,7 @@ test.each(['happier-server-light', 'happier-server'] as const)('native %s code c
         await writeFile(outfile, `compiled ${input}`);
       },
       runCommand: async () => { throw new Error('native code must not run workspace preparation'); },
+      readPublicProfileAssetFiles: async () => [],
     });
     expect(compiled).toEqual([entrypoint, migrationSource]);
     expect(await readFile(join(payloadDir, result.entrypoint), 'utf8')).toContain(entrypoint);

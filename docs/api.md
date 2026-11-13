@@ -149,7 +149,9 @@ badge/card SVG, card PNG and fixed-dark OG PNG use the current projected visitor
 Brand geometry and in-process Sharp. The SVG glyph layer embeds locally shaped
 PNG pixels from packaged Inter/Noto faces, with explicit font selection rather
 than system fallback. The runtime build copies those faces and their OFL
-licenses. Card PNG rasterizes the same 495×195 scene as card SVG: explicit light
+licenses beside its chunks; the Bun-compiled server executables carry them in
+`assets/public-profile/` beside the executable, because a compiled module's URL
+is Bun's virtual root. Card PNG rasterizes the same 495×195 scene as card SVG: explicit light
 or dark selects that edition, and automatic/default rasterization uses light.
 OG remains 1200×630 and dark regardless of query theme. Every representation
 reads current admission before comparing its ETag; an unavailable edition has

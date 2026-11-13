@@ -1316,6 +1316,8 @@ test('buildServerBinaryArtifactPayload stages and finalizes self-contained runti
     const runCalls = [];
     const result = await artifacts.buildServerBinaryArtifactPayload({
       repoRoot,
+      // Fixture repositories carry no server face list (staged from apps/server in real builds).
+      readPublicProfileAssetFiles: async () => [],
       payloadDir,
       uiWebDistPath: uiDistDir,
       serverComponent: 'happier-server-light',
@@ -1400,6 +1402,8 @@ test('buildServerBinaryArtifactPayload stages and finalizes self-contained runti
         await assert.rejects(
           artifacts.buildServerBinaryArtifactPayload({
             repoRoot,
+            // Fixture repositories carry no server face list (staged from apps/server in real builds).
+            readPublicProfileAssetFiles: async () => [],
             payloadDir,
             uiWebDistPath: uiDistDir,
             entrypoint: join(serverSourcesDir, 'main.light.ts'),
@@ -1443,6 +1447,8 @@ test('buildServerBinaryArtifactPayload builds managed server code without UI or 
     const runCalls = [];
     await artifacts.buildServerBinaryArtifactPayload({
       repoRoot,
+      // Fixture repositories carry no server face list (staged from apps/server in real builds).
+      readPublicProfileAssetFiles: async () => [],
       payloadDir,
       includeRuntimeSupport: false,
       serverComponent: 'happier-server-light',
@@ -1557,6 +1563,8 @@ test('buildServerBinaryArtifactPayload packages PostgreSQL and MySQL migration c
     const artifacts = await import('../dist/componentArtifacts/index.js');
     const result = await artifacts.buildServerBinaryArtifactPayload({
       repoRoot,
+      // Fixture repositories carry no server face list (staged from apps/server in real builds).
+      readPublicProfileAssetFiles: async () => [],
       payloadDir,
       uiWebDistPath: join(repoRoot, 'apps', 'ui', 'dist'),
       serverComponent: 'happier-server',
@@ -1653,6 +1661,8 @@ test('buildServerBinaryArtifactPayload stages sharp runtime sidecars for the ser
     const compileCalls = [];
     await artifacts.buildServerBinaryArtifactPayload({
       repoRoot,
+      // Fixture repositories carry no server face list (staged from apps/server in real builds).
+      readPublicProfileAssetFiles: async () => [],
       payloadDir,
       uiWebDistPath: uiDistDir,
       entrypoint: join(serverSourcesDir, 'main.light.ts'),
@@ -1689,6 +1699,8 @@ test('buildServerBinaryArtifactPayload stages sharp runtime sidecars for the ser
     await assert.rejects(
       artifacts.buildServerBinaryArtifactPayload({
         repoRoot,
+        // Fixture repositories carry no server face list (staged from apps/server in real builds).
+        readPublicProfileAssetFiles: async () => [],
         payloadDir: join(tempRoot, 'payload-missing-sharp'),
         uiWebDistPath: uiDistDir,
         entrypoint: join(serverSourcesDir, 'main.light.ts'),
@@ -1759,6 +1771,8 @@ test('buildServerBinaryArtifactPayload delegates provider freshness to generate:
 
     await artifacts.buildServerBinaryArtifactPayload({
       repoRoot,
+      // Fixture repositories carry no server face list (staged from apps/server in real builds).
+      readPublicProfileAssetFiles: async () => [],
       payloadDir,
       uiWebDistPath: uiDistDir,
       entrypoint: join(serverSourcesDir, 'main.light.ts'),
@@ -1856,6 +1870,8 @@ test('buildServerBinaryArtifactPayload fails darwin artifacts without the darwin
     await assert.rejects(
       artifacts.buildServerBinaryArtifactPayload({
         repoRoot,
+        // Fixture repositories carry no server face list (staged from apps/server in real builds).
+        readPublicProfileAssetFiles: async () => [],
         payloadDir,
         uiWebDistPath: uiDistDir,
         entrypoint: join(serverSourcesDir, 'main.light.ts'),
@@ -1911,6 +1927,8 @@ test('buildServerBinaryArtifactPayload retries transient ENOENT failures while c
     let copyAttempts = 0;
     await artifacts.buildServerBinaryArtifactPayload({
       repoRoot,
+      // Fixture repositories carry no server face list (staged from apps/server in real builds).
+      readPublicProfileAssetFiles: async () => [],
       payloadDir,
       uiWebDistPath: uiDistDir,
       buildDbProviders: 'sqlite',
@@ -1988,6 +2006,8 @@ test('prepareUiWebDist refreshes an existing ui-web dist before server sidecars 
     });
     await artifacts.buildServerBinaryArtifactPayload({
       repoRoot,
+      // Fixture repositories carry no server face list (staged from apps/server in real builds).
+      readPublicProfileAssetFiles: async () => [],
       payloadDir,
       uiWebDistPath,
       buildDbProviders: 'sqlite',
