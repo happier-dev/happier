@@ -15,7 +15,11 @@ function createHarness(options: Readonly<{
     // Electron's app/window/WebContents are the OS/process boundary; lifecycle logic stays real.
     const app = new EventEmitter();
     let quitCalls = 0;
-    const electronApp = Object.assign(app, { quit: () => { quitCalls += 1; } }) as unknown as Pick<App, 'on' | 'quit'>;
+    const exitCodes: number[] = [];
+    const electronApp = Object.assign(app, {
+        quit: () => { quitCalls += 1; },
+        exit: (code: number) => { exitCodes.push(code); },
+    }) as unknown as Pick<App, 'on' | 'quit' | 'exit'>;
     const window = new EventEmitter();
     let windowDestroyed = false;
     const messages: unknown[] = [];
@@ -53,7 +57,7 @@ function createHarness(options: Readonly<{
     };
     return {
         app, window, sender, eventBus, lifecycle, messages, emit,
-        readState: () => ({ quitCalls, openCount, showCount, shutdownCount }),
+        readState: () => ({ quitCalls, exitCodes, openCount, showCount, shutdownCount }),
     };
 }
 
@@ -69,6 +73,7 @@ test('application Quit waits for one renderer handoff and repeated Quit cannot b
     }]);
     assert.equal(host.readState().quitCalls, 0);
     assert.equal(host.readState().shutdownCount, 0);
+    assert.deepEqual(host.readState().exitCodes, []);
 });
 
 test('ordinary window close retains the renderer until the shared quit owner answers', async () => {
@@ -119,10 +124,10 @@ test('an accepted exit releases close/quit interception and settles Iroh before 
     assert.equal(host.emit(host.app, 'will-quit'), true);
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(host.readState().shutdownCount, 1);
-    assert.equal(host.readState().quitCalls, 2);
-    assert.equal(host.emit(host.app, 'will-quit'), false);
+    assert.deepEqual(host.readState().exitCodes, [0]);
+    assert.equal(host.readState().quitCalls, 1);
     host.app.emit('window-all-closed');
-    assert.equal(host.readState().quitCalls, 2);
+    assert.equal(host.readState().quitCalls, 1);
     assert.equal(host.messages.length, 1);
 });
 
@@ -151,8 +156,9 @@ test('repeated Quit cannot bypass an in-flight final Iroh shutdown', async () =>
     assert.equal(host.emit(host.app, 'will-quit'), true);
     assert.equal(host.emit(host.app, 'will-quit'), true);
     assert.equal(host.readState().shutdownCount, 1);
+    assert.deepEqual(host.readState().exitCodes, []);
     finishIroh();
     await new Promise<void>((resolve) => setImmediate(resolve));
-    assert.equal(host.emit(host.app, 'will-quit'), false);
-    assert.equal(host.readState().quitCalls, 2);
+    assert.deepEqual(host.readState().exitCodes, [0]);
+    assert.equal(host.readState().quitCalls, 1);
 });

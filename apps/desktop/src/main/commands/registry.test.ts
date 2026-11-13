@@ -38,13 +38,17 @@ test('secure storage commands share the Tauri schema and roundtrip through the i
 });
 
 test('the shared renderer can finish a desktop shutdown through the registered command', async () => {
-    const { registry, context, app, readQuitCalls } = createHarness();
+    const { registry, context, app, readQuitCalls, readExitCodes } = createHarness();
     app.emit('before-quit', { preventDefault: () => {} });
     assert.deepEqual(await runCommand(registry, 'desktop_finish_shutdown', {}, context), {
         kind: 'implemented',
         value: null,
     });
     assert.equal(readQuitCalls(), 1);
+    assert.deepEqual(readExitCodes(), []);
+    app.emit('will-quit', { preventDefault: () => {} });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.deepEqual(readExitCodes(), [0]);
 });
 
 test('late quit-listener registration receives the pending handoff once and cancellation keeps the window', async () => {

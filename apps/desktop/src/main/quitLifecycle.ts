@@ -9,7 +9,7 @@ export class DesktopQuitLifecycle {
     private exiting = false;
 
     constructor(private readonly dependencies: Readonly<{
-        app: Pick<App, 'on' | 'quit'>;
+        app: Pick<App, 'on' | 'quit' | 'exit'>;
         eventBus: DesktopEventBus;
         ensureMainWindow: () => Promise<void>;
         showMainWindow: () => void;
@@ -24,18 +24,17 @@ export class DesktopQuitLifecycle {
             if (!this.exiting) this.requestQuit();
         });
 
-        let shutdownSettled = false;
         let shutdownStarted = false;
         dependencies.app.on('will-quit', (event) => {
-            if (shutdownSettled) return;
             event.preventDefault();
             if (shutdownStarted) return;
             shutdownStarted = true;
             void dependencies.shutdownForProcessExit()
                 .catch((error: unknown) => console.error('[quit] Iroh shutdown failed', error))
                 .finally(() => {
-                    shutdownSettled = true;
-                    dependencies.app.quit();
+                    // All windows have closed and cleanup has settled; finish this exit
+                    // instead of re-entering Electron's cancelled quit sequence.
+                    dependencies.app.exit(0);
                 });
         });
     }

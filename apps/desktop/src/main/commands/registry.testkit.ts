@@ -54,9 +54,13 @@ export function createHarness(options: Readonly<{
     const desktopFileCalls: Array<readonly [string, ...unknown[]]> = [];
     const app = new EventEmitter();
     let quitCalls = 0;
+    const exitCodes: number[] = [];
     const quitLifecycle = new DesktopQuitLifecycle({
         // Electron is the process boundary; keep the real quit owner and event bridge beneath it.
-        app: Object.assign(app, { quit: () => { quitCalls += 1; } }) as unknown as Pick<App, 'on' | 'quit'>,
+        app: Object.assign(app, {
+            quit: () => { quitCalls += 1; },
+            exit: (code: number) => { exitCodes.push(code); },
+        }) as unknown as Pick<App, 'on' | 'quit' | 'exit'>,
         eventBus,
         ensureMainWindow: async () => {},
         showMainWindow: () => { shown.push(1); },
@@ -175,5 +179,6 @@ export function createHarness(options: Readonly<{
         loginItemWrites,
         app,
         readQuitCalls: () => quitCalls,
+        readExitCodes: () => exitCodes,
     };
 }
