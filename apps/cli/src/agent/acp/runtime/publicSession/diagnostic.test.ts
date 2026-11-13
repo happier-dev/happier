@@ -31,7 +31,7 @@ it('preserves a more specific native phase and reason instead of replacing them'
 });
 
 
-it.each([false, true])('carries a multiline backend refusal through ACP and transcript publication, then recovers (request dump=%s)', async requestDump => {
+it.each([false, true, 'recorded' as const])('carries a multiline backend refusal through ACP and transcript publication, then recovers (request dump=%s)', async requestDump => {
   await withTempDir('gemini-acp-refusal-', async directory => {
     // Only the external native process and transcript persistence are substituted.
     const script = writeAcpTestAgentScript({ dir: directory, fileName: 'gemini.mjs', source: `
@@ -43,13 +43,13 @@ it.each([false, true])('carries a multiline backend refusal through ACP and tran
         if (r.method === 'initialize') result = { protocolVersion: 1, agentCapabilities: { loadSession: true } };
         if (r.method === 'session/new') result = { sessionId: 'native-gemini' };
         if (r.method === 'session/prompt' && ++prompts === 1) {
-          if (${requestDump}) {
+          if (${requestDump === true}) {
             process.stderr.write('Error handling request { id: 2, method: "session/prompt" } { message: "APIError: Unable to connect" }\\n');
             await new Promise(resolve => setTimeout(resolve, 50));
           }
           process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: r.id, error: { code: -32603,
-            message: 'Error handling request {\\n  "message": "Cannot connect to API",\\n  "authorization": "Bearer synthetic-private-token"\\n}',
-            data: { limitCategory: 'validation_failed', body: 'PRIVATE_BODY' },
+            message: ${requestDump === 'recorded' ? JSON.stringify('Internal error: Cannot connect to API: Unable to connect. Is the computer able to access the url?') : JSON.stringify('Error handling request {\n  "message": "Cannot connect to API",\n  "authorization": "Bearer synthetic-private-token"\n}')},
+            data: ${JSON.stringify(requestDump === 'recorded' ? { service: 'session', errorName: 'APIError' } : { limitCategory: 'validation_failed', body: 'PRIVATE_BODY' })},
           } }) + '\\n');
           continue;
         }
@@ -82,6 +82,10 @@ it.each([false, true])('carries a multiline backend refusal through ACP and tran
       const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'gemini', error: failure.diagnostic });
       expect(issue).toMatchObject({ source: 'agent_session_error', failureCause: { phase: 'turn',
         providerErrorCode: -32603, providerErrorMessage: expect.stringContaining('Cannot connect to API') } });
+      if (requestDump === 'recorded') {
+        expect(issue.failureCause?.providerErrorMessage).toContain('service=session');
+        expect(issue.failureCause?.providerErrorMessage).toContain('errorName=APIError');
+      }
       const writes: unknown[] = [];
       const project = createRuntimeFailureTranscriptProjector({ provider: 'gemini', providerName: 'Gemini',
         session: { sessionId: 'session', enqueueAgentMessageCommitted: async (_provider, body, options) => {

@@ -676,6 +676,8 @@ describe('createAcpClientConnection', () => {
       transport: agent({ name: 'redaction-agent' }).onRequest('session/load', async () => {
         throw RequestError.internalError({
           details: 'Upstream rejected the request: token=provider-secret-value',
+          service: 'session token=service-secret-value',
+          errorName: 'APIError Authorization: Bearer metadata-secret-value',
           token: 'provider-secret-value',
           nested: { authorization: 'Bearer nested-secret-value', repeated: 'x'.repeat(100_000) },
         });
@@ -697,6 +699,10 @@ describe('createAcpClientConnection', () => {
       expect(failure.message).toContain('Upstream rejected the request');
       expect(failure.message).toContain('[REDACTED]');
       expect(failure.message).not.toContain('provider-secret-value');
+      expect(failure.message).toContain('service=session');
+      expect(failure.message).toContain('errorName=APIError');
+      expect(JSON.stringify({ message: failure.message, data: failure.data }))
+        .not.toMatch(/service-secret-value|metadata-secret-value/);
       expect(serialized).not.toContain('provider-secret-value');
       expect(serialized).not.toContain('nested-secret-value');
       expect(failure.data).toMatchObject({ details: expect.stringContaining('[REDACTED]') });

@@ -77,9 +77,15 @@ export class AcpAgentPeer {
         code: 'code' in error ? error.code : undefined,
         data,
       }) === true;
-      const rawDetails = typeof dataRecord?.details === 'string'
-        ? dataRecord.details.trim().slice(0, ACP_ERROR_DIAGNOSTIC_MAX_BYTES)
-        : '';
+      // Keep diagnostic identity alongside prose, without retaining arbitrary
+      // provider payloads (request bodies, headers or credential material).
+      const rawDetails = [
+        typeof dataRecord?.details === 'string' ? dataRecord.details.trim() : '',
+        ...(['service', 'errorName'] as const).flatMap((key) => {
+          const value = dataRecord?.[key];
+          return typeof value === 'string' && value.trim() ? [`${key}=${value.trim()}`] : [];
+        }),
+      ].filter(Boolean).join('; ');
       const sanitizedDetails = rawDetails
         ? trimBugReportTextToMaxBytes(
           redactBugReportSensitiveText(rawDetails),
