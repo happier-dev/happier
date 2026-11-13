@@ -109,7 +109,7 @@ async function renderPicker() {
     // asserting that the destination projection has settled.
     await import('@/components/sessions/new/components/machineSelection/ManagedMachineSelectionOffers');
     screen = await renderScreen(<Screen />);
-    await vi.waitFor(() => expect(content().groups?.every(group => !group.loading)).toBe(true));
+    await vi.waitFor(() => expect(content().groups?.filter(group => group.loading)).toEqual([]));
     return screen;
 }
 

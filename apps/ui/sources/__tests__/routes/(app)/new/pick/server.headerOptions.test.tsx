@@ -125,12 +125,12 @@ describe('ServerPickerScreen header options', () => {
         expect(typeof capture.getResolved()?.headerTitle).toBe('string');
     });
     it('presents as a modal on web by default and as a regular screen when requested', async () => {
-        await mountRoute();
-        expect(capture.getResolved()?.presentation).toBe('modal');
+        const rendered = await mountRoute();
+        expect(rendered.findByTestId('new-session-picker-route-frame')).not.toBeNull();
         await act(async () => {
             storage.getState().applySettingsLocal({ newSessionPresentationModeV1: 'screen' });
         });
-        expect(capture.getResolved()?.presentation).toBeUndefined();
+        expect(rendered.findByTestId('new-session-picker-route-frame')).toBeNull();
     });
     it('gives the standalone picker the only scroll viewport', async () => {
         const rendered = await mountRoute();

@@ -20,7 +20,7 @@ const navigationApi = createNavigationMock();
 const routerApi = createRouterMock();
 let localSearchParams: Record<string, string> = { selectedId: '' };
 
-installPickerCommonModuleMocks({
+await installPickerCommonModuleMocks({
     text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
     reactNative: async () =>
         (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({

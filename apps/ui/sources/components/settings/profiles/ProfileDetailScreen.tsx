@@ -11,6 +11,7 @@ import { LaunchProfileEditForm } from '@/components/profiles/edit';
 import { isBuiltInLaunchProfile } from '@/components/profiles/edit/launchProfileSave';
 import { promptLaunchProfileUnsavedChanges, useSaveLaunchProfile } from '@/components/profiles/edit/useSaveLaunchProfile';
 import { useLaunchProfileEditorDraft } from '@/components/profiles/edit/useLaunchProfileEditorDraft';
+import { LaunchProfileEditorMigration } from '@/components/profiles/migration/LaunchProfileEditorMigration';
 import { LegacyProfileMigrationConflictFlow } from '@/components/profiles/migration/LegacyProfileMigrationConflictFlow';
 import { LegacyProfileMigrationFlow } from '@/components/profiles/migration/LegacyProfileMigrationFlow';
 import { resolveProfileMigrationConflict } from '@/components/profiles/migration/status';
@@ -33,7 +34,6 @@ import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountS
 import { getProfileCatalogSnapshot } from '@/sync/store/settings/profileCatalogSnapshot';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { refreshProfileCatalog } from '@/sync/engine/settings/profileCatalogEngine';
-import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { randomUUID } from '@/platform/randomUUID';
 // The same store the profile readers hydrate published documents from.
 import { getStorage } from '@/sync/domains/state/storageStore';
@@ -134,30 +134,15 @@ export const ProfileDetailScreen = React.memo(function ProfileDetailScreen(props
     const collection = useProfilesCollection();
     const router = useRouter();
     const scope = useAccountSettingsScope();
-    const migrationAcknowledged = React.useRef(false);
     const { target } = props;
     const sourceId = target.kind === 'draft' ? target.cloneFrom : target.profileId;
-    React.useEffect(() => { migrationAcknowledged.current = false; }, [scope?.serverId, scope?.accountId, sourceId]);
     const { draft, discard } = useLaunchProfileEditorDraft({ enabled: true,
         cloneFrom: target.kind === 'draft' ? target.cloneFrom : target.profileId, saveAsBuiltin: target.kind === 'profile' });
     const saved = target.kind === 'profile' ? collection.resolveProfile(target.profileId) : null;
     const profile = draft.status === 'ready' ? draft.profile : saved;
-    const rehydrateMigration = React.useCallback(async (minimumVersion: number) => {
-        await getSyncSingleton().refreshAccountSettingsFromServer(minimumVersion, scope);
-        if (!scope) throw new Error('profile_account_unavailable');
-        await refreshProfileCatalog(scope);
-        migrationAcknowledged.current = true;
-    }, [scope]);
     if (draft.status === 'migration') {
-        const conflict = collection.migrationStatusOf(draft.profile.id) === 'conflict'
-            ? resolveProfileMigrationConflict({ profileId: draft.profile.id, providerSettings: collection.providerSettings }) : null;
-        const close = () => {
-            if (!migrationAcknowledged.current) openProfileCollectionHref(router, PROFILES_COLLECTION_ROOT, true, 'ProfileDetail.cancelMigration');
-        };
-        return <View style={styles.migration}>{conflict ? <LegacyProfileMigrationConflictFlow
-            profileName={draft.profile.name} conflict={conflict} rehydrateSettings={rehydrateMigration} onClose={close} />
-            : <LegacyProfileMigrationFlow profile={draft.profile} secretBindings={draft.profile.secretBindings ?? {}}
-                rehydrateSettings={rehydrateMigration} onClose={close} />}</View>;
+        return <View style={styles.migration}><LaunchProfileEditorMigration key={JSON.stringify([scope, sourceId])}
+            profile={draft.profile} onCancel={() => openProfileCollectionHref(router, PROFILES_COLLECTION_ROOT, true, 'ProfileDetail.cancelMigration')} /></View>;
     }
     if (draft.status === 'loading' && saved && isBuiltInLaunchProfile(saved)) {
         return <ItemList><SurfaceStateCard testID="settings.profiles.detail.loading" kind="loading" title={t('common.loading')} /></ItemList>;

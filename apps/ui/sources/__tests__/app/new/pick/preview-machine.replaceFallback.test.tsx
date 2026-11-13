@@ -62,7 +62,7 @@ const previewMachine = createMachineFixture({
     activeAt: Date.now(),
 });
 
-const picker = installPickerCommonModuleMocks({
+const picker = await installPickerCommonModuleMocks({
     reactNative: async () =>
         (await import('@/dev/testkit/mocks/reactNative')).createReactNativeNativeMock({ platformOS: 'ios' }),
     reactNavigationNative: async () => ({
@@ -144,6 +144,46 @@ describe('PreviewMachinePickerScreen replace fallback', () => {
             scope, stale: false, catalog: { status: 'ready', revision: 3 },
         }));
     }
+
+    it('opens resolved shared Machine names beneath one offline fold per ownership section', async () => {
+        await prepareAcpCatalog();
+        const { storage } = await import('@/sync/domains/state/storageStore');
+        const { publishMachineActivityForTest } = await import('@/dev/testkit/harness/machinePresence');
+        const { getActiveServerId } = await import('@/sync/domains/server/serverProfiles');
+        await applyPickerFixtureSettings(settingsParse(settingsState.current));
+        const serverId = getActiveServerId();
+        const named = ['owned-1', 'owned-2', 'shared-1', 'shared-2'].map((id, index) => createMachineFixture({
+            id, active: false, activeAt: 0, storageMode: 'plain',
+            metadata: { ...previewMachine.metadata!, displayName: id },
+            ...(index >= 2 ? { isShared: true, access: { custodian: { accountId: 'qa-c', displayName: 'qa-c' },
+                role: 'use' as const, resourceMode: 'plain' as const, accessState: 'ready' as const } } : {}),
+        }));
+        // The facts roster has no content; the demanded inventory already opened those records.
+        storage.getState().applyMachines(named.map(machine => ({ ...machine, metadata: null })), true, { sourceServerId: serverId });
+        publishMachineActivityForTest(named);
+        storage.setState({ machineListByServerId: { [serverId]: named.map(machine => ({ ...machine, metadata: null })) }, machineListStatusByServerId: { [serverId]: 'loading' } });
+        const PreviewMachinePickerScreen = (await import('@/app/(app)/new/pick/preview-machine')).default;
+        const { SelectionList } = await import('@/components/ui/selectionList');
+        const screen = await renderScreen(<PreviewMachinePickerScreen />);
+        await awaitRenderedCatalog();
+        const coldSections = screen.findByType(SelectionList).props.rootStep.sections as readonly import('@/components/ui/selectionList').SelectionListSectionDescriptor[];
+        const coldMachineRows = coldSections.flatMap(section => section.kind === 'static' ? section.options : [])
+            .filter(option => named.some(machine => machine.id === option.id));
+        expect(coldMachineRows).toEqual([]);
+        await act(async () => {
+            storage.setState({ machineListByServerId: { [serverId]: named }, machineListStatusByServerId: { [serverId]: 'idle' } });
+        });
+        const sections = () => screen.findByType(SelectionList).props.rootStep.sections;
+        const folds = () => sections().flatMap((section: import('@/components/ui/selectionList').SelectionListSectionDescriptor) =>
+            section.kind === 'static' ? section.options.filter(option => option.id.startsWith('offline:')) : []);
+        expect(folds().map((fold: { id: string }) => fold.id)).toEqual(['offline:all', 'offline:shared:qa-c']);
+        for (const fold of folds()) await act(async () => { fold.onSelect(); });
+        const options = sections().flatMap((section: import('@/components/ui/selectionList').SelectionListSectionDescriptor) => section.kind === 'static' ? section.options : []);
+        for (const machine of named) expect(options.find((option: { id: string }) => option.id === machine.id)?.label)
+            .toBe(machine.metadata?.displayName ?? machine.metadata?.host);
+        expect(folds()).toHaveLength(2);
+        await screen.unmount();
+    });
 
     it('preserves the new-session context when the preview machine picker has to replace back to /new', async () => {
         await prepareAcpCatalog();

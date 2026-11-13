@@ -47,7 +47,7 @@ const featureState = vi.hoisted(() => ({
 const resumeSelectionContentPropsRef = { current: null as NewSessionResumeSelectionContentProps | null };
 let acpDefinitions: AcpBackendDefinitionV1[] = [];
 
-const picker = installPickerCommonModuleMocks({
+const picker = await installPickerCommonModuleMocks({
     reactNative: async () =>
         (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
             Platform: { OS: 'ios' },

@@ -78,7 +78,7 @@ function emitLocalSearchParamsChange() {
         listener();
     }
 }
-const picker = installPickerCommonModuleMocks({
+const picker = await installPickerCommonModuleMocks({
     reactNative: async () =>
         (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
             Platform: { OS: 'web' },
@@ -220,6 +220,7 @@ describe('PathPickerScreen', () => {
         await flushHookEffects({ cycles: 1, turns: 2 });
 
         expect(pathSelectionProps).toBeTruthy();
+        expect(pathSelectionProps?.().machineId).toBe('machine-1');
 
         await act(async () => {
             await pathSelectionProps?.().onCommit('/repo/selected');

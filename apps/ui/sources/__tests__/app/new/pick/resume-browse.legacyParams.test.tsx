@@ -25,7 +25,7 @@ const routeParamsState = vi.hoisted(() => ({
         dataId: ['draft-7', 'ignored'],
     } as Record<string, string | string[]>,
 }));
-installPickerCommonModuleMocks({
+await installPickerCommonModuleMocks({
     reactNative: async () =>
         (await import('@/dev/testkit/mocks/reactNative')).createReactNativeNativeMock({ platformOS: 'ios' }),
     reactNavigationNative: async () => ({

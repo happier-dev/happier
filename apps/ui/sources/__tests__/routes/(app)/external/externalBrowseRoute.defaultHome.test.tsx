@@ -14,7 +14,7 @@ enableReactActEnvironment();
 
 const routeParams = vi.hoisted(() => ({ value: {} as Record<string, string> }));
 const describeProjection = createProjectionDescribeMock();
-const picker = installPickerCommonModuleMocks({
+const picker = await installPickerCommonModuleMocks({
     expoRouter: async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({
         params: () => routeParams.value,
     }).module,

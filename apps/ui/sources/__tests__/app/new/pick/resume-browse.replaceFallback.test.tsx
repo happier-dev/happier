@@ -52,7 +52,7 @@ type ExternalSessionsBrowseScreenProps = Readonly<{
 
 const browseScreenPropsRef = { current: null as ExternalSessionsBrowseScreenProps | null };
 
-const picker = installPickerCommonModuleMocks({
+const picker = await installPickerCommonModuleMocks({
     reactNative: async () =>
         (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
             Platform: { OS: 'ios' },

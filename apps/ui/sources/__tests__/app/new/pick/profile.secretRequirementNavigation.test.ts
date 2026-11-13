@@ -65,7 +65,7 @@ const settingsState = {
 };
 const machineContributionRegistryProjectionDescribe = createProjectionDescribeMock();
 
-const picker = installPickerCommonModuleMocks({
+const picker = await installPickerCommonModuleMocks({
     reactNative: async () =>
         (await import('@/dev/testkit/mocks/reactNative')).createReactNativeNativeMock({ platformOS: 'ios' }),
     text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),

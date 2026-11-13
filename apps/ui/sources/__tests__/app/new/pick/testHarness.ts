@@ -1,6 +1,6 @@
 import type { Settings } from '@/sync/domains/settings/settings';
 import React from 'react';
-import { afterEach, beforeAll, beforeEach, vi } from 'vitest';
+import { afterEach, beforeEach, vi } from 'vitest';
 import { DaemonContributionRegistryProjectionDescribeResponseSchema, PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_ERROR_CODES} from '@happier-dev/protocol/rpcErrors';
 import { RPC_METHODS} from '@happier-dev/protocol/rpc/methods';
@@ -132,7 +132,7 @@ export function createProjectionDescribeMock() {
     );
 }
 
-export function installPickerCommonModuleMocks(options: PickerCommonModuleMocksOptions = {}) {
+export async function installPickerCommonModuleMocks(options: PickerCommonModuleMocksOptions = {}) {
     pickerCommonModuleMocksState.options = options;
     let account: Awaited<ReturnType<typeof import('@/dev/testkit/harness/serverAccountConnectionHarness').restoreServerAccountForTest>> | undefined;
     let homes: ReturnType<typeof import('@/dev/testkit/harness/homeGovernanceHarness').createHomeGovernanceHarness> | undefined;
@@ -171,12 +171,6 @@ export function installPickerCommonModuleMocks(options: PickerCommonModuleMocksO
     // These factories consume caller configuration, so register them after that
     // configuration exists. Hoisting can resolve a default Web/router fixture
     // while the caller's static testkit imports are still evaluating.
-
-    if (options.projectionSeam) {
-        beforeAll(async () => {
-            await initializeRealAppRuntimeForTests();
-        });
-    }
 
     beforeEach(async () => {
         const seam = pickerCommonModuleMocksState.options.projectionSeam;
@@ -357,6 +351,10 @@ export function installPickerCommonModuleMocks(options: PickerCommonModuleMocksO
             return await storageFactory(importOriginal);
         });
     }
+
+    // Cold-loading the real runtime belongs to collection, after all boundary
+    // factories above are registered, rather than the per-test hook budget.
+    if (options.projectionSeam) await initializeRealAppRuntimeForTests();
 
     return {
         restoreHome,

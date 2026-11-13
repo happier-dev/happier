@@ -17,7 +17,7 @@ const navigation = createNavigationMock();
 let params = { machineId: 'm1', selectedPath: '', spawnServerId: '' };
 let resetRouterParams: (() => void) | undefined;
 
-installPickerCommonModuleMocks({
+await installPickerCommonModuleMocks({
     reactNative: async () => (await import('@/dev/testkit/mocks/reactNative'))
         .createReactNativeNativeMock({ platformOS: 'ios' }),
     expoRouter: async () => {

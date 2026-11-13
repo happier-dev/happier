@@ -1,6 +1,6 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 import { RunnerArtifactAvailabilityProjectionV1Schema } from '@happier-dev/protocol/ephemeralRunner/runnerArtifact';
 import { EPHEMERAL_RUNNER_ARTIFACTS_PATH_V1 } from '@happier-dev/protocol/ephemeralRunner/routes';
@@ -49,7 +49,7 @@ let homeRecordId: string;
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 let waitForHomeGovernance: typeof import('@/dev/testkit/harness/homeGovernanceHarness').waitForHomeGovernance;
 
-installPickerCommonModuleMocks({
+await installPickerCommonModuleMocks({
     reactNative: async () =>
         (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
             Platform: {
@@ -77,10 +77,9 @@ installPickerCommonModuleMocks({
     },
 });
 
+await initializeRealAppRuntimeForTests();
+
 describe('MachinePickerScreen (iOS presentation)', () => {
-    beforeAll(async () => {
-        await initializeRealAppRuntimeForTests();
-    });
 
     afterEach(async () => {
         standardCleanup();
@@ -144,12 +143,11 @@ describe('MachinePickerScreen (iOS presentation)', () => {
             serverIdentityId: HOME_ID, accountId: ACCOUNT_ID, request: homes.request });
     });
 
-    it('presents as containedModal on iOS and provides an explicit header back button', async () => {
+    it('provides an explicit header Cancel on iOS', async () => {
         const MachinePickerScreen = (await import('@/app/(app)/new/pick/machine')).default;
         await renderScreen(React.createElement(MachinePickerScreen));
 
         const options = stackOptionsCapture.getResolved();
-        expect(options?.presentation).toBe('containedModal');
         expect(typeof options?.headerLeft).toBe('function');
 
         const backButton = options?.headerLeft?.();

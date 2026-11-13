@@ -629,7 +629,11 @@ export function createProviderSettingsAccountHarness() {
             // This fixture publishes a complete HTTP census, including an authoritative empty list.
             machineDataKeys: new Map(), sourceServerId: targetServerId, throwOnError: true, replace: true,
             request: (path, init) => home.request(new URL(path, homeRecord.serverUrl), init),
-            applyMachines: (rows, replace) => storage.getState().applyMachines(rows, replace, { sourceServerId: targetServerId }),
+            applyMachines: (rows, replace) => storage.getState().applyMachines(rows, replace, {
+                sourceServerId: targetServerId, sourceAccountId: accountId,
+            }),
+            onListComplete: () => storage.getState().markMachineListSettled(targetServerId),
+            onListUnavailable: () => storage.getState().markMachineListUnavailable(targetServerId),
         });
     }
     async function selectMachine(targetServerId: string, machineId: string | null, selectionKey?: string) {

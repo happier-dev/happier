@@ -38,7 +38,7 @@ const describeRequests: Array<ReturnType<typeof DaemonContributionRegistryProjec
 vi.mock('expo-constants', () => ({ default: { statusBarHeight: 0 } }));
 vi.mock('@react-navigation/elements', () => ({ useHeaderHeight: () => 0 }));
 
-installPickerCommonModuleMocks({
+await installPickerCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeNativeMock({ platformOS: 'ios' }, {

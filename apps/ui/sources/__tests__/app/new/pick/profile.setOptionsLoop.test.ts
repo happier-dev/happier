@@ -22,7 +22,7 @@ const navigationApi = createNavigationMock();
 const routerApi = createRouterMock();
 let searchParams = { selectedId: '', machineId: 'm1' };
 
-installPickerCommonModuleMocks({
+await installPickerCommonModuleMocks({
     text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
     reactNative: async () =>
         (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({

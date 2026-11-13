@@ -14,7 +14,7 @@ const navigation = createNavigationMock();
 const capture = createStackOptionsCapture();
 let params: Record<string, string> = {};
 
-installPickerCommonModuleMocks({
+await installPickerCommonModuleMocks({
     reactNative: async () => (await import('@/dev/testkit/mocks/reactNative'))
         .createReactNativeNativeMock({ platformOS: 'ios' }),
     expoRouter: async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({

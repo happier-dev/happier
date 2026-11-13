@@ -24,7 +24,7 @@ const stackOptionsCapture = createStackOptionsCapture();
 
 type PlatformSelectOptions<T> = { ios?: T; default?: T };
 
-installPickerCommonModuleMocks({
+await installPickerCommonModuleMocks({
     text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
     reactNative: async () =>
         (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
@@ -66,14 +66,13 @@ describe('PathPickerScreen (iOS presentation)', () => {
         standardCleanup();
     });
 
-    it('presents as containedModal on iOS and provides an explicit header back button', async () => {
+    it('provides explicit header Cancel and Done actions on iOS', async () => {
         const PathPickerScreen = (await import('@/app/(app)/new/pick/path')).default;
         stackOptionsCapture.reset();
 
         await renderScreen(React.createElement(runtime.Wrapper, null, React.createElement(PathPickerScreen)));
 
         const options = stackOptionsCapture.getResolved();
-        expect(options?.presentation).toBe('containedModal');
         expect(typeof options?.headerLeft).toBe('function');
 
         // K2 picker route chrome: the leading control is Cancel.

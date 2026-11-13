@@ -32,6 +32,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { useProfileCatalog } from '@/sync/store/useProfileCatalog';
 import { useLaunchProfileEditorDraft } from '@/components/profiles/edit/useLaunchProfileEditorDraft';
+import { LaunchProfileEditorMigration } from '@/components/profiles/migration/LaunchProfileEditorMigration';
 import { Icon } from '@/components/ui/icons/Icon';
 import { promptLaunchProfileUnsavedChanges, useSaveLaunchProfile } from '@/components/profiles/edit/useSaveLaunchProfile';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
@@ -160,12 +161,14 @@ export default React.memo(function ProfileEditScreen() {
         return null;
     }, [profileDataParam]);
     const { draft } = useLaunchProfileEditorDraft({
-        enabled: !providedProfile && (Boolean(cloneFromProfileIdParam) || !profileIdParam),
-        cloneFrom: cloneFromProfileIdParam ?? null,
+        enabled: !providedProfile,
+        cloneFrom: cloneFromProfileIdParam ?? profileIdParam ?? null,
+        saveAsBuiltin: !cloneFromProfileIdParam && Boolean(profileIdParam),
     });
     const saved = profileIdParam ? launchProfiles.find(entry => entry.id === profileIdParam)
         ?? getBuiltInProfile(profileIdParam) : null;
-    const profile = providedProfile ?? (draft.status === 'ready' ? draft.profile : saved);
+    const profile = providedProfile ?? (draft.status === 'ready' ? draft.profile
+        : draft.status === 'idle' ? saved : null);
     const draftSecretBindings = draft.status === 'ready' ? draft.secretBindings : undefined;
     const loading = !profile && (draft.status === 'loading' || (!catalog || catalog.catalog.status === 'loading'));
 
@@ -288,7 +291,10 @@ export default React.memo(function ProfileEditScreen() {
                         <View style={[
                             { maxWidth: layout.maxWidth, flex: 1, width: '100%', alignSelf: 'center' }
                         ]}>
-                            {!profile ? <SurfaceStateCard
+                            {draft.status === 'migration' ? <LaunchProfileEditorMigration
+                                key={JSON.stringify([profileScope, draft.profile.id])}
+                                profile={draft.profile} onCancel={handleCancel}
+                            /> : !profile ? <SurfaceStateCard
                                 testID="profiles.edit.unavailable"
                                 kind={loading ? 'loading' : 'unavailable'}
                                 title={loading ? t('common.loading') : t('profilesPage.notFoundTitle')}

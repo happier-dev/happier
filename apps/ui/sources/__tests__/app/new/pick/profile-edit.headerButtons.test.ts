@@ -48,7 +48,7 @@ let draftId = 'draft-before';
 vi.mock('expo-constants', () => ({ default: { statusBarHeight: 0 } }));
 vi.mock('@react-navigation/elements', () => ({ useHeaderHeight: () => 0 }));
 
-installPickerCommonModuleMocks({
+await installPickerCommonModuleMocks({
     reactNative: async () => {
         const { createReactNativeNativeMock } = await import('@/dev/testkit/mocks/reactNative');
         return createReactNativeNativeMock({ platformOS: 'ios' }, {
@@ -275,7 +275,7 @@ describe('ProfileEditScreen (header buttons)', () => {
         expect(routerMock.replace).toHaveBeenCalledWith({ pathname: '/new', params: expect.objectContaining({ profileId: 'p1' }) });
     });
 
-    it('saves a built-in as a new current profile through the same presented guard', async () => {
+    it('opens the guided migration before editing a builtin from the picker', async () => {
         const { DEFAULT_PROFILES, getBuiltInProfile } = await import('@/sync/domains/profiles/profileUtils');
         const builtIn = getBuiltInProfile(DEFAULT_PROFILES[0].id);
         if (!builtIn) throw new Error('Expected canonical built-in profile');
@@ -283,19 +283,15 @@ describe('ProfileEditScreen (header buttons)', () => {
         profileData = '';
         profileId = builtIn.id;
         const screen = await renderProfileEditor();
-        await editName(screen, 'Saved built-in copy');
+        const { LegacyProfileMigrationFlow } = await import('@/components/profiles/migration/LegacyProfileMigrationFlow');
+        await vi.waitFor(() => expect(screen.findAllByType(LegacyProfileMigrationFlow)).toHaveLength(1));
+        expect(screen.findHostByTestId('profile-legacy-name')).toBeNull();
+        expect(screen.findHostByTestId('profile-slim-name')).toBeNull();
+        expect(stackOptionsCapture.getResolved()?.headerRight?.()?.props.disabled).toBe(true);
         await closeAndFlush();
-        expect(alertSpy.mock.calls.at(-1)?.[2]?.some((button) => button.text === 'common.saveAs')).toBe(true);
-        await chooseDecision('common.saveAs');
-        await vi.waitFor(() => {
-            expect(savedProfiles()).toEqual([expect.objectContaining({ v: 2, name: 'Saved built-in copy' })]);
-        });
-        const { readAiLaunchProfileCollection} = await import('@happier-dev/protocol/profiles/read');
-        const entry = readAiLaunchProfileCollection(savedProfiles()).entries[0];
-        if (!entry || entry.kind === 'opaque') throw new Error('Expected saved current profile');
-        expect(entry.profile.id).not.toBe(builtIn.id);
+        expect(alertSpy).not.toHaveBeenCalled();
+        expect(savedProfiles()).toEqual([]);
         expect(getBuiltInProfile(builtIn.id)).toEqual(builtIn);
-        expect(navigationMock.goBack).not.toHaveBeenCalled();
-        expect(routerMock.replace).toHaveBeenCalledWith({ pathname: '/new', params: expect.objectContaining({ profileId: entry.profile.id }) });
+        expect(navigationMock.goBack).toHaveBeenCalledOnce();
     });
 });

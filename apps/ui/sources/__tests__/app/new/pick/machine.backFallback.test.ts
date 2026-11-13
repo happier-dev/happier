@@ -19,7 +19,7 @@ const routerMock = createRouterMock();
 const navigationMock = { ...createNavigationMock(), canGoBack: vi.fn(() => false) };
 const stackOptionsCapture = createStackOptionsCapture();
 
-installPickerCommonModuleMocks({
+await installPickerCommonModuleMocks({
     reactNative: async () =>
         (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
             Platform: {
@@ -64,19 +64,8 @@ describe('MachinePickerScreen (back fallback)', () => {
     it('replaces to /new when it cannot go back', async () => {
         navigationMock.canGoBack.mockReturnValue(false);
         const MachinePickerScreen = (await import('@/app/(app)/new/pick/machine')).default;
-        await renderScreen(React.createElement(runtime.Wrapper, null, React.createElement(MachinePickerScreen)));
-
-        const options = stackOptionsCapture.getResolved();
-        expect(typeof options?.headerLeft).toBe('function');
-
-        const backButton = options?.headerLeft?.();
-        expect(typeof backButton?.props?.onPress).toBe('function');
-        // K2 picker route chrome: the leading control is Cancel (the native title is the only other chrome).
-        if (!backButton) throw new Error('Expected native leading Cancel control');
-        const renderedLeading = await renderScreen(backButton);
-        expect(renderedLeading.findByTestId('new-session-machine-picker-cancel')?.props.accessibilityLabel)
-            .toBe('common.cancel');
-        backButton?.props?.onPress?.();
+        const screen = await renderScreen(React.createElement(runtime.Wrapper, null, React.createElement(MachinePickerScreen)));
+        await screen.pressByTestIdAsync('new-session-machine-picker-cancel');
 
         // The picker's own `selectedId` is not new-session context, so the
         // structured fallback href carries no params.

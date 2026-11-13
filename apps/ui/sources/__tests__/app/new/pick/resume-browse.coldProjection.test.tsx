@@ -29,7 +29,7 @@ const routeParamsState = vi.hoisted(() => ({
 const machineContributionRegistryProjectionDescribeMock = createProjectionDescribeMock();
 const browseScreenPropsRef = { current: null as Record<string, unknown> | null };
 
-installPickerCommonModuleMocks({
+const boundary = await installPickerCommonModuleMocks({
     reactNative: async () =>
         (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
             Platform: { OS: 'ios' },
@@ -119,6 +119,29 @@ describe('ResumeBrowsePickerScreen cold projection', () => {
 
     afterEach(() => {
         standardCleanup();
+    });
+
+    it('renders a terminal catalog refusal with retry even while the daemon is loading', async () => {
+        const { ACP_CATALOG_ROWS_ROUTE_V1 } = await import('@happier-dev/protocol/acp/catalog/catalogRowsV1');
+        const { refreshAcpCatalog } = await import('@/sync/engine/settings/acpCatalogEngine');
+        const projection = createDeferred<MachineContributionRegistryProjectionDescribeResult>();
+        machineContributionRegistryProjectionDescribeMock.mockImplementation(() => projection.promise);
+        boundary.homeBoundary.answer(boundary.accountScope.serverId, ACP_CATALOG_ROWS_ROUTE_V1, { status: 503 });
+        await refreshAcpCatalog(boundary.accountScope);
+        const ResumeBrowsePickerScreen = (await import('@/app/(app)/new/pick/resume-browse')).default;
+        const screen = await renderScreen(React.createElement(ResumeBrowsePickerScreen));
+        const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+        const card = screen.tree.root.findByType(SurfaceStateCard);
+        expect(card.props.kind).toBe('unavailable');
+        expect(card.props.diagnosticCode).toBe('unreachable');
+        expect(routerMock.replace).not.toHaveBeenCalled();
+        boundary.homeBoundary.answer(boundary.accountScope.serverId, ACP_CATALOG_ROWS_ROUTE_V1, {
+            body: { status: 'present', revision: 1, content: { t: 'plain', v: { v: 1, definitions: [] } } },
+        });
+        await act(async () => { await card.props.action.onPress(); });
+        expect(screen.findByTestId('external-sessions-browse-route-loading')).not.toBeNull();
+        await screen.unmount();
+        await act(async () => { projection.resolve({ supported: false, reason: 'not-supported' }); });
     });
 
     it('retains the picker while the bundled-Agent projection is still loading', async () => {

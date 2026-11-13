@@ -62,7 +62,7 @@ let selectableSecret: ReturnType<typeof SavedSecretSchema.parse>;
 const selectedSecretRef = formatSharedSavedSecretRefV1('secret-picked');
 let acpDefinitions: Array<ReturnType<typeof AcpBackendDefinitionV1Schema.parse>> = [];
 
-const picker = installPickerCommonModuleMocks({
+const picker = await installPickerCommonModuleMocks({
     reactNative: async () =>
         (await import('@/dev/testkit/mocks/reactNative')).createReactNativeNativeMock({ platformOS: 'ios' }),
     reactNavigationNative: async () => ({

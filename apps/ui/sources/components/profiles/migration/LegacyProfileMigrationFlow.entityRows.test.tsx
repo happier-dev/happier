@@ -81,7 +81,7 @@ const { useProviderSettingsTarget } = await import('@/providers/hooks/targetMach
 const [{ getStorage }, { settingsParse }, { profileDefaults }, { MACHINE_ADMINISTRATION_SELECTION_KEYS_V1 },
     { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime }, { getActiveServerSnapshot },
     { getServerProfileById, resolveServerProfileScopeIdForIdentifier }, { disconnectActiveServerConnection }, { getSyncSingleton },
-    { applyProfileCatalogSnapshot, getProfileCatalogSnapshot, resetProfileCatalogSnapshotsForTests },
+    { getProfileCatalogSnapshot, resetProfileCatalogSnapshotsForTests },
     { refreshProfileCatalog, resetProfileCatalogEngineForTests }, { serverScopedRpcSocketPool }, { resetRuntimeFetch }, { t }, { newProfileRoute }] = await Promise.all([
     import('@/sync/domains/state/storageStore'), import('@/sync/domains/settings/settings'), import('@/sync/domains/profiles/profile'),
     import('@/sync/domains/machines/administration/selectionPreferences'), import('@/sync/domains/scope/activeServerAccountScope'),
@@ -229,9 +229,9 @@ describe('Legacy Profile guided source preparation', () => {
         getSyncSingleton().applySettings({ machineAdministrationTargetsLocalV1: {
             [MACHINE_ADMINISTRATION_SELECTION_KEYS_V1.providers]: { serverIdentityId, machineId: selectedMachineId },
         } }, { expectedSettingsScope: homeScope, source: 'ui' });
-        applyProfileCatalogSnapshot(homeScope, { status: 'ready', source: 'legacy', authority: 'inactive',
-            records: [], control: null, controlRevision: 'absent', referenceGuardRevision: 'absent', diagnostics: [] },
-        true, new Map(), { legacyProfiles: [profile] });
+        // Finish the initial canonical read before a case changes its HTTP source.
+        // Publishing a fixture snapshot leaves the actual loader's bootstrap in flight.
+        await refreshProfileCatalog(homeScope);
         rpc.mockImplementation(async call => {
             if (call.method.endsWith(`:${RPC_METHODS.DAEMON_PROVIDERS_PROFILE_MIGRATION_PREVIEW}`)) {
                 return DaemonProviderProfileMigrationPreviewResponseV1Schema.parse({ status: 'success', sourceProfileId: profile.id,
@@ -355,8 +355,10 @@ describe('Legacy Profile guided source preparation', () => {
         const screen = await renderScreen(<LegacyProfileMigrationFlow profile={profile} secretBindings={{}} onClose={vi.fn()} />);
         expect(rpc).not.toHaveBeenCalled();
         catalogReads.mockClear();
-        const machinePicker = screen.findAllByType(SessionMachineField).find(row =>
+        const findMachinePicker = () => screen.findAllByType(SessionMachineField).find(row =>
             row.props.machines?.some((machine: Readonly<{ id: string }>) => machine.id === selectedMachineId));
+        await vi.waitFor(() => expect(findMachinePicker()).toBeDefined());
+        const machinePicker = findMachinePicker();
         expect(machinePicker).toBeDefined();
         await act(async () => { machinePicker!.props.onSelectMachine(machinePicker!.props.machines!.find((machine: Readonly<{ id: string }>) => machine.id === selectedMachineId)!); });
         const preview = screen.findAllByType(Item).find(item => item.props.title === t('settingsProviders.migration.preview'));
@@ -472,8 +474,9 @@ describe('Legacy Profile guided source preparation', () => {
         expect(rawSettings).toEqual(migrationPreferences);
     });
 
-    it.each(['settings-copy', 'picker-copy', 'picker-builtin'] as const)('opens %s only after guided confirmation publishes the canonical migrated row', async entry => {
-        const record = await seedDestinationLegacy({ holdPublication: true, builtin: entry === 'picker-builtin' });
+    it.each(['settings-copy', 'settings-builtin', 'picker-copy', 'picker-builtin'] as const)('opens %s only after guided confirmation publishes the canonical migrated row', async entry => {
+        const builtin = entry === 'settings-builtin' || entry === 'picker-builtin';
+        const record = await seedDestinationLegacy({ holdPublication: true, builtin });
         const [{ LegacyProfileMigrationFlow }, { Item }, { SessionMachineField }] = await Promise.all([
             import('./LegacyProfileMigrationFlow'), import('@/components/ui/lists/Item'),
             import('@/components/sessions/new/placement/SessionPlacementChips'),
@@ -483,12 +486,15 @@ describe('Legacy Profile guided source preparation', () => {
             : entry === 'picker-copy' ? { cloneFromProfileId: record.id } : {};
         routeBoundary.reset();
         const wrapper = ({ children }: React.PropsWithChildren) => <HeaderHeightContext.Provider value={0}>{children}</HeaderHeightContext.Provider>;
-        const screen = await renderScreen(entry !== 'settings-copy' ? <ProfileEditScreen />
-            : <ProfileDetailScreen target={{ kind: 'draft', cloneFrom: record.id }} />, { wrapper });
+        const screen = await renderScreen(entry === 'settings-builtin' ? <ProfileDetailScreen target={{ kind: 'profile', profileId: record.id }} />
+            : entry === 'settings-copy' ? <ProfileDetailScreen target={{ kind: 'draft', cloneFrom: record.id }} />
+                : <ProfileEditScreen />, { wrapper });
         expect(screen.findAllByType(LegacyProfileMigrationFlow)).toHaveLength(1);
-        const picker = screen.findAllByType(SessionMachineField).find(row => row.props.machines?.some((machine: Readonly<{ id: string }>) => machine.id === selectedMachineId));
+        const findPicker = () => screen.findAllByType(SessionMachineField).find(row => row.props.machines?.some((machine: Readonly<{ id: string }>) => machine.id === selectedMachineId));
+        await vi.waitFor(() => expect(findPicker()).toBeDefined());
+        const picker = findPicker();
         await act(async () => { picker!.props.onSelectMachine(picker!.props.machines!.find((machine: Readonly<{ id: string }>) => machine.id === selectedMachineId)!); });
-        if (entry === 'picker-builtin') {
+        if (builtin) {
             await act(async () => { screen.changeTextByTestId('profile-migration-base-url', 'https://gateway.example.test'); });
         }
         await pressTestInstanceAsync(screen.findAllByType(Item).find(row => row.props.title === t('settingsProviders.migration.preview')));

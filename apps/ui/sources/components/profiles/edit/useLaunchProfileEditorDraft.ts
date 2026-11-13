@@ -47,6 +47,8 @@ export function useLaunchProfileEditorDraft(options: Readonly<{ enabled: boolean
     React.useEffect(() => {
         if (captured.key === key && ['ready', 'idle', 'discarded'].includes(captured.draft.status)) return;
         const draft = initialize(captured.key === key && captured.draft.status === 'migration');
+        // A migration's catalog refresh must retain the pending copy intent until its new source arrives.
+        if (captured.key === key && captured.draft.status === 'migration' && draft.status === 'loading') return;
         if (captured.key === key && (draft.status === 'loading' && captured.draft.status === 'loading'
             || draft.status === 'unavailable' && captured.draft.status === 'unavailable'
                 && draft.reason === captured.draft.reason

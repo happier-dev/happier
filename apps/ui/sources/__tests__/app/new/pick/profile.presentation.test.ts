@@ -20,7 +20,7 @@ const routerMock = createRouterMock();
 const navigationMock = createNavigationMock();
 const stackOptionsCapture = createStackOptionsCapture();
 
-installPickerCommonModuleMocks({
+await installPickerCommonModuleMocks({
     text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
     reactNative: async () =>
         (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
@@ -68,12 +68,11 @@ describe('ProfilePickerScreen (iOS presentation)', () => {
         navigationMock.goBack.mockClear();
     });
 
-    it('presents as containedModal on iOS and provides an explicit header back button', async () => {
+    it('provides an explicit header Cancel on iOS', async () => {
         const ProfilePickerScreen = (await import('@/app/(app)/new/pick/profile')).default;
         await renderScreen(React.createElement(runtime.Wrapper, null, React.createElement(ProfilePickerScreen)));
 
         const resolvedOptions = stackOptionsCapture.getResolved();
-        expect(resolvedOptions?.presentation).toBe('containedModal');
         expect(typeof resolvedOptions?.headerLeft).toBe('function');
 
         const backButton = typeof resolvedOptions?.headerLeft === 'function'

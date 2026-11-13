@@ -40,12 +40,13 @@ installSettingsViewCommonModuleMocks({
 
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+// Load the real screen after its boundaries are installed, outside any case's deadline.
+const { TeamGroupsScreen } = await import('./TeamGroupsScreen');
 
 const TEAM_GET_PATH = '/v1/teams/get';
 const GROUPS_LIST_PATH = '/v1/teams/groups/list';
 
 async function renderGroups(serverId: string) {
-    const { TeamGroupsScreen } = await import('./TeamGroupsScreen');
     return renderScreen(<TeamGroupsScreen serverId={serverId} teamId="team-1" />);
 }
 

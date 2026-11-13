@@ -25,7 +25,7 @@ const routerMock = createRouterMock();
 const navigationMock = createNavigationMock();
 const stackOptionsCapture = createStackOptionsCapture();
 
-installPickerCommonModuleMocks({
+await installPickerCommonModuleMocks({
     text: async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock(),
     reactNative: async () =>
         (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
@@ -67,12 +67,11 @@ describe('SecretPickerScreen (iOS presentation)', () => {
         navigationMock.setParams.mockClear();
     });
 
-    it('presents as containedModal on iOS and provides an explicit header back button', async () => {
+    it('provides an explicit header Cancel on iOS', async () => {
         const SecretPickerScreen = (await import('@/app/(app)/new/pick/secret')).default;
         await renderScreen(React.createElement(runtime.Wrapper, null, React.createElement(SecretPickerScreen)));
 
         const options = stackOptionsCapture.getResolved();
-        expect(options?.presentation).toBe('containedModal');
         expect(typeof options?.headerLeft).toBe('function');
 
         const backButton = options?.headerLeft?.();
