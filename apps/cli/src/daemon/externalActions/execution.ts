@@ -57,7 +57,7 @@ import { createCliActionExecutorFromCredentials } from "@/session/actions/create
 import { createMachineRecipeReadAction } from "@/machines/setup/machineRecipeActionDeps";
 import { createLocalServicesDaemonRestartPreparation, createLocalServicesDaemonRuntimeActionExecutor } from "@/daemon/local/services/actions/runtimeActionExecutor";
 import { createLocalServicesDaemonFeatureGate } from "@/daemon/local/services/featureGate";
-import { dispatchManagedSessionStart, dispatchManagedMachineSetup, dispatchManagedMachineSetupPlan,
+import { dispatchManagedSessionStart, dispatchManagedMachineSetup, dispatchManagedMachineSetupPlan, managedChildRequiresRequesterMaterial,
   dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineSetupPlan, isManagedSessionStartTransportAvailable, isReviewedServiceMoveChild, isReviewedMachineSetupPlanChild, isReviewedSecondOpinionModelSpawnChild, isReviewedSessionStopChild } from "@/api/externalActionExecutionAuthorization";
 import type { SessionSpawnDirectTargetTransport } from "@/session/actions/createCliActionDeps";
 import type { ExternalSessionPluginAdmissionOwner } from "@/session/actions/externalSessions/pluginExternalSessionAdmissionOwner";
@@ -1084,10 +1084,10 @@ resolveServerFeaturesSnapshot?: () =>
               if (!externalActionInstallationIdentity || machine.homeId !== authorization.binding.serverIdentityId
                 || machine.controller?.machineId !== authorization.binding.machineId
                 || machine.controller?.installationId !== authorization.binding.installationId) return { ok: false, errorCode: 'intent_changed', error: 'intent_changed' };
-              const controllerCustody = authorization.binding.accountId !== authorization.binding.custodianAccountId;
-              const encryption = authorization.binding.accountEncryptionMode === 'e2ee' && !controllerCustody
+              const requiresMaterial = managedChildRequiresRequesterMaterial(authorization.binding);
+              const encryption = requiresMaterial
                 ? await (requesterAccountContext ? requesterAccountContext.resolveEncryption : externalActionIngressOwner?.resolveEncryption)?.(context.signal, authorization) : undefined;
-              if (!controllerCustody && authorization.binding.accountEncryptionMode === 'e2ee' && encryption?.serverIdentityId !== authorization.binding.serverIdentityId)
+              if (requiresMaterial && encryption?.serverIdentityId !== authorization.binding.serverIdentityId)
                 return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
               const child = { serverId: params.serverId, authorization, authority: context.authority, context, observeRecordedApprovalExecution,
                 continuation: { managedId: machine.id, creationRequestId: authorization.binding.requestId, expectedIntentRevision: machine.intentRevision },

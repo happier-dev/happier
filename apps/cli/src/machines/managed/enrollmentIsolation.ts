@@ -2,9 +2,9 @@ import type { ActionExecuteResult } from '@happier-dev/protocol';
 import { applyManagedMachineEnrollmentIsolation, type ManagedEnrollmentIsolationRequest } from '@happier-dev/cli-common/machines/managed';
 import { resolveManagedMachineEnrollmentAgentIsolationV1, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { dispatchManagedMachineAgentIsolation, dispatchLocalManagedMachineAgentIsolation } from '@/api/externalActionExecutionAuthorization';
-import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { ManagedMachineAcquisitionDriverInput, ManagedMachineExecutionOptions } from './acquire';
 import { ManagedMachineControllerError } from './controllerErrors';
+import { resolveManagedCreationChildMaterial } from './creationChildMaterial';
 
 /** Creation/recovery consumes the same reviewed guest policy owner as manual changes. */
 export async function initializeManagedMachineEnrollmentIsolation(machine: ManagedMachineV1, input: ManagedMachineAcquisitionDriverInput,
@@ -25,17 +25,13 @@ export async function initializeManagedMachineEnrollmentIsolation(machine: Manag
             if (!input.externalActionMachineRequestPrivateKey || authorization.binding.machineId !== input.controller.machineId
                 || authorization.binding.installationId !== input.controller.installationId
                 || authorization.binding.serverIdentityId !== machine.homeId) throw new ManagedMachineControllerError('admission_unavailable');
-            const requester = readRequesterAccountActionContext(authorization);
-            const encryption = authorization.binding.accountEncryptionMode === 'e2ee'
-                ? await requester?.resolveEncryption(options.signal, authorization) : undefined;
-            if (authorization.binding.accountEncryptionMode === 'e2ee' && encryption?.serverIdentityId !== machine.homeId)
-                throw new ManagedMachineControllerError('admission_unavailable');
+            const material = await resolveManagedCreationChildMaterial(authorization, machine.homeId, options.signal);
             execution = await dispatchManagedMachineAgentIsolation({ ...request,
                 observeRecordedApprovalExecution: input.observeRecordedApprovalExecution,
                 serverId: context.serverId ?? machine.homeId, homeTarget: input.homeTarget, context, continuation,
                 authorization, authority: context.authority, installationId: input.controller.installationId,
                 privateKey: input.externalActionMachineRequestPrivateKey, serverHttpBaseUrl: input.serverUrl,
-                ...(encryption ? { material: encryption.material } : {}), signal: options.signal });
+                ...(material ? { material } : {}), signal: options.signal });
         } else {
             execution = await dispatchLocalManagedMachineAgentIsolation({ ...request, homeId: machine.homeId, context,
                 observeRecordedApprovalExecution: input.observeRecordedApprovalExecution,

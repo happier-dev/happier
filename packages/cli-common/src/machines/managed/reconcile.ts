@@ -310,6 +310,9 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
             ? await input.home.reportIssuedAcquireFact(machine, result, await captureIssuedConfigurationFacts(machine, provisioner, native))
             : await input.home.row('report', { ...input.home.correlation(machine), result }, null);
         if (result.kind !== 'bound') throw acquisitionFailure(result);
+        // Cancel can settle Home's row while the provider allocates. The late
+        // report retains cleanup custody; this canceled creation does no guest IO.
+        if (machine.creationState !== 'active') throw new ManagedMachineControllerError('intent_changed');
         startPending = result.startPending === true;
     }
     if (!machine.resource || machine.enrolledMachineId && input.action !== MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1) return machine;

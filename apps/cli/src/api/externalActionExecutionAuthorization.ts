@@ -2005,6 +2005,16 @@ export async function dispatchManagedSessionStart(params: ManagedChildDispatchPa
     targetMachineId: params.input.executionTarget.machineId });
 }
 
+/** A member's child on another Account's controller is sealed with a fresh installation codec. */
+function isManagedChildFreshCodec(root: ExternalActionExecutionAuthorizationV1['binding']): boolean {
+  return 'authentication' in root && root.accountId !== root.custodianAccountId && root.accountEncryptionMode === 'e2ee';
+}
+
+/** Only an own-Account e2ee managed child consumes the requester's Account material. */
+export function managedChildRequiresRequesterMaterial(root: ExternalActionExecutionAuthorizationV1['binding']): boolean {
+  return root.accountEncryptionMode === 'e2ee' && !isManagedChildFreshCodec(root);
+}
+
 async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'input'> & Readonly<{
   input: SessionSpawnNewInputV2 | MachineSetupApplyInputV1 | MachineSetupPlanInputV1 | ReturnType<typeof MachineAdminAccessSetInputV1Schema.parse>
     | MachineAgentIsolationPreviewInputV1 | MachineAgentIsolationSetInputV1 | MachineRolesSetInputV1;
@@ -2016,8 +2026,7 @@ async function dispatchManagedChild(params: Omit<ManagedChildDispatchParams, 'in
   const root = params.authorization.binding;
   const reviewedParent = readHostReviewedParentV1(params.context);
   const invocation = params.context ? readExternalActionRequesterInvocation(params.context) : params.invocation;
-  const managedChildCodec = 'authentication' in root && root.accountId !== root.custodianAccountId
-    && root.accountEncryptionMode === 'e2ee';
+  const managedChildCodec = isManagedChildFreshCodec(root);
   const carriesInvocation = managedChildCodec || invocation !== undefined || reviewedParent !== null;
   const recoveryAvailable = isManagedEnrollmentRecoveryChildV1(root.actionId, params.actionId)
     && root.installationId === params.installationId && root.target.kind === 'machine' && root.target.machineId === root.machineId

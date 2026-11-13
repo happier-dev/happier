@@ -590,6 +590,20 @@ describe('portable managed reconciliation', () => {
         expect(run.events.filter(event => event !== 'report')).toEqual(['preflight', 'prepare-roles', 'submit', 'report-bound', 'enrollment-context', 'enroll']);
         expect(run.roles).toEqual(['acquire', 'check', 'bootstrap', 'inspect']);
     });
+    it('stops at the late bound report when Cancel settled the creation during native allocation', async () => {
+        const run = boundary();
+        const result = reconcileManagedMachine({ ...run.input, home: { ...run.input.home,
+            reportIssuedAcquireFact: async (row, fact) => {
+                // Cancel landed while the provider was allocating; Home records the
+                // exact late resource for cleanup and returns the canceled row.
+                const recorded = await run.input.home.reportIssuedAcquireFact(row, fact);
+                return ManagedMachineFullV1Schema.parse({ ...recorded, creationState: 'canceled', desired: 'delete', intentRevision: 1,
+                    cleanup: { disposition: 'pending', reason: 'late_allocation' } });
+            } } });
+        await expect(result).rejects.toMatchObject({ code: 'cancelled' });
+        expect(run.events.filter(event => event !== 'report')).toEqual(['preflight', 'prepare-roles', 'submit', 'report-bound']);
+        expect(run.roles).not.toContain('bootstrap');
+    });
     it('retries installation on the bound resource without another allocation', async () => {
         const run = boundary({ ...machine, allocation: 'bound', resource });
         const result = await reconcileManagedMachine({ ...run.input, action: 'machines.managed.bootstrap.retry' });

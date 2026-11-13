@@ -2,10 +2,10 @@ import { MachineAdminAccessMutationResultV1Schema, MachineAdminAccessFieldV1, ty
 import { resolveManagedMachineEnrollmentAdminAccessV1, type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MachineRolesMutationResultV1Schema, machineRolesMetadataFieldV1, resolveManagedMachineEnrollmentRolesV1 } from '@happier-dev/protocol/machines/roles/machineRolesV1';
 import { dispatchManagedMachineAdminAccess, dispatchLocalManagedMachineAdminAccess, dispatchManagedMachineRoles, dispatchLocalManagedMachineRoles } from '@/api/externalActionExecutionAuthorization';
-import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { logger } from '@/ui/logger';
 import type { ManagedMachineAcquisitionDriverInput, ManagedMachineExecutionOptions } from './acquire';
 import { ManagedMachineControllerError } from './controllerErrors';
+import { resolveManagedCreationChildMaterial } from './creationChildMaterial';
 import { initializeManagedMachineEnrollmentIsolation } from './enrollmentIsolation';
 
 /** One signed creation child on the exact enrolled guest: remote continuation or the original local host path. */
@@ -23,16 +23,12 @@ async function dispatchEnrollmentPolicyChild<TInput extends Readonly<{ machineId
         if (!input.externalActionMachineRequestPrivateKey || authorization.binding.machineId !== input.controller.machineId
             || authorization.binding.installationId !== input.controller.installationId
             || authorization.binding.serverIdentityId !== machine.homeId) throw new ManagedMachineControllerError('admission_unavailable');
-        const requester = readRequesterAccountActionContext(authorization);
-        const encryption = authorization.binding.accountEncryptionMode === 'e2ee'
-            ? await requester?.resolveEncryption(options.signal, authorization) : undefined;
-        if (authorization.binding.accountEncryptionMode === 'e2ee' && encryption?.serverIdentityId !== machine.homeId)
-            throw new ManagedMachineControllerError('admission_unavailable');
+        const material = await resolveManagedCreationChildMaterial(authorization, machine.homeId, options.signal);
         return dispatch.remote({ input: request, serverId: context.serverId ?? machine.homeId, homeTarget: input.homeTarget,
             observeRecordedApprovalExecution: input.observeRecordedApprovalExecution,
             context, continuation, authorization, authority: context.authority,
             installationId: input.controller.installationId, privateKey: input.externalActionMachineRequestPrivateKey,
-            serverHttpBaseUrl: input.serverUrl, ...(encryption ? { material: encryption.material } : {}), signal: options.signal });
+            serverHttpBaseUrl: input.serverUrl, ...(material ? { material } : {}), signal: options.signal });
     }
     return dispatch.local({ input: request, homeId: machine.homeId, context,
         observeRecordedApprovalExecution: input.observeRecordedApprovalExecution, managedContinuation: continuation,
