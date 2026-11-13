@@ -22,7 +22,10 @@ describe('machine Session Pending enqueue through real admission owners', () => 
     let harness: LightSqliteHarness;
 
     beforeAll(async () => {
-        harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-machine-pending-handler-', initAuth: true });
+        harness = await createLightSqliteHarness({
+            tempDirPrefix: 'happier-machine-pending-handler-', initAuth: true,
+            env: { HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY: 'optional' },
+        });
     }, 120_000);
 
     afterAll(async () => {

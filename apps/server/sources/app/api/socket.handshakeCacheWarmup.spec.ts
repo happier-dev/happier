@@ -9,6 +9,7 @@ import { activityCache } from "@/app/presence/sessionCache";
 import { db } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { startSocket } from "./socket";
+import { createFakeSocket, createSocketRoomDiscoveryHarness } from "./testkit/socketHarness";
 import type { Fastify as AppFastify } from "./types";
 
 const serverCtor = vi.hoisted(() => vi.fn());
@@ -20,7 +21,7 @@ vi.mock("socket.io", () => ({
 }));
 
 function createHandshakeServer() {
-    const server = { on: vi.fn(), use: vi.fn(), close: vi.fn(), to: vi.fn(() => ({ emit: vi.fn() })) };
+    const server = { ...createSocketRoomDiscoveryHarness(async () => []), on: vi.fn(), use: vi.fn(), close: vi.fn(), to: vi.fn(() => ({ emit: vi.fn() })) };
     serverCtor.mockReturnValue(server);
     return server;
 }
@@ -55,7 +56,7 @@ describe("startSocket handshake cache warmup", () => {
         const middleware = server.use.mock.calls[0]?.[0] as
             (socket: Record<string, unknown>, next: (error?: unknown) => void) => Promise<void>;
         const socket = {
-            id: "warmup-socket",
+            ...createFakeSocket({ id: "warmup-socket" }),
             handshake: { auth: { token, clientType: "session-scoped", sessionId: "warmup-session", machineId: "warmup-machine" }, headers: {} },
             conn: { transport: { name: "websocket" } },
             data: {} as Record<string, unknown>,

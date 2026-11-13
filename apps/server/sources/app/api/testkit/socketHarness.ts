@@ -1,9 +1,10 @@
 import { vi } from "vitest";
+import { EventEmitter } from 'node:events';
 import type { Server } from 'socket.io';
 
 /** Socket.IO room discovery is a network boundary, including its timed form. */
 export function createSocketRoomDiscoveryHarness(resolveSockets: (room: string) => Promise<readonly unknown[]>): Server {
-    return { sockets: { sockets: new Map(), adapter: { rooms: new Map() } },
+    return { sockets: { sockets: new Map(), adapter: Object.assign(new EventEmitter(), { rooms: new Map() }) },
         // Domain mutations may publish or evict after commit while RPC peers
         // are substituted. Keep those Socket.IO boundary operations available.
         to: () => ({ emit: () => {}, disconnectSockets: () => {} }),

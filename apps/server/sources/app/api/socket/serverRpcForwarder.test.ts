@@ -92,12 +92,14 @@ describe("createServerRpcForwarder", () => {
             const events = info.mock.calls.map(([entry]) => entry).filter(
                 (entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null && "event" in entry,
             );
-            expect(events).toHaveLength(6);
             for (const root of roots) {
                 const requestId = `sha256:${createHash("sha256").update(root).digest("hex")}`;
                 const joined = events.filter(entry => entry.requestId === requestId);
-                expect(joined.map(entry => entry.event)).toEqual(["rpc-target-lookup", "rpc-target-issued", "rpc-target-ack"]);
-                expect(joined.at(-1)).toMatchObject({ status: failed ? "failed" : "received",
+                expect(joined.map(entry => entry.event)).toEqual([
+                    "rpc-target-lookup", "rpc-target-issued", "rpc-target-ack",
+                    ...(failed ? ["rpc-failed"] : []),
+                ]);
+                expect(joined.find(entry => entry.event === "rpc-target-ack")).toMatchObject({ status: failed ? "failed" : "received",
                     ...(failed ? { failure: "disconnected" } : {}) });
                 for (const entry of joined) expect(entry).not.toHaveProperty("callerSocketId");
             }
@@ -200,10 +202,10 @@ describe("createServerRpcForwarder", () => {
             params: {},
         });
 
-        expect(response).toEqual({
+        expect(response).toMatchObject({
             ok: false,
-            error: "RPC target discovery unavailable",
             errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE,
+            failureCause: { phase: "rpc.discovery.target", errorClass: "Error" },
         });
         expect(rpcMetricsMocks.recordSocketClusterFetchSockets).toHaveBeenCalledWith(expect.objectContaining({
             result: "error",

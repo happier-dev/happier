@@ -89,8 +89,11 @@ describe("startSocket connect convergence", () => {
         const next = vi.fn();
         await middleware(socket, next);
         expect(next).toHaveBeenCalledWith();
-        const connection = server.on.mock.calls.find(([event]) => event === "connection")?.[1] as
-            (socket: Record<string, unknown>) => Promise<void>;
+        const connections = server.on.mock.calls.filter(([event]) => event === "connection")
+            .map(([, handler]) => handler as (socket: Record<string, unknown>) => unknown);
+        const connection = async (connectedSocket: Record<string, unknown>) => {
+            await Promise.all(connections.map(handler => handler(connectedSocket)));
+        };
         return { account, socket, connection, events, machine };
     }
 
