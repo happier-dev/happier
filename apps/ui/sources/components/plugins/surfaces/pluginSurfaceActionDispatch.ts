@@ -6,6 +6,7 @@ import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/act
 import { pluginActionDeclarationIsReadOnlyForInput } from '@happier-dev/protocol/plugins/actions/invocation';
 import { PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE } from '@happier-dev/protocol/plugins/actions/invocation';
 import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import { evaluateContributionAvailability, resolveInvocationContributionPolicyFacts } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { pluginSourceCustodyV1Equal, type PluginSourceCustodyV1 } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
@@ -93,7 +94,7 @@ import {
 import { resolvePluginUiClientExecutablePlatform } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { readPluginUiAccountExecutableOrigin } from '@/components/plugins/reactNative/executableModuleHost';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
-import { resolvePluginUiExecutionDeclaration } from '@/sync/domains/plugins/ui/projectionUnion';
+import { readPluginUiContributionOrigin, resolvePluginUiExecutionDeclaration } from '@/sync/domains/plugins/ui/projectionUnion';
 import { acquirePluginSurfaceContributedAction, resolveProjectedContributedAction } from './pluginSurfaceActionAcquisition';
 import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
 import {
@@ -2200,7 +2201,7 @@ async function executeHostAction(
         admittedReview: { action: actionId, role: 'actions.execute', surface: 'plugin' },
         execute: (operand, childContext, childActionId) => binding.execute(childActionId, operand, childContext),
     }) : await binding.execute(actionId, input.input, context);
-    if (result.ok) return { ok: true, result: result.result as PluginUiJsonValueV1 };
+    if (result.ok) return { ok: true, result: projectNativeJsonValueForTransport(result.result) };
     return projectPluginActionFailure({ ...result, code: result.errorCode, message: result.error,
         details: result.details as PluginUiJsonValueV1 | undefined, requestId: result.requestId ?? input.actionRequestId });
 }
@@ -2373,6 +2374,42 @@ async function executeContributedAction(
     // Connected-Account reconstruction that a daemon Action must satisfy.
     const settlement = settleSelectedTargetedOperation(input, identity, caller);
     if (!settlement.ok) return settlement;
+    // Machine-hosted Account effects enter their existing whole-Action owner.
+    // Browser executable preparation belongs only to Account-local handlers.
+    const machineOrigin = readPluginUiContributionOrigin(projectedAction);
+    if (projectedAction.execution.target === 'account' && !projectedAction.execution.invokingUi
+        && !readPluginUiAccountExecutableOrigin(projectedAction) && machineOrigin && !input.readObservation) {
+        if (settlement.relay) return failure('unsupported_method', 'plugin_surface_targeted_selection_relay_unsupported');
+        const lifetime = input.actionAccountLifetime ?? input.contributedAction?.accountLifetime;
+        const serverId = lifetime?.scope.serverId ?? input.hostAction?.context?.serverId ?? machineOrigin.serverId;
+        const accountId = lifetime?.scope.accountId ?? input.hostAction?.context?.expectedAccountId;
+        if (!serverId || !accountId) return clientActionFailure('plugin_surface_account_action_unavailable');
+        if (input.requiredReadOnly && !pluginActionDeclarationIsReadOnlyForInput(
+            projectedAction.accountActionDeclaration ?? projectedAction, settlement.input)) {
+            return clientActionFailure('plugin_action_read_only_required');
+        }
+        const execution = projectedAction.execution;
+        const occurrenceId = projectedAction.occurrenceId;
+        const run = async (input: DispatchPluginSurfaceActionInput): Promise<PluginSurfaceActionDispatchOutcome> => {
+            const context = mountedHostActionContext(input, caller,
+                input.invocation?.kind === 'clientPluginAction' ? input.invocation.clientActionBinding : null, 'action.invoke');
+            const authority = await contributedInvocationAuthority(input, serverId);
+            try {
+                input.onInvocationAdmitted?.();
+                const result = await executeAccountActionAtRuntimeHost({ accountScope: { serverId, accountId },
+                    action: identity, execution, input: settlement.input,
+                    sourceMachineId: machineOrigin.machineId, expectedContributorOccurrenceId: occurrenceId,
+                    signal: input.signal ?? new AbortController().signal,
+                    context: { ...context, surface: input.invocationSurface ?? 'ui',
+                        ...(context.actionCaller?.kind === 'plugin' ? {} : { authority }) },
+                    executeLocal: () => { throw new PluginError({ code: 'plugin_surface_account_action_unavailable' }); } });
+                return { ok: true, result: result as PluginUiJsonValueV1 };
+            } catch (error) { return clientActionPreparationFailure(error); }
+        };
+        return input.spokenActionRequest && (input.invocationSurface ?? 'ui') === 'voice'
+            ? executePreparedPluginSurfaceAction({ input, identity, action: projectedAction, normalizedInput: settlement.input, run })
+            : run(input);
+    }
     // Missing confidential operands enter the existing request producer before
     // either placement's executable schema can reject the value-free input.
     if (readActionSecretInputAdmission(projectedAction, settlement.input).missingPaths.length > 0) {

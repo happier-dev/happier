@@ -346,7 +346,9 @@ describe('the mounted Azure DevOps pull-request writes', () => {
 
   it('sends the branch decision the user made with the merge source they were shown', async () => {
     nextResult = { kind: 'applied', observation: FIXTURE.getResult as unknown as JsonValue } as JsonValue;
-    const detail = await mountDetail();
+    // Public Triage observations retain the review snapshot, not process-local fold evidence.
+    const { nativeRevision: _foldRevision, ...observation } = FIXTURE.detailInput.observation;
+    const detail = await mountDetail({ ...FIXTURE.detailInput, observation } as unknown as JsonValue);
 
     await detail.press(await detail.getByRole('switch', {
       name: 'Delete the source branch after completing',
@@ -363,7 +365,7 @@ describe('the mounted Azure DevOps pull-request writes', () => {
         instance: FIXTURE.detailInput.instance,
         localRef: LOCAL_REF,
         routingToken: ROUTING_TOKEN,
-        observedSourceCommitId: FIXTURE.detailInput.observation.nativeRevision,
+        observedSourceCommitId: FIXTURE.detailInput.observation.snapshot.reviewRevision?.nativeRevision,
         deleteSourceBranch: true,
       },
     }]);
@@ -406,8 +408,11 @@ describe('the mounted Azure DevOps pull-request writes', () => {
   });
 
   it('refuses to offer a completion Azure DevOps gave it no merge source for', async () => {
-    const { nativeRevision: _omitted, ...observation } = FIXTURE.detailInput.observation;
-    const detail = await mountDetail({ ...FIXTURE.detailInput, observation } as unknown as JsonValue);
+    const { reviewRevision: _omitted, ...snapshot } = FIXTURE.detailInput.observation.snapshot;
+    const detail = await mountDetail({
+      ...FIXTURE.detailInput,
+      observation: { ...FIXTURE.detailInput.observation, snapshot },
+    } as unknown as JsonValue);
 
     await expect(Promise.resolve(detail.controls.presentation('Complete'))).resolves.toMatchObject({
       disabled: true,

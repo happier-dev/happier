@@ -102,7 +102,7 @@ export function projectAzureDetailOverview(
     fields,
     observedAtMs: observation.observedAtMs,
     sourceUpdatedAtMs: observation.sourceUpdatedAtMs ?? null,
-    nativeRevision: observation.nativeRevision ?? null,
+    nativeRevision: observation.snapshot.reviewRevision?.nativeRevision ?? null,
     projectionTruncated: observation.snapshot.projectionTruncated === true,
     linkedSessions: input.linkedSessions,
   };

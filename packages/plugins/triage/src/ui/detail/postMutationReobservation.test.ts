@@ -20,6 +20,23 @@ const INSTANCE = '11111111-1111-4111-8111-111111111111';
 const entryRef = testkitEntryRef();
 
 describe('reobserveTriagePostMutationRow', () => {
+  it('carries the exact source refusal when an opening observation is unresolved', async () => {
+    const failure = {
+      class: 'unsupportedContract' as const,
+      code: 'azure-devops/entry-outside-configured-instance',
+      detail: 'This entry reference was not derived from this configured Azure DevOps base.',
+      requestId: 'request-opening',
+    };
+    const onReadFailure = vi.fn();
+    const executeAction = async () => ({ kind: 'observed' as const, entryRef,
+      observation: { sourceInstanceId: INSTANCE, observedAtMs: 2_000,
+        outcome: { kind: 'unresolved' as const, failure } } });
+    const row = await reobserveTriagePostMutationRow({ executeAction }, { entryRef }, [], INSTANCE, { onReadFailure });
+    expect(row).toBeNull();
+    expect(onReadFailure).toHaveBeenCalledWith(expect.objectContaining({
+      code: failure.code, message: failure.detail, details: { requestId: failure.requestId },
+    }));
+  });
   it('opens a first observation without depending on a successful list scan', async () => {
     const executeAction = vi.fn(async () => ({
       kind: 'observed' as const,

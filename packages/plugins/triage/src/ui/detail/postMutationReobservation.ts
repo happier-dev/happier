@@ -101,8 +101,13 @@ export async function reobserveTriagePostMutationRow(
     onReadFailure?.(error);
     return null;
   }
-  if (result.kind !== 'observed') {
-    const failure = result.kind === 'unavailable' ? result.failure : undefined;
+  if (result.kind !== 'observed' || result.observation.outcome.kind === 'unresolved') {
+    const failure = result.kind === 'unavailable' ? result.failure
+      : result.kind === 'observed' && result.observation.outcome.kind === 'unresolved'
+        ? result.observation.outcome.failure : undefined;
+    if (result.kind === 'observed' && !options.signal?.aborted) {
+      publishObservation?.({ entryRef: result.entryRef, ...result.observation }, keepViewerFacts);
+    }
     onReadFailure?.(new PluginError({ code: failure?.code ?? (result.kind === 'rejected' ? 'denied' : result.kind),
       ...(failure?.detail === undefined ? {} : { message: failure.detail }),
       ...(failure?.requestId === undefined ? {} : { details: { requestId: failure.requestId } }),

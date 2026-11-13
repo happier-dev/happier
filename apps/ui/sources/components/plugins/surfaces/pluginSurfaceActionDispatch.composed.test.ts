@@ -102,6 +102,7 @@ import { createActionOperationRunner } from '../../../../../cli/src/daemon/actio
 import { createActionOperationStore } from '../../../../../cli/src/daemon/actionOperations/actionOperationStore';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { NotificationsNotifyMeResultV1Schema } from '@happier-dev/protocol/account/notifications/notifyMeV1';
+import { ReviewCommentV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
 import { DOC_EDIT_PROPOSAL_HTTP_PATHS_V1, DocCollaborationActionOutputSchemasV1,
     DocEditAcceptTransportInputV1Schema, DocEditDeclineTransportInputV1Schema,
     DocEditDecisionResultV1Schema } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
@@ -2031,6 +2032,31 @@ describe('Board task controls through the contributed Action front door', () => 
 });
 
 describe('Account Action placement through the executable dispatcher', () => {
+    it('opens native Review proposals across the strict plugin result boundary', async () => {
+        const comment = ReviewCommentV1Schema.parse({
+            v: 1, id: 'proposal-1', accountId: 'account-1', projectId: undefined,
+            workspace: { machineId: 'machine-1', path: '/repo' }, sessionId: 'session-1',
+            anchor: { kind: 'file', filePath: 'src/gateway.ts' }, snapshot: { kind: 'none', capturedAt: 1 },
+            body: 'Proposed reply', bodyVersion: 1, edits: [], author: { kind: 'user', userId: 'account-1' },
+            state: 'proposed', flags: {}, dispositions: {}, threadId: 'proposal-1', transitions: [],
+            createdAt: 1, updatedAt: 1, serverRevision: 1,
+        });
+        // Substitute only the Reviews HTTP port; Action parsing, dispatch and both host envelopes remain real.
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            reviewCommentAction: async () => ({ items: [comment], cursor: null }),
+        }));
+        const api = createPluginSurfaceActionHostApi({ surfaceContext: surfaceContext(),
+            callerBinding: mountedCallerBinding(),
+            hostAction: { execute: executor.execute, context: { serverId: 'home-1', runtimeAccountId: 'account-1' } },
+        });
+        try {
+            const { settlePluginSurfaceHostApiRequest } = await import('./createPluginSurfaceHostApi');
+            const invocation = executeActionRequest({ action: 'reviews.comments.list', input: { sessionId: 'session-1' } });
+            const result = await settlePluginSurfaceHostApiRequest(invocation, () => api.handleRequest(invocation));
+            expect(result).toMatchObject({ kind: 'result', payload: { cursor: null,
+                items: [{ id: comment.id, body: comment.body, snapshot: comment.snapshot }] } });
+        } finally { api.dispose?.(); }
+    });
     it.each(['equivalent', 'retired'] as const)('retains an entered Account read only while its execution remains current (%s)', async change => {
         const accountLifetime = clientAccountLifetime();
         let enter!: () => void;
@@ -2396,6 +2422,48 @@ describe('Account Action placement through the executable dispatcher', () => {
             expect(result, JSON.stringify(result)).toMatchObject({ ok: false, reason: 'action_home_signed_out' });
             expect(handler).not.toHaveBeenCalled();
         } finally { credentials.mockRestore(); await activation.composition.unload(); accountLifetime.retire(); }
+    });
+
+    it.each([
+        { placement: 'declaration', explicitTarget: false, refuses: false },
+        { placement: 'explicit target', explicitTarget: true, refuses: false },
+        { placement: 'typed refusal', explicitTarget: false, refuses: true },
+    ])('reads a Machine-hosted Account Action through its public owner without a browser executable ($placement)', async ({ explicitTarget, refuses }) => {
+        const { createExternalActionAccountHttpBoundary } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+        const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
+        const lifetime = clientAccountLifetime();
+        const identity = { pluginId: 'acme.placement', localId: 'read' };
+        const action = { ...createClientTargetAction({ identity, accountPlacement: true }),
+            hostOrigin: { ...CLIENT_ACTION_HOST_ORIGIN, executionOrigin: clientActionExecutionOrigin(identity.pluginId) } };
+        const projection = { ...EMPTY_PLUGIN_UI_PROJECTION, generation: 1,
+            actionsById: { 'acme.placement/read': action } };
+        const release = publishCommittedAppShellPluginUiProjection(() => projection);
+        const payload = { choices: [{ id: 'investigate', startable: true }], linkedSessionId: 'retained-finding' };
+        const failureCause = { phase: 'dispatch', errorClass: 'PluginError', errorCode: 'admission_unavailable', httpStatus: null };
+        const received: unknown[] = [];
+        const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: 'https://server-client-action',
+            serverIdentityId: 'srv_client_action', accountId: lifetime.scope.accountId, machineId: CLIENT_ACTION_HOST_ORIGIN.machineId,
+            actionId: 'action.invoke', tokenEpoch: 0, execute: request => { received.push(request); return payload; },
+            failure: () => refuses ? { errorCode: 'admission_unavailable', error: 'admission_unavailable', details: { failureCause } } : null });
+        network.setHttpResponder(async (url, init) => await boundary.handle(new URL(String(url)), init)
+            ?? createEmptyAccountBootstrapHttpResponse(new URL(String(url)).pathname, init));
+        accountBrowserRelay.enabled = true;
+        const controller = new AbortController();
+        const port = createCurrentUiContextVoiceToolPort({ invocationSurface: 'ui', readProjection: () => projection,
+            readNavigationBinding: () => null,
+            reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+            hostAction: { execute: async () => { throw new Error('No local Action effect'); }, context: {
+                serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId,
+                runtimeAccountId: lifetime.scope.accountId, surface: 'ui', authority: 'present_user',
+                ...(explicitTarget ? { externalActionTarget: { kind: 'machine' as const, machineId: boundary.machine.id } } : {}),
+            } },
+        });
+        try {
+            const outcome = await port.invokeAction!({ action: identity, input: { subject: 'receipt' }, signal: controller.signal });
+            if (refuses) expect(outcome).toMatchObject({ ok: false, errorCode: 'admission_unavailable', failureCause });
+            else expect(outcome).toEqual({ ok: true, result: payload });
+            expect(received).toHaveLength(1);
+        } finally { controller.abort(); release(); accountBrowserRelay.enabled = false; }
     });
 
     it.each(['missing', 'unavailable', 'offline', 'none', 'cold', 'explicit'] as const)('places automatic Account Actions using receiver runtime availability (%s)', async state => {

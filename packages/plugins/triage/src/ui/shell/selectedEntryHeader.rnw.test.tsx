@@ -153,6 +153,7 @@ let sourceAvailable = true;
 let exactTitle = ENTRY_TITLE;
 let exactReads = 0;
 let lastExactRoutingToken: string | undefined;
+let lastExactSourceInstanceId: string | undefined;
 let exactNeedsReview = true;
 let exactFailure: PluginError | null = null;
 let publishedContext: unknown;
@@ -161,6 +162,7 @@ let listProducerOverride: ((input: JsonValue | undefined) => Promise<JsonValue>)
 async function executeAction(action: string, input?: JsonValue): Promise<JsonValue> {
     if (action === TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1) {
         exactReads += 1;
+        lastExactSourceInstanceId = (input as { sourceInstanceId?: string } | undefined)?.sourceInstanceId;
         lastExactRoutingToken = (input as { lastKnownLocator?: { routingToken?: string } } | undefined)
             ?.lastKnownLocator?.routingToken;
         if (exactFailure !== null) throw exactFailure;
@@ -207,6 +209,7 @@ async function mountShell(hosted = false, options: Readonly<{ pinned?: boolean; 
     exactTitle = ENTRY_TITLE;
     exactReads = 0;
     lastExactRoutingToken = undefined;
+    lastExactSourceInstanceId = undefined;
     exactNeedsReview = true;
     exactFailure = null;
     const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
@@ -283,6 +286,32 @@ afterEach(async () => {
 });
 
 describe('the selected entry once the window stops holding it', () => {
+    it('opens an off-window entry through its retained connection and source route', async () => {
+        const { shell, ephemeralSharedScope, setSubPath } = await mountShell(true, { pinned: true });
+        const otherInstance = '00000000-0000-4000-8000-000000000000';
+        listProducerOverride = async () => {
+            const result = listResult(true);
+            const row = result.window.rows[0]!;
+            return { ...result, window: { ...result.window, rows: [{ ...row, observation: {
+                ...row.observation, outcome: { ...row.observation.outcome,
+                    locator: testkitLocator({ routingToken: 'example/repository' }) },
+            } }] }, configuredSources: [...result.configuredSources, {
+                ...result.configuredSources[0]!, sourceInstanceId: otherInstance, configurationRowId: otherInstance,
+            }] } as unknown as JsonValue;
+        };
+        await act(async () => { await refreshTriageListWindow('manual', shell.context.hostApi, ephemeralSharedScope); });
+        await setSubPath(buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1, query: 'outside this lens' }));
+        const store = readTriageListWindowReadOwner(shell.context.hostApi, ephemeralSharedScope)!;
+        expect(store.getSnapshot().window?.rows).toHaveLength(0);
+        expect(store.getRow(triageEntryRowKey(ENTRY_REF))?.selected).toMatchObject({ sourceInstanceId: INSTANCE });
+
+        await setSubPath(buildTriageRouteSubPathV1({
+            ...TRIAGE_ROUTE_DEFAULT_LENS_V1, query: 'outside this lens', selection: ENTRY_REF,
+        }));
+
+        expect(lastExactSourceInstanceId).toBe(INSTANCE);
+        expect(lastExactRoutingToken).toBe('example/repository');
+    });
     it('filters a formerly exact-only pin using its later retained facts', async () => {
         const { shell, ephemeralSharedScope, setSubPath } = await mountShell(true, { pinned: true, listsEntry: false });
         await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Pinned before reading' })); });

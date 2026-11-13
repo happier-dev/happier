@@ -880,26 +880,31 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
    * The one activation path. The shared `List` reports pointer, touch and
    * keyboard activation through the same key, and a row the window could not
    * qualify carries no instance. An explicit off-window open admits a current active
-   * connection through the same Corpus selector; rendering pins performs no read.
+   * connection through the retained owner, or the Corpus selector for an unseen entry;
+   * rendering pins performs no read.
    */
   const [entryOpenFailure, setEntryOpenFailure] = React.useState<(Extract<CorpusExplicitOpenSelectionV1, { kind: 'none' }> & { failure?: TriageSourceFailureV1 }) | null>(null);
-  const openAdmission = React.useRef({ configuredSources: window.snapshot.configuredSources, selection: surface.selection });
-  openAdmission.current = { configuredSources: window.snapshot.configuredSources, selection: surface.selection };
+  const openAdmission = React.useRef({ configuredSources: window.snapshot.configuredSources, selection: surface.selection, readOwner: window.readOwner });
+  openAdmission.current = { configuredSources: window.snapshot.configuredSources, selection: surface.selection, readOwner: window.readOwner };
   // Read at press time through the ref: a callback rebuilt with every window/session update made the row
   // environment every row reads a new value each time, re-rendering every row for nothing.
   const readEntryActivation = React.useCallback((entryRef: TriageEntryRefV1) => {
-    const hit = rowsByKeyRef.current.get(triageEntryRowKey(entryRef));
-    let sourceInstanceId = hit?.row.sourceInstanceId ?? null;
-    if (hit === undefined || sourceInstanceId === null) {
-      const current = openAdmission.current;
+    const key = triageEntryRowKey(entryRef);
+    const hit = rowsByKeyRef.current.get(key);
+    const current = openAdmission.current;
+    const retained = current.readOwner?.getRow(key);
+    const existingSelection = current.selection !== null && sameTriageEntryRefV1(current.selection.entryRef, entryRef)
+      ? current.selection : null;
+    let sourceInstanceId = hit?.row.sourceInstanceId
+      ?? (existingSelection === null && retained?.selected.kind === 'selected' ? retained.selected.sourceInstanceId : null);
+    if (sourceInstanceId === null) {
       // The list owner already published source admission. A delayed local descriptor
       // catalog cannot withdraw that connection; the source owns entry-kind validation.
       const candidates = current.configuredSources.filter(source => sameTriageSourceIdentity(source.source, entryRef.source));
       const active = candidates.filter(source => source.available).map(source => source.sourceInstanceId);
       const selected = selectObservationInstance([], active, null, {
         allowUnobserved: true,
-        ...(current.selection !== null && sameTriageEntryRefV1(current.selection.entryRef, entryRef)
-          ? { overrideSourceInstanceId: current.selection.sourceInstanceId } : {}),
+        ...(existingSelection === null ? {} : { overrideSourceInstanceId: existingSelection.sourceInstanceId }),
       });
       if (selected.kind === 'none') {
         const failure = candidates.find(source => source.availabilityFailure !== undefined)?.availabilityFailure;
@@ -1183,8 +1188,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     if (selection === null || state.kind !== 'window') return null;
     const row = state.window.rows.find(
       (candidate) => sameTriageEntryRefV1(candidate.entryRef, selection.entryRef),
-    );
-    if (row === undefined) return null;
+    ) ?? window.readOwner?.getRow(triageEntryRowKey(selection.entryRef));
+    if (row == null) return null;
     if (row.selected.kind === 'selected'
       && row.selected.sourceInstanceId === selection.sourceInstanceId) return row;
     // `core/SURFACE.md` §3.1: the selection's `sourceInstanceId` IS the
@@ -1206,7 +1211,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         reason: 'override',
       },
     };
-  }, [state, surface.selection]);
+  }, [state, surface.selection, window.readOwner]);
   // Explicit opens and restored locations share configured-source admission
   // and the same exact read when their entry is outside the list window.
   const { row: selectedRow, completePostMutation, readFailed, failure: selectedReadFailure, exactRead } = useTriagePostMutationRow(
