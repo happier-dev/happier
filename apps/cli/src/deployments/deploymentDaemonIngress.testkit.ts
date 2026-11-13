@@ -124,6 +124,7 @@ export async function createS0DeploymentDaemonIngress(input: Readonly<{
         const deployment = input.createDeploymentActionDeps?.(requester, actionOperations);
         return createCliActionExecutorFromCredentials({
             credentials: scopedCredentials, readCredentials: async () => scopedCredentials,
+            pluginActionExecutionOwner: 'current_process',
             machineId: home.machineId, serverId: home.serverId, serverIdentityId: home.serverId, serverApiUrl: home.baseUrl,
             externalActionMachineInstallationId: home.installationId,
             externalActionMachineRequestPrivateKey: home.keys.secretKey,

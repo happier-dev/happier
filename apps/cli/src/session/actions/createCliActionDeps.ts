@@ -1,6 +1,7 @@
 import { PROJECT_SOURCE_MOVE_TO_TEAM_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { prepareCliProjectSourceTeamMove } from './projectSourceTeamMove';
 import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
+import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { requireExternalActionHeaders, createExternalActionHeaderRefusalError } from '@/api/externalActionHeaderRefusal';
 import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
 import { prepareCliDeploymentAlertDefaults } from './cliActionDeps/deploymentDefaults';
@@ -944,7 +945,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
     if (!params.credentials || context.externalActionCredential || context.externalActionExecutionAuthorization
       || context.rpcSessionAuthorization || context.actionCaller && context.actionCaller.kind !== 'host' && !workflow)
       return executionRunActionFailure('deployment_executor_unavailable');
-    if (!context.actionRequestId || context.runtimeAccountId && context.runtimeAccountId !== homeAccountId)
+    if (!context.actionRequestId || workflow && context.runtimeAccountId && context.runtimeAccountId !== homeAccountId)
       return executionRunActionFailure('admission_unavailable');
     const publisherMachineId = params.machineActionDirectTargetTransport?.machineId;
     const installedWorkflow = workflow && publisherMachineId && params.serverIdentityId
@@ -954,11 +955,20 @@ export function createCliActionDeps(params: CliActionDepsParams,
     if (workflow && !installedWorkflow) return executionRunActionFailure('admission_unavailable');
     const selected = await readMachine();
     if (!selected.ok) return selected;
+    const target = { kind: 'machine' as const, machineId: selected.machineId };
+    const invocation = installedWorkflow ? null : homeAccountId ? projectExternalActionRequesterInvocationV1({
+      actionId, context: { ...context, actionCaller: { kind: 'host' }, surface: context.surface ?? 'cli',
+        authority: context.authority ?? 'account_automation' },
+      account: { accountId: homeAccountId, serverId: actionHomeId,
+        ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}) }, target,
+      authentication: { kind: readAuthTokenProvenance(decodeJwtPayload(params.credentials.token))?.provenance.kind === 'terminal'
+        ? 'terminal' : 'account' },
+    }) : null;
+    if (!installedWorkflow && !invocation) return executionRunActionFailure('admission_unavailable');
     return dispatchOriginalAccountAction({ actionId, input, requestId: context.actionRequestId,
-      target: { kind: 'machine', machineId: selected.machineId }, credentials: params.credentials,
+      target, credentials: params.credentials,
       ...(installedWorkflow ? { authority: 'account_automation' as const, installedWorkflow }
-        : { authority: context.authority,
-          invocation: { caller: { kind: 'host' as const }, surface: context.surface ?? 'cli', authority: context.authority ?? 'account_automation' } }),
+        : { authority: context.authority, invocation: invocation! }),
       serverHttpBaseUrl: todoHomeBaseUrl,
       ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}),
       ...(params.onRequesterSessionCredentialDisclosure ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
@@ -1206,20 +1216,10 @@ export function createCliActionDeps(params: CliActionDepsParams,
       }
       if (actionId === 'deployments.publish.prepare') {
         const selected = DeploymentActionInputSchemasV1[actionId].parse(input);
-        if (!params.credentials || context.externalActionCredential || context.externalActionExecutionAuthorization
-          || context.rpcSessionAuthorization || context.actionCaller && context.actionCaller.kind !== 'host')
+        if (context.actionCaller && context.actionCaller.kind !== 'host')
           return executionRunActionFailure('deployment_executor_unavailable');
-        if (!context.actionRequestId || context.runtimeAccountId && context.runtimeAccountId !== homeAccountId)
-          return executionRunActionFailure('admission_unavailable');
-        const execution = await dispatchOriginalAccountAction({ actionId, input: selected, requestId: context.actionRequestId,
-          target: { kind: 'machine', machineId: selected.machineId }, credentials: params.credentials,
-          authority: context.authority,
-          invocation: { caller: { kind: 'host' }, surface: context.surface ?? 'cli', authority: context.authority ?? 'account_automation' },
-          serverHttpBaseUrl: todoHomeBaseUrl,
-          ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}),
-          ...(params.onRequesterSessionCredentialDisclosure ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
-          ...(params.isCredentialCurrent ? { isCurrent: params.isCredentialCurrent } : {}),
-          ...(context.signal ? { signal: context.signal } : {}) });
+        const execution = await dispatchOriginalDeploymentRoot(actionId, selected, context,
+          async () => ({ ok: true, machineId: selected.machineId }));
         if (!execution.ok) return execution;
         const approval = ActionApprovalRequestCreatedResultSchema.safeParse(execution.result);
         if (approval.success && approval.data.actionId === actionId) return approval.data;
@@ -1236,35 +1236,12 @@ export function createCliActionDeps(params: CliActionDepsParams,
       if ('errorCode' in loaded || 'kind' in loaded) return loaded;
       const opened = DeploymentEnvironmentGetResultV1Schema.parse(loaded);
       if (!opened.ok) return opened;
-      // Route the original intent to the installed controller that owns
-      // native preparation and receipt admission.
-      const workflow = context.actionCaller?.kind === 'workflowRun';
-      if (!params.credentials || context.externalActionCredential || context.externalActionExecutionAuthorization
-        || context.rpcSessionAuthorization || context.actionCaller && context.actionCaller.kind !== 'host' && !workflow) {
-        return executionRunActionFailure('deployment_executor_unavailable');
-      }
-      if (!context.actionRequestId || context.runtimeAccountId && context.runtimeAccountId !== homeAccountId)
-        return executionRunActionFailure('admission_unavailable');
-      const publisherMachineId = params.machineActionDirectTargetTransport?.machineId;
-      if (workflow && (!publisherMachineId || !params.serverIdentityId
-        || !params.externalActionMachineRequestPrivateKey || !params.externalActionMachineInstallationId))
-        return executionRunActionFailure('admission_unavailable');
+      // The same original-root owner retains requester review for every controller dispatch.
       if (nativeRead && (!('machineId' in input) || typeof input.machineId !== 'string'))
         return executionRunActionFailure('invalid_parameters');
-      const execution = await dispatchOriginalAccountAction({ actionId, input, requestId: context.actionRequestId,
-        target: { kind: 'machine', machineId: nativeRead && 'machineId' in input && typeof input.machineId === 'string'
-          ? input.machineId : opened.environment.controllerMachineId }, credentials: params.credentials,
-        ...(workflow ? { authority: 'account_automation' as const,
-          installedWorkflow: { context, machineId: publisherMachineId!, installationId: params.externalActionMachineInstallationId!,
-            privateKey: params.externalActionMachineRequestPrivateKey! } }
-          : { authority: context.authority,
-            invocation: { caller: { kind: 'host' as const }, surface: context.surface ?? 'cli', authority: context.authority ?? 'account_automation' } }),
-        serverHttpBaseUrl: todoHomeBaseUrl,
-        ...(params.serverIdentityId ? { serverIdentityId: params.serverIdentityId } : {}),
-        ...(params.onRequesterSessionCredentialDisclosure ? { onRequesterSessionCredentialDisclosure: params.onRequesterSessionCredentialDisclosure } : {}),
-        ...(params.isCredentialCurrent ? { isCurrent: params.isCredentialCurrent } : {}),
-        ...(context.signal ? { signal: context.signal } : {}),
-      });
+      const execution = await dispatchOriginalDeploymentRoot(actionId, input, context, async () => ({ ok: true,
+        machineId: nativeRead && 'machineId' in input && typeof input.machineId === 'string'
+          ? input.machineId : opened.environment.controllerMachineId }));
       if (!execution.ok) return execution;
       const approval = ActionApprovalRequestCreatedResultSchema.safeParse(execution.result);
       if (approval.success && approval.data.actionId === actionId) return approval.data;
