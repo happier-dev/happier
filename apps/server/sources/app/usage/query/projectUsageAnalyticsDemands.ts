@@ -7,11 +7,18 @@ import type { UsageAnalyticsPopulation } from './projectUsageAnalyticsPopulation
 import { setImmediate } from 'node:timers/promises';
 import type { UsageQueryTiming } from './usageQueryTiming';
 
+export function assertUsageReaderOpen(isReaderClosed?: () => boolean): void {
+    if (isReaderClosed?.()) throw new Error('Usage reader closed');
+}
+
 /** Service native callbacks between the accounting owner's actual projection units. */
-export async function completeUsageAnalyticsProjection<T>(projection: Generator<void, T, void>): Promise<T> {
+export async function completeUsageAnalyticsProjection<T>(projection: Generator<void, T, void>,
+    isReaderClosed?: () => boolean): Promise<T> {
+    assertUsageReaderOpen(isReaderClosed);
     let next = projection.next();
     while (!next.done) {
         await setImmediate();
+        assertUsageReaderOpen(isReaderClosed);
         next = projection.next();
     }
     return next.value;
@@ -34,10 +41,11 @@ export function unionUsageAnalyticsProjectionDemands(queries: readonly UsageAnal
 
 /** Output demand is a union over one admitted population and chart coordinate, not another row projection. */
 export async function projectUsageAnalyticsDemands(snapshot: UsageAnalyticsProjectionContext, queries: readonly UsageAnalyticsQueryRequest[],
-    catalog: UsageModelPriceCatalog, population: UsageAnalyticsPopulation, prepareSummary: boolean, timing?: UsageQueryTiming, groupPrices = false):
+    catalog: UsageModelPriceCatalog, population: UsageAnalyticsPopulation, prepareSummary: boolean, timing?: UsageQueryTiming,
+    groupPrices = false, isReaderClosed?: () => boolean):
     Promise<(query: UsageAnalyticsQueryRequest, captured: UsageAnalyticsProjectionContext) => Promise<UsageAnalyticsQueryResponse>> {
     const union = unionUsageAnalyticsProjectionDemands(queries);
-    const prepared = await completeUsageAnalyticsProjection(prepareUsageAnalyticsProjectionSteps(snapshot, union, catalog, population, timing, groupPrices));
+    const prepared = await completeUsageAnalyticsProjection(prepareUsageAnalyticsProjectionSteps(snapshot, union, catalog, population, timing, groupPrices), isReaderClosed);
     // Completeness of total-price evidence can differ with a truncated requested
     // ranking. It has two states, not one row pass per requesting widget.
     const summaries = new Map<boolean, UsageAnalyticsSummary>();
@@ -48,7 +56,7 @@ export async function projectUsageAnalyticsDemands(snapshot: UsageAnalyticsProje
         let summary = summaries.get(complete);
         if (!summary) {
             const projected = await completeUsageAnalyticsProjection(projectUsageAnalyticsSummarySteps({ ...prepared.value,
-                coverage: value.coverage, costFacts: value.costFacts }, union, prepared.pricingPartitions));
+                coverage: value.coverage, costFacts: value.costFacts }, union, prepared.pricingPartitions), isReaderClosed);
             summary = projected.summary!;
             summaries.set(complete, summary);
         }

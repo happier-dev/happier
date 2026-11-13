@@ -135,11 +135,11 @@ export async function captureUsageAnalyticsInTx(
 
 /** Live scalar requests use the batch owner's cooperative fold, pricing and projection. */
 export async function projectUsageAnalyticsAsync(snapshot: UsageAnalyticsSnapshot,
-    request: UsageAnalyticsQueryRequest): Promise<UsageAnalyticsQueryResponse> {
+    request: UsageAnalyticsQueryRequest, isReaderClosed?: () => boolean): Promise<UsageAnalyticsQueryResponse> {
     const batch = await projectUsageAnalyticsBatch({
         snapshots: new Map([[getUsageAnalyticsQueryRequestKey(request), snapshot]]),
         priceCatalog: snapshot.priceCatalog,
-    }, [request], true);
+    }, [request], true, false, undefined, undefined, isReaderClosed);
     const result = batch.results[0];
     if (!result || !('value' in result)) throw new Error('Usage analytics projection failed');
     return { ...result.value, priceCatalog: batch.priceCatalog };

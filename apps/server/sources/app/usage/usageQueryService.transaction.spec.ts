@@ -172,8 +172,14 @@ describe('Usage snapshot transaction lifetime', () => {
         { url: '/v2/usage/query', accept: 'application/json' },
     ])('does not send $accept after a real client cancels during $url projection', async ({ url, accept }) => {
             const app: Parameters<typeof registerAccountUsageRoutes>[0] = createAuthenticatedTestApp();
+            let clockMs = 0;
+            const clock = vi.spyOn(performance, 'now').mockImplementation(() => clockMs += 25);
             let client: ClientRequest | undefined;
             let closedAfterCommit = false;
+            let projectionYieldsAfterClose = 0;
+            schedulerBoundary.onYield = () => {
+                if (closedAfterCommit) projectionYieldsAfterClose++;
+            };
             const sendsAfterClose: number[] = [];
             const streamsSettled: Promise<void>[] = [];
             const transportErrors: Array<{ name: string; code: string | null; stackHeader: string | undefined;
@@ -202,7 +208,9 @@ describe('Usage snapshot transaction lifetime', () => {
             });
             registerAccountUsageRoutes(app);
             usageEventRawRead.mockImplementation(async () => {
-                const captured = [eventForAttempt(++accountingRead)];
+                const event = eventForAttempt(++accountingRead);
+                const captured = Array.from({ length: 64 }, (_, index) => ({ ...event,
+                    id: `event-${index}`, turnId: `turn-${index}` }));
                 committed = true;
                 // A real client closes after capture returns and before the
                 // committed projector resumes from its normal I/O yields.
@@ -221,10 +229,13 @@ describe('Usage snapshot transaction lifetime', () => {
                 await handlerFinished;
                 await Promise.all(streamsSettled);
             } finally {
+                schedulerBoundary.onYield = () => {};
+                clock.mockRestore();
                 client?.destroy();
                 await app.close();
             }
             expect(closedAfterCommit).toBe(true);
+            expect(projectionYieldsAfterClose).toBe(0);
             expect(transportErrors).toEqual([]);
             expect(sendsAfterClose).toEqual([]);
             expect(logSink.mock.calls.filter(([entry]) => entry?.module === 'fastify-error'

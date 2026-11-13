@@ -85,7 +85,7 @@ export function registerAccountUsageRoutes(app: Fastify): void {
             if (!admitted) return reply.code(404).send({ error: 'Session not found' });
             const snapshot = await captureUsageAnalytics(userId, query, () => reply.raw.destroyed);
             if (reply.raw.destroyed) { reply.hijack(); return; }
-            const result = await projectUsageAnalyticsAsync(snapshot, query);
+            const result = await projectUsageAnalyticsAsync(snapshot, query, () => reply.raw.destroyed);
             if (reply.raw.destroyed) { reply.hijack(); return; }
             return reply.send({
                 usage: (result.series ?? []).map((bucket) => ({
@@ -127,7 +127,7 @@ export function registerAccountUsageRoutes(app: Fastify): void {
             }
             const snapshot = await captureUsageAnalytics(request.userId, request.body, () => reply.raw.destroyed);
             if (reply.raw.destroyed) { reply.hijack(); return; }
-            const result = await projectUsageAnalyticsAsync(snapshot, request.body);
+            const result = await projectUsageAnalyticsAsync(snapshot, request.body, () => reply.raw.destroyed);
             if (reply.raw.destroyed) { reply.hijack(); return; }
             return reply.send(result);
         } catch (error) {
@@ -171,7 +171,10 @@ export function registerAccountUsageRoutes(app: Fastify): void {
         if (reply.raw.destroyed) { reply.hijack(); return; }
         const projected = captured.snapshot ? await projectUsageAnalyticsBatch(captured.snapshot, captured.admitted,
             request.body.includeContributions || request.body.contributionQueries !== undefined,
-            request.body.contributionQueries !== undefined, timing, request.body) : undefined;
+            request.body.contributionQueries !== undefined, timing, request.body, () => reply.raw.destroyed).catch(error => {
+                if (reply.raw.destroyed) { reply.hijack(); return undefined; }
+                throw error;
+            }) : undefined;
         if (reply.raw.destroyed) { reply.hijack(); return; }
         const results = new Map(projected?.results.map(result => [getUsageAnalyticsQueryRequestKey(result.query), result]));
         const batch = { v: 1 as const, ...(projected?.priceCatalog ? { priceCatalog: projected.priceCatalog } : {}),
