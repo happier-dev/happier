@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
+import { AutomationTriggerIdSchema } from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol';
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { x25519 } from '@noble/curves/ed25519';
@@ -158,7 +160,9 @@ describe('committed service health receiver admission', () => {
     expect(await invoke('another-person')).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
     expect(await invoke(accountId, receipt.revision, 'another-home')).toMatchObject({ errorCode: 'RPC_FORBIDDEN' });
     expect(push).toHaveBeenCalledTimes(pushes);
-    expect(await invoke(accountId, { ...receipt.revision, bodyVersion: receipt.revision.bodyVersion + 1 })).toEqual({ kind: 'suppressed' });
+    const committedRevision = receipt.revision;
+    if (!committedRevision) throw new Error('Committed notice revision is required');
+    expect(await invoke(accountId, { ...committedRevision, bodyVersion: committedRevision.bodyVersion + 1 })).toEqual({ kind: 'suppressed' });
     expect(push).toHaveBeenCalledTimes(pushes);
     const row = rows.get(receipt.artifactId)!;
     rows.set(receipt.artifactId, { ...row, ownerAccountId: 'another-person' });
@@ -177,9 +181,9 @@ describe('committed service health receiver admission', () => {
     expect(push).toHaveBeenCalledTimes(pushes + 1);
     if (mode === 'plain') {
       const eventRef = HEALTH_CHECK_EVENT_REFS_V1.failed;
-      const triggerId = '11111111-1111-4111-8111-111111111111';
+      const triggerId = AutomationTriggerIdSchema.parse('11111111-1111-4111-8111-111111111111');
       const binding = { v: 1 as const, automationId: 'saved-health', triggerId, triggerRevision: 0,
-        triggerKind: 'pluginEvent' as const, eventRef, sourceSelectorId: 'c79a9957-537c-4f21-a08d-289245801c05' };
+        triggerKind: 'pluginEvent' as const, eventRef, sourceSelectorId: AutomationSourceSelectorIdV1Schema.parse('c79a9957-537c-4f21-a08d-289245801c05') };
       const save = (alerts: NonNullable<HealthCheckSourceConfigV1['alerts']>) => {
         savedSource = AutomationDefinitionDetailSchema.parse({ id: binding.automationId, name: 'Saved health',
           description: null, enabled: true, targetType: null, existingSessionId: null, templateVersion: 1,

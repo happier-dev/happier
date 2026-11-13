@@ -137,7 +137,7 @@ describe('createAccountArtifactStore', () => {
       expect(patch.agentState.expectedVersion).toBe(session.agentStateVersion);
       session = { ...session, metadata: patch.sharedMetadata.ciphertext, ownerMetadata: patch.ownerMetadata,
         agentState: patch.agentState.ciphertext, metadataVersion: session.metadataVersion + 1,
-        agentStateVersion: session.agentStateVersion + 1 };
+        agentStateVersion: (session.agentStateVersion ?? 0) + 1 };
       writes.push('source-pointer');
       return { status: 200, data: { success: true, metadataLayoutVersion: 1,
         sharedMetadata: { version: session.metadataVersion }, agentState: { version: session.agentStateVersion } } };

@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
 import { resolvePublishedMachineEncryptionContext, MachineContentKeyUnavailableError } from './machine/machineDataEncryptionKey';
 import { readPublishedMachineRow } from './machine/readPublishedMachineRow';
+import { SessionCreationCorrespondenceV1ReadSchema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { AccessibleMachineAccessV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { MachineRegistrationReplacementResultSchema } from '@happier-dev/protocol/machines/identity/machineReplacement';
@@ -528,7 +529,8 @@ export class ApiClient {
     signal?: AbortSignal,
   }): Promise<SessionCreateOrLoadResult | null> {
     opts.signal?.throwIfAborted();
-    const managedCreation = opts.metadata.sessionCreationCorrespondenceV1?.recipe.managedCreation;
+    const correspondence = SessionCreationCorrespondenceV1ReadSchema.safeParse(opts.metadata.sessionCreationCorrespondenceV1);
+    const managedCreation = correspondence.success ? correspondence.data.recipe.managedCreation : undefined;
     const sessionsUrl = `${resolveServerHttpBaseUrl()}/v1/sessions`;
 
     // One terminal classification for every failure this call can meet on its

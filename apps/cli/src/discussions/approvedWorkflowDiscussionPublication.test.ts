@@ -41,7 +41,7 @@ import { createApprovedWorkflowDiscussionPublisher } from './approvedWorkflowDis
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { createCurrentMachineExecutionOriginContextResolver } from '@/api/machine/resolveCurrentMachineExecutionOriginContext';
 import { readApprovedWorkflowDiscussionPublication } from './approvedDiscussionPublication';
-import { buildWorkflowActionContext } from '@/daemon/workflows/daemonRuntime';
+import { buildWorkflowActionContext, createCredentialedWorkflowAcceptedAuthorizationCurrentness } from '@/daemon/workflows/daemonRuntime';
 import type { WorkflowStep } from '@happier-dev/protocol/workflows/workflowV1';
 import { SessionMessageReplyAccountMutationV1Schema, SessionMessageReplyProgressV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import type { DiscussionReplyReturnPublication } from '@/session/services/sessionMessageReply';
@@ -112,12 +112,12 @@ type DaemonDenial = typeof daemonDenials[number];
 const transportDenials = ['recipient_key_pending', 'discussion_workflow_frontier_mismatch'] as const;
 const publicationModes = ['publish', 'settlement', 'settlement_restart', 'settlement_restart_e2ee', 'settlement_restart_transient', 'settlement_restart_deleted', 'settlement_restart_claim_lost', 'settlement_restart_paused', 'settlement_restart_misbound', 'settlement_rejected', 'settlement_canceled', 'settlement_session', 'settlement_session_retry', 'settlement_session_rejected', 'settlement_session_canceled', 'settlement_parallel', 'settlement_parallel_reject_first', 'settlement_parallel_approve_first', 'settlement_parallel_reject_both', 'settlement_provenance_entry', 'settlement_provenance_resolution', 'settled_parent', 'stable_replay_home', 'stable_delivery', 'foreign_delivery', 'unknown_delivery', 'revoked', 'observation', 'no_person', 'wrong_run', 'causal'] as const;
 it.each(publicationModes)('rejoins one configured-Ask Workflow approval and reopens its exact accepted typed result (%s)', mode => runPublicationCase(mode));
-it.each(readerDenials)('records reader %s as %s in the Artifact', (branch, code) =>
-  runPublicationCase(branch.startsWith('approval_') || branch.startsWith('source_') || branch.startsWith('adapter_')
-    ? 'starter' : 'settlement_restart', [branch, code]));
+it.each(readerDenials)('records reader %s as %s in the Artifact', (...denial: ReaderDenial) =>
+  runPublicationCase(denial[0].startsWith('approval_') || denial[0].startsWith('source_') || denial[0].startsWith('adapter_')
+    ? 'starter' : 'settlement_restart', denial));
 
-it.each(daemonDenials)('records daemon %s as %s in the Artifact', (branch, code) =>
-  runPublicationCase(branch === 'currentness' ? 'settlement_restart' : 'starter', undefined, [branch, code]));
+it.each(daemonDenials)('records daemon %s as %s in the Artifact', (...denial: DaemonDenial) =>
+  runPublicationCase(denial[0] === 'currentness' ? 'settlement_restart' : 'starter', undefined, denial));
 
 it.each(transportDenials)('records the Machine/custody transport code %s in the Artifact', code =>
   runPublicationCase('starter', undefined, undefined, code));
@@ -430,6 +430,7 @@ async function runPublicationCase(mode: typeof publicationModes[number] | 'start
     definitions: { get: async () => { throw new Error('No mutable definition read'); } },
     resolveEncryption: async () => accountEncryption,
     normalizeAbsolutePath: path => path, randomBytes: () => { throw new Error('No plaintext keys'); } });
+  const acceptedCurrent = createCredentialedWorkflowAcceptedAuthorizationCurrentness({ credentials, accountId, serverId, serverHttpBaseUrl: serverUrl });
   const currentness = createDaemonApprovalExecutionOriginCurrentnessFromCredentials({ credentials, machineId, serverId,
     serverApiUrl: serverUrl });
   if (!currentness) throw new Error('Missing bound approval currentness');
@@ -705,6 +706,7 @@ async function runPublicationCase(mode: typeof publicationModes[number] | 'start
         detachedRun: { actionExecutor: executor, buildActionContext: () => ({ surface: 'cli', authority: 'account_automation' }) },
         action: { executor, buildContext: async () => buildWorkflowActionContext({ ...materialized.snapshot, runId: workflow.runId }),
           observeApproval: async ({ artifactId, actionRequestId, actionId, authorization, signal }) => {
+            if (!authorization) throw new Error('Expected the accepted Workflow authorization');
             const expectedOrigin = { actionId: actionId ?? 'discussion.invite', requestId: actionRequestId,
               accountId, serverIdentityId, machineId };
             const origin = ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId })).executionOriginV1;

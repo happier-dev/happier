@@ -32,7 +32,6 @@ import { fail } from '@happier-dev/cli-common/output';
 import { resolveShellBridgeActionSurfaceV1 as resolveToolsCommandSurface } from '@/cli/actions/shellBridgeActionSurface';
 import { callSessionMcpTool, listSessionMcpTools } from './toolsSessionMcp';
 import { supportsSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
-import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { readMcpExecutionSource, refuseMcpExecutionSource } from '@/mcp/runtime/mcpExecutionSource';
 import { configuration } from '@/configuration';
@@ -303,15 +302,10 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
           scopeKey: resolveAccountSettingsScopeKeyForToken(context.credentials.token),
         });
         const actionsSettings = actionsSettingsProvider.getActionsSettings();
-        const isServerFeatureEnabled = surface === 'agent'
-          ? (featureId: FeatureId) => resolveCliFeatureDecision({ featureId, env: process.env,
-              serverSnapshot: context.serverFeaturesSnapshot }).state === 'enabled'
-          : undefined;
         const builtInTools = await deps.listBuiltInHappierTools({
           surface,
           actionsSettings,
           isActionEnabled: (id) => isActionEnabledByActionsSettings(id, actionsSettings, { surface }),
-          ...(isServerFeatureEnabled ? { isServerFeatureEnabled } : {}),
         });
         const { tools: customTools, warnings } = await deps.listResolvedCustomHappierTools({ mcpServers: context.mcpServers });
         if (!await context.operationContext.isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');

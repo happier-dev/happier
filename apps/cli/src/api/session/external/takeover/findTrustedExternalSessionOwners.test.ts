@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+
 import { findTrustedExternalSessionOwners } from './findTrustedExternalSessionOwners';
 
 describe('findTrustedExternalSessionOwners', () => {
@@ -7,6 +9,7 @@ describe('findTrustedExternalSessionOwners', () => {
         const matches = findTrustedExternalSessionOwners({
             markers: [{
                 pid: 4343,
+                trackingKey: legacyPidSessionTrackingKey(4343),
                 happySessionId: 'happy-pi-1',
                 happyHomeDir: '/tmp/happy-home',
                 createdAt: 1,
@@ -28,6 +31,7 @@ describe('findTrustedExternalSessionOwners', () => {
         const matches = findTrustedExternalSessionOwners({
             markers: [{
                 pid: 4242,
+                trackingKey: legacyPidSessionTrackingKey(4242),
                 happySessionId: 'happy-1',
                 happyHomeDir: '/tmp/happy-home',
                 createdAt: 1,
@@ -54,6 +58,7 @@ describe('findTrustedExternalSessionOwners', () => {
         const matches = findTrustedExternalSessionOwners({
             markers: [{
                 pid: 4444,
+                trackingKey: legacyPidSessionTrackingKey(4444),
                 happySessionId: 'happy-opaque-1',
                 happyHomeDir: '/tmp/happy-home',
                 createdAt: 1,
@@ -75,6 +80,7 @@ describe('findTrustedExternalSessionOwners', () => {
         const matches = findTrustedExternalSessionOwners({
             markers: [{
                 pid: 4445,
+                trackingKey: legacyPidSessionTrackingKey(4445),
                 happySessionId: 'happy-opaque-2',
                 happyHomeDir: '/tmp/happy-home',
                 createdAt: 1,
@@ -96,6 +102,7 @@ describe('findTrustedExternalSessionOwners', () => {
         const matches = findTrustedExternalSessionOwners({
             markers: [{
                 pid: 4446,
+                trackingKey: legacyPidSessionTrackingKey(4446),
                 happySessionId: 'happy-opaque-3',
                 happyHomeDir: '/tmp/happy-home',
                 createdAt: 1,
@@ -117,6 +124,7 @@ describe('findTrustedExternalSessionOwners', () => {
         const matches = findTrustedExternalSessionOwners({
             markers: [{
                 pid: 4242,
+                trackingKey: legacyPidSessionTrackingKey(4242),
                 happySessionId: 'happy-1',
                 happyHomeDir: '/tmp/happy-home',
                 createdAt: 1,

@@ -118,13 +118,20 @@ export async function createSavedSecretsCliHttpFixture(options: Readonly<{ loseC
     createExecutorFn: params => createCliActionExecutorFromCredentials({ ...params, serverIdentityId: options.serverIdentityId ?? 'srv_fixture',
       actionsSettingsProvider: createActionSettingsProvider({ scopeKey, accountSettings: settings }), savedSecretOperationContext: operation }),
   };
+  const opened = (input: Readonly<Record<string, unknown>>) => {
+    const resource = resources.get(String(input.resourceId)); if (!resource) throw new Error('Missing fixture resource');
+    if (resource.encryptionMode !== 'plain') throw new Error('Fixture requires plain Account content');
+    return openSavedSecretResourceStoredContentV1({ resourceId: resource.resourceId, mode: resource.encryptionMode,
+      storedContent: resource.storedContent });
+  };
   return { deps, writes, registryWrites, resources, origin,
     inHome: <T>(run: () => T) => runWithServerHttpBaseUrl(origin, run),
-    opened: (input: Readonly<Record<string, unknown>>) => {
-      const resource = resources.get(String(input.resourceId)); if (!resource) throw new Error('Missing fixture resource');
-      if (resource.encryptionMode !== 'plain') throw new Error('Fixture requires plain Account content');
-      return openSavedSecretResourceStoredContentV1({ resourceId: resource.resourceId, mode: resource.encryptionMode,
-        storedContent: resource.storedContent });
+    opened,
+    /** The inline value a write stored; fails when the write saved a source reference instead. */
+    openedValue: (input: Readonly<Record<string, unknown>>) => {
+      const content = opened(input);
+      if (content?.v !== 1) throw new Error('Fixture expects inline Saved Secret content');
+      return content.value;
     },
     close: async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); clearActiveAccountSettingsSnapshot(); },
   };

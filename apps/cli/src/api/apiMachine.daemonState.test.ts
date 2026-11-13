@@ -122,7 +122,7 @@ describe('daemon state publication cost contract', () => {
       for (let index = 0; index < 10; index++) await activity.read();
       expect(socket.emit.mock.calls.filter(([event, payload]) => event === 'machine-alive'
         && (payload as { workSummaryChanged?: unknown }).workSummaryChanged === true)).toHaveLength(0);
-      sessions = [...sessions, { pid: 2, startedBy: 'daemon', happySessionId: 'second',
+      sessions = [...sessions, { trackingKey: legacyPidSessionTrackingKey(2), pid: 2, startedBy: 'daemon', happySessionId: 'second',
         requesterWorkAttributionV1: attribution }];
       source.notifyChanged();
       expect(await activity.readDecision()).toEqual({ kind: 'busy', reasons: ['session'] });

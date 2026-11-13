@@ -4,7 +4,8 @@ import tweetnacl from 'tweetnacl';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { buildMachineAgentsDetectRequest } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
-import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionExecutionAuthorizationV1Schema, type ReviewedActionChildHttpProofV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { BotTemplateInstantiateInputV1Schema } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
 import { computeExternalActionRequestEnvelopeDigestV1, signExternalActionMachineRpcRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -54,10 +55,10 @@ describe('signed Session Agent readiness receiver', () => {
       agentInstallConsent: { vendorRecipe: false },
     };
     const envelope = { v: 1 as const, requestId: 'spawn', target: { kind: 'machine' as const, machineId: admission.machineId },
-      input: scenario.root === 'pat-template' ? BotTemplateInstantiateInputV1Schema.parse({
+      input: projectNativeJsonValueForTransport(scenario.root === 'pat-template' ? BotTemplateInstantiateInputV1Schema.parse({
         source: { kind: 'artifact', serverId: 'home', artifactId: 'template-artifact' }, expectedVersion: '1.0.0',
         creation: { ...creation, creationKey: 'copy' },
-      }) : creation };
+      }) : creation) };
     const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'root', binding: {
       accountId: 'requester', ...(scenario.root === 'pat-template'
         ? { principalId: 'requester', credentialId: 'pat', grant: API_TOKEN_FULL_GRANT_V1 }
@@ -75,11 +76,12 @@ describe('signed Session Agent readiness receiver', () => {
     const requestId = '0123456789abcdef0123456789abcdef';
     const childInput = getActionSpec(scenario.child.action).inputSchema.parse({ machineId: admission.machineId,
       ...(scenario.child === SESSION_AGENT_READINESS_CHILDREN_V1.inventory ? { serverId: 'home' } : {}), ...scenario.actionInput });
-    const reviewedChild = { actionId: scenario.child.action, role: scenario.child.role,
+    const reviewedChild: ReviewedActionChildHttpProofV1 = { actionId: scenario.child.action, role: scenario.child.role,
       inputDigest: computeActionInputApprovalDigestV1(scenario.child.action, childInput) };
     const encode = async (request: unknown, rpcMethod = method) => socketRpcCodec.encodeParams({ mode: 'plain' }, request, { method: rpcMethod, callId: requestId });
-    const packet = (params: unknown, proof = reviewedChild, rpcMethod = method) => ({ method: rpcMethod, requestId, params,
-      originalActionEnvelope: envelope, externalActionExecution: { v: 1, authorization: sealed, effectActionId: scenario.child.action,
+    const packet = (params: unknown, proof = reviewedChild, rpcMethod = method) => ({ method: rpcMethod, requestId,
+      params: projectNativeJsonValueForTransport(params),
+      originalActionEnvelope: envelope, externalActionExecution: { v: 1 as const, authorization: sealed, effectActionId: scenario.child.action,
         target: root.binding.target, installationId: admission.installationId, reviewedChild: proof,
         machineSignature: signExternalActionMachineRpcRequestV1({ authorizationToken: root.token, requesterAccountContext: sealed.requesterAccountContext,
           effectActionId: scenario.child.action, target: root.binding.target, installationId: admission.installationId,
@@ -110,10 +112,11 @@ describe('signed Session Agent readiness receiver', () => {
         resolveCustodianAccountId: async () => admission.custodianAccountId, resolveHomeServerIdentityId: async () => 'home',
         verifyMachineAdmission: input => verifyMachineRpcAdmissionCurrent({ ...input, privateKey: keys.secretKey,
           daemonToken: 'daemon', serverHttpBaseUrl: 'https://home.invalid' }) };
-      const rpc = new RpcHandlerManager({ scopePrefix: admission.machineId, localMachineId: admission.machineId, scopeKind: 'machine',
+      const rpc = new RpcHandlerManager({ scopePrefix: admission.machineId, localMachineId: admission.machineId,
         encryptionMode: 'plain', logger: () => {},
         authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, boundary, source),
         prepareRequesterAccountContext: input => prepareInstalledRequesterAccountActionContext({ ...input,
+          purpose: input.purpose ?? { kind: 'external_action' },
           machineId: admission.machineId, serverId: 'home', serverHttpBaseUrl: 'https://home.invalid',
           resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: admission.machineId, serverIdentityId: 'home' }),
           createExecutor: () => createActionExecutor(createUnavailableActionTransportDeps()) }),

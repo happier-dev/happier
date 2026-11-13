@@ -639,7 +639,7 @@ export type Metadata = Readonly<Partial<RuntimeDescriptorMetadataCarrier>> & Rea
   /** Presentation/routing marker; managed filesystem ownership remains daemon-owned. */
   sessionDirectoryV1?: SessionDirectoryV1,
   /** Immutable create-or-rejoin recipe supplied only by the Session creation owner. */
-  sessionCreationCorrespondenceV1?: import('@happier-dev/protocol').SessionCreationCorrespondenceV1,
+  sessionCreationCorrespondenceV1?: import('@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1').SessionCreationCorrespondenceV1,
   /** Informational creation origin; never execution authority. */
   placementOrigin?: import('@happier-dev/protocol').MachinePoolSelectionOriginV1,
   /** Durable connected-service generation reconciliation state; parsed fail-closed by its owner. */

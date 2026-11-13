@@ -83,7 +83,7 @@ export function updateMetadataWithExternalSessionFollowStatus(
                 ...(params.sessionId === undefined ? {} : { sessionId: params.sessionId }),
                 expectedLinkGeneration: Number.isFinite(expected) && expected >= 0
                     && String(expected) === params.expectedLinkGeneration ? expected : null,
-                actualLinkGeneration: resolved.ok ? resolved.linkedSession.linkedAtMs : null,
+                actualLinkGeneration: resolved.ok ? resolved.linkedSession.linkedAtMs ?? null : null,
             },
         );
     }

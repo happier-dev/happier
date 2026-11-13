@@ -161,7 +161,7 @@ describe('machine skill service through real Account HTTP and SQLite CAS', () =>
     vi.spyOn(persistence, 'readSettings').mockResolvedValue({ schemaVersion: 6, onboardingCompleted: true,
       activeServerId: configuration.activeServerId, servers: { [configuration.activeServerId]: {
         id: configuration.activeServerId, name: 'Fixture Home', serverUrl: descriptor.canonicalServerUrl,
-        webappUrl: descriptor.canonicalServerUrl, createdAt: 1, updatedAt: 1, lastUsedAt: 1,
+        webappUrl: descriptor.canonicalServerUrl, createdAt: 1, updatedAt: 1,
         homeConnectionDescriptor: descriptor,
       } } });
     const release = publishServerHttpRuntimeOrigin(base, 'iroh');

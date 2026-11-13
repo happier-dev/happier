@@ -21,7 +21,7 @@ export async function readSavedHealthAlertDestinationAvailabilityForHost(
     const configured = (await host.notificationChannelsList(input.signal)).find(channel => channel.value === input.channel.channelId);
     if (!configured || configured.disabled) return { kind: 'unavailable', reason: 'notification_channel_unavailable' };
     if (!configured.destinationSetup) return { kind: 'ready' };
-    if (input.channel.destination === undefined) return { kind: 'unavailable', reason: 'notification_destination_unconfigured' };
+    if (input.channel.destination === undefined || input.channel.destination === null) return { kind: 'unavailable', reason: 'notification_destination_unconfigured' };
     const result = await host.executeSetup(configured.destinationSetup, { destination: input.channel.destination }, input.signal);
     input.signal?.throwIfAborted();
     const parsed = ConversationNotificationDestinationSetupResultV1Schema.safeParse(result);

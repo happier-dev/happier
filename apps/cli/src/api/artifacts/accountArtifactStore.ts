@@ -893,7 +893,8 @@ export function createAccountArtifactStore(params: Readonly<{
       savedBy: input.savedBy, source, signal: input.signal,
       mutationAuthorizationHeaders: input.mutationAuthorizationHeaders, authorizationHeaders: input.authorizationHeaders }, stored, codec);
     const transcriptVisualPublication = readApprovalTranscriptVisualPublicationV1({
-      artifactId: input.artifactId, approval: approvalArtifactBodyMatchesHeaderV1(nextHeader, content.body) });
+      artifactId: input.artifactId, approval: approvalArtifactBodyMatchesHeaderV1(nextHeader,
+        typeof content.body === 'string' ? content.body : null) });
     const wire = { header, expectedHeaderVersion: input.expectedRevision.headerVersion,
       ...(transcriptVisualPublication ? { transcriptVisualPublication } : {}),
       body, expectedBodyVersion: input.expectedRevision.bodyVersion,

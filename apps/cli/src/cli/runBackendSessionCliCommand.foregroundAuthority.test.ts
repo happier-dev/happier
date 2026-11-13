@@ -43,8 +43,13 @@ import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 
 afterEach(() => { vi.restoreAllMocks(); reloadConfiguration(); });
 
+type ForegroundAuthorityCase = Readonly<{
+  prior: string | undefined; definitionId: string | undefined; missingCli: boolean; profileRouting?: boolean;
+  disabled?: boolean; explicitProfile?: boolean; fileStoreAgent?: 'pi' | 'ohmypi'; hostedScope?: string;
+}>;
+
 describe('foreground CLI runner authority scope', () => {
-  it.each([
+  it.each<ForegroundAuthorityCase>([
     { prior: undefined, definitionId: undefined, missingCli: false, profileRouting: false },
     { prior: '', definitionId: undefined, missingCli: false },
     { prior: 'previous-invocation', definitionId: undefined, missingCli: false },
@@ -86,7 +91,7 @@ describe('foreground CLI runner authority scope', () => {
     let sessionCreatePermissionMode: unknown = null;
     let admittedProfileId: unknown = null;
     let optionsEnvironment: Readonly<Record<string, string | undefined>> | null = null;
-    let fileStoreEnvironment: Readonly<Record<string, unknown>> | undefined;
+    let fileStoreEnvironment: unknown;
     const directory = join(home, hostedScope ?? 'workspace');
     const requests: string[] = [];
     const boundaryErrors: unknown[] = [];

@@ -1,4 +1,5 @@
 import { InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry } from "@/daemon/connectedServices/accountGroups/switching/ConnectedServiceAuthGroupSwitchCoordinator";
+import type { SessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 import { createServer } from 'node:http';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -289,7 +290,7 @@ describe('explicit daemon Account Artifact query-hint backfill', () => {
         startupSource: 'manual' as const, serviceLabel: undefined, daemonLogPath: '/tmp/artifact-bootstrap.log', controlToken: 'control',
         publishDaemonState: () => true, happyHomeDir: '/tmp/artifact-bootstrap-home', activeServerDir: '/tmp/artifact-bootstrap-server',
         filesystemAccessPolicy: { kind: 'osUser' as const }, publicReleaseChannel: 'dev' as const,
-        connectedServicesRestartRequestedSessions: new Set(), trackedSessionsByKey: new Map(),
+        connectedServicesRestartRequestedSessions: new Set<SessionTrackingKey>(), trackedSessionsByKey: new Map(),
         connectedServiceAuthGroupPreTurnSwitchCoordinator: { ...healthSwitchContext, switchBeforeTurn: unsupported, applyCommittedGeneration: unsupported, applyCredentialUpdate: unsupported },
         connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(), providerAccountUsageStore: createProviderAccountUsageStore(),
         artifactQueryHints: { signal: lifetime.signal,

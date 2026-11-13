@@ -62,9 +62,8 @@ describe('RPC completion diagnostics', () => {
             details: { ...details, environment: { TOKEN: 'never-log-secret' }, output: 'never-log-child-output' },
         }), { rpcErrorCode: 'agent_isolation_unavailable' }); };
         const method = kind === 'invoke' ? RPC_METHODS.CAPABILITIES_INVOKE : RPC_METHODS.CAPABILITIES_DETECT;
-        rpc.registerHandler(method, () => kind === 'invoke'
-            ? service.invoke({ id: 'cli.fixture', method: 'probeModels' }, { executeEffects })
-            : service.detect({ requests: [{ id: 'cli.fixture' }] }, { executeEffects }));
+        if (kind === 'invoke') rpc.registerHandler(method, () => service.invoke({ id: 'cli.fixture', method: 'probeModels' }, { executeEffects }));
+        else rpc.registerHandler(method, () => service.detect({ requests: [{ id: 'cli.fixture' }] }, { executeEffects }));
         const response = await rpc.handleRequest({ method: `machine:${method}`, params: {} });
         expect(response).toMatchObject(kind === 'invoke'
             ? { ok: false, error: { code: 'agent_isolation_unavailable', details } }

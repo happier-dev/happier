@@ -60,7 +60,9 @@ it.each([
     const askSurfaces: unknown[] = [];
     let effects = 0;
     let childResult: ActionExecuteResult | undefined;
-    const guest = createCliActionExecutorHarness({ token, credentials, mode, ctx: mode === 'plain' ? null : { encryptionVariant: 'legacy', encryptionKey: secret },
+    const guest = createCliActionExecutorHarness({ token, credentials,
+        ...(mode === 'plain' ? { mode: 'plain' as const, ctx: null }
+            : { mode: 'e2ee' as const, ctx: { encryptionVariant: 'legacy' as const, encryptionKey: secret } }),
         sessionId: '', serverId: profile, serverIdentityId: 'srv_home', serverHttpBaseUrl: 'https://home.example',
         actionsSettingsProvider: { getActionsSettings: () => settings, getAccountSettings: () => null },
     }, {

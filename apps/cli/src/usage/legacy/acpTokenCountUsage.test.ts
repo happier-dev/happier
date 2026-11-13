@@ -102,6 +102,6 @@ describe('acp token_count usage extraction', () => {
     expect(res.tokens.input).toBe(1);
     expect(res.tokens.output).toBe(2);
     expect(Object.hasOwn(res.tokens, '__proto__')).toBe(false);
-    expect(res.tokens.polluted).toBeUndefined();
+    expect(Reflect.get(res.tokens, 'polluted')).toBeUndefined();
   });
 });

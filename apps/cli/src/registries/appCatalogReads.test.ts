@@ -24,10 +24,11 @@ describe('daemon admitted immutable app catalog reads', () => {
         : Response.json({ sha: url.endsWith('/HEAD') ? head : url.split('/').at(-1) });
       if (url.endsWith('/service-templates.json')) return Response.json({ app: { name: 'App', slogan: 'Status' } });
       if (url.endsWith('/app.yaml')) {
-        if (bodyGate) await new Promise<void>((resolve, reject) => {
+        const gate = bodyGate;
+        if (gate) await new Promise<void>((resolve, reject) => {
           const abort = () => reject(init?.signal?.reason);
           init?.signal?.addEventListener('abort', abort, { once: true });
-          bodyGate.then(resolve, reject).finally(() => init?.signal?.removeEventListener('abort', abort));
+          gate.then(resolve, reject).finally(() => init?.signal?.removeEventListener('abort', abort));
         });
         if (bodyLimited) return new Response('', { status: 429,
           headers: { 'x-ratelimit-reset': String(Math.ceil(retryAt / 1000)) } });

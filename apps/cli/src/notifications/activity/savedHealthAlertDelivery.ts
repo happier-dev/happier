@@ -43,7 +43,7 @@ async function readSavedHealthAlertTestSelection(host: SavedHealthAlertTestHost,
         if (!source) return unavailable('health_check_source_unconfigured');
         if (source.revision !== selector.expectedSourceRevision) return unavailable('health_check_source_revision_changed');
         const subject = source.source.subject;
-        let controllerMachineId: string | null = subject.kind === 'machineService' ? source.observer.machineId : null;
+        let controllerMachineId: string | null = subject.kind === 'machineService' ? source.observer?.machineId ?? null : null;
         if (subject.kind === 'environment') {
             const { deploymentAction } = createCliDeploymentActionDeps({ serverHttpBaseUrl: host.serverHttpBaseUrl,
                 localAccount: { accountId: host.accountId, token: host.credentials.token },

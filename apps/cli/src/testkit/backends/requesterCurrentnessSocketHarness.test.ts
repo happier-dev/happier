@@ -26,7 +26,7 @@ it('rejects a prior native upgrade failure and settles a replacement connection'
     const channel = await createRequesterCurrentnessSocketHarness();
     onTestFinished(() => channel.close());
     channel.server.engine.once('connection', peer => {
-        peer.once('upgrading', transport => transport.close());
+        peer.once('upgrading', (transport: Readonly<{ close(): void }>) => transport.close());
     });
     const connection = createUserScopedSocketConnection({ token: 'fixture-token' });
     connection.socket.io.opts.transports = ['polling', 'websocket'];

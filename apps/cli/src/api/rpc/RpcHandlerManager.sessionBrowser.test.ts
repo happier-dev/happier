@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { createDeferred } from '@/testkit/async/deferred';
 import axios from 'axios';
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -21,7 +22,7 @@ it.each([
 ] as const)('opens Home-admitted Browser RPC with the exact Session content ($mode Session, $accountMode Account, failure=$contentFailure)', async testCase => {
     const { mode, accountMode } = testCase;
     const contentFailure = 'contentFailure' in testCase ? testCase.contentFailure : null;
-    const sessionReadStarted = Promise.withResolvers<void>();
+    const sessionReadStarted = createDeferred<void>();
     const seed = new Uint8Array(32).fill(3);
     const publicKey = libsodiumPublicKeyFromSecretKey(seed);
     const sessionKey = new Uint8Array(32).fill(9);

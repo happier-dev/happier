@@ -2092,7 +2092,7 @@ describe('createExecutionRunRpcActionExecutor', () => {
     const diagnostics = { dispatch: vi.fn(async () => ({ v: 1 as const, machineId: 'machine_1',
       generatedAt: 2_000, refreshState: 'idle' as const, events: [], diagnostics: [] })) };
     const deps = createExecutionRunRpcActionDeps({
-      manager: { ...original, get: id => id === run.runId ? { ...run, approvalProfileId } : null },
+      manager: { ...original, getForRequest: async id => id === run.runId ? { ...run, approvalProfileId } : null },
       context: { sessionId: 'sess_1', cwd: '/workspace', browserDiagnostics: diagnostics,
         getServerFeaturesSnapshot: () => BROWSER_DIAGNOSTICS_RUNTIME_ACTIONS_ENABLED },
       policy: resolveExecutionRunPolicy({ defaults: { boundedTimeoutMs: null,

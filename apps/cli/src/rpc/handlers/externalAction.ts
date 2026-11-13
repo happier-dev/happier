@@ -168,10 +168,11 @@ export function registerExternalActionRpcHandler(
       currentMachineId: options.machineId,
       ...(options.sessionId === undefined ? {} : { currentSessionId: options.sessionId }),
       currentServerId: options.currentServerId,
-      currentAccountId: accountId,
+      // Admitted above: both equal the binding's custodian/installation.
+      currentAccountId: accountId ?? undefined,
       currentServerHttpBaseUrl: options.currentServerHttpBaseUrl,
       prepareRequesterAccountContext: options.prepareRequesterAccountContext,
-      currentInstallationId: installationId,
+      currentInstallationId: installationId ?? undefined,
       // HTTP-port reconstruction reuses this ingress's admitted root. Keep
       // installation retirement local; fresh effect admission stays below.
       isInstallationCurrent: () => options.resolveInstallationId() === installationId,

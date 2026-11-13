@@ -20,7 +20,7 @@ import { encodeStoredCredentials, updateSettings, writeStoredCredentialsForServe
 import { configuration } from '@/configuration';
 import { withCliApiToken } from '@/auth/cliApiToken';
 import { createRequesterSessionCredentialCustody, readRequesterSessionCredentialsForChild } from '@/daemon/sessionEncryption/requesterSessionCredentials';
-import { SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { admitSessionSpawnNewActionInputV2, SessionSpawnNewActionInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
 import { projectExternalActionHttpError } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectExternalActionRequesterHttpAuthorization } from './externalActionExecutionAuthorization';
@@ -206,8 +206,9 @@ describe('managed continuation through the ordinary public Action transport', ()
         const setupExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
             machineSetupPlan: createMachineSetupPlanAction({ homeId: 'srv_home', machineId: 'guest', apiMachine: guest }) });
         const preparedDirectories: unknown[] = [];
-        const spawnExecutor = createCliActionExecutorHarness({ token: credentials.token, credentials, mode,
-            ctx: mode === 'plain' ? null : { encryptionVariant: 'legacy', encryptionKey: secret }, sessionId: '', serverId: 'home-profile', serverIdentityId: 'srv_home',
+        const spawnExecutor = createCliActionExecutorHarness({ token: credentials.token, credentials,
+            ...(mode === 'plain' ? { mode: 'plain' as const, ctx: null }
+                : { mode: 'e2ee' as const, ctx: { encryptionVariant: 'legacy' as const, encryptionKey: secret } }), sessionId: '', serverId: 'home-profile', serverIdentityId: 'srv_home',
             serverHttpBaseUrl: 'https://home.example', sessionSpawnDirectTargetTransport: { machineId: 'guest',
                 // The actual directory/Agent process boundary is unavailable in
                 // this test; all Session authoring and Action admission is real.
@@ -275,9 +276,9 @@ describe('managed continuation through the ordinary public Action transport', ()
         const dispatch = { continuation, authorization: parent, installationId: 'installation', privateKey: keyPair.secretKey,
             ...(mode === 'e2ee' && !foreign ? { material: ownMaterial } : {}),
             serverHttpBaseUrl: 'https://home.example', invocation: { caller: { kind: 'host' as const }, surface: 'ui' as const, authority: 'present_user' as const } };
-        const sessionInput = SessionSpawnNewActionInputV2Schema.parse({ executionTarget: input.executionTarget, directory: input.directory,
+        const sessionInput = admitSessionSpawnNewActionInputV2(SessionSpawnNewActionInputV2Schema.parse({ executionTarget: input.executionTarget, directory: input.directory,
             agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
-            connectedServices: { v: 2, bindingsByServiceId: {} } });
+            connectedServices: { v: 2, bindingsByServiceId: {} } }));
         const invoke = (includeInvocation = true, surface: 'ui' | 'cli' = 'ui') => actionId === 'machines.setup.plan'
             ? dispatchManagedMachineSetupPlan({ ...dispatch, ...(includeInvocation ? { invocation: { ...dispatch.invocation, surface } } : { invocation: undefined }), serverId: 'home-profile', input: { homeId: 'srv_home', machineId: 'guest' } })
             : dispatchManagedSessionStart({ ...dispatch, ...(includeInvocation ? { invocation: { ...dispatch.invocation, surface } } : { invocation: undefined }), input: sessionInput });
@@ -396,7 +397,7 @@ describe('managed continuation through the ordinary public Action transport', ()
         // Setup Plan can be hosted with only receiving requester custody. The
         // transport owns selecting it; public daemon credentials are optional.
         const deps = createCliActionDeps({ token: daemonCredentials.token,
-            ...(rootActionId === 'machines.setup.plan' ? {} : { credentials: daemonCredentials }), sessionId: '',
+            ...(rootActionId === 'machines.setup.plan' ? {} : { credentials: daemonCredentials }), sessionId: '', mode: 'plain', ctx: null,
             serverId: 'home-profile', serverIdentityId: 'srv_home', serverHttpBaseUrl: 'https://home.example',
             externalActionMachineInstallationId: sourceInstallationId, externalActionMachineRequestPrivateKey: keyPair.secretKey });
         const invoke = (input = child) => runWithServerHttpBaseUrl('https://home.example', () => deps.machineSetupPlan!({ input, context: {

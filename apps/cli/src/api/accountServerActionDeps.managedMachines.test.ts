@@ -60,6 +60,9 @@ import { decodeStoredCredentials } from '@/persistence';
 
 const socketBoundary = vi.hoisted(() => ({
   connections: [] as Array<{ serverUrl: string; token?: string }>,
+/** These fixtures attach a reviewed-child port that closes over the same context object. */
+type MutableContext<T> = { -readonly [K in keyof T]: T[K] };
+
   respond: undefined as ((event: string, payload: unknown) => Promise<unknown>) | undefined,
 }));
 vi.mock('socket.io-client', async () => {
@@ -351,7 +354,7 @@ describe('managed inventory CLI Home adapter', () => {
       uiArtifacts: [], packageAssets: [],
     }));
     const inspectInput = { homeId: retained.homeId, managedId: retained.id, includeGuestDiagnostics: true };
-    const actionContext: ActionExecutorContext = { ...context, actionRequestId: 'guest-log-read', runtimeAccountId: 'owner' };
+    const actionContext: MutableContext<ActionExecutorContext> = { ...context, actionRequestId: 'guest-log-read', runtimeAccountId: 'owner' };
     const roles: string[] = [];
     actionContext.hostReviewedChild = createHostReviewedChildPortV1({ actionId: 'machines.managed.inspect', input: inspectInput,
       context: actionContext, plan: { children: [
@@ -472,7 +475,7 @@ describe('managed inventory CLI Home adapter', () => {
         purposeBindingOwner: owner, requestAuthRegistry: createConnectedAccountRequestAuthSubjectRegistry(),
         resolveRequestAuthHttpPort: () => 43123, createRedactionLease: () => ({ add() {}, close() {} }),
       }) });
-    const actionContext: ActionExecutorContext = { ...context, actionRequestId: 'original-power', runtimeAccountId: refused ? 'other' : 'owner',
+    const actionContext: MutableContext<ActionExecutorContext> = { ...context, actionRequestId: 'original-power', runtimeAccountId: refused ? 'other' : 'owner',
       operationAcceptance: { operationId: 'original-operation', accept() {} }, operationOwnerUpdate: { update() {} } };
     // This constructs the consumer's canonical private-port boundary; it is
     // not evidence that production preparation has published the role plan.
@@ -565,7 +568,7 @@ describe('managed inventory CLI Home adapter', () => {
       return { machine: retained };
     });
     const actionInput = { homeId: retained.homeId, managedId: retained.id, expectedRevision: 0, when: 'now' as const, intent };
-    const actionContext: ActionExecutorContext = { ...context, actionRequestId: 'failed-power', runtimeAccountId: 'owner' };
+    const actionContext: MutableContext<ActionExecutorContext> = { ...context, actionRequestId: 'failed-power', runtimeAccountId: 'owner' };
     const native: string[] = [];
     let powered = false;
     const roles = readMachineProvisionerActionRolesV1(provisioner);
@@ -732,7 +735,7 @@ describe('managed inventory CLI Home adapter', () => {
     const deps = createAccountServerActionDeps({ token: 'bound', serverId: 'route-home', serverIdentityId: 'srv_home', serverHttpBaseUrl: 'http://home.test' });
     const inspectInput = { homeId: retained.homeId, managedId: retained.id };
     const settlements: ManagedNativeOperationSettlement[] = [];
-    const actionContext: ManagedMachineOperationSettlementContext = { ...context, actionRequestId: 'inspect-request', runtimeAccountId: 'owner',
+    const actionContext: MutableContext<ManagedMachineOperationSettlementContext> = { ...context, actionRequestId: 'inspect-request', runtimeAccountId: 'owner',
       settleManagedNativeOperation: settlement => { settlements.push(settlement); } };
     const plan = await prepareCliManagedProvisionerAdmission({ actionId: 'machines.managed.inspect', input: inspectInput, context: actionContext },
       { credentials: { token: 'bound', encryption: null }, serverUrl: 'http://home.test', managedMachineAction: deps.managedMachineAction });

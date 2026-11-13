@@ -16,7 +16,7 @@ describe('retained Workspace Sync SOURCE writer cleanup admission', () => {
       resolveInstallationId: () => admission.installationId, resolveCustodianAccountId: async () => admission.custodianAccountId,
       resolveHomeServerIdentityId: async () => 'home', verifyMachineAdmission: async () => { homeReads++; return true; } };
     const manager = new RpcHandlerManager({ scopePrefix: admission.machineId, localMachineId: admission.machineId,
-      scopeKind: 'machine', encryptionMode: 'plain', logger: () => {},
+      encryptionMode: 'plain', logger: () => {},
       authorizeRequest: (request, source) => authorizeMachineRpcRequest(request, boundary, source) });
     let ready!: () => void;
     const entered = new Promise<void>(resolve => { ready = resolve; });
@@ -77,7 +77,7 @@ describe('retained Workspace Sync SOURCE writer cleanup admission', () => {
     expect(await authorizeMachineRpcRequest(request, boundary, 'authenticated_home_socket')).toEqual({ ok: true });
     expect(homeReads).toBe(0);
     const manager = new RpcHandlerManager({ scopePrefix: boundary.machineId, localMachineId: boundary.machineId,
-      scopeKind: 'machine', encryptionMode: 'plain', logger: () => {},
+      encryptionMode: 'plain', logger: () => {},
       authorizeRequest: (incoming, source) => authorizeMachineRpcRequest(incoming, boundary, source) });
     manager.registerHandler(phase === 'inspect' ? RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_INSPECT
       : RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE, async () => ({ admitted: true }));

@@ -214,7 +214,9 @@ function createRuntimeRegistry(): ResolvedExecutablePluginRuntimeRegistry {
     prepareDaemonDatabases: async () => { throw new Error('Daemon databases are outside this fixture'); },
     quiesceDaemonDatabases: async () => { throw new Error('Daemon databases are outside this fixture'); },
     projectManagedServices: createManagedServicesOwner({
-      processSupervisorHost: { custodyOwner: 'daemon', bind: () => { throw new Error('No native service process is available in this fixture'); } },
+      processSupervisorHost: { custodyOwner: 'daemon', bind: () => { throw new Error('No native service process is available in this fixture'); },
+        captureProjectProcess: async () => null,
+        restoreProjectProcess: async () => { throw new Error('No retained Project process in this fixture'); } },
       dependencies: { status: unavailableDependency, ensure: unavailableDependency, update: unavailableDependency, remove: unavailableDependency },
       resolveScope: () => null,
     }),

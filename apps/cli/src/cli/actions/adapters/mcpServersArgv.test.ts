@@ -7,7 +7,7 @@ import { createPersonalSavedSecretActionExecuteV1 } from '@happier-dev/protocol/
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { MCP_SERVER_ACTION_INPUT_SCHEMAS_V1, MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/mcp/servers/serverActionsV1';
 import { commitMcpServerCatalogMutationV1, loadMcpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverCatalogV1';
-import type { McpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
+import { McpServerCatalogRowReadResponseV1Schema, type McpServerCatalogV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { executeConnectedServiceConfigurationActionV1, prepareConnectedServiceRevokeInputV1, type ConnectedServiceConfigurationActionHostV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { HOST_CONNECTED_ACCOUNT_SERVICE_REF_V1 as service } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
@@ -27,7 +27,7 @@ describe('MCP compiled CLI predecessor spellings', () => {
       readCatalog: () => loadMcpServerCatalogV1({ mode: 'plain', material: null,
         readRow: async () => {
           if (failedRead) throw new Error('Unavailable HTTP transport');
-          return { status: 'present', revision, content: { t: 'plain', v: catalog } };
+          return McpServerCatalogRowReadResponseV1Schema.parse({ status: 'present', revision, content: { t: 'plain', v: catalog } });
         } }),
       mutate: (change, expectedRevision) => commitMcpServerCatalogMutationV1({ catalog, revision, change, scope: null,
         writeCatalog: async candidate => {
@@ -207,7 +207,7 @@ describe('MCP compiled CLI tools', () => {
     const mcpServerAction = createMcpServerActionExecuteV1({
       readCatalog: () => loadMcpServerCatalogV1({ mode: 'plain', material: null, readRow: async () => {
         if (changed === 'home') { vi.stubEnv('HAPPIER_SERVER_URL', 'https://changed-home.example.test'); reloadConfiguration(); }
-        return { status: 'present', revision, content: { t: 'plain', v: catalog } };
+        return McpServerCatalogRowReadResponseV1Schema.parse({ status: 'present', revision, content: { t: 'plain', v: catalog } });
       } }),
       mutate: (change, expectedRevision) => commitMcpServerCatalogMutationV1({ catalog, revision, change, scope: null,
         writeCatalog: async candidate => {

@@ -17,11 +17,11 @@ describe('usageObservation', () => {
             contextUsedTokens: null, contextWindowTokens: null };
         expect(buildLegacyUsageReportFromUsageObservation({ sessionId: 'session-1', observation })).toBeNull();
         expect(buildLegacyUsageReportFromUsageObservation({ sessionId: 'session-1',
-            observation: { ...observation, tokens: { input: 8, cacheRead: 4 }, cost: { reportedUsd: 0 } } })).toBeNull();
+            observation: { ...observation, tokens: { input: 8, output: null, reasoning: null, cacheRead: 4, cacheWrite: null, total: null }, cost: { reportedUsd: 0, estimatedUsd: null, currency: 'USD' } } })).toBeNull();
         expect(buildTokenCountSessionMessageFromUsageObservation({ ...observation,
-            tokens: { input: 8, cacheRead: 4 } })?.tokens).toEqual({ input: 8, cache_read: 4 });
+            tokens: { input: 8, output: null, reasoning: null, cacheRead: 4, cacheWrite: null, total: null } })?.tokens).toEqual({ input: 8, cache_read: 4 });
         expect(buildLegacyUsageReportFromUsageObservation({ sessionId: 'session-1',
-            observation: { ...observation, tokens: { total: 0 }, cost: { reportedUsd: 0 } } }))
+            observation: { ...observation, tokens: { total: 0 }, cost: { reportedUsd: 0, estimatedUsd: null, currency: 'USD' } } }))
             .toMatchObject({ tokens: { total: 0 }, cost: { total: 0 } });
     });
     it.each([

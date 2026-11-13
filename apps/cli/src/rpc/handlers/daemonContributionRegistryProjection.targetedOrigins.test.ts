@@ -61,7 +61,8 @@ describe('targeted detail execution origins through admitted runtime publication
             const callers = [...new Map(snapshots.map(snapshot => [snapshot.target.pluginId, snapshot.target])).values()];
             const callerPluginIds = new Set(callers.map(caller => caller.pluginId));
             const actions = [...new Map([
-                ...fixture.registry.contributes.actions.filter(action => callerPluginIds.has(action.pluginId)).map(action => action.identity),
+                ...fixture.registry.contributes.actions.flatMap(action => action.pluginId && action.identity && callerPluginIds.has(action.pluginId)
+                    ? [action.identity] : []),
                 ...snapshots.flatMap(snapshot => snapshot.points.flatMap(point => point.protocols.flatMap(protocol =>
                     protocol.contributions.flatMap(contribution => contribution.operations.map(operation => operation.action))))),
             ].map(action => [buildQualifiedPluginContributionKey(action), action])).values()];

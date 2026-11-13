@@ -8,6 +8,7 @@ import type { ActionCliExecutionDeps } from '@/cli/actions/executeCommand';
 import { executePluginDevLoopAction } from '@/plugins/devLoop/actions';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ApprovalRequestV2Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 const daemon = vi.hoisted(() => ({
   ensureRunning: vi.fn(async () => undefined),
@@ -54,7 +55,8 @@ function authenticatedActionDeps(options: Readonly<{ approve?: boolean }> = {}):
       storedRequest = request;
       return { artifactId: 'plugins-command-approval' };
     },
-    approvalsGet: async () => storedRequest,
+    // The artifact store returns its persisted body through the canonical approval parser.
+    approvalsGet: async () => storedRequest && ApprovalRequestV2Schema.parse(storedRequest),
     approvalsUpdate: async ({ request }) => {
       storedRequest = request;
       return { ok: true };

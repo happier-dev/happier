@@ -94,7 +94,7 @@ describe('rpcHandlers.mcpServers (shared Saved Secret admission)', () => {
     registerMachineMcpServersRpcHandlers({
       rpcHandlerManager: {
         registerHandler: (method: string, handler: RpcHandler<unknown, unknown>) => {
-          handlers.set(method, raw => handler(raw, createMcpOwnerRpcContext()));
+          handlers.set(method, async raw => handler(raw, createMcpOwnerRpcContext()));
         },
       } as never,
       deps: {

@@ -17,6 +17,7 @@ it.skipIf(process.platform === 'win32').each(['muse', 'droid', 'fx'] as const)('
   await writeFile(join(bin, 'bash'), '#!/bin/sh\nexit 0\n');
   await chmod(join(bin, 'bash'), 0o755);
   const spec = getAgentCliRuntimeSpec(agentId);
+  if (!spec) throw new Error(`Missing ${agentId} runtime spec`);
   let stored: ApprovalRequestV2 | null = null;
   let jobId: string | undefined;
   const owner = createAgentInstallJobOwner({

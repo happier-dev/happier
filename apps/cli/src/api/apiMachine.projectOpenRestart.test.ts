@@ -57,7 +57,7 @@ describe('installed Machine Project Open receipt restart', () => {
         const client = await api.machineSyncClient({ id: 'worker', encryptionMode: 'plain', metadata: null,
             metadataVersion: 0, daemonState: null, daemonStateVersion: 0 });
         clients.push(client);
-        client.setRPCHandlers({ spawnSession: async () => ({ type: 'error', errorMessage: 'Not used' }),
+        client.setRPCHandlers({ spawnSession: async () => ({ type: 'error', errorCode: 'INVALID_REQUEST', errorMessage: 'Not used' }),
             stopSession: async () => ({ status: 'not_found' }), isSessionActive: async () => false,
             requestShutdown: () => {} });
         const rpc: unknown = Reflect.get(client, 'rpcHandlerManager');

@@ -1,4 +1,5 @@
 import { projectExternalActionMachineRuntimeDemandV1, projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/actionSpecs';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import {
   API_TOKEN_FULL_GRANT_V1,
   computeExternalActionRequestEnvelopeDigestV1,
@@ -402,7 +403,7 @@ describe('registerExternalActionRpcHandler', () => {
         v: 1,
         requestId: 'request-1',
         target: spawn.target,
-        input: spawn.input,
+        input: projectNativeJsonValueForTransport(spawn.input),
       },
       principal: {
         accountId: 'account-1',

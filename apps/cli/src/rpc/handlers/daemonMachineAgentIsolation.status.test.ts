@@ -25,6 +25,8 @@ it.skipIf(process.platform !== 'linux').each(['machines.agentIsolation.status', 
     resetNativeFilesystemMemberBoundary();
     onTestFinished(resetNativeFilesystemMemberBoundary);
     const native = await createNativeFilesystemMemberFixture({ accountId: 'requester' });
+    const preparation = native.preparation;
+    if (!preparation) throw new Error('Expected native isolation preparation fixture');
     const target = { serverId: native.serverId, machineId: native.machineId,
       installationId: native.installation.installationId, custodianAccountId: 'requester' };
     const policy = { enabled: true, memberProvisioning: 'linuxUsersV1' as const };
@@ -35,7 +37,7 @@ it.skipIf(process.platform !== 'linux').each(['machines.agentIsolation.status', 
         // The Machine's base setup already exists. Member user observation
         // retains the native fixture's UID/GID/home facts for the real inspector.
         observe: async (step, ...rest) => step.kind === 'user' && step.username === native.identity.username
-          ? native.preparation.effects.backend!.observe(step, ...rest)
+          ? preparation.effects.backend!.observe(step, ...rest)
           : { stepId: step.id, status: 'satisfied', facts: {} },
         apply: async () => { throw new Error('Existing native isolation must not be applied again'); },
       } });
@@ -48,13 +50,13 @@ it.skipIf(process.platform !== 'linux').each(['machines.agentIsolation.status', 
     const machine = new ApiMachineClient(native.bootstrap.credentials.token, { id: target.machineId,
       encryptionMode: 'plain', metadata: { host: 'output-host', platform: 'linux', happyCliVersion: 'test',
         homeDir: '/home/happier', happyHomeDir: '/home/happier/.happier', agentIsolation: policy }, metadataVersion: 10,
-      daemonState: { runtimeId: 'qualified-output-runtime', agentIsolation: status }, daemonStateVersion: 0 },
+      daemonState: { status: 'running', runtimeId: 'qualified-output-runtime', agentIsolation: status }, daemonStateVersion: 0 },
       { runtimeId: 'qualified-output-runtime' }, { resolveCurrentServerIdentityId: () => native.homeServerIdentityId });
     onTestFinished(() => machine.shutdown());
     // Use the real own-status inspector, retained member binding and readiness
     // frame. The native fixture supplies only OS identity/permission observations.
     machine.registerMachineAgentIsolationRoutes({ ...setup.effects,
-      nativeReadiness: native.preparation.effects.nativeReadiness });
+      nativeReadiness: preparation.effects.nativeReadiness });
     machine.connect();
     await vi.waitFor(() => expect(socket.connected).toBe(true));
     const manager: unknown = Reflect.get(machine, 'rpcHandlerManager');
@@ -274,7 +276,8 @@ it.skipIf(process.platform !== 'linux')('Repair reports the missing native user 
       compareAndSwap: async () => { throw new Error('Repair must preserve the selected policy'); } }),
     inspectOwn: async ({ requesterIdentity }) => {
       try {
-        await readAgentIsolationMemberLaunchIdentity({ requesterIdentity, activeServerDir: directory }, backend);
+        await readAgentIsolationMemberLaunchIdentity({ requesterIdentity: { ...requesterIdentity,
+          homeServerIdentityId: requesterIdentity.requester.serverId }, activeServerDir: directory }, backend);
         throw new Error('Missing native user must not qualify');
       } catch (error) {
         if (!isPluginError(error) || error.code !== 'agent_isolation_unavailable') throw error;

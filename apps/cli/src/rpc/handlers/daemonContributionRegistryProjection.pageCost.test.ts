@@ -13,6 +13,12 @@ import {
     registerDaemonContributionRegistryProjectionHandler,
 } from '@/rpc/handlers/daemonContributionRegistryProjection';
 
+
+/** Optional registry readers must be present before they can be counted. */
+function hasMethods<T, K extends keyof T>(target: T, ...keys: K[]): target is T & { [P in K]-?: NonNullable<T[P]> } {
+    return keys.every(key => typeof target[key] === 'function');
+}
+
 it('keeps Describe pages local to their advertised revision and fitting bodies for 77 plugins and 616 Actions', async () => {
     // Same declaration scale and description length as fix-r390; this is a
     // constructed workload, not a claim about the current loaded Machine.
@@ -50,6 +56,7 @@ it('keeps Describe pages local to their advertised revision and fitting bodies f
         RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE,
         { machineId: 'r393', locale: 'en', deferredSections: true, ...request });
     const stringify = vi.spyOn(JSON, 'stringify');
+    if (!hasMethods(runtime, 'getPluginBrandAsset', 'readPluginSourceCustody')) throw new Error('Runtime registry readers are required');
     const brands = vi.spyOn(runtime, 'getPluginBrandAsset');
     const custody = vi.spyOn(runtime, 'readPluginSourceCustody');
     const snapshot = () => ({ serializations: stringify.mock.calls.length, brands: brands.mock.calls.length,

@@ -550,7 +550,8 @@ it.each([
             }
             const write = records.findIndex(row => row.phase === 'approval.publication.write' && row.status === 'started');
             expect(records.findIndex(row => row.phase === 'approval.artifact.update' && row.status === 'completed')).toBeLessThan(write);
-            expect(records.findLastIndex(row => row.phase === 'approval.artifact.update' && row.status === 'completed')).toBeGreaterThan(write);
+            expect(records.reduce((last, row, index) => row.phase === 'approval.artifact.update' && row.status === 'completed' ? index : last, -1))
+                .toBeGreaterThan(write);
             const serialized = JSON.stringify(records);
             for (const secret of [token, privateContent.parts[0]!.text, 'Unapproved replacement']) expect(serialized).not.toContain(secret);
             expect(records.every(row => Object.keys(row).every(key => ['phase', 'status', 'durationMs', 'actionId',
@@ -989,10 +990,12 @@ it.each([
           const current = createDaemonApprovalExecutionOriginCurrentnessFromCredentials({ credentials, machineId,
             serverId: 'reviewing-browser-profile', serverApiUrl: serverUrl });
           if (!current) throw new Error('Missing canonical approval currentness owner');
-          expect(await current({ origin: privateDraft.executionOriginV1, request: privateDraft })).toBe(true);
+          const origin = privateDraft.executionOriginV1;
+          if (!origin) throw new Error('Missing persisted approval execution origin');
+          expect(await current({ origin, request: privateDraft })).toBe(true);
           advertisedHomeId = 'srv_other_home';
           const staleReasons: string[] = [];
-          expect(await current({ origin: privateDraft.executionOriginV1, request: privateDraft,
+          expect(await current({ origin, request: privateDraft,
             reportStale: reason => staleReasons.push(reason) })).toBe(false);
           expect(staleReasons).toEqual(['home_changed']);
           advertisedHomeId = 'srv_fixture_home';

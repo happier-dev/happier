@@ -1338,8 +1338,8 @@ describe('Saved Secret catalog hydration', () => {
     expect(createSavedSecretMaterializerFromSnapshotV1(refreshed).resolve(ref))
       .toMatchObject({ status: 'ready', value: 'current-value' });
     await expect(resolveLaunchProfileSavedSecretEnvironment({
-      profile: { id: 'current-profile', name: 'Current', envVarRequirements: [{ name: 'API_KEY', required: true }],
-        secretBindings: { API_KEY: ref } },
+      profile: { ...AIBackendProfileSchema.parse({ id: 'current-profile', name: 'Current',
+        envVarRequirements: [{ name: 'API_KEY', kind: 'secret', required: true }] }), secretBindings: { API_KEY: ref } },
       accountSettings: refreshed.settings, settingsSecretsReadKeys: [], foregroundSatisfiedSecretRequirementNames: [],
       expectedScopeKey: resolveAccountSettingsScopeKeyForToken(token),
       isCurrent: () => { throw new Error('The admitted materializer owns lifetime'); },

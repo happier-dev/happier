@@ -1,4 +1,5 @@
 import { expect, it, vi } from 'vitest';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import axios from 'axios';
 import { createDeploymentChildRequesterHarness } from '@/testkit/backends/deploymentChildRequesterHarness';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
@@ -103,10 +104,11 @@ it.each(['account', 'terminal'] as const)('admits only the closed finite archive
     selectedDeploymentId: 'deployment', actionOperationId: 'operation',
     input: { serverId: 'home', environmentId: 'environment', targetLinkId: 'link', expectedRevision: 1,
       expectedTargetLinkRevision: 1, requestKey: 'request', contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1 } });
-  const originalActionEnvelope = { v: 1, requestId: root.binding.requestId, target: root.binding.target, input: job.input } as const;
+  const originalActionEnvelope = { v: 1, requestId: root.binding.requestId, target: root.binding.target,
+    input: projectNativeJsonValueForTransport(job.input) } as const;
   root.binding.requestEnvelopeDigest = computeExternalActionRequestEnvelopeDigestV1(originalActionEnvelope);
   const proof = createDeploymentChildExecutionProofV1({ method: `receiver:${RPC_METHODS.DAEMON_DEPLOYMENT_CHILD}`, originalActionEnvelope,
-    requestId: 'member-request', params: job, externalActionExecution: { v: 1, authorization: root,
+    requestId: 'member-request', params: projectNativeJsonValueForTransport(job), externalActionExecution: { v: 1, authorization: root,
       effectActionId: 'deployments.deploy', target: root.binding.target, installationId: 'controller-install',
       machineSignature: 'a'.repeat(86), deploymentChildRouting: projectDeploymentChildRoutingV1(job) } },
     { environmentId: 'environment', deploymentId: 'deployment', holderMachineId: 'holder', holderInstallationId: 'holder-install' });

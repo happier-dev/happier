@@ -175,4 +175,3 @@ export async function validateStoredAuthTokenAgainstActiveServer(
     await acquired.close().catch(() => undefined);
   }
 }
-import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';

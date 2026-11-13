@@ -362,7 +362,6 @@ describe('handleDaemonCliCommand: daemon start-sync', () => {
                     machineIdByServerIdByAccountId: {},
                     lastTokenSubByServerId: {},
                     machineIdConfirmedByServerByServerId: {},
-                    lastChangesCursorByServerIdByAccountId: {},
                 });
                 writeInstalledLinuxDaemonService({ userHomeDir, happierHomeDir, targetMode: 'default-following' });
                 writeInstalledLinuxDaemonService({

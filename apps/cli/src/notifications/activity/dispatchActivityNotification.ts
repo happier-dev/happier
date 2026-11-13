@@ -594,6 +594,8 @@ async function dispatchActivityNotification(params: Readonly<{
       continue;
     }
     const event = await readEventContent();
+    // Prepared content keeps the occurrence's topic; plugin-native events never reach webhooks.
+    if (event.topic === 'plugin_notification') continue;
     await assertCurrent();
     outcome.attemptedChannels += 1;
     preparationSignal = undefined;

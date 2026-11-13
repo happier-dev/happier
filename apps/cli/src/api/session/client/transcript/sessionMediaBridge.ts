@@ -22,6 +22,7 @@ import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPol
 import type { SessionMediaFailureV1 } from '@happier-dev/protocol';
 import type { ACPProvider } from '../../sessionMessageTypes';
 import type { TranscriptSessionPort } from '../../transcriptPort';
+import type { SessionClientTranscriptApi } from './sessionClientTranscriptApi';
 import type {
     SessionMediaIngestionSource,
     SessionMediaItemV1,
@@ -382,7 +383,7 @@ export async function persistSessionMediaForTranscript(
 /** Commit the descriptor through the same role-specific durable transcript owners as text. */
 export async function commitSessionMediaForTranscript(deps: SessionMediaBridgePersistDeps & Readonly<{
     provider: ACPProvider;
-    enqueueUser: NonNullable<TranscriptSessionPort['enqueueUserTextMessageCommitted']>;
+    enqueueUser: SessionClientTranscriptApi['enqueueUserTextMessageCommitted'];
     enqueueAgent: NonNullable<TranscriptSessionPort['enqueueAgentMessageCommitted']>;
     clearAssistantSnapshot: () => void;
 }>): Promise<void> {

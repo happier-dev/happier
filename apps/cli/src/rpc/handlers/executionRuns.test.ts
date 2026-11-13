@@ -3977,7 +3977,7 @@ describe('executionRuns session RPC handlers', () => {
 
     await expect.poll(async () => {
       const current = await client.call<ExecutionRunGetResponse, unknown>(SESSION_RPC_METHODS.EXECUTION_RUN_GET, { runId: started.runId });
-      return current.run?.lifecycle.state;
+      return current.run?.lifecycle?.state;
     }).toBe('recoverable_with_input');
 
     const ensured = await client.call<any, any>(SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE, {

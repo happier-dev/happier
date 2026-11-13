@@ -17,8 +17,8 @@ const { createProcessTreeOwner } = createRequire(import.meta.url)(resolveCliRunt
 describe('owned shell Stop', () => {
     it.each([false, true])('never advances past a terminated wait (detached=%s)', async detached => {
         const windows = process.platform === 'win32';
-        const child = spawn(windows ? windowsSystemToolCommand('cmd.exe') : '/bin/sh', windows
-            ? ['/d', '/s', '/c', 'echo READY & ping -n 121 127.0.0.1 >nul & echo UNEXPECTED_END']
+        const child = spawn(windows ? windowsSystemToolCommand('powershell.exe') : '/bin/sh', windows
+            ? ['-NoProfile', '-NonInteractive', '-Command', 'Write-Output READY; Start-Sleep -Seconds 120; Write-Output UNEXPECTED_END']
             : ['-c', 'echo READY; sleep 120; echo UNEXPECTED_END'], {
             detached, stdio: ['ignore', 'pipe', 'pipe'],
         });

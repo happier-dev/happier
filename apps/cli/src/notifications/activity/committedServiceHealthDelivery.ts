@@ -71,11 +71,12 @@ export function registerDaemonCommittedServiceHealthDeliveryRpcHandler(rpc: RpcH
   }> | null>;
 }>) {
   rpc.registerHandler(RPC_METHODS.DAEMON_SERVICE_HEALTH_DELIVER, async (raw: unknown, context) => {
-    const testKind = raw !== null && typeof raw === 'object' && 'kind' in raw
-      && (raw.kind === 'test' || raw.kind === 'prepareTest') ? raw.kind : null;
+    const rawObject = raw !== null && typeof raw === 'object' ? raw : null;
+    const testKind = rawObject && 'kind' in rawObject
+      && (rawObject.kind === 'test' || rawObject.kind === 'prepareTest') ? rawObject.kind : null;
     const isTest = testKind !== null;
-    const request = isTest ? NotificationConfigurationActionInputSchemas[SAVED_HEALTH_ALERT_TEST_ACTION_ID].parse(
-      Object.fromEntries(Object.entries(raw).filter(([key]) => key !== 'kind')),
+    const request = isTest && rawObject ? NotificationConfigurationActionInputSchemas[SAVED_HEALTH_ALERT_TEST_ACTION_ID].parse(
+      Object.fromEntries(Object.entries(rawObject).filter(([key]) => key !== 'kind')),
     ) : CommittedServiceHealthDeliveryRequestV1Schema.parse(raw);
     const target = host.target();
     const admission = context?.machineAdmission;

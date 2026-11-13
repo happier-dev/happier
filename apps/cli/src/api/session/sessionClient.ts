@@ -1640,7 +1640,7 @@ export class ApiSessionClient extends EventEmitter {
                     ...(resolveAuthorizationHeaders ? { resolveAuthorizationHeaders } : {}),
                     credentials,
                     idOrPrefix: this.sessionId,
-                    ...(this.serverId ? { serverId: this.serverId } : {}),
+                    serverId: this.serverBinding.serverId,
                     message: text,
                     messageMeta: sourceMeta,
                     localId,

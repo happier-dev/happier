@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
-import { FeaturesResponseSchema, type ActionExecutorContext } from '@happier-dev/protocol';
+import { FeaturesResponseSchema } from '@happier-dev/protocol';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
 import { withAdmittedSessionRun } from '@/agent/runtime/bridges/executionRun/testkit/admittedSessionRun';
@@ -53,7 +53,7 @@ it('retains only the exact signed Voice root when fresh Ensure-or-Start creates 
     for (const proof of ['matching-root', 'wrong-root', 'unsigned'] as const) {
       // This is the already-verified private Account RPC boundary, not a
       // public Run field. The production socket opener verifies its signature.
-      const context: ActionExecutorContext = { surface: 'voice', authority: 'present_user', actionCaller: { kind: 'host' },
+      const context: NonNullable<Parameters<NonNullable<typeof deps.executionRunEnsureOrStart>>[2]> = { surface: 'voice', authority: 'present_user', actionCaller: { kind: 'host' },
         ...(proof === 'unsigned' ? {} : { externalActionExecutionAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse({
           v: 1, token: 'verified-private-rpc-fixture', binding: { serverIdentityId: 'home', accountId: 'alice', custodianAccountId: 'alice',
             authentication: { kind: 'account', tokenEpoch: 0 }, installationId: 'installation', machineId: 'machine',

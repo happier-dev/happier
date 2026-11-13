@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 import { mkdir, readFile, rmdir } from 'node:fs/promises';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -586,7 +587,7 @@ describe('ApiSessionClient socket write readiness', () => {
       signal: new AbortController().signal, isCurrent: async () => true, subscribeInvalidation: () => () => {},
       resolveSourceKeyContext: async () => null, isPersonalCurrent: () => false, dispatchPersonal: async () => {} });
     const app = createDaemonControlApp({
-      getChildren: () => [{ pid: 1, startedBy: 'daemon', happySessionId: session.id }], machineId: 'machine-1',
+      getChildren: () => [{ trackingKey: legacyPidSessionTrackingKey(1), pid: 1, startedBy: 'daemon', happySessionId: session.id }], machineId: 'machine-1',
       stopSession: async () => ({ status: 'not_found' }), spawnSession: async () => ({ type: 'success', sessionId: session.id }),
       requestShutdown: () => {}, onHappySessionWebhook: () => {}, controlToken: 'token',
       onSessionActivityChanged: async (_sessionId, occurrence) => {

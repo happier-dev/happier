@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -72,6 +73,7 @@ function marker(overrides: Partial<DaemonSessionMarker> = {}): DaemonSessionMark
       claudeSessionId: 'remote-1',
     },
     ...overrides,
+    trackingKey: overrides.trackingKey ?? legacyPidSessionTrackingKey(overrides.pid ?? 4_242),
   };
 }
 

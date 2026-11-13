@@ -113,7 +113,7 @@ describe('Voice run caller-turn admission', () => {
 
   it.each(['ui.voice_global.start', 'ui.voice_global.recover'] as const)('approval for Agent %s does not grant control of the resulting Voice run', async (actionId) => {
     const manager = createManager();
-    let approval: Parameters<NonNullable<ActionExecutorDeps['approvalsCreate']>>[0]['request'] | null = null;
+    let approval: Parameters<NonNullable<ActionExecutorDeps['approvalsUpdate']>>[0]['request'] | null = null;
     let clientOpened = false;
     const executor = createActionExecutor({
       ...createDeps(manager),

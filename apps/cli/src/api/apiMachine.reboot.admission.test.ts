@@ -83,7 +83,7 @@ async function setupReboot(options: Readonly<{ busyStartup?: boolean; spawn?: Ma
         if (!credentials) throw new Error('Stored terminal fixture must decode');
         const drain = createDaemonAdmissionDrain();
         const nativeAdmission = createMachineNativeEffectAdmission();
-        const startup = createSpawnRequestCoalescer({ recentSuccessTtlMs: 0 });
+        const startup = createSpawnRequestCoalescer();
         const nativeSpawn = createDeferred();
         // Hold only the native-spawn completion. The real startup coalescer and
         // canonical Session producer retain the in-flight admission themselves.

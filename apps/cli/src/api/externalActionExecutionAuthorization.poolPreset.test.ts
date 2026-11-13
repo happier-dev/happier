@@ -97,7 +97,7 @@ it.each(['ready', 'account-ready', 'mcp-ready', 'unavailable', 'bound', 'denied'
         }
         if (path.endsWith('/execution-authorization')) {
             const envelope = ExternalActionRequestEnvelopeSchema.parse((body as { envelope: unknown }).envelope);
-            if (fixed && mcp) requestId = envelope.requestId;
+            if (fixed && mcp && envelope.requestId) requestId = envelope.requestId;
             expect(envelope).toMatchObject({ target: { kind: 'machine', machineId: controller.machineId },
                 input: { controller, ...(fixed && own ? {} : { reviewedFacts: { controller } }) } });
             return { status: 200, data: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-root', binding: {

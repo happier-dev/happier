@@ -449,15 +449,17 @@ export async function createNativeSoftwareInstallFixture(options: Readonly<{
   const receiveDispatch = async (request: Readonly<{ actionId: SignedRootActionId; envelope: ExternalActionRequestEnvelope;
     authorization: ExternalActionExecutionAuthorizationV1; authority?: 'present_user' | 'account_automation' }>
     | ReturnType<typeof ExternalActionDaemonDispatchRequestSchema.parse>) => {
-    const authorization = 'executionAuthorization' in request ? request.executionAuthorization : request.authorization;
+    const direct = 'authorization' in request ? request : null;
+    const authorization = 'authorization' in request ? request.authorization : request.executionAuthorization;
+    if (!authorization) throw new Error('Native dispatch requires its execution authorization');
     const binding = authorization.binding;
     if (!startup) throw new Error('Native receiving owner has not started');
-    const dispatch = ExternalActionDaemonDispatchRequestSchema.parse('executionAuthorization' in request ? request : {
-      actionId: request.actionId, envelope: request.envelope,
+    const dispatch = ExternalActionDaemonDispatchRequestSchema.parse(!direct ? request : {
+      actionId: direct.actionId, envelope: direct.envelope,
       executionAuthorization: authorization,
       principal: { accountId: binding.accountId,
         ...('authentication' in binding
-          ? { authentication: binding.authentication, authority: request.authority ?? 'present_user' }
+          ? { authentication: binding.authentication, authority: direct.authority ?? 'present_user' }
           : { principalId: binding.principalId, credentialId: binding.credentialId, grant: binding.grant,
             authority: 'account_automation' }),
         ...(binding.sessionActionOrigin ? { sessionActionOrigin: binding.sessionActionOrigin } : {}),

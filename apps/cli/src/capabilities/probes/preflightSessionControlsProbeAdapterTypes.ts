@@ -1,4 +1,4 @@
-import type { AgentCliSessionCommandPluginSettingsV1, AgentPreflightSessionControlsProbeContextV1 } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentCliSessionCommandPluginSettingsV1, AgentConnectedAccountResumeReachabilityInputV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { RuntimeDescriptorV1 } from '@happier-dev/protocol';
 import type { PreflightCatalogCleanupScope } from './preflightCatalogCleanupScope';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
@@ -38,7 +38,8 @@ export type PreflightSessionControlsProbeAdapter = Readonly<{
   /** Borrow the containing operation's cancellation and the existing declared process owner. */
   withNativeInspection?<T>(
     params: Pick<PreflightSessionControlsProbeParams, 'cwd' | 'env' | 'acquireEnvironment' | 'signal' | 'runtimeDescriptorV1'>,
-    inspect: (context: Pick<AgentPreflightSessionControlsProbeContextV1, 'withDeclaredJsonRpcClient'>) => Promise<T>,
+    /** The resume-reachability native inspection the SDK declares: the admitted cwd plus the declared JSON-RPC owner. */
+    inspect: (context: NonNullable<AgentConnectedAccountResumeReachabilityInputV1['nativeInspection']>) => Promise<T>,
   ): Promise<T>;
   failureCacheStrategy?: PreflightSessionControlsProbeFailureCacheStrategy;
   probeCatalogsRaw?: (params: PreflightSessionControlsProbeParams) => Promise<unknown>;

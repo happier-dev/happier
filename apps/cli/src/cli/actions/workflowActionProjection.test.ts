@@ -92,7 +92,8 @@ describe('workflow Action projections', () => {
       try {
         await runCompiledActionCliCommand({ command,
           argv: [...command.path, '--input-json', JSON.stringify(input), ...(json ? ['--json'] : [])],
-          deps: { readCredentialsFn: async () => ({ token: 'hap_v1_test' } as never), createExecutorFn: () => executor },
+          deps: { readCredentialsFn: async () => ({ token: 'hap_v1_test' } as never), createExecutorFn: () => ({ ...executor,
+            resolveSessionTarget: async (sessionId: string) => ({ ok: true as const, sessionId }) }) },
         });
         expect(process.exitCode ?? 0).toBe(failed ? 1 : 0);
         if (failed) {

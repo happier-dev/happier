@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { ChildProcess } from 'node:child_process';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 import { createServer, type ServerResponse, type IncomingMessage } from 'node:http';
 import type { RequestOptions } from 'node:https';
 import { mkdtemp, readdir, rm, access, readFile, writeFile, mkdir, chmod } from 'node:fs/promises';
@@ -41,7 +42,7 @@ test.skipIf(process.platform === 'win32')('ordinary install refuses replacing ex
       managedInstall: { kind: 'github_release_binary', githubRepo: 'fixture/live', binaryName: 'fixture-live' } };
     const env = { NODE_ENV: process.env.NODE_ENV, HAPPIER_HOME_DIR: root, HOME: root, PATH: '' };
     owner = createAgentInstallJobOwner({ env, readRegistry: () => registryWith(spec), readTrackedSessions: () => [{
-      pid: process.pid, startedBy: 'daemon', spawnOptions: { directory: root,
+      trackingKey: legacyPidSessionTrackingKey(process.pid), pid: process.pid, startedBy: 'daemon', spawnOptions: { directory: root,
         runtimeDescriptorV1: { v: 1, agentId: spec.id, agent: {} } },
     }], installerDeps: { fetchGitHubLatestRelease: async () => ({ assets: [{
       name: `fixture-live-${process.platform}-${process.arch}`, browser_download_url: `http://127.0.0.1:${address.port}/binary`,

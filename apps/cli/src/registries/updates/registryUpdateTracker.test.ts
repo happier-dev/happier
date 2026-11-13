@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol';
 import { createRegistryHostV1, RegistryProvenanceV1Schema, RegistryUpstreamV1Schema, RegistryUpstreamCheckV1Schema, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1,
-  type RegistrySourceDescriptorV1, type RegistryHttpV1 } from '@happier-dev/protocol/registries';
+  type RegistryRemoteSourceDescriptorV1, type RegistrySourceDescriptorV1, type RegistryHttpV1 } from '@happier-dev/protocol/registries';
 import { ACP_REGISTRY_V1_FIXTURE } from '../../../../../packages/protocol/src/registries/formats/fixtures/acpRegistryV1Fixture';
 import { normalizeComposeTemplateV1 } from '../../../../../packages/protocol/src/registries/formats/composeTemplateNormalizationV1';
 import { withTempDir } from '@/testkit/fs/tempDir';
@@ -15,7 +15,7 @@ import { readRuntimeInstallableLastCheckAtMs } from '@/packagedRuntime/installab
 import { configuration } from '@/configuration';
 import { mkdir } from 'node:fs/promises';
 
-const source: RegistrySourceDescriptorV1 = { id: 'test-repo', title: 'Repo', format: 'git', kinds: ['skill'],
+const source: RegistryRemoteSourceDescriptorV1 = { id: 'test-repo', title: 'Repo', format: 'git', kinds: ['skill'],
   url: 'https://github.com/test/repo', enabled: true, addedAt: 0, origin: { kind: 'user' }, removable: true };
 const commit = '1'.repeat(40), next = '2'.repeat(40);
 

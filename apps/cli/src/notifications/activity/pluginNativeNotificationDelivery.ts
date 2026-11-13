@@ -12,6 +12,7 @@ import type { ExpoPushActivityNotificationSender } from './sendExpoPushActivityN
 import { readPluginSessionDestination } from '@/session/services/pluginSessionDestination';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 
 /** The plugin invocation joins the host's existing Account/channel/push owner. */
 export function createPluginNativeNotificationDelivery(params: Readonly<{
@@ -47,8 +48,7 @@ export function createPluginNativeNotificationDelivery(params: Readonly<{
     } else {
       // Push-only sends keep their live source. No notice id or stored copy is
       // manufactured when the captured Home cannot name the exact Session.
-      const sessionId = request.data && typeof request.data === 'object' && !Array.isArray(request.data)
-        ? request.data.sessionId : undefined;
+      const sessionId = isJsonObject(request.data) ? request.data.sessionId : undefined;
       if (typeof sessionId !== 'string') return none;
       const destination = readPluginSessionDestination({ sessionId, serverUrl: params.serverUrl,
         serverFeaturesSnapshot: params.resolveServerFeaturesSnapshot?.() });

@@ -1,4 +1,5 @@
 import { createNativeSoftwareInstallFixture, osStore } from '@/testkit/machines/nativeSoftwareInstall';
+import type { WorkflowRunStorageOperation } from '@happier-dev/protocol/workflows/workflowRunStorageV1';
 import { exercisePublicPackagePlanApply, withNativeConfirmation } from '@/testkit/machines/nativeSoftwareInstallFlow';
 import { nativeTerminal } from '@/testkit/machines/nativeSoftwareOs';
 import axios, { AxiosHeaders } from 'axios';
@@ -94,10 +95,10 @@ describe('ApiMachine own Session Account read custody', () => {
     expect(fixture.rootLaunches).toHaveLength(0);
   });
   it.skipIf(process.platform === 'win32').each(['first-absent', 'first-present', 'first-arrived', 'first-forged-absent', 'first-absent-e2ee', 'excluded-to-selected'] as const)(
-    'publishes native first-presence through exact public Plan → P10 Apply (%s)', exercisePublicPackagePlanApply,
+    'publishes native first-presence through exact public Plan → P10 Apply (%s)', scenario => exercisePublicPackagePlanApply(scenario),
   );
   it.skipIf(process.platform === 'win32').each(['remove-absent', 'remove-absent-e2ee'] as const)(
-    'removes only selected declared effects after native first-absence (%s)', exercisePublicPackagePlanApply,
+    'removes only selected declared effects after native first-absence (%s)', scenario => exercisePublicPackagePlanApply(scenario),
   );
   it.each(['unchecked-new', 'same-item-second-source', 'unchanged-unknown', 'account-copy', 'foreign-owned-personal-copy', 'foreign-unowned-personal-copy'] as const)('keeps unknown initial presence unknown after real Apply success: %s', async scenario => {
     const personalCopy = scenario === 'foreign-owned-personal-copy' || scenario === 'foreign-unowned-personal-copy';
@@ -367,7 +368,8 @@ describe('ApiMachine own Session Account read custody', () => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'alice' })).toString('base64url')}.signature`;
     osStore.credentials = { token, encryption: null, credentialProvenance: 'stored_session' };
     nativeTerminal.launches.length = 0;
-    nativeTerminal.exit = undefined;
+    // Reset without narrowing `exit` to undefined for the rest of the scenario; the PTY mock re-binds it.
+    Object.assign(nativeTerminal, { exit: undefined });
     const nativeSetupLaunch = new Promise<void>(resolve => { nativeTerminal.onLaunch = resolve; });
     nativeTerminal.autoExit = directScript || scenario === 'changed-review' || scenario === 'managed-app-item' || scenario === 'managed-app-child' || scenario === 'accepted-app-run-unreadable';
     const currentness = createAccountEncryptionCurrentnessFixture({ mode: 'plain' });
@@ -415,7 +417,8 @@ describe('ApiMachine own Session Account read custody', () => {
         }
         // The server's opaque storage is the genuine network boundary. Run
         // admission, frozen input, envelope opening and public read stay real.
-        const data = await runStorage.execute(operation);
+        // The HTTP body is the untyped network boundary; the storage testkit owns operation semantics.
+        const data = await runStorage.execute({ ...operation, operation: String(operation.operation) as WorkflowRunStorageOperation['operation'] });
         if (operation.operation === 'invocations.list' && operation.parentRecordId !== null && operation.memberOrdinal === appMemberOrdinal
           && observeDeployProgress) {
           observeDeployProgress();
@@ -457,7 +460,7 @@ describe('ApiMachine own Session Account read custody', () => {
       return { status: 200, data: { ok: true } };
     });
     const metadata = { host: 'worker', platform: 'linux', happyCliVersion: 'dev', homeDir: '/users/worker', happyHomeDir: '/users/worker/.happier',
-      ...(scenario === 'retained-copy' || acceptedApp ? { setup: { version: 1, revision: desiredRevision, sources, exclusions: [] } } : {}) };
+      ...(scenario === 'retained-copy' || acceptedApp ? { setup: { version: 1 as const, revision: desiredRevision, sources, exclusions: [] } } : {}) };
     const machine: Machine = { id: 'alice-machine', encryptionMode: 'plain',
       metadata, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 };
     advanceDesired = () => {
@@ -563,7 +566,7 @@ describe('ApiMachine own Session Account read custody', () => {
         if (!projected) throw new Error('Requester read custody missing');
         context = { ...context, externalActionExecutionAuthorization: { ...projected, requesterAccountProjection: projected.requesterAccountProjection,
           requesterAccountExecutor: requesterExecutor,
-          binding: { ...projected.binding, workflowActionOrigin: { runId } } } };
+          binding: { ...projected.binding, workflowActionOrigin: { runId, requestId: projected.binding.requestId } } } };
         refuseRunRead = scenario === 'accepted-app-run-unreadable';
       }
       if (scenario === 'managed-plan') {

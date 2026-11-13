@@ -77,8 +77,15 @@ async function settle(response: Promise<AxiosResponse<unknown>>): Promise<AxiosR
   }
 }
 
-const bodyMethods = new Set(['post', 'put', 'patch', 'postForm', 'putForm', 'patchForm']);
-const readMethods = new Set(['get', 'delete', 'head', 'options']);
+const bodyMethodNames = ['post', 'put', 'patch', 'postForm', 'putForm', 'patchForm'] as const;
+const readMethodNames = ['get', 'delete', 'head', 'options'] as const;
+type AxiosMethodName = typeof bodyMethodNames[number] | typeof readMethodNames[number];
+const bodyMethods = new Set<string>(bodyMethodNames);
+const readMethods = new Set<string>(readMethodNames);
+
+function isAxiosMethodName(key: PropertyKey): key is AxiosMethodName {
+  return typeof key === 'string' && (bodyMethods.has(key) || readMethods.has(key));
+}
 
 /** Preserve the Axios API and its existing proxy/authority interceptors at one boundary. */
 function credentialClient<T extends AxiosInstance>(client: T): T {
@@ -99,7 +106,7 @@ function credentialClient<T extends AxiosInstance>(client: T): T {
       else if (key === 'create') method = (config?: AxiosRequestConfig) => credentialClient(
         Reflect.apply(Reflect.get(target, key), target, [config]) as AxiosInstance,
       );
-      else if (typeof key === 'string' && (bodyMethods.has(key) || readMethods.has(key))) {
+      else if (isAxiosMethodName(key)) {
         method = (...args: unknown[]) => {
           const configIndex = bodyMethods.has(key) ? 2 : 1;
           args[configIndex] = scopeRedirects(client, {
@@ -108,7 +115,8 @@ function credentialClient<T extends AxiosInstance>(client: T): T {
             ...(bodyMethods.has(key) ? { data: args[1] } : {}),
           });
           // Axios owns these public method signatures; the decorator changes only config.
-          return settle(Reflect.apply(Reflect.get(target, key), target, args) as Promise<AxiosResponse<unknown>>);
+          const instance: AxiosInstance = target;
+          return settle(Reflect.apply(Reflect.get(instance, key), target, args) as Promise<AxiosResponse<unknown>>);
         };
       } else return Reflect.get(target, key, receiver);
       methods.set(key, method);

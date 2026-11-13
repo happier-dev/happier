@@ -178,7 +178,7 @@ export function createDaemonHostResourceRead(input: Readonly<{
                             await accountId(context, reference, retire);
                             if (signal.aborted) return;
                             const bytes = Buffer.from(JSON.stringify(value), 'utf8');
-                            const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+                            const digest: `sha256:${string}` = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
                             await emit(digest, delivery === 'pages'
                                 ? [{ contentType: 'application/json', bytesBase64: bytes.toString('base64'), digest }] : undefined);
                         } catch (error) {

@@ -271,7 +271,8 @@ async function resolveCliLaunchCommand(params: { resolvedPath: string; env?: Nod
     }
 
     const runtimeExecutable = params.env
-        ? resolveAgentCliJavaScriptRuntimeCommand(params.resolvedPath, params.env)
+        ? resolveAgentCliJavaScriptRuntimeCommand(params.resolvedPath, params.env,
+            { isBunRuntime: typeof process.versions.bun === 'string', currentExecPath: process.execPath })
         : await resolveJavaScriptRuntimeExecutableForCliSnapshot(params.resolvedPath);
     if (!runtimeExecutable) return quoteShellArgument(params.resolvedPath);
     return `${quoteShellArgument(runtimeExecutable)} ${quoteShellArgument(params.resolvedPath)}`;

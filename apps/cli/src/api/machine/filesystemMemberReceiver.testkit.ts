@@ -139,7 +139,24 @@ function receiveChunk(chunk) { void receive(chunk).catch(error => {
 process.stdin.on('data', receiveChunk);
 `;
 
-export async function createNativeFilesystemMemberFixture(options: Readonly<{ registerCleanup?: NonNullable<Parameters<typeof createInstalledFilesystemMachineFixture>[0]>['registerCleanup']; accountId?: string; legacy?: boolean; coldPolicy?: 'managed' | 'legacy' | 'reviewedMember'; startupFailure?: true; cleanupRefused?: true; foreignLauncher?: true }> = {}) {
+type InstalledFilesystemMachineFixture = Awaited<ReturnType<typeof createInstalledFilesystemMachineFixture>>;
+type NativeFilesystemFrame = Readonly<{ identity?: { username: string; agentUid: number; agentGid: number; home: string };
+  executable: string; args: string[]; cwd: string; runtimeHome: string; materialCount: number }>;
+/** Explicit so declaration emit does not serialize the whole composed fixture (TS7056). */
+export type NativeFilesystemMemberFixture = Omit<InstalledFilesystemMachineFixture, 'invoke'> & Readonly<{
+  member: string;
+  foreign: string;
+  identity: ReturnType<typeof deriveAgentIsolationMemberIdentity>;
+  sharedHome: string;
+  frames: NativeFilesystemFrame[];
+  children: ChildProcess[];
+  runAsUsers: string[];
+  invoke(method: string, params: unknown, accountId?: string, role?: 'use' | 'manage', correlation?: 'request' | 'trace'):
+    ReturnType<InstalledFilesystemMachineFixture['receive']>;
+  preparation: ReturnType<typeof createAgentIsolationMemberPreparationBoundary> | undefined;
+}>;
+
+export async function createNativeFilesystemMemberFixture(options: Readonly<{ registerCleanup?: NonNullable<Parameters<typeof createInstalledFilesystemMachineFixture>[0]>['registerCleanup']; accountId?: string; legacy?: boolean; coldPolicy?: 'managed' | 'legacy' | 'reviewedMember'; startupFailure?: true; cleanupRefused?: true; foreignLauncher?: true }> = {}): Promise<NativeFilesystemMemberFixture> {
   let preparation: ReturnType<typeof createAgentIsolationMemberPreparationBoundary> | undefined;
   const coldPolicy = options.coldPolicy === 'managed'
     ? resolveManagedMachineEnrollmentAgentIsolationV1({ kind: 'dedicatedDaemonUser', username: 'happier',
@@ -202,8 +219,7 @@ export async function createNativeFilesystemMemberFixture(options: Readonly<{ re
   nativeOs.home = { path: options.legacy ? sharedHome : identity.home, backing: member,
     workspaceRoot: options.legacy ? projectPath() : identity.workspaceRoot, workspaceBacking: workspace, uid: options.legacy ? 2402 : 2401 };
   if (!options.coldPolicy && !options.legacy) await writeAgentIsolationMemberBinding(configuration.activeServerDir, { ...identity, agentUid: 2401, agentGid: 2401 });
-  const frames: Array<Readonly<{ identity?: { username: string; agentUid: number; agentGid: number; home: string };
-    executable: string; args: string[]; cwd: string; runtimeHome: string; materialCount: number }>> = [];
+  const frames: NativeFilesystemFrame[] = [];
   const children: ChildProcess[] = [];
   const runAsUsers: string[] = [];
   const phases: string[] = [];

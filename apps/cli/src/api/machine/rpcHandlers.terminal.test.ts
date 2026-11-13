@@ -312,7 +312,7 @@ describe('registerMachineTerminalRpcHandlers', () => {
   it('holds an idle output read until bytes arrive, then releases the next held read on cancellation', async () => {
     const { provider, terminalId, read } = await openHeldOutputFixture('idle-held-output', false);
     vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
-    onTestFinished(() => vi.useRealTimers());
+    onTestFinished(() => { vi.useRealTimers(); });
     const controller = new AbortController();
     const context = { ...ownerIngress(), signal: controller.signal };
     let completedIdleReads = 0;

@@ -64,7 +64,7 @@ function createNativeBoundary() {
       const endpointHandle = `endpoint-${++nextEndpoint}`;
       endpoints.add(endpointHandle);
       return { endpointHandle, endpointId: nextEndpoint.toString(16).padStart(64, '0'),
-        relayPolicy: input.relayPolicy, relayMode: 'disabled' as const,
+        relayPolicy: input.relayPolicy ?? 'automatic', relayMode: 'disabled' as const,
         capProfile: 'homeInteractive' as const, relayUrls: [] };
     },
     ensureHomeTunnel: async (input) => {

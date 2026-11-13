@@ -4,7 +4,7 @@ import { DaemonTerminalCloseRequestSchema, DaemonTerminalEnsureRequestSchema, Da
 import { TerminalStreamAckRequestSchema, TerminalStreamAckResponseSchema, TerminalStreamReadRequestSchema, TerminalStreamReadResponseSchema } from '@happier-dev/protocol/terminal/stream';
 import { TerminalStreamInputRequestSchema, TerminalStreamInputResponseSchema } from '@happier-dev/protocol/terminal/input';
 import type { DaemonTerminalErrorCode, TerminalStreamAckRequest, TerminalStreamAckResponse, TerminalStreamInputRequest, TerminalStreamInputResponse, TerminalStreamReadRequest, TerminalStreamReadResponse } from '@happier-dev/protocol';
-import type { DaemonTerminalShellAvailabilityV1 } from '@happier-dev/protocol/daemon/terminal';
+import type { DaemonTerminalError, DaemonTerminalShellAvailabilityV1 } from '@happier-dev/protocol/daemon/terminal';
 import { ProjectCommandActionOutputV1Schema } from '@happier-dev/protocol/actions/actionCompletion';
 import { normalizeWorkspaceRootPathV1, projectWorkspaceRefV1, resolveWorkspaceRefV1, workspaceAddressFromRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import type { WorkspaceAddressV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
@@ -321,7 +321,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
 
   const resolveTerminalCustody = async (input: Readonly<{ workspace?: WorkspaceAddressV1; cwd?: string; sessionId?: string; launch?: import('@happier-dev/protocol').DaemonTerminalLaunchIntent }>, context?: RpcHandlerContext,
     requesterIdentity?: HostRequesterExecutionIdentity)
-    : Promise<Readonly<{ ok: true; cwd: string; custody?: TerminalPtyCustody }> | ReturnType<typeof err>> => {
+    : Promise<Readonly<{ ok: true; cwd: string; custody?: TerminalPtyCustody }> | ReturnType<typeof err> | DaemonTerminalError> => {
     if (hasRequiredSessionAuthority(context)) {
       if (input.workspace) return err('terminal_invalid_request');
       if (context?.machineAdmission && context.signal.aborted) return err('terminal_forbidden');

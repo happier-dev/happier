@@ -152,6 +152,8 @@ export interface Settings {
     updatedAt: number
     /** Exact protocol-owned descriptor observed from this authenticated Home. */
     homeConnectionDescriptor?: import('@happier-dev/protocol').HomeConnectionDescriptorV1
+    /** Whether the descriptor is exact or advisory; written by the server profile owner. */
+    homeConnectionDescriptorAuthority?: import('@/server/serverProfiles').ServerProfile['homeConnectionDescriptorAuthority']
   }>
   /**
    * Per-server machine IDs (schema v5+).

@@ -37,6 +37,7 @@ function requireSuccess(
   result: Awaited<ReturnType<RegistryCliService['mutate']>>,
 ): Extract<typeof result, { status: 'success' }> {
   if (result.status === 'error') throw new Error(`Registry operation failed: ${result.code}`);
+  if (result.status !== 'success') throw new Error(`Registry operation failed: ${result.status}`);
   return result;
 }
 

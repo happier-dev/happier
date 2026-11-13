@@ -70,7 +70,7 @@ export function createDiscussionReplyReturnPublisher(params: Readonly<{
       const domain = !result.ok && DiscussionAgentPostResponseV1Schema.safeParse({ v: 1, ok: false, error: result.errorCode });
       const response = domain && domain.success ? domain.data : !result.ok && ['action_disabled', 'present_user_required',
         'run_access_denied', 'approval_stale'].includes(result.errorCode) ? denied() : unavailable();
-      return failure ? { ...response, failure } : response;
+      return failure && !response.ok ? { ...response, failure } : response;
     };
     const signal = options?.signal && options.signal !== params.signal
       ? AbortSignal.any([params.signal, options.signal]) : params.signal;

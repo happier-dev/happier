@@ -24,7 +24,7 @@ describe('buildUsageEventIngestRequest', () => {
         const request = buildUsageEventIngestRequest({ sessionId: 'session-1', observedAt: 10,
             metadata: { usageAccounting: { path: 'runtime', status: 'partial', asOfMs: 10, nativeSessionId: 'child-native' } },
             observation: { provider: 'pi', source: 'native-statistics', scope: 'session_cumulative',
-                key: null, modelId: null, tokens: { input: 8, cacheRead: 4, output: 2 }, cost: null,
+                key: null, modelId: null, tokens: { input: 8, cacheRead: 4, output: 2, cacheWrite: null, reasoning: null, total: null }, cost: null,
                 contextUsedTokens: null, contextWindowTokens: null } });
         expect(request?.tokens).toEqual({ input: 8, output: 2, cacheRead: 4, cacheWrite: null, reasoning: null, total: null });
         expect(request?.cost).toMatchObject({ reportedUsd: null, estimatedUsd: null });

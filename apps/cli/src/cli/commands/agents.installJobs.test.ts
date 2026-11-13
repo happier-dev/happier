@@ -119,6 +119,7 @@ describe('Agent CLI compiled install jobs', () => {
 
   it.skipIf(process.platform === 'win32')('normalizes the documented lowercase Oh My Pi name before admitting an install Action', async () => {
     const spec = getAgentCliRuntimeSpec('ohMyPi');
+    if (!spec) throw new Error('Oh My Pi runtime spec is required');
     const command = resolveAgentCliManagedCommandPathForRuntime(spec, { happyHomeDir: home });
     await mkdir(dirname(command), { recursive: true });
     await writeFile(command, '#!/bin/sh\nprintf "omp 1.2.3\\n"\n');

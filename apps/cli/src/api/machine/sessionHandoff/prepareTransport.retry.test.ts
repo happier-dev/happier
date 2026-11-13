@@ -15,6 +15,8 @@ describe('handoff direct transfer recovery', () => {
       const directory = await mkdtemp(join(tmpdir(), 'happier-handoff-retry-'));
       const destinationPath = join(directory, 'bundle');
       const payloadSource = await createSessionHandoffAgentBundlePayloadSource({ agentId: 'claude', remoteSessionId: 'retry-session' });
+      const { sizeBytes, manifestHash } = payloadSource;
+      if (sizeBytes === undefined || manifestHash === undefined) throw new Error('Agent bundle payload must publish size and manifest hash');
       const transferId = 'handoff-retry';
       const registry = createDirectPeerTransferRegistry({ advertisedPort: 46001 });
       const publication = registry.publishTransfer({ transferId, payloadSource });
@@ -82,8 +84,8 @@ describe('handoff direct transfer recovery', () => {
               sourceSessionStorageMode: 'persisted', negotiatedTransportStrategy: 'direct_peer',
               allowServerRoutedFallback: mode !== 'reset' && mode !== 'persistent-reset', endpointCandidates: publication.endpointCandidates },
             actualTransportStrategy: 'direct_peer',
-            handoffMetadataV2: { agentBundleTransferPublication: { transferId, sizeBytes: payloadSource.sizeBytes,
-              manifestHash: payloadSource.manifestHash, endpointCandidates: publication.endpointCandidates } },
+            handoffMetadataV2: { agentBundleTransferPublication: { transferId, sizeBytes,
+              manifestHash, endpointCandidates: publication.endpointCandidates } },
             machineTransferChannel: channel('target'),
             directPeerTransfer: { publishTransfer: () => [], clearPublishedTransfer: () => undefined,
               requestPayloadFile: input => requestDirectPeerTransferToFile({ ...input, fetchFn }) },

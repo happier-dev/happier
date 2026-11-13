@@ -243,7 +243,8 @@ it.each<{ member: boolean; receivingRole?: 'manage' | 'use' }>([
     source: { kind: 'workspace', workspaceId: 'logical-source', checkout: { serverId: homeId,
       workspaceId: 'logical-source', machineId: admission.machineId, rootPath: '/source/workspace' } },
     materialization: { kind: 'sync', targetPath: '/chosen/workspace', workspaceAction: { kind: 'copy_once', contentPolicy } } });
-  const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: 'project-request',
+  const requestId = 'project-request';
+  const envelope = ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId,
     target: { kind: 'machine', machineId: input.machineId }, input });
   const { computeExternalActionRequestEnvelopeDigestV1 } = await import('@happier-dev/protocol/actions/externalActionExecutionAuthorization');
   const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'current-project-root', binding: {
@@ -252,7 +253,7 @@ it.each<{ member: boolean; receivingRole?: 'manage' | 'use' }>([
     installationId: 'chosen-installation', actionId: 'projects.open', requestId: envelope.requestId,
     requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), target: envelope.target,
     // Home binds the admitted Sync source into every Project Sync Open root (62e7ae8da3f).
-    workspaceSyncAdmission: { relationshipId: deriveWorkspaceSyncRelationshipId(envelope.requestId),
+    workspaceSyncAdmission: { relationshipId: deriveWorkspaceSyncRelationshipId(requestId),
       sourceWorkspaceRefId: 'logical-source', source: admission } } });
   const constraints = { models: API_TOKEN_FULL_GRANT_V1.models, permissionModes: API_TOKEN_FULL_GRANT_V1.permissionModes };
   const source = WorkspaceSyncSourceRoutingV1Schema.parse({ v: 1, phase: 'prepare', operationId: 'workspace-operation',
@@ -743,10 +744,11 @@ it.each(['plain', 'e2ee'] as const)('admits arbitrary %s requester custody throu
     sessionRpc.registerHandler(SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND,
       (_input, context) => ({ accepted: true, authority: context?.callerAuthority }));
     for (const kind of ['account', 'terminal'] as const) {
-      const sessionRoot = ExternalActionExecutionAuthorizationV1Schema.parse(sealExternalActionRequesterAccountContextV1({ authorization: {
-        ...transition, binding: { ...transition.binding, authentication: { kind, tokenEpoch: 1 },
-          target: { kind: 'session', sessionId: 'original-session' } },
-      }, credentials: encodedCredentials, invocation,
+      const sessionRoot = ExternalActionExecutionAuthorizationV1Schema.parse(sealExternalActionRequesterAccountContextV1({
+        authorization: ExternalActionExecutionAuthorizationV1Schema.parse({
+          ...transition, binding: { ...transition.binding, authentication: { kind, tokenEpoch: 1 },
+            target: { kind: 'session', sessionId: 'original-session' } },
+        }), credentials: encodedCredentials, invocation,
         purpose: { kind: 'machine_rpc', method: SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND, params: {} },
         installationPublicKey: installation.publicKey, randomBytes: tweetnacl.randomBytes }));
       const response = await sessionRpc.handleRequest({ method: sessionMethod, requestId: `transition-${kind}`,
@@ -2575,7 +2577,7 @@ describe('RpcHandlerManager request lifetime', () => {
     const requestId = 'settled-action-request';
     const result = succeeded ? { ok: true, result: { environmentRemoved: true } }
       : { ok: false, errorCode: 'native_refused', error: 'native_refused' };
-    const entered = Promise.withResolvers<void>();
+    const entered = createDeferredVoid();
     let cancelled = false;
     rpc.registerHandler('demo.settle', async (_input: unknown, context?: RpcHandlerContext) => {
       if (!context) throw new Error('Missing receiving context');

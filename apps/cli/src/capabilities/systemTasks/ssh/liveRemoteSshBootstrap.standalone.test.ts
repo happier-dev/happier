@@ -179,8 +179,8 @@ it.each(['task', 'cli', 'hsetup', 'hsetup-ask'] as const)('uses admitted standal
     } else if (entry === 'cli') {
       vi.spyOn(console, 'log').mockImplementation(() => {});
       vi.spyOn(console, 'error').mockImplementation(() => {});
-      vi.spyOn(process.stdout, 'write').mockImplementation((chunk, callback) => {
-        callback?.();
+      vi.spyOn(process.stdout, 'write').mockImplementation((_chunk, encodingOrCallback?, callback?) => {
+        (typeof encodingOrCallback === 'function' ? encodingOrCallback : callback)?.();
         return true;
       });
       await handleMachineCommand(['enroll', '--ssh', 'root@example.test', '--role', 'server', '--admin-access', 'none',

@@ -34,7 +34,7 @@ import { artifactListResponse, artifactReadResponse } from '@/testkit/http/artif
 import { createCliApprovalsArtifactStore } from '@/session/actions/approvals/artifactStore';
 import { ARTIFACT_UPLOAD_PATH_V1 } from '@happier-dev/transfers';
 import { ACCOUNT_API_TOKENS_LIST_HTTP_PATH_V1 } from '@happier-dev/protocol/auth/accountApiTokens';
-import { MachineInstallationProofV1Schema, verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { MachineInstallationProofPayloadV1Schema, MachineInstallationProofV1Schema, verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { SIGNED_ROOT_ACTION_EXECUTE_PATH } from '@/daemon/externalActions/signedRootActionControl';
 import { readBundledPluginAvailabilityHttpFixture } from '@/plugins/testkit/bundledPluginAvailabilityHttpFixture';
@@ -46,6 +46,12 @@ function decodeNativeConfirmation(context: RpcActionExecutorContext) {
     presentUserConfirmation: context.presentUserConfirmation,
   }))).presentUserConfirmation;
 }
+
+function requireEnvelopeRequestId(requestId: string | undefined): string {
+  if (!requestId) throw new Error('Native Home workflow proposals carry their request id');
+  return requestId;
+}
+
 export function withNativeConfirmation(actionId: 'machines.setup.plan' | 'machines.setup.apply' | 'machines.setup.remove', input: unknown,
   context: RpcActionExecutorContext): RpcActionExecutorContext {
   const binding = context.externalActionExecutionAuthorization?.binding;
@@ -265,10 +271,10 @@ export async function exercisePublicPackagePlanApply(scenario: NativeSoftwareSce
         const admission = SocketRpcMachineAdmissionContextV1Schema.parse(rpcAdmission.context);
         const proof = MachineInstallationProofV1Schema.parse(proofInput);
         const ok = admission.actorAccountId === 'alice' && admission.custodianAccountId === 'alice'
-          && verifyMachineInstallationProof({ publicKey: fixture.pair.publicKey, proof, payload: {
+          && verifyMachineInstallationProof({ publicKey: fixture.pair.publicKey, proof, payload: MachineInstallationProofPayloadV1Schema.parse({
             version: 1, accountId: 'alice', machineId: machine.id, installationId: installation.installationId,
             rpcAdmission,
-          } });
+          }) });
         return { status: ok ? 200 : 403, data: ok ? { v: 1, ok: true } : { error: 'access_denied' } };
       }
       if (path === WORKFLOW_RUN_STORAGE_HTTP_PATH)
@@ -335,7 +341,7 @@ export async function exercisePublicPackagePlanApply(scenario: NativeSoftwareSce
         expect(verifyMachineInstallationProof({ publicKey: fixture.pair.publicKey,
           proof: MachineInstallationProofV1Schema.parse(workflowProposal.installationProof), payload: {
             version: 1, accountId: 'alice', machineId: machine.id, installationId: installation.installationId,
-            externalActionOrigin: { homeId: 'srv_home', actionId, requestId: envelope.requestId,
+            externalActionOrigin: { homeId: 'srv_home', actionId, requestId: requireEnvelopeRequestId(envelope.requestId),
               requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
               origin: workflowProposal.workflowActionOrigin! },
           } })).toBe(true);

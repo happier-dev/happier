@@ -229,9 +229,10 @@ describe('authorizeMachineRpcRequest', () => {
         verifyMachineAdmission: received => verifyMachineRpcAdmissionCurrent({ ...received,
           privateKey: keys.secretKey, daemonToken: input.daemonToken, serverHttpBaseUrl: input.serverHttpBaseUrl }) };
       const diagnostics: unknown[] = [];
-      const rpc = new RpcHandlerManager({ scopePrefix: context.machineId, localMachineId: context.machineId, scopeKind: 'machine',
+      const rpc = new RpcHandlerManager({ scopePrefix: context.machineId, localMachineId: context.machineId,
         encryptionMode: 'plain', logger: (_message, data) => diagnostics.push(data),
         prepareRequesterAccountContext: input => prepareInstalledRequesterAccountActionContext({ ...input,
+          purpose: input.purpose ?? { kind: 'external_action' },
           machineId: context.machineId, serverId: 'home', serverHttpBaseUrl: 'https://home.invalid',
           resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: context.machineId, serverIdentityId: 'home' }),
           createExecutor: () => createActionExecutor(createUnavailableActionTransportDeps()) }),

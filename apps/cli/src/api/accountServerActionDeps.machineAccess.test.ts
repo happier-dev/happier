@@ -67,10 +67,10 @@ describe('Machine access headless Action transport', () => {
         let output = '';
         // HTTP, stored credentials and stdout are the boundaries; CLI binding,
         // credentialed dispatch, inventory parsing and content opening stay real.
-        const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk, encodingOrCallback, callback) => {
+        const stdout = vi.spyOn(process.stdout, 'write').mockImplementation((chunk, ...rest: unknown[]) => {
           output += String(chunk);
-          if (typeof encodingOrCallback === 'function') encodingOrCallback();
-          else callback?.();
+          // Both write overloads end with an optional completion callback.
+          rest.find((value): value is () => void => typeof value === 'function')?.();
           return true;
         });
         restoreStdout = () => stdout.mockRestore();

@@ -22,6 +22,7 @@ import type { TrackedSession } from '@/daemon/types';
 import { buildMachineAgentInventoryKey } from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { executeAgentInstall } from './executeAgentInstall';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 
 export type AgentInstallJobRegistry = Readonly<{
   agents: readonly Pick<ResolvedAgentContribution, 'id' | 'identity' | 'runtimeSpec' | 'pluginId' | 'richDefinition' | 'hostAccess' | 'cliMetadata'>[];
@@ -262,9 +263,10 @@ export function createAgentInstallJobOwner(options: AgentInstallJobOwnerOptions 
           if (error instanceof ExecFileTerminationError) job.cleanupError = error;
           const nativeCode = isPluginError(error) && (error.code === 'agent_isolation_unavailable'
             || error.code === 'requester_material_cleanup_failed') ? error.code : null;
-          const phase = nativeCode && isPluginError(error) && (error.details?.phase === 'native_execution_preparation'
-            || error.details?.phase === 'native_identity_binding' || error.details?.phase === 'native_execution_admission'
-            || error.details?.phase === 'requester_material_cleanup') ? error.details.phase : null;
+          const details = nativeCode && isPluginError(error) ? error.details : undefined;
+          const detailPhase = isJsonObject(details) ? details.phase : undefined;
+          const phase = detailPhase === 'native_execution_preparation' || detailPhase === 'native_identity_binding'
+            || detailPhase === 'native_execution_admission' || detailPhase === 'requester_material_cleanup' ? detailPhase : null;
           settle(job, { kind: 'failed', code: job.controller.signal.aborted && !job.cleanupError ? 'cancelled' : 'install_failed',
             stepId: buildAgentInstallJobCliStepId(request), message: nativeCode
               ? `Native Agent installation failed (${nativeCode}${phase ? `, ${phase}` : ''}).` : 'Native Agent installation failed.' });

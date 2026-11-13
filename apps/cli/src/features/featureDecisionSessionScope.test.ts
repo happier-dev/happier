@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 
 import { bindHostedSessionId, readHostedSessionScope, runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
@@ -82,7 +83,7 @@ describe('hosted Session feature policy', () => {
       const scope = readHostedSessionScope();
       const rpc = new RpcHandlerManager({ scopePrefix: sessionId, scopeKind: 'session', encryptionMode: 'plain', logger: () => {} });
       const registration = registerExecutionRunRpcHandlers(rpc, {
-        sessionId, cwd: `/session-${enabled}`, parentProvider: 'codex', sendAcp: () => {},
+        sessionId, cwd: `/session-${enabled}`, parentProvider: 'codex', sendAcp: async () => {},
       });
       onTestFinished(() => registration.dispose());
       rpc.registerHandler('hostedScopeProbe', () => readHostedSessionScope() === scope);
@@ -122,7 +123,7 @@ describe('hosted Session feature policy', () => {
       client: createMutableApiSessionClientFixture({ sessionId: `inventory-${deny || 'enabled'}`,
         overrides: { getServerFeaturesSnapshot: () => serverSnapshot } }),
       happierToolsEnabled: true, hasAuthenticatedRuntime: true,
-      actionSettingsProvider: { getActionsSettings: () => ({ v: 1, actions: {
+      actionSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1, actions: {
         'session.board.layout.update': { toolExposureModes: { agent: 'direct' } },
       } }) },
     }));
