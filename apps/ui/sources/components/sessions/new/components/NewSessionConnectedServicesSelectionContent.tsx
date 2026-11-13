@@ -1,3 +1,4 @@
+import type { ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import type { DirectDeliveryDisclosure } from '@/components/sessions/teamCredentials/directDeliveryDisclosure';
 import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import * as React from 'react';
@@ -49,6 +50,7 @@ export type NewSessionConnectedServicesSelectionContentProps = Readonly<{
     bindingsByServiceId: Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>;
     bindingsKnown?: boolean;
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
+    declarationContext?: ProviderDeclarationContext;
     teamCredentialResourceStatusByKey?: TeamCredentialResourceStatusByKey;
     teamNameById?: Readonly<Record<string, string>>;
     /** Where agents run on the selected target now, for the Direct delivery disclosure. */
@@ -216,6 +218,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
             bindingsByServiceId: props.bindingsByServiceId,
             bindingsKnown: props.bindingsKnown,
             teamCredentialResources: props.teamCredentialResources,
+            declarationContext: props.declarationContext,
             teamCredentialResourceStatusByKey: props.teamCredentialResourceStatusByKey,
             teamNameById: props.teamNameById,
             directDelivery: props.directDelivery,
@@ -253,6 +256,7 @@ export function NewSessionConnectedServicesSelectionContent(props: NewSessionCon
         profileOptionsByServiceId,
         groupOptionsByServiceId,
         props.teamCredentialResources,
+        props.declarationContext,
         props.teamCredentialResourceStatusByKey,
         props.teamNameById,
         props.directDelivery,

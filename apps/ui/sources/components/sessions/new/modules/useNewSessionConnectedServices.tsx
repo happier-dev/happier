@@ -542,6 +542,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
       groupOptionsByServiceId={connectedServiceAccountGroupOptionsByServiceId}
       bindingsByServiceId={connectedServicesBindingsByServiceId}
       bindingsKnown={connectedAccountDefaultsStatus === 'ready'}
+      declarationContext={providerDeclarationContext(params.sourceMachineId, params.providerProjection)}
       teamCredentialResources={params.teamCredentialResources}
       teamCredentialResourceStatusByKey={params.teamCredentialResourceStatusByKey}
       teamNameById={params.teamNameById}
@@ -588,6 +589,8 @@ export function useNewSessionConnectedServices(params: Readonly<{
     directDelivery,
     params.routeSources,
     params.nativeAgentTargetKey,
+    params.sourceMachineId,
+    params.providerProjection,
     routePresentation.applied,
     targetServerId,
   ]);

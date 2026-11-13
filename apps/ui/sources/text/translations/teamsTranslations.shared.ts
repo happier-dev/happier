@@ -886,6 +886,7 @@ export const english = {
                 ceilingLabel: 'Direct disclosure',
                 ceilingBrokeredOnly: 'Brokered only',
                 directUnsupported: 'Direct credential delivery is unavailable for this source.',
+                museBrokeredUse: 'Members can use this shared Muse login with Pi, OpenCode or Codex; the Muse Agent needs their own Muse login.',
                 ceilingDirectAllowed: 'Allow direct access',
                 ceilingNote: 'Direct access lets a recipient\u2019s local tools receive credential material. Removing access stops future delivery, but cannot erase material an external process already used.',
                 conflict: 'These settings changed elsewhere. Reload to see the current values before saving.',

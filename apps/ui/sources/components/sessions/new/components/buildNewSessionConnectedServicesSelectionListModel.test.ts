@@ -1,3 +1,4 @@
+import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams';
 import { presentDirectDeliveryDisclosure } from '@/components/sessions/teamCredentials/directDeliveryDisclosure';
 import { describe, expect, it, vi } from 'vitest';
 import type { GestureResponderEvent } from 'react-native';
@@ -59,6 +60,25 @@ function buildModel(overrides: Partial<Parameters<typeof buildNewSessionConnecte
 }
 
 describe('buildNewSessionConnectedServicesSelectionListModel', () => {
+    it.each(['muse', 'pi', 'opencode', 'codex'])('filters brokered Team sources using %s provider declarations while retaining personal login', agentId => {
+        const service = { pluginId: 'happier.agent.muse', localId: 'muse-account' };
+        const key = `${service.pluginId}/${service.localId}`;
+        const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
+            id: 'shared-muse', teamId: 'team-1', displayName: 'Shared Muse', resourceRevision: 1,
+            readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: false,
+            directMaterialState: 'never_delivered', sessionUsePolicy: 'personal_allowed', providerModels: [],
+            sourcePresentation: { kind: 'connected_service', service },
+            connectedServiceSelections: [{ source: 'team_resource', resourceId: 'shared-muse', deliveryMode: 'brokered' }],
+        });
+        const model = buildModel({ supportedServiceIds: [key],
+            profileOptionsByServiceId: { [key]: [{ profileId: 'own-muse', status: 'connected' }] },
+            nativeRoute: { agentTargetKey: `agent:happier.agent.${agentId}/${agentId}`, active: true },
+            teamCredentialResources: [resource],
+        });
+        const options = model.rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : []);
+        expect(options.some(option => option.id === createTeamResourceServiceOptionId(resource.connectedServiceSelections[0]!))).toBe(agentId !== 'muse');
+        expect(options.some(option => option.id === createConnectedServiceOptionId(key, 'own-muse'))).toBe(true);
+    });
     it.each([
         { agentId: 'codex', pluginId: 'happier.agent.codex', localId: 'openai-codex' },
         { agentId: 'opencode', pluginId: 'happier.agent.codex', localId: 'openai-codex' },

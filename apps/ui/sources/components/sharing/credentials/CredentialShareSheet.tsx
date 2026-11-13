@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { credentialBrokeredSourceUseMessage } from '@/components/settings/teams/credentials/teamCredentialPresentation';
 import { useUnistyles } from 'react-native-unistyles';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
@@ -32,7 +33,7 @@ const NO_GRANTS: ShareSheetModel['grants'] = [];
  * A credential's meaning of the one share sheet: one level, "Can use it". Recipients' agents use it
  * through the owner's machine and never see it; giving the value itself is not offered here.
  */
-function createCredentialShareAdapter(): ShareSheetAdapter {
+function createCredentialShareAdapter(source: TeamCredentialSourceHint): ShareSheetAdapter {
   const canUse: ShareLevelPresentation = {
     label: t('shareSheet.credentials.levels.canUse'),
     help: t('shareSheet.credentials.help.use'),
@@ -40,7 +41,8 @@ function createCredentialShareAdapter(): ShareSheetAdapter {
   return {
     namespace: 'credential-share',
     title: t('shareSheet.credentials.title'),
-    description: t('shareSheet.credentials.description'),
+    description: credentialBrokeredSourceUseMessage(source.kind === 'connected_account' ? source.account.service
+      : source.kind === 'connected_pool' ? source.service : undefined) ?? t('shareSheet.credentials.description'),
     levels: {
       view: canUse,
       edit: { label: canUse.label },
@@ -73,7 +75,7 @@ function CredentialShareModal(
     () => directory.sections.filter((section) => section.kind === 'team'),
     [directory.sections],
   );
-  const [adapter] = React.useState(createCredentialShareAdapter);
+  const [adapter] = React.useState(() => createCredentialShareAdapter(props.source));
   const { onClose, scope, source } = props;
   const actions = React.useMemo<ShareSheetActions>(
     () => ({

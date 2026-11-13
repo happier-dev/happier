@@ -16,6 +16,7 @@ import {
     resourceState,
     resourceStateLabel,
     credentialFailureMessage,
+    credentialBrokeredSourceUseMessage,
     recoveryDestinationIsNavigable,
     teamCredentialRecoveryPresentation,
     resourceConnectedServiceMarkId,
@@ -23,6 +24,12 @@ import {
 } from './teamCredentialPresentation';
 
 describe('teamCredentialPresentation', () => {
+    it('explains shared Muse use without promising native Muse access', () => {
+        const message = credentialBrokeredSourceUseMessage({ pluginId: 'happier.agent.muse', localId: 'muse-account' });
+        expect(message).toMatch(/Pi.*OpenCode.*Codex/);
+        expect(message).toMatch(/Muse Agent.*own Muse login/);
+        expect(credentialBrokeredSourceUseMessage({ pluginId: 'acme', localId: 'muse-account' })).toBeUndefined();
+    });
     it('names a saved broker from the same Home-qualified machine presentation as its editor', () => {
         const picker = createMachineAdministrationTargetSelectionFixture({
             serverId: 'profile-a', serverIdentityId: 'identity-a',

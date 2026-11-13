@@ -357,6 +357,12 @@ export {
     type TeamCredentialRecoveryTranslationKey,
 } from './credentialStatusPresentation';
 
+/** One explanation for Muse's brokered sharing in the Share sheet and Team offer. */
+export function credentialBrokeredSourceUseMessage(service: Readonly<{ pluginId: string; localId: string }> | undefined): string | undefined {
+    return service?.pluginId === 'happier.agent.muse' && service.localId === 'muse-account'
+        ? t('teams.credentials.edit.museBrokeredUse') : undefined;
+}
+
 /**
  * The Home's typed refusal, in the words of the recovery it actually implies.
  *
@@ -368,8 +374,11 @@ export {
 export function credentialDirectExportFailureMessage(
     failure: TeamCredentialResourceSummaryV1['directExportFailure'],
     support?: TeamCredentialResourceSummaryV1['directExportSupport'],
+    source?: TeamCredentialSourceBindingV1 | null,
 ): string | undefined {
-    if (support === 'unsupported') return t('teams.credentials.edit.directUnsupported');
+    if (support === 'unsupported') return credentialBrokeredSourceUseMessage(source?.kind === 'connected_account'
+        ? source.target.account.service : source?.kind === 'connected_pool' ? source.target.service : undefined)
+        ?? t('teams.credentials.edit.directUnsupported');
     return failure === undefined ? undefined : failure.message ?? t('common.unavailable');
 }
 

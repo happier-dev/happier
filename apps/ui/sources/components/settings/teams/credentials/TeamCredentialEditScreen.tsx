@@ -391,7 +391,7 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
                 is confirmed before it is drafted. */}
             {props.section === undefined && resource.capabilities.updateDeliveryPolicy ? <ItemGroup
                 title={t('teams.credentials.edit.ceilingLabel')}
-                description={credentialDirectExportFailureMessage(directExportFailure, directExportSupport) ?? t('teams.credentials.edit.ceilingNote')}
+                description={credentialDirectExportFailureMessage(directExportFailure, directExportSupport, source) ?? t('teams.credentials.edit.ceilingNote')}
                 accessibilityRole="radiogroup"
                 accessibilityLabel={t('teams.credentials.edit.ceilingLabel')}
             >

@@ -1,3 +1,4 @@
+import { readAccountAgentProviderRequirements, type ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import type * as React from 'react';
 import type { PopoverAnchor } from '@/components/ui/popover';
@@ -95,6 +96,7 @@ export type BuildNewSessionConnectedServicesSelectionListModelParams = Readonly<
     /** Unread inherited defaults are indeterminate, not an implicit Native selection. */
     bindingsKnown?: boolean;
     teamCredentialResources?: readonly TeamCredentialResourceCatalogEntryV1[];
+    declarationContext?: ProviderDeclarationContext;
     /** Exact currentness projection from the Home catalog; stale rows stay visible but cannot be selected. */
     teamCredentialResourceStatusByKey?: TeamCredentialResourceStatusByKey;
     teamNameById?: Readonly<Record<string, string>>;
@@ -189,6 +191,11 @@ function resolveServiceOptionAccessibilityLabel(params: Readonly<{
 export function buildNewSessionConnectedServicesSelectionListModel(
     params: BuildNewSessionConnectedServicesSelectionListModelParams,
 ): NewSessionConnectedServicesSelectionListModel {
+    // Native-only Agents have no broker application. Use the same declaration
+    // authority as the Provider picker; personal and Direct material stay native.
+    const brokeredSupported = !params.nativeRoute || readAccountAgentProviderRequirements(
+        params.nativeRoute.agentTargetKey, params.declarationContext ?? { kind: 'account' },
+    ) !== null;
     let firstSelectedOptionId: string | null = null;
     const optionAvailabilityById = new Map<string, ConnectedServicesSelectionOptionAvailabilityFact>();
     const markUnavailable = (optionId: string, unavailableReason: string) => {
@@ -322,6 +329,7 @@ export function buildNewSessionConnectedServicesSelectionListModel(
             const resourceStatus = params.teamCredentialResourceStatusByKey?.get(`${resource.teamId}:${resource.id}`);
             const seenSelectionIds = new Set<string>();
             for (const selection of resource.connectedServiceSelections) {
+                if (selection.deliveryMode === 'brokered' && !brokeredSupported) continue;
                 if (selection.deliveryMode === 'direct'
                     && buildQualifiedPluginContributionKey(selection.disclosedMember.service) !== serviceId) continue;
                 const matchesBinding = binding?.source === 'team_resource'
