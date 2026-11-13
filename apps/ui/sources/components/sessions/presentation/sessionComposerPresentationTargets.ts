@@ -2289,17 +2289,19 @@ export function createComposerPresentationHostHandlers(
     }
     const activeOwner = owner;
     const capturedScope = input.scope ?? getActiveServerAccountScope();
-    const readHostTarget = (ref: ComposerRefV1): ComposerPresentationTarget | null => {
+    const readHostTarget = (ref: ComposerRefV1, requirePresented = true): ComposerPresentationTarget | null => {
         if (input.mountedComposer) {
             if (composerRefV1Key(ref) !== composerRefV1Key(input.mountedComposer)) return null;
-            return capturedScope ? resolveScopedMountedComposerTarget(ref, capturedScope) : null;
+            return capturedScope ? resolveScopedMountedComposerTarget(ref, capturedScope, requirePresented) : null;
         }
         return ref.kind === 'discussion'
             ? capturedScope ? resolveScopedMountedComposerTarget(ref, capturedScope) : null
             : readTarget(ref);
     };
     const readHostSnapshot = (ref: ComposerRefV1): ComposerSnapshotV1 | null => {
-        const target = readHostTarget(ref);
+        // A retained New Session draft remains readable when its opener is hidden by
+        // navigation to details. Focus and presentation effects still require presentation.
+        const target = readHostTarget(ref, ref.kind !== 'newSession');
         return target ? readComposerSnapshot(target) : null;
     };
 
@@ -2461,7 +2463,7 @@ export function createComposerPresentationHostHandlers(
         const snapshot = readHostSnapshot(parsed.data.ref);
         return PluginUiJsonValueV1Schema.parse(snapshot
             ? { status: 'ready', snapshot }
-            : { status: 'unavailable', reason: 'scopeClosed' });
+            : { status: 'unavailable', reason: 'scopeClosed', requestId: request.requestId });
     };
     const handlers = {
         activeComposer: (

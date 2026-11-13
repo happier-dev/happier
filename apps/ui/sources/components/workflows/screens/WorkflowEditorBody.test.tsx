@@ -3697,7 +3697,7 @@ describe('workflow editor prompt pictures', () => {
         expect(promptFocus).toHaveBeenCalled();
         await screen.pressByTestIdAsync('workflow-editor-step-analyze-actions');
         await screen.pressByTestIdAsync('workflow-editor-step-analyze-actions-remove');
-        expect(handlers.readComposer!(request('readComposer', { ref: first }))).toEqual({ status: 'unavailable', reason: 'scopeClosed' });
+        expect(handlers.readComposer!(request('readComposer', { ref: first }))).toEqual({ status: 'unavailable', reason: 'scopeClosed', requestId: 'editor:readComposer' });
         expect(readMountedComposerPresentationSnapshot({ scope, ref: first })).toBeNull();
         expect(handlers.focusComposer!(request('focusComposer', { ref: first }))).toEqual({ status: 'unavailable', reason: 'scopeClosed' });
         expect(await handlers.applyComposer!(request('applyComposer', { ref: first, transaction: {
@@ -3705,7 +3705,7 @@ describe('workflow editor prompt pictures', () => {
         } }))).toMatchObject({ status: 'composerUnavailable' });
         expect(handlers.readComposer!(request('readComposer', { ref: second }))).toMatchObject({ status: 'ready' });
         await act(async () => { await homes.switchAccount('editor', 'replacement-account'); });
-        expect(handlers.readComposer!(request('readComposer', { ref: second }))).toEqual({ status: 'unavailable', reason: 'scopeClosed' });
+        expect(handlers.readComposer!(request('readComposer', { ref: second }))).toEqual({ status: 'unavailable', reason: 'scopeClosed', requestId: 'editor:readComposer' });
         expect(readMountedComposerPresentationSnapshot({ scope, ref: second })).toBeNull();
         expect(handlers.focusComposer!(request('focusComposer', { ref: second }))).toEqual({ status: 'unavailable', reason: 'scopeClosed' });
         expect(await executor.execute('composer.transaction.apply', { scope, ref: second, transaction: {
@@ -3717,7 +3717,7 @@ describe('workflow editor prompt pictures', () => {
         await screen.pressByTestIdAsync('workflow-editor-step-implement-actions-moveIn');
         const moved = readDraft().blocks[0];
         expect(moved?.kind === 'loop' && moved.body.map(block => block.id)).toEqual(['triage-ready', 'implement']);
-        expect(handlers.readComposer!(request('readComposer', { ref: second }))).toEqual({ status: 'unavailable', reason: 'scopeClosed' });
+        expect(handlers.readComposer!(request('readComposer', { ref: second }))).toEqual({ status: 'unavailable', reason: 'scopeClosed', requestId: 'editor:readComposer' });
         handlers.dispose();
         await screen.unmount();
     });

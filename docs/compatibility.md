@@ -8394,6 +8394,15 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 `ComposerReadResultV1` adds optional `requestId` to its closed
+`unavailable` result. The Composer host copies the existing request envelope id;
+the SDK derives its result type and parser from that Protocol schema. Missing ids
+from earlier producers remain valid. Matching host, Protocol and SDK source reload
+together under the unpublished 0.3 direct cut; older strict development readers
+reject the added field. This adds no authority, persisted state, epoch or adapter.
+The inspected `../0.2` frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf`
+has no `packages/protocol/src/plugins/ui/composer.ts`.
+
 Unreleased 0.3 `deployments.receipts.get` adds optional input
 `projection: investigation` and optional result `investigation`. UI and daemon
 Account hosts strip the projection before reading server metadata, open the exact

@@ -227,7 +227,7 @@ export type ComposerUnavailableReasonV1 = z.infer<typeof ComposerUnavailableReas
 
 export const ComposerReadResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('ready'), snapshot: ComposerSnapshotV1Schema }),
-  z.strictObject({ status: z.literal('unavailable'), reason: ComposerUnavailableReasonV1Schema }),
+  z.strictObject({ status: z.literal('unavailable'), reason: ComposerUnavailableReasonV1Schema, requestId: z.optional(z.string().check(z.minLength(1))) }),
 ]));
 export type ComposerReadResultV1 = DeepReadonly<z.infer<typeof ComposerReadResultV1Schema>>;
 

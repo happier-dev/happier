@@ -237,7 +237,7 @@ describe('composer presentation host handlers', () => {
         const api = createPluginSurfaceHostApi({ surfaceContext: request('activeComposer').surface, handlers });
         expect(await api.handleRequest(request('activeComposer'))).toEqual(ref);
         expect(await api.handleRequest(request('readComposer', { ref: otherSessionRef })))
-            .toEqual({ status: 'unavailable', reason: 'scopeClosed' });
+            .toEqual({ status: 'unavailable', reason: 'scopeClosed', requestId: 'request:readComposer' });
         const transaction = { expectedRevision: 3, operations: [{ kind: 'text.set', text: 'opener edit' }] };
         expect(await api.handleRequest(request('applyComposer', { ref, transaction }))).toEqual({ status: 'applied', revision: 4 });
         expect(target.readSnapshot?.().text).toBe('opener edit');
@@ -271,7 +271,7 @@ describe('composer presentation host handlers', () => {
         releaseOpener();
         expect(await api.handleRequest(request('activeComposer'))).toBeNull();
         expect(await api.handleRequest(request('readComposer', { ref })))
-            .toEqual({ status: 'unavailable', reason: 'scopeClosed' });
+            .toEqual({ status: 'unavailable', reason: 'scopeClosed', requestId: 'request:readComposer' });
         expect(await api.handleRequest(request('applyComposer', { ref, transaction })))
             .toEqual({ status: 'composerUnavailable' });
         current = false;
@@ -974,7 +974,7 @@ describe('composer presentation host handlers', () => {
 
         expect(handlers.activeComposer!(request('activeComposer'))).toBeNull();
         expect(handlers.readComposer!(request('readComposer', { ref: sessionRef })))
-            .toEqual({ status: 'unavailable', reason: 'scopeClosed' });
+            .toEqual({ status: 'unavailable', reason: 'scopeClosed', requestId: 'request:readComposer' });
         expect(handlers.focusComposer!(request('focusComposer', { ref: sessionRef })))
             .toEqual({ status: 'unavailable', reason: 'scopeClosed' });
         expect(retiredTarget.focus).not.toHaveBeenCalled();

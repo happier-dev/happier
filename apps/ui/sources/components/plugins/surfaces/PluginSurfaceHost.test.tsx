@@ -19113,6 +19113,7 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
             await expect(hostApi.readComposer(composerRef)).resolves.toEqual({
                 status: 'unavailable',
                 reason: 'scopeClosed',
+                requestId: expect.any(String),
             });
         } finally {
             unregister();

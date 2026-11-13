@@ -2121,11 +2121,7 @@ typed unknown outcome. The same input-sensitive `readOnly` declaration decides
 this policy; hosts and the SDK testkit pass that declaration to the invoker
 without a provider or role opt-in. Cancellation before handler entry still
 prevents dispatch. Read-only Actions and Resource observations retain their
-abort-wins lifecycle. A cancelled read settles as `plugin_action_aborted` without
-waiting for its handler; CLI failures retain the invocation's Request ID. Hosts
-preserve that terminal code instead of reclassifying a started read as an unknown
-mutation. Handler IO must consume `context.signal` (or use host HTTP services,
-which link it into the request) to close its in-flight provider request too.
+abort-wins lifecycle.
 
 `options.observeAction(ref, input, invalidate, { signal })` installs dependencies
 without running the read handler. The target registers `observeRead` beside
@@ -7541,10 +7537,14 @@ hydration as permanent absence. The stable document adapter publishes scope
 arrival and withdrawal through the existing per-Composer registry push; no
 author retry, polling, or unscoped fallback participates in admission.
 Scope readiness is separate from visual presentation: a hidden retained view
-keeps its controller, while presented-only document operations keep their own
-checks. Physical admission subscribes only to mounted registry changes, not
+keeps its controller. An exact New Session snapshot remains readable by a fresh
+Composer-bound detail host when navigation hides the retained opener; focus and
+presentation effects still require presentation. Unavailable Composer reads carry
+the host request envelope's existing `requestId`, without minting another id.
+Physical admission subscribes only to mounted registry changes, not
 the persisted Session fallback or broad storage updates.
-This is host-side binding through the existing API, not a new wire field.
+The opener binding uses the existing API. Read-result diagnostics follow the
+[unreleased protocol cut](compatibility.md#sdk-protocol-evolution).
 
 `composer.regions` also admits `placement: 'statusStrip'` in development source.
 The shared Composer presentation owner filters scopes and orders the same region
@@ -12041,7 +12041,13 @@ and returns its approval Artifact ID. An explicit
 the retained candidate and same Artifact while its registered source observation
 is current. If a newer observation has already superseded that candidate, a new
 request expires the stale candidate and prepares current facts; approving an old
-review still cannot adopt superseded source. A managed-to-development transition
+review still cannot adopt superseded source. Development dependency preparation
+preserves an author-provided lockfile and does not create one for a lockfile-free
+source. Before replacing a serving development occurrence, the lifecycle owner
+validates the candidate, including contributions otherwise activated on demand;
+a failed activation retains the incumbent. Install failures carry their canonical
+Action `failureCause` through daemon review, approval preparation and target Action
+projection. A managed-to-development transition
 removes only that plugin's managed generation selection. Its serving occurrence
 keeps its original custody until development adoption, and restart rebuilds the
 registered source. A managed manifest-authority-only update keeps its generation

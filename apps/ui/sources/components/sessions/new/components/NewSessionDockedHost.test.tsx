@@ -472,7 +472,8 @@ describe('web shell Docked composer', () => {
         expect(await api.handleRequest(request)).toMatchObject({ status: 'ready', snapshot: { ref, text: 'Unsent café 日本語' } });
       }
       await screen.pressByTestIdAsync('close-dock');
-      expect(await api.handleRequest(request)).toEqual({ status: 'unavailable', reason: 'scopeClosed', requestId: request.requestId });
+      const { ComposerReadResultV1Schema } = await import('@happier-dev/protocol/plugins/ui/composer');
+      expect(ComposerReadResultV1Schema.parse(await api.handleRequest(request))).toEqual({ status: 'unavailable', reason: 'scopeClosed', requestId: request.requestId });
     } finally {
       handlers.dispose();
       await screen.unmount();
