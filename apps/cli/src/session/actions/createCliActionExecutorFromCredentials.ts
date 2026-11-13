@@ -137,6 +137,7 @@ import { resolveActionApprovalFlow } from '@happier-dev/protocol/actions/actionS
 import { resolveActionApprovalRouting } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invocationAuthority';
+import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { callExactMachineRpc, readMachineRpcRequestDisposition } from '@/session/transport/rpc/machineRpc';
 import { callSessionRpc } from '@/session/transport/rpc/sessionRpc';
@@ -480,7 +481,7 @@ async function resolvePatActionTransportPlan(params: Readonly<{
     if (!admittedInput.success) return { kind: 'settled', result: actionFailure('invalid_parameters') };
     placementInput = admittedInput.data;
   }
-  const executionPlacement = resolveActionExecutionPlacementForInput(spec, placementInput);
+  const executionPlacement = resolveActionExecutionPlacementForInput(spec, placementInput, params.context?.actionCaller);
   const targetInput = readRecord(params.input);
   if (spec.sessionTarget && targetInput) {
     const rawTarget = readActionSessionTargetField(targetInput, spec.sessionTarget.field);
@@ -1588,7 +1589,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         && !context.externalActionExecutionAuthorization && params.machineId
         && (params.pluginActionExecutionOwner !== 'current_process' || isDeploymentReceiptObservationActionIdV1(actionId))
         && !isPluginActionExecutionDispatchId(actionId)
-        && resolveActionExecutionPlacementForInput(getActionSpec(ActionIdSchema.parse(actionId)), input) === 'machine') {
+        && resolveActionExecutionPlacementForInput(getActionSpec(ActionIdSchema.parse(actionId)), input, context.actionCaller) === 'machine') {
         const invocation = readExternalActionRequesterInvocation(context);
         const serverIdentityId = context.serverIdentityId ?? params.serverIdentityId;
         const originalTarget = context.externalActionTarget ?? { kind: 'machine' as const, machineId: params.machineId };
@@ -1789,7 +1790,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         liveResultCustody = resolveActionApprovalRouting({ actionId: spec.id, spec, input: admittedInput,
           settings: policy.getActionsSettings(), context: { ...context, surface: 'cli', authority } }).required;
       }
-      const executionPlacement = resolveActionExecutionPlacementForInput(spec, admittedInput);
+      const executionPlacement = resolveActionExecutionPlacementForInput(spec, admittedInput, context.actionCaller);
       if (originalCliCaller && actionId === 'machines.managed.acquire' && executionPlacement === 'account') {
         const invocation = readExternalActionRequesterInvocation({ ...context, surface: 'cli',
           authority: context.authority ?? 'account_automation' });
@@ -2037,14 +2038,21 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
                 }
                 const requestId = context.actionRequestId ?? randomUUID();
                 const requesterTarget = target;
+                const invocation = accountId ? projectExternalActionRequesterInvocationV1({
+                  actionId: parsedActionId.data,
+                  context: { ...originalContext, actionCaller: { kind: 'host' }, surface: 'cli',
+                    // Stored CLI credentials establish presence before sealing;
+                    // the canonical projector retains their exact host review.
+                    authority: originalContext.authority ?? resolveInvocationAuthority({ credential: 'terminal', surface: 'cli' }) },
+                  account: { accountId, serverId: approvalServerId,
+                    ...(context.serverIdentityId ? { serverIdentityId: context.serverIdentityId } : {}) },
+                  target: requesterTarget, authentication: { kind: pairedTerminal ? 'terminal' : 'account' },
+                }) : null;
+                if (!invocation) return actionFailure('admission_unavailable');
                 const run = (requestSignal?: AbortSignal) => dispatchOriginalAccountAction({ actionId: parsedActionId.data, input: admittedInput,
                   requestId, target: requesterTarget, credentials,
                   serverHttpBaseUrl: resolveActionServerApiUrl(), serverIdentityId: context.serverIdentityId,
-                  invocation: { caller: { kind: 'host' }, surface: 'cli',
-                    // This original-host branch has stored CLI credentials. Resolve
-                    // their presence before sealing; approval cannot restore it later.
-                    authority: originalContext.authority ?? resolveInvocationAuthority({ credential: 'terminal', surface: 'cli' }),
-                    ...(originalContext.defaultSessionId ? { defaultSessionId: originalContext.defaultSessionId } : {}) },
+                  invocation,
                   // Accepted legacy publications omit Account identity. Keep their
                   // incumbent own-target bridge while Home still admits foreign work.
                   ...(ordinary && localPublication && !localPublication.accountId ? { foreignTargetOnly: true as const } : {}),

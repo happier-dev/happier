@@ -7,7 +7,8 @@ import type { ExternalActionIssuerRefusal } from './externalActionIssuerRefusal'
 import { ACTION_INVOKE_ACTION_ID_V1, APPROVAL_REQUEST_DECIDE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { deriveEd25519KeyPair, ED25519_PUBLIC_KEY_BYTES } from '@happier-dev/protocol/crypto/ed25519';
-import { doesExternalActionConsumeRequesterAccountContentV1, getActionSpec, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { doesExternalActionConsumeRequesterAccountContentV1, getActionSpec, projectExternalActionMachineRuntimeDemandV1, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
+import { isAgentInitiatedApprovalRequiredByDefault } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { isMachineTerminalOpenOrRestartActionIdV1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
 import { isMachineSetupPlanOrApplyActionIdV1, isManagedAccountNativeControlInvocationV1, managedAccountNativeReadEffectActionIdV1, isManagedEnrollmentRecoveryChildV1, isManagedCreationMutationActionIdV1, SESSION_AGENT_READINESS_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
@@ -168,7 +169,12 @@ export async function readReviewedExternalActionInput(input: Readonly<{
 async function readReviewedSessionSpawnInput(
   input: Parameters<typeof readReviewedExternalActionInput>[0],
 ): Promise<SessionSpawnNewInputV2 | null> {
-  const parsed = SessionSpawnNewActionInputV2Schema.safeParse(await readReviewedExternalActionInput(input));
+  const root = await readReviewedExternalActionInput(input);
+  const preparation = input.authorization.binding.actionId === 'deployments.prepare'
+    ? DeploymentPrepareInputV1Schema.safeParse(root) : null;
+  const parsed = SessionSpawnNewActionInputV2Schema.safeParse(preparation
+    ? preparation.success ? preparation.data.sessionDraft : null
+    : root);
   return parsed.success ? admitSessionSpawnNewActionInputV2(parsed.data) : null;
 }
 
@@ -678,12 +684,20 @@ type OriginalAccountActionInput = Readonly<{
  * admission even on an own target. Workflow birth also needs the authenticated
  * requester custody that private root control does not carry. */
 export function requiresOriginalAccountMachineActionProof(actionId: string, input?: unknown): boolean {
+  const machineAction = actionId.startsWith('machines.') ? ActionIdSchema.safeParse(actionId) : null;
+  const machineSpec = machineAction?.success ? getActionSpec(machineAction.data) : null;
   const sessionSpawn = actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 ? SessionSpawnNewActionInputV2Schema.safeParse(input) : null;
   const hasSession = input !== null && typeof input === 'object' && 'sessionId' in input
     && typeof input.sessionId === 'string' && input.sessionId.trim().length > 0;
   const detachedRunLaunch = !hasSession && (actionId === 'execution.run.start' || actionId === 'execution.run.ensure'
     || actionId === 'execution.run.send' || actionId === 'execution.run.ensure_or_start');
-  return actionId.startsWith('machines.') && doesExternalActionConsumeRequesterAccountContentV1({ actionId, input })
+  // Native confirmation ownership needs the private host invocation even when
+  // this person's approval policy is waived. Account Actions keep their owner.
+  return machineAction?.success === true && machineSpec !== null
+    && resolveActionExecutionPlacementForInput(machineSpec, input) === 'machine'
+    && (doesExternalActionConsumeRequesterAccountContentV1({ actionId, input })
+      || machineSpec.approvalPolicy?.uiConfirmation !== undefined
+      || isAgentInitiatedApprovalRequiredByDefault(machineAction.data))
     || isWorkspaceSyncRelationshipControlActionId(actionId) || Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, actionId) || actionId === 'projects.inspect'
     || isWorkspaceSyncRelationshipWriteActionId(actionId)
     || sessionSpawn?.success === true && sessionSpawn.data.machineSetupPlanInput !== undefined

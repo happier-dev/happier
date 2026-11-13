@@ -75,6 +75,8 @@ import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDeploymentActionDeps';
 import { createOwnServerDeploymentRuntimeForHost } from '@/deployments/targets/ownServer/ownServerDeploymentHostRuntime';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { computeActionInputApprovalDigestV1, computeActionReviewDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
+import { MachineRolesSetInputV1Schema } from '@happier-dev/protocol/actions/specs/machineRoles';
 
 // Terminal reads and controlling-TTY availability are genuine user/OS boundaries;
 // the consent owner and its default-no answer parsing stay real.
@@ -833,7 +835,8 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
         ownExecution: { ok: false, errorCode: 'fixture_receipt', error: 'fixture_receipt' } });
       const input = actionId === 'deployments.prepare' ? DeploymentPrepareInputV1Schema.parse({ projectSourceId: 'source', sourceRevision: 1,
           repository: { kind: 'github', deployment: 'https://github.com', repository: 'prepare/app' }, baseCommit: 'a'.repeat(40),
-          workspace: { kind: 'workspace-ref', serverId: homeIdentityId, id: 'workspace' } }) : {};
+          workspace: { kind: 'workspace-ref', serverId: homeIdentityId, id: 'workspace' },
+          sessionRef: { serverId: homeIdentityId, sessionId: 'preparation-session' } }) : {};
       const result = await dispatchOriginalAccountAction({ actionId, input, requestId: 'request-1',
         target: { kind: 'machine', machineId: 'alice-machine' },
         credentials: { token: token(), encryption: null, credentialProvenance: 'stored_session' },
@@ -844,6 +847,67 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
         installationId: 'alice-installation', accountId: 'bob', custodianAccountId: 'bob' });
       expect(events).toEqual(['home-authorized', 'dispatch']);
     });
+
+  it.each([
+    { actionId: 'machines.agentIsolation.set', viaCli: false, input: { machineId: 'alice-machine', enabled: true, expectedMetadataVersion: 10,
+      expectedPolicy: { enabled: false }, expectedPlanDigest: 'a'.repeat(64) } },
+    { actionId: 'machines.services.list', viaCli: false, input: { machineId: 'alice-machine' } },
+    // The native output fixture's empty role-policy mutation is a default-only
+    // confirmation owner, outside the retained native proof families.
+    { actionId: 'machines.roles.set', viaCli: false, input: MachineRolesSetInputV1Schema.parse({ serverId: homeIdentityId,
+      machineId: 'alice-machine', expectedPolicy: { active: [] }, expectedMetadataVersion: 1, policy: { active: [] } }) },
+    { actionId: 'machines.agentIsolation.set', viaCli: true, input: { machineId: 'alice-machine', enabled: true, expectedMetadataVersion: 10,
+      expectedPolicy: { enabled: false }, expectedPlanDigest: 'a'.repeat(64) } },
+    { actionId: 'machines.agentIsolation.set', viaCli: 'approval', input: { machineId: 'alice-machine', enabled: true, expectedMetadataVersion: 10,
+      expectedPolicy: { enabled: false }, expectedPlanDigest: 'a'.repeat(64) } },
+  ] as const)('retains carried native Machine confirmation in signed own-Account delivery ($actionId, CLI: $viaCli)', async ({ actionId, input, viaCli }) => {
+    const events: string[] = [];
+    const target = await home('plain', events, { custodianAccountId: 'bob', originalOwnAction: actionId, machineRole: 'manage',
+      ownExecution: { ok: false, errorCode: 'fixture_receipt', error: 'fixture_receipt' } });
+    const machineTarget = { kind: 'machine' as const, machineId: 'alice-machine' };
+    const invocation = { caller: { kind: 'host' as const }, surface: viaCli ? 'cli' as const : 'ui' as const, authority: 'present_user' as const,
+      ...(viaCli ? { defaultSessionId: 'confirmed-session' } : {}),
+      presentUserConfirmation: { actionId, requestId: 'request-1', accountId: 'bob', serverId: homeIdentityId,
+        target: machineTarget, inputDigest: computeActionInputApprovalDigestV1(actionId, input),
+        reviewDigest: computeActionReviewDigestV1(actionId, { actionArgs: input, preview: { machineId: machineTarget.machineId } }) } };
+    const credentials: StoredCredentials = { token: token(), encryption: null, credentialProvenance: 'stored_session' };
+    const result = viaCli
+      ? await createCliActionExecutorFromCredentials({ credentials, externalActionClient: true,
+        serverId: 'home', serverApiUrl: target.url, serverIdentityId: homeIdentityId, machineId: machineTarget.machineId,
+        actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }),
+          // A witnessed approval delegates its Account Ask through the real
+          // persisted policy owner, rather than a runtime-only policy override.
+          ...(viaCli === 'approval' ? { getAccountSettings: () => ({}) } : {}) },
+      }).execute(actionId, input, { surface: 'cli', actionRequestId: 'request-1', authority: 'present_user', defaultSessionId: 'confirmed-session',
+        ...(viaCli === 'approval' ? { presentUserApproval: { actionId, requestId: 'request-1',
+          inputDigest: invocation.presentUserConfirmation.inputDigest, reviewDigest: invocation.presentUserConfirmation.reviewDigest } }
+          : { presentUserConfirmation: invocation.presentUserConfirmation }) })
+      : await dispatchOriginalAccountAction({ actionId, input, requestId: 'request-1', target: machineTarget,
+        credentials, serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId, authority: 'present_user', invocation });
+    expect(result).toMatchObject({ ok: false, errorCode: 'fixture_receipt' });
+    const received = ExternalActionExecutionAuthorizationRequestV1Schema.parse(target.readReceived());
+    expect(received.executionAuthorization?.binding).toMatchObject({ actionId, accountId: 'bob', custodianAccountId: 'bob',
+      machineId: machineTarget.machineId, installationId: 'alice-installation' });
+    expect(openExternalActionRequesterAccountContextV1({ authorization: received.executionAuthorization,
+      installationPrivateKey: target.privateKey, purpose: { kind: 'external_action' }, machineId: machineTarget.machineId,
+      installationId: 'alice-installation', serverIdentityId: homeIdentityId, includeInvocation: true }))
+      .toMatchObject({ invocation });
+    expect(events).toEqual(['home-authorized', 'dispatch']);
+  });
+
+  it('keeps Account sharing outside native Machine proof selection', async () => {
+    const events: string[] = [];
+    const actionId = 'machines.access.grant.set' as const;
+    const target = await home('plain', events, { custodianAccountId: 'bob', originalOwnAction: actionId });
+    const result = await dispatchOriginalAccountAction({ actionId, input: { serverId: homeIdentityId, machineId: 'alice-machine',
+      principal: { kind: 'account', accountId: 'other-person' }, level: 'view' }, requestId: 'request-1',
+      target: { kind: 'machine', machineId: 'alice-machine' },
+      credentials: { token: token(), encryption: null, credentialProvenance: 'stored_session' },
+      serverHttpBaseUrl: target.url, serverIdentityId: homeIdentityId, foreignTargetOnly: true });
+    expect(result).toBeNull();
+    expect(target.readReceived()).toBeUndefined();
+    expect(events).toEqual([]);
+  });
 
   it('retains the original non-person invocation when a Prepare handoff dispatches the ordinary Session Action', async () => {
     const events: string[] = [];
