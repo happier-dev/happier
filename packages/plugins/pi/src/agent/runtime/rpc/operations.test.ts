@@ -33,6 +33,7 @@ import {
 } from '../../auth/services/requestAuth/index.js';
 import { buildPiCompletedContextCompactionPayload, type PiRuntimeEvent } from './events.js';
 import { createPiExecutionRunConversation, createPiRuntimeOperations } from './operations.js';
+import recordedMcp from '../../transcripts/__fixtures__/pi-rpc-mcp-0.82.1.json';
 
 type Capture = {
   initialRecords?: readonly unknown[];
@@ -335,6 +336,62 @@ function configuration(options: Readonly<Record<string, string>>): AgentSessionC
 }
 
 describe('createPiRuntimeOperations', () => {
+  it('counts recorded native MCP calls once per completed window without configured zero claims', async () => {
+    const capture: Capture = { specs: [], written: [] };
+    const runtime = await createPiRuntimeOperations({ ...createRuntimeContext(capture),
+      cwd: '/tmp/pi-workspace', env: {}, sessionId: 'mcp-session', initialSessionId: 'pi-native-session', mcpServerNames: ['a', 'b'] });
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch(event => events.push(event));
+    try {
+      const prompt = sendPrompt(runtime, 'replay native MCP');
+      await waitForWrittenCount(capture, 1); await ackLastCommand(capture); await prompt;
+      for (const frame of recordedMcp.frames) {
+        if (frame.type === 'tool_execution_start') {
+          // Scale only correlation IDs at the genuine RPC boundary; duplicate delivery
+          // must not multiply the number of native invocations in the window.
+          for (let index = 0; index < 128; index++) {
+            const call = { ...frame, toolCallId: 'replayed-' + index };
+            await emit(capture, call); await emit(capture, call);
+          }
+          expect(events.filter(event => event.kind === 'mcp-tool-usage')).toEqual([]);
+        } else await emit(capture, frame);
+      }
+      const usage = parseEvents(events).filter(event => event.kind === 'mcp-tool-usage');
+      expect(usage).toMatchObject([{ turnId: 'pi-turn-1', coverage: 'partial',
+        servers: [{ serverName: 'a', toolCallCount: 128, schemaBytes: null }] }]);
+      expect(usage).toHaveLength(1);
+      expect(events.findIndex(event => event.kind === 'mcp-tool-usage'))
+        .toBeLessThan(events.findIndex(event => event.kind === 'turn-complete'));
+    } finally { await runtime.dispose(); }
+  });
+
+  it.each(['cancelled', 'empty'] as const)('discards native MCP observations from a %s window before the next window', async outcome => {
+    const capture: Capture = { specs: [], written: [] };
+    const runtime = await createPiRuntimeOperations({ ...createRuntimeContext(capture),
+      cwd: '/tmp/pi-workspace', env: {}, sessionId: 'mcp-session', initialSessionId: 'pi-native-session', mcpServerNames: ['a', 'b'] });
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch(event => events.push(event));
+    try {
+      const prompt = sendPrompt(runtime, 'interrupted MCP');
+      await waitForWrittenCount(capture, 1); await ackLastCommand(capture); await prompt;
+      const call = recordedMcp.frames.find(frame => frame.type === 'tool_execution_start')!;
+      const end = recordedMcp.frames.find(frame => frame.type === 'agent_end')!;
+      await emit(capture, call);
+      if (outcome === 'cancelled') {
+        const cancelling = runtime.cancel!({ turnId: 'pi-turn-1', reason: 'user' });
+        await waitForWrittenCount(capture, 2); await emit(capture, end); await ackLastCommand(capture); await cancelling;
+      } else await emit(capture, end);
+      expect(events.filter(event => event.kind === 'mcp-tool-usage')).toEqual([]);
+      const writes = capture.written.length;
+      const next = sendPrompt(runtime, 'complete next window', { delivery: { kind: 'newTurn', turnId: 'next-window' } });
+      await waitForWrittenCount(capture, writes + 1); await ackLastCommand(capture); await next;
+      for (const frame of recordedMcp.frames) await emit(capture, frame);
+      expect(parseEvents(events).filter(event => event.kind === 'mcp-tool-usage')).toMatchObject([
+        { turnId: 'next-window', coverage: 'partial', servers: [{ serverName: 'a', toolCallCount: 1, schemaBytes: null }] },
+      ]);
+    } finally { await runtime.dispose(); }
+  });
+
   it('replays retained facts to a late watcher in their source order and preserves their sequences', async () => {
     const capture: Capture = { specs: [], written: [] };
     const runtime = await createRuntime(capture);
@@ -573,6 +630,7 @@ describe('createPiRuntimeOperations', () => {
         expect(flagIndex).toBeGreaterThan(0);
         const configPath = args[flagIndex + 1]!;
         const extensionPath = args[flagIndex - 1]!;
+        expect(capture.specs[0]!.launch).toMatchObject({ requiredFiles: [extensionPath, configPath] });
         expect(readFileSync(extensionPath, 'utf8')).toContain('happy-pi-user-input');
         expect(JSON.parse(readFileSync(configPath, 'utf8'))).toMatchObject({ directory: root, tools: [], mcpServers: {} });
         expect(existsSync(join(root, 'agent'))).toBe(false);
@@ -840,6 +898,43 @@ describe('createPiRuntimeOperations', () => {
     expect(parsedEvents.some((event) => event.kind === 'turn-failed')).toBe(false);
 
     await runtime.dispose();
+  });
+
+  it('surfaces an Agent adopted mid-turn as one provider-started turn that completes', async () => {
+    // A respawned runner adopted a held Pi whose turn the crashed runner started:
+    // the replay begins after `agent_start`, which the old runner already received.
+    const adopting = async (capture: Capture) => await createPiRuntimeOperations({
+      ...createRuntimeContext(capture), cwd: '/tmp/pi-workspace', env: {}, sessionId: 'happier-session-1',
+      initialSessionId: 'pi-provider-session-1', adoptsHeldAgent: true,
+    });
+    const capture: Capture = { specs: [], written: [] };
+    const runtime = await adopting(capture);
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch((event) => events.push(event));
+    await emit(capture, {
+      type: 'message_update',
+      assistantMessageEvent: { type: 'text_delta', contentIndex: 0, delta: 'rest of the answer' },
+    });
+    await emit(capture, { type: 'agent_end' });
+    const parsed = parseEvents(events);
+    const starts = parsed.filter((event) => event.kind === 'turn-start');
+    expect(starts).toEqual([expect.objectContaining({ startedBy: 'provider' })]);
+    expect(parsed.filter((event) => event.kind === 'message-delta'))
+      .toEqual([expect.objectContaining({ turnId: starts[0]!.turnId })]);
+    expect(parsed.filter((event) => event.kind === 'turn-complete'))
+      .toEqual([expect.objectContaining({ turnId: starts[0]!.turnId })]);
+    await runtime.dispose();
+
+    // Only the turn end was left to replay: its answer reached the crashed runner,
+    // so the adopted turn completes rather than failing as an empty response.
+    const tailCapture: Capture = { specs: [], written: [] };
+    const tail = await adopting(tailCapture);
+    const tailEvents: AgentSessionRuntimeEvent[] = [];
+    tail.watch((event) => tailEvents.push(event));
+    await emit(tailCapture, { type: 'agent_end' });
+    expect(parseEvents(tailEvents).filter((event) => event.kind.startsWith('turn-')).map((event) => event.kind))
+      .toEqual(['turn-start', 'turn-complete']);
+    await tail.dispose();
   });
 
   it('suppresses the echo of host-submitted prompts and keeps only injected user prompts', async () => {

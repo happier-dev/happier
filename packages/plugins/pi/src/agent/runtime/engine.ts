@@ -151,6 +151,7 @@ async function openPiSession(
           eagerStart: true,
           sessionOpenLifecycle: lifecycle,
           mcpServersStrictMode: request.mcpServersStrictMode,
+          mcpServerNames: Object.keys(request.mcpServers ?? {}),
           async publishCapabilityNotice(notice) {
             await context.session.services.transcripts.publishSessionEvent({
               type: 'message',
@@ -279,6 +280,7 @@ async function openPiExecutionRun(
             eagerStart: true,
             sessionOpenLifecycle: lifecycle,
             mcpServersStrictMode: request.mcpServersStrictMode,
+            mcpServerNames: Object.keys(request.mcpServers ?? {}),
             ...(preparedTools ? { happierToolsExtension: preparedTools } : {}),
           }),
           undefined, // The nested runtime owns the active startup phase.

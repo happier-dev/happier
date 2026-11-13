@@ -1,0 +1,840 @@
+{
+  "producer": {
+    "name": "Pi",
+    "version": "0.82.1",
+    "fixture": "Standalone native CLI with production Happier tools extension, real stdio echo MCP and isolated synthetic Anthropic model; capture-mcp.cjs",
+    "capturedAt": "2026-11-13",
+    "sanitization": "No redaction needed: isolated synthetic prompt/model/MCP, no Account credentials. Native frames retained unchanged."
+  },
+  "frames": [
+    {
+      "type": "agent_start"
+    },
+    {
+      "type": "turn_start"
+    },
+    {
+      "type": "message_start",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Finish"
+          }
+        ],
+        "timestamp": 1794552553649
+      }
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "Finish"
+          }
+        ],
+        "timestamp": 1794552553649
+      }
+    },
+    {
+      "type": "message_start",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "native-mcp-recording",
+            "name": "mcp__a__echo",
+            "arguments": {},
+            "partialJson": "",
+            "index": 0
+          }
+        ],
+        "api": "anthropic-messages",
+        "provider": "fixture",
+        "model": "fixture",
+        "usage": {
+          "input": 1,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 1,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          },
+          "cacheWrite1h": 0
+        },
+        "stopReason": "stop",
+        "timestamp": 1794552553688,
+        "responseId": "recorded-text"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_start",
+        "contentIndex": 0,
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "native-mcp-recording",
+              "name": "mcp__a__echo",
+              "arguments": {}
+            }
+          ],
+          "api": "anthropic-messages",
+          "provider": "fixture",
+          "model": "fixture",
+          "usage": {
+            "input": 1,
+            "output": 1,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 2,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            },
+            "cacheWrite1h": 0
+          },
+          "stopReason": "toolUse",
+          "timestamp": 1794552553688,
+          "responseId": "recorded-text"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "native-mcp-recording",
+            "name": "mcp__a__echo",
+            "arguments": {}
+          }
+        ],
+        "api": "anthropic-messages",
+        "provider": "fixture",
+        "model": "fixture",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          },
+          "cacheWrite1h": 0
+        },
+        "stopReason": "toolUse",
+        "timestamp": 1794552553688,
+        "responseId": "recorded-text"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_delta",
+        "contentIndex": 0,
+        "delta": "{}",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "native-mcp-recording",
+              "name": "mcp__a__echo",
+              "arguments": {}
+            }
+          ],
+          "api": "anthropic-messages",
+          "provider": "fixture",
+          "model": "fixture",
+          "usage": {
+            "input": 1,
+            "output": 1,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 2,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            },
+            "cacheWrite1h": 0
+          },
+          "stopReason": "toolUse",
+          "timestamp": 1794552553688,
+          "responseId": "recorded-text"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "native-mcp-recording",
+            "name": "mcp__a__echo",
+            "arguments": {}
+          }
+        ],
+        "api": "anthropic-messages",
+        "provider": "fixture",
+        "model": "fixture",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          },
+          "cacheWrite1h": 0
+        },
+        "stopReason": "toolUse",
+        "timestamp": 1794552553688,
+        "responseId": "recorded-text"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "toolcall_end",
+        "contentIndex": 0,
+        "toolCall": {
+          "type": "toolCall",
+          "id": "native-mcp-recording",
+          "name": "mcp__a__echo",
+          "arguments": {}
+        },
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "native-mcp-recording",
+              "name": "mcp__a__echo",
+              "arguments": {}
+            }
+          ],
+          "api": "anthropic-messages",
+          "provider": "fixture",
+          "model": "fixture",
+          "usage": {
+            "input": 1,
+            "output": 1,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 2,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            },
+            "cacheWrite1h": 0
+          },
+          "stopReason": "toolUse",
+          "timestamp": 1794552553688,
+          "responseId": "recorded-text"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "native-mcp-recording",
+            "name": "mcp__a__echo",
+            "arguments": {}
+          }
+        ],
+        "api": "anthropic-messages",
+        "provider": "fixture",
+        "model": "fixture",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          },
+          "cacheWrite1h": 0
+        },
+        "stopReason": "toolUse",
+        "timestamp": 1794552553688,
+        "responseId": "recorded-text"
+      }
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "native-mcp-recording",
+            "name": "mcp__a__echo",
+            "arguments": {}
+          }
+        ],
+        "api": "anthropic-messages",
+        "provider": "fixture",
+        "model": "fixture",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          },
+          "cacheWrite1h": 0
+        },
+        "stopReason": "toolUse",
+        "timestamp": 1794552553688,
+        "responseId": "recorded-text"
+      }
+    },
+    {
+      "type": "tool_execution_start",
+      "toolCallId": "native-mcp-recording",
+      "toolName": "mcp__a__echo",
+      "args": {}
+    },
+    {
+      "type": "tool_execution_end",
+      "toolCallId": "native-mcp-recording",
+      "toolName": "mcp__a__echo",
+      "result": {
+        "content": [
+          {
+            "type": "text",
+            "text": "Recorded echo"
+          }
+        ],
+        "details": {}
+      },
+      "isError": false
+    },
+    {
+      "type": "message_start",
+      "message": {
+        "role": "toolResult",
+        "toolCallId": "native-mcp-recording",
+        "toolName": "mcp__a__echo",
+        "content": [
+          {
+            "type": "text",
+            "text": "Recorded echo"
+          }
+        ],
+        "details": {},
+        "isError": false,
+        "timestamp": 1794552553727
+      }
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "toolResult",
+        "toolCallId": "native-mcp-recording",
+        "toolName": "mcp__a__echo",
+        "content": [
+          {
+            "type": "text",
+            "text": "Recorded echo"
+          }
+        ],
+        "details": {},
+        "isError": false,
+        "timestamp": 1794552553727
+      }
+    },
+    {
+      "type": "turn_end",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "toolCall",
+            "id": "native-mcp-recording",
+            "name": "mcp__a__echo",
+            "arguments": {}
+          }
+        ],
+        "api": "anthropic-messages",
+        "provider": "fixture",
+        "model": "fixture",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          },
+          "cacheWrite1h": 0
+        },
+        "stopReason": "toolUse",
+        "timestamp": 1794552553688,
+        "responseId": "recorded-text"
+      },
+      "toolResults": [
+        {
+          "role": "toolResult",
+          "toolCallId": "native-mcp-recording",
+          "toolName": "mcp__a__echo",
+          "content": [
+            {
+              "type": "text",
+              "text": "Recorded echo"
+            }
+          ],
+          "details": {},
+          "isError": false,
+          "timestamp": 1794552553727
+        }
+      ]
+    },
+    {
+      "type": "turn_start"
+    },
+    {
+      "type": "message_start",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "",
+            "index": 0
+          }
+        ],
+        "api": "anthropic-messages",
+        "provider": "fixture",
+        "model": "fixture",
+        "usage": {
+          "input": 1,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 1,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          },
+          "cacheWrite1h": 0
+        },
+        "stopReason": "stop",
+        "timestamp": 1794552553727,
+        "responseId": "recorded-text"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "text_start",
+        "contentIndex": 0,
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Finished"
+            }
+          ],
+          "api": "anthropic-messages",
+          "provider": "fixture",
+          "model": "fixture",
+          "usage": {
+            "input": 1,
+            "output": 1,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 2,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            },
+            "cacheWrite1h": 0
+          },
+          "stopReason": "stop",
+          "timestamp": 1794552553727,
+          "responseId": "recorded-text"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Finished"
+          }
+        ],
+        "api": "anthropic-messages",
+        "provider": "fixture",
+        "model": "fixture",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          },
+          "cacheWrite1h": 0
+        },
+        "stopReason": "stop",
+        "timestamp": 1794552553727,
+        "responseId": "recorded-text"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "text_delta",
+        "contentIndex": 0,
+        "delta": "Finished",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Finished"
+            }
+          ],
+          "api": "anthropic-messages",
+          "provider": "fixture",
+          "model": "fixture",
+          "usage": {
+            "input": 1,
+            "output": 1,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 2,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            },
+            "cacheWrite1h": 0
+          },
+          "stopReason": "stop",
+          "timestamp": 1794552553727,
+          "responseId": "recorded-text"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Finished"
+          }
+        ],
+        "api": "anthropic-messages",
+        "provider": "fixture",
+        "model": "fixture",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          },
+          "cacheWrite1h": 0
+        },
+        "stopReason": "stop",
+        "timestamp": 1794552553727,
+        "responseId": "recorded-text"
+      }
+    },
+    {
+      "type": "message_update",
+      "assistantMessageEvent": {
+        "type": "text_end",
+        "contentIndex": 0,
+        "content": "Finished",
+        "partial": {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Finished"
+            }
+          ],
+          "api": "anthropic-messages",
+          "provider": "fixture",
+          "model": "fixture",
+          "usage": {
+            "input": 1,
+            "output": 1,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 2,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            },
+            "cacheWrite1h": 0
+          },
+          "stopReason": "stop",
+          "timestamp": 1794552553727,
+          "responseId": "recorded-text"
+        }
+      },
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Finished"
+          }
+        ],
+        "api": "anthropic-messages",
+        "provider": "fixture",
+        "model": "fixture",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          },
+          "cacheWrite1h": 0
+        },
+        "stopReason": "stop",
+        "timestamp": 1794552553727,
+        "responseId": "recorded-text"
+      }
+    },
+    {
+      "type": "message_end",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Finished"
+          }
+        ],
+        "api": "anthropic-messages",
+        "provider": "fixture",
+        "model": "fixture",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          },
+          "cacheWrite1h": 0
+        },
+        "stopReason": "stop",
+        "timestamp": 1794552553727,
+        "responseId": "recorded-text"
+      }
+    },
+    {
+      "type": "turn_end",
+      "message": {
+        "role": "assistant",
+        "content": [
+          {
+            "type": "text",
+            "text": "Finished"
+          }
+        ],
+        "api": "anthropic-messages",
+        "provider": "fixture",
+        "model": "fixture",
+        "usage": {
+          "input": 1,
+          "output": 1,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "totalTokens": 2,
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "total": 0
+          },
+          "cacheWrite1h": 0
+        },
+        "stopReason": "stop",
+        "timestamp": 1794552553727,
+        "responseId": "recorded-text"
+      },
+      "toolResults": []
+    },
+    {
+      "type": "agent_end",
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Finish"
+            }
+          ],
+          "timestamp": 1794552553649
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "toolCall",
+              "id": "native-mcp-recording",
+              "name": "mcp__a__echo",
+              "arguments": {}
+            }
+          ],
+          "api": "anthropic-messages",
+          "provider": "fixture",
+          "model": "fixture",
+          "usage": {
+            "input": 1,
+            "output": 1,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 2,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            },
+            "cacheWrite1h": 0
+          },
+          "stopReason": "toolUse",
+          "timestamp": 1794552553688,
+          "responseId": "recorded-text"
+        },
+        {
+          "role": "toolResult",
+          "toolCallId": "native-mcp-recording",
+          "toolName": "mcp__a__echo",
+          "content": [
+            {
+              "type": "text",
+              "text": "Recorded echo"
+            }
+          ],
+          "details": {},
+          "isError": false,
+          "timestamp": 1794552553727
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Finished"
+            }
+          ],
+          "api": "anthropic-messages",
+          "provider": "fixture",
+          "model": "fixture",
+          "usage": {
+            "input": 1,
+            "output": 1,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 2,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            },
+            "cacheWrite1h": 0
+          },
+          "stopReason": "stop",
+          "timestamp": 1794552553727,
+          "responseId": "recorded-text"
+        }
+      ],
+      "willRetry": false
+    }
+  ]
+}

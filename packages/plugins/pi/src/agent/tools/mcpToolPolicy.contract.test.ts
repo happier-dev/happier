@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it } from 'vitest';
-import type { AgentExecutionRunRuntime, AgentSessionRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { AgentSessionRuntimeEvent, AgentExecutionRunRuntime, AgentSessionRuntime } from '@happier-dev/plugin-sdk/agents/runtime';
 import { readSessionCapabilityNoticeV1, SessionCapabilityNoticeV1Schema } from '@happier-dev/protocol';
 
 runAgentMcpToolPolicyContract(createPiMcpToolPolicyContractFixture());
@@ -110,6 +110,32 @@ it.each(['ask', 'off', 'allow'] as const)('delivers %s Run MCP through the same 
     await runtime.dispose();
   } finally {
     try { for (const runtime of runtimes) await runtime.dispose(); }
+    finally { await input.fixtureServer.dispose(); await rm(cwd, { recursive: true, force: true }); }
+  }
+});
+
+
+it('witnesses native MCP calls only in a completed Pi window', async () => {
+  const input = createPiMcpToolPolicyContractFixture();
+  const cwd = await mkdtemp(join(tmpdir(), 'happier-pi-mcp-usage-'));
+  let runtime: AgentSessionRuntime | undefined;
+  try {
+    const fixture = await input.fixtureServer.prepare({ cwd });
+    runtime = await input.openSession({ kind: 'create', sessionId: 'pi-mcp-usage', cwd,
+      mcpServers: Object.fromEntries(fixture.servers.map(server => [server.key, server.config])) });
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch(event => events.push(event));
+    for (let call = 0; call < 2; call++) {
+      await input.invokeTool(runtime, { server: 'a', tool: 'echo', arguments: {}, approvalScope: 'once' });
+    }
+    const usage = events.filter(event => event.kind === 'mcp-tool-usage');
+    expect(usage).toHaveLength(2);
+    expect(usage).toMatchObject([0, 1].map(() => ({ coverage: 'partial',
+      servers: [{ serverName: 'a', toolCallCount: 1, schemaBytes: null }] })));
+    expect(new Set(usage.map(event => event.turnId)).size).toBe(2);
+    expect(events.filter(event => event.kind === 'tool-call').map(event => event.toolName)).toEqual(['mcp__a__echo', 'mcp__a__echo']);
+  } finally {
+    try { await runtime?.dispose(); }
     finally { await input.fixtureServer.dispose(); await rm(cwd, { recursive: true, force: true }); }
   }
 });

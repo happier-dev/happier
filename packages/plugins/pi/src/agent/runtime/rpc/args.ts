@@ -65,7 +65,7 @@ function resolvePiRequestAuthExtensionArgs(env: Readonly<Record<string, string |
     : [];
 }
 
-export function buildPiRpcArgs(opts?: Readonly<{
+type PiRpcArgsOptions = Readonly<{
   skillsRoot?: string;
   modelDiscoveryExtensionPath?: string;
   permissionMode?: PiPermissionMode;
@@ -79,7 +79,11 @@ export function buildPiRpcArgs(opts?: Readonly<{
     configPath: string;
     toolNames?: readonly string[];
   }>;
-}>): readonly string[] {
+}>;
+
+/** Arguments and their transient file dependencies have one owner. */
+export function buildPiRpcLaunch(opts?: PiRpcArgsOptions): Readonly<{ args: readonly string[]; requiredFiles: readonly string[] }> {
+  const requestAuthArgs = resolvePiRequestAuthExtensionArgs(opts?.env);
   const launchSelection = opts?.providerModelId
     ? { provider: PI_PROVIDER_ID, startupModel: opts.providerModelId, modelScope: `${PI_PROVIDER_ID}/*` }
     : readPreparedConnectedAccountModel(opts?.env) ?? resolvePiLaunchSelectionForConnectedService(opts?.connectedServiceId);
@@ -88,7 +92,7 @@ export function buildPiRpcArgs(opts?: Readonly<{
     ? [...new Set([...restrictedTools, ...(opts?.happierToolsExtension?.toolNames ?? [])])]
     : null;
   const args: string[] = [
-    ...resolvePiRequestAuthExtensionArgs(opts?.env),
+    ...requestAuthArgs,
     ...(opts?.modelDiscoveryExtensionPath ? ['--extension', opts.modelDiscoveryExtensionPath] : []),
     ...(opts?.happierToolsExtension
       ? [
@@ -120,5 +124,13 @@ export function buildPiRpcArgs(opts?: Readonly<{
     ? opts.resumeSessionId
     : '';
   if (resumeSessionId) args.push('--session', resumeSessionId);
-  return args;
+  return { args, requiredFiles: [
+    ...(requestAuthArgs[1] ? [requestAuthArgs[1]] : []),
+    ...(opts?.modelDiscoveryExtensionPath ? [opts.modelDiscoveryExtensionPath] : []),
+    ...(opts?.happierToolsExtension ? [opts.happierToolsExtension.extensionPath, opts.happierToolsExtension.configPath] : []),
+  ] };
+}
+
+export function buildPiRpcArgs(opts?: PiRpcArgsOptions): readonly string[] {
+  return buildPiRpcLaunch(opts).args;
 }

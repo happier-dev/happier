@@ -1,3 +1,4 @@
+import { parseMcpToolWireNameV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import { createMcpCatalogPermissionChoiceV1, type InteractionTransientApprovalAuthorRequestV1 } from '@happier-dev/plugin-sdk/interactions';
 import { PI_PROVIDER_ID } from '../../providerBinding.js';
 import { randomUUID } from 'node:crypto';
@@ -39,7 +40,7 @@ import {
   PI_REQUEST_AUTH_PRODUCER_VERSION_ENV,
 } from '../../auth/services/requestAuth/index.js';
 import { PI_THINKING_LEVEL_ENV, resolvePiThinkingLevelFromEnv } from '../../../protocol/thinking.js';
-import { buildPiRpcArgs, readPiConnectedServiceIdFromEnv } from './args.js';
+import { buildPiRpcLaunch, readPiConnectedServiceIdFromEnv } from './args.js';
 import {
   createPiJsonStreamRpcClient,
   PiRpcNegativeAcknowledgementError,
@@ -186,6 +187,8 @@ type PiRuntimeOperationsParams = Readonly<{
   unsetEnvKeys?: readonly string[];
   permissionMode?: PiPermissionMode;
   initialSessionId?: string | null;
+  /** The host's `adoptsHeldAgent`: this runner adopts a held Pi that may be mid-turn. */
+  adoptsHeldAgent?: boolean;
   resumeSessionSelector?: string | null;
   resumeProviderSessionId?: string | null;
   sessionId: string;
@@ -193,6 +196,7 @@ type PiRuntimeOperationsParams = Readonly<{
   sessionOpenLifecycle?: PiSessionOpenLifecycle;
   happierToolsExtension?: Readonly<{ extensionPath: string; configPath: string }>;
   mcpServersStrictMode?: boolean;
+  mcpServerNames?: readonly string[];
   publishCapabilityNotice?: (notice: SessionCapabilityNoticeV1) => Promise<void>;
 }>;
 
@@ -467,7 +471,7 @@ function createPiExecSpec(
     kind: 'jsonStream' as const,
     launch: {
       executable,
-      args: buildPiRpcArgs({
+      ...buildPiRpcLaunch({
         skillsRoot: params.skills?.skillsRoot,
         modelDiscoveryExtensionPath,
         permissionMode: params.permissionMode,
@@ -491,8 +495,17 @@ function createPiExecSpec(
         : {}),
     },
     maxFrameBytes: 16 * 1024 * 1024,
+    // A held Agent mid-turn surfaces as a provider-started turn (see `joinHeldTurn`).
+    adoptsHeldAgentTurns: 'commandResponse' as const,
   };
 }
+
+/** Records that only occur inside a Pi agent turn. */
+const PI_TURN_OUTPUT_RECORD_TYPES: ReadonlySet<string | null> = new Set([
+  'message_start', 'message_update', 'message_end',
+  'tool_execution_start', 'tool_execution_update', 'tool_execution_end',
+  'turn_end', 'agent_end',
+]);
 
 function createRuntimeOperations(params: Readonly<{
   rpc: PiJsonStreamRpcClient;
@@ -505,9 +518,13 @@ function createRuntimeOperations(params: Readonly<{
   refreshCommands?: () => void;
   refreshModels?: () => void;
   observeUsage?: (turnId: string | null, promptCacheLastUseAtMs?: number) => void;
+  mcpServerNames?: readonly string[];
   cancelBlockingExtensionUiRequests: () => Promise<void>;
+  adoptsHeldAgent?: boolean;
 }>): RuntimeOperationsWithRecordHandler {
   const runtimeEventProjector = createPiRuntimeEventProjector();
+  const mcpServerNames = new Set(params.mcpServerNames);
+  const nativeMcpCalls = new Map<string, string>();
   let sessionId = params.initialSessionId;
   let activeTurn: ActiveTurnState | null = null;
   let activeTurnStartObserved = false;
@@ -529,6 +546,11 @@ function createRuntimeOperations(params: Readonly<{
   let pendingPromptAdmission: PendingPromptAdmission | null = null;
   let pendingCancellation: PendingCancellation | null = null;
   let piCompactionInProgress = false;
+  // Adopting a held Agent (`adoptsHeldAgent`): turn output before this runtime began
+  // any turn is the rest of the turn the crashed runner started (its `agent_start`
+  // already went to that runner). It joins as one provider-started turn.
+  let joinHeldTurn = params.adoptsHeldAgent === true;
+  let activeTurnJoinedInProgress = false;
 
   function beginTurn(
     agentTurnId: string | null = null,
@@ -537,11 +559,14 @@ function createRuntimeOperations(params: Readonly<{
     startedAtMs: number = Date.now(),
   ): ActiveTurnState {
     runtimeEventProjector.resetTurn();
+    nativeMcpCalls.clear();
     const turn = Object.freeze({
       turnId,
       agentTurnId,
     });
     activeTurn = turn;
+    joinHeldTurn = false;
+    activeTurnJoinedInProgress = false;
     activeTurnStartObserved = false;
     activeTurnAssistantMessageObserved = false;
     turnStartedAtMs = startedAtMs;
@@ -561,7 +586,9 @@ function createRuntimeOperations(params: Readonly<{
   }
 
   function clearActiveTurn(): void {
+    nativeMcpCalls.clear();
     activeTurn = null;
+    activeTurnJoinedInProgress = false;
     activeTurnStartObserved = false;
     activeTurnAssistantMessageObserved = false;
     turnStartedAtMs = undefined;
@@ -605,7 +632,8 @@ function createRuntimeOperations(params: Readonly<{
     completion: PendingCompletion | null,
   ): boolean {
     const providerFailure = activeTurnProviderFailure;
-    if (activeTurnAssistantMessageObserved && !providerFailure) return false;
+    // A joined turn's earlier answer went to the runner that started it.
+    if ((activeTurnAssistantMessageObserved || activeTurnJoinedInProgress) && !providerFailure) return false;
     const emittedAtMs = Date.now();
     settledTurnFailure = new Error(providerFailure?.diagnostic.sanitizedPreview
       ?? 'Pi completed the turn without returning an assistant message. Check provider credentials, model availability, and Pi logs.');
@@ -640,6 +668,22 @@ function createRuntimeOperations(params: Readonly<{
     const completion = pendingCompletion;
     if (settleTurnFailedForEmptyResponse(turn, terminalProviderTurnId, completion)) {
       return;
+    }
+    if (nativeMcpCalls.size > 0) {
+      const counts = new Map<string, number>();
+      for (const server of nativeMcpCalls.values()) counts.set(server, (counts.get(server) ?? 0) + 1);
+      const endMs = Date.now();
+      params.publishRuntimeEvent({
+        kind: 'mcp-tool-usage',
+        emittedAtMs: endMs,
+        turnId: turn.turnId,
+        ...(terminalProviderTurnId ? { agentTurnId: terminalProviderTurnId } : {}),
+        window: { startMs: turnStartedAtMs!, endMs },
+        // Pi RPC witnesses native calls, but does not report the complete
+        // model-context inventory. Uncalled configured servers are unknown.
+        coverage: 'partial',
+        servers: [...counts].map(([serverName, toolCallCount]) => ({ serverName, toolCallCount, schemaBytes: null })),
+      });
     }
     params.publishRuntimeEvent({
         kind: 'turn-complete',
@@ -703,11 +747,21 @@ function createRuntimeOperations(params: Readonly<{
       activeTurnStartObserved = true;
       return;
     }
+    if (joinHeldTurn && PI_TURN_OUTPUT_RECORD_TYPES.has(type)) {
+      readOrBeginTurn(agentTurnId, undefined, 'provider', observedAtMs);
+      activeTurnStartObserved = true;
+      activeTurnJoinedInProgress = true;
+    }
     const turn = activeTurn;
     const providerFailureDiagnostic = readPiProviderFailureDiagnostic(record);
     if (turn && type === 'message_start' && record.message && typeof record.message === 'object'
       && 'role' in record.message && record.message.role === 'assistant') {
       turnStartedAtMs ??= observedAtMs;
+    }
+    if (turn && type === 'tool_execution_start' && typeof record.toolCallId === 'string'
+      && record.toolCallId && typeof record.toolName === 'string' && !nativeMcpCalls.has(record.toolCallId)) {
+      const tool = parseMcpToolWireNameV1(record.toolName, mcpServerNames);
+      if (tool) nativeMcpCalls.set(record.toolCallId, tool.server);
     }
     if (turn && type === 'tool_execution_end') {
       lastNonModelItemCompletedAtMs = observedAtMs;
@@ -1684,7 +1738,9 @@ async function createPiConversationRuntimeOperations(
     rpc,
     logger: params.logger,
     initialSessionId: params.initialSessionId ?? null,
+    adoptsHeldAgent: params.adoptsHeldAgent === true,
     providerModelId: params.providerModelId,
+    mcpServerNames: params.mcpServerNames,
     subscribeRuntimeEvents(handler, replayStartupEvents = true) {
       subscribers.add(handler);
       if (replayStartupEvents && pendingStartupEvents !== null && replayingStartupSubscriber === null) {
