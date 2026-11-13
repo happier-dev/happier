@@ -5747,7 +5747,11 @@ loopback bearer by exact value before storage; the follow-up is a Windows
 named-pipe transport with peer proof. Plugin-hosted loopback MCP servers' bearers
 ride only the private remote-bridge config written by the MCP materializer (its
 path, not the bearer, is in the bridge's MCP config env), and the same transcript
-redactor covers them while they are live. No bearer
+redactor covers them while they are live. The session hook server
+(`plugins/runtime/hooks/session/service.ts`, 127.0.0.1) is the same case: its two
+secrets reach the Agent only as private secret files named by `--secret-file` in
+its hook config, never the Agent environment, and the service registers them with
+the transcript redactor until the hook server is disposed. No bearer
 is logged.
 
 Agents launch the Session MCP as `happier-session-holder mcp-relay` (the shipped
@@ -7014,7 +7018,13 @@ channels and exits when the holder closes that connection.
     target Agents through their holders over the relay). "Runner exited" is decided by
     `observeSessionTargetRunnerExit`: a Session in the daemon's session host ends when
     the host ended that Session (`hostedSession.observed`; it has no process of its
-    own), a runner process at its `exit`. Its end runs the
+    own), a runner process at its `exit`. The placement (`managedTargetPlacement`) is
+    kept in the Session marker's respawn descriptor, so a daemon that reattaches the
+    runner after a restart, or respawns it, knows the Session is placed: a crashed
+    runner's held Agent is probed and spared or ended through the target, and a
+    reattached runner that leaves without a spare (its relay ended with the previous
+    daemon, so it could not stop its Agent) has that Agent ended in the target
+    (`createSparedHeldAgentCustody().endStranded`). Its end runs the
     placement's Session-end steps (`onSessionEnd`), then the authority and relay end.
     Each call of the authority is its own provider operation (the Agents' held
     channels stay open next to finite calls).

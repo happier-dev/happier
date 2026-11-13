@@ -16,6 +16,7 @@ import { logger } from '@/ui/logger';
 import { isBun } from '@/utils/runtime';
 import { writeJsonAtomic } from '@/utils/fs/writeJsonAtomic';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
+import { registerTranscriptSecret } from '@/api/session/client/transport/transcriptSecretRedaction';
 import type { TranscriptFileFollowPathGrantEvidence } from '../../context/transcripts/fileFollowGrants';
 
 import {
@@ -468,6 +469,11 @@ export function createSessionHooksService(
                 providerId: request.providerId,
                 lifecycle,
             });
+            // 127.0.0.1 has no peer proof: the Agent's hook config names these secret files, so
+            // the transcript writer redacts the live secrets while this server runs.
+            const unregisterTranscriptSecrets = [secretFiles.sessionHookSecret, secretFiles.permissionHookSecret]
+                .map(secret => registerTranscriptSecret(secret));
+            const releaseTranscriptSecrets = () => { for (const unregister of unregisterTranscriptSecrets) unregister(); };
             const sessionRoot = lifecycle?.kind === 'session'
                 ? resolveHookSessionRoot({
                     happyHomeDir: params.happyHomeDir,
@@ -531,6 +537,7 @@ export function createSessionHooksService(
                     await writeSessionHookEndpointPort(sessionRoot, serverState.current.port);
                 }
             } catch (error) {
+                releaseTranscriptSecrets();
                 if (serverState.current) {
                     serverState.current.stop();
                     await serverState.current.closed;
@@ -542,9 +549,11 @@ export function createSessionHooksService(
             }
             const server = serverState.current;
             if (!server) {
+                releaseTranscriptSecrets();
                 throw new Error('Session hook server failed to initialize');
             }
             const cleanup = createOnceDisposable(async () => {
+                releaseTranscriptSecrets();
                 server.stop();
                 await server.closed;
                 if (secretFiles.secretDir && !secretFiles.retained) {

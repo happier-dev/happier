@@ -3,10 +3,10 @@
  * transcript. Applied once, at the Session message writer (`buildOutboundSessionMessagePayload`),
  * before encryption or plain storage.
  *
- * Labeled mitigation for 127.0.0.1 MCP listeners, which have no kernel peer proof: the Windows
- * Session MCP transport and plugin-hosted loopback MCP servers. Their bearers reach the Agent's
- * MCP client only through its runner-written client config, which the Agent's own process can
- * read. Unix socket Sessions give the Agent no bearer (kernel peer proof admits the Agent tree).
+ * Labeled mitigation for 127.0.0.1 listeners, which have no kernel peer proof: the Windows
+ * Session MCP transport, plugin-hosted loopback MCP servers and the session hook server. Their
+ * secrets reach the Agent only through its runner-written private config (MCP client config,
+ * bridge config, hook secret files), which the Agent's own process can read. Unix socket Sessions give the Agent no bearer (kernel peer proof admits the Agent tree).
  * Follow-up: local-socket / named-pipe transports with peer proof for both, which remove these
  * bearers and this registry.
  */
