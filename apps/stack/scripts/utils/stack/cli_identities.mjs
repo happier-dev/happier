@@ -1,5 +1,5 @@
 import { readdir } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 const IDENTITY_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/;
 
@@ -25,8 +25,15 @@ export function resolveCliHomeDirForIdentity({ cliHomeDir, identity }) {
   //
   // If the stack overrides cliHomeDir to a custom path, we keep the same layout
   // relative to that path's parent directory.
-  const baseDir = dirname(cliHomeDir);
-  return join(baseDir, 'cli-identities', id);
+  const parentDir = dirname(cliHomeDir);
+  // Passthrough commands export the selected home to nested stack commands.
+  // Resolve those homes (or the identities directory itself) without re-scoping.
+  const identitiesDir = basename(cliHomeDir) === 'cli-identities'
+    ? cliHomeDir
+    : basename(parentDir) === 'cli-identities'
+      ? parentDir
+      : join(parentDir, 'cli-identities');
+  return join(identitiesDir, id);
 }
 
 /** Identity homes survive runtime-state replacement; intent alone is not an inventory. */
