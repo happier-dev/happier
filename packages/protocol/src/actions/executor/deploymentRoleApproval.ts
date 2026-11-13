@@ -36,7 +36,12 @@ export function prepareHostReviewedChildPolicyV1(child: HostReviewedChildrenPlan
       const routing = typeof child.action === 'string'
       ? resolveActionApprovalRouting({ actionId: child.action, spec: getActionSpec(child.action),
         input: child.input === undefined ? child.scopeInput : child.input,
-        context: { ...context, bypassApprovals: false }, settings, reviewAdmitted, ...(approvalScope ? { approvalScope } : {}) })
+        context: { ...context, bypassApprovals: false }, settings, reviewAdmitted,
+        // The admitted parent answers defaults; explicit child preferences and
+        // the selected approval profile still belong to this parent review.
+        ...(context.bypassApprovals === true ? { defaultUiConfirmation: false,
+          requiredByPolicy: readExplicitActionApprovalPreferenceV1(id, settings, context, approvalScope) === true } : {}),
+        ...(approvalScope ? { approvalScope } : {}) })
       : resolveActionApprovalRouting({ actionId: 'action.invoke', profileActionId: id, spec: getActionSpec('action.invoke'),
         ...(defaultSafety ? { defaultSafety } : {}),
         input: child.input === undefined ? child.scopeInput : child.input,

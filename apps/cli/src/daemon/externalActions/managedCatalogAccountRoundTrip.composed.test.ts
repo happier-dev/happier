@@ -18,7 +18,7 @@ import { ApprovalExecutionV2Schema } from '@happier-dev/protocol/approvals/appro
 import { MachineProvisionersListResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { MachinePresetActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { MachineSetupApplyInputV1Schema, MachineSetupCombinedPlanInputV1Schema, MachineSetupCombinedPlanResultV1Schema, MachineSetupPlanResultV1Schema,
-  machineSetupApplyTargetFromPlanV1, ManagedAdmissionOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+  machineSetupApplyTargetFromPlanV1, ManagedAdmissionOutputV1Schema, ManagedAcceptedV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityActionOutputSchemasV1 } from '@happier-dev/protocol/plugins/availability/actions';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -3245,20 +3245,34 @@ describe('managed catalog original Account transport', () => {
     }
   });
 
-  it('retains a named delegated preset acquire before a disconnected controller transport', async () => {
+  it.each([
+    { memberMode: 'plain', credentialKind: 'account', identityKind: 'guestProcess' },
+    { memberMode: 'e2ee', credentialKind: 'account', identityKind: 'guestProcess' },
+    { memberMode: 'e2ee', credentialKind: 'terminal', identityKind: 'guestProcess' },
+    { memberMode: 'e2ee', credentialKind: 'account', identityKind: 'dedicatedDaemonUser' },
+    { memberMode: 'e2ee', credentialKind: 'terminal', identityKind: 'dedicatedDaemonUser' },
+    { memberMode: 'e2ee', credentialKind: 'account', identityKind: 'dedicatedDaemonUser', requireChildReview: true },
+  ] as const)('delivers a named delegated preset acquire through installed controller admission ($credentialKind/$memberMode/$identityKind/$requireChildReview)', async (vector) => {
+    const { memberMode, credentialKind, identityKind } = vector;
+    const requireChildReview = 'requireChildReview' in vector && vector.requireChildReview;
     const machineKey = new Uint8Array(32).fill(49);
     const signing = tweetnacl.sign.keyPair();
     const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
     const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
-    const member = await db.account.create({ data: { encryptionMode: 'e2ee', publicKey: Buffer.from(signing.publicKey).toString('hex'),
+    const member = await db.account.create({ data: memberMode === 'plain' ? { encryptionMode: 'plain' } : { encryptionMode: 'e2ee', publicKey: Buffer.from(signing.publicKey).toString('hex'),
       contentPublicKey: publicKey, contentPublicKeySig: signAccountContentKeyBindingV1({ accountSigningSecretKey: signing.secretKey, contentPublicKey: publicKey }) } });
     const team = await db.team.create({ data: { name: 'Named delegated acquire' } });
     await db.teamMembership.createMany({ data: [{ teamId: team.id, accountId: owner.id, role: 'admin' },
       { teamId: team.id, accountId: member.id, role: 'member' }] });
     const homeId = await getOrCreateServerIdentityId();
     const installation = tweetnacl.sign.keyPair();
-    const controller = { machineId: 'named-preset-controller', installationId: 'named-preset-installation' };
-    const provisioner = nativeFixture({ credentialPurposes: [] });
+    const fixtureId = `${credentialKind}-${memberMode}-${identityKind}-${requireChildReview ? 'require' : 'default'}`;
+    const controller = { machineId: `named-preset-controller-${fixtureId}`, installationId: `named-preset-installation-${fixtureId}` };
+    const nativeLaunches: unknown[] = [];
+    // The external provider refuses acquisition; all Home/controller owners stay real.
+    const provisioner = nativeFixture({ credentialPurposes: [],
+      nativeRoleResults: { acquire: { kind: 'rejected', code: 'provider_unavailable' } },
+      onNativeRole: (role, input) => { if (role === 'acquire') nativeLaunches.push(input); } });
     const manifest = PluginManifestV2Schema.parse(provisioner.runtimeRegistry.contributes.activationTargets[0]!.manifest);
     const declaration = createReleaseLessDeclarationV1(manifest);
     await db.machine.create({ data: { id: controller.machineId, accountId: owner.id, installationId: controller.installationId,
@@ -3278,14 +3292,12 @@ describe('managed catalog original Account transport', () => {
     registerPluginAvailabilityRoutes(app); machinesRoutes(app);
     app.get('/v1/features', async () => FeaturesResponseSchema.parse({ features: {},
       capabilities: { serverIdentity: { serverIdentityId: homeId } } }));
-    // Only the network delivery after real Home admission is disconnected.
-    // No provider/native effect runs; the retained allocation is the observable result.
-    registerExternalActionRoutes(app, { dispatch: createExternalActionDaemonDispatcher({ io: channel.server,
-      forwardRpc: async () => ({ ok: false, error: 'fixture_controller_disconnected' }) }) });
     const restoreHttp = installAxiosFastifyAdapter({ app, origin: serverUrl });
     const ownerToken = await createAccountTokenForTests(owner.id, { kind: 'account', authority: 'present_user' });
-    const memberToken = await createAccountTokenForTests(member.id, { kind: 'account', authority: 'present_user' });
-    const policy = normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'machines.presets.create': ['cli'], 'machines.managed.acquire': ['cli'] } });
+    const memberToken = await createAccountTokenForTests(member.id, { kind: credentialKind,
+      authority: credentialKind === 'terminal' ? 'account_automation' : 'present_user' });
+    const policy = normalizeActionsSettingsV1({ v: 1, ...(requireChildReview ? { actions: {
+      'machines.agentIsolation.set': { approvalRequiredSurfaces: ['cli'] } } } : {}), approvalWaivedSurfaces: { 'machines.presets.create': ['cli'], 'machines.managed.acquire': ['cli'] } });
     const makeExecutor = (credentials: StoredCredentials) => createCliActionExecutorFromCredentials({
       credentials, readCredentials: async () => credentials, serverId: configuration.activeServerId,
       serverApiUrl: serverUrl, serverIdentityId: homeId,
@@ -3298,8 +3310,66 @@ describe('managed catalog original Account transport', () => {
         } }),
       actionsSettingsProvider: { getActionsSettings: () => policy,
         getAccountSettings: () => AccountSettingsSchema.parse({ actionsSettingsV1: policy }) } });
+    const installedCredentials: StoredCredentials = { token: await createAccountTokenForTests(owner.id,
+      { kind: 'terminal', authority: 'account_automation' }), encryption: null };
+    await updateSettings(settings => ({ ...settings, servers: { ...settings.servers, [configuration.activeServerId]: {
+      id: configuration.activeServerId, name: 'Delegated acquire', serverUrl, webappUrl: serverUrl, createdAt: 1, updatedAt: 1, lastUsedAt: 1,
+      homeConnectionDescriptorAuthority: 'exact', homeConnectionDescriptor: { v: 1, homeServerIdentityId: homeId,
+        canonicalServerUrl: serverUrl, revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] },
+    } } }));
+    const unavailable = async (): Promise<never> => { throw new Error('This provider has no credential purposes'); };
+    const providerAuthority = createManagedProviderOperationAuthority({ materializationBaseDir: tmpdir(),
+      purposeBindingOwner: createConnectedAccountPurposeBindingOwner({ store: { read: async () => ({ v: 1, bindings: [] }), update: unavailable,
+        subscribe: () => ({ dispose() {} }) }, selectTarget: unavailable, resolveTarget: unavailable, materializeAccount: unavailable,
+        projectTargetAccounts: unavailable, assertTargetAccountMaterializable: unavailable }),
+      requestAuthRegistry: createConnectedAccountRequestAuthSubjectRegistry(), resolveRequestAuthHttpPort: () => 43123,
+      createRedactionLease: () => ({ add() {}, close() {} }) });
+    const operations = createHostActionOperationRuntime({ machineId: controller.machineId,
+      custodyBinding: { serverId: configuration.activeServerId, installationId: controller.installationId },
+      resolveAccountId: async () => owner.id });
+    const native = createDaemonManagedMachineActionAdapter({ credentials: installedCredentials, machineId: controller.machineId,
+      serverBaseUrl: serverUrl, serverId: configuration.activeServerId,
+      installationIdentity: { installationId: controller.installationId, privateKey: installation.secretKey },
+      managedProviderOperationAuthority: providerAuthority, observeActionExecution: operations.observeExecution,
+      resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({ serverUrl,
+        resolveCurrentServerIdentityId: () => homeId, resolveCurrentMachineId: () => controller.machineId }),
+      acquireRuntimeRegistryLease: async () => ({ registry: provisioner.runtimeRegistry, source: 'active', durableRevision: 1, release: async () => {} }) });
+    const daemonExecutor = (admitted?: RequesterAccountActionContext) => createCliActionExecutorFromCredentials({
+      credentials: installedCredentials, readCredentials: async () => installedCredentials,
+      machineId: controller.machineId, serverId: configuration.activeServerId, serverApiUrl: serverUrl, serverIdentityId: homeId,
+      externalActionMachineRequestPrivateKey: installation.secretKey, externalActionMachineInstallationId: controller.installationId,
+      managedMachineAction: native,
+      actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1(admitted?.accountSettingsContext.settings.actionsSettingsV1 ?? policy),
+        getAccountSettings: () => admitted?.accountSettingsContext.settings ?? AccountSettingsSchema.parse({ actionsSettingsV1: policy }) } });
+    registerExternalActionRoutes(app, { dispatch: createExternalActionDaemonDispatcher({ io: channel.server, forwardRpc: async request => {
+      const { ExternalActionDaemonDispatchRequestSchema } = await import('@happier-dev/protocol/actions');
+      const admitted = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
+      // The network substitute must run the real relay guard, which captures
+      // the Machine admission carried by live RPC ingress.
+      const recipient = createFakeSocket({ data: { clientType: 'machine-scoped', userId: owner.id,
+        machineId: controller.machineId, [VERIFIED_MACHINE_INSTALLATION_ID_SOCKET_DATA_KEY]: controller.installationId } });
+      if (!request.targetGuard || (await request.targetGuard.filterTargets([recipient])).length !== 1)
+        throw new Error('Controller transport was not admitted');
+      const machineAdmission = await request.createMachineAdmission?.();
+      const result = await executeExternalAction({ actionId: admitted.actionId, envelope: admitted.envelope,
+        principal: admitted.principal, executionAuthorization: admitted.executionAuthorization,
+        currentMachineId: controller.machineId, currentInstallationId: controller.installationId,
+        ...(machineAdmission ? { machineAdmission } : {}),
+        currentServerId: configuration.activeServerId, currentServerHttpBaseUrl: serverUrl, currentAccountId: owner.id,
+        externalActionMachineRequestPrivateKey: installation.secretKey,
+        verifyExecutionAuthorization: input => verifyExternalActionExecutionAuthorizationCurrent({ ...input,
+          installationId: controller.installationId, privateKey: installation.secretKey, serverHttpBaseUrl: serverUrl }),
+        resolveTarget: createDaemonExternalActionTargetResolver({ credentials: installedCredentials }), executor: daemonExecutor(),
+        resolveEncryption: async () => ({ serverIdentityId: homeId, material: { type: 'dataKey', machineKey } }),
+        prepareRequesterAccountContext: input => prepareRequesterAccountActionContext({ authorization: input.authorization,
+          purpose: { kind: 'external_action' }, machineId: controller.machineId, installationId: controller.installationId,
+          installationPrivateKey: installation.secretKey, serverId: configuration.activeServerId, serverIdentityId: homeId,
+          serverHttpBaseUrl: serverUrl, ownCredentials: installedCredentials, isCurrent: async () => true, createExecutor: daemonExecutor }),
+      });
+      return { ok: true, result: result.kind === 'response' ? createExternalActionDaemonDispatchResponse(result.prepared) : result };
+    } }) });
     const context = { surface: 'cli', authority: 'present_user', serverId: configuration.activeServerId } as const;
-    const presetId = 'named-delegated-preset';
+    const presetId = `named-delegated-preset-${fixtureId}`;
     try {
       const claim = await app.inject({ method: 'POST', url: PluginAvailabilityActionHttpPathsV1['account.plugins.availability.collectionWriters.claim'],
         headers: { authorization: `Bearer ${ownerToken}` }, payload: { manifest } });
@@ -3309,15 +3379,31 @@ describe('managed catalog original Account transport', () => {
         launch: { provider: { pluginId: manifest.id, localId: 'vm' }, schemaVersion: 1, name: 'Saved launch', choices: {} },
         retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, teamAcquireDelegated: true,
       }, context)).toMatchObject({ ok: true, result: { kind: 'saved' } });
-      const memberExecutor = makeExecutor({ token: memberToken, encryption: { type: 'dataKey', machineKey, publicKey } });
+      const memberExecutor = makeExecutor({ token: memberToken, encryption: memberMode === 'plain' ? null : { type: 'dataKey', machineKey, publicKey } });
       for (const name of [undefined, 'fix-g1-provider-1112']) {
-        const requestId = name ? 'named-delegated-acquire' : 'default-delegated-acquire';
+        const requestId = `${name ? 'named' : 'default'}-delegated-acquire-${fixtureId}`;
         const result = await memberExecutor.execute('machines.managed.acquire', {
           selection: { kind: 'preset', homeId, id: presetId, revision: 0, ...(name ? { name } : {}) },
           retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
-          enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' },
+          enrollmentIdentity: identityKind === 'guestProcess' ? { kind: 'guestProcess', role: 'sandbox' }
+            : { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'server', adminAccessAtCreation: 'none' },
         }, { ...context, actionRequestId: requestId });
-        expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+        if (requireChildReview) {
+          // An admitted parent never waives explicit child Require or moves
+          // the requester's private Ask into the controller's Account.
+          expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+          expect(nativeLaunches).toHaveLength(0);
+          expect(await db.artifact.count({ where: { accountId: owner.id } })).toBe(0);
+          return;
+        }
+        expect(result, JSON.stringify(result)).not.toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+        if (!result.ok) throw new Error(result.errorCode);
+        const accepted = ManagedAcceptedV1Schema.parse(result.result);
+        if (!accepted.operation) throw new Error('Acquisition has no controller operation');
+        expect(await operations.handlers.getV2({ operationId: accepted.operation.operationId, waitForTerminal: true }))
+          .toMatchObject({ kind: 'found', operation: { state: 'failed' } });
+        expect(nativeLaunches, JSON.stringify(result)).toHaveLength(name ? 2 : 1);
         const retained = await db.managedMachine.findFirst({ where: { homeId, admittedActionRequestId: requestId },
           select: { custodianAccountId: true, admittedInput: true, launch: true, reviewedFacts: true } });
         expect(retained, JSON.stringify({ requestId, result })).toMatchObject({
