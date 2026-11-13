@@ -28,16 +28,18 @@ await loadSyncSingletonForTests();
 const { BrowserProfileStatus } = await import('./BrowserProfileStatus');
 const { Modal } = await import('@/modal');
 const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
-
-const harness = createWebListDomHarness({ rowSelector: '[data-testid^="profiles-profile-select-"]', rowHeight: 28,
-    contentSizedHost: true });
-afterEach(async () => { await standardCleanup(); await homes.reset(); });
 afterAll(async () => { await network.dispose(); });
 
-it('gives persisted profiles a visible scroll viewport in a content-sized privacy panel and usable select/delete controls', async () => {
+let width = 390;
+const harness = createWebListDomHarness({ rowSelector: '[data-testid^="profiles-profile-select-"]', rowHeight: 28,
+    get width() { return width; }, height: 180, contentSizedHost: true });
+afterEach(async () => { await standardCleanup(); await homes.reset(); });
+
+it.each([390, 1440])('gives persisted profiles a visible scroll viewport and usable select/delete controls at %spx', async viewportWidth => {
+    width = viewportWidth;
     vi.stubGlobal('crypto', globalThis.crypto ?? webcrypto);
-    const serverUrl = 'https://profile-viewport.test';
-    const serverIdentityId = 'srv_profile_viewport';
+    const serverUrl = `https://profile-viewport-${width}.test`;
+    const serverIdentityId = `srv_profile_viewport_${width}`;
     const serverId = await homes.addHome({ name: 'Profile Home', serverUrl, serverIdentityId, accountId: 'owner', currentAccount: true });
     await network.addHome(serverUrl, 'owner', { serverIdentityId });
     network.resetRequests();
@@ -45,7 +47,8 @@ it('gives persisted profiles a visible scroll viewport in a content-sized privac
     const scope = { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' };
     const work: BrowserProfileV1 = { profileId: 'work', displayName: 'Work', storageMode: 'user',
         owner: { kind: 'user', id: 'owner' }, lifecycleState: 'active', cleanupOnSessionClose: false };
-    let profiles = [work];
+    const others = Array.from({ length: 8 }, (_, index) => ({ ...work, profileId: `other-${index}`, displayName: `Other ${index}` }));
+    let profiles = [work, ...others];
     homes.answer(serverId, '/v1/actions/browser.profile.list', { select: body => {
         const request = ExternalActionRequestEnvelopeV1Schema.parse(body);
         return { body: { v: 1, actionId: 'browser.profile.list', requestId: request.requestId,
@@ -60,7 +63,7 @@ it('gives persisted profiles a visible scroll viewport in a content-sized privac
     homes.answer(serverId, '/v1/actions/browser.profile.delete', { select: body => {
         const request = ExternalActionRequestEnvelopeV1Schema.parse(body);
         expect(request.input).toMatchObject({ profileId: work.profileId, machineId: 'machine' });
-        profiles = [];
+        profiles = profiles.filter(profile => profile.profileId !== work.profileId);
         return { body: { v: 1, actionId: 'browser.profile.delete', requestId: request.requestId,
             execution: { ok: true, result: { status: 'deleted', profileId: work.profileId } } } };
     } });
@@ -91,6 +94,7 @@ it('gives persisted profiles a visible scroll viewport in a content-sized privac
         await waitForHomeGovernance(async () => {
             await harness.flush();
             expect(harness.container.querySelector('[data-testid="profiles-profile-select-work"]'), harness.container.textContent ?? '').toBeTruthy();
+            expect(scroller!.scrollHeight).toBeGreaterThan(scroller!.clientHeight);
         });
         const select = harness.container.querySelector<HTMLElement>('[data-testid="profiles-profile-select-work"]')!;
         expect(scroller!.contains(select)).toBe(true);
@@ -105,11 +109,11 @@ it('gives persisted profiles a visible scroll viewport in a content-sized privac
         // Each profile's operations carry its name, so a screen reader can tell which one it deletes.
         expect(document.querySelector('[data-testid="profiles-profile-delete-work"]')?.getAttribute('aria-label')).toContain('Work');
         await act(async () => document.querySelector<HTMLElement>('[data-testid="profiles-profile-delete-work"]')!.click());
-        await waitForHomeGovernance(() => expect(profiles).toEqual([]));
+        await waitForHomeGovernance(() => expect(profiles).toEqual(others));
         await waitForHomeGovernance(async () => {
             await harness.flush();
             expect(harness.container.querySelector('[data-testid="profiles-profile-select-work"]')?.getBoundingClientRect().height ?? 0).toBe(0);
         });
-        expect(profiles).toEqual([]);
+        expect(profiles).toEqual(others);
     } finally { disposeLoader(); }
 });

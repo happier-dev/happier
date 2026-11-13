@@ -20,7 +20,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
 import { createBrowserAutomationOwnerRegistry } from '../automation/owners';
 import { createBrowserSidecarInteractions } from '../sidecar/interactions';
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { resolveMachineLiveStreamFramePayloadByteLimit } from '@/api/machine/liveStreamFrameBudget';
@@ -239,6 +239,8 @@ describe('browser live capture', () => {
                 expect(result.session.applySidebandControl?.(control)).toEqual({ ok: true });
                 await vi.waitFor(() => expect(dragEvents.map(event => event.type)).toEqual(['dragEnter', 'dragOver', 'drop']));
                 expect(dragEvents.at(-1)).toMatchObject({ x: 200, y: 50, data: { files: [expect.any(String)] } });
+                const files = (dragEvents.at(-1)?.data as { files: string[] }).files;
+                expect(await readFile(files[0])).toEqual(Buffer.from([0, 255, 128]));
                 return;
             }
             if (change === 'controller') {

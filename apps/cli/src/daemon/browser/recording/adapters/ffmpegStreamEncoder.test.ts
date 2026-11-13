@@ -3,6 +3,8 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { Writable } from 'node:stream';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 
 import type {
   BrowserRecordingMachineLiveStreamCaptureSourceV1,
@@ -107,6 +109,36 @@ function outputPathFromArgs(args: readonly string[]): string {
 }
 
 describe('browser recording ffmpeg stream encoder', () => {
+  it('acquires the installed encoder and produces playable changing frames', async ({ skip }) => {
+    const { resolveFfmpegStaticBinaryPath } = await import('../../../runtime/ffmpegStatic');
+    const { createFfmpegBrowserRecordingStreamFrameEncoderFactory } = await import('../../../recording/ffmpegStreamEncoder');
+    const binary = await resolveFfmpegStaticBinaryPath();
+    // Source-only developer/test installs may omit this optional runtime payload.
+    // This case certifies real playback only where the installed encoder is available.
+    if (!binary) return skip(true, 'installed ffmpeg-static payload unavailable; playback not verified');
+    const run = promisify(execFile);
+    const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-real-encoder-'));
+    try {
+      const frame = async (color: string) => (await run(binary, ['-f', 'lavfi', '-i', `color=c=${color}:s=16x16`,
+        '-frames:v', '1', '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1'], { encoding: 'buffer' })).stdout;
+      const factory = createFfmpegBrowserRecordingStreamFrameEncoderFactory({ workingDirectory });
+      const encoder = await factory({ recording: createRecording(), captureSource, registeredSource, outputMimeType: 'video/webm' });
+      encoder.appendFrame({ sequence: 1, timestampMs: 1_000, payloadKind: 'image_keyframe', payload: await frame('red') });
+      encoder.appendFrame({ sequence: 2, timestampMs: 1_500, payloadKind: 'image_keyframe', payload: await frame('blue') });
+      const output = await encoder.finish({ recording: createRecording(), frameCount: 2, durationMs: 1_000 });
+      try {
+        if (output.source.kind !== 'local-file') throw new Error('expected recorded video file');
+        const decoded = (await run(binary, ['-i', output.source.path, '-f', 'rawvideo', '-pix_fmt', 'rgb24', 'pipe:1'],
+          { encoding: 'buffer' })).stdout;
+        const frameBytes = 16 * 16 * 3;
+        expect(decoded.length).toBe(12 * frameBytes);
+        expect(decoded[0]).toBeGreaterThan(decoded[2]);
+        const last = decoded.length - frameBytes;
+        expect(decoded[last + 2]).toBeGreaterThan(decoded[last]);
+      } finally { await output.cleanup?.(); }
+    } finally { await rm(workingDirectory, { recursive: true, force: true }); }
+  });
+
   it('writes machine-live-stream MJPEG frames to a local video/webm artifact through bundled ffmpeg', async () => {
     const { createFfmpegBrowserRecordingStreamFrameEncoderFactory } = await import('../../../recording/ffmpegStreamEncoder');
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-ffmpeg-encoder-'));

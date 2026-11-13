@@ -130,10 +130,11 @@ describe('createSidecarCdpDiagnosticsRuntime', () => {
     it('delivers managed storage inventories to the diagnostics snapshot and clears them on view retirement', async () => {
         const store = createBrowserDiagnosticsDaemonStore({ machineId: 'machine_1' });
         const surface = fakeContextCapture();
-        surface.contextCapture.transport.dispatchPageCommand.mockImplementation(async () => ({ result: { value: [
+        let inventories = [
             { storageType: 'localStorage', keys: ['owned-marker'] },
-            { storageType: 'sessionStorage', keys: [] },
-        ] } }));
+            { storageType: 'sessionStorage', keys: ['session-marker'] },
+        ];
+        surface.contextCapture.transport.dispatchPageCommand.mockImplementation(async () => ({ result: { value: inventories } }));
         const runtime = createSidecarCdpDiagnosticsRuntime({ ownerAccountId: OWNER, store,
             contextCapture: surface.contextCapture, isEnabled: () => true });
         try {
@@ -143,6 +144,20 @@ describe('createSidecarCdpDiagnosticsRuntime', () => {
                     storageType: 'localStorage', keyCount: 1, keys: ['owned-marker'], keysTruncated: false,
                 },
             })));
+            inventories = [
+                { storageType: 'localStorage', keys: ['changed-local'] },
+                { storageType: 'sessionStorage', keys: ['session-marker', 'changed-session'] },
+            ];
+            surface.emitCdp({ method: 'DOMStorage.domStorageItemAdded', sessionId: HANDLE.sessionId,
+                params: { storageId: { securityOrigin: 'https://example.test', isLocalStorage: false },
+                    key: 'changed-session', newValue: 'private-value-must-not-leave-cdp' } });
+            await vi.waitFor(() => {
+                const events = store.getSnapshot().events.filter(event => event.kind === 'storage.keyInventory');
+                for (const inventory of inventories) expect(events).toContainEqual(expect.objectContaining({
+                    family: 'storage', data: { ...inventory, keyCount: inventory.keys.length, keysTruncated: false },
+                }));
+            });
+            expect(JSON.stringify(store.getSnapshot())).not.toContain('private-value-must-not-leave-cdp');
             surface.unbindView();
             expect(store.getSnapshot().events).toEqual([]);
         } finally {
