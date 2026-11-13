@@ -1114,6 +1114,15 @@ test('compiler projects run serially with their own emission modes and retain al
   for (const execution of executions) {
     assert.deepEqual(execution.args, ['--pretty', 'false', '--project', execution.project]);
   }
+  // Partitions print nothing until they finish, so an earlier partition's verdict must not
+  // read as the run's last word while a later one is still compiling (P03-TC-HANG).
+  const progress = stderr().split('\n').flatMap(line => {
+    const started = /^\[typescript\] starting (\{.*\})$/u.exec(line);
+    if (started) return [`start ${JSON.parse(started[1]).project}`];
+    const failed = /^\[typecheck-failure\] compiler: .* project=(\S+)$/u.exec(line);
+    return failed ? [`fail ${failed[1]}`] : [];
+  });
+  assert.deepEqual(progress, ['start source.json', 'fail source.json', 'start test.json', 'fail test.json', 'start last.json'], stderr());
 });
 
 test('compiler single-project argv keeps original spelling and ordering', async (t) => {

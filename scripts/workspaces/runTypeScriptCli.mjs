@@ -101,14 +101,18 @@ async function runCompiler(invocation, project, isCancelled, captureDiagnostics 
       rmSync(directory, { recursive: true, force: true });
     }
   };
+  // A partition prints nothing until it finishes. Name each one when it starts and in its
+  // verdict, so an earlier partition's failure never reads as the run's last word.
+  const projectName = project.authoredProject ?? project.project;
+  process.stderr.write(`[typescript] starting ${JSON.stringify({ project: projectName, at: new Date().toISOString() })}\n`);
   const publish = async result => {
     if (result.error || result.signal || result.status !== 0) {
       const reason = result.error ? typecheckDiagnosticFailureIdentifier(result.error, 'spawn')
         : result.signal ? 'compiler-signal' : 'compiler-exit';
-      process.stderr.write(`[typecheck-failure] compiler: exit=${result.status ?? 'unavailable'} signal=${result.signal ?? 'none'} reason=${reason}\n`);
+      process.stderr.write(`[typecheck-failure] compiler: exit=${result.status ?? 'unavailable'} signal=${result.signal ?? 'none'} reason=${reason} project=${projectName}\n`);
     }
     if (diagnosticReportDir) await writeJsonAtomic(resolve(diagnosticReportDir, `${randomUUID()}.json`), {
-      cwd: process.cwd(), project: project.authoredProject ?? project.project,
+      cwd: process.cwd(), project: projectName,
       compiler: invocation.compilerPath,
       status: result.status, signal: result.signal,
       ...(result.error ? { error: { message: result.error.message, code: result.error.code } } : {}),
