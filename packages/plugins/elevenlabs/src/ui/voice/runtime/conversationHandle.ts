@@ -83,6 +83,7 @@ export function createElevenLabsConversationHandle(params: Readonly<{
 }>): ElevenLabsConversationHandle {
     let activeConversation: ElevenLabsConversation | null = null;
     let latestStartSequence = 0;
+    let nextToolCallOrder = 0;
     let disposed = false;
     let outputVolume = 1;
     let micMuted: boolean | null = null;
@@ -140,13 +141,15 @@ export function createElevenLabsConversationHandle(params: Readonly<{
             const tool = readRecord(envelope.client_tool_call);
             const parameters = tool.parameters;
             if (!parameters || typeof parameters !== 'object' || Array.isArray(parameters)) return;
-            // The provider wire has no independent response identity. Its
-            // actual tool_call_id is therefore also the single-call grouping.
+            // Keep the provider call id for effect deduplication. The existing
+            // order field identifies each SDK delivery so an out-of-order
+            // conflict result settles its own callback, not the admitted one.
             const parsed = VoiceRealtimeToolCallV1Schema.safeParse({
                 v: 1, responseId: tool.tool_call_id, callId: tool.tool_call_id,
-                toolName: tool.tool_name, order: 0, arguments: decodeVoiceToolJsonArguments(parameters),
+                toolName: tool.tool_name, order: nextToolCallOrder, arguments: decodeVoiceToolJsonArguments(parameters),
             });
             if (parsed.success && parsed.data.toolName === tool.tool_name) {
+                nextToolCallOrder += 1;
                 callsByParameters.set(parameters, parsed.data);
             }
         },
@@ -195,6 +198,7 @@ export function createElevenLabsConversationHandle(params: Readonly<{
             if (disposed) return null;
             const startSequence = latestStartSequence + 1;
             latestStartSequence = startSequence;
+            nextToolCallOrder = 0;
             cancelPending();
 
             const previousConversation = activeConversation;
@@ -274,12 +278,13 @@ export function createElevenLabsConversationHandle(params: Readonly<{
         settleToolResult(rawResult): void {
             const result = VoiceRealtimeToolResultV1Schema.parse(rawResult);
             const waiters = pending.get(result.callId);
-            const waiter = waiters?.[0];
-            if (!waiters || !waiter || waiter.call.responseId !== result.responseId
-                || waiter.call.toolName !== result.toolName || waiter.call.order !== result.order) {
+            const index = waiters?.findIndex(({ call }) => call.responseId === result.responseId
+                && call.toolName === result.toolName && call.order === result.order) ?? -1;
+            const waiter = waiters?.[index];
+            if (!waiters || !waiter) {
                 throw new Error('elevenlabs_tool_result_custody_unavailable');
             }
-            waiters.shift();
+            waiters.splice(index, 1);
             if (!waiters.length) pending.delete(result.callId);
             // The canonical schema above requires defined output on success;
             // its refinement preserves JSON null but cannot narrow this type.

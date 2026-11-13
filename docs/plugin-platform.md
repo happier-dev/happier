@@ -9573,6 +9573,11 @@ uses that real identity for the canonical tool call. The shared host barrier
 deduplicates execution by that call id, and the canonical Action executor owns
 approval. There is no additional provider custody capability or authorization
 gate. Invalid provider call identities are rejected at the wire boundary.
+In 0.3 development, each SDK delivery carries a distinct canonical call `order`,
+which the host preserves in its result and the callback owner uses to select
+that delivery's waiter. Conflicting reuse of a call id receives
+`tool_call_identity_conflict` without settling the original callback or executing
+the conflicting effect; identical effect redeliveries share the host's retained outcome.
 Provisioned client tools share one 120-second provider response timeout; updating
 an existing agent through its settings action applies that configuration.
 When a failure carries typed details, ElevenLabs receives the canonical failure

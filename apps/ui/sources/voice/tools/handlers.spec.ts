@@ -459,6 +459,8 @@ async function createElevenLabsToolHarness() {
       version: () => ({ apiVersion: PLUGIN_UI_HOST_API_VERSION_V1, wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1, methods: [] }),
       context: async () => unavailableUi(), watchContext: unavailableUi,
       widgetArea: async () => unavailableUi(),
+      setPageNavigation: async () => unavailableUi(),
+      openResource: async () => unavailableUi(),
       actionControl: async () => unavailableUi(),
       downloadFile: async () => unavailableUi(),
       readEntityDragItem: async () => unavailableUi(),
@@ -751,14 +753,18 @@ describe('voice tool handlers', () => {
     await enqueueStarted.promise;
     expect(pendingEnqueue).toHaveBeenCalledTimes(1);
     const conflict = harness.deliver('provider-conflict', 'different effect');
-    await Promise.all([first, conflict]);
-    expect(harness.failures).toEqual([expect.objectContaining({ code: 'response_conflict' })]);
-    expect(harness.connection.state()).toBe('closed');
+    await conflict;
     expect(harness.sent.filter((event) => event.type === 'client_tool_result'))
-      .toEqual([expect.objectContaining({ is_error: true }), expect.objectContaining({ is_error: true })]);
+      .toEqual([expect.objectContaining({ is_error: true, result: expect.stringContaining('tool_call_identity_conflict') })]);
+    expect(harness.failures).toEqual([]);
+    expect(harness.connection.state()).toBe('open');
+    // The rejected delivery must not settle or cancel the admitted effect.
+    release(currentPendingEnqueueAck(requestInit));
+    await first;
+    expect(harness.sent.filter((event) => event.type === 'client_tool_result'))
+      .toEqual([expect.objectContaining({ is_error: true }), expect.objectContaining({ is_error: false })]);
     expect(pendingEnqueue).toHaveBeenCalledTimes(1);
     expect(harness.directEffect).not.toHaveBeenCalled();
-    release(currentPendingEnqueueAck(requestInit));
   });
 
   it('settles real ElevenLabs cancelled callbacks and cannot deliver late results or replay them on a new connection', async () => {
@@ -1806,7 +1812,7 @@ describe('voice tool handlers', () => {
         ...spawnInput, agentTarget: claudeTarget, creationKey: 'manual:voice-explicit-signed-out',
       }));
       expect(explicitFailure).toMatchObject({ agentTarget: claudeTarget, errorMessage: expect.stringContaining('claude') });
-      expect(entry === 'discovered' ? explicitFailure.result : explicitFailure).toMatchObject(spawnSettlement);
+      expect(entry === 'discovered' ? explicitFailure.result : explicitFailure).toMatchObject(SessionSpawnNewResultV1Schema.parse(spawnSettlement));
       expect(explicitFailure).not.toHaveProperty('alternativeAgent');
       expect(readAgent('claude')).toMatchObject({ state: 'needsSignIn', stale: false, signIn: { native: { status: 'signedOut' } } });
       expect(readAgent('codex')).toMatchObject({ state: 'ready', stale: false });
@@ -1846,7 +1852,7 @@ describe('voice tool handlers', () => {
       expect(failed).toMatchObject({ agentTarget: selectedAgentTarget,
         errorMessage: expect.stringContaining('codex') });
       expect(failed.errorMessage).toContain('Cannot call write after a stream was destroyed');
-      expect(entry === 'discovered' ? failed.result : failed).toMatchObject(spawnSettlement);
+      expect(entry === 'discovered' ? failed.result : failed).toMatchObject(SessionSpawnNewResultV1Schema.parse(spawnSettlement));
     }
   });
 

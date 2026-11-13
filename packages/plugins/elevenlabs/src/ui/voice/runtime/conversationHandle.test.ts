@@ -205,6 +205,39 @@ describe('createElevenLabsConversationHandle event surface', () => {
     expect(close).toHaveBeenCalledOnce();
   });
 
+  it('routes out-of-order results to each delivery of the same provider call', async () => {
+    startSession.mockResolvedValue({ getId: () => 'delivery-routing', endSession: async () => {} });
+    const handle = createElevenLabsConversationHandle({
+      tools: [{ name: 'effect' }], loadConversationSdk: () => import('@elevenlabs/client'),
+    });
+    const calls: import('@happier-dev/plugin-sdk/voice/client').VoiceRealtimeToolCall[] = [];
+    handle.subscribe(event => { if (event.type === 'tool_call') calls.push(event.call); });
+    await handle.startSession({});
+    const options = startSession.mock.calls[0]![0];
+    const deliver = (message: string) => {
+      const parameters = { message };
+      options.onIncomingEvent({ type: 'client_tool_call', client_tool_call: {
+        tool_call_id: 'same-call', tool_name: 'effect', parameters,
+      } });
+      return options.clientTools.effect(parameters);
+    };
+    try {
+      const first = deliver('approved effect');
+      for (const message of ['conflict one', 'conflict two']) {
+        const conflict = deliver(message);
+        const rejected = expect(conflict).rejects.toThrow('tool_call_identity_conflict');
+        const { arguments: _arguments, ...identity } = calls.at(-1)!;
+        handle.settleToolResult({ ...identity, status: 'error', errorCode: 'tool_call_identity_conflict' });
+        await rejected;
+      }
+      const { arguments: _arguments, ...identity } = calls[0]!;
+      handle.settleToolResult({ ...identity, status: 'success', output: { approved: true } });
+      await expect(first).resolves.toEqual({ approved: true });
+    } finally {
+      await handle.endSession();
+    }
+  });
+
   it('correlates real provider call IDs, settles deliveries individually and revokes late callbacks', async () => {
     startSession.mockResolvedValue({ getId: () => 'custody', endSession: async () => {} });
     const execute = vi.fn(async () => ({ unsafe: true }));
