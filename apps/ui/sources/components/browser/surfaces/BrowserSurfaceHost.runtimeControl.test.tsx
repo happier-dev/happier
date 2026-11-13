@@ -7,6 +7,7 @@ import {
 import {
     type BrowserAdapterCapabilitiesV1} from '@happier-dev/protocol/browser/adapters/v1';
 import {
+    BrowserCommandV1Schema,
     type BrowserCommandV1} from '@happier-dev/protocol/browser/control/v1';
 import {
     type BrowserViewTargetV1,
@@ -18,6 +19,7 @@ import { createDeferred, flushHookEffects, renderScreen, standardCleanup } from 
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { initializeTerminalRouteRuntimeForTests, installTerminalRouteCommonModuleMocks } from '@/__tests__/routes/(app)/terminal/terminalRouteTestHelpers';
 import type { BrowserDaemonControlCommandSender } from '@/sync/domains/browser/control/machineRpc';
 import { BrowserShell } from '@/components/browser/BrowserShell';
@@ -40,6 +42,7 @@ import { handleUiBrowserAutomationDispatchRequest } from '@/sync/domains/browser
 import type { BrowserAutomationControlService } from '@/sync/domains/browser/automation/controlService';
 import { BrowserSurfaceHost } from './BrowserSurfaceHost';
 import type { DesktopWebViewNativeAvailability } from '@/sync/domains/browser/adapters/desktopWebView';
+import { unavailableDesktopWebViewNativeAvailability } from '@/sync/domains/browser/adapters/desktopWebView';
 import { createBrowserWorkspaceOpeningFixture } from '@/dev/testkit/fixtures/browserWorkspaceOpening';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { resolveBrowserViewTargetOpenTab } from './openBrowserTargetInWorkspace';
@@ -470,6 +473,68 @@ describe('BrowserSurfaceHost runtime control registration', () => {
         await act(async () => { store.removePortalEntry('retained-slot'); });
         expect(await invoke('browser.automation.press')).toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
         expect(effects).toBe(1);
+    });
+
+    it('opens a launchpad page on the Session Machine and applies its ready streamed view', async () => {
+        const machineId = 'machine-launchpad';
+        const sessionId = 'session-launchpad';
+        const target = { kind: 'externalUrl', targetId: 'launchpad-page', url: 'https://example.com/docs' } satisfies BrowserViewTargetV1;
+        const requests: unknown[] = [];
+        const boundary = await createExternalActionAccountHttpBoundary({
+            serverUrl: 'https://browser-control-home.example.test', serverIdentityId: 'srv_browser_fresh',
+            accountId: 'account-a', machineId, actionId: 'browser.view.open', tokenEpoch: 1,
+            requesterInvocation: 'none', execute: (input, context) => {
+            const command = BrowserCommandV1Schema.parse(input);
+            if (command.kind !== 'openView') throw new Error('Expected launchpad open');
+            requests.push({ target: context.target, command });
+            const events = [BrowserEventV1Schema.parse({ kind: 'sessionCreated', eventId: 'launchpad-session',
+                browserSessionId: command.browserSessionId, profileId: 'profile_1', occurredAt: 1_000 }),
+            BrowserEventV1Schema.parse({ kind: 'viewOpened', eventId: 'launchpad-opened',
+                browserSessionId: command.browserSessionId, viewId: command.viewId, target,
+                platform: 'web', currentUrl: target.url, adapterKind: 'chromiumSidecar', engineKind: 'streamedSurface',
+                adapterCapabilities: buildBrowserAdapterCapabilities({ adapterKind: 'chromiumSidecar',
+                    supportedTargetKinds: ['externalUrl'], supportedRenderEngines: ['streamedSurface'] }), occurredAt: 1_001 }),
+            BrowserEventV1Schema.parse({ kind: 'navigationStateChanged', eventId: 'launchpad-ready',
+                browserSessionId: command.browserSessionId, viewId: command.viewId, occurredAt: 1_002,
+                currentUrl: target.url, title: 'Example documentation', loadingState: 'ready', canGoBack: false, canGoForward: false })];
+            return { v: 1, commandId: command.commandId, status: 'dispatched', adapterKind: 'chromiumSidecar', events };
+        } });
+        actionRequest = (input, init) => boundary.handle(new URL(String(input)), init);
+        const screen = await renderScreen(<BrowserSurfaceHost browserSessionId="browser-launchpad" platform="web"
+            initialBrowserState={createBrowserControlState()}
+            pluginBrowserActionContext={{ machineId, sessionId }}
+            policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false,
+                contextEnabled: false, automationEnabled: false, recordingEnabled: false }} />);
+        await flushHookEffects();
+        let result: unknown;
+        await act(async () => { result = await screen.findByType(BrowserShell).props.onNavigateInPlace(target); });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'dispatched' } });
+        expect(requests, JSON.stringify(result)).toEqual([expect.objectContaining({ target: { kind: 'machine', machineId },
+            command: expect.objectContaining({ kind: 'openView', browserSessionId: sessionId, target }) })]);
+        expect(Object.values(screen.findByType(BrowserShell).props.state.viewsById))
+            .toEqual([expect.objectContaining({ browserSessionId: sessionId, target, currentUrl: target.url,
+                adapterKind: 'chromiumSidecar', engineKind: 'streamedSurface', loadingState: 'ready', title: 'Example documentation' })]);
+        await screen.unmount();
+    });
+
+    it('hands a desktop launchpad URL to the system browser when its native browser command is unavailable', async () => {
+        const systemOpen = vi.fn();
+        vi.stubGlobal('open', systemOpen);
+        const target = { kind: 'externalUrl', targetId: 'desktop-launchpad-page', url: 'https://example.com/docs' } satisfies BrowserViewTargetV1;
+        const initialBrowserState = createBrowserControlState();
+        const screen = await renderScreen(<BrowserSurfaceHost browserSessionId="desktop-launchpad" platform="desktop"
+            initialBrowserState={initialBrowserState}
+            desktopWebViewAvailability={unavailableDesktopWebViewNativeAvailability('desktop_webview_native_command_unavailable')}
+            pluginBrowserActionContext={{ machineId: 'machine-launchpad', sessionId: 'session-launchpad' }}
+            policy={{ browserEnabled: true, viewTargetsEnabled: true, diagnosticsEnabled: false,
+                contextEnabled: false, automationEnabled: false, recordingEnabled: false }} />);
+        await flushHookEffects();
+        let result: unknown;
+        await act(async () => { result = await screen.findByType(BrowserShell).props.onNavigateInPlace(target); });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'dispatched', adapterKind: 'externalUrl' } });
+        expect(systemOpen).toHaveBeenCalledWith(target.url, '_blank', 'noopener,noreferrer');
+        expect(screen.findByType(BrowserShell).props.state).toEqual(initialBrowserState);
+        await screen.unmount();
     });
 
     it('observes the current daemon page through the captured Account Action transport and waits for authoritative recovery', async () => {

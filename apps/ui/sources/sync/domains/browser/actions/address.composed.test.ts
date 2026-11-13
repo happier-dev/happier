@@ -20,13 +20,18 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createUiAccountAction } from '@/sync/ops/actions/accountActionDeps';
+import { createOpenBrowserTargetInWorkspace } from '@/components/browser/surfaces/openBrowserTargetInWorkspace';
+import { registerBrowserRuntimeWorkspaceOpeningAdapter } from './runtimeControlRegistry';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { storage } from '@/sync/domains/state/storageStore';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { primeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 
 const homes = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(homes);
+const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
 let account: Awaited<ReturnType<typeof captureLazyActionAccountContext>>;
 const previewInputs: unknown[] = [];
 
@@ -92,6 +97,39 @@ beforeEach(async () => {
     previewInputs.length = 0;
 });
 afterEach(async () => { account?.dispose(); machineRpc.mockReset(); clearBrowserRuntimeControlRegistryForTests(); await homes.reset(); });
+
+it('opens a page from the normal Session workspace front door on its Machine', async () => {
+    await homes.setActionPolicy(account.serverId, ['browser.workspace.open', 'browser.view.open'], 'ui', 'allowed');
+    const features = createRootLayoutFeaturesResponse({ features: { browser: { enabled: true,
+        internal: { enabled: true }, viewTargets: { enabled: true }, sidecar: { enabled: true } } } });
+    homes.answer(account.serverId, '/v1/features', { body: features });
+    homes.answer(account.serverId, '/v1/features/authenticated', { body: features });
+    primeServerFeaturesSnapshot({ serverId: account.serverId, snapshot: { status: 'ready', features } });
+    const target = { ...external, url: 'https://example.com/docs' };
+    const facts = { scope: 'sessionDetails' as const, platform: 'web' as const, browserFeatureDecision,
+        localServiceAddressScope: { machineId: service.machineId, sessionId: service.sessionId } };
+    const resolved = resolveBrowserViewTargetOpen(facts, target);
+    const daemonView = { browserSessionId: service.sessionId, viewId: resolved.viewId, sourceId: 'browser_capture',
+        target, platform: 'web', adapterKind: 'chromiumSidecar', events: [], captureSource: {
+            v: 1, sourceKind: 'browser', sourceId: 'browser_capture', supportedCodecs: ['image.mjpeg'],
+            inputMode: 'shared', health: { status: 'available' },
+        } };
+    machineRpc.mockResolvedValue({ protocolVersion: 1, views: [daemonView] });
+    await answerExternalActionAccountForHome(homes, account.serverId, { machineId: service.machineId,
+        actionId: 'browser.view.open', tokenEpoch: 0, requesterInvocation: 'none',
+        execute: input => ({ v: 1, commandId: (input as { commandId: string }).commandId,
+            status: 'dispatched', adapterKind: 'chromiumSidecar', events: [] }) });
+    const openDetailsTab = vi.fn();
+    const executor = createDefaultActionExecutor();
+    const open = createOpenBrowserTargetInWorkspace({ ...facts, scopeId: 'normal-session', accountLifetime: lifetime,
+        openDetailsTab, actionExecute: (id, input, context) => executor.execute(id, input, context) });
+    const dispose = registerBrowserRuntimeWorkspaceOpeningAdapter(open.runtimeAdapter);
+    try {
+        const result = await open(target);
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { outcome: 'workspaceTab' } });
+        expect(openDetailsTab.mock.calls[0]?.[0]).toMatchObject({ resource: { target: { kind: 'streamedBrowser' } } });
+    } finally { dispose(); }
+});
 
 it('opens an unregistered Project Service identically from Services Open and a workspace address', async () => {
     const openDetailsTab = vi.fn();
