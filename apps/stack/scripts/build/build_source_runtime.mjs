@@ -944,7 +944,10 @@ async function buildSourceRuntimeBundlePass(options) {
   if (options.pending && (!options.stackBaseDir || !options.pending.requestId || options.reuseSelected)) {
     throw new Error('[source-bundle] pending preparation requires a Stack request and current-input lookup');
   }
-  const readLastGreen = Boolean(options.devStartup && options.preparation && !options.pending && !options.reuseSelected);
+  // An explicit capture boundary belongs to producer selection, including
+  // the controller daemon prepared for a remotely placed source Stack.
+  const readLastGreen = Boolean(options.devStartup && options.preparation && !options.pending && !options.reuseSelected
+    && options.sourceCapturedAfter == null);
   const selection = options.reuseSelected || (readLastGreen ? 'if-available' : false);
   if (options.stackBaseDir && selection) {
     const stackBaseDir = resolve(options.stackBaseDir);

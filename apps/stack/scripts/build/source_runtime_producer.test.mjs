@@ -3,7 +3,7 @@ import test from 'node:test';
 import { mkdir, readFile, writeFile, symlink, chmod, readdir, lstat, rm, utimes } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { createRequire } from 'node:module';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { installSourceAdmissionFixture, installSourcePreparationInputs } from '../testkit/core/source_runtime_fixture.mjs';
 import { markDependencyMutation, withDependencyRefreshLock } from '../utils/proc/dependency_refresh.mjs';
@@ -131,6 +131,33 @@ test('QA requests adopt one producer capture across source movement and join an 
   assert.equal(JSON.parse(await readFile(join(stacks[0], 'source-runtime/selected-daemon.json'), 'utf8')).entrypoint, dependencyChanged.entrypoint);
 });
 
+
+test('fresh controlled start replaces a retained daemon after dependency refresh', { skip: process.platform !== 'linux' }, async t => {
+  const { native, repoDir, cliDir, entry, env, stacks } = await createProducerFixture(t);
+  const identityOwner = join(repoDir, 'apps/stack/scripts/build/source_author_inputs.mjs');
+  await mkdir(dirname(identityOwner), { recursive: true });
+  await symlink(fileURLToPath(new URL('./source_author_inputs.mjs', import.meta.url)), identityOwner);
+  const dependency = join(cliDir, 'node_modules/start-input');
+  await mkdir(dependency);
+  await writeFile(join(dependency, 'package.json'), JSON.stringify({ name: 'start-input', main: 'index.cjs' }));
+  await writeFile(join(dependency, 'index.cjs'), 'module.exports = 1;');
+  await writeFile(entry, 'export { default as value } from "start-input";');
+  const options = { repoDir, component: 'daemon', env, stackBaseDir: stacks[0] };
+  const first = await native.build(options);
+  await withDependencyRefreshLock({ installDir: repoDir, env }, async () => {
+    await markDependencyMutation({ installDir: repoDir, env });
+    await writeFile(join(dependency, 'index.cjs'), 'module.exports = 2;');
+    await mkdir(dirname(first.dependencyPublication.markerPath), { recursive: true });
+    await writeFile(first.dependencyPublication.markerPath, JSON.stringify({ identity: 'refreshed-start-input' }));
+  });
+  // runControlledRemoteStack prepares its controller daemon through this path:
+  // startup admission plus a preparation handle, with an explicit fix boundary.
+  const replacement = await native.build({ ...options, devStartup: true, preparation: {}, sourceCapturedAfter: Date.now() });
+  assert.notEqual(replacement.entrypoint, first.entrypoint);
+  assert.equal((await import(pathToFileURL(replacement.entrypoint))).value, 2);
+  assert.equal(JSON.parse(await readFile(join(stacks[0], 'source-runtime/selected-daemon.json'), 'utf8')).entrypoint,
+    replacement.entrypoint);
+});
 
 test('completed adoption bypasses busy producer and fingerprint leases', { skip: process.platform !== 'linux' }, async t => {
   const { native, repoDir, compilers, env, stacks } = await createProducerFixture(t);
