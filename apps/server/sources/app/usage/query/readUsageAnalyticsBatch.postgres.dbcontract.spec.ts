@@ -5,6 +5,7 @@ import { db, getDbProviderFromEnv, initDbPostgres, shutdownDbClient } from '@/st
 import { inReadSnapshot, type Tx } from '@/storage/inTx';
 import { TEAM_CREDENTIAL_ONLY_USAGE_SOURCES } from '../usageSourceClassifier';
 import { captureUsageAnalyticsBatchInTx, projectUsageAnalyticsBatch } from './readUsageAnalyticsBatch';
+import { usageEventSelect } from './loadUsageEventsForQuery';
 
 describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('Usage batch capture read cost on PostgreSQL', () => {
     beforeAll(async () => {
@@ -31,10 +32,15 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('U
             // Non-personal events must not turn a fully covered personal window into a historical scan.
             await db.usageEvent.create({ data: { accountId: account.id, observedAt: new Date(50), agentId: 'codex',
                 source: TEAM_CREDENTIAL_ONLY_USAGE_SOURCES[0], scope: 'turn_delta', totalTokens: 999 } });
+            // Bulk fixture insertion must expose its actual cardinality to the
+            // planner before measuring the accounting read's row contract.
+            await db.$executeRawUnsafe('ANALYZE "UsageEvent"');
             const query = UsageAnalyticsQueryRequestSchema.parse({ dateRange: { startMs: 100, endMs: 200 },
                 includeActivity: true, includeInsights: false, includeMessageStats: false });
             const capture = async (startMs: number) => {
                 const cost = { evidenceRows: 0, bodyRows: 0, bodyMetadataRows: 0 };
+                const metadataIndex = 1 + Object.keys(usageEventSelect)
+                    .filter(key => key !== 'observedAt' && key !== 'createdAt').indexOf('metadata');
                 const request = { ...query, dateRange: { startMs, endMs: 200 } };
                 const snapshot = await inReadSnapshot(tx => captureUsageAnalyticsBatchInTx(new Proxy(tx, {
                     get(target, property, receiver) {
@@ -45,10 +51,13 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('U
                             if (Array.isArray(rows) && rows[0] && Object.hasOwn(rows[0], 'observedAt')) {
                                 for (const row of rows) {
                                     if (typeof row !== 'object' || row === null) continue;
-                                    if (Reflect.get(row, 'captureKind') === 'body') {
+                                    const payload: unknown[] | undefined = typeof Reflect.get(row, 'payload') === 'string'
+                                        ? JSON.parse(Reflect.get(row, 'payload')) : undefined;
+                                    const kind = payload?.[0] ?? Reflect.get(row, 'captureKind');
+                                    if (kind === 'body') {
                                         cost.bodyRows++;
-                                        if (Reflect.get(row, 'metadata') != null) cost.bodyMetadataRows++;
-                                    } else if (Reflect.get(row, 'captureKind') === 'evidence') cost.evidenceRows++;
+                                        if ((payload ? payload[metadataIndex] : Reflect.get(row, 'metadata')) != null) cost.bodyMetadataRows++;
+                                    } else if (kind === 'evidence') cost.evidenceRows++;
                                 }
                             }
                             return rows;
@@ -88,7 +97,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('U
                 .toEqual({ evidenceRows: eventCount + 3, bodyRows: 0, bodyMetadataRows: 0 });
             const narrowResult = narrow.result.results[0]!;
             if (!('value' in narrowResult)) throw new Error('Narrow Usage query failed');
-            expect(narrowResult.value.totals.tokens.total).toBeNull();
+            // No event falls inside the narrow window. An empty measured sum
+            // is zero; only an event with an unknown measurement contributes null.
+            expect(narrowResult.value.totals.tokens.total).toBe(0);
             expect(narrowResult.value.coverage?.sources.some(source => source.source === 'historical')).toBe(true);
         } finally {
             await db.account.delete({ where: { id: account.id } });

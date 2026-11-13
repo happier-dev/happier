@@ -86,7 +86,7 @@ export async function loadUsageAccountingRowsForQuery(tx: Tx, accountId: string,
     const reportSelect = prismaRuntime.join(Object.keys(usageReportSelect).map(key => prismaRuntime.raw(`"${key}"`)));
     const reportOrder = prismaRuntime.join(legacyUsageReportCanonicalOrder.flatMap(order => Object.entries(order)
         .map(([key, direction]) => prismaRuntime.raw(`r."${key}" ${direction}`))));
-    return tx.$queryRaw<CapturedUsageAccountingRow[]>(prismaRuntime.sql`
+    const capture = prismaRuntime.sql`
         WITH retained_reports AS MATERIALIZED (
             SELECT ${reportSelect}
             FROM "UsageReport" WHERE "accountId" = ${accountId} ${reportEnd}
@@ -97,5 +97,27 @@ export async function loadUsageAccountingRowsForQuery(tx: Tx, accountId: string,
         WHERE e."accountId" = ${accountId} ${end} AND e."source" NOT IN (${sources})
         UNION ALL (SELECT 'report' AS "captureKind", ${reportColumns},
             r."key" AS "reportKey", r."data" AS "reportData", r."updatedAt" AS "reportUpdatedAt"
-        FROM retained_reports r ORDER BY ${reportOrder})`);
+        FROM retained_reports r ORDER BY ${reportOrder})`;
+    // Prisma materializes a native result cell for every selected column. Keep
+    // accounting values in one text cell, with field order derived from the
+    // select owner, while dates retain the database driver's native decoding.
+    const payloadKeys = ['captureKind', ...Object.keys(usageEventSelect)
+        .filter(key => key !== 'observedAt' && key !== 'createdAt'), 'reportKey', 'reportData'];
+    const rows = await tx.$queryRaw<Array<{ payload: string; observedAt: Date | null;
+        createdAt: Date; reportUpdatedAt: Date | null }>>(prismaRuntime.sql`
+        SELECT jsonb_build_array(${prismaRuntime.join(payloadKeys.map(key => prismaRuntime.raw(`c."${key}"`)))})::text AS payload,
+            c."observedAt", c."createdAt", c."reportUpdatedAt"
+        FROM (${capture}) c`);
+    const entries: Array<[string, unknown]> = payloadKeys.map(key => [key, undefined]);
+    return rows.map(row => {
+        const values: unknown[] = JSON.parse(row.payload);
+        for (let index = 0; index < entries.length; index++) entries[index]![1] = values[index];
+        // The statement above owns the shape; fromEntries retains shared object
+        // shapes rather than dictionary storage from many dynamic assignments.
+        const captured = Object.fromEntries<unknown>(entries);
+        captured.observedAt = row.observedAt;
+        captured.createdAt = row.createdAt;
+        captured.reportUpdatedAt = row.reportUpdatedAt;
+        return captured as unknown as CapturedUsageAccountingRow;
+    });
 }

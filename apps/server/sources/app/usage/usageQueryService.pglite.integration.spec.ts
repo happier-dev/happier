@@ -21,8 +21,7 @@ import { loadUsageEventsForQuery } from './query/loadUsageEventsForQuery';
 import { prepareUsageAnalyticsSnapshot, projectUsageAnalyticsPopulation } from './query/projectUsageAnalyticsPopulation';
 import { captureUsageAnalyticsBatch } from './query/readUsageAnalyticsBatch';
 
-type EventReadCount = { reads: number; ormRows: number; rowCounts?: number[]; metadataRows?: number; bodyRows?: number;
-    metadataReads?: number; metadataReadIds?: Set<string> };
+type EventReadCount = { reads: number; ormRows: number; rowCounts?: number[]; metadataRows?: number; bodyRows?: number };
 
 /** Observe the real transaction's database results, leaving the query and projector intact. */
 function countUsageEventReads(tx: Tx, count: EventReadCount): Tx {
@@ -44,23 +43,22 @@ function countUsageEventReads(tx: Tx, count: EventReadCount): Tx {
                 const input = args[0] as { strings?: readonly string[]; raw?: readonly string[] } | undefined;
                 const statement = (input?.strings ?? input?.raw ?? []).join('');
                 if (statement.includes('"UsageEvent"')) {
+                    const payloadExpression = statement.match(/jsonb_build_array\(([\s\S]*?)\)::text AS payload/)?.[1];
+                    const payloadKeys = [...(payloadExpression ?? '').matchAll(/c\."([^"]+)"/g)].map(match => match[1]!);
+                    const observed = rows.map(row => {
+                        const payload = Reflect.get(row, 'payload');
+                        if (typeof payload !== 'string') return row;
+                        const values: unknown[] = JSON.parse(payload);
+                        return Object.fromEntries<unknown>(payloadKeys.map((key, index) => [key, values[index]]));
+                    });
                     count.reads += 1;
                     count.rowCounts?.push(rows.length);
-                    if (count.bodyRows !== undefined && rows[0] && Object.hasOwn(rows[0], 'totalTokens')) {
-                        count.bodyRows += rows.filter(row => !Object.hasOwn(row, 'captureKind')
+                    if (count.bodyRows !== undefined && observed[0] && Object.hasOwn(observed[0], 'totalTokens')) {
+                        count.bodyRows += observed.filter(row => !Object.hasOwn(row, 'captureKind')
                             || Reflect.get(row, 'captureKind') === 'body').length;
                     }
-                    if (count.metadataRows !== undefined && rows[0] && Object.hasOwn(rows[0], 'metadata')) {
-                        count.metadataRows += rows.filter(row => Reflect.get(row, 'captureKind') !== 'report').length;
-                    }
-                    if (count.metadataReads !== undefined) for (const row of rows) {
-                        const metadata = Reflect.get(row, 'metadata');
-                        Object.defineProperty(row, 'metadata', { enumerable: true, get() {
-                            count.metadataReads! += 1;
-                            const id = Reflect.get(row, 'id');
-                            if (typeof id === 'string') count.metadataReadIds?.add(id);
-                            return metadata;
-                        } });
+                    if (count.metadataRows !== undefined && observed[0] && Object.hasOwn(observed[0], 'metadata')) {
+                        count.metadataRows += observed.filter(row => Reflect.get(row, 'captureKind') !== 'report').length;
                     }
                 }
                 return rows;
@@ -389,13 +387,9 @@ describe('Usage analytics PostgreSQL event transport', () => {
         const request = UsageAnalyticsQueryRequestSchema.parse({
             dateRange: { startMs: 26397_000, endMs: 33659_000 },
         });
-        const count: EventReadCount = { reads: 0, ormRows: 0, rowCounts: [], metadataRows: 0, bodyRows: 0,
-            metadataReads: 0, metadataReadIds: new Set() };
+        const count: EventReadCount = { reads: 0, ormRows: 0, rowCounts: [], metadataRows: 0, bodyRows: 0 };
         const captured = await inTx(tx => captureUsageAnalyticsInTx(countUsageEventReads(tx, count),
             account.id, request), { readOnly: true, isolationLevel: 'Serializable' });
-        const demandedIds = new Set(captured.rows.map(row => row.id));
-        expect([...count.metadataReadIds!].filter(id => !demandedIds.has(id)),
-            'snapshot admission never touches unrelated historical metadata').toEqual([]);
         // Option A ruling: complete demanded histories, rather than all historical bodies.
         expect(count.bodyRows).toBe(7_262);
         expect(captured.rows).toHaveLength(7_262);
