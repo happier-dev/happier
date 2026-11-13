@@ -111,10 +111,12 @@ describe('Team credential MySQL migration', () => {
             );
             expect(await db.$queryRawUnsafe(
                 "SELECT CHAR_LENGTH(`resourceId`) AS resourceIdLength,CHAR_LENGTH(`maximum`) AS maximumLength FROM `TeamCredentialUsageLimit` WHERE `id`='maximum-width-limit'",
-            )).toEqual([{ resourceIdLength: 256, maximumLength: 256 }]);
+            )).toEqual([{ resourceIdLength: 256n, maximumLength: 256n }]);
             await db.$executeRawUnsafe("INSERT INTO `TeamCredentialActivityEvent` (`id`,`teamId`,`resourceId`,`kind`,`actorAccountId`,`subjectDisplayName`) VALUES ('activity','team','resource','resource_created','account','Shared')");
             await db.$executeRawUnsafe("DELETE FROM `TeamCredentialResource` WHERE `id`='resource'");
             expect(await db.$queryRawUnsafe('SELECT resourceId FROM SessionTeamCredentialBinding')).toEqual([]);
+            // Session ownership is RESTRICT; remove the fixture after its retention assertions.
+            await db.$executeRawUnsafe("DELETE FROM `Session` WHERE `id`='session'");
             await db.$executeRawUnsafe("DELETE FROM `Account` WHERE `id`='account'");
             expect(await db.$queryRawUnsafe('SELECT resourceId,actorAccountId,subjectDisplayName FROM TeamCredentialActivityEvent'))
                 .toEqual([{ resourceId: 'resource', actorAccountId: null, subjectDisplayName: 'Shared' }]);
