@@ -264,6 +264,7 @@ import {
 } from '@/plugins/runtime/providerBindings/handoff';
 import { beginProviderBindingRuntimeDiagnosticRedaction } from '@/plugins/runtime/providerBindings/runtimeDiagnosticRedaction';
 import { logger } from '@/ui/logger';
+import { bindHostedSessionId, bindHostedSessionWorkingDirectory, runInHostedSessionScope, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import {
   consumePersistedTakeoverAdmissionFromEnv,
   parsePersistedTakeoverAdmission,
@@ -1037,11 +1038,25 @@ function assertProviderBindingHandoffMatchesSelection(input: Readonly<{
   }
 }
 
-export async function runHostSessionRuntime(
+/**
+ * Run one Session. The process hosting it may host others; this Session's
+ * environment, owner tag and fatal errors stay in its own scope.
+ */
+export function runHostSessionRuntime(
   opts: HostSessionRuntimeRunOptions,
   config: HostSessionRuntimeConfig,
   deps: HostSessionRuntimeDeps = {},
 ): Promise<void> {
+  return runInHostedSessionScope({}, () => runHostedSessionRuntime(opts, config, deps));
+}
+
+async function runHostedSessionRuntime(
+  opts: HostSessionRuntimeRunOptions,
+  config: HostSessionRuntimeConfig,
+  deps: HostSessionRuntimeDeps,
+): Promise<void> {
+  // Children of this Session inherit this environment, never another Session's.
+  const sessionEnvironment = sessionProcessEnvironment();
   let toolNormalizationSource = config.checkpointToolSource ?? null;
   const startupStartedAt = performance.now();
   let startupPhaseStartedAt = startupStartedAt;
@@ -1196,7 +1211,7 @@ export async function runHostSessionRuntime(
   // without mutating the caller's run options.
   const providerBindingHandoff = consumeProviderBindingLaunchHandoffFromEnvironments([
     ...(runtimeOpts.environmentVariables ? [runtimeOpts.environmentVariables] : []),
-    process.env,
+    sessionEnvironment,
   ]);
   const selectedProviderConnectionId = runtimeOpts.modelSelection?.ref.providerConnectionId;
   if (
@@ -1237,7 +1252,7 @@ export async function runHostSessionRuntime(
       ? { providerRequirements: config.providerRequirements }
       : {}),
     environment: buildScopedProcessEnv({
-      baseEnv: process.env,
+      baseEnv: sessionEnvironment,
       explicitEnv: runtimeOpts.environmentVariables,
       unsetEnvKeys: runtimeOpts.unsetEnvironmentVariables,
     }),
@@ -1420,8 +1435,9 @@ export async function runHostSessionRuntime(
     workerUpdatePublication?.bind(newSession);
     if (roleContext) applyRunnerMcpSessionContext(newSession, { getSessionRoleContext: roleContext });
     currentSessionPresentationHost?.bindCurrentSession();
-    process.env[PROCESS_OWNER_ENV_KEY] = formatProcessOwnerTag({ happierHomeDir: configuration.happyHomeDir,
+    sessionEnvironment[PROCESS_OWNER_ENV_KEY] = formatProcessOwnerTag({ happierHomeDir: configuration.happyHomeDir,
       owner: { kind: 'session', sessionId: newSession.sessionId } });
+    bindHostedSessionId(newSession.sessionId);
     if (previousSession && previousSession !== newSession) {
       await previousSession.close();
     }
@@ -1646,12 +1662,12 @@ export async function runHostSessionRuntime(
       typeof runtimeOpts.existingSessionId === 'string'
       && runtimeOpts.existingSessionId.trim().length > 0
       && String(
-        process.env[
+        sessionEnvironment[
           HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY
         ] ?? '',
       ).trim().length > 0
       && String(
-        process.env[
+        sessionEnvironment[
           HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY
         ] ?? '',
       ).trim().length > 0;
@@ -1716,8 +1732,9 @@ export async function runHostSessionRuntime(
   }
   recordStartupPhase('session_construction');
 
-  process.env[PROCESS_OWNER_ENV_KEY] = formatProcessOwnerTag({ happierHomeDir: configuration.happyHomeDir,
+  sessionEnvironment[PROCESS_OWNER_ENV_KEY] = formatProcessOwnerTag({ happierHomeDir: configuration.happyHomeDir,
     owner: { kind: 'session', sessionId: session.sessionId } });
+  bindHostedSessionId(session.sessionId);
   const startupCustody = await joinCurrentWindowsSessionProcessCustody();
   if (startupCustody?.state === 'unavailable') logger.debug('[session] Windows process custody unavailable');
 
@@ -2046,9 +2063,9 @@ export async function runHostSessionRuntime(
         async () => (await ApiClient.create(runtimeAuthority.accountCredentials)).getMachine(machineId)),
       isCurrent: () => session === initialPolicySession,
     });
-    Object.assign(process.env, buildToolIdleTimeoutEnvironmentOverlay({
+    Object.assign(sessionEnvironment, buildToolIdleTimeoutEnvironmentOverlay({
       environment: buildScopedProcessEnv({
-        baseEnv: process.env,
+        baseEnv: sessionEnvironment,
         explicitEnv: runtimeOpts.environmentVariables,
         unsetEnvKeys: runtimeOpts.unsetEnvironmentVariables,
       }),
@@ -2472,6 +2489,7 @@ export async function runHostSessionRuntime(
         ?? ''
       )
     : runtimeContext.runtimeDirectory;
+  if (runtimeDirectory) bindHostedSessionWorkingDirectory(runtimeDirectory);
   const checkpointCodeRollback = createRepositoryCheckpointCodeRollback({
     session: currentLifecycleSession,
     runtimeDirectory,
@@ -2897,7 +2915,7 @@ export async function runHostSessionRuntime(
   let nativeAttachmentRequester: import('@/rpc/handlers/fileSystem/sessionAttachmentIntake').SessionAttachmentRequester | undefined;
   let nativeMcpLaunchMaterial: HostSessionRuntimeFactoryParams['mcpLaunchMaterial'];
   const mcpPreparation = traceCapabilityPreparation('mcp_preparation', async () => {
-    const bootstrapFile = process.env[HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY];
+    const bootstrapFile = sessionEnvironment[HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY];
     const launch = bootstrapFile
       ? (await readRunnerAgentSessionBootstrap(bootstrapFile)).launch
       : undefined;
@@ -2915,7 +2933,7 @@ export async function runHostSessionRuntime(
       // Only the canonical native HOME and existing public executable search
       // path aid authored command resolution; no Account/provider environment.
       environment: Object.freeze({ HOME: isolatedMaterial.identity.home,
-        ...(process.env.PATH === undefined ? {} : { PATH: process.env.PATH }) }),
+        ...(sessionEnvironment.PATH === undefined ? {} : { PATH: sessionEnvironment.PATH }) }),
       directory: runtimeDirectory, signal: startupRegistrationLifetime.signal,
     });
     if (isolatedMaterial?.target && nativeExecutionSource.kind === 'requester'

@@ -11,6 +11,7 @@ import { PromptLibraryCatalogKeyV1Schema } from '@happier-dev/protocol/prompts/l
 import { PROJECT_ACCOUNT_ROWS_ROUTE_V1, ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { accountSettingsParse, ProviderConnectionIdSchema, type McpServerCatalogEntryV1 } from '@happier-dev/protocol';
 import { ApiClient } from '@/api/api';
+import { ApiSessionClient } from '@/api/session/sessionClient';
 import { createMutableApiSessionClientFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -42,6 +43,7 @@ import type { ChildProcess, SpawnOptions } from 'node:child_process';
 import type { AgentLaunchMaterialization } from '@/daemon/agentIsolation/agentLaunchMaterials';
 import type { AgentIsolationDaemonObservation } from '@/daemon/agentIsolation/provisioning';
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 const nativeHomes = vi.hoisted(() => new Map<string, Readonly<{
   backingDirectory: string; uid: number; gid: number;
@@ -165,15 +167,17 @@ afterEach(() => {
   reloadConfiguration();
 });
 
-it.each((['fresh', 'resume', 'member', 'member-native', 'copied', 'missing-home', 'retired-account',
+it.each((['fresh', 'resume', 'member', 'member-native', 'member-native-path-a', 'member-native-path-b',
+  'member-native-path-absent', 'copied', 'missing-home', 'retired-account',
   'legacy-empty', 'legacy-selected', 'modern-missing-access', 'legacy-partial', 'legacy-unknown',
   'parent-carrier', 'shared-view-session', 'shared-edit-session', 'missing-session', 'member-logging-failure',
   'historical-capsule', 'retained-owner-capsule', 'foreign-home-capsule',
   'malformed-capsule', 'different-bearer-capsule', 'foreign-account-capsule',
   'no-mcp-provider', 'no-mcp-provider-e2ee', 'mcp-provider-overlay', 'no-mcp-provider-restricted',
-  'no-mcp-plugin-exec-refusal', 'voice-child-owner', 'voice-child-member-use', 'voice-child-member-manage'] as const).filter(kind => kind !== 'member-native' || process.platform === 'linux'))(
+  'no-mcp-plugin-exec-refusal', 'voice-child-owner', 'voice-child-member-use', 'voice-child-member-manage'] as const).filter(kind => !kind.startsWith('member-native') || process.platform === 'linux'))(
   'qualifies an ordinary native Session from its authenticated physical custodian, not absent requester scope (%s)', async kind => {
-  const nativeCase = kind === 'member-native';
+  const nativeCase = kind.startsWith('member-native');
+  const hostedNativeCase = kind.startsWith('member-native-path-');
   const providerCase = kind.includes('provider');
   const childCase = kind.startsWith('voice-child-');
   let boundaryPhase = 'runtime_fixture';
@@ -191,23 +195,36 @@ it.each((['fresh', 'resume', 'member', 'member-native', 'copied', 'missing-home'
   const { projectBuiltInAgents } = await import('@/plugins/projection/registry/builtIn/agents');
   const { projectLoadedPluginContributes } = await import('@/plugins/projection/registry/fullProjection');
   const { createResolvedContributionRegistry } = await import('@/plugins/projection/registry/createResolvedContributionRegistry');
-  const { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } = await import('@/plugins/projection/registry/sources/generatedBundledPluginManifests');
+  const { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS, BUNDLED_FIRST_PARTY_PLUGIN_METADATA } = await import('@/plugins/projection/registry/sources/generatedBundledPluginManifests');
   const { BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS } = await import('@/plugins/projection/registry/sources/generatedBundledPlugins');
+  const { PluginManifestV2Schema } = await import('@happier-dev/protocol/plugins/manifest/v2');
+  const { readPluginManifestReferencedPluginIdsV2 } = await import('@happier-dev/protocol/plugins/manifest/ingest');
   // Load the real current Pi declaration through the normal manifest loader.
   // This scoped runtime does not depend on unrelated bundled projections.
   const piLocator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find(locator => locator.pluginId === 'happier.agent.pi');
   if (!piLocator) throw new Error('Pi bundled locator unavailable');
-  const sourceDeclarations = await Promise.all([
-    ['pi', 'happier.agent.pi'], ['claude', 'happier.agent.claude'],
-    ['codex', 'happier.agent.codex'], ['openai', 'happier.voice.openai'],
-  ].map(async ([packageId, pluginId]) => {
-    const sourcePath: string = `../../../../../../../packages/plugins/${packageId}/src/manifest`;
+  const sourceLocators = [piLocator];
+  const sourceDeclarations: Array<Omit<typeof piLocator, 'manifestRelativePath'> & {
+    manifest: ReturnType<typeof PluginManifestV2Schema.parse>;
+  }> = [];
+  for (const locator of sourceLocators) {
+    const metadata = BUNDLED_FIRST_PARTY_PLUGIN_METADATA.find(candidate => candidate.pluginId === locator.pluginId);
+    if (!metadata) throw new Error(`${locator.pluginId} source package metadata unavailable`);
+    const sourcePath: string = `../../../../../../../packages/plugins/${metadata.pluginPackageId}/src/manifest`;
     const source: unknown = await import(sourcePath);
-    if (!source || typeof source !== 'object' || !('PLUGIN_MANIFEST' in source)) throw new Error(`${packageId} source manifest unavailable`);
-    const locator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find(candidate => candidate.pluginId === pluginId);
-    if (!locator) throw new Error(`${packageId} bundled locator unavailable`);
-    return { ...locator, manifest: source.PLUGIN_MANIFEST };
-  }));
+    if (!source || typeof source !== 'object' || !('PLUGIN_MANIFEST' in source)) throw new Error(`${metadata.pluginPackageId} source manifest unavailable`);
+    const manifest = PluginManifestV2Schema.parse(source.PLUGIN_MANIFEST);
+    // Authored source declarations need canonical admission; only generated
+    // file declarations have already crossed the publisher's build admission.
+    const { manifestRelativePath: _manifestRelativePath, ...inlineLocator } = locator;
+    sourceDeclarations.push({ ...inlineLocator, manifest });
+    for (const pluginId of readPluginManifestReferencedPluginIdsV2(manifest)) {
+      if (sourceLocators.some(candidate => candidate.pluginId === pluginId)) continue;
+      const reference = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find(candidate => candidate.pluginId === pluginId);
+      if (!reference) throw new Error(`${pluginId} referenced bundled locator unavailable`);
+      sourceLocators.push(reference);
+    }
+  }
   // Pi's real Connected Account references must resolve without opening real
   // Account credentials or a native Agent. The legacy-selected case opens only
   // its fixture SDK stdio child. Keep those real peer declarations.
@@ -221,7 +238,7 @@ it.each((['fresh', 'resume', 'member', 'member-native', 'copied', 'missing-home'
       registrationBindings: BUNDLED_FIRST_PARTY_AGENT_REGISTRATION_BINDINGS.filter(binding => binding.identity.pluginId === piLocator.pluginId) }),
   });
   const runtimeFixture = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
-    runtimeOptions: { contributes, pluginIds: nativeCase ? ['happier.agent.pi'] : [] } });
+    runtimeOptions: { contributes, pluginIds: nativeCase ? sourceDeclarations.map(declaration => declaration.pluginId) : [] } });
   const profileId = 'pi-native-owner-regression';
   const token = `e30.${Buffer.from(JSON.stringify({ sub: kind.startsWith('member') || kind.includes('child-member') ? 'pi-member' : 'pi-owner', session: 'pi-terminal' })).toString('base64url')}.fixture`;
   const accountMachineKey = new Uint8Array(32).fill(7);
@@ -330,11 +347,13 @@ it.each((['fresh', 'resume', 'member', 'member-native', 'copied', 'missing-home'
     // Match the attached Session's selected exact Home at the persistence and
     // environment boundaries; prompt preparation retains real target checks.
     await seedTestServerProfile({ id: profileId, homeId: 'srv_pi_owner', serverUrl });
-    vi.stubEnv('HAPPIER_SERVER_ID', profileId);
+    vi.stubEnv('HAPPIER_ACTIVE_SERVER_ID', profileId);
     vi.stubEnv('HAPPIER_SERVER_URL', serverUrl);
     reloadConfiguration();
   }
   const workingDirectory = await mkdtemp(join(tmpdir(), 'pi-native-owner-'));
+  const sessionPath = kind === 'member-native-path-absent' ? undefined
+    : join(workingDirectory, kind === 'member-native-path-a' ? 'session-bin-a' : 'session-bin-b');
   const nativeCleanups: Array<() => void | Promise<void>> = [];
   let nativeRuntimeHome: string | undefined;
   let nativeMaterial: AgentLaunchMaterialization | undefined;
@@ -352,8 +371,10 @@ it.each((['fresh', 'resume', 'member', 'member-native', 'copied', 'missing-home'
     await mkdir(join(workingDirectory, 'native-worker-home'), { mode: 0o700 });
     const requester = { serverId: profileId, accountId: 'pi-member', machineId: 'pi-machine', installationId: installation.installationId };
     nativeBirth = requester;
+    const requesterIdentity = { kind: 'isolated' as const, requester, separationRequired: true,
+      homeServerIdentityId: 'srv_pi_owner' };
     const member = createAgentIsolationMemberPreparationBoundary({ activeServerDir: serverDirectory,
-      requesterIdentity: { kind: 'isolated', requester, separationRequired: true, homeServerIdentityId: 'srv_pi_owner' },
+      requesterIdentity,
       uid: 2401, custodianAccountId: 'pi-owner', encryptionMode: 'plain' });
     nativeHomes.set(member.filesystemHome.path, member.filesystemHome);
     const noAccountReads = new Proxy({} as ApiClient, { get() { throw new Error('Native member preparation must precede Account reads'); } });
@@ -367,7 +388,8 @@ it.each((['fresh', 'resume', 'member', 'member-native', 'copied', 'missing-home'
         const result = await member.prepare({ signal: input.signal });
         if (result.kind !== 'ready') throw new Error('Real member native preparation refused');
         nativeDaemonObservation = result.daemonObservation;
-        return result.identity;
+        return { kind: 'member', requesterIdentity, snapshot: undefined,
+          identity: result.identity, daemonObservation: result.daemonObservation };
       },
     });
     if (!prepared.ok || !prepared.agentLaunchMaterials?.memberIdentity) throw new Error('Admitted member material is unavailable');
@@ -416,7 +438,19 @@ it.each((['fresh', 'resume', 'member', 'member-native', 'copied', 'missing-home'
   await prepareNativeCase();
   const settings = accountSettingsParse(openedSettings.raw);
   const childCode = nativeCase
-    ? 'require("node:readline").createInterface({input:process.stdin}).on("line",line=>{const q=JSON.parse(line);if(q.id===undefined)return;const name=process.env.USER_VALUE==="synthetic-child-value"?"member_ready":"wrong_material";const result=q.method==="initialize"?{protocolVersion:q.params.protocolVersion,capabilities:{tools:{}},serverInfo:{name:"member",version:"1"}}:q.method==="tools/list"?{tools:[{name,inputSchema:{type:"object"}}]}:{content:[{type:"text",text:name}]};process.stdout.write(JSON.stringify({jsonrpc:"2.0",id:q.id,result})+"\\n")})'
+    ? String.raw`
+      require('node:readline').createInterface({input:process.stdin}).on('line',line=>{
+        const q=JSON.parse(line); if(q.id===undefined)return;
+        const name=process.env.USER_VALUE==='synthetic-child-value'?'member_ready':'wrong_material';
+        const result=q.method==='initialize'?{
+          protocolVersion:q.params.protocolVersion,capabilities:{tools:{}},serverInfo:{name:'member',version:'1'}
+        }:q.method==='tools/list'?{tools:[{name,inputSchema:{type:'object'}}]}:{
+          content:[{type:'text',text:name}],
+          _meta:{environment:{path:process.env.PATH??null,home:process.env.HOME,
+            privateAccountPresent:'PRIVATE_ACCOUNT_SECRET' in process.env}}
+        };
+        process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:q.id,result})+'\n');
+      });`
     : 'require("node:readline").createInterface({input:process.stdin}).on("line",line=>{const q=JSON.parse(line);if(q.id===undefined)return;const result=q.method==="initialize"?{protocolVersion:q.params.protocolVersion,capabilities:{tools:{}},serverInfo:{name:"legacy-owner",version:"1"}}:{tools:[{name:"fixture",inputSchema:{type:"object"}}]};process.stdout.write(JSON.stringify({jsonrpc:"2.0",id:q.id,result})+"\\n")})';
   const servers: McpServerCatalogEntryV1[] = (kind === 'legacy-empty' ? [] : ['selected', 'excluded']).map(id => ({
     id, name: id, transport: 'stdio', stdio: kind === 'legacy-selected' || nativeCase
@@ -448,6 +482,7 @@ it.each((['fresh', 'resume', 'member', 'member-native', 'copied', 'missing-home'
   const session = createMutableApiSessionClientFixture({ sessionId: 'pi-session', metadata,
     serverBinding: { serverId: profileId, serverUrl },
     overrides: {
+      bindSessionAttachmentNativeRuntime: ApiSessionClient.prototype.bindSessionAttachmentNativeRuntime,
       close: async () => { sessionClosed = true; },
       readPendingQueueStateForLiveWork: async () => ({ known: true, pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 0 }),
       getServerIdentityId: () => kind === 'missing-home' ? undefined : 'srv_pi_owner',
@@ -621,7 +656,7 @@ it.each((['fresh', 'resume', 'member', 'member-native', 'copied', 'missing-home'
     expect(sessionReads).toBe(1);
     return;
   }
-  const outcome = runHostSessionRuntime({ credentials, directory: metadata.path,
+  const runSession = () => runHostSessionRuntime({ credentials, directory: metadata.path,
     startedBy: kind.endsWith('-capsule') ? 'terminal' : 'daemon',
     ...(kind === 'resume' || kind.endsWith('-capsule') ? { existingSessionId: session.sessionId } : {}),
     accountSettingsContext: { ...snapshot, whenRefreshed: null } }, {
@@ -717,6 +752,10 @@ it.each((['fresh', 'resume', 'member', 'member-native', 'copied', 'missing-home'
           const called = await connection.client.callTool({ name: 'member_ready', arguments: {},
             _meta: { 'happier/tool-source': 'selected' } });
           expect(called.structuredContent).toMatchObject({ ok: true, result: { content: [{ type: 'text', text: 'member_ready' }] } });
+          if (hostedNativeCase) expect(called.structuredContent).toMatchObject({ ok: true, result: {
+            _meta: { environment: { path: sessionPath ?? null, home: member.home,
+              privateAccountPresent: false } },
+          } });
           expect(frames).toHaveLength(2);
           for (const frame of frames) {
             expect(frame.uid).toBe(member.agentUid);
@@ -833,6 +872,11 @@ it.each((['fresh', 'resume', 'member', 'member-native', 'copied', 'missing-home'
     initializeBackendRunSessionFn: async () => ({ session, reconnectionHandle: null,
       reportedSessionId: session.sessionId, attachedToExistingSession: kind === 'resume' || kind.endsWith('-capsule') }),
   });
+  const hostedEnvironment: NodeJS.ProcessEnv = { ...process.env, HOME: join(workingDirectory, 'private-session-home'),
+    PRIVATE_ACCOUNT_SECRET: 'must-not-reach-mcp', PATH: sessionPath };
+  if (sessionPath === undefined) delete hostedEnvironment.PATH;
+  const outcome = hostedNativeCase ? runAddedHostedSession({ environment: hostedEnvironment,
+    workingDirectory, end: () => undefined }, runSession) : runSession();
   if (kind === 'no-mcp-plugin-exec-refusal') {
     // The existing host turns a typed preparation refusal into a published
     // dependency failure before construction cleanup; it does not open a runtime.
@@ -855,7 +899,8 @@ it.each((['fresh', 'resume', 'member', 'member-native', 'copied', 'missing-home'
       originalCode: 'project_requester_credentials_unavailable', reason: 'ingress_missing' });
     expect(entry!.includes('PRIVATE_PLUGIN')).toBe(false);
   } else if (nativeCase) {
-    await expect(outcome).rejects.toBe(opened);
+    const failure = await outcome.then(() => undefined, error => error);
+    if (failure !== opened) throw failure ?? new Error('Native MCP fixture did not reach its cleanup sentinel');
     expect(sessionClosed).toBe(true);
     expect(publishedMutations).toContainEqual(expect.objectContaining({ action: 'fail',
       issue: expect.objectContaining({ code: 'resource_unavailable', source: 'team_credential' }) }));
