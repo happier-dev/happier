@@ -153,6 +153,8 @@ export function projectExternalActionRequesterInvocationV1(args: Readonly<{
   authentication?: Readonly<{ kind: 'account' | 'terminal' }>;
 }>): ExternalActionRequesterInvocationV1 | null {
   const review = args.context.presentUserApproval;
+  if (review?.actionId === args.actionId && review.decidingAccountId !== undefined
+    && review.decidingAccountId !== args.account.accountId) return null;
   const reviewedParent = readHostReviewedParentV1(args.context);
   const confirmation = args.context.presentUserConfirmation?.inputDigest !== undefined
     ? args.context.presentUserConfirmation

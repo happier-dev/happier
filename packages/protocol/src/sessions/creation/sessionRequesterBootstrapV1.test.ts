@@ -15,6 +15,7 @@ import { sealExternalActionRequestV2, openExternalActionRequestV2 } from '../../
 import { WorkflowApprovedOperationParentV1Schema } from '../../actions/approvedOperationV1.js';
 import { DeploymentChildRpcV1Schema } from '../../deployments/deploymentChildRpcV1.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../../auth/apiTokenGrant.js';
+import { recordPresentUserApprovalV1 } from '../../actions/executor/approvalReview.js';
 
 const request = {
   kind: 'requester_session_bootstrap_v1',
@@ -29,6 +30,23 @@ const request = {
 } as const;
 
 describe('requester bootstrap installation confidentiality', () => {
+  it.each([undefined, 'requester', 'another-person'] as const)(
+    'projects only the requester approval as an invocation confirmation (%s)', decidingAccountId => {
+    const actionId = 'machines.agentIsolation.set';
+    const target = { kind: 'machine' as const, machineId: 'computer' };
+    const review = recordPresentUserApprovalV1({ actionId, input: { serverId: 'home', machineId: target.machineId, enabled: true },
+      requestId: 'isolate', reviewDigest: 'b'.repeat(43), ...(decidingAccountId ? { decidingAccountId } : {}) });
+    const invocation = bootstrap.projectExternalActionRequesterInvocationV1({ actionId,
+      context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, presentUserApproval: review },
+      account: { accountId: 'requester', serverId: 'home' }, target });
+    if (decidingAccountId === 'another-person') {
+      expect(invocation).toBeNull();
+    } else {
+      expect(invocation?.presentUserConfirmation).toEqual({ actionId, inputDigest: review.inputDigest,
+        reviewDigest: review.reviewDigest, requestId: 'isolate', accountId: 'requester', serverId: 'home', target });
+    }
+  });
+
   it.each(['own_account', 'unknown', 'other_account', 'other_home', 'terminal', 'api', 'session', 'workflow', 'plugin', 'transport_plugin'] as const)(
     'qualifies private host attribution against its admitted credential (%s)', kind => {
     const invocation = bootstrap.ExternalActionRequesterInvocationV1Schema.parse({
