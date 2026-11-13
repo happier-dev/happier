@@ -1623,12 +1623,26 @@ There is no persisted global last-selected Action. An unreadable catalog is
 unavailable, and approval/failure outcomes remain intact. Execution still
 re-reads the configured record and admits the real target before effects.
 
+In development source, native **Send to Session** explicitly requests `send`
+through the shared entry handoff builder, including when the catalog defaults
+to `compose`. New-Session authoring and contributed handoffs requesting
+`configured` retain the catalog's delivery choice. An unbound entry can use the
+chosen Session's accepted workspace; a repository-bound entry must match that
+workspace's repository. Workspace-less recipients still receive the typed
+`existing_session_workspace_missing` refusal.
+
 An existing Session keeps its admitted Agent. A configured profile's preferred
 Agent applies to new-Session authoring; it does not silently switch or reject
 an existing Session. An incompatible explicitly requested profile or Agent
 returns `agentMismatch`. Compose appends ordinary evidence through the existing
 composer transaction and preserves its prior text, attachments, selection and
 focus; an unavailable composer is not a request to send instead.
+
+In unreleased 0.3 development source, a PR cited in an ordinary Composer Send
+is content. The attachment resolver reads it without creating a Session–PR
+relation, including from a Session without a checkout or in another repository.
+Only explicit work-on-PR or link Actions create the checkout-verified binding;
+`channels_pr_link_checkout_not_verified` belongs to that explicit Action.
 
 For an existing PR workspace, the configured owner invokes the read-only
 `entries/verify-existing-review-workspace-v1` Action. It obtains the exact

@@ -162,12 +162,12 @@ export async function runTriageConfiguredHandoffV1(
             if (!await matchesRepository(workspace)) return unavailable('repositoryMismatch');
         }
     }
-    if (primary !== undefined && (primary.workflowSubject === null
-        || planTriageOfferedActionsV1([configured.action], primary.workflowSubject).length === 0)) return unavailable('configuredActionUnavailable');
     const action = { ...configured.action,
         profileId: input.agentChoice.kind === 'profile' ? input.agentChoice.profileId : configured.action.profileId,
         target: { ...configured.action.target, delivery: input.delivery === 'configured' ? configured.action.target.delivery : input.delivery },
     };
+    if (primary !== undefined && (primary.workflowSubject === null
+        || planTriageOfferedActionsV1([action], primary.workflowSubject).length === 0)) return unavailable('configuredActionUnavailable');
     const references = await resolveTriageActionReferencesV1(host, action, cancellation);
     if (references.status !== 'resolved') return targetUnavailable('action_references_unresolved', references.status);
     const promptText = resolveTriageActionInstructionV1(action, references.prompt?.text ?? null,
@@ -276,8 +276,10 @@ export async function runTriageConfiguredHandoffV1(
         if (action.workspaceMode !== 'reference_only') {
             const accepted = state.acceptedWorkspace;
             if (accepted === undefined) return targetUnavailable('existing_session_workspace_missing');
-            if (repository === undefined || accepted.repository === undefined
-                || !sameScmHostingRepositoryIdentity(repository, accepted.repository)) return unavailable('repositoryMismatch');
+            // An unbound entry uses the workspace the person explicitly chose.
+            // A repository-bound entry must still match that accepted checkout.
+            if (repository !== undefined && (accepted.repository === undefined
+                || !sameScmHostingRepositoryIdentity(repository, accepted.repository))) return unavailable('repositoryMismatch');
             if (suppliedWorkspace !== undefined && !sameWorkspace(suppliedWorkspace, accepted.checkout)) return unavailable('scopeMismatch');
             if (action.workspaceMode === 'pull_request') {
                 const preparation = primary?.reviewWorkspace?.preparation;

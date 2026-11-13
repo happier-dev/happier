@@ -141,20 +141,19 @@ describe('entry existing Session handoff', () => {
         expect(f.edits).toEqual([]);
     });
 
-    it('Find uses that same qualified handoff and Ask keeps configured compose with no Fix instruction', async () => {
+    it('Find refuses an instructionless compose action rather than inventing a Fix instruction for Send', async () => {
         const f = fixture('compose');
         const session = { serverId: 'home-b', sessionId: 'same-session' };
         f.setAddress(session);
         f.controller.getSnapshot().start({ ...f.request, destinationChoice: 'existingSession' });
         const settled = await f.controller.waitForSettled();
         expect(settled.phase).toMatchObject({ kind: 'handoffSettled', result: {
-            handoff: { kind: 'composed', destination: { kind: 'existing', session } },
+            handoff: { kind: 'unavailable', reason: 'configuredActionUnavailable' },
         } });
-        expect(f.operands[0]?.handoff).toMatchObject({ task: 'investigate', delivery: 'configured',
+        expect(f.operands[0]?.handoff).toMatchObject({ task: 'investigate', delivery: 'send',
             agentChoice: { kind: 'configured' }, sessionChoice: { kind: 'existing', session: session.sessionId } });
         expect(f.addresses).toEqual([session]);
-        expect(f.edits).toHaveLength(1);
-        expect(f.edits[0]?.operations).toEqual([expect.objectContaining({ kind: 'attachment.add' })]);
+        expect(f.edits).toEqual([]);
         expect(f.sends).toEqual([]);
         expect(f.unexpected).toEqual([]);
     });

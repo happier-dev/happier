@@ -15,7 +15,6 @@ import type {
 } from '@happier-dev/plugin-sdk/ui';
 import type { ComposerAttachmentAuthorPresentationV1 } from '@happier-dev/plugin-sdk/ui';
 import {
-    TRIAGE_DEFAULT_FIX_ACTION_ID_V1,
     projectTriagePrepareReviewWorkspaceInputV1,
     type TriageEntryLocatorV1,
     type TriageEntryRefV1,
@@ -74,6 +73,7 @@ import {
 } from '../ui/header/newSessionSeedCommand.js';
 import { triageActionDefaultSeedV1, requestTriageNewSessionAuthoringV1 } from './newSessionAuthoring.js';
 import { readTriageEntrySessionFactsV1, type TriageEntrySessionSourceFactsV1 } from './readEntrySessionFacts.js';
+import { buildTriageEntrySessionHandoffV1 } from './entrySessionHandoff.js';
 import { projectTriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCommand.js';
 import {
     submitTriageEntrySessionStart,
@@ -771,13 +771,7 @@ export function createTriageEntrySessionStartController(
                         if (choice.kind !== 'sessionAddress') { setPhase(unavailable('dispatch')); return; }
                         session = choice.session;
                     }
-                    const selected = { entryRef: request.entryRef, sourceInstanceId: request.sourceInstance.sourceInstanceId };
-                    const handoff: TriageSessionHandoffInputV1 = {
-                        task: request.requestedTask ?? (action.actionId === TRIAGE_DEFAULT_FIX_ACTION_ID_V1 ? 'fix' : 'investigate'),
-                        configuredActionId: action.actionId,
-                        context: { kind: 'entry', entry: selected }, evidence: [{ kind: 'entry', entry: selected }],
-                        sessionChoice: { kind: 'existing', session: session.sessionId }, agentChoice: { kind: 'configured' }, delivery: 'configured',
-                    };
+                    const handoff = buildTriageEntrySessionHandoffV1(request, session);
                     const resumeStart = previous?.state.kind === 'handoff'
                         && previous.state.serverId === session.serverId
                         && JSON.stringify(previous.state.handoff) === JSON.stringify(handoff) ? previous : undefined;
@@ -1210,15 +1204,7 @@ export function createTriageEntrySessionStartController(
                 if (choice.kind !== 'sessionAddress') { inFlight.current = false; setPhase(unavailable('dispatch')); return null; }
                 session = choice.session;
             }
-            const entry = { entryRef: request.entryRef, sourceInstanceId: request.sourceInstance.sourceInstanceId };
-            const handoff: TriageSessionHandoffInputV1 = {
-                task: request.requestedTask ?? (request.action.actionId === TRIAGE_DEFAULT_FIX_ACTION_ID_V1 ? 'fix' : 'investigate'),
-                configuredActionId: request.action.actionId,
-                context: session === undefined ? { kind: 'entries', entries: [entry], destination: 'single' } : { kind: 'entry', entry },
-                evidence: [{ kind: 'entry', entry }],
-                sessionChoice: session === undefined ? { kind: 'configured' } : { kind: 'existing', session },
-                agentChoice: { kind: 'configured' }, delivery: 'configured',
-            };
+            const handoff = buildTriageEntrySessionHandoffV1(request, session);
             const singleIntent: TriageRunConfiguredActionInputV1['singleIntent'] = session !== undefined ? undefined
                 : request.orchestrationPrompt !== undefined ? { kind: 'orchestrate', prompt: request.orchestrationPrompt }
                 : request.comparisonDestination?.kind === 'scmReview' ? { kind: 'comparison', comparison: request.comparisonDestination.comparison }
