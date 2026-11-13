@@ -29,6 +29,21 @@
         ],
         "buildGoal": "Build a cross-platform mobile app from this blank Expo template, replacing the placeholder screen with the requested product."
       }
+    },
+    {
+      "itemId": "coder-docker",
+      "starter": {
+        "repository": "https://github.com/coder/coder",
+        "title": "Coder Docker workspaces",
+        "description": "Coder\u2019s official Docker workspace template with a persistent home volume.",
+        "tags": [
+          "coder",
+          "docker",
+          "workspaces",
+          "terraform"
+        ],
+        "buildGoal": "Prepare the official Coder v2.39.0 Docker workspace template from examples/templates/docker at tag v2.39.0 (include build/Dockerfile). Preserve the coder_agent transport and persistent home volume; do not add account tokens or Happier enrollment secrets to Terraform or startup scripts. Review the template, then import this directory into your Coder deployment. First-user setup and Coder Connected Account sign-in remain separate private steps."
+      }
     }
   ]
 }

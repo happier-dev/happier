@@ -6,6 +6,7 @@ import { browserBot } from './browserBot.js';
 import { BACKUP_RECEIVER_RECIPE } from './backupReceiver.js';
 import { JOURNAL_READER_RECIPE } from './journalReader.js';
 import { dockerEngine } from './dockerEngine.js';
+import { coder } from './coder.js';
 import { coolify } from './coolify.js';
 import { dokploy } from './dokploy.js';
 import { caddy } from './caddy.js';
@@ -33,6 +34,7 @@ export const MACHINE_RECIPES_PLUGIN = definePlugin({
     'tailscale-server': tailscaleServer,
     [DOCKER_ENGINE_RECIPE_REF_V1.recipeId]: dockerEngine,
     coolify,
+    coder,
     dokploy,
     caddy,
     firewall,

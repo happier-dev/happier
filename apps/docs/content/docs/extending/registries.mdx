@@ -64,6 +64,52 @@ reviewed deployment, then adds the Domain. If deployment is refused or fails,
 the Environment remains and no Domain is added. Retry uses that retained
 Environment for a new deploy attempt before adding the Domain.
 
+## Coder server and Docker workspaces in development
+
+The unreleased 0.3 Machine recipes include **Coder** for Debian/Ubuntu Linux
+with systemd. It installs Coder 2.39.0 through the official installer. Install
+**Docker Engine** first if this server will provision Docker workspaces. Supply
+your credential-free external HTTPS URL; the recipe listens on
+`127.0.0.1:3000`. Configure your HTTPS reverse proxy before connecting clients
+or workspace agents. Coder uses its built-in PostgreSQL database for this
+starter installation; preserve the service user's data directory.
+
+For a container deployment, choose **Coder** from the Store's app templates.
+It includes PostgreSQL 17 with a generated database password managed by the
+ordinary deployment secret owner, a persistent database volume, and a required
+HTTP Domain. Set **Docker socket group ID** to the numeric group owning
+`/var/run/docker.sock` on the Linux Machine (`stat -c %g /var/run/docker.sock`).
+The reviewed Docker socket mount lets Coder provision sibling containers on
+that host. Complete Coder's first-user setup privately in its web UI; neither
+recipe creates or prints an administrator password.
+
+The **Coder Docker workspaces** project starter uses Coder's official repository.
+Its build instructions select the `v2.39.0` Docker example under
+`examples/templates/docker`. Import that directory as a template in Coder,
+including its `build` directory. The example keeps the workspace home in a
+Docker volume across Stop and Start. Workspace agents must reach your external
+Coder URL; a loopback-only URL cannot serve containers on the Docker network.
+Do not put Happier enrollment keys or your Coder account token in Terraform,
+images, startup scripts, or template parameters.
+
+After first-user setup, follow the [Coder connected-account and workspace
+flow](/apps/control-panel#coder-workspaces-unreleased-development). Use the deployment
+URL and your personal Coder token in the existing Connected Account form.
+The installer does not sign in the controller or create a Happier Machine.
+
+Removal of the Machine recipe stops and disables Coder while retaining its
+binary, database, workspaces and configuration. Delete workspaces in Coder
+before deliberately removing their volumes. For a failed install, inspect the
+Machine setup result and retry after correcting the reported prerequisite or
+network failure. Back up PostgreSQL before an upgrade; Coder does not support
+rolling its database back by installing an older binary.
+
+The vendor basis is Coder's [Docker installation guide](https://coder.com/docs/install/server/docker),
+[official v2.39.0 installer](https://github.com/coder/coder/blob/v2.39.0/install.sh),
+[Docker template](https://github.com/coder/coder/tree/v2.39.0/examples/templates/docker),
+and [upgrade guidance](https://coder.com/docs/install/operate/upgrade/), checked
+on November 13, 2026. This development entry does not establish release certification.
+
 ## Browser extensions in development
 
 The development `browserExtension` catalog kind supplies Chrome Web Store IDs

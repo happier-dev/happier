@@ -792,6 +792,117 @@
           "password": "MONGO_PASSWORD"
         }
       }
+    },
+    {
+      "itemId": "coder",
+      "app": {
+        "schemaVersion": 1,
+        "title": "Coder",
+        "description": "A self-hosted Coder server with PostgreSQL and Docker workspace provisioning on this Linux host. Complete first-user setup in Coder.",
+        "category": "development",
+        "documentationUrl": "https://coder.com/docs/install/server/docker",
+        "compose": {
+          "document": "{\"services\":{\"coder\":{\"image\":\"ghcr.io/coder/coder:v2.39.0\",\"restart\":\"unless-stopped\",\"environment\":{\"CODER_HTTP_ADDRESS\":\"0.0.0.0:7080\",\"CODER_ACCESS_URL\":\"${CODER_ACCESS_URL}\",\"CODER_PG_CONNECTION_URL\":\"postgresql://coder:${DB_PASSWORD}@database:5432/coder?sslmode=disable\"},\"group_add\":[\"${DOCKER_GID}\"],\"volumes\":[\"/var/run/docker.sock:/var/run/docker.sock\"],\"depends_on\":{\"database\":{\"condition\":\"service_healthy\"}}},\"database\":{\"image\":\"postgres:17\",\"restart\":\"unless-stopped\",\"environment\":{\"POSTGRES_USER\":\"coder\",\"POSTGRES_DB\":\"coder\",\"POSTGRES_PASSWORD\":\"${DB_PASSWORD}\"},\"volumes\":[\"coder-postgres:/var/lib/postgresql/data\"],\"healthcheck\":{\"test\":[\"CMD-SHELL\",\"pg_isready -U coder -d coder\"],\"interval\":\"10s\",\"timeout\":\"5s\",\"retries\":5}}},\"volumes\":{\"coder-postgres\":{}}}",
+          "profiles": [],
+          "services": [
+            "coder",
+            "database"
+          ],
+          "primaryService": "coder"
+        },
+        "variables": [
+          {
+            "key": "CODER_ACCESS_URL",
+            "label": "Coder URL",
+            "required": true,
+            "valueKind": "string",
+            "secret": false,
+            "sites": [
+              {
+                "service": "coder",
+                "path": [
+                  "environment",
+                  "CODER_ACCESS_URL"
+                ]
+              }
+            ],
+            "valueFrom": {
+              "kind": "domainUrl",
+              "domainKey": "CODER"
+            }
+          },
+          {
+            "key": "DOCKER_GID",
+            "label": "Docker socket group ID",
+            "required": true,
+            "valueKind": "string",
+            "secret": false,
+            "sites": [
+              {
+                "service": "coder",
+                "path": [
+                  "group_add",
+                  "0"
+                ]
+              }
+            ],
+            "help": "Numeric group owning /var/run/docker.sock on the Linux host (stat -c %g /var/run/docker.sock)."
+          },
+          {
+            "key": "DB_PASSWORD",
+            "label": "Database password",
+            "required": true,
+            "valueKind": "string",
+            "secret": true,
+            "sites": [
+              {
+                "service": "database",
+                "path": [
+                  "environment",
+                  "POSTGRES_PASSWORD"
+                ]
+              },
+              {
+                "service": "coder",
+                "path": [
+                  "environment",
+                  "CODER_PG_CONNECTION_URL"
+                ]
+              }
+            ]
+          }
+        ],
+        "generatedSecrets": [
+          {
+            "key": "DB_PASSWORD",
+            "purpose": "database-password",
+            "label": "Database password",
+            "profile": {
+              "kind": "base64url-32-bytes"
+            }
+          }
+        ],
+        "domains": [
+          {
+            "key": "CODER",
+            "service": "coder",
+            "containerPort": 7080,
+            "protocol": "http",
+            "required": true
+          }
+        ],
+        "volumes": [
+          {
+            "id": "coder-postgres",
+            "service": "database",
+            "target": "/var/lib/postgresql/data",
+            "persistent": true,
+            "backup": false,
+            "description": "Back up PostgreSQL using its native tools before upgrades. Workspace volumes are managed separately by Coder templates."
+          }
+        ],
+        "firstRunSetup": true
+      }
     }
   ]
 }
