@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod/mini';
 import * as mini from 'zod/mini';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
-import { enableSchemaValidation } from './enableSchemaValidation';
+import { admitResponse, enableSchemaValidation } from './enableSchemaValidation';
 
 describe('API schema admission', () => {
     it('shares one parser handle for a canonical definition across routes and generated HEAD routes', async () => {
@@ -23,6 +23,33 @@ describe('API schema admission', () => {
             expect(first.response[200]).toBe(second.response[200]);
             expect(built.response[200]).toBe(concrete);
             expect((await app.inject('/first')).json()).toEqual({ value: 'kept' });
+        } finally {
+            await app.close();
+        }
+    });
+    it('admits a producer-parsed response once and still validates every other payload', async () => {
+        let parses = 0;
+        const counted = () => z.strictObject({ value: z.string() }).check(z.refine(() => { parses++; return true; }));
+        const response = lazyZodSchema(counted);
+        const other = lazyZodSchema(() => z.object({ value: z.string(), extra: z.optional(z.boolean()) }));
+        const app = fastify().withTypeProvider<ZodTypeProvider>();
+        enableSchemaValidation(app);
+        app.get('/admitted', { schema: { response: { 200: response } } }, async () => admitResponse(response, { value: 'kept' }));
+        app.get('/plain', { schema: { response: { 200: response } } }, async () => ({ value: 'kept' }));
+        // Admission by another schema is not admission by this route's contract.
+        app.get('/foreign', { schema: { response: { 200: response } } }, async () => admitResponse(other, { value: 'kept', extra: true }) as never);
+        try {
+            await app.ready();
+            parses = 0;
+            const admitted = await app.inject('/admitted');
+            expect(admitted.json()).toEqual({ value: 'kept' });
+            expect(parses).toBe(1);
+            parses = 0;
+            expect((await app.inject('/plain')).json()).toEqual({ value: 'kept' });
+            expect(parses).toBe(1);
+            const foreign = await app.inject('/foreign');
+            expect(foreign.statusCode).toBe(500);
+            expect(foreign.json().code).toBe('FST_ERR_RESPONSE_SERIALIZATION');
         } finally {
             await app.close();
         }
