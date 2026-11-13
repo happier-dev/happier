@@ -48,6 +48,17 @@ EOF
       case "$line" in
         p*) case "\${line#p}" in ''|*[!0-9]*) exit 1;; esac;;
         n/*) ;;
+        "lsof: WARNING: can't stat() "*" file system /"*)
+          # Docker's inaccessible overlay/network mounts are outside +D's
+          # payload tree. They do not make that tree's observation incomplete.
+          version_mount="\${line##* file system }"
+          version_mount="\${version_mount%/}"
+          case "$1/" in "$version_mount/"*) exit 1;; esac
+          case "$version_mount/" in "$1/"*) exit 1;; esac
+          version_external_mount_warning=true;;
+        '      Output information may be incomplete.')
+          [ "\${version_external_mount_warning:-false}" = true ] || exit 1
+          version_external_mount_warning=false;;
         *) exit 1;;
       esac
     done

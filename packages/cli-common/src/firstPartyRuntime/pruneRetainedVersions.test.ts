@@ -96,6 +96,32 @@ describe('installed payload retention', () => {
       expect((await readdir(versions)).sort()).toEqual(['1.0.0', '2.0.0', '3.0.0']);
     } finally { await rm(home, { recursive: true, force: true }); }
   });
+  it.skipIf(process.platform === 'win32').each([
+    { mount: '/var/lib/docker/rootfs/overlayfs/fixture', pruned: true },
+    { mount: 'PAYLOAD_ROOT/private-mount', pruned: false },
+    { mount: 'INSTALL_HOME', pruned: false },
+    { mount: '/', pruned: false },
+  ])('scopes incomplete mount diagnostics to the retained payload filesystem: $mount', async ({ mount, pruned }) => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-mount-retention-'));
+    const versions = join(home, 'cli', 'versions');
+    try {
+      const tools = join(home, 'tools');
+      await mkdir(tools);
+      const affectedMount = mount === 'INSTALL_HOME' ? home : mount.replace('PAYLOAD_ROOT', versions);
+      await writeFile(join(tools, 'ps'), '#!/bin/sh\nprintf "%s\\n" "$(id -u) fixture-process"\n', { mode: 0o755 });
+      await writeFile(join(tools, 'lsof'), `#!/bin/sh\nprintf "%s\\n" "p1234" "n$open_path"\nprintf '%s\\n' "lsof: WARNING: can't stat() overlay file system $affected_mount" '      Output information may be incomplete.' >&2\n`, { mode: 0o755 });
+      vi.stubEnv('PATH', `${tools}:${process.env.PATH}`);
+      vi.stubEnv('affected_mount', affectedMount);
+      vi.stubEnv('open_path', join(versions, '3.0.0', 'happier'));
+      for (const id of ['1.0.0', '2.0.0', '3.0.0']) await mkdir(join(versions, id), { recursive: true });
+      const result = await pruneRetainedVersions({
+        componentId: 'happier-cli', processEnv: { ...process.env, HAPPIER_FIRST_PARTY_INSTALL_HOME: home },
+        orderedVersionIdsNewestFirst: ['3.0.0', '2.0.0', '1.0.0'], currentVersionId: '3.0.0', previousVersionId: '2.0.0',
+      });
+      expect(result.prunedVersionIds).toEqual(pruned ? ['1.0.0'] : []);
+      expect((await readdir(versions)).sort()).toEqual(pruned ? ['2.0.0', '3.0.0'] : ['1.0.0', '2.0.0', '3.0.0']);
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
   it.skipIf(process.platform === 'win32')('retains a loaded script until its process exits even when Node is outside the payload', async () => {
     const home = await mkdtemp(join(tmpdir(), 'happier-live-version-'));
     const versions = join(home, 'cli', 'versions');

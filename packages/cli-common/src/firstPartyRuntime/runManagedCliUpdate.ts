@@ -11,7 +11,7 @@ import { doesVersionMatchReleaseRing } from '../update/index.js';
 import type { FirstPartyAcquisitionOptions } from './acquisitionProgress.js';
 import { getFirstPartyComponentCatalogEntry } from './componentCatalog.js';
 import { resolveFirstPartyActivationLockTarget, resolveFirstPartyInstallLayout, type FirstPartyInstallLayout } from './installLayout.js';
-import { activateVersionedPayload, pruneInstalledVersionsAfterActivation } from './installVersionedPayload.js';
+import { activateVersionedPayload, pruneInstalledVersions } from './installVersionedPayload.js';
 import {
   prepareFirstPartyComponentPayloadFromGitHubRelease,
   type PreparedFirstPartyComponentPayload,
@@ -390,7 +390,7 @@ async function activateAndProve(input: Readonly<{
 
   await discardActivationStateSnapshot(snapshot);
   // Committed and proven: pruning old versions is best-effort and never turns this into a failure.
-  await pruneInstalledVersionsAfterActivation({
+  await pruneInstalledVersions({
     componentId: COMPONENT_ID,
     channel: params.channel,
     processEnv: params.processEnv,

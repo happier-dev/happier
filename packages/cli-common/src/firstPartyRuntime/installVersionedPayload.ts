@@ -8,6 +8,7 @@ import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRi
 import { listInstalledVersionIdsNewestFirst } from './listInstalledVersionIdsNewestFirst.js';
 import { promoteVersionedPayloadWithoutLock, type FirstPartyPayloadPromotionResult } from './promoteVersionedPayload.js';
 import { pruneRetainedVersions } from './pruneRetainedVersions.js';
+import { readInstalledVersionMarkers } from './versionMarkers.js';
 import {
   resolveDefaultReleaseChannelAfterInstall,
   shouldPersistDefaultManagedReleaseChannel,
@@ -288,7 +289,7 @@ type VersionedPayloadActivationParams = FirstPartyAcquisitionOptions & Readonly<
 
 async function installVersionedPayloadOnce(params: VersionedPayloadActivationParams): Promise<FirstPartyPayloadPromotionResult> {
   const promotion = await activateVersionedPayload(params);
-  await pruneInstalledVersionsAfterActivation({
+  await pruneInstalledVersions({
     componentId: params.componentId,
     channel: params.channel,
     releaseRing: params.releaseRing,
@@ -303,12 +304,20 @@ async function installVersionedPayloadOnce(params: VersionedPayloadActivationPar
 /**
  * Everything an install changes to make a version the running one — the versioned payload, the
  * `current`/`previous` pointers and markers, the command shims and the default-channel record —
- * without pruning. The caller holds the install root's lock and, for a component with shims or the
- * default-channel record, the home-wide activation lock. `runManagedCliUpdate` activates through
- * this and prunes only after the new version proved itself, so the version it would restore is
- * still on disk while the service restarts (plan R13 f).
+ * while preserving the existing rollback versions. The caller holds the install root's lock and,
+ * for a component with shims or the default-channel record, the home-wide activation lock.
+ * Superseded versions are reclaimed before staging; `runManagedCliUpdate` retires the previous
+ * rollback version only after the new version proves itself (plan R13 f).
  */
 export async function activateVersionedPayload(params: VersionedPayloadActivationParams): Promise<FirstPartyPayloadPromotionResult> {
+  const layout = resolveFirstPartyInstallLayout(params);
+  const markers = await readInstalledVersionMarkers(layout);
+  // Reclaim superseded payloads before allocating staging bytes. Without a
+  // current marker a legacy install cannot identify its protected version yet.
+  if (markers.currentVersionId) {
+    await pruneInstalledVersions({ ...params, currentVersionId: markers.currentVersionId,
+      previousVersionId: markers.previousVersionId, pendingVersionId: params.versionId });
+  }
   // Once promotion starts, finish its shims and markers as one locked operation.
   params.onProgress?.({ phase: 'installing' });
   const promotion = await promoteVersionedPayloadWithoutLock({
@@ -347,8 +356,8 @@ export async function activateVersionedPayload(params: VersionedPayloadActivatio
   return promotion;
 }
 
-/** Retention after an activation is committed: keep current + previous, prune the rest best-effort. */
-export async function pruneInstalledVersionsAfterActivation(params: Readonly<{
+/** Keep activation's current + previous and native users through the shared retention policy. */
+export async function pruneInstalledVersions(params: Readonly<{
   desktopBundleId?: string;
   componentId: FirstPartyComponentId;
   channel?: PublicReleaseRingId;
@@ -356,6 +365,8 @@ export async function pruneInstalledVersionsAfterActivation(params: Readonly<{
   processEnv?: NodeJS.ProcessEnv;
   currentVersionId: string;
   previousVersionId: string | null;
+  /** An existing target must survive until promotion verifies its immutable bytes. */
+  pendingVersionId?: string;
   onWarning?: (message: string) => void;
 }>): Promise<void> {
   const orderedVersionIdsNewestFirst = await listInstalledVersionIdsNewestFirst({
@@ -370,7 +381,7 @@ export async function pruneInstalledVersionsAfterActivation(params: Readonly<{
     processEnv: params.processEnv,
     channel: params.channel,
     releaseRing: params.releaseRing,
-    orderedVersionIdsNewestFirst,
+    orderedVersionIdsNewestFirst: orderedVersionIdsNewestFirst.filter(id => id !== params.pendingVersionId),
     currentVersionId: params.currentVersionId,
     previousVersionId: params.previousVersionId,
     onWarning: params.onWarning,
