@@ -58,6 +58,8 @@ import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { ChangesResponseSchema, CurrentCursorResponseSchema } from '@happier-dev/protocol/changes';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { subscribeHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionOutputV1Schema,
+    PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability';
 
 export type SecretSettingsTestHarness = {
     credentials: AuthCredentials;
@@ -172,6 +174,16 @@ export async function createSecretSettingsTestHarness(options: Readonly<{
         if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(features);
         if (path === '/v2/cursor') return Response.json(CurrentCursorResponseSchema.parse({ cursor: 0, changesFloor: 0 }));
         if (path === '/v2/changes') return Response.json(ChangesResponseSchema.parse({ changes: [], nextCursor: 0 }));
+        if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read']) {
+            return Response.json(PluginAvailabilityMaterializationsReadActionOutputV1Schema.parse({
+                availabilityCursor: 0, snapshots: [], releases: [], inventoryComplete: true,
+            }));
+        }
+        if (path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list']) {
+            return Response.json(PluginAvailabilityIntentsListActionOutputV1Schema.parse({
+                availabilityCursor: 0, pluginIds: [], nextCursor: null, intentReads: [], failedPluginIds: [],
+            }));
+        }
         if (path === '/v1/account/profile') return new Headers(init?.headers).get('Authorization') === `Bearer ${token}`
             ? Response.json(AccountProfileSchema.parse({ id: accountId }))
             : Response.json({ error: 'Not authenticated' }, { status: 401 });

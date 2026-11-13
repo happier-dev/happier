@@ -23,8 +23,9 @@ import { readSessionMessageProvenanceV1 } from '@happier-dev/protocol/sessions/m
 import { PendingRequestedActionV1Schema } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { createDeferred, createSessionFixture, createSessionListRenderableSessionFixture, createSessionMessagesFixture, createSessionViewerFixture, createToolCallMessageFixture, renderHook, standardCleanup, waitForTestEvent } from '@/dev/testkit';
 import type { Message } from '@happier-dev/session-core/messages';
-import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture, createReadyMachineAgentInventoryFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture, createReadyMachineAgentInventoryFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { createSocketIoBoundaryStub } from '@/dev/testkit/mocks/socketIo';
 import { PLUGIN_UI_HOST_API_VERSION_V1, PLUGIN_UI_HOST_API_WIRE_VERSION_V1 } from '@happier-dev/protocol/plugins/ui';
 import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -121,7 +122,7 @@ async function mountCurrentUiContext(wireResult: Readonly<Record<string, boolean
   const { useCurrentUiContextVoiceToolPort } = await import('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort');
   const { AppShellPluginUiProjectionProvider, useAppShellPluginUiProjection } = await import('@/components/appShell/plugins/AppShellPluginUiProjection');
   const { usePluginUiProjectionCurrentness } = await import('@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness');
-  const [{ PluginProjectionV2Schema, PluginProjectedActionV2Schema, DaemonPluginActionSchemasReadResponseSchema, DaemonPluginStructuredMessageActionExecuteResponseSchema}, { formatQualifiedPluginActionId}] = await Promise.all([import('@happier-dev/protocol/daemon/contributionRegistryProjection'), import('@happier-dev/protocol/plugins/actions/qualifiedActionId')]);
+  const [{ PluginProjectionV2Schema, PluginProjectedActionV2Schema, DaemonPluginActionSchemasReadResponseSchema}, { formatQualifiedPluginActionId}] = await Promise.all([import('@happier-dev/protocol/daemon/contributionRegistryProjection'), import('@happier-dev/protocol/plugins/actions/qualifiedActionId')]);
   // These are daemon-authored declarations, consumed by the real normalizer,
   // origin union and effect dispatcher, not fabricated AppShell decisions.
   const sourceCustody = { kind: 'development' as const, registeredRootId: 'voice-tools-current-ui' };
@@ -141,12 +142,22 @@ async function mountCurrentUiContext(wireResult: Readonly<Record<string, boolean
         scopes: ['global'], surfaces: ['voice'], execution: { target: 'daemon' }, dangerLevel: 'safe', available: true,
       }) }, resourcesById: {}, settingsById: {}, familiesById: {}, diagnostics: [] });
   const previous = daemonRpc.getMockImplementation();
+  const admittedActions: unknown[] = [];
+  const actionBoundary = await createExternalActionAccountHttpBoundary({ serverUrl: homeUrlA,
+    serverIdentityId: 'srv_voice_tools_a', accountId: 'account-a', machineId: 'm1', tokenEpoch: 0,
+    actionId: 'action.invoke', execute: (input, context) => {
+      admittedActions.push({ input, target: context.target, invocation: context.invocation });
+      return wireResult;
+    } });
+  const previousHttp = account.request.getMockImplementation();
+  if (!previousHttp) throw new Error('Current UI Account HTTP boundary missing');
+  account.request.mockImplementation(async (url, init) =>
+    await actionBoundary.handle(new URL(String(url)), init) ?? previousHttp(url, init));
   daemonRpc.mockImplementation(async request => {
     if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE) return { protocolVersion: 1, projection };
     if (request.method === RPC_METHODS.DAEMON_PLUGIN_ACTION_SCHEMAS_READ) return DaemonPluginActionSchemasReadResponseSchema.parse({ ok: true,
       inputSchema: { type: 'object', additionalProperties: true },
       outputSchema: { type: 'object', additionalProperties: true } });
-    if (request.method === RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE) return DaemonPluginStructuredMessageActionExecuteResponseSchema.parse({ ok: true, result: wireResult });
     if (!previous) throw new Error('Voice daemon boundary is unavailable');
     return previous(request);
   });
@@ -154,9 +165,8 @@ async function mountCurrentUiContext(wireResult: Readonly<Record<string, boolean
   const { resetMachineProjectionReadsForTests } = await import('@/sync/ops/machineContributionRegistryProjection');
   clearDaemonMergedProjectionCacheForTests();
   resetMachineProjectionReadsForTests();
-  storage.getState().applyMachines([storage.getState().machines.m1], true);
-  const { observeMachinePresenceForTest } = await import('@/dev/testkit/harness/machinePresence');
-  observeMachinePresenceForTest(account.scope, ['m1']);
+  const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+  await publishMachineInventoryForTest(account.scope, [storage.getState().machines.m1]);
   const enrichment = { entity: { kind: 'plugin', label: 'PLUGIN_LABEL_SENTINEL' }, commands: [{
     title: 'Open issue #124', command: { kind: 'executeAction' as const,
       action: { pluginId: 'acme.triage', localId: 'refresh-issues' },
@@ -191,7 +201,7 @@ async function mountCurrentUiContext(wireResult: Readonly<Record<string, boolean
     })).toEqual(expect.arrayContaining([expect.objectContaining({ id: formatQualifiedPluginActionId({ pluginId: 'acme.triage', localId: 'refresh-issues' }) })]));
   }
   const commandId = reader.readCurrentUiContext()?.commands[0]?.id;
-  return { port: mounted.getCurrent().port!, reader, commandId };
+  return { port: mounted.getCurrent().port!, reader, commandId, admittedActions };
 }
 
 function createBaseState(): any {
@@ -312,14 +322,14 @@ function createBaseState(): any {
       },
     },
     machines: {
-      m1: createMachineFixture({ id: 'm1', activeAt: Date.now(),
-        metadata: { ...createMachineFixture().metadata!, host: 'a-host' } }),
-      m2: createMachineFixture({ id: 'm2', activeAt: Date.now(),
-        metadata: { ...createMachineFixture().metadata!, host: 'b-host' } }),
+      m1: createHydratedPlainMachineFixture({ id: 'm1', accountId: 'account-a', machine: { activeAt: Date.now(),
+        metadata: { ...createMachineFixture().metadata!, host: 'a-host' } } }),
+      m2: createHydratedPlainMachineFixture({ id: 'm2', accountId: 'account-a', machine: { activeAt: Date.now(),
+        metadata: { ...createMachineFixture().metadata!, host: 'b-host' } } }),
     },
     machineListByServerId: {
-      [homeA]: [createMachineFixture({ id: 'm1', activeAt: Date.now(),
-        metadata: { ...createMachineFixture().metadata!, host: 'a-host' } })],
+      [homeA]: [createHydratedPlainMachineFixture({ id: 'm1', accountId: 'account-a', machine: { activeAt: Date.now(),
+        metadata: { ...createMachineFixture().metadata!, host: 'a-host' } } })],
     },
     machineListStatusByServerId: { [homeA]: 'idle', [homeB]: 'idle' },
     sessionMessages: {
@@ -649,8 +659,9 @@ vi.mock('socket.io-client', async (importOriginal) => (
 
 function installVoiceSocketBoundary() { installDisconnectedServerSocketBoundary((socket, serverUrl) => {
   configureConnectedServerSocketBoundary(socket);
+  const defaultBoundary = createSocketIoBoundaryStub();
   socket.emitWithAck = vi.fn(async (event, payload) => {
-    if (event !== 'rpc-call') return { v: 1, ok: true, admittedSessionIds: [] };
+    if (event !== 'rpc-call') return defaultBoundary.socket.emitWithAck(event, payload);
     if (!serverUrl) throw new Error(`Unexpected Voice daemon event: ${event}`);
     // Socket.IO's SDK is untyped here; this is the real shared RPC producer's envelope.
     const request = payload as SocketRpcRequestPayload;
@@ -730,7 +741,10 @@ describe('voice tool handlers', () => {
     let requestInit!: RequestInit;
     pendingEnqueue.mockImplementationOnce(async request => {
       requestInit = request.init;
-      return await new Promise<Response>((resolve) => { release = resolve; enqueueStarted.resolve(); });
+      const response = createDeferred<Response>(request.init.signal);
+      release = response.resolve;
+      enqueueStarted.resolve();
+      return await response.promise;
     });
     const harness = await createElevenLabsToolHarness();
     const first = harness.deliver('provider-conflict', 'first');
@@ -753,7 +767,10 @@ describe('voice tool handlers', () => {
     let requestInit!: RequestInit;
     pendingEnqueue.mockImplementationOnce(async request => {
       requestInit = request.init;
-      return await new Promise<Response>((resolve) => { release = resolve; enqueueStarted.resolve(); });
+      const response = createDeferred<Response>(request.init.signal);
+      release = response.resolve;
+      enqueueStarted.resolve();
+      return await response.promise;
     });
     const harness = await createElevenLabsToolHarness();
     const delivery = harness.deliver('provider-cancelled', 'pending message');
@@ -1245,12 +1262,11 @@ describe('voice tool handlers', () => {
     const result = await tools.invokeCurrentUiCommand({ commandId: current.commandId });
 
     expect(JSON.parse(result), result).toEqual({ ok: true, result: { opened: true } });
-    expect(daemonRpc.mock.calls.map(([request]) => request)).toContainEqual(expect.objectContaining({
-      serverUrl: homeUrlA, sessionId: 'm1', method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
-      payload: expect.objectContaining({ qualifiedActionId: 'acme.triage/refresh-issues', input: {
-        repository: 'acme/widgets', privateQuery: 'must-remain-local',
-      } }),
-    }));
+    expect(current.admittedActions).toEqual([{ target: { kind: 'machine', machineId: 'm1' },
+      input: expect.objectContaining({ action: { pluginId: 'acme.triage', localId: 'refresh-issues' },
+        input: { repository: 'acme/widgets', privateQuery: 'must-remain-local' } }),
+      invocation: expect.objectContaining({ surface: 'voice', authority: 'present_user', caller: { kind: 'host' } }),
+    }]);
     expect(result).not.toContain(current.commandId);
     expect(result).not.toContain('must-remain-local');
   });
@@ -1268,10 +1284,11 @@ describe('voice tool handlers', () => {
       input: { repository: 'acme/widgets' },
     });
 
-    expect(daemonRpc.mock.calls.map(([request]) => request)).toContainEqual(expect.objectContaining({
-      serverUrl: homeUrlA, sessionId: 'm1', method: RPC_METHODS.DAEMON_PLUGIN_STRUCTURED_MESSAGE_ACTION_EXECUTE,
-      payload: expect.objectContaining({ qualifiedActionId: 'acme.triage/refresh-issues', input: { repository: 'acme/widgets' } }),
-    }));
+    expect(current.admittedActions).toEqual([{ target: { kind: 'machine', machineId: 'm1' },
+      input: expect.objectContaining({ action: { pluginId: 'acme.triage', localId: 'refresh-issues' },
+        input: { repository: 'acme/widgets' } }),
+      invocation: expect.objectContaining({ surface: 'voice', authority: 'present_user', caller: { kind: 'host' } }),
+    }]);
     expect(JSON.parse(result), result).toEqual({ ok: true, result: { refreshed: true } });
     expect(result).not.toContain('acme/widgets');
   });
@@ -1331,6 +1348,12 @@ describe('voice tool handlers', () => {
       errorCode: 'action_disabled',
       errorMessage: 'action_disabled',
       actionId: 'session.list',
+      details: {
+        available: false, reason: 'disabled_by_policy', actionId: 'session.list', surface: 'voice',
+        availableSurfaces: Object.entries((await import('@happier-dev/protocol/actions/actionSpecs')).getActionSpec('session.list').surfaces)
+          .filter(([, enabled]) => enabled).map(([surface]) => surface),
+        settingsState: 'enabled',
+      },
     }));
   });
 
@@ -1348,18 +1371,30 @@ describe('voice tool handlers', () => {
       ioMode: 'request_response',
     };
     const { ExecutionRunStartResponseSchema } = await import('@happier-dev/protocol/execution/runs/responseSchemas');
-    daemonRpc.mockResolvedValue(ExecutionRunStartResponseSchema.parse({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' }));
+    const admitted: unknown[] = [];
+    const boundary = await createExternalActionAccountHttpBoundary({ serverUrl: homeUrlA,
+      serverIdentityId: 'srv_voice_tools_a', accountId: 'account-a', machineId: 'm1', tokenEpoch: 0,
+      actionId: 'execution.run.start', execute: (input, context) => {
+        admitted.push({ input, target: context.target, invocation: context.invocation });
+        return ExecutionRunStartResponseSchema.parse({ runId: 'run_1', callId: 'call_1', sidechainId: 'call_1' });
+      } });
+    const previousHttp = account.request.getMockImplementation();
+    if (!previousHttp) throw new Error('Voice Account HTTP boundary missing');
+    account.request.mockImplementation(async (url, init) =>
+      await boundary.handle(new URL(String(url)), init) ?? previousHttp(url, init));
 
     const { createVoiceToolHandlers } = await import('./handlers');
-    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1' });
+    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1',
+      currentSessionAddress: { serverId: homeA, sessionId: 's1' } });
 
     const result = await tools.startExecutionRun(startArgs);
 
     expect(JSON.parse(result), result).toMatchObject({ ok: true, runId: 'run_1' });
-    expect(daemonRpc).toHaveBeenCalledWith({ serverUrl: homeUrlA, sessionId: 's1',
-      method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1,
-      payload: { runId: null, resume: false, start: expect.objectContaining(startArgs) },
-    });
+    expect(admitted).toEqual([{ input: expect.objectContaining({ ...startArgs, sessionId: 's1' }),
+      target: { kind: 'machine', machineId: 'm1' },
+      invocation: expect.objectContaining({ surface: 'voice', authority: 'present_user', caller: { kind: 'host' } }),
+    }]);
+    expect(daemonRpc.mock.calls.map(([request]) => request.method)).not.toContain(SESSION_RPC_METHODS.EXECUTION_RUN_START);
   });
 
   it('can apply an execution run action via sessionExecutionRunAction', async () => {
@@ -2374,6 +2409,10 @@ describe('voice tool handlers', () => {
         access: createPlainMachineRowFixture({ id: 'machine-1', accountId: 'account-a' }).access });
       storage.setState({ machines: { [machine.id]: machine },
         machineListByServerId: { [active.binding.conversationSessionAddress.serverId]: [machine] } });
+      const scope = storage.getState().profileScope;
+      if (!scope) throw new Error('Teleport fixture Account scope is missing');
+      const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+      await publishMachineInventoryForTest(scope, [machine]);
       const { writeVoiceProviderSettingsConfig, readLocalConversationVoiceSettings } = await import('@/sync/domains/settings/voiceSettings');
       const { normalizeVoiceSettingsLocalDelta } = await import('@/sync/domains/settings/voiceSettingsPersistence');
       const voice = storage.getState().settings.voice;
@@ -2389,7 +2428,7 @@ describe('voice tool handlers', () => {
       const result = JSON.parse(await tools.teleportVoiceAgentToSessionRoot({}));
       expect(result, JSON.stringify({ result, methods: daemon.requests.map(request => request.method) })).toMatchObject({ ok: true });
       expect(voiceSessionBindingStore.getState().getByConversationSessionId('carrier-1')).toMatchObject({
-        targetSessionAddress: { serverId: active.binding.conversationSessionAddress.serverId, sessionId: 's1' },
+        targetSessionAddress: { serverId: getServerProfileById(active.binding.conversationSessionAddress.serverId)!.serverIdentityId, sessionId: 's1' },
       });
       expect(daemon.readRetainedRun()).toBeNull();
       expect(daemon.requests.filter(request => request.method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP))
@@ -2405,12 +2444,22 @@ describe('voice tool handlers', () => {
     }
   });
 
-  describe('question answers with Voice request approval turned off', () => {
+  describe('question answers with a saved Voice Action waiver', () => {
   beforeEach(() => {
-    // An Action waiver cannot override the person's Voice opt-out.
-    // The default approval/replay path is composed in defaultActionExecutor.planMode.test.ts.
-    state.settings.voice.canApproveRequests = false;
-    state.settings.actionsSettingsV1 = { v: 1, approvalWaivedSurfaces: { 'session.user_action.answer': ['voice'] } };
+    // Voice opt-out removes present-user authority; the saved Action waiver
+    // still admits host automation through the canonical approval policy.
+    account.replaceVoice({ ...storage.getState().settings.voice, canApproveRequests: false });
+    account.replaceSettings(settingsParse({ ...storage.getState().settings,
+      actionsSettingsV1: ActionsSettingsV1Schema.parse({
+        v: 1, approvalWaivedSurfaces: { 'session.user_action.answer': ['voice'] },
+      }) }));
+    state = storage.getState();
+    expect(state.settings.voice.canApproveRequests).toBe(false);
+    expect(account.persistedSettings.voice.canApproveRequests).toBe(false);
+    daemonRpc.mockImplementation(async request => {
+      if (request.method === RPC_METHODS.SESSION_USER_ACTION_ANSWER) return { ok: true };
+      throw new Error(`Unexpected Voice daemon RPC: ${request.method}`);
+    });
   });
 
   it('does not answer a covered user-action request', async () => {
@@ -2449,7 +2498,7 @@ describe('voice tool handlers', () => {
     expect(daemonRpc.mock.calls.map(([request]) => request.method)).not.toContain(RPC_METHODS.SESSION_USER_ACTION_ANSWER);
   });
 
-  it('requires present-user authority for a pending AskUserQuestion despite structured spoken answers', async () => {
+  it('answers the pending question under the saved waiver without granting present-user authority', async () => {
     state.sessions.s1.agentState.requests = {
       req_question: { id: 'req_question', tool: 'AskUserQuestion', kind: 'user_action' },
       req_permission: { id: 'req_permission', tool: 'Bash', kind: 'permission' },
@@ -2462,19 +2511,23 @@ describe('voice tool handlers', () => {
       answers: [{ question: 'Continue?', values: ['Yes'] }],
     });
 
-    expect(JSON.parse(result)).toMatchObject({ ok: false, errorCode: 'present_user_required' });
-    expect(daemonRpc).not.toHaveBeenCalled();
+    expect(JSON.parse(result)).toEqual({ ok: true, status: 'done', sessionId: 's1', requestId: 'req_question' });
+    expect(daemonRpc.mock.calls.map(([request]) => request)).toEqual([{
+      serverUrl: homeUrlA, sessionId: 's1', method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
+      payload: { id: 'req_question', approved: true, answers: { 'Continue?': ['Yes'] }, answeringClientCategory: undefined },
+    }]);
   });
 
   it('requests person approval without executing an approval-required spoken answer', async () => {
-    state.settings.actionsSettingsV1 = {
+    account.replaceSettings(settingsParse({ ...storage.getState().settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
       v: 1,
       actions: {
         'session.user_action.answer': {
           approvalRequiredSurfaces: ['voice'],
         },
       },
-    };
+    }) }));
+    state = storage.getState();
     state.sessions.s1.agentState.requests = {
       req_question: { id: 'req_question', tool: 'AskUserQuestion', kind: 'user_action' },
     };
@@ -2497,7 +2550,7 @@ describe('voice tool handlers', () => {
     expect(artifactCreateRequests).toHaveBeenCalled();
   });
 
-  it('does not grant present-user authority to a spoken reject decision for a permission-labelled question', async () => {
+  it('preserves a waived spoken reject decision for a permission-labelled question', async () => {
     state.sessions.s1.agentState.requests = {
       req_question: {
         id: 'req_question',
@@ -2525,11 +2578,14 @@ describe('voice tool handlers', () => {
       decision: 'reject',
     });
 
-    expect(JSON.parse(result)).toMatchObject({ ok: false, errorCode: 'present_user_required', sessionId: 's1', requestId: 'req_question' });
-    expect(daemonRpc).not.toHaveBeenCalled();
+    expect(JSON.parse(result)).toEqual({ ok: true, status: 'done', sessionId: 's1', requestId: 'req_question' });
+    expect(daemonRpc.mock.calls.map(([request]) => request)).toEqual([{
+      serverUrl: homeUrlA, sessionId: 's1', method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
+      payload: { id: 'req_question', approved: false, answers: { 'May I create QA_DENY_PATH.txt?': ["No, don\'t create it"] }, answeringClientCategory: undefined },
+    }]);
   });
 
-  it('requires present-user authority for ExitPlanMode even when Voice requests changes', async () => {
+  it('preserves waived ExitPlanMode change requests', async () => {
     state.sessions.s1.agentState.requests = {
       req_exit_plan: { id: 'req_exit_plan', tool: 'ExitPlanMode', kind: 'user_action' },
     };
@@ -2542,11 +2598,14 @@ describe('voice tool handlers', () => {
       reason: 'The plan needs another pass before exiting plan mode.',
     });
 
-    expect(JSON.parse(result), result).toMatchObject({ ok: false, errorCode: 'present_user_required' });
-    expect(daemonRpc).not.toHaveBeenCalled();
+    expect(JSON.parse(result)).toEqual({ ok: true, status: 'done', sessionId: 's1', requestId: 'req_exit_plan' });
+    expect(daemonRpc.mock.calls.map(([request]) => request)).toEqual([{
+      serverUrl: homeUrlA, sessionId: 's1', method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
+      payload: { id: 'req_exit_plan', approved: false, reason: 'The plan needs another pass before exiting plan mode.', answeringClientCategory: undefined },
+    }]);
   });
 
-  it('rejects a spoken user-action answer before entering the scoped RPC', async () => {
+  it('delivers a waived spoken answer through the scoped RPC', async () => {
     state.sessions.s1.agentState.requests = {
       req_question: { id: 'req_question', tool: 'AskUserQuestion', kind: 'user_action' },
     };
@@ -2558,11 +2617,14 @@ describe('voice tool handlers', () => {
       answers: [{ question: 'Continue?', values: ['Yes'] }],
     });
 
-    expect(JSON.parse(result)).toMatchObject({ ok: false, errorCode: 'present_user_required' });
-    expect(daemonRpc).not.toHaveBeenCalled();
+    expect(JSON.parse(result)).toEqual({ ok: true, status: 'done', sessionId: 's1', requestId: 'req_question' });
+    expect(daemonRpc.mock.calls.map(([request]) => request)).toEqual([{
+      serverUrl: homeUrlA, sessionId: 's1', method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
+      payload: { id: 'req_question', approved: true, answers: { 'Continue?': ['Yes'] }, answeringClientCategory: undefined },
+    }]);
   });
 
-  it('retains present-user authority requirements for a transcript-backed user-action request', async () => {
+  it('answers a transcript-backed request under the saved waiver', async () => {
     state.sessions.sys_voice.agentState.requests = {};
     state.sessions.s1.agentState.requests = {};
     state.sessions.s2.agentState.requests = {};
@@ -2593,11 +2655,14 @@ describe('voice tool handlers', () => {
       answers: [{ question: 'Continue?', values: ['Yes'] }],
     });
 
-    expect(JSON.parse(result)).toMatchObject({ ok: false, errorCode: 'present_user_required', sessionId: 's1', requestId: 'req_question' });
-    expect(daemonRpc).not.toHaveBeenCalled();
+    expect(JSON.parse(result)).toEqual({ ok: true, status: 'done', sessionId: 's1', requestId: 'req_question' });
+    expect(daemonRpc.mock.calls.map(([request]) => request)).toEqual([{
+      serverUrl: homeUrlA, sessionId: 's1', method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
+      payload: { id: 'req_question', approved: true, answers: { 'Continue?': ['Yes'] }, answeringClientCategory: undefined },
+    }]);
   });
 
-  it('refreshes the resolved target session messages before failing a user-action response', async () => {
+  it('refreshes the resolved target messages before answering a waived user action', async () => {
     state.sessions.s1.agentState.requests = {};
     seedMessages('s1', []);
     messagePages.set('s1', SessionMessagesPageV1Schema.parse({ messages: [SessionMessageV1Schema.parse({
@@ -2617,8 +2682,11 @@ describe('voice tool handlers', () => {
     });
 
     expect(messageReads).toContain('s1');
-    expect(JSON.parse(result)).toMatchObject({ ok: false, errorCode: 'present_user_required', sessionId: 's1', requestId: 'req_question_after_refresh' });
-    expect(daemonRpc).not.toHaveBeenCalled();
+    expect(JSON.parse(result)).toEqual({ ok: true, status: 'done', sessionId: 's1', requestId: 'req_question_after_refresh' });
+    expect(daemonRpc.mock.calls.map(([request]) => request)).toEqual([{
+      serverUrl: homeUrlA, sessionId: 's1', method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
+      payload: { id: 'req_question_after_refresh', approved: true, answers: { 'Continue with the write?': ['Yes'] }, answeringClientCategory: undefined },
+    }]);
   });
 
   it('does not answer a pending user action from another Session when Voice context is admitted to the current Session', async () => {
@@ -2649,7 +2717,7 @@ describe('voice tool handlers', () => {
     expect(daemonRpc).not.toHaveBeenCalled();
   });
 
-  it('forces a session refresh before failing a user-action response when the known session state is stale', async () => {
+  it('refreshes stale Session state before answering a waived user action', async () => {
     state.sessions.s1.agentState.requests = {};
     seedMessages('s1', []);
     sessionDetailReplies.set('s1', createSessionFixture({ ...state.sessions.s1, agentState: { requests: {
@@ -2669,8 +2737,11 @@ describe('voice tool handlers', () => {
     });
 
     expect(sessionDetailReads).toContain('s1');
-    expect(JSON.parse(result)).toMatchObject({ ok: false, errorCode: 'present_user_required', sessionId: 's1', requestId: 'req_question_after_force_refresh' });
-    expect(daemonRpc).not.toHaveBeenCalled();
+    expect(JSON.parse(result)).toEqual({ ok: true, status: 'done', sessionId: 's1', requestId: 'req_question_after_force_refresh' });
+    expect(daemonRpc.mock.calls.map(([request]) => request)).toEqual([{
+      serverUrl: homeUrlA, sessionId: 's1', method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
+      payload: { id: 'req_question_after_force_refresh', approved: true, answers: { 'Continue with local voice QA?': ['Yes'] }, answeringClientCategory: undefined },
+    }]);
   });
 
   });
@@ -3298,7 +3369,7 @@ describe('voice tool reset Account authority', () => {
       })();
       const request = ApprovalRequestSchema.parse(JSON.parse(artifacts.readPlainBody(approval.id) ?? 'null'));
       expect(request).toMatchObject({ v: 2, status: 'open', actionId: 'ui.voice_global.reset', executionOriginV1: {
-        authority: 'account_automation', surface: 'voice', serverId: account.scope.serverId,
+        authority: 'present_user', surface: 'voice', serverId: account.scope.serverId,
         serverIdentityId: 'srv_voice-settings-account', accountId: account.scope.accountId, requestId: 'voice-reset-test',
       } });
       expect(account.writes).toHaveLength(0);

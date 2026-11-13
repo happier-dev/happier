@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { storage } from '@/sync/domains/state/storage';
+import type { Machine } from '@/sync/domains/state/storageTypes';
+import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { getAppliedActiveServerSnapshot, isAppliedActiveServerRuntimeAvailable, publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
@@ -14,8 +17,10 @@ import {
   projectVoiceExecutionMachineReadiness,
 } from './executionMachine';
 
-function machine(id: string, active: boolean, extra: Record<string, unknown> = {}) {
-  return { id, active, createdAt: 1, updatedAt: 1, metadata: {}, ...extra } as any;
+function machine(id: string, active: boolean, extra: Partial<Machine> = {}) {
+  const row = createMachineFixture({ id, active, activeAt: 0, ...extra });
+  publishMachineActivityForTest([row]);
+  return row;
 }
 
 describe('resolveVoiceExecutionMachineIdFromState', () => {
@@ -203,6 +208,7 @@ describe('resolveVoiceExecutionMachineIdFromState', () => {
 
     expect(resolveVoiceExecutionMachineIdFromState(state)).toBe('replacement');
     state.machines.replacement.active = false;
+    publishMachineActivityForTest([state.machines.replacement]);
     expect(resolveVoiceExecutionMachineIdFromState(state)).toBe(null);
     expect(resolveVoiceExecutionMachineSelectionFromState(state)).toEqual({
       kind: 'selected_unreachable',
@@ -275,7 +281,8 @@ describe('resolveVoiceExecutionMachineIdFromState', () => {
       expect(resolveVoiceExecutionMachineSelectionFromState(stateFor({ newer: { ...newer, createdAt: older.createdAt }, older })))
         .toEqual({ kind: 'resolved', machineId: 'newer' });
       // Both Machines remain reachable under the canonical presence grace rule.
-      expect(resolveVoiceExecutionMachineSelectionFromState(stateFor({ newer: { ...newer, active: false, activeAt: Date.now() - 1_000 }, older })))
+      publishMachineActivityForTest([newer], { active: false, activeAt: Date.now() - 1_000 });
+      expect(resolveVoiceExecutionMachineSelectionFromState(stateFor({ newer, older })))
         .toEqual({ kind: 'resolved', machineId: 'newer' });
       expect(resolveVoiceExecutionMachineSelectionFromState(stateFor({ newer: { ...newer, replacedByMachineId: 'older' }, older })))
         .toEqual({ kind: 'resolved', machineId: 'older' });
@@ -283,7 +290,8 @@ describe('resolveVoiceExecutionMachineIdFromState', () => {
         .toEqual({ kind: 'resolved', machineId: 'older' });
       const scope = { serverId, accountId: settingsScope.accountId };
       useVoiceTargetStore.getState().rememberAutoTargetMachine(scope, 'newer');
-      expect(resolveVoiceExecutionMachineSelectionFromState({ ...stateFor({ newer: { ...newer, active: false }, older }),
+      publishMachineActivityForTest([newer], { active: false, activeAt: 0 });
+      expect(resolveVoiceExecutionMachineSelectionFromState({ ...stateFor({ newer, older }),
         settingsScope: scope,
       })).toEqual({ kind: 'selected_unreachable', machineId: 'newer' });
       expect(settingsWrites).toBe(0);
