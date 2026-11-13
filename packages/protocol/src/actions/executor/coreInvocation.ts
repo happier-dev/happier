@@ -71,8 +71,8 @@ export type CoreOptions = Readonly<{
       prepareOnly?: boolean;
       /** Host-local review projection, not approval or permission to dispatch. */
       reviewOnly?: true;
-      /** Only public execute offers the host's transient UI default confirmation. */
-      confirmUiDefault?: boolean;
+      /** Immediate execute retains its already prepared memory admission across dispatch. */
+      dispatchImmediately?: boolean;
       prepared?: PreparedCoreAdmission;
       /** Private schema admission for this exact value, invalidated by input binding. */
       admittedInputSchema?: ActionSpec['inputSchema'];
