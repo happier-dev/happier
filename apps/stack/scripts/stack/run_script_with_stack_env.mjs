@@ -862,6 +862,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
       let preservedDaemonForRestart = false;
       let preserveDaemonForRestart = true;
       let restartIdentityDaemons = [];
+      const skippedIdentityDaemons = [];
 
       try {
         // If this is an ephemeral-port stack and it's already running, avoid spawning a second copy.
@@ -920,6 +921,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
               && runtimeLaunchContext.runtimeMode?.mode === 'source-snapshot'
               && preserveDaemonForRestart;
             restartIdentityDaemons = runnerRefreshesIdentities ? [] : await readRunningStackIdentityDaemons({
+              skipped: skippedIdentityDaemons,
               runtimeState,
               cliHomeDir: getCliHomeDirFromEnvOrDefault({ stackBaseDir: baseDir, env }),
               stackName,
@@ -1317,7 +1319,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
                   `[stack] log: ${logPath}`
               );
             }
-            await restartStackIdentityDaemons({ rootDir, stackName, identities: restartIdentityDaemons, env: childEnv });
+            await restartStackIdentityDaemons({ rootDir, stackName, identities: restartIdentityDaemons, skipped: skippedIdentityDaemons, stackBaseDir: baseDir, env: childEnv });
           } catch (e) {
             // Attach some log context so failures are debuggable even when a higher-level
             // command cleans up the sandbox directory afterwards.
@@ -1497,7 +1499,7 @@ export async function runStackScriptWithStackEnv({ rootDir, stackName, scriptPat
                 `[stack] log: ${logPath}`
             );
           }
-          await restartStackIdentityDaemons({ rootDir, stackName, identities: restartIdentityDaemons, env });
+          await restartStackIdentityDaemons({ rootDir, stackName, identities: restartIdentityDaemons, skipped: skippedIdentityDaemons, stackBaseDir: baseDir, env });
         } catch (e) {
           e = await readBackgroundRunnerFailure(e, { logPath, env,
             sourceSnapshot: runtimeLaunchContext.runtimeMode?.mode === 'source-snapshot' });

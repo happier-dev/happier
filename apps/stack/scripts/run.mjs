@@ -9,7 +9,7 @@ import { fetchHappierHealth, getServerComponentName, isHappierServerRunning, wai
 import { resolveServerShutdownGraceMs } from './utils/server/shutdown_grace.mjs';
 import { prepareStackRelay } from './utils/server/infra/iroh/runtime.mjs';
 import { ensureDepsInstalled, requireDir } from './utils/proc/pm.mjs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { statSync } from 'node:fs';
 import { mkdir, mkdtemp } from 'node:fs/promises';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -968,9 +968,10 @@ async function main() {
     const sourceRuntime = sourceSnapshot && localDaemonRequested
       ? await readStackRuntimeStateFile(runtimeStatePath) : null;
     const sourceLaunch = sourceRuntime?.sourceRuntimeLaunch;
+    const skipped = [];
     const identities = sourceLaunch
       ? await readRunningStackIdentityDaemons({
-        runtimeState: sourceRuntime, cliHomeDir,
+        runtimeState: sourceRuntime, cliHomeDir, skipped,
         stackName, serverUrl: effectiveInternalServerUrl, env: daemonScopeEnv,
         excludeRuntimeEntrypoint: sourceLaunch.entrypoint,
       }) : [];
@@ -1011,7 +1012,7 @@ async function main() {
     });
     ownedDaemonPid = typeof daemonState?.pid === 'number' ? daemonState.pid : null;
     if (daemonState?.status === 'running') {
-      await restartStackIdentityDaemons({ stackName, identities }, {
+      await restartStackIdentityDaemons({ stackName, identities, skipped, stackBaseDir: runtimeStatePath ? dirname(runtimeStatePath) : null }, {
         startIdentityDaemonImpl: identity => startLocalDaemonWithAuth({
           ...launchOptions,
           cliHomeDir: resolveCliHomeDirForIdentity({ cliHomeDir, identity }),

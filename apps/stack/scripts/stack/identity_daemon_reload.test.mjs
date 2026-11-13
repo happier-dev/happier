@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, mkdir, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -116,4 +116,49 @@ for (const unavailable of ['unreachable', 'throws']) test(`identity reload skips
   assert.equal(warnings.length, 1);
   assert.match(warnings[0], /qa-f-e2ee-fixtures.*skipped.*scope_unavailable/);
   assert.doesNotMatch(warnings[0], /private diagnostic/);
+});
+
+for (const thrown of [false, true]) test(`reload publishes exactly one outcome per named identity (throws=${thrown})`, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), 'identity-outcomes-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await mkdir(join(root, 'source-runtime'), { recursive: true });
+  if (thrown) await writeFile(join(root, 'source-runtime/reload.json'), JSON.stringify({ status: 'ready', logPath: '/existing-log' }));
+  const lines = [];
+  const log = console.log, warn = console.warn;
+  console.log = console.warn = line => lines.push(line);
+  t.after(() => { console.log = log; console.warn = warn; });
+  const skipped = [];
+  const identities = await readRunningStackIdentityDaemons({
+    runtimeState: { daemon: { desiredStateByIdentity: { restored: 'running', refused: 'running', stopped: 'stopped' } } },
+    cliHomeDir: join(root, 'cli'), stackName: 'outcomes', env: {}, skipped,
+  }, { checkDaemonStateImpl: async () => ({ status: 'running' }) });
+  const result = await restartStackIdentityDaemons({ stackName: 'outcomes', identities, skipped, stackBaseDir: root }, {
+    startIdentityDaemonImpl: async identity => {
+      if (identity === 'restored') return { started: true };
+      const refusal = { ok: false, code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', reason: 'closure_changed' };
+      if (thrown) throw Object.assign(new Error('private diagnostic'), refusal);
+      return refusal;
+    },
+  });
+  assert.deepEqual(result.failures, [{ identity: 'refused', code: 'SOURCE_RUNTIME_RELOAD_REQUIRED', reason: 'closure_changed' }]);
+  for (const identity of ['restored', 'refused', 'stopped']) {
+    assert.equal(lines.filter(line => line.includes(`identity daemon ${identity} `)).length, 1);
+  }
+  assert.match(lines.find(line => line.includes('identity daemon restored ')), /restored/);
+  assert.match(lines.find(line => line.includes('identity daemon stopped ')), /skipped.*owner_stopped/);
+  assert.match(lines.find(line => line.includes('identity daemon refused ')), /refused.*SOURCE_RUNTIME_RELOAD_REQUIRED.*closure_changed/);
+  assert.doesNotMatch(lines.join('\n'), /private diagnostic/);
+  const status = JSON.parse(await readFile(join(root, 'source-runtime/reload.json'), 'utf8'));
+  assert.equal(status.status, thrown ? 'ready' : undefined);
+  assert.equal(status.logPath, thrown ? '/existing-log' : undefined);
+  assert.deepEqual(status.identityRestore.failures, result.failures);
+});
+
+test('a daemon start that did not start is never reported restored', async () => {
+  const result = await restartStackIdentityDaemons({ identities: ['stopped', 'failed'] }, {
+    startIdentityDaemonImpl: async identity => identity === 'stopped'
+      ? { ok: true, started: false, reason: 'daemon-stopped-by-owner' } : { started: false },
+  });
+  assert.deepEqual(result.started, []);
+  assert.deepEqual(result.failures, [{ identity: 'failed', reason: 'daemon_start_failed' }]);
 });

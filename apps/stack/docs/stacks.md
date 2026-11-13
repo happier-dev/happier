@@ -179,6 +179,11 @@ and does not fail or retry the stack reload. Discovery reports a scoped or
 unreachable identity as skipped and continues restoring the other eligible
 identities independently. The final participant verification still reports
 unavailable participants as `NOT_READY`.
+Each discovered named identity emits one restore outcome: `restored`, `refused`
+with its typed code/reason, or `skipped` with its eligibility reason. Source
+reload status retains these diagnostics under
+`runtime.sourceReload.identityRestore` in `stack info --json`, alongside the
+existing preparation result. A non-starting daemon is never counted as restored.
 
 Use `hstack stack start <stack> --runtime=source --restart --verify` for a
 background reload followed by one `READY` or `NOT_READY` verdict. Verification

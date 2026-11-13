@@ -1,3 +1,4 @@
+import { dirname } from 'node:path';
 import { existsSync } from 'node:fs';
 
 import { readRunningStackIdentityDaemons, restartStackIdentityDaemons } from '../../stack/identity_daemon_reload.mjs';
@@ -370,13 +371,15 @@ export function createHappyCliReloadExecutor({
       if (!startDaemon || isShuttingDown?.()) return { skipped: true, reason: 'daemon-disabled' };
       if (!successor) return { skipped: true, reason: 'no-prepared-source' };
 
+      const skipped = [];
       const identities = runtimeStatePath && cliIdentity === 'default'
         ? await readRunningStackIdentityDaemons({
-          runtimeState: await readStackRuntimeStateFileImpl(runtimeStatePath), cliHomeDir,
+          runtimeState: await readStackRuntimeStateFileImpl(runtimeStatePath), cliHomeDir, skipped,
           stackName, serverUrl: internalServerUrl, env,
           excludeRuntimeEntrypoint: successor.launch.entrypoint,
         }) : [];
-      const refreshIdentities = () => restartStackIdentityDaemons({ stackName, identities }, {
+      const refreshIdentities = () => restartStackIdentityDaemons({ stackName, identities, skipped,
+        stackBaseDir: runtimeStatePath ? dirname(runtimeStatePath) : null }, {
         startIdentityDaemonImpl: identity => launchSuccessor({
           cliHomeDir: resolveCliHomeDirForIdentity({ cliHomeDir, identity }),
           cliIdentity: identity,

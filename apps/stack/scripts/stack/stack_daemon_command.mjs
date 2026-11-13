@@ -274,7 +274,8 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json, em
           stackName,
           cliIdentity: identity,
         });
-        return { ok: true, action, cliIdentity: identity, cliHomeDir, status: status.trim() };
+        return { ok: true, action, cliIdentity: identity, cliHomeDir, status: status.trim(),
+          ...(startResult?.started === false ? { started: false, reason: startResult.reason } : {}) };
       }
 
       if (action === 'stop') {
