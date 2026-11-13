@@ -1,6 +1,6 @@
 import type { ActionId } from './actionIds.js';
 import type { ActionsSettingsV1 } from './actionSettings.js';
-import type { ActionSpec, ActionToolExposureMode, ActionToolExposureSurface } from './actionSpecs.js';
+import type { ActionSpec, ActionSurfaces, ActionToolExposureMode, ActionToolExposureSurface } from './actionSpecs.js';
 import { SignedRootActionIdSchema } from './actionSpecs.js';
 import {
   ACTION_TOOL_EXPOSURE_SURFACES,
@@ -32,7 +32,7 @@ export function resolveActionToolExposureMode(
 
 export function isActionDirectToolExposedOn(
   spec: ActionSpec,
-  surface: ActionToolExposureSurface,
+  surface: keyof ActionSurfaces,
   context?: ActionToolExposureResolutionContext | null,
 ): boolean {
   const availability = resolveActionSurfaceAvailability({

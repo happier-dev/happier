@@ -281,7 +281,7 @@ describe('bundledSpeechRuntime', () => {
     const actualVoice = { ...preference, value: 'bound-voice' };
     speech.speechSynthesizeRpc.mockResolvedValueOnce({ ...wav, appliedVoice: actualVoice });
     speech.encodedAudio.start.mockImplementationOnce(async () => { playbackEntered.resolve(); });
-    const preparation = prepare(preference);
+    const preparation = await prepare(preference);
     const speaking = runtimeFor([CATALOG_TTS_DECLARATION]).speak(CATALOG_TTS_ID, {
       text: 'hello', providerConfig: config,
       preparation, registerPlaybackStopper: () => () => {},
@@ -300,7 +300,7 @@ describe('bundledSpeechRuntime', () => {
   it('drops a synthesis completed after its captured target retires', async () => {
     const pending = createDeferred<typeof wav>();
     const synthesisEntered = createDeferred<void>();
-    const preparation = prepare(null);
+    const preparation = await prepare(null);
     speech.speechSynthesizeRpc.mockImplementationOnce(() => {
       synthesisEntered.resolve();
       voiceSessionBindingStore.getState().unbind('runtime-conversation');

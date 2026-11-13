@@ -97,9 +97,9 @@ export function isActionToolExposureSurface(surface: keyof ActionSurfaces): surf
 
 export function getDefaultActionToolExposureMode(
   spec: Readonly<{ id: string; toolExposure?: ActionSpec['toolExposure'] }>,
-  surface: ActionToolExposureSurface,
+  surface: keyof ActionSurfaces,
 ): ActionToolExposureMode {
-  const explicit = spec.toolExposure?.[surface];
+  const explicit = isActionToolExposureSurface(surface) ? spec.toolExposure?.[surface] : undefined;
   if (explicit) return explicit;
   if (surface === 'agent' || surface === 'mcp') {
     return 'discoverable_only';
@@ -109,15 +109,17 @@ export function getDefaultActionToolExposureMode(
 
 function getSettingsOverride(
   spec: Readonly<{ id: string; toolExposure?: ActionSpec['toolExposure'] }>,
-  surface: ActionToolExposureSurface,
+  surface: keyof ActionSurfaces,
   settings?: ActionsSettingsV1 | null,
 ): ActionToolExposureMode | null {
-  return settings?.actions?.[spec.id as ActionId]?.toolExposureModes?.[surface] ?? null;
+  return isActionToolExposureSurface(surface)
+    ? settings?.actions?.[spec.id as ActionId]?.toolExposureModes?.[surface] ?? null
+    : null;
 }
 
 export function resolveActionToolExposureModeForSurface(
   spec: Readonly<{ id: string; toolExposure?: ActionSpec['toolExposure'] }>,
-  surface: ActionToolExposureSurface,
+  surface: keyof ActionSurfaces,
   settings?: ActionsSettingsV1 | null,
 ): ActionToolExposureMode {
   return getSettingsOverride(spec, surface, settings) ?? getDefaultActionToolExposureMode(spec, surface);

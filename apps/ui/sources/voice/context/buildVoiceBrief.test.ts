@@ -13,7 +13,7 @@ import { t } from '@/text';
 import { WorkflowRunPrivateMetadataV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { readInboxSessionTitle } from '@/components/inbox/sessionAttention/inboxSessionPrivacy';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
-import { createSessionListPresentationSource } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
+import { createSessionListPresentationSource, readSessionPresentationControl } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 import { buildInboxItems } from '@/components/inbox/inboxItems';
 import { countInboxNeedsYou } from '@/components/inbox/inboxCounts';
 import { computeVisibleSessionListIndex } from '@/sync/domains/session/listing/computeVisibleSessionListIndex';
@@ -28,7 +28,11 @@ const EMPTY_WORKFLOW_ATTENTION_SOURCE: WorkflowAttentionSource = { serverId: nul
 function buildVoiceBrief(input: Parameters<typeof buildBrief>[0]) {
     const { inbox } = input;
     if ('needsYouShelf' in inbox) return buildBrief(input);
-    const candidates = [...inbox.sessionPresentation.sessionsNeedingAttention.map(entry => entry.candidate), ...inbox.sessionPresentation.readySessions];
+    const candidates = [...inbox.sessionPresentation.sessionsNeedingAttention.map(entry => entry.candidate), ...inbox.sessionPresentation.readySessions]
+        .map(candidate => {
+            if (!candidate.address) throw new Error('The sidebar fixture requires a qualified Session address');
+            return { ...candidate, address: candidate.address };
+        });
     const workflowRuns = inbox.workGroups.flatMap(group => group.items.flatMap(item =>
         item.kind === 'workflow_run' && item.row.summary
             ? [{ serverId: inbox.workflowAttention.serverId ?? 'home-a', summary: item.row.summary }] : []));
@@ -36,7 +40,7 @@ function buildVoiceBrief(input: Parameters<typeof buildBrief>[0]) {
         source: candidates.map(candidate => ({ type: 'session' as const, serverId: candidate.address.serverId, sessionId: candidate.sessionId })),
         resolveSessionRow: (serverId, id) => {
             const candidate = candidates.find(candidate => candidate.sessionId === id && candidate.address.serverId === serverId);
-            return candidate ? candidate.presentationSource?.row ?? buildSessionListRenderableFromSession(candidate.session) : null;
+            return candidate ? candidate.presentationSource?.row ?? buildSessionListRenderableFromSession(readSessionPresentationControl(candidate.session)) : null;
         },
         hideInactiveSessions: false, pinnedSessionKeysV1: [], sessionListGroupOrderV1: {},
         sessionListAttentionPlacementV1: 'both', attentionPlacement: { mode: 'global' },
@@ -91,7 +95,7 @@ function buildBriefFromInboxFixture(input: Parameters<typeof buildVoiceBrief>[0]
 describe('Voice brief from the mounted Inbox', () => {
     it('names explicitly requested Brief work independently of automatic updates at Account scale', () => {
         const base = source();
-        const original = base.sessionPresentation.readySessions[0]!.session;
+        const original = readSessionPresentationControl(base.sessionPresentation.readySessions[0]!.session);
         const candidates = Array.from({ length: 1000 }, (_, index) => buildSessionActivityAttention({
             session: createSessionFixture({ ...original, id: `brief-${index}`,
                 pendingBlockedCount: index < 8 ? 1 : 0,
@@ -117,7 +121,7 @@ describe('Voice brief from the mounted Inbox', () => {
         // The sidebar filters three admitted Session requests out of the larger
         // Account Inbox; both projections use their real producers.
         const base = source();
-        const original = base.sessionPresentation.readySessions[0]!.session;
+        const original = readSessionPresentationControl(base.sessionPresentation.readySessions[0]!.session);
         const candidates = ([['pending_blocked', 13], ['failed', 29], ['ready_after_read', 49]] as const)
             .flatMap(([reason, count]) => Array.from({ length: count }, (_, index) => buildSessionActivityAttention({
                 session: createSessionFixture({ ...original, id: `${reason}-sidebar-${index}`,
@@ -125,7 +129,7 @@ describe('Voice brief from the mounted Inbox', () => {
                     viewer: { ...original.viewer!, attention: { needsAttention: true, reasons: [reason], primary: reason, presentation: 'full' } },
                 }), nowMs: 1_000,
             })));
-        const rows = new Map(candidates.map(candidate => [candidate.session.id, buildSessionListRenderableFromSession(candidate.session)]));
+        const rows = new Map(candidates.map(candidate => [candidate.session.id, buildSessionListRenderableFromSession(readSessionPresentationControl(candidate.session))]));
         const index = computeVisibleSessionListIndex({
             source: candidates.filter(candidate => !['pending_blocked-sidebar-10', 'pending_blocked-sidebar-11', 'pending_blocked-sidebar-12'].includes(candidate.session.id))
                 .map(candidate => ({ type: 'session' as const, serverId: 'home-a', sessionId: candidate.session.id })),
@@ -162,11 +166,11 @@ describe('Voice brief from the mounted Inbox', () => {
     });
     it('uses the sidebar display label for Sessions without authored names while retaining exact totals', () => {
         const inbox = source();
-        const base = inbox.sessionPresentation.readySessions[0]!.session;
+        const base = readSessionPresentationControl(inbox.sessionPresentation.readySessions[0]!.session);
         const unnamed = ([['pending_blocked', 13], ['failed', 14]] as const).flatMap(([reason, count]) =>
             Array.from({ length: count }, (_, index) => {
                 const session = createSessionFixture({ ...base, id: `${reason}-unnamed-${index}`,
-                    metadata: { path: '/private/unnamed-work' }, pendingBlockedCount: reason === 'pending_blocked' ? 1 : 0,
+                    metadata: { host: 'test-host', path: '/private/unnamed-work' }, pendingBlockedCount: reason === 'pending_blocked' ? 1 : 0,
                     viewer: { ...base.viewer!, attention: { needsAttention: true, reasons: [reason], primary: reason, presentation: 'full' } },
                 });
                 const row = buildSessionListRenderableFromSession(session, undefined, [{ id: 'first-message', kind: 'user-text',
@@ -191,8 +195,8 @@ describe('Voice brief from the mounted Inbox', () => {
     });
     it.each([true, false])('shares sidebar fallback labels only when Session summary disclosure allows it (share=%s)', shareSessionSummary => {
         const inbox = source();
-        const original = inbox.sessionPresentation.readySessions[0]!.session;
-        const session = createSessionFixture({ ...original, id: 'fallback-ready', metadata: { path: '/home/alice/project' } });
+        const original = readSessionPresentationControl(inbox.sessionPresentation.readySessions[0]!.session);
+        const session = createSessionFixture({ ...original, id: 'fallback-ready', metadata: { host: 'test-host', path: '/home/alice/project' } });
         const candidate = buildSessionActivityAttention({ session, nowMs: 1_000 });
         const brief = buildBriefFromInboxFixture({ inbox: { ...inbox, sessionPresentation:
             buildInboxSessionPresentation({ overview: buildActivityOverviewFromCandidates([candidate]) }) },
@@ -205,7 +209,7 @@ describe('Voice brief from the mounted Inbox', () => {
     });
     it.each([false, true])('preserves the sidebar count when the Account Inbox has another unloaded Run (unloaded run=%s)', (unloadedRun) => {
         const base = source();
-        const session = base.sessionPresentation.readySessions[0]!.session;
+        const session = readSessionPresentationControl(base.sessionPresentation.readySessions[0]!.session);
         const candidates = ([['pending_blocked', 11], ['manual', 8], ['failed', 31], ['ready_after_read', 45]] as const)
             .flatMap(([reason, count]) => Array.from({ length: count }, (_, index) => buildSessionActivityAttention({
                 session: createSessionFixture({ ...session, id: `${reason}-${index}`, pendingBlockedCount: reason === 'pending_blocked' ? 1 : 0,
@@ -318,7 +322,7 @@ describe('Voice brief from the mounted Inbox', () => {
     });
     it('keeps the sidebar untitled fallback but omits unreadable work without claiming caught up', () => {
         const inbox = source();
-        const original = inbox.sessionPresentation.readySessions[0]!.session;
+        const original = readSessionPresentationControl(inbox.sessionPresentation.readySessions[0]!.session);
         const sessions = [createSessionFixture({ ...original, id: 'locked', encryptionMode: 'e2ee', encryptedContentAvailability: 'encrypted_access_pending', metadata: null }),
             createSessionFixture({ ...original, id: 'unnamed', metadata: null })];
         const row = workflowRunRowFromSummary(createWorkflowRunSummaryFixture({ id: 'unnamed-run', state: 'interrupted' }));
@@ -362,16 +366,16 @@ describe('Voice brief from the mounted Inbox', () => {
     });
 
     it.each([
-        ['permission', { tool: 'Bash', arguments: { command: 'yarn test:e2e' } }, () => t('voiceMoments.briefWantsTo', { action: t('voiceMoments.briefRunCommand', { command: 'yarn test:e2e' }) })],
-        ['permission', { tool: 'Edit', arguments: { file_path: 'src/index.ts' } }, () => t('voiceMoments.briefWantsTo', { action: t('voice.readiness.permissionAccessFile', { path: 'src/index.ts' }) })],
-        ['permission', { tool: 'WebFetch', arguments: {} }, () => t('voiceMoments.briefWantsTo', { action: t('voice.readiness.permissionContinueAction') })],
+        ['permission', { tool: 'Bash', arguments: { command: 'yarn test:e2e' } }, (): string => t('voiceMoments.briefWantsTo', { action: t('voiceMoments.briefRunCommand', { command: 'yarn test:e2e' }) })],
+        ['permission', { tool: 'Edit', arguments: { file_path: 'src/index.ts' } }, (): string => t('voiceMoments.briefWantsTo', { action: t('voice.readiness.permissionAccessFile', { path: 'src/index.ts' }) })],
+        ['permission', { tool: 'WebFetch', arguments: {} }, (): string => t('voiceMoments.briefWantsTo', { action: t('voice.readiness.permissionContinueAction') })],
         ['user_action', { tool: 'AskUserQuestion', arguments: { questions: [{ question: 'Which branch?', header: 'Branch', options: [], multiSelect: false }] } }, () => 'Which branch?'],
     ] as const)('leads with what the %s request asks for (%#)', (kind, request, expected) => {
         const inbox = source();
         const sessionsNeedingAttention = inbox.sessionPresentation.sessionsNeedingAttention.map((entry) => entry.candidate.sessionId === 'needs'
             ? { ...entry, requestDetails: undefined, ...(kind === 'permission'
-                ? { pendingPermissions: [{ id: 'r1', ...request, createdAt: 1 }] }
-                : { pendingUserActions: [{ id: 'r1', ...request, createdAt: 1 }] }) }
+                ? { pendingPermissions: [{ id: 'r1', ...request, kind: 'permission' as const, createdAt: 1 }] }
+                : { pendingUserActions: [{ id: 'r1', ...request, kind: 'user_action' as const, createdAt: 1 }] }) }
             : entry);
         const brief = buildBriefFromInboxFixture({ inbox: { ...inbox, sessionPresentation: { ...inbox.sessionPresentation, sessionsNeedingAttention } }, settings: {} });
         const subtitle = brief.items.find((item) => item.destination.kind === 'session' && item.destination.address.sessionId === 'needs')?.subtitle;
@@ -380,7 +384,7 @@ describe('Voice brief from the mounted Inbox', () => {
 
     it.each([true, false])('shows the readable Inbox request despite notification status-only, with Voice sharing=%s', (sharePermissionRequests) => {
         const inbox = source();
-        const original = inbox.sessionPresentation.sessionsNeedingAttention.find(entry => entry.candidate.sessionId === 'needs')!.candidate.session;
+        const original = readSessionPresentationControl(inbox.sessionPresentation.sessionsNeedingAttention.find(entry => entry.candidate.sessionId === 'needs')!.candidate.session);
         // Restart126b's observed Home has 766 waiting rows. Exercise that admitted
         // shape without introducing a competing Brief window or disclosure cap.
         const waitingCount = 766;
@@ -422,13 +426,13 @@ describe('Voice brief from the mounted Inbox', () => {
         const settings = { voice: { privacy: { shareSessionSummary: true, sharePermissionRequests: true } } };
         const permissionSpeech = (title?: string) => {
             const session = createSessionFixture({ ...entry.candidate.session, metadata: {
-                path: '/project', ...(title ? { summary: { text: title, updatedAt: 2 } } : {}),
+                host: 'test-host', path: '/project', ...(title ? { summary: { text: title, updatedAt: 2 } } : {}),
             } });
             const row = buildSessionListRenderableFromSession(session, undefined, messages);
             const candidate = buildSessionActivityAttention({ session, presentationSource: createSessionListPresentationSource(row, { baseSession: session }), nowMs: 1_000 });
             const brief = buildBriefFromInboxFixture({ inbox: { ...inbox, sessionPresentation: { ...inbox.sessionPresentation,
                 sessionsNeedingAttention: [{ ...entry, candidate, requestDetails: undefined,
-                    pendingPermissions: [{ id: 'r1', tool: 'Bash', arguments: {}, createdAt: 1 }] }],
+                    pendingPermissions: [{ id: 'r1', kind: 'permission', tool: 'Bash', arguments: {}, createdAt: 1 }] }],
                 readySessions: [],
             } }, settings });
             expect(brief.items[0]?.title).toBe(title ?? dictated);
@@ -448,7 +452,7 @@ describe('Voice brief from the mounted Inbox', () => {
 
     it('retains a readable inactive question without offering request controls', () => {
         const inbox = source();
-        const original = inbox.sessionPresentation.sessionsNeedingAttention.find(entry => entry.candidate.sessionId === 'needs')!.candidate.session;
+        const original = readSessionPresentationControl(inbox.sessionPresentation.sessionsNeedingAttention.find(entry => entry.candidate.sessionId === 'needs')!.candidate.session);
         const candidate = buildSessionActivityAttention({ session: createSessionFixture({ ...original, active: false,
             viewer: { ...original.viewer!, attention: { ...original.viewer!.attention, reasons: ['permission_required', 'user_action_required'], primary: 'user_action_required' } },
             agentState: { requests: {
@@ -467,7 +471,7 @@ describe('Voice brief from the mounted Inbox', () => {
 
     it.each([true, false])('uses the actual authored or typed failure reason before an unavailable label (authored=%s)', authored => {
         const inbox = source();
-        const original = inbox.sessionPresentation.sessionsNeedingAttention.find(entry => entry.candidate.sessionId === 'failed')!.candidate.session;
+        const original = readSessionPresentationControl(inbox.sessionPresentation.sessionsNeedingAttention.find(entry => entry.candidate.sessionId === 'failed')!.candidate.session);
         const candidate = buildSessionActivityAttention({ session: createSessionFixture({ ...original, latestTurnStatus: 'failed',
             metadata: { ...original.metadata!, work: { statusReason: authored ? 'Waiting for release sign-off' : undefined } },
             lastRuntimeIssue: { v: 1, scope: 'primary_session', status: 'failed', source: 'agent_session_error',
@@ -480,7 +484,7 @@ describe('Voice brief from the mounted Inbox', () => {
 
     it('states the known blocked delivery condition without inventing a delivery cause', () => {
         const inbox = source();
-        const original = inbox.sessionPresentation.sessionsNeedingAttention.find(entry => entry.candidate.sessionId === 'needs')!.candidate.session;
+        const original = readSessionPresentationControl(inbox.sessionPresentation.sessionsNeedingAttention.find(entry => entry.candidate.sessionId === 'needs')!.candidate.session);
         const candidate = buildSessionActivityAttention({ session: createSessionFixture({ ...original, active: false, pendingBlockedCount: 1,
             viewer: { ...original.viewer!, attention: { ...original.viewer!.attention, reasons: ['pending_blocked', 'unread'], primary: 'pending_blocked' } },
             lastRuntimeIssue: { v: 1, scope: 'primary_session', status: 'failed', source: 'agent_session_error',

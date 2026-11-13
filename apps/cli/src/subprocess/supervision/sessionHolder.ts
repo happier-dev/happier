@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { Readable, Writable, type Duplex } from 'node:stream';
 import { constants as osConstants } from 'node:os';
+import { clearTimeout, setTimeout } from 'node:timers';
 
 import { resolveSessionHolderExecutablePath } from '@happier-dev/iroh-native/node';
 

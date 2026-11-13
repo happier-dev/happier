@@ -211,7 +211,7 @@ export type VoiceAgentInstance = {
   chatGeneration: number;
   chatBuffer: string;
   chatActions: VoiceAssistantAction[];
-  chatActionFailure?: import('@happier-dev/protocol/actions/actionExecutionResult').ActionExecuteFailure;
+  chatActionFailure?: ReturnType<typeof import('@happier-dev/protocol/voice/actions').decodeVoiceAssistantActions>['failure'];
   commitBuffer: string;
   clearChatBuffer: () => void;
   clearCommitBuffer: () => void;

@@ -1,7 +1,7 @@
 import { isActionDirectToolExposedOn } from '@happier-dev/protocol/actions/actionToolExposure';
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
-import { getDefaultActionToolExposureMode, resolveActionSurfaceAvailability, resolveActionToolExposureModeForSurface } from '@happier-dev/protocol/actions/actionSurfaceAvailability';
+import { getDefaultActionToolExposureMode, isActionToolExposureSurface, resolveActionSurfaceAvailability, resolveActionToolExposureModeForSurface } from '@happier-dev/protocol/actions/actionSurfaceAvailability';
 import { listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ActionId, ActionSurfaceAvailability, ActionSurfaces, ActionsSettingsV1 } from '@happier-dev/protocol';
@@ -533,7 +533,9 @@ export function isDirectManualToolAvailable(params: Readonly<{
 }>, catalog?: ActionToolCatalog): boolean {
   const surface = params.surface ?? 'agent';
   if (DIRECT_MANUAL_TOOL_NAMES.has(params.toolName)) {
-    const explicitMode = params.actionsSettings?.actions?.[params.actionId as ActionId]?.toolExposureModes?.[surface];
+    const explicitMode = isActionToolExposureSurface(surface)
+      ? params.actionsSettings?.actions?.[params.actionId as ActionId]?.toolExposureModes?.[surface]
+      : undefined;
     if (explicitMode === 'discoverable_only') return false;
     return isActionAvailableOnToolSurface({
       actionId: params.actionId,

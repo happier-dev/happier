@@ -12,8 +12,11 @@ describe('Voice conversation History projection', () => {
             metadata: { ...createSessionFixture().metadata!, name: 'Confidential conversation',
                 ...buildSystemSessionMetadataV1({ key: 'voice_conversation', hidden: true }) } });
         const isSessionVisible = createSessionRecordingVisibility(true, { [serverId]: ['private'] }, () => ['private']);
-        for (const state of [{ sessions: { [session.id]: session }, sessionListRowsByServerId: {} },
-            { sessions: {}, sessionListRowsByServerId: { [serverId]: { [session.id]: buildSessionListRenderableFromSession(session) } } }]) {
+        const sources: Parameters<typeof readVoiceConversationHistory>[0][] = [
+            { sessions: { [session.id]: session }, sessionListRowsByServerId: {} },
+            { sessions: {}, sessionListRowsByServerId: { [serverId]: { [session.id]: buildSessionListRenderableFromSession(session) } } },
+        ];
+        for (const state of sources) {
             expect(readVoiceConversationHistory(state, { serverId, isSessionVisible }).conversations).toEqual([]);
         }
     });

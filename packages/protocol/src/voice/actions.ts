@@ -4,7 +4,8 @@ import { resolveActionCatalogSurfaceProjection } from '../actions/actionCatalog.
 import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
 import { PluginJsonValueV2Schema } from '../plugins/contributions/jsonSchema.js';
 import { actionInputValidationFailure } from '../actions/executor/actionInputValidation.js';
-import type { ActionExecuteFailure } from '../actions/actionExecutionResult.js';
+
+type VoiceActionInputFailure = ReturnType<typeof actionInputValidationFailure>;
 
 export const VOICE_ACTION_FUNCTION_NAME = 'happier_voice_action' as const;
 
@@ -169,7 +170,7 @@ function coerceVoiceActionValueForSchema(value: unknown, schema: z.core.$ZodType
   return coerceVoiceActionScalarStrings(value);
 }
 
-function parseVoiceAssistantAction(rawAction: unknown): VoiceAssistantAction | ActionExecuteFailure {
+function parseVoiceAssistantAction(rawAction: unknown): VoiceAssistantAction | VoiceActionInputFailure {
   const rawToolName = rawAction && typeof rawAction === 'object' && 't' in rawAction && typeof rawAction.t === 'string'
     ? rawAction.t.trim() : '';
   const toolName = resolveVoiceClientToolNameAlias(rawToolName);
@@ -204,11 +205,11 @@ const INVALID_VOICE_ACTION_MESSAGE = "I couldn't run that action because its req
 export function decodeVoiceAssistantActions(
   rawActions: readonly unknown[],
   assistantText = '',
-  priorFailure?: ActionExecuteFailure,
-): Readonly<{ assistantText: string; actions: VoiceAssistantAction[]; invalidActionBlock?: true; failure?: ActionExecuteFailure }> {
+  priorFailure?: VoiceActionInputFailure,
+): Readonly<{ assistantText: string; actions: VoiceAssistantAction[]; invalidActionBlock?: true; failure?: VoiceActionInputFailure }> {
   const parsed = rawActions.map(parseVoiceAssistantAction);
   const actions = parsed.filter((entry): entry is VoiceAssistantAction => !('ok' in entry));
-  const failure = parsed.find((entry): entry is ActionExecuteFailure => 'ok' in entry)
+  const failure = parsed.find((entry): entry is VoiceActionInputFailure => 'ok' in entry)
     ?? (actions.length === 0 ? priorFailure : undefined);
   // Preserve the existing all-or-nothing request decoding.
   if (failure) {

@@ -34,12 +34,12 @@ export async function connectSessionMcpClient(context: SessionMcpLocalContext, s
     const client = new Client({ name: 'happier-session-bridge', version: '1' });
     const transport = new StreamableHTTPClientTransport(new URL('socketPath' in context ? 'http://localhost/mcp' : context.url), {
         requestInit: { headers: { authorization: `Bearer ${context.bearerToken}` } },
-        fetch: (url, init) => fetchWithCredentialRedirectRefusal(url, init, async (url, init) => {
+        fetch: (url, init) => fetchWithCredentialRedirectRefusal(String(url), init, async (url, init) => {
             // Pair the dispatcher with its own Undici version: Node's bundled
             // fetch can use a different dispatch ABI. The SDK sends JSON strings.
             const { body, headers, ...options } = init ?? {};
             if (body != null && typeof body !== 'string') throw new SessionMcpUnavailableError();
-            const response = await fetchWithDispatcher(url, {
+            const response = await fetchWithDispatcher(typeof url === 'string' || url instanceof URL ? url : url.url, {
                 ...options, body, headers: Array.from(new Headers(headers).entries()), dispatcher, redirect: 'manual',
             });
             // Undici types its body with Node's stream/web declaration. Narrow

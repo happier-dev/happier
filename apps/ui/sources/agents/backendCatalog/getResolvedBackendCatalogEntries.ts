@@ -252,7 +252,7 @@ export function getResolvedBackendCatalogEntries(params: Readonly<{
     });
 }
 
-export function resolveCatalogAgentIdForBackendTarget(target: BackendTargetRefV2): AgentId | null {
+export function resolveCatalogAgentIdForBackendTarget(target: PersistedBackendTargetRefV2): AgentId | null {
     return target.kind === 'backend' && isBundledAgentId(target.backendId) ? target.backendId : null;
 }
 

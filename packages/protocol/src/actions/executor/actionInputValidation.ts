@@ -65,7 +65,7 @@ function projectIssue(issue: core.$ZodIssue, parentPath: readonly (string | numb
 }
 
 /** Never echo rejected values, unknown-key lists, or custom issue prose. */
-export function actionInputValidationFailure(error: core.$ZodError): ActionExecuteFailure {
+export function actionInputValidationFailure(error: core.$ZodError): ReturnType<typeof actionInputIssueFailure> {
   return actionInputIssueFailure(...projectActionInputIssues(error));
 }
 
@@ -113,12 +113,12 @@ export function projectActionInputJsonSchemaIssues(
 }
 
 /** Semantic checks use the same content-free repair envelope as schema validation. */
-export function actionInputIssueFailure(...issues: readonly ActionInputIssue[]): ActionExecuteFailure {
+export function actionInputIssueFailure(...issues: readonly ActionInputIssue[]) {
   if (issues.some(issue => issue.code === 'invitation_token_expected')) {
-    return { ok: false, errorCode: 'invitation_token_expected', error: INVITATION_TOKEN_EXPECTED_MESSAGE };
+    return { ok: false, errorCode: 'invitation_token_expected', error: INVITATION_TOKEN_EXPECTED_MESSAGE } satisfies ActionExecuteFailure;
   }
   return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters', details: { issues: issues.map(issue => ActionInputIssueSchema.parse({
     ...issue,
     ...(issue.acceptedValues === undefined ? {} : { acceptedValues: issue.acceptedValues.filter(isJsonPrimitive) }),
-  })) } };
+  })) } } satisfies ActionExecuteFailure;
 }

@@ -30,18 +30,18 @@ describe('resolveVoiceSessionLabel', () => {
 
   it('names authored metadata while rejecting transient list and display-only title fields', () => {
     const prefs = { voiceShareSessionSummary: true, voiceShareFilePaths: false };
-    const session = createSessionFixture({ metadata: { path: '/project' } });
+    const session = createSessionFixture({ metadata: { ...createSessionFixture().metadata!, path: '/project' } });
     const row = buildSessionListRenderableFromSession(session, undefined, [
       { id: 'dictated', kind: 'user-text', localId: null, createdAt: 1, text: 'A transient request' },
     ]);
     expect(resolveVoiceSessionAuthoredLabel(session.metadata, prefs)).toBeNull();
     expect(resolveVoiceSessionAuthoredLabel(row.metadata, prefs)).toBeNull();
     expect(resolveVoiceSessionAuthoredLabel({ summaryText: 'A transient request' }, prefs)).toBeNull();
-    expect(resolveVoiceSessionAuthoredLabel({ summary: { text: 'Release /home/alice/project', updatedAt: 2 } }, prefs))
+    expect(resolveVoiceSessionAuthoredLabel({ summary: { text: 'Release /home/alice/project' } }, prefs))
       .toBe('Release <path_redacted>');
     expect(resolveVoiceSessionAuthoredLabel({ name: 'Release planning' }, prefs))
       .toBe('Release planning');
-    expect(resolveVoiceSessionAuthoredLabel({ summary: { text: 'Saved title', updatedAt: 2 } },
+    expect(resolveVoiceSessionAuthoredLabel({ summary: { text: 'Saved title' } },
       { ...prefs, voiceShareSessionSummary: false })).toBeNull();
   });
 

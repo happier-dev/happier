@@ -2130,7 +2130,7 @@ describe('createBundledRealtimeProviderRuntime', () => {
     const barrier = barrierInput!;
     const signal = new AbortController().signal;
     await barrier.submitResults('response-1', [], signal);
-    await barrier.continueResponse('response-1', signal);
+    await barrier.continueResponse('response-1', signal, 'synthetic');
     expect(sentEvents).toEqual([
       { type: 'tool.output' },
       'playback-drained',

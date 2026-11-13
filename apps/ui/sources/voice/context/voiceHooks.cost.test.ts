@@ -81,7 +81,7 @@ it.each(['announcement', 'model_context'] as const)
     const address = { serverId: 'voice-title-home', sessionId: 'voice-title-session' };
     const dictated = 'NOW ASK IT TO CREATE ANOTHER FILE CALLED SECOND NOTES DOT TEXT WITH THE WORD GOOD BY INSIDE';
     const session = createSessionFixture({ id: address.sessionId, serverId: address.serverId, encryptionMode: 'plain',
-        metadata: { path: '/project' } });
+        metadata: { ...createSessionFixture().metadata!, path: '/project' } });
     const messages: Message[] = [{ id: 'dictated', kind: 'user-text', localId: null, createdAt: 1, text: dictated }];
     const voice = voiceSettings.voiceSettingsParse({ providerId: 'local_conversation',
         privacy: { shareSessionSummary: true, sharePermissionRequests: true, shareFilePaths: false },
@@ -110,7 +110,7 @@ it.each(['announcement', 'model_context'] as const)
     expect(spoken[0]).not.toContain(dictated);
 
     const authored = 'Second notes: KEEP This Name';
-    publish({ ...session, metadata: { ...session.metadata, summary: { text: authored, updatedAt: 2 } } });
+    publish({ ...session, metadata: { ...session.metadata!, summary: { text: authored, updatedAt: 2 } } });
     spoken.length = 0;
     voiceHooks.onAgentRequest(address, 'permission-named', 'permission', 'Bash', {});
     expect(spoken).toHaveLength(1);
