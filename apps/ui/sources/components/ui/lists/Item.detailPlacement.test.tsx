@@ -26,7 +26,7 @@ afterEach(() => {
 type Screen = Awaited<ReturnType<typeof renderScreen>>;
 type Node = ReturnType<Screen['findAll']>[number];
 
-async function renderDetailRow(detail: string, title = 'Advanced', withIcon = false) {
+async function renderDetailRow(detail: string, title = 'Advanced', withIcon = false, subtitle?: string) {
   const { Item } = await import('./Item');
   const { ListPresentationProvider } = await import('./listPresentation');
   return renderScreen(
@@ -34,6 +34,7 @@ async function renderDetailRow(detail: string, title = 'Advanced', withIcon = fa
       <Item
         title={title}
         detail={detail}
+        {...(subtitle ? { subtitle } : {})}
         {...(withIcon ? { icon: <span />, showChevron: true } : {})}
         detailTestID="detail"
         onPress={() => {}}
@@ -158,6 +159,19 @@ describe('Item page row detail placement', () => {
     const screen = await renderDetailRow('Service identity · diagnostics', 'Fork', true);
     await layout(screen, { row: 366, detail: 176, title: 34, titleText: 'Fork' });
     expect(sharesTitleColumn(screen, visibleDetail(screen), 'Fork')).toBe(true);
+  });
+
+  it('keeps a row\'s facts under its name and moves a short value after them when it goes beneath', async () => {
+    // All deployments on a 390 phone: a long Environment name sent "2d ago" beneath, between the name and its facts.
+    const screen = await renderDetailRow('0.2.10', 'DEF-EDITOR-1110-stored-r121', true, 'NLDW3-5-36-33 · Compose');
+    await layout(screen, { row: 358, detail: 44, title: 230, titleText: 'DEF-EDITOR-1110-stored-r121' });
+    const detail = visibleDetail(screen);
+    expect(sharesTitleColumn(screen, detail, 'DEF-EDITOR-1110-stored-r121')).toBe(true);
+    const column = screen.findAll((node) => typeof node.type === 'string'
+      && node.findAll((child: Node) => child === detail).length > 0
+      && node.findAll((child: Node) => child.props?.children === 'NLDW3-5-36-33 · Compose').length > 0)[0]!;
+    const order = column.findAll((node: Node) => node === detail || node.props?.children === 'NLDW3-5-36-33 · Compose');
+    expect(order[0]).not.toBe(detail);
   });
 
   it('keeps a summary trailing on a wide row', async () => {

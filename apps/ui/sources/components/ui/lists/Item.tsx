@@ -1610,6 +1610,11 @@ export const Item = React.memo<ItemProps>((props) => {
         // A split primary remains a bounded horizontal label/value band. Its independent
         // operation stacks outside this band, so only content containing that operation stacks.
         const stackContentAccessory = stackAccessory && includeRightAccessory;
+        const detailBeneathNode = detailBeneath && detail ? renderPrimitiveText({
+            value: detail,
+            testID: detailTestID,
+            style: [styles.subtitle, subtitleSizeStyle, subtitleInkStyle],
+        }) : null;
         const renderColumnMetaLine = (line: React.ReactNode) => columnTitleMeta == null ? line : (
             <View style={styles.columnMetaLine}>
                 {line == null ? null : <View style={styles.columnMetaLead}>{line}</View>}
@@ -1705,11 +1710,8 @@ export const Item = React.memo<ItemProps>((props) => {
                 ) : (
                     normalizeNodeForView(title)
                 )}
-                {detailBeneath && detail ? renderPrimitiveText({
-                    value: detail,
-                    testID: detailTestID,
-                    style: [styles.subtitle, subtitleSizeStyle, subtitleInkStyle],
-                }) : null}
+                {/* A row's own facts stay under its name; a moved short value (a time) follows them, last. */}
+                {detailBeneath && detail && !subtitle ? detailBeneathNode : null}
                 {renderColumnMetaLine(subtitle ? (() => {
                     // If subtitle is a ReactNode (not string), render as-is.
                     // This enables richer subtitle layouts (e.g. inline glyphs).
@@ -1786,6 +1788,7 @@ export const Item = React.memo<ItemProps>((props) => {
                         ellipsizeMode: subtitleEllipsizeMode,
                     });
                 })() : null)}
+                {detailBeneath && detail && subtitle ? detailBeneathNode : null}
                 {subtitleAccessoryNode ? (
                     <View style={{ marginTop: 0 }}>
                         {subtitleAccessoryNode}

@@ -17,6 +17,9 @@ it('names the missing selected Compose file through native preparation and child
             details: { kind: 'deploymentSourceFileUnavailable', path: 'compose.yaml', reason: 'absent' },
             failureCause: { phase: 'deployment.source.compose_file.absent' } });
         expect(failure.error).toContain('compose.yaml');
+        // The cause states the fact; its one remedy is the typed recovery (DEPLOY-ACCEPT-143 C1), never a second,
+        // different instruction to edit a Compose path the person may not need to change.
+        expect(failure.error).not.toContain('Environment Settings');
         expect(readDeploymentChildResult(JSON.parse(JSON.stringify(failure)))).toEqual(failure);
         expect(readDeploymentFailureRecoveryV1(failure.errorCode, failure).nextAction.destination).toBe('source');
         expect(requests.some(request => request.args.includes('bake') || request.args.includes('up'))).toBe(false);

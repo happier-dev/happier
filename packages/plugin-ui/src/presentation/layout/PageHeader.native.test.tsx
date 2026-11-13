@@ -96,6 +96,39 @@ describe('page header wrapped actions room', () => {
   });
 });
 
+describe('page header hanging actions', () => {
+  it('hangs a lone ⋯ from the title once wider actions leave it, instead of keeping their old width', () => {
+    // #143 phone Environment page: Deploy moved to the phone's bar, leaving ⋯ alone, yet ⋯ kept a row of its own.
+    const header = (wide: boolean) => <HappierPageHeader testID="header" actionsLayout="hang" leading={<View testID="mark" />}
+      title={<Text testID="title">DEF-EDITOR-1110-stored-r121</Text>}
+      actions={<View testID="controls">{wide ? <Pressable testID="deploy"><Text>Deploy</Text></Pressable> : null}
+        <Pressable testID="more"><Text>…</Text></Pressable></View>} />;
+    let renderer!: ReactTestRenderer;
+    act(() => { renderer = create(header(true)); });
+    try {
+      const root = () => renderer.root;
+      const below = () => root().findAll(node => node.props.testID === 'header-actions-below');
+      const views = () => root().findAllByType('View');
+      const split = () => views().find(node => node.props.onLayout && node.props.style?.flexBasis === HAPPIER_PAGE_METRICS.sectionTextMinWidthPx)!;
+      const titleNatural = () => views().find(node => node.props.onLayout && node.props.style?.alignSelf === 'flex-start');
+      const actions = () => measuringAncestor(root().findByProps({ testID: 'controls' }));
+      deliverLayout(views().find(node => node.props.testID === 'header')!, 390, 100);
+      deliverLayout(actions(), 130, 32);
+      deliverLayout(split(), 304, 76);
+      deliverLayout(titleNatural()!, 280, 38);
+      deliverLayout(split(), 304, 76);
+      // Deploy and ⋯ leave the name less than its column: they wait beneath the identity.
+      expect(below()).toHaveLength(1);
+      act(() => renderer.update(header(false)));
+      deliverLayout(actions(), 28, 28);
+      deliverLayout(split(), 304, 76);
+      expect(below()).toHaveLength(0);
+    } finally {
+      act(() => renderer.unmount());
+    }
+  });
+});
+
 describe('page header entrance parts', () => {
   it('lets an entrance hold the mark and the title apart from the lines and actions that support them', () => {
     const parts: string[] = [];

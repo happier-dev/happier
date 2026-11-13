@@ -262,7 +262,9 @@ export function HappierPageHeader(props: HappierPageHeaderProps) {
     const { height } = event.nativeEvent.layout;
     setActionsHeightPx(current => current === height ? current : height);
     naturalWidthsRef.current.actions = Math.max(naturalWidthsRef.current.actions, event.nativeEvent.layout.width);
-    setActionsNaturalWidthPx(naturalWidthsRef.current.actions);
+    // Hanging is decided by the actions drawn now: controls that left (a phone bar took Deploy) free the name's line.
+    const currentWidthPx = event.nativeEvent.layout.width;
+    setActionsNaturalWidthPx(current => current === currentWidthPx ? current : currentWidthPx);
     if (splitWidthRef.current !== null) predictActionsWrap(splitWidthRef.current);
   }, [predictActionsWrap]);
   // Layout events arrive in no fixed order: whichever of the column, title and actions lands last decides.

@@ -7,7 +7,8 @@ export async function readNativeComposeSourceBytes(root: string, path: string): 
     const read = await readProjectDefinitionFileBytes(root, path);
     if (read.kind === 'read') return read.bytes;
     const reason = read.kind === 'absent' ? 'absent' : read.code;
-    const error = `The selected Compose file "${path}" ${read.kind === 'absent' ? 'is missing from' : 'cannot be read within'} the selected revision. Open Environment Settings and set the Compose path relative to the repository root, then review the deployment again.`;
+    // The cause states the fact only: the recovery owner gives the one remedy for this typed file failure.
+    const error = `The selected Compose file "${path}" ${read.kind === 'absent' ? 'is missing from' : 'cannot be read within'} the selected revision.`;
     const failure = {
         ok: false, errorCode: 'deployment_source_unavailable', error,
         details: { kind: 'deploymentSourceFileUnavailable', path, reason },
