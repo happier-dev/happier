@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type { NotificationSendRequest, NotificationSendResult } from '@happier-dev/plugin-sdk/notifications';
 import {
   ConversationNotificationDestinationV1Schema, ConversationNotificationDestinationSetupInputV1Schema,
@@ -272,12 +271,13 @@ async function createExactTelegramBotApi(
     // The activation retains public bot identity only. Each poll still asks the
     // host for its current credential; a changed token cannot reuse old identity.
     const key = credentialRef.accountId;
-    const fingerprint = createHash('sha256').update(token).digest('hex');
+    const digest = await globalThis.crypto.subtle.digest('SHA-256', new TextEncoder().encode(token));
+    const fingerprint = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
     return {
       ...api,
       async getMe(options) {
         const cached = identities.get(key);
-        if (cached?.fingerprint === fingerprint) return cached.identity;
+        if (cached !== undefined && cached.fingerprint === fingerprint) return cached.identity;
         const identity = await api.getMe(options);
         if (!('kind' in identity)) identities.set(key, { fingerprint, identity });
         return identity;
