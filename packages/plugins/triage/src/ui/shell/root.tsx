@@ -2016,18 +2016,13 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     readEntryActivation,
     surface,
     rowsByKey,
-    // A launch may only be answered "this page does not list that entry" once a
-    // window actually EXISTS to have listed it. `window` and `configureSources`
-    // are the two states assembled from a completed pass
-    // (`windowState.ts` returns `configureSources` for a completed pass over zero
-    // configured sources). `initial`, `sourcesUnreachable` and `unavailable` all
-    // mean NO window was ever assembled — in those, whether this page lists the
-    // entry is UNKNOWN, not false, so the launch must stay pending rather than be
-    // adopted and permanently qualified by its own instance over an empty
-    // `rowsByKey`. Naming only `initial` here did exactly that, and additionally
-    // showed "this entry is no longer in the list" over a page whose sources could
-    // not be reached at all.
-    windowSettled: state.kind === 'window' || state.kind === 'configureSources',
+    // The store can publish a window while its first source answers are still
+    // pending. A listed row can already supply its connection, but an absent
+    // row must not be permanently qualified through an unobserved connection
+    // before that first pass answers. Consume the store's completion state;
+    // an unreadable initial window still cannot answer absence either.
+    windowSettled: window.snapshot.pending !== 'initial'
+      && (state.kind === 'window' || state.kind === 'configureSources'),
     applyLensEdit,
     dispatch,
     readerChangedLens,

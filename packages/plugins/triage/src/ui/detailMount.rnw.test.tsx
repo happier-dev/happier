@@ -521,6 +521,8 @@ function createHarness(options: Readonly<{
     nativeRoutingToken?: string;
     secondInstance?: boolean;
     secondInstanceObservesEntry?: boolean;
+    firstInstanceObservesEntry?: boolean;
+    secondInitialScan?: Promise<void>;
     /** The second connection's reads fail (a transient provider error), so it is the one Manage sources flags. */
     secondInstanceFails?: boolean;
     otherSourceEntry?: boolean;
@@ -550,6 +552,7 @@ function createHarness(options: Readonly<{
     const exactReads: Array<ReturnType<typeof TriageReobserveEntryInputV1Schema.parse>> = [];
     const getEntryIds: string[] = [];
     const continuedScanPages: string[] = [];
+    const initialScanInstanceIds: string[] = [];
     /** Flipped to make the next pass observe nothing, so the row leaves. */
     const observes = { current: true };
     const deferLinkedEntry = { current: options.deferLinkedEntry === true };
@@ -586,6 +589,11 @@ function createHarness(options: Readonly<{
     } as unknown as TriageAdmittedSourceV1] : [])];
 
     const executeScan: TriageAdmittedOperationExecutorV1 = async (operation, input) => {
+        if (input.page.kind === 'initial') initialScanInstanceIds.push(input.instance.instance.sourceInstanceId);
+        if (input.instance.instance.sourceInstanceId === SECOND_INSTANCE && input.page.kind === 'initial'
+            && options.secondInitialScan !== undefined) {
+            await options.secondInitialScan;
+        }
         if (options.secondInstanceFails === true && input.instance.instance.sourceInstanceId === SECOND_INSTANCE) {
             return { kind: 'failed', failure: { class: 'transient', code: 'provider-busy' } } satisfies TriageScanResultV1;
         }
@@ -609,6 +617,8 @@ function createHarness(options: Readonly<{
         return {
         kind: 'complete',
         observations: observes.current
+            && (options.firstInstanceObservesEntry !== false
+                || input.instance.instance.sourceInstanceId !== INSTANCE)
             && (options.secondInstanceObservesEntry !== false
                 || input.instance.instance.sourceInstanceId !== SECOND_INSTANCE) ? [{
             kind: 'present',
@@ -792,6 +802,7 @@ function createHarness(options: Readonly<{
         exactReads,
         getEntryIds,
         continuedScanPages,
+        initialScanInstanceIds,
         async seedPins(ids: readonly string[]) {
             for (const entryId of ids) await setTriageEntryPinned({ v: 1, pinned: true,
                 entryRef: { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId },
@@ -923,6 +934,8 @@ async function mountShell(
     revokedEntryIds?: readonly string[];
         secondInstance?: boolean;
         secondInstanceObservesEntry?: boolean;
+        firstInstanceObservesEntry?: boolean;
+        secondInitialScan?: Promise<void>;
         secondInstanceFails?: boolean;
         /** Read configured sources from the harness's Account Collections, as a live Account-backed mount does. */
         accountData?: boolean;
@@ -976,6 +989,10 @@ async function mountShell(
         ...(options.secondInstanceObservesEntry === undefined
             ? {}
             : { secondInstanceObservesEntry: options.secondInstanceObservesEntry }),
+        ...(options.firstInstanceObservesEntry === undefined
+            ? {}
+            : { firstInstanceObservesEntry: options.firstInstanceObservesEntry }),
+        ...(options.secondInitialScan === undefined ? {} : { secondInitialScan: options.secondInitialScan }),
         ...(options.otherSourceEntry === undefined ? {} : { otherSourceEntry: options.otherSourceEntry }),
         ...(options.deferLinkedEntry === undefined ? {} : { deferLinkedEntry: options.deferLinkedEntry }),
         ...(options.taskEdit === undefined ? {} : { taskEdit: options.taskEdit }),
@@ -3335,6 +3352,26 @@ describe('opening a row into the source detail', () => {
         }));
         await expect(shell.queryByRole('group', { name: 'Details pane' })).resolves.toBeUndefined();
         expect(currentHarness?.getEntryIds).toEqual([]);
+    });
+
+    it('waits for initial source answers before qualifying a restored link through an unobserved connection', async () => {
+        let release!: () => void;
+        const secondInitialScan = new Promise<void>(resolve => { release = resolve; });
+        const subPath = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
+            selection: { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' } });
+        const shell = await mountShell({ subPath, activeSurface: true, automaticDemandOnly: true,
+            secondInstance: true, firstInstanceObservesEntry: false, secondInitialScan });
+        try {
+            await act(async () => {
+                await vi.waitFor(() => { expect(currentHarness?.initialScanInstanceIds).toContain(SECOND_INSTANCE); });
+            });
+            expect(currentHarness?.exactReads).toEqual([]);
+        } finally {
+            await act(async () => { release(); });
+        }
+        await expect.poll(() => currentHarness?.readDetailInstanceIds).toEqual([SECOND_INSTANCE]);
+        await expect(shell.getByText(DETAIL_BODY_TEXT)).resolves.toBeDefined();
+        expect(currentHarness?.exactReads.every(read => read.sourceInstanceId === SECOND_INSTANCE)).toBe(true);
     });
 
     it('opens an unloaded restored link exactly and leaves further pages to visible Load more', async () => {
