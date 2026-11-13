@@ -34,15 +34,27 @@ export const DeploymentDomainContentV1Schema = lazyZodSchema(() => z.strictObjec
 }));
 export type DeploymentDomainContentV1 = z.infer<typeof DeploymentDomainContentV1Schema>;
 
+/** Syntax only: DNS resolution and native routing retain their own observations. */
+export function readDeploymentDomainHostnameV1(value: unknown): string | null {
+    const parsed = text.safeParse(value);
+    if (!parsed.success) return null;
+    try {
+        const hostname = parsed.data;
+        if (/[\s/%\\?#@:]/u.test(hostname) || hostname.includes('*')) return null;
+        const address = new URL(`https://${hostname}`);
+        if (address.port || address.username || address.password || address.pathname !== '/' || address.search || address.hash) return null;
+        return address.hostname;
+    } catch { return null; }
+}
+
 /** The configured ingress address remains the address even when that route redirects. */
 export function readDeploymentDomainServingUrlV1(content: unknown): string | null {
     const parsed = DeploymentDomainContentV1Schema.safeParse(content);
     if (!parsed.success) return null;
     try {
-        const hostname = parsed.data.hostname.trim();
-        if (/[\s/%\\?#@:]/u.test(hostname) || hostname.includes('*')) return null;
+        const hostname = readDeploymentDomainHostnameV1(parsed.data.hostname);
+        if (!hostname) return null;
         const address = new URL(`https://${hostname}`);
-        if (address.port || address.username || address.password || address.pathname !== '/' || address.search || address.hash) return null;
         address.pathname = parsed.data.target.path ?? '/';
         return address.href;
     } catch { return null; }

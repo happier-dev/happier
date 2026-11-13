@@ -1,12 +1,14 @@
-import { readdir, stat } from 'node:fs/promises';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { basename, dirname, join, resolve } from 'node:path';
 import { readProjectDefinitionFile } from './nativeDefinitionFiles';
 import { readRepositoryIgnoredPaths } from '@/scm/readRepositoryIgnoredPaths';
 import type { ScmBackendRegistry } from '@/scm/registry';
+import { ProjectDetectedApplicationV1Schema, type ProjectDetectedApplicationV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 
 export type NativePackageManager = 'npm' | 'pnpm' | 'yarn' | 'bun';
 export type NativePackageManagerSelection = Readonly<{ manager: NativePackageManager; version?: string; root: string }>;
-export type NativePackage = Readonly<{ name: string; scripts: Readonly<Record<string, string>>; packageManager?: string }>;
+export type NativePackage = Readonly<{ name: string; scripts: Readonly<Record<string, string>>; packageManager?: string;
+    application: Pick<ProjectDetectedApplicationV1, 'framework' | 'runtime' | 'port'> }>;
 
 const IGNORED_DIRECTORY_NAMES = new Set(['.git', '.hg', '.svn', '.next', '.turbo', 'build', 'coverage', 'dist', 'node_modules']);
 const LOCKFILES = [
@@ -35,9 +37,23 @@ export function parseNativePackage(bytes: string, cwd: string): NativePackage {
             if (typeof command === 'string' && command.trim()) scripts[name] = command;
         }
     }
+    const dependencies = new Set([parsed.dependencies, parsed.devDependencies].flatMap(value =>
+        isNativeDefinitionRecord(value) ? Object.keys(value) : []));
+    // Specialized framework declarations win over their Vite build-tool dependency.
+    const frameworks = ['next', 'nuxt', 'astro', '@sveltejs/kit', '@remix-run/react'].filter(name => dependencies.has(name));
+    const framework = frameworks.length === 1 ? frameworks[0]! : frameworks.length === 0 && dependencies.has('vite') ? 'vite' : null;
+    const node = isNativeDefinitionRecord(parsed.engines) && typeof parsed.engines.node === 'string' && parsed.engines.node.trim()
+        ? parsed.engines.node.trim() : null;
+    const ports = new Set([...((scripts.start ?? '').matchAll(/(?:^|\s)(?:--port(?:=|\s+)|-p\s+|PORT=)(\d+)(?=\s|$)/gu))]
+        .flatMap(match => {
+            const port = ProjectDetectedApplicationV1Schema.shape.port.safeParse(Number(match[1]));
+            return port.success && port.data !== null ? [port.data] : [];
+        }));
     return {
         name: typeof parsed.name === 'string' && parsed.name.trim() ? parsed.name.trim() : basename(cwd) || 'package',
         scripts,
+        application: { framework, runtime: node ? { name: 'node', version: node } : null,
+            port: ports.size === 1 ? [...ports][0]! : null },
         ...(typeof parsed.packageManager === 'string' ? { packageManager: parsed.packageManager } : {}),
     };
 }
@@ -50,7 +66,7 @@ export async function readNativePackage(cwd: string, readDefinition = readProjec
 }
 
 async function isFile(file: string): Promise<boolean> {
-    try { return (await stat(file)).isFile(); } catch { return false; }
+    try { return (await currentWorkspaceSource().stat(file)).isFile(); } catch { return false; }
 }
 
 /** A package's declaration wins at each applicable root; otherwise the nearest lock selects the manager. */
@@ -95,7 +111,7 @@ export async function collectNativePackageDirectories(root: string | readonly st
     const visit = async (directory: string, identity: string, ignored: ReadonlySet<string>, relativePath: string): Promise<void> => {
         if (visitedRoots.get(identity) === true) return;
         if (visitedRoots.has(identity)) visitedRoots.set(identity, true);
-        const entries = await readdir(directory, { withFileTypes: true }).catch(() => null);
+        const entries = await currentWorkspaceSource().readdir(directory).catch(() => null);
         const packageEntry = entries?.find(entry => entry.name === 'package.json');
         const child = (name: string) => relativePath ? `${relativePath}/${name}` : name;
         // The listing already proves ordinary file presence/absence. Only a

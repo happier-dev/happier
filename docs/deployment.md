@@ -14,12 +14,38 @@ creation owner handles authentication and launch. Continuing a returned Session
 uses its ordinary message Action. The preparation brief contains source intent,
 without copying the launch recipe or Connected Account references into messages.
 
+The Prepare read composes reported Session work state, structured SCM Action
+results and the Session's linked pull requests. Forge owns PR status and checks,
+including closed and merged PRs; an open-PR-only checkout summary is insufficient.
+Missing or unreadable facts stay unknown. A reported push or PR refusal retains
+the SCM owner's outcome and recovery actions, without interpreting transcript
+prose or promising that a branch or remote effect was preserved. Creating a PR
+does not establish build or health validation, or make the source deployable.
+The read adds no waiting operation or polling loop; UI composition consumes its
+typed result and returns to ordinary Source review after merge.
+
 This unpublished 0.3 input cut requires matching UI, Protocol and daemon source;
 older development readers reject the added draft. The 0.2 predecessor has no
 Prepare Action contract. No persistence migration or compatibility adapter is
 introduced.
 
 ## Advisory deployment preflight (0.3 development)
+
+Configure uses `projectDeploymentConfigurePreflightV1` for name, port and hostname
+syntax. The same projection is returned as `configurePreflight` by
+`deployments.publish.prepare` when its optional `configure` draft is supplied.
+Fields retain `valid`, `invalid` or `notProvided` and a normalized value; these
+facts establish neither name uniqueness, free listeners nor DNS resolution.
+
+`readDeploymentPreparationFacts` combines those facts with the existing
+`projects.inspect` Action's `read: {kind: 'applications'}` projection when a
+qualified workspace is selected. `detection.applications` contains each package
+file's recognized framework, declared Node engine, build/start references and
+unambiguous literal start port. Unknown declarations stay null; command bodies
+are omitted. The read resolves no tools and requests no setup review. Configure
+edits can use the pure projection without repeating inspection. These unpublished
+0.3 additions require matching UI, Protocol and daemon source; no migration or
+Prepare-to-PR progress inference is introduced.
 
 The Promote data hook compares the selected source and destination Environment's
 P42 variable-binding identities, including build/runtime phase. Its warning data

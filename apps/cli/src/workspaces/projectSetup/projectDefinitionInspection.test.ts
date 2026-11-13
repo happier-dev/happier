@@ -6,6 +6,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { discoverLocalServiceRunTargets } from '@/daemon/local/services/launch/runTargets';
 import { inspectProjectDefinitions, inspectProjectDefinitionExecutionFacts, inspectProjectToolFacts } from './projectDefinitionInspection';
 import { resolveNativePackageManager } from './nativePackageScripts';
+import { ProjectDefinitionDetectionV1Schema } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
+import { selectProjectDefinitionRead } from './projectDefinitionRead';
 
 const roots: string[] = [];
 async function fixture(files: Record<string, string>): Promise<string> {
@@ -20,6 +22,27 @@ async function fixture(files: Record<string, string>): Promise<string> {
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))); });
 
 describe('inspectProjectDefinitions', () => {
+    it('carries recognized app declarations without resolving commands, returning script rows or guessing ports', async () => {
+        const root = await fixture({ 'package.json': JSON.stringify({ dependencies: { next: '15', react: '19' },
+            engines: { node: '>=20' }, scripts: { build: 'next build', start: 'TOKEN=never-project next start --port 4321' } }),
+            'worker/package.json': JSON.stringify({ scripts: { start: 'PORT=${PORT} node worker.js' } }),
+        });
+        const detection = await inspectProjectDefinitions(root);
+        const read = selectProjectDefinitionRead({ basis: { kind: 'absent' }, document: null }, detection, { kind: 'applications' });
+        const projected = ProjectDefinitionDetectionV1Schema.parse(read.detection);
+        expect(projected).toMatchObject({ applications: [
+            { file: 'package.json', framework: 'next', runtime: { name: 'node', version: '>=20' },
+                build: { kind: 'native', tool: 'package_script', file: 'package.json', target: 'build' },
+                start: { kind: 'native', tool: 'package_script', file: 'package.json', target: 'start' }, port: 4321 },
+            { file: 'worker/package.json', framework: null, runtime: null, build: null,
+                start: { kind: 'native', tool: 'package_script', file: 'worker/package.json', target: 'start' }, port: null },
+        ] });
+        expect(JSON.stringify(projected)).not.toContain('never-project');
+        expect(read.candidateEntries).toEqual([]);
+        expect(read.entries).toEqual([]);
+        expect(read.includeSetup).toBe(false);
+        expect(read.includeInvocation).toBe(false);
+    });
     it('reads execution facts per source and installed selection rather than per target, retaining fresh hashes and availability', async () => {
         const scripts = Object.fromEntries(Array.from({ length: 128 }, (_, index) => [`check${index}`, 'echo initial']));
         const manifest = { version: 1 as const, scripts: Object.fromEntries(Object.keys(scripts).map(name => [name, {

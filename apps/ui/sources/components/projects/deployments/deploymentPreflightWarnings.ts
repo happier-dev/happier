@@ -1,6 +1,36 @@
 import { environmentSecretBindingIdentityV1, type EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
 import { parseDeploymentComposeSourceV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { LocalServiceEndpointV1Schema } from '@happier-dev/protocol/local/services/inventory/v1';
+import { projectDeploymentConfigurePreflightV1, type DeploymentConfigureDraftV1 } from '@happier-dev/protocol/deployments/deploymentPublishPreparationV1';
+import { ProjectDefinitionInspectOutputSchema, type ProjectDefinitionWorkspace } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+
+export { projectDeploymentConfigurePreflightV1 } from '@happier-dev/protocol/deployments/deploymentPublishPreparationV1';
+
+/** One finite Configure/recognized-repository read. Inspection stays with projects.inspect;
+ * invalid authoring text never requests native work or masquerades as availability. */
+export async function readDeploymentPreparationFacts(lifetime: ServerAccountScopeLifetime,
+    input: Readonly<{ configure: DeploymentConfigureDraftV1; workspace?: ProjectDefinitionWorkspace }>,
+    options: Readonly<{ signal: AbortSignal }>) {
+    const configurePreflight = projectDeploymentConfigurePreflightV1(input.configure);
+    const stale = () => ({ ok: false as const, errorCode: 'action_account_scope_changed', error: 'action_account_scope_changed' });
+    options.signal.throwIfAborted();
+    if (!lifetime.isCurrent()) return stale();
+    if (!input.workspace) return { ok: true as const, configurePreflight, repository: { status: 'notInspected' as const } };
+    const result = await createFrontDoorActionExecute()('projects.inspect', { workspace: input.workspace, read: { kind: 'applications' } },
+        { surface: 'ui', serverId: lifetime.scope.serverId, expectedAccountId: lifetime.scope.accountId, signal: options.signal });
+    options.signal.throwIfAborted();
+    if (!lifetime.isCurrent()) return stale();
+    if (!result.ok) return result;
+    const parsed = ProjectDefinitionInspectOutputSchema.safeParse(result.result);
+    if (!parsed.success) return { ok: false as const, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+    const detection = parsed.data.detection;
+    return { ok: true as const, configurePreflight, repository: {
+        status: detection.applications === undefined ? 'notReported' as const : 'observed' as const,
+        applications: detection.applications ?? [], coverage: detection.coverage, diagnostics: detection.diagnostics,
+    } };
+}
 
 export type DeploymentPromotionBindingGap = Readonly<{ name: string; phase: 'build' | 'runtime'; secret: boolean }>;
 

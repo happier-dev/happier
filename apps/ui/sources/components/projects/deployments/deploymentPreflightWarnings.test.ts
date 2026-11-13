@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { EnvironmentSecretBindingV1 } from '@happier-dev/deployment-protocol';
-import { projectDeploymentPromotionBindingGaps, readDeploymentAddDeclaredInputs, readDeploymentDeclaredContainerPorts } from './deploymentPreflightWarnings';
+import { projectDeploymentPromotionBindingGaps, readDeploymentAddDeclaredInputs, readDeploymentDeclaredContainerPorts,
+    projectDeploymentConfigurePreflightV1, readDeploymentPreparationFacts } from './deploymentPreflightWarnings';
 
 const value = { kind: 'value' as const, value: 'public' };
 const secret = { kind: 'secret' as const, ref: 'happier:shared-secret:v1:token', resourceRevision: 1 };
@@ -11,6 +12,33 @@ const source: EnvironmentSecretBindingV1[] = [
     { purpose: 'registry', targetLinkId: 'source-link', registryOrigin: 'https://registry.test', access: 'pull', source: secret },
 ];
 describe('deployment preflight warnings', () => {
+    it('prepares Configure locally and refuses cancelled or retired demand before a repository read', async () => {
+        const lifetime = { scope: { serverId: 'home-a', accountId: 'alice' }, isCurrent: () => true,
+            onRetire: () => ({ dispose() {} }) };
+        const signal = new AbortController().signal;
+        expect(await readDeploymentPreparationFacts(lifetime, { configure: { name: 'App', port: 3000 } }, { signal }))
+            .toMatchObject({ ok: true, configurePreflight: { name: { status: 'valid' }, port: { status: 'valid' } },
+                repository: { status: 'notInspected' } });
+        const workspace = { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'workspace-a', rootPath: '/repo' };
+        const cancelled = new AbortController();
+        cancelled.abort();
+        await expect(readDeploymentPreparationFacts(lifetime, { configure: { name: 'App' }, workspace },
+            { signal: cancelled.signal })).rejects.toHaveProperty('name', 'AbortError');
+        expect(await readDeploymentPreparationFacts({ ...lifetime, isCurrent: () => false },
+            { configure: { name: 'App' }, workspace }, { signal })).toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
+    });
+    it('keeps absent fields, syntax validity and availability separate at the shared Configure owner', () => {
+        expect(projectDeploymentConfigurePreflightV1({ name: ' app ' })).toEqual({
+            name: { status: 'valid', value: 'app' }, port: { status: 'notProvided', value: null }, dns: { status: 'notProvided', value: null },
+        });
+        expect(projectDeploymentConfigurePreflightV1({ name: '', port: '3e3', hostname: '*.example.test' })).toEqual({
+            name: { status: 'invalid', value: null }, port: { status: 'invalid', value: null }, dns: { status: 'invalid', value: null },
+        });
+        for (const port of [1, 65535]) expect(projectDeploymentConfigurePreflightV1({ name: 'app', port,
+            hostname: ' APP.example.test ' })).toMatchObject({ port: { status: 'valid', value: port },
+                dns: { status: 'valid', value: 'app.example.test' } });
+        for (const port of [0, 65536, 3.5]) expect(projectDeploymentConfigurePreflightV1({ name: 'app', port }).port.status).toBe('invalid');
+    });
     it('projects only the final allocated source declarations, without evaluating short syntax or interpolation', async () => {
         const declarations = await readDeploymentAddDeclaredInputs(JSON.stringify({ services: {
             existing: { container_name: 'existing', ports: ['80:80'] },

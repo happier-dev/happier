@@ -40,9 +40,10 @@ export function selectProjectDefinitionRead(definition: ProjectManifestInspectio
     const projectedDetection: ProjectDefinitionDetectionV1 = { entries: read.kind === 'tools' ? [] : entries,
         toolchains: fullDetection ? detection.toolchains : [], devcontainers: fullDetection ? detection.devcontainers : [],
         coverage: detection.coverage, diagnostics: detection.diagnostics,
+        ...(read.kind === 'applications' && detection.applications ? { applications: detection.applications } : {}),
         ...(fullDetection && detection.tools ? { tools: detection.tools } : {}) };
     const document = definition.document;
-    const statusOnly = read.kind === 'detail' || read.kind === 'tools' || read.kind === 'imports';
+    const statusOnly = read.kind === 'detail' || read.kind === 'tools' || read.kind === 'imports' || read.kind === 'applications';
     let projectedDefinition = definition;
     if (read.kind !== 'editor' && read.kind !== 'create' && document) {
         if (document.status === 'valid') {

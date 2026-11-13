@@ -1,4 +1,4 @@
-import { readdir } from 'node:fs/promises';
+import { currentWorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { dirname, join, relative } from 'node:path';
 import type { ProjectDefinitionDetectionV1, ProjectToolchainSelectionV1, ProjectNativeRefV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectManifestV1';
 import { collectNativePackageDirectories, isNativeDefinitionRecord, parseNativePackage } from './nativePackageScripts';
@@ -23,7 +23,7 @@ export async function inspectProjectDefinitions(root: string, observation?: Read
 }>): Promise<ProjectDefinitionDetectionV1> {
     const files = new Set<string>(NATIVE_PROJECT_DEFINITION_FILES);
     for (const cwd of observation?.packageDirectories ?? await collectNativePackageDirectories(root)) files.add(relative(root, join(cwd, 'package.json')).replaceAll('\\', '/'));
-    for (const entry of await readdir(join(root, '.devcontainer'), { withFileTypes: true }).catch(() => [])) {
+    for (const entry of await currentWorkspaceSource().readdir(join(root, '.devcontainer')).catch(() => [])) {
         if (entry.isDirectory()) files.add(`.devcontainer/${entry.name}/devcontainer.json`);
     }
     return inspectProjectDefinitionFiles(root, [...files].map(file => ({ file })));
@@ -41,7 +41,7 @@ export async function inspectProjectDefinitionFacts(root: string, files: readonl
 }
 
 async function inspectDefinitionReads(root: string, files: readonly Readonly<{ file: string; format?: NativeTool | 'nix_flake' | 'devcontainer'; read: ProjectDefinitionFileRead }>[]): Promise<ProjectDefinitionDetectionV1> {
-    const detection: ProjectDefinitionDetectionV1 = { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [] };
+    const detection: ProjectDefinitionDetectionV1 = { entries: [], toolchains: [], devcontainers: [], coverage: 'complete', diagnostics: [], applications: [] };
     const formatNames = { package_script: 'package.json', mise: 'mise.toml', make: 'Makefile', just: 'justfile', taskfile: 'Taskfile.yml', turbo: 'turbo.json', compose: 'compose.yml', procfile: 'Procfile', devbox: 'devbox.json', devenv: 'devenv.nix', flox: '.flox/env/manifest.toml', nix_flake: 'flake.nix', devcontainer: 'devcontainer.json' } as const;
     const diagnostic = (file: string, code: string) => {
         detection.coverage = 'partial';
@@ -73,6 +73,9 @@ async function inspectDefinitionReads(root: string, files: readonly Readonly<{ f
             if (format === 'package.json' || format.endsWith('/package.json')) {
                 const pkg = parseNativePackage(content, join(root, dirname(file)));
                 for (const target of Object.keys(pkg.scripts)) add(file, 'package_script', target);
+                detection.applications!.push({ file, ...pkg.application,
+                    build: pkg.scripts.build ? { kind: 'native', tool: 'package_script', file, target: 'build' } : null,
+                    start: pkg.scripts.start ? { kind: 'native', tool: 'package_script', file, target: 'start' } : null });
             } else if (format.endsWith('mise.toml') || format === '.config/mise/config.toml') {
                 const value: unknown = (await import('smol-toml')).parse(content);
                 if (!isNativeDefinitionRecord(value)) throw new Error('invalid_definition');

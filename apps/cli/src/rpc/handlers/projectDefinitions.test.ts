@@ -43,6 +43,24 @@ async function setup(nativeIo?: ProjectNativeCommandIo, reviewInput?: (root: str
   return { root, workspace, handlers, producer };
 }
 
+it('returns recognized repository facts through the registered inspection Action without resolving or executing tools', async () => {
+  const resolveTool = vi.fn(async () => { throw new Error('Passive preparation must not resolve tools'); });
+  const h = await setup({ resolveTool }, () => { throw new Error('Passive preparation must not inspect setup'); });
+  await writeFile(join(h.root, 'package.json'), JSON.stringify({ dependencies: { next: '15' }, engines: { node: '>=20' },
+    scripts: { build: 'next build', start: 'PRIVATE=never-publish next start -p 4000' } }));
+  const output = ProjectDefinitionInspectOutputSchema.parse(await h.handlers.get('daemon.projects.inspect.v1')!({
+    workspace: h.workspace, read: { kind: 'applications' },
+  }));
+  expect(output.detection.applications).toMatchObject([{ framework: 'next', runtime: { name: 'node', version: '>=20' },
+    build: { target: 'build' }, start: { target: 'start' }, port: 4000 }]);
+  expect(JSON.stringify(output)).not.toContain('never-publish');
+  expect(resolveTool).not.toHaveBeenCalled();
+  expect(output.importCandidates).toEqual([]);
+  expect(output.commands).toEqual([]);
+  expect(output.detection.entries).toEqual([]);
+  expect(output.setupReadiness).toBeUndefined();
+});
+
 describe('project definition Actions through registered Machine RPC', () => {
   it('keeps all 6230 Script summaries compact and performs no native discovery for the author document', async () => {
     const resolveTool = vi.fn(async () => ({ executablePath: '/installed/pnpm', version: '10' }));

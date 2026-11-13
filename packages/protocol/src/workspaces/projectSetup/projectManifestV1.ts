@@ -79,6 +79,15 @@ export const ProjectNativeInvocationPreviewV1Schema = z.strictObject({
   tool: nonempty, args: z.readonly(z.array(z.string())), cwd: nonempty, requestedVersion: z.optional(nonempty),
 });
 
+/** Passive declarations, not execution or deployability. Command refs omit script bodies. */
+export const ProjectDetectedApplicationV1Schema = z.strictObject({
+  file: ProjectNativeFilePathV1Schema,
+  framework: z.nullable(nonempty),
+  runtime: z.nullable(z.strictObject({ name: nonempty, version: nonempty })),
+  build: z.nullable(ProjectNativeRefV1Schema), start: z.nullable(ProjectNativeRefV1Schema),
+  port: z.nullable(z.number().check(z.int(), z.minimum(1), z.maximum(65535))),
+});
+export type ProjectDetectedApplicationV1 = z.infer<typeof ProjectDetectedApplicationV1Schema>;
 export const ProjectDefinitionDetectionV1Schema = z.strictObject({
   entries: z.array(z.strictObject({ source: ProjectNativeRefV1Schema, usage: z.enum(['script', 'service', 'setup']) }).check(z.refine(
     entry => entry.usage === 'service' || isFiniteSource(entry.source), 'Compose and Procfile references are services',
@@ -88,6 +97,7 @@ export const ProjectDefinitionDetectionV1Schema = z.strictObject({
   coverage: z.enum(['complete', 'partial']),
   diagnostics: z.array(z.strictObject({ file: nonempty, code: nonempty })),
   tools: z.optional(z.array(ProjectToolRequirementV1Schema)),
+  applications: z.optional(z.array(ProjectDetectedApplicationV1Schema)),
 });
 export type ProjectDefinitionDetectionV1 = z.infer<typeof ProjectDefinitionDetectionV1Schema>;
 

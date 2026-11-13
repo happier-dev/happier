@@ -11,6 +11,8 @@ import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue'
 import type { ProjectSourceV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { resolveDeploymentCreationDefaultsV1, resolvePublishTargetRecommendation } from '@happier-dev/deployments';
 import type { DeploymentCreationDefaultInputsForHost } from '@/deployments/readCreationDefaultsForHost';
+import { projectDeploymentFailure } from '@/deployments/deploymentFailure';
+import { projectDeploymentConfigurePreflightV1 } from '@happier-dev/protocol/deployments/deploymentPublishPreparationV1';
 
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
 
@@ -43,10 +45,13 @@ export function createPublishCatalogPreparation(host: Readonly<{
         recommendation: resolvePublishTargetRecommendation({ definition: { from: 'compose' },
           explicitTarget: { id: input.machineId, targetClass: 'ownServer' },
           targets: [{ id: input.machineId, targetClass: 'ownServer', availability: 'unknown' }] }),
-        creationDefaults, ...(selected.defaultInputs.reviewBasis ? { creationDefaultsBasis: selected.defaultInputs.reviewBasis } : {}) });
+        creationDefaults, ...(input.configure ? { configurePreflight: projectDeploymentConfigurePreflightV1(input.configure) } : {}),
+        ...(selected.defaultInputs.reviewBasis ? { creationDefaultsBasis: selected.defaultInputs.reviewBasis } : {}) });
     } catch (error) {
-      return failure(error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
-        ? error.code : 'deployment_unavailable');
+      const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+        ? error.code : 'deployment_unavailable';
+      return code === 'deployment_unavailable'
+        ? projectDeploymentFailure(code, error, 'deployment.publish.prepare.selection') : failure(code);
     }
   };
 }
