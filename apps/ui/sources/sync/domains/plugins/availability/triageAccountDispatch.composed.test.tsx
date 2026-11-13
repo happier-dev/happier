@@ -206,6 +206,10 @@ vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', a
     });
 });
 
+// Expo is the native HTTP leaf; keep the same real Account request harness.
+vi.mock('expo/fetch', async () => (await import('@/dev/testkit/mocks/expoFetch'))
+    .createExpoFetchModuleMock((input, init) => account.home.request(input, init)));
+
 const account = createProviderSettingsAccountHarness();
 const { AppPaneProvider } = await import('@/components/appShell/panes/AppPaneProvider');
 const { SessionRightSidebarProvider, SessionActionRail } = await import('@/components/sessions/panes/SessionRightPanel');
@@ -481,8 +485,9 @@ afterEach(async () => {
 
 const TRIAGE_ACCOUNT_DISPATCH_SCENARIOS = ['client mounted E2EE', 'Account GitHub detail plain', 'Account GitHub detail E2EE', 'Account GitHub Session plain', 'Account GitHub Session E2EE', 'mixed sources', 'personal CRUD', 'personal detail', 'personal search', 'Home search', 'unavailable optional Machine', 'available Machine sources', 'available Machine linked Resource'] as const;
 
-async function prepareTriageAccountDispatchScenario(scenario: typeof TRIAGE_ACCOUNT_DISPATCH_SCENARIOS[number] | 'personal send picker') {
-    const personalDetail = scenario === 'personal detail' || scenario === 'personal send picker';
+async function prepareTriageAccountDispatchScenario(scenario: typeof TRIAGE_ACCOUNT_DISPATCH_SCENARIOS[number] | 'personal send picker' | 'personal host controls') {
+    const hostControls = scenario === 'personal host controls';
+    const personalDetail = scenario === 'personal detail' || scenario === 'personal send picker' || hostControls;
     const availableMachine = scenario === 'available Machine sources' || scenario === 'available Machine linked Resource' || scenario === 'Home search';
     const sessionGithub = scenario === 'Account GitHub Session plain' || scenario === 'Account GitHub Session E2EE';
     const withMachine = scenario === 'unavailable optional Machine' || availableMachine || sessionGithub;
@@ -504,7 +509,7 @@ async function prepareTriageAccountDispatchScenario(scenario: typeof TRIAGE_ACCO
             body: createPlainSessionByIdResponseFixture(session),
         });
     }
-    if (scenario === 'personal send picker') {
+    if (scenario === 'personal send picker' || hostControls) {
         // The rendered Actions catalog reads the plugin's Account KV row,
         // separately from the legacy Todo KV below. An empty real Account
         // yields the authored default Actions through the real catalog reader.
@@ -770,6 +775,13 @@ async function prepareTriageAccountDispatchScenario(scenario: typeof TRIAGE_ACCO
         const prefix = new URL(request.url).searchParams.get('prefix') ?? '';
         return { body: { items: [...todoRows.values()].filter(row => row.key.startsWith(prefix)) } };
     } });
+    account.home.answer(account.serverId, 'POST /v1/kv/bulk', { select: input => {
+        const { keys } = z.object({ keys: z.array(z.string()) }).parse(input);
+        return { body: { values: keys.flatMap(key => {
+            const row = todoRows.get(key);
+            return row ? [row] : [];
+        }) } };
+    } });
     for (const row of todoRows.values()) publishTodoRow(row.key);
     account.home.answer(account.serverId, 'POST /v1/kv', { select: value => {
         const { mutations } = kvMutationsSchema.parse(value);
@@ -841,19 +853,18 @@ async function prepareTriageAccountDispatchScenario(scenario: typeof TRIAGE_ACCO
     function PhysicalPageScene() {
         const [focused, setFocused] = React.useState(true);
         setPageInputFocus = setFocused;
+        const page = <PluginAppPageScreen pluginId={declaration.pluginId} localId="tasks"
+            subPath={buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
+                selection: { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1('personal-task') } })} />;
         return <PluginSurfaceFocusEligibilityProvider active={focused} presentationActive currentUiContextActive>
-            <AppShellPluginUiProjectionProvider>
-            <PluginAppPageScreen pluginId={declaration.pluginId} localId="tasks"
-                subPath={buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
-                    selection: { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1('personal-task') } })} />
-            </AppShellPluginUiProjectionProvider>
+            {hostControls ? page : <AppShellPluginUiProjectionProvider>{page}</AppShellPluginUiProjectionProvider>}
         </PluginSurfaceFocusEligibilityProvider>;
     }
     const screen = personalDetail || scenario === 'client mounted E2EE'
-        ? await renderMountedCurrentUiContext(<PhysicalPageScene />)
+        ? await renderMountedCurrentUiContext(<PhysicalPageScene />, { withAppShellActions: hostControls })
         : await renderWithAppProviders(<AppShellPluginUiProjectionProvider><></></AppShellPluginUiProjectionProvider>);
     try {
-        if (personalDetail) {
+        if (personalDetail && !hostControls) {
             const { PluginReactNativeSurface } = await import('@/components/plugins/reactNative/PluginReactNativeSurface');
             await waitForHomeGovernance(async () => {
                 await flushHookEffects();
@@ -866,8 +877,39 @@ async function prepareTriageAccountDispatchScenario(scenario: typeof TRIAGE_ACCO
         await waitForHomeGovernance(async () => {
             await flushHookEffects();
             const action = readCurrentAppShellPluginUiProjection()?.actionsById['happier.triage/sources/read-configured-v1'];
-            expect(action && resolvePluginUiClientActionRegistration({ action, platform: 'web' })).not.toBeNull();
+            expect(action && resolvePluginUiClientActionRegistration({ action, platform: hostControls ? 'ios' : 'web' })).not.toBeNull();
         });
+        if (hostControls) return {
+            dispose: () => screen.unmount(),
+            run: async () => {
+                const { pressTestInstanceAsync, findTestInstanceByTypeContainingText } = await import('@/dev/testkit');
+                const completion = () => findTestInstanceByTypeContainingText(screen.tree, 'Pressable', 'Done');
+                const inlineControl = () => screen.tree.root.findAll(node => typeof node.type === 'string'
+                    && typeof node.props.accessibilityLabel === 'string' && node.props.accessibilityLabel.startsWith('Change status')
+                    && typeof node.props.onPress === 'function' && node.props.disabled !== true).at(-1);
+                await waitForHomeGovernance(async () => {
+                    await flushHookEffects();
+                    expect(inlineControl(), screen.getTextContent()).toBeDefined();
+                });
+                await pressTestInstanceAsync(inlineControl(), 'inline task status menu');
+                await waitForHomeGovernance(async () => {
+                    await flushHookEffects();
+                    expect(completion()).toBeDefined();
+                });
+                await pressTestInstanceAsync(completion(), 'inline task completion');
+                await waitForHomeGovernance(async () => {
+                    await flushHookEffects();
+                    const completed = [...todoRows.keys()].filter(key => key !== 'todo.index'
+                        && z.object({ t: z.literal('plain'), v: z.object({ done: z.boolean() }) }).parse(taskResource(key)?.content).v.done);
+                    expect(completed, JSON.stringify({
+                        page: screen.getTextContent(),
+                        requests: account.home.requests.slice(-16).map(request => ({ method: request.method, path: request.path })),
+                    })).toHaveLength(1);
+                });
+                expect([...todoRows.keys()].filter(key => key !== 'todo.index')).toHaveLength(1);
+                expect(packaged.machineRpc).not.toHaveBeenCalled();
+            },
+        };
         const accountProjection = readCurrentAppShellPluginUiProjection()!;
         const { loadDaemonMergedProjectionInputs } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
         const { mergeInstalledPluginUiProjections } = await import('@/sync/domains/plugins/ui/projectionUnion');
@@ -1364,4 +1406,16 @@ describe.each(TRIAGE_ACCOUNT_DISPATCH_SCENARIOS)('runs actual Triage through the
 it('opens the existing Session picker from actual native Task Send without a Machine', async () => {
     const fixture = await prepareTriageAccountDispatchScenario('personal send picker');
     try { await fixture.run(); } finally { await fixture.dispose(); }
+});
+
+it('completes a Triage task through the real mounted inline host control', async () => {
+    const { Platform } = await import('react-native');
+    const previous = Platform.OS;
+    // These artifacts execute in the native host; browser Account Actions need
+    // a receiving Machine, which this Account-only fixture intentionally lacks.
+    Object.assign(Platform, { OS: 'ios' });
+    try {
+        const fixture = await prepareTriageAccountDispatchScenario('personal host controls');
+        try { await fixture.run(); } finally { await fixture.dispose(); }
+    } finally { Object.assign(Platform, { OS: previous }); }
 });

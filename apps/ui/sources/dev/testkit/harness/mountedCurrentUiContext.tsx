@@ -6,7 +6,8 @@ import { MainAppTabStateProvider } from '@/components/navigation/mobile/chrome/M
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { CurrentUiContextProvider, useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import { registerCurrentUiContextActionPort } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
-import { createCurrentUiContextVoiceToolPort } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
+import { createCurrentUiContextVoiceToolPort, CurrentUiContextActionHost } from '@/components/appShell/currentUiContext/currentUiContextVoiceToolPort';
+import { AppShellPluginUiProjectionProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getServerProfileById } from '@/sync/domains/server/serverProfiles';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
@@ -16,6 +17,8 @@ import { ModalProvider } from '@/modal/ModalProvider';
 type MountedCurrentUiContextOptions = Pick<RenderWithAppProvidersOptions, 'createNodeMock'> & Readonly<{
     /** Match AppShell's host order so the current-context reader observes the foreground modal. */
     withModalProvider?: boolean;
+    /** Exercise contributed Actions through AppShell's actual discovery and admission owner. */
+    withAppShellActions?: boolean;
 }>;
 
 function ActionPort() {
@@ -29,7 +32,7 @@ function ActionPort() {
 }
 
 /** Real mounted command publication and Action port. Install Home/Socket boundaries before importing. */
-export async function createMountedCurrentUiContextWrapper(options?: Pick<MountedCurrentUiContextOptions, 'withModalProvider'>) {
+export async function createMountedCurrentUiContextWrapper(options?: Pick<MountedCurrentUiContextOptions, 'withModalProvider' | 'withAppShellActions'>) {
     const authority = captureActiveServerAccountScopeLifetime();
     if (!authority) throw new Error('Mounted command fixture requires a restored Account');
     const server = getServerProfileById(authority.scope.serverId);
@@ -39,7 +42,9 @@ export async function createMountedCurrentUiContextWrapper(options?: Pick<Mounte
     const Wrapper = (props: React.PropsWithChildren) => {
         const content = <CurrentUiContextProvider>
             <PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
-                <ActionPort />{props.children}
+                {options?.withAppShellActions ? <AppShellPluginUiProjectionProvider>
+                    <CurrentUiContextActionHost />{props.children}
+                </AppShellPluginUiProjectionProvider> : <><ActionPort />{props.children}</>}
             </PluginSurfaceFocusEligibilityProvider>
         </CurrentUiContextProvider>;
         return <InjectedAuthProvider credentials={credentials}>
@@ -52,6 +57,6 @@ export async function createMountedCurrentUiContextWrapper(options?: Pick<Mounte
 }
 
 export async function renderMountedCurrentUiContext(children: React.ReactNode, options?: MountedCurrentUiContextOptions) {
-    const { withModalProvider, ...renderOptions } = options ?? {};
-    return renderScreen(<>{children}</>, { ...renderOptions, wrapper: await createMountedCurrentUiContextWrapper({ withModalProvider }) });
+    const { withModalProvider, withAppShellActions, ...renderOptions } = options ?? {};
+    return renderScreen(<>{children}</>, { ...renderOptions, wrapper: await createMountedCurrentUiContextWrapper({ withModalProvider, withAppShellActions }) });
 }
