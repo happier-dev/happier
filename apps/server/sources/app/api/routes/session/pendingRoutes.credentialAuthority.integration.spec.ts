@@ -135,8 +135,8 @@ describe("Pending HTTP credential authority (integration)", () => {
         if (caller === "shared editor") {
             const editor = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
             await db.session.update({ where: { id: fixture.sessionId }, data: { currentStorageState: "hosted" } });
-            await db.sessionShare.create({ data: { sessionId: fixture.sessionId, sharedByUserId: fixture.accountId,
-                sharedWithUserId: editor.id, accessLevel: "edit", canApprovePermissions: false } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: fixture.sessionId, createdByAccountId: fixture.accountId,
+                accountId: editor.id, accessLevel: "edit", canApprovePermissions: false } });
             mutationToken = await auth.createToken(editor.id, undefined, { kind: "account", authority: "present_user" });
         }
         const app = createApp();

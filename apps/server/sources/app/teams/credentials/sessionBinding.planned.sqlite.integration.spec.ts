@@ -1037,17 +1037,17 @@ describe("planned Session Team credential selection (SQLite)", () => {
 
         await db.teamCredentialResource.update({ where: { id: current.resource.id }, data: { enabled: false } });
         await expect(grant()).resolves.toEqual({ ok: false, reason: "disabled" });
-        await expect(db.sessionTeamGrant.count({ where: { sessionId: session.id } })).resolves.toBe(0);
+        await expect(db.sessionGrant.count({ where: { principalKind: 'team', sessionId: session.id } })).resolves.toBe(0);
         await db.teamCredentialResource.update({ where: { id: current.resource.id }, data: { enabled: true, revision: 1 } });
         await expect(grant()).resolves.toEqual({ ok: false, reason: "resource_changed" });
-        await expect(db.sessionTeamGrant.count({ where: { sessionId: session.id } })).resolves.toBe(0);
+        await expect(db.sessionGrant.count({ where: { principalKind: 'team', sessionId: session.id } })).resolves.toBe(0);
         await db.teamCredentialResource.update({ where: { id: current.resource.id }, data: { revision: 0, sessionUsePolicy: "personal_allowed" } });
         await expect(grant()).resolves.toEqual({ ok: false, reason: "invalid_input" });
-        await expect(db.sessionTeamGrant.count({ where: { sessionId: session.id } })).resolves.toBe(0);
+        await expect(db.sessionGrant.count({ where: { principalKind: 'team', sessionId: session.id } })).resolves.toBe(0);
         await db.teamCredentialResource.update({ where: { id: current.resource.id }, data: { sessionUsePolicy: "team_visibility_required" } });
 
         await expect(grant()).resolves.toMatchObject({ ok: true });
-        await expect(db.sessionTeamGrant.findUnique({ where: { sessionId_teamId: { sessionId: session.id, teamId: current.team.id } } }))
+        await expect(db.sessionGrant.findUnique({ where: { principalKind: 'team', sessionId_teamId: { sessionId: session.id, teamId: current.team.id } } }))
             .resolves.toMatchObject({ accessLevel: "edit", canApprovePermissions: false });
         await expect(db.sessionTeamCredentialBinding.count({ where: { sessionId: session.id } })).resolves.toBe(0);
         await expect(db.session.findUniqueOrThrow({ where: { id: session.id }, select: { metadata: true, metadataVersion: true } }))
@@ -1075,7 +1075,7 @@ describe("planned Session Team credential selection (SQLite)", () => {
             const rejected = await post();
             expect(rejected.statusCode, rejected.body).toBe(409);
             expect(rejected.json()).toEqual({ error: "session_team_credential_binding_rejected", reason: "disabled" });
-            await expect(db.sessionTeamGrant.count({ where: { sessionId: session.id } })).resolves.toBe(0);
+            await expect(db.sessionGrant.count({ where: { principalKind: 'team', sessionId: session.id } })).resolves.toBe(0);
             await db.teamCredentialResource.update({ where: { id: current.resource.id }, data: { enabled: true } });
             const granted = await post();
             expect(granted.statusCode, granted.body).toBe(200);
@@ -1086,7 +1086,7 @@ describe("planned Session Team credential selection (SQLite)", () => {
             // A later failed attempt does not undo an already accepted share.
             await db.teamCredentialResource.update({ where: { id: current.resource.id }, data: { enabled: false } });
             expect((await post()).statusCode).toBe(409);
-            await expect(db.sessionTeamGrant.count({ where: { sessionId: session.id } })).resolves.toBe(1);
+            await expect(db.sessionGrant.count({ where: { principalKind: 'team', sessionId: session.id } })).resolves.toBe(1);
         });
         await expect(db.sessionTeamCredentialBinding.count({ where: { sessionId: session.id } })).resolves.toBe(0);
         await expect(db.session.findUniqueOrThrow({ where: { id: session.id }, select: { metadata: true, metadataVersion: true } }))
@@ -1132,7 +1132,7 @@ describe("planned Session Team credential selection (SQLite)", () => {
             error: "session_team_credential_binding_rejected",
             reason: "invalid_input",
         });
-        await expect(db.sessionTeamGrant.count({ where: { sessionId: session.id } })).resolves.toBe(0);
+        await expect(db.sessionGrant.count({ where: { principalKind: 'team', sessionId: session.id } })).resolves.toBe(0);
         await expect(db.sessionTeamCredentialBinding.count({ where: { sessionId: session.id } })).resolves.toBe(0);
         await expect(db.session.findUniqueOrThrow({
             where: { id: session.id },
@@ -1153,7 +1153,7 @@ describe("planned Session Team credential selection (SQLite)", () => {
             error: "session_team_credential_binding_rejected",
             reason: "disabled",
         });
-        await expect(db.sessionTeamGrant.count({ where: { sessionId: session.id } })).resolves.toBe(0);
+        await expect(db.sessionGrant.count({ where: { principalKind: 'team', sessionId: session.id } })).resolves.toBe(0);
         await expect(db.sessionTeamCredentialBinding.count({ where: { sessionId: session.id } })).resolves.toBe(0);
         await expect(db.session.findUniqueOrThrow({
             where: { id: session.id },
@@ -1173,8 +1173,8 @@ describe("planned Session Team credential selection (SQLite)", () => {
         admissions.mockRestore();
         expect(result).toMatchObject({ ok: true });
         expect(entitlementEvaluations).toBe(mutation.teamCredentialBindings.length);
-        await expect(db.sessionTeamGrant.findUnique({
-            where: { sessionId_teamId: { sessionId: session.id, teamId: current.team.id } },
+        await expect(db.sessionGrant.findUnique({
+            where: { principalKind: 'team', sessionId_teamId: { sessionId: session.id, teamId: current.team.id } },
         })).resolves.toMatchObject({ accessLevel: "edit", canApprovePermissions: false });
         await expect(db.sessionTeamCredentialBinding.findFirst({ where: { sessionId: session.id } }))
             .resolves.toMatchObject({ resourceId: current.resource.id, resourceRevision: current.resource.revision });
@@ -1183,7 +1183,7 @@ describe("planned Session Team credential selection (SQLite)", () => {
             ...mutation,
             teamVisibilityGrantConsent: { teamId: current.team.id },
         })).resolves.toMatchObject({ ok: true });
-        await expect(db.sessionTeamGrant.count({ where: { sessionId: session.id } })).resolves.toBe(1);
+        await expect(db.sessionGrant.count({ where: { principalKind: 'team', sessionId: session.id } })).resolves.toBe(1);
         await expect(db.sessionTeamCredentialBinding.count({ where: { sessionId: session.id } })).resolves.toBe(1);
     });
 

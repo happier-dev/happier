@@ -2,7 +2,8 @@ import { encodeBase64 } from 'privacy-kit';
 import { MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1 } from '@happier-dev/protocol/changes';
 import { parseEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import type { MachineAccessRecipientCensusResponseV1 } from '@happier-dev/protocol/machines/machineAccessV1';
-import { isTeamPrincipalRoleV1, type TeamRoleV1 } from '@happier-dev/protocol/teams';
+import type { TeamRoleV1 } from '@happier-dev/protocol/teams';
+import { iterateResourceGrantPrincipalAccountIdsFromFacts, type ResourceGrantPrincipalFacts } from '@/app/teams/resourceGrantAccess';
 import type { Tx } from '@/storage/inTx';
 import { getDbProviderFromEnv } from '@/storage/db';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
@@ -55,19 +56,22 @@ function machineAudienceQuery(ids: readonly string[], provider: ReturnType<typeo
         SELECT s."machineId", g."accountId", 'account' AS "source", NULL AS "membershipStatus", NULL AS "membershipRole",
             ${absentArchive} AS "teamArchivedAt", ${absentArchive} AS "groupArchivedAt", g."accessLevel",
             CASE WHEN s."machineId" = s."sourceMachineId" THEN 0 ELSE 1 END AS "inherited"
-        FROM "MachineAccountGrant" g JOIN authority_sources s ON s."sourceMachineId" = g."machineId"
+        FROM "MachineGrant" g JOIN authority_sources s ON s."sourceMachineId" = g."machineId"
+        WHERE g."principalKind" = 'account'
         UNION ALL
         SELECT s."machineId", tm."accountId", 'team', tm."status", tm."role", t."archivedAt", ${absentArchive}, g."accessLevel",
             CASE WHEN s."machineId" = s."sourceMachineId" THEN 0 ELSE 1 END
-        FROM "MachineTeamGrant" g JOIN authority_sources s ON s."sourceMachineId" = g."machineId"
+        FROM "MachineGrant" g JOIN authority_sources s ON s."sourceMachineId" = g."machineId"
         JOIN "Team" t ON t."id" = g."teamId" JOIN "TeamMembership" tm ON tm."teamId" = t."id"
+        WHERE g."principalKind" = 'team'
         UNION ALL
         SELECT s."machineId", tm."accountId", 'group', tm."status", tm."role", t."archivedAt", tg."archivedAt", g."accessLevel",
             CASE WHEN s."machineId" = s."sourceMachineId" THEN 0 ELSE 1 END
-        FROM "MachineGroupGrant" g JOIN authority_sources s ON s."sourceMachineId" = g."machineId"
+        FROM "MachineGrant" g JOIN authority_sources s ON s."sourceMachineId" = g."machineId"
         JOIN "TeamGroup" tg ON tg."id" = g."teamGroupId" JOIN "Team" t ON t."id" = tg."teamId"
         JOIN "TeamGroupMembership" gm ON gm."teamGroupId" = tg."id"
         JOIN "TeamMembership" tm ON tm."id" = gm."teamMembershipId"
+        WHERE g."principalKind" = 'group'
         UNION ALL
         SELECT s."machineId", m."accountId", 'account', NULL, NULL, ${absentArchive}, ${absentArchive}, 'admin',
             CASE WHEN s."machineId" = s."sourceMachineId" THEN 0 ELSE 1 END
@@ -81,10 +85,14 @@ function isEffectiveAudienceRecipient<T extends AudienceRow>(row: T): row is T &
     if (row.inherited && inheritManagedControllerRole(row.accessLevel === 'admin' ? 'manage' : 'use', null) === null) return false;
     const lifetime = { accountStatus: row.status, membershipStatus: row.membershipStatus ?? 'active',
         teamArchivedAt: row.teamArchivedAt === null ? null : new Date(Number(row.teamArchivedAt)) };
-    if (row.source === 'team') return row.membershipRole !== null && isTeamPrincipalRoleV1(row.membershipRole) && isEffectiveTeamMembership(lifetime);
-    if (row.source === 'group') return isEffectiveTeamGroupMembership({ ...lifetime,
-        groupArchivedAt: row.groupArchivedAt === null ? null : new Date(Number(row.groupArchivedAt)) });
-    return true;
+    const principal: ResourceGrantPrincipalFacts = row.source === 'team'
+        ? { kind: 'team', memberships: row.membershipRole === null ? [] : [{ accountId: row.id, role: row.membershipRole,
+            effective: isEffectiveTeamMembership(lifetime) }] }
+        : row.source === 'group'
+        ? { kind: 'group', memberships: [{ accountId: row.id, effective: isEffectiveTeamGroupMembership({ ...lifetime,
+            groupArchivedAt: row.groupArchivedAt === null ? null : new Date(Number(row.groupArchivedAt)) }) }] }
+        : { kind: 'account', accountId: row.id, active: true };
+    return !iterateResourceGrantPrincipalAccountIdsFromFacts(principal).next().done;
 }
 
 /** Notification/liveness reads need membership only, never content or wrapping material. */

@@ -61,8 +61,8 @@ describe('ordinary Session birth and owner-only onboarding', () => {
             const otherToken = await auth.createToken(other.id, undefined, { kind: 'account', authority: 'present_user' });
             expect((await enqueue(otherToken)).json()).toMatchObject({ result: {
                 status: 'rejected', code: 'session_input_target_unavailable' } });
-            await db.sessionShare.create({ data: { sessionId, sharedByUserId: f.account.id,
-                sharedWithUserId: other.id, accessLevel: 'edit' } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId, createdByAccountId: f.account.id,
+                accountId: other.id, accessLevel: 'edit' } });
             expect((await enqueue(otherToken)).json()).toMatchObject({ result: {
                 status: 'rejected', code: 'session_input_target_unavailable' } });
             expect((await enqueue(f.presentUserToken, { ...request, targetMachineId: randomUUID() })).json())
@@ -187,8 +187,8 @@ describe('ordinary Session birth and owner-only onboarding', () => {
                     creationKey: randomUUID() }) } });
             expect(otherBirth.statusCode, otherBirth.body).toBe(200);
             const otherSessionId = String(otherBirth.json().session.id);
-            await db.sessionShare.create({ data: { sessionId: otherSessionId, sharedByUserId: other.id,
-                sharedWithUserId: f.account.id, accessLevel: 'edit' } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: otherSessionId, createdByAccountId: other.id,
+                accountId: f.account.id, accessLevel: 'edit' } });
             const foreignBody = { request: { ...request, sessionId: otherSessionId, localId: randomUUID() } };
             const foreignPath = `/v2/sessions/${otherSessionId}/pending/template-onboarding`;
             const foreign = await f.app.inject({ method: 'POST', url: foreignPath,

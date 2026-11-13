@@ -151,7 +151,7 @@ describe("Team credential direct material consumed boundary (SQLite integration)
             slotKey: Buffer.from(encodeSessionTeamCredentialSlotKeyV1({ kind: "connected_service_purpose", purpose })),
             resourceId: resource.id, resourceRevision: resource.revision,
         } });
-        await db.sessionTeamGrant.create({ data: { sessionId: session.id, teamId: team.id, accessLevel: "edit",
+        await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: team.id, accessLevel: "edit",
             canApprovePermissions: false, effectiveAt: new Date() } });
         const app = createAuthenticatedTestApp();
         app.addHook("onRequest", async (request: FastifyRequest) => {
@@ -363,7 +363,7 @@ describe("Team credential direct material consumed boundary (SQLite integration)
             resourceId: resource.id,
             resourceRevision: resource.revision,
         } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id,
             teamId: team.id,
             accessLevel: "edit",

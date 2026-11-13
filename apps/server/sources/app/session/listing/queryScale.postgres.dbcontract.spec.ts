@@ -113,8 +113,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
             })) });
         }
         const sharedIds = foreignIds.slice(-3);
-        await db.sessionShare.createMany({ data: sharedIds.map(sessionId => ({ sessionId, sharedByUserId: foreign.id,
-            sharedWithUserId: owner.id, accessLevel: 'view' as const })) });
+        await db.sessionGrant.createMany({ data: (sharedIds.map(sessionId => ({ sessionId, createdByAccountId: foreign.id,
+            accountId: owner.id, accessLevel: 'view' as const }))).map(data => ({ ...data, principalKind: 'account' })) });
         await db.accountSessionFollow.create({ data: { accountId: owner.id, sessionId: foreignIds.at(-4)!,
             following: true, hasPersistentFollow: true } });
         await db.sessionMessage.createMany({ data: ids.slice(0, 2_000).map((sessionId, index) => ({ sessionId, seq: 1,
@@ -235,8 +235,13 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
             await db.$executeRawUnsafe('ANALYZE "Session"');
             const mixed = await measure('mixed publication branches', { includeInactive: true, includeAttention: false });
             expect(mixed.status).toBe(200);
+            // Both Account/activity indexes serve the same ordered, bounded
+            // hosted keyset. PostgreSQL chooses between them from live stats.
+            expect.soft(mixed.plans[0]?.nodes.some(node => node === 'Index Scan:Session_listing_hosted_activity_idx'
+                || node === 'Index Scan:Session_accountId_meaningfulActivityAt_id_idx')).toBe(true);
+            expect.soft(mixed.plans[0]?.scanned).toBe(mixed.plans[0]?.returned);
             expect.soft(mixed.plans.flatMap(plan => plan.nodes)).toEqual(expect.arrayContaining([
-                'Index Scan:Session_listing_hosted_activity_idx', 'Index Scan:Session_listing_state_snapshot_idx',
+                'Index Scan:Session_listing_state_snapshot_idx',
                 'Index Scan:Session_listing_hosted_created_idx', 'Index Scan:Session_listing_incomplete_created_idx',
             ]));
             await db.session.updateMany({ where: { accountId: owner.id }, data: { active: false } });

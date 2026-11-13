@@ -3,15 +3,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 // Prisma is the database boundary; current Session audience resolution stays real.
 vi.mock('@/storage/db', async () => {
     const { createDbMocks, createDbTransactionMock, inTxPostgresControlStatementMock } = await import('@/app/api/testkit/dbMocks');
-    const { db } = createDbMocks({ session: ['findMany'], sessionShare: ['findMany'],
-        sessionTeamGrant: ['findMany'], sessionGroupGrant: ['findMany'] });
+    const { db } = createDbMocks({ session: ['findMany'], sessionGrant: ['findMany'],
+          });
     db.session.findMany.mockResolvedValue([{ id: 'session_1', accountId: 'session_owner', account: { status: 'active' },
         currentStorageState: 'hosted', seq: 0, acceptedThroughServerSeq: null,
         materializationPublicationId: null, materializedThroughSourceAt: null, publishedThroughServerSeq: null }]);
-    db.sessionShare.findMany.mockResolvedValue([{ sessionId: 'session_1', sharedWithUserId: 'coadmin' },
-        { sessionId: 'session_1', sharedWithUserId: 'creator' }]);
-    db.sessionTeamGrant.findMany.mockResolvedValue([]);
-    db.sessionGroupGrant.findMany.mockResolvedValue([]);
+    db.sessionGrant.findMany.mockResolvedValue([{ sessionId: 'session_1', principalKind: 'account', accountId: 'coadmin', teamId: null, teamGroupId: null, effectiveAt: null },
+        { sessionId: 'session_1', principalKind: 'account', accountId: 'creator', teamId: null, teamGroupId: null, effectiveAt: null }]);
+    db.sessionGrant.findMany.mockResolvedValue([]);
+    db.sessionGrant.findMany.mockResolvedValue([]);
     const reader = { ...db, ...inTxPostgresControlStatementMock,
         $queryRawUnsafe: async (query: string) => {
             if (!query.includes('WITH RECURSIVE selected AS') || !query.includes('MachineAccountGrant')) throw new Error('Unexpected audience fixture SQL');

@@ -194,7 +194,7 @@ function pagedSessionRow(id: string) {
         dataEncryptionKey: null,
         active: false,
         lastActiveAt: createdAt,
-        shares: [],
+        grants: [],
     };
 }
 

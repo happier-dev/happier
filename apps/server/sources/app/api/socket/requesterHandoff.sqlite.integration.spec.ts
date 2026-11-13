@@ -36,7 +36,7 @@ describe('requester handoff placement and exact signed ingress', () => {
         const target = await db.machine.create({ data: { ...machineData, id: randomUUID(), accountId: bob.id,
             installationId: randomUUID(), installationPublicKey: new Uint8Array(nacl.sign.keyPair().publicKey) } });
         const grant = { machineId: source.id, accountId: bob.id, accessLevel: 'view' as const, createdByAccountId: alice.id };
-        await db.machineAccountGrant.create({ data: grant });
+        await db.machineGrant.create({ data: { ...grant, principalKind: 'account' } });
         const session = await db.session.create({ data: { accountId: bob.id, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
         await db.accessKey.create({ data: { accountId: bob.id, sessionId: session.id, machineId: source.id, data: 'opaque' } });
         const envelope = { v: 1 as const, requestId: randomUUID(), target: { kind: 'machine' as const, machineId: source.id },
@@ -105,11 +105,11 @@ describe('requester handoff placement and exact signed ingress', () => {
         expect(await call()).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
         expect(effect).not.toHaveBeenCalled();
         await db.session.update({ where: { id: session.id }, data: { accountId: bob.id } });
-        duringLatest = () => db.machineAccountGrant.delete({ where: { machineId_accountId: { machineId: source.id, accountId: bob.id } } });
+        duringLatest = () => db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: { machineId: source.id, accountId: bob.id } } });
         expect(await call()).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
         expect(effect).not.toHaveBeenCalled();
         expect(await relay()).toMatchObject({ kind: 'placement_error' });
-        await db.machineAccountGrant.create({ data: grant });
+        await db.machineGrant.create({ data: { ...grant, principalKind: 'account' } });
         await db.machine.update({ where: { id: source.id }, data: { active: false } });
         expect(await relay()).toMatchObject({ kind: 'placement_error' });
         expect(await call()).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));

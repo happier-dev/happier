@@ -185,8 +185,8 @@ describe('Account personal Follow accepted progress (SQLite + HTTP)', () => {
             const send = (payload: unknown = occurrence, app = receiver.app, headers = receiver.headers) =>
                 app.inject({ method: 'POST', url, headers, payload });
             expect((await send()).json()).toEqual({ accepted: false, alreadyRepresented: false });
-            await db.sessionShare.create({ data: { sessionId: source.source.id, sharedByUserId: source.account.id,
-                sharedWithUserId: receiver.account.id, accessLevel: 'view' } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: source.source.id, createdByAccountId: source.account.id,
+                accountId: receiver.account.id, accessLevel: 'view' } });
             const observationUrl = `/v2/sessions/${source.source.id}/follows/occurrence-routes`;
             const observation = { v: 1, receiver: { kind: 'account' }, production: 'source', sourceMessage };
             const observed = await receiver.app.inject({ method: 'POST', url: observationUrl, headers: receiver.headers, payload: observation });
@@ -244,7 +244,7 @@ describe('Account personal Follow accepted progress (SQLite + HTTP)', () => {
             expect(await applyViewerReadCursorOperation({ accountId: receiver.account.id, sessionId: source.source.id,
                 authentication, operation: { kind: 'mark-read' } })).toMatchObject({ ok: true });
             expect((await send()).json()).toEqual({ accepted: false, alreadyRepresented: false });
-            await db.sessionShare.deleteMany({ where: { sessionId: source.source.id, sharedWithUserId: receiver.account.id } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: source.source.id, accountId: receiver.account.id } });
             expect((await send()).json()).toEqual({ accepted: false, alreadyRepresented: false });
             expect((await receiver.app.inject({ method: 'POST', url: observationUrl, headers: receiver.headers, payload: observation })).json())
                 .toEqual({ ok: false, v: 1, error: 'forbidden' });
@@ -378,8 +378,8 @@ describe('Account personal Follow accepted progress (SQLite + HTTP)', () => {
         try {
             const rule = await s.rule('first');
             const collaborator = await db.account.create({ data: { encryptionMode: 'plain' } });
-            await db.sessionShare.create({ data: { sessionId: s.source.id, sharedByUserId: s.account.id,
-                sharedWithUserId: collaborator.id, accessLevel: 'edit' } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: s.source.id, createdByAccountId: s.account.id,
+                accountId: collaborator.id, accessLevel: 'edit' } });
             for (const actorUserId of [s.account.id, collaborator.id]) {
                 const localId = randomUUID();
                 expect(await createSessionMessage({ actorUserId, sessionId: s.source.id, localId,

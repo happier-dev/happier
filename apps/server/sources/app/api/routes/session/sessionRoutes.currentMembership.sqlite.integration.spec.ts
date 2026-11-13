@@ -222,11 +222,11 @@ async function createSharedSessionFixture(encryptionMode: 'plain' | 'e2ee' = 'pl
         },
         select: { id: true },
     });
-    await db.sessionShare.create({
-        data: {
+    await db.sessionGrant.create({
+        data: { principalKind: 'account',
             sessionId: session.id,
-            sharedByUserId: owner.id,
-            sharedWithUserId: collaborator.id,
+            createdByAccountId: owner.id,
+            accountId: collaborator.id,
             accessLevel: "view",
         },
     });
@@ -273,11 +273,11 @@ async function createSharedSessionFixture(encryptionMode: 'plain' | 'e2ee' = 'pl
 }
 
 async function revokeShare(params: Readonly<{ sessionId: string; collaboratorId: string }>): Promise<void> {
-    await db.sessionShare.delete({
-        where: {
-            sessionId_sharedWithUserId: {
+    await db.sessionGrant.delete({
+        where: { principalKind: 'account',
+            sessionId_accountId: {
                 sessionId: params.sessionId,
-                sharedWithUserId: params.collaboratorId,
+                accountId: params.collaboratorId,
             },
         },
     });
@@ -309,7 +309,7 @@ describe("sessionRoutes current shared-participant reads (integration)", () => {
             () => db.sessionTurnMutationReceipt.deleteMany(),
             () => db.sessionTurn.deleteMany(),
             () => db.sessionMessage.deleteMany(),
-            () => db.sessionShare.deleteMany(),
+            () => db.sessionGrant.deleteMany({ where: { principalKind: 'account' } }),
             () => db.accountChange.deleteMany(),
             () => db.session.deleteMany(),
             () => db.account.deleteMany(),
@@ -318,8 +318,8 @@ describe("sessionRoutes current shared-participant reads (integration)", () => {
 
     it('retains an admitted manager roster and observes capability downgrade on the next inspection', async () => {
         const fixture = await createSharedSessionFixture();
-        const share = { sessionId_sharedWithUserId: { sessionId: fixture.sessionId, sharedWithUserId: fixture.collaboratorId } };
-        await db.sessionShare.update({ where: share, data: { accessLevel: 'admin' } });
+        const share = { sessionId_accountId: { sessionId: fixture.sessionId, accountId: fixture.collaboratorId } };
+        await db.sessionGrant.update({ where: { principalKind: 'account', ...share }, data: { accessLevel: 'admin' } });
         const params = { actorAccountId: fixture.collaboratorId, sessionId: fixture.sessionId,
             authentication: createPresentUserSessionAccessAuthentication() };
         expect(await inspectSessionAccessGrants(params)).toMatchObject({ ok: true, value: { visibility: 'complete' } });
@@ -331,13 +331,13 @@ describe("sessionRoutes current shared-participant reads (integration)", () => {
         let paused = false;
         Object.defineProperty(delegate, 'findUniqueOrThrow', { configurable: true, writable: true,
             value: async (...args: Parameters<typeof original>) => {
-                if (!paused && args[0]?.select?.shares) { paused = true; reached.resolve(); await release.promise; }
+                if (!paused && args[0]?.select?.grants) { paused = true; reached.resolve(); await release.promise; }
                 return await original(...args);
             } });
         const response = inspectSessionAccessGrants(params);
         try {
             await expectBarrierEnteredBeforeResponse({ reached: reached.promise }, response);
-            await db.sessionShare.update({ where: share, data: { accessLevel: 'view' } });
+            await db.sessionGrant.update({ where: { principalKind: 'account', ...share }, data: { accessLevel: 'view' } });
             release.resolve();
             const result = await response;
             expect(await inspectSessionAccessGrants(params)).toMatchObject({ ok: true, value: { visibility: 'self', grants: [] } });
@@ -350,8 +350,8 @@ describe("sessionRoutes current shared-participant reads (integration)", () => {
 
     it.each(['downgraded', 'revoked'] as const)('retains admitted recipient access until the next inspection after its grant is %s', async (scenario) => {
         const fixture = await createSharedSessionFixture();
-        const share = { sessionId_sharedWithUserId: { sessionId: fixture.sessionId, sharedWithUserId: fixture.collaboratorId } };
-        await db.sessionShare.update({ where: share, data: { accessLevel: 'edit' } });
+        const share = { sessionId_accountId: { sessionId: fixture.sessionId, accountId: fixture.collaboratorId } };
+        await db.sessionGrant.update({ where: { principalKind: 'account', ...share }, data: { accessLevel: 'edit' } });
         const params = { actorAccountId: fixture.ownerId, sessionId: fixture.sessionId,
             recipientAccountId: fixture.collaboratorId, authentication: createPresentUserSessionAccessAuthentication() };
         const reader = await withSqliteReadSnapshot(async tx => tx);
@@ -362,14 +362,14 @@ describe("sessionRoutes current shared-participant reads (integration)", () => {
         let paused = false;
         Object.defineProperty(delegate, 'findUniqueOrThrow', { configurable: true, writable: true,
             value: async (...args: Parameters<typeof original>) => {
-                if (!paused && args[0]?.select?.shares) { paused = true; reached.resolve(); await release.promise; }
+                if (!paused && args[0]?.select?.grants) { paused = true; reached.resolve(); await release.promise; }
                 return await original(...args);
             } });
         const response = inspectSessionAccessGrants(params);
         try {
             await expectBarrierEnteredBeforeResponse({ reached: reached.promise }, response);
             if (scenario === 'revoked') await revokeShare(fixture);
-            else await db.sessionShare.update({ where: share, data: { accessLevel: 'view' } });
+            else await db.sessionGrant.update({ where: { principalKind: 'account', ...share }, data: { accessLevel: 'view' } });
             release.resolve();
             expect(await response).toMatchObject({ ok: true, value: { visibility: 'complete', recipientAccess: {
                 accountId: fixture.collaboratorId,
@@ -498,7 +498,7 @@ describe("sessionRoutes current shared-participant reads (integration)", () => {
         const membership = await db.teamMembership.create({ data: {
             teamId: team.id, accountId: fixture.collaboratorId, role: 'member', sessionAccessStartsAt: null,
         } });
-        const grant = await db.sessionTeamGrant.create({ data: {
+        const grant = await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: fixture.sessionId, teamId: team.id, accessLevel: 'view', effectiveAt: new Date(),
         } });
         try {
@@ -538,7 +538,7 @@ describe("sessionRoutes current shared-participant reads (integration)", () => {
                 }
             });
         } finally {
-            await db.sessionTeamGrant.delete({ where: { sessionId_teamId: { sessionId: grant.sessionId, teamId: grant.teamId } } });
+            await db.sessionGrant.delete({ where: { principalKind: 'team', sessionId_teamId: { sessionId: grant.sessionId, teamId: grant.teamId } } });
             await db.teamMembership.delete({ where: { id: membership.id } });
             await db.team.delete({ where: { id: team.id } });
         }
@@ -712,11 +712,11 @@ describe("sessionRoutes current shared-participant reads (integration)", () => {
 
     it("keeps authenticated Account authorship when a public caller supplies the retired transcript-only hint", async () => {
         const fixture = await createSharedSessionFixture();
-        await db.sessionShare.update({
-            where: {
-                sessionId_sharedWithUserId: {
+        await db.sessionGrant.update({
+            where: { principalKind: 'account',
+                sessionId_accountId: {
                     sessionId: fixture.sessionId,
-                    sharedWithUserId: fixture.collaboratorId,
+                    accountId: fixture.collaboratorId,
                 },
             },
             data: { accessLevel: "edit" },

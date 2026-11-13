@@ -1,3 +1,4 @@
+import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import nacl from 'tweetnacl';
 import * as privacyKit from 'privacy-kit';
@@ -56,7 +57,7 @@ describe('Environment installation grants and complete resource captures', () =>
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const machineId = crypto.randomUUID();
         await db.machine.create({ data: { id: machineId, installationId: crypto.randomUUID(),
-            installationPublicKey: privacyKit.encodeBase64(nacl.box.keyPair().publicKey), accountId: owner.id, ...publishedMachine } });
+            installationPublicKey: new Uint8Array(nacl.box.keyPair().publicKey), accountId: owner.id, ...publishedMachine } });
         const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId,
             requestKey: crypto.randomUUID(), name: 'Repeated allocation', audience: [] }));
         if (!source.ok) throw new Error(source.error);
@@ -108,7 +109,7 @@ describe('Environment installation grants and complete resource captures', () =>
         const a = { machineId: crypto.randomUUID(), installationId: crypto.randomUUID() };
         const b = { machineId: crypto.randomUUID(), installationId: crypto.randomUUID() };
         await db.machine.createMany({ data: [a, b].map(machine => ({ id: machine.machineId,
-            installationId: machine.installationId, installationPublicKey: privacyKit.encodeBase64(nacl.box.keyPair().publicKey),
+            installationId: machine.installationId, installationPublicKey: new Uint8Array(nacl.box.keyPair().publicKey),
             accountId: owner.id, ...publishedMachine })) });
         const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId,
             requestKey: crypto.randomUUID(), name: 'Accepted grant custody', audience: [] }));
@@ -220,9 +221,7 @@ describe('Environment installation grants and complete resource captures', () =>
             { id: secondMachineId, installationId: secondInstallationId, accountId: owner.id, ...machineContent },
             { id: buildMachineId, installationId: buildInstallationId, accountId: owner.id, ...machineContent },
         ] });
-        if (team) await db.machineTeamGrant.createMany({ data: [machineId, secondMachineId, buildMachineId].map(id => ({
-            machineId: id, teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id,
-        })) });
+        if (team) await db.machineGrant.createMany({ data: [machineId, secondMachineId, buildMachineId].map(id => ({ ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id }), machineId: id })) });
         const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, {
             serverId, requestKey: crypto.randomUUID(), name: 'Capture contract', audience: [],
             ...(team ? { owner: { kind: 'team' as const, teamId: team.id } } : {}),
@@ -320,8 +319,7 @@ describe('Environment installation grants and complete resource captures', () =>
                     : sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: recipientKeys.publicKey, randomBytes: nacl.randomBytes }),
             });
             if (!created.ok) throw new Error(created.error);
-            if (team) await db.artifactTeamGrant.create({ data: { artifactId: created.artifact.id, teamId: team.id,
-                accessLevel: 'admin', createdByAccountId: actorAccountId } });
+            if (team) await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: actorAccountId }), artifactId: created.artifact.id } });
             return { contentArtifactId: created.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
         }
         const initialContent = await artifact('deployment-environment.v1', { ...content, bindings: [] });
@@ -398,7 +396,7 @@ describe('Environment installation grants and complete resource captures', () =>
                 ...destination, binding: { purpose: 'variable', phase: row.phase, name: row.name }, sealedContent: `sealed-${row.name}` });
         }
         const input = { serverId, environmentId: environment.environmentId, expectedRevision: linked.revision,
-            ...preparedContent, referencedSavedSecretRevisions: [{ resourceId, revision: 1 }], grants };
+            ...preparedContent, referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(content.bindings), grants };
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
             const url = `/v1/deployments/environments/${environment.environmentId}/bindings`;
             const headers = { 'x-test-user-id': owner.id };
@@ -495,7 +493,8 @@ describe('Environment installation grants and complete resource captures', () =>
                 expect(await inTx(tx => repairSavedSecretResourceKeyEnvelopesInTx(tx, { accountId: donor.id, resourceId,
                     expectedRevision: 1, keyEnvelopes: envelopes }))).toMatchObject({ ok: true, value: { revision: 1 } });
                 expect((await snapshot()).grants, 'same-revision key repair keeps exact current installation grants').toEqual(committed.grants);
-                expect(await inTx(tx => updateSavedSecretResourceInTx(tx, rotating))).toMatchObject({ ok: true, value: { revision: 2 } });
+                const rotated = await inTx(tx => updateSavedSecretResourceInTx(tx, rotating));
+                expect(rotated, JSON.stringify(rotated)).toMatchObject({ ok: true, value: { revision: 2 } });
                 expect((await snapshot()).grants.filter(row => row.kind === 'secret' && row.resourceId === resourceId),
                     'rotation deletes retired ciphertext instead of retaining it for generation logs').toEqual([]);
                 expect((await snapshot()).environment).toMatchObject({
@@ -520,7 +519,7 @@ describe('Environment installation grants and complete resource captures', () =>
                 expect(continued.json()).toEqual(accepted.json());
                 expect(await snapshot(), 'Team grants survive departure of the binding author without re-sealing or publishing').toEqual(committed);
                 // Equal-seal maintenance above needs no new Machine decision; changing the definition below does.
-                await db.machineTeamGrant.updateMany({ where: { teamId: team.id,
+                await db.machineGrant.updateMany({ where: { principalKind: 'team', teamId: team.id,
                     machineId: { in: [machineId, secondMachineId, buildMachineId] } }, data: { accessLevel: 'admin' } });
             }
             const actorAccountId = team ? donor.id : owner.id;

@@ -60,7 +60,7 @@ describe("Discussion grant-entry baseline (SQLite)", () => {
             const readers = await Promise.all(Array.from({ length: readerCount }, () => db.account.create({
                 data: { publicKey: randomUUID(), encryptionMode: "plain" }, select: { id: true },
             })));
-            await db.discussionAccountGrant.createMany({ data: readers.map(reader => ({
+            await db.discussionGrant.createMany({ data: readers.map(reader => ({ principalKind: 'account',
                 discussionId: discussion.id, accountId: reader.id, accessLevel: "view", createdByAccountId: owner.id,
             })) });
             const observed = { count: 0 };

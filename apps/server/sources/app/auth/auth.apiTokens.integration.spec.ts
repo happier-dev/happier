@@ -361,7 +361,7 @@ describe("auth (API tokens)", () => {
             if (!source.ok) throw new Error(source.error);
             const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: creator.id,
                 metadata: "{}", installationId: crypto.randomUUID() } });
-            await db.machineTeamGrant.create({ data: { machineId: machine.id, teamId: team.id,
+            await db.machineGrant.create({ data: { principalKind: 'team', machineId: machine.id, teamId: team.id,
                 accessLevel: "view", createdByAccountId: creator.id } });
             const content = async (kind: string) => {
                 const created = await createArtifact({ actorUserId: creator.id, artifactId: crypto.randomUUID(),

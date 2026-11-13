@@ -51,7 +51,7 @@ describe("Session metadata tuple pending summary (SQLite)", () => {
         registerSessionPatchRoute(app);
         await app.ready();
         try {
-            await expect(updateSessionMetadataTupleWithRetry({
+            await expect(updateSessionMetadataTupleWithRetry<typeof metadata, typeof agentState>({
                 initialSnapshot: { mode: "legacy_owner", metadataLayoutVersion: 0,
                     metadataVersion: session.metadataVersion, metadataCiphertext: session.metadata, ownerMetadata: null,
                     agentStateVersion: session.agentStateVersion, agentStateCiphertext: session.agentState,
@@ -180,7 +180,7 @@ describe("Session metadata tuple pending summary (SQLite)", () => {
             { accountId: current.account.id, teamId: team.id, role: "owner", sessionAccessStartsAt: null },
             { accountId: editor.id, teamId: team.id, role: "member", sessionAccessStartsAt: null },
         ] });
-        await db.sessionTeamGrant.create({ data: { sessionId: current.session.id, teamId: team.id,
+        await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: current.session.id, teamId: team.id,
             accessLevel: "admin", effectiveAt: new Date(0) } });
         const patch = { mode: "shared_editor" as const, mutationIntent: "rename_session" as const,
             actorUserId: editor.id, authentication, sessionId: current.session.id, metadataLayoutVersion: 1 as const,

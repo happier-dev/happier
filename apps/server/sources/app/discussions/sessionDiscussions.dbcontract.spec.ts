@@ -208,8 +208,8 @@ describe("Discussion provider contract", () => {
         const source = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
         const answer = await db.sessionMessage.create({ data: { sessionId: source.id, seq: 1, messageRole: 'agent', content: { t: 'plain', v: { text: 'Private source answer' } } } });
         const reviewer = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
-        const sourceShare = await db.sessionShare.create({ data: { sessionId: source.id, sharedByUserId: owner.id, sharedWithUserId: reader.id, accessLevel: 'view' } });
-        await db.sessionShare.create({ data: { sessionId: reviewer.id, sharedByUserId: owner.id, sharedWithUserId: reader.id, accessLevel: 'view' } });
+        const sourceShare = await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: source.id, createdByAccountId: owner.id, accountId: reader.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: reviewer.id, createdByAccountId: owner.id, accountId: reader.id, accessLevel: 'view' } });
         const content = { v: 1 as const, parts: [{ t: 'text' as const, text: 'Private source answer' }] };
         const request = buildDiscussionMutationRequestBodyV1({ kind: 'create', creationLocalId: randomUUID(),
             anchor: { kind: 'session', sessionId: source.id, messageId: answer.id },
@@ -226,7 +226,7 @@ describe("Discussion provider contract", () => {
                 url: DISCUSSION_HTTP_PATHS_V1.invite.replace(':discussionId', discussionId), headers: { 'x-test-user-id': owner.id }, payload: { participant } });
             const target = { kind: 'session' as const, sessionId: reviewer.id };
             const person = { kind: 'account' as const, accountId: outsider.id };
-            await db.sessionShare.delete({ where: { id: sourceShare.id } });
+            await db.sessionGrant.delete({ where: { principalKind: 'account', id: sourceShare.id } });
             for (const participant of [target, person]) {
                 const denied = await invite(participant);
                 expect(denied.statusCode, denied.body).toBe(403);
@@ -245,7 +245,7 @@ describe("Discussion provider contract", () => {
             expect(await db.discussionParticipant.count({ where: { discussionId, sessionId: reviewer.id } })).toBe(1);
             expect(await db.sessionFollowEdge.findFirst({ where: { sourceDiscussionId: discussionId, destinationSessionId: reviewer.id } }))
                 .toMatchObject({ sourceSessionId: null, deliveredTranscriptSeq: 1 });
-            expect(await db.sessionShare.count({ where: { sessionId: source.id } })).toBe(0);
+            expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId: source.id } })).toBe(0);
             expect(await db.discussionMessage.count({ where: { discussionId } })).toBe(1);
             expect((await db.discussion.findUniqueOrThrow({ where: { id: discussionId } })).messageSeq).toBe(1);
         } finally {
@@ -274,11 +274,11 @@ describe("Discussion provider contract", () => {
             },
             select: { id: true },
         });
-        await db.sessionShare.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'account',
                 sessionId: session.id,
-                sharedByUserId: owner.id,
-                sharedWithUserId: author.id,
+                createdByAccountId: owner.id,
+                accountId: author.id,
                 accessLevel: "edit",
             },
         });
@@ -326,7 +326,7 @@ describe("Discussion provider contract", () => {
                 },
             })).toBe(1);
 
-            await db.sessionShare.deleteMany({ where: { sessionId: session.id, sharedWithUserId: author.id } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session.id, accountId: author.id } });
             await db.account.delete({ where: { id: author.id } });
             expect(await db.discussionMessage.count({
                 where: { discussionId: created.value.discussion.id, authorAccountId: null },

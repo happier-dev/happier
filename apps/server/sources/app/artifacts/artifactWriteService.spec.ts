@@ -109,7 +109,7 @@ describe("artifactWriteService", () => {
             const accountId = row.accountId ?? "u1";
             return { ...row, accountId,
                 account: row.account ?? await txFixture.account.findUnique({ where: { id: accountId } }),
-                accountGrants: row.accountGrants ?? [], teamGrants: row.teamGrants ?? [], groupGrants: row.groupGrants ?? [],
+                grants: row.grants ?? [],
                 keyEnvelopes: row.keyEnvelopes ?? [],
             };
         };

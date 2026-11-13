@@ -35,7 +35,7 @@ export function discussionSecondOpinionSecurityContracts() {
     const fixture = createSecondOpinionSourceFixture;
     it('withholds a Session quote and its replies from a later Team member but retains independent chat', async () => {
         const { owner, reader, source, request } = await fixture();
-        await db.sessionShare.create({ data: { sessionId: source.id, sharedByUserId: owner.id, sharedWithUserId: reader.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: source.id, createdByAccountId: owner.id, accountId: reader.id, accessLevel: 'view' } });
         const team = await db.team.create({ data: { name: 'Quoted source readers' } });
         await db.teamMembership.createMany({ data: [owner.id, reader.id].map(accountId => ({ teamId: team.id, accountId, role: 'member' })) });
         const created = await createDiscussion({ authentication, actorAccountId: owner.id, request });
@@ -71,9 +71,9 @@ export function discussionSecondOpinionSecurityContracts() {
         const { owner, reader, source, answer } = await fixture();
         const other = await db.account.create({ data: { encryptionMode: 'plain' } });
         await makeShareEligibleForTest(owner.id, other.id);
-        await db.sessionShare.createMany({ data: [reader.id, other.id].map(sharedWithUserId => ({
-            sessionId: source.id, sharedByUserId: owner.id, sharedWithUserId, accessLevel: 'view',
-        })) });
+        await db.sessionGrant.createMany({ data: ([reader.id, other.id].map(accountId => ({
+            sessionId: source.id, createdByAccountId: owner.id, accountId, accessLevel: 'view',
+        }))).map(data => ({ ...data, principalKind: 'account' })) });
         const sessionSource = { kind: 'session' as const, message: { kind: 'session' as const,
             session: { serverId: 'home', sessionId: source.id }, messageId: answer.id } };
         const artifact = kind === 'doc_passage' ? await createArtifact({ actorUserId: owner.id, artifactId: crypto.randomUUID(),
@@ -103,7 +103,7 @@ export function discussionSecondOpinionSecurityContracts() {
         if (!artifact.ok) throw new Error(artifact.error);
         const artifactId = artifact.artifact.id;
         const reviewer = await db.session.create({ data: { accountId: reader.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
-        await db.sessionShare.create({ data: { sessionId: reviewer.id, sharedByUserId: reader.id, sharedWithUserId: owner.id, accessLevel: 'edit' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: reviewer.id, createdByAccountId: reader.id, accountId: owner.id, accessLevel: 'edit' } });
         const request = { source: { kind: 'doc_passage' as const, doc: { ref: { kind: 'doc' as const, serverId: 'home', artifactId },
             revision: { headerVersion: artifact.artifact.headerVersion, bodyVersion: artifact.artifact.bodyVersion } } },
             reviewers: [{ sourceAccess: 'read' as const, selection: { kind: 'session' as const, session: { serverId: 'home', sessionId: reviewer.id } } }] };
@@ -115,6 +115,6 @@ export function discussionSecondOpinionSecurityContracts() {
             .toEqual({ ok: false, error: 'artifact_subject_ineligible' });
         expect(await previewDiscussionSecondOpinion({ authentication, actorAccountId: owner.id, request }))
             .toMatchObject({ ok: true, value: { reviewers: [{ canGrantSource: false, missingSourceAccountIds: [reader.id] }] } });
-        expect(await db.artifactAccountGrant.count({ where: { artifactId } })).toBe(0);
+        expect(await db.artifactGrant.count({ where: { artifactId, principalKind: 'account' } })).toBe(0);
     });
 }

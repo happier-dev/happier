@@ -134,8 +134,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
     const authentication = createPresentUserSessionAccessAuthentication();
     beforeAll(async () => {
         const url = process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL;
-        if (!url || process.env.DATABASE_URL !== url || new URL(url).pathname !== "/serialaudit_c5_sessionreaders") {
-            throw new Error("Run against the dedicated disposable Session-reader database");
+        if (!url || process.env.DATABASE_URL !== url || !process.env.HAPPIER_DB_CONTRACT_CONTAINER_ID) {
+            throw new Error("Run against the disposable PostgreSQL DB-contract container");
         }
         vi.stubEnv("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
         initDbPostgres();
@@ -200,7 +200,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
         const manager = await db.session.create({ data: { accountId: foreignOwner.id, tag: randomUUID(), metadata: "manager" } });
         const nextManager = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: "next-manager" } });
         const report = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: "report", archivedAt: null } });
-        await db.sessionShare.create({ data: { sessionId: manager.id, sharedByUserId: foreignOwner.id, sharedWithUserId: owner.id, accessLevel: "view" } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: manager.id, createdByAccountId: foreignOwner.id, accountId: owner.id, accessLevel: "view" } });
         await db.sessionFollowEdge.create({ data: { sourceKey: sourceKeyForSessionFollowSourceV1({ kind: "session", sessionId: report.id }),
             sourceSessionId: report.id, managerSourceSessionId: report.id, destinationSessionId: manager.id, relation: "manager", policyJson: JSON.stringify({ preset: "quiet" }) } });
         const app = createAuthenticatedTestApp();
@@ -222,7 +222,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
                     if (!projection || committed || query.model !== "sessionFollowEdge" || query.method !== "findMany") return;
                     committed = true;
                     await inTx(async tx => {
-                        await tx.sessionShare.deleteMany({ where: { sessionId: manager.id } });
+                        await tx.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: manager.id } });
                         await tx.sessionFollowEdge.updateMany({ where: { sourceSessionId: report.id, relation: "manager" }, data: { destinationSessionId: nextManager.id } });
                     }, { isolationLevel: "Serializable" });
                 },
@@ -234,7 +234,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
             expect(observed.predicateLocks).toEqual(observed.predicateLocks.map(() => 0));
         } finally {
             await app.close();
-            await db.sessionShare.deleteMany({ where: { sessionId: manager.id } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: manager.id } });
             await db.session.deleteMany({ where: { id: { in: [manager.id, nextManager.id, report.id] } } });
             await db.account.deleteMany({ where: { id: { in: [owner.id, foreignOwner.id] } } });
         }
@@ -290,7 +290,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
         const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
         const actor = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain" } });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: actor.id, accessLevel: "edit" } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id, accountId: actor.id, accessLevel: "edit" } });
         const address = { owner: "plugin" as const, namespace: "notes", kind: "entry.v1", localId: "cas-snapshot" };
         const params = { actorUserId: actor.id, sessionId: session.id, pluginId: "acme.notes", address, authentication };
         const created = await upsertSessionSystemRecordV1({ ...params, content: { t: "plain", v: { title: "before" } }, expectedRevision: null });
@@ -311,7 +311,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
                 after: async query => {
                     if (!lostCas || revoked || query.model !== "sessionSystemRecord" || query.method !== "findFirst") return;
                     revoked = true;
-                    await db.sessionShare.deleteMany({ where: { sessionId: session.id, sharedWithUserId: actor.id } });
+                    await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session.id, accountId: actor.id } });
                 },
             });
             expect(lostCas && revoked).toBe(true);
@@ -323,7 +323,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
             expect(observed.predicateLocks).toEqual(observed.predicateLocks.map(() => 0));
         } finally {
             await db.sessionSystemRecord.deleteMany({ where: { sessionId: session.id } });
-            await db.sessionShare.deleteMany({ where: { sessionId: session.id } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session.id } });
             await db.session.delete({ where: { id: session.id } });
             await db.account.deleteMany({ where: { id: { in: [owner.id, actor.id] } } });
         }

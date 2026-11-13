@@ -292,8 +292,8 @@ describe('signed Account Discussion HTTP admission', () => {
         const bob = await db.account.create({ data: { encryptionMode: 'plain' } });
         const receiver = await db.session.create({ data: { accountId: f.account.id, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
         await db.accessKey.create({ data: { accountId: f.account.id, machineId: f.machine.id, sessionId: receiver.id, data: 'source' } });
-        const shareReceiver = () => db.sessionShare.create({ data: { sessionId: receiver.id,
-            sharedByUserId: f.account.id, sharedWithUserId: bob.id, accessLevel: 'view' } });
+        const shareReceiver = () => db.sessionGrant.create({ data: { principalKind: 'account', sessionId: receiver.id,
+            createdByAccountId: f.account.id, accountId: bob.id, accessLevel: 'view' } });
         const privateText = 'Alice-only source passage';
         const text = (value: string) => ({ v: 1 as const, parts: [{ t: 'text' as const, text: value }] });
         let sourceSessionId: string | undefined;
@@ -331,6 +331,7 @@ describe('signed Account Discussion HTTP admission', () => {
                 replyTarget: { kind: 'message', messageId: created.value.firstMessage.id } }) });
         if (!inherited.ok) throw new Error(inherited.error);
         // Doc Discussion grants do not themselves confer Doc access.
+        if (sourceKind === 'doc') await db.userRelationship.create({ data: { fromUserId: f.account.id, toUserId: bob.id, status: 'friend' } });
         if (sourceKind === 'doc') expect(await setDiscussionGrant({ authentication, actorAccountId: f.account.id, discussionId,
             request: { principal: { kind: 'account', accountId: bob.id }, accessLevel: 'view' } })).toMatchObject({ ok: true });
         if (sharedBeforeInvite) await shareReceiver();
@@ -399,8 +400,8 @@ describe('signed Account Discussion HTTP admission', () => {
             expect(direct.body).toContain(privateText);
             if (artifactId) await db.artifactAccountGrant.create({ data: { artifactId, accountId: bob.id,
                 accessLevel: 'view', createdByAccountId: f.account.id } });
-            if (sourceSessionId) await db.sessionShare.create({ data: { sessionId: sourceSessionId,
-                sharedByUserId: f.account.id, sharedWithUserId: bob.id, accessLevel: 'view' } });
+            if (sourceSessionId) await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: sourceSessionId,
+                createdByAccountId: f.account.id, accountId: bob.id, accessLevel: 'view' } });
             expect(await execute('discussion.read', 1)).toMatchObject({ messages: expect.arrayContaining([
                 expect.objectContaining({ id: inherited.value.message.id })]) });
         } finally { await f.app.close(); }
@@ -514,11 +515,11 @@ describe('signed Account Discussion HTTP admission', () => {
                 authority: 'account_automation', surface: 'agent', defaultSessionId: callerKind !== 'Workflow' ? caller.id : null,
                 actionRequestId: identity.requestId, agentStartWorkDepth: 1, actionCaller, externalActionExecutionAuthorization: authorization });
             expect(args).not.toBeNull();
-            if (!args?.creationAuthorization) throw new Error('missing_real_spawn_creation_authorization');
+            if (!args) throw new Error('missing_real_spawn_arguments');
             const sessionContent = contentKey ? sealSessionStoredContent({ mode: 'e2ee',
                 ctx: { encryptionKey: contentKey.encryptionKey, encryptionVariant: 'dataKey' }, payload: { v: 1 } })
                 : { t: 'plain' as const, v: { v: 1 } };
-            const body = { tag: args.sessionCreationTag, metadataLayoutVersion: 1, encryptionMode: encrypted ? 'e2ee' : 'plain',
+            const body = { tag: identity.sessionCreationTag, metadataLayoutVersion: 1, encryptionMode: encrypted ? 'e2ee' : 'plain',
                 sharedMetadata: { ciphertext: sessionContent.t === 'encrypted' ? sessionContent.c : JSON.stringify(sessionContent.v) },
                 ownerMetadata: encrypted ? sealSessionOwnerMetadataEnvelopeV1({
                     material: { type: 'dataKey', machineKey: contentKeys.secretKey }, ownerMetadata: { v: 1 },
@@ -991,7 +992,12 @@ describe('signed Account Discussion HTTP admission', () => {
                     expect(await f.verify(authorization, { method: 'GET', path: `${DISCUSSION_HTTP_PATHS_V1.collection}?creationLocalId=create-retry&unknown=true` })).toBeNull();
                 } else {
                     expect(await f.verify(authorization, { method: 'GET', path: detail })).not.toBeNull();
-                    expect(await f.verify(authorization, { method: 'GET', path: '/v1/account/encryption/currentness' })).toBeNull();
+                    // Invitation declares a Session operand and retains its existing selector preparation.
+                    if (c.actionId === 'discussion.invite') {
+                        expect(await f.verify(authorization, { method: 'GET', path: '/v1/account/encryption/currentness' })).not.toBeNull();
+                    } else {
+                        expect(await f.verify(authorization, { method: 'GET', path: '/v1/account/encryption/currentness' })).toBeNull();
+                    }
                 }
                 if (c.actionId === 'discussion.create' || c.actionId === 'discussion.invite'
                     || c.actionId === 'discussion.access.grants.set') {
@@ -1021,7 +1027,7 @@ describe('signed Account Discussion HTTP admission', () => {
         } finally { await f.app.close(); }
     });
 
-    it('admits native Session E2EE creation preparation without granting the proposal a present-user effect', async () => {
+    it('admits native Session E2EE preparation and refuses creation without available recipient keys', async () => {
         const f = await fixture();
         try {
             const contentKeys = tweetnacl.box.keyPair();
@@ -1081,7 +1087,8 @@ describe('signed Account Discussion HTTP admission', () => {
                 firstMessage: { localId: 'native-first', content: { t: 'plain', v: content }, authoredContent: content, mentionedAccountIds: [] } });
             const direct = await f.app.inject({ method: 'POST', url: DISCUSSION_HTTP_PATHS_V1.collection,
                 headers: headers('POST', DISCUSSION_HTTP_PATHS_V1.collection, creation), payload: creation });
-            expect(direct.statusCode).toBe(401);
+            expect(direct.statusCode, direct.body).toBe(409);
+            expect(direct.json()).toMatchObject({ error: 'recipient_key_unavailable' });
             expect(await db.discussion.count({ where: { ownerAccountId: f.account.id } })).toBe(0);
             await db.account.update({ where: { id: f.account.id }, data: { contentPublicKeySig: null } });
             const unavailable = await f.app.inject({ method: 'GET', url: path, headers: headers('GET', path) });

@@ -22,10 +22,11 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Workflow Run re
     it("cancels a retained existing-session Run with its pending target audience admitted before the Run", async () => {
         const account = await db.account.create({ data: { encryptionMode: "plain" } });
         const viewer = await db.account.create({ data: { encryptionMode: "plain" } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id, metadata: "{}" } });
         const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(),
             metadata: "{}", encryptionMode: "plain", pendingCount: 1 } });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: account.id,
-            sharedWithUserId: viewer.id, accessLevel: "view" } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: account.id,
+            accountId: viewer.id, accessLevel: "view" } });
         const templateCiphertext = JSON.stringify({ kind: "happier_automation_template_plain_v1",
             payload: { prompt: "Run the retained automation", existingSessionId: session.id } });
         const automation = await db.automation.create({ data: { accountId: account.id, name: "Retained target",
@@ -34,6 +35,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Workflow Run re
         const run = await db.automationRun.create({ data: { accountId: account.id, automationId: automation.id,
             ...encodeAutomationRunCause({ kind: "manual", invokedAt }), state: "running", attempt: 1,
             scheduledAt: new Date(invokedAt), dueAt: new Date(invokedAt), startedAt: new Date(invokedAt),
+            assignments: { create: { machineId: machine.id, priority: 0 } },
             executionInputEnvelope: JSON.stringify({ kind: "happier_automation_run_execution_input_v1",
                 targetType: "existing_session", templateVersion: 1, templateCiphertext,
                 origin: { kind: "manual", invokedAt } }) } });

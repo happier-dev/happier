@@ -3733,7 +3733,7 @@ describe('Team credential Provider broker admission', () => {
         // broker/initiator Machine endpoints. (Team/TeamMembership are also read
         // by the usage-change publication to the Team's administrators, an
         // accounting effect every admitted request keeps.)
-        const authorityTables = /["`](TeamGroupMembership|TeamCredentialMemberGrant|TeamCredentialGroupGrant|SessionTeamCredentialBinding|Machine|AccessKey|MachineAccountGrant)["`]/;
+        const authorityTables = /["`](TeamGroupMembership|TeamCredentialMemberGrant|TeamCredentialGroupGrant|SessionTeamCredentialBinding|Machine|AccessKey|MachineGrant)["`]/;
         const authorityReads = async <T>(run: () => Promise<T>) => {
             statements.length = 0;
             const result = await run();

@@ -1,8 +1,9 @@
 import * as privacyKit from 'privacy-kit';
 import type { Prisma } from '@prisma/client';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import type { Tx } from '@/storage/inTx';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
-import { resourceGrantRelationsSelect, resolveResourceGrantAudienceInTx, resolveResourceGrantAudienceFromFacts,
+import { resourceGrantRelationsSelect, projectResourceGrantRows, resolveResourceGrantAudienceInTx, resolveResourceGrantAudienceFromFacts,
     projectResourceRecipientEnvelope, type ResourceGrantAccessFacts, type ResourceGrantStorageAdapter,
     type ResourceRecipientEnvelopeStorageAdapter } from '@/app/teams/resourceGrantAccess';
 import type { ResourceRecipientKeyEnvelopeInputV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
@@ -11,20 +12,27 @@ import { markAccountsChanged } from '@/app/changes/markAccountChanged';
 import { buildPluginDomainAccountChangeEntityId } from '@happier-dev/protocol/changes/pluginDomain';
 
 export function collectionAccessFactsSelect(actorAccountId?: string) {
-    return { accountId: true, account: { select: { encryptionMode: true } }, ...resourceGrantRelationsSelect(actorAccountId) } as const;
+    return { id: true, accountId: true, account: { select: { encryptionMode: true } }, ...resourceGrantRelationsSelect(actorAccountId) } as const;
 }
-async function readFacts(tx: Tx, rowDbId: string, actorAccountId?: string) {
-    return tx.pluginCollectionRow.findFirst({ where: { id: rowDbId, deletedAt: null }, select: collectionAccessFactsSelect(actorAccountId) });
+async function readFactsBatch(tx: Tx, rowDbIds: readonly string[], actorAccountId?: string) {
+    return tx.pluginCollectionRow.findMany({ where: { id: { in: [...rowDbIds] }, deletedAt: null }, select: collectionAccessFactsSelect(actorAccountId) });
 }
-export function collectionGrantFacts(row: NonNullable<Awaited<ReturnType<typeof readFacts>>>): ResourceGrantAccessFacts {
+export function collectionGrantFacts(row: Awaited<ReturnType<typeof readFactsBatch>>[number]): ResourceGrantAccessFacts {
     const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(row.account);
     return { ownerAccountId: row.accountId, encryptionMode: mode.status === 'ready' ? mode.mode : null,
-        accountGrants: row.accountGrants, teamGrants: row.teamGrants, groupGrants: row.groupGrants };
+        ...projectResourceGrantRows(row.grants) };
 }
 export const collectionGrantStorageAdapter: ResourceGrantStorageAdapter = {
+    async readAccessFactsBatchInTx(tx, rowDbIds, actorAccountId) {
+        const facts = new Map<string, ResourceGrantAccessFacts>();
+        for (const ids of portableQueryChunks({ values: [...new Set(rowDbIds)], bindingsPerValue: 1,
+            fixedBindings: actorAccountId === undefined ? 0 : 3 })) {
+            for (const row of await readFactsBatch(tx, ids, actorAccountId)) facts.set(row.id, collectionGrantFacts(row));
+        }
+        return facts;
+    },
     async readAccessFactsInTx(tx, rowDbId, actorAccountId) {
-        const row = await readFacts(tx, rowDbId, actorAccountId);
-        return row ? collectionGrantFacts(row) : null;
+        return (await collectionGrantStorageAdapter.readAccessFactsBatchInTx(tx, [rowDbId], actorAccountId)).get(rowDbId) ?? null;
     },
 };
 export async function resolveCollectionAudienceInTx(tx: Tx, rowDbId: string) {
@@ -34,7 +42,7 @@ export async function resolveCollectionAudienceInTx(tx: Tx, rowDbId: string) {
 /** Entry admission reads only the sharing facts of rows this writer can change. */
 export async function readCollectionSharingAudienceInTx(tx: Tx, where: Prisma.PluginCollectionRowWhereInput) {
     const rows = await tx.pluginCollectionRow.findMany({ where: { AND: [where,
-        { OR: [{ accountGrants: { some: {} } }, { teamGrants: { some: {} } }, { groupGrants: { some: {} } }] }] },
+        { grants: { some: {} } }] },
         select: collectionAccessFactsSelect() });
     return [...new Set(rows.flatMap(row => resolveResourceGrantAudienceFromFacts(collectionGrantFacts(row))))];
 }
@@ -62,7 +70,7 @@ export async function publishCollectionSharingRowsChangedInTx(tx: Tx, input: Rea
     if (input.rowIds?.length === 0) return;
     const rows = await tx.pluginCollectionRow.findMany({ where: { accountId: input.accountId, pluginId: input.pluginId,
         collectionId: input.collectionId, ...(input.rowIds ? { rowId: { in: [...input.rowIds] } } : {}),
-        OR: [{ accountGrants: { some: {} } }, { teamGrants: { some: {} } }, { groupGrants: { some: {} } }] }, select: { id: true } });
+        grants: { some: {} } }, select: { id: true } });
     for (const row of rows) await publishCollectionSharingChangedInTx(tx, row.id, [], { ownerAlreadyPublished: true });
 }
 
@@ -70,15 +78,13 @@ export async function publishCollectionSharingRowsChangedInTx(tx: Tx, input: Rea
 export async function endCollectionSharingInTx(tx: Tx, rowDbIds: readonly string[]) {
     if (!rowDbIds.length) return;
     const rows = await tx.pluginCollectionRow.findMany({ where: { id: { in: [...rowDbIds] }, OR: [
-        { accountGrants: { some: {} } }, { teamGrants: { some: {} } }, { groupGrants: { some: {} } },
+        { grants: { some: {} } },
         { keyEnvelopes: { some: {} } },
     ] }, select: { id: true } });
     if (!rows.length) return;
     for (const row of rows) await publishCollectionSharingChangedInTx(tx, row.id, [], { ownerAlreadyPublished: true });
     const where = { rowDbId: { in: rows.map(row => row.id) } };
-    await tx.pluginCollectionAccountGrant.deleteMany({ where });
-    await tx.pluginCollectionTeamGrant.deleteMany({ where });
-    await tx.pluginCollectionGroupGrant.deleteMany({ where });
+    await tx.pluginCollectionGrant.deleteMany({ where });
     await tx.pluginCollectionKeyEnvelope.deleteMany({ where });
 }
 export const collectionRecipientEnvelopeStorageAdapter: ResourceRecipientEnvelopeStorageAdapter<ResourceRecipientKeyEnvelopeInputV1> = {

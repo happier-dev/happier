@@ -47,7 +47,7 @@ describe.skipIf(provider === 'mysql')('Machine recipient work (real provider)', 
         const f = await fixture();
         const recipient = await account();
         const suspended = await account();
-        await db.machineAccountGrant.createMany({ data: [recipient, suspended, f.owner].map(account => ({
+        await db.machineGrant.createMany({ data: [recipient, suspended, f.owner].map(account => ({ principalKind: 'account',
             machineId: f.machine.id, accountId: account.id, accessLevel: 'view', createdByAccountId: f.owner.id,
         })) });
         await db.account.update({ where: { id: suspended.id }, data: { status: 'suspended' } });
@@ -127,8 +127,8 @@ describe.skipIf(provider === 'mysql')('Machine recipient work (real provider)', 
         const groupMember = await db.teamMembership.create({ data: { teamId: team.id, accountId: groupRecipient.id, role: 'member' } });
         const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Recipient fact Group', nameKey: 'recipient-fact' } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: groupMember.id, nativeContribution: true } });
-        await db.machineGroupGrant.create({ data: { machineId, teamGroupId: group.id, accessLevel: 'view', createdByAccountId: f.owner.id } });
-        await db.machineTeamGrant.create({ data: { machineId, teamId: team.id, accessLevel: 'view', createdByAccountId: f.owner.id } });
+        await db.machineGrant.create({ data: { principalKind: 'group', machineId, teamGroupId: group.id, accessLevel: 'view', createdByAccountId: f.owner.id } });
+        await db.machineGrant.create({ data: { principalKind: 'team', machineId, teamId: team.id, accessLevel: 'view', createdByAccountId: f.owner.id } });
         const workForChangedMachine = async () => {
             const work = (await read()).get(machineId)!;
             const page = await inTx(async tx => {
@@ -155,7 +155,7 @@ describe.skipIf(provider === 'mysql')('Machine recipient work (real provider)', 
         await db.team.update({ where: { id: team.id }, data: { archivedAt: null } });
         await db.teamMembership.update({ where: { id: teamMember.id }, data: { status: 'suspended' } });
         expect(await workForChangedMachine()).toEqual([groupRecipient.id]);
-        await db.machineTeamGrant.delete({ where: { machineId_teamId: { machineId, teamId: team.id } } });
+        await db.machineGrant.delete({ where: { principalKind: 'team', machineId_teamId: { machineId, teamId: team.id } } });
         await db.teamGroup.update({ where: { id: group.id }, data: { archivedAt: new Date() } });
         expect(await workForChangedMachine()).toEqual([]);
         await db.teamGroup.update({ where: { id: group.id }, data: { archivedAt: null } });

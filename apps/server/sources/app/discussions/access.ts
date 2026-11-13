@@ -1,3 +1,4 @@
+import { projectResourceGrantRows } from '@/app/teams/resourceGrantAccess';
 import * as privacyKit from "privacy-kit";
 import type { Prisma } from "@prisma/client";
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
@@ -153,29 +154,29 @@ export interface DiscussionContext {
 
 function discussionAccessFactsSelect(actorAccountId?: string) {
     const relations = resourceGrantRelationsSelect(actorAccountId);
-    const memberships = relations.teamGrants.select.team.select.memberships;
+    const memberships = relations.grants.select.team.select.memberships;
     const membershipSelect = { ...memberships.select, id: true } as const;
     return {
         id: true, ownerAccountId: true, encryptionMode: true,
         ownerAccount: { select: { ...RECIPIENT_READINESS_SELECT, status: true } },
-        ...relations,
-        teamGrants: { select: { ...relations.teamGrants.select, team: { select: {
-            ...relations.teamGrants.select.team.select, id: true, authenticationPolicy: true,
-            memberships: { ...memberships, select: membershipSelect },
-        } } } },
-        groupGrants: { select: { ...relations.groupGrants.select, teamGroup: { select: {
-            ...relations.groupGrants.select.teamGroup.select, id: true, team: { select: {
-                ...relations.groupGrants.select.teamGroup.select.team.select, id: true, authenticationPolicy: true,
-            } }, memberships: { ...relations.groupGrants.select.teamGroup.select.memberships,
+        grants: { ...relations.grants, select: { ...relations.grants.select,
+            team: { select: { ...relations.grants.select.team.select, id: true, authenticationPolicy: true,
+                memberships: { ...memberships, select: membershipSelect },
+            } },
+            teamGroup: { select: { ...relations.grants.select.teamGroup.select, id: true, team: { select: {
+                ...relations.grants.select.teamGroup.select.team.select, id: true, authenticationPolicy: true,
+            } }, memberships: { ...relations.grants.select.teamGroup.select.memberships,
                 select: { teamGroupId: true, teamMembershipId: true, teamMembership: { select: membershipSelect } } },
-        } } } },
+            } },
+        } },
     } as const;
 }
 
-async function readDiscussionAccessFactsInTx(tx: Tx, discussionId: string, actorAccountId?: string) {
-    return tx.discussion.findUnique({ where: { id: discussionId }, select: discussionAccessFactsSelect(actorAccountId) });
+async function readDiscussionAccessFactsBatchInTx(tx: Tx, discussionIds: readonly string[], actorAccountId?: string) {
+    return tx.discussion.findMany({ where: { id: { in: [...discussionIds] } }, select: discussionAccessFactsSelect(actorAccountId) })
+        .then(rows => rows.map(row => ({ ...row, ...projectResourceGrantRows(row.grants) })));
 }
-type DiscussionAccessFacts = NonNullable<Awaited<ReturnType<typeof readDiscussionAccessFactsInTx>>>;
+type DiscussionAccessFacts = Awaited<ReturnType<typeof readDiscussionAccessFactsBatchInTx>>[number];
 
 function discussionGrantFacts(row: DiscussionAccessFacts, qualifiedTeamIds?: ReadonlySet<string>): ResourceGrantAccessFacts {
     const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(row.ownerAccount);
@@ -190,9 +191,16 @@ function discussionGrantFacts(row: DiscussionAccessFacts, qualifiedTeamIds?: Rea
 
 /** Structural grants are shared policy; request credentials qualify collective arms separately. */
 export const discussionGrantStorageAdapter: ResourceGrantStorageAdapter = {
+    async readAccessFactsBatchInTx(tx, discussionIds, actorAccountId) {
+        const facts = new Map<string, ResourceGrantAccessFacts>();
+        for (const ids of portableQueryChunks({ values: [...new Set(discussionIds)], bindingsPerValue: 1,
+            fixedBindings: actorAccountId === undefined ? 0 : 3 })) {
+            for (const row of await readDiscussionAccessFactsBatchInTx(tx, ids, actorAccountId)) facts.set(row.id, discussionGrantFacts(row));
+        }
+        return facts;
+    },
     async readAccessFactsInTx(tx, discussionId, actorAccountId) {
-        const row = await readDiscussionAccessFactsInTx(tx, discussionId, actorAccountId);
-        return row ? discussionGrantFacts(row) : null;
+        return (await discussionGrantStorageAdapter.readAccessFactsBatchInTx(tx, [discussionId], actorAccountId)).get(discussionId) ?? null;
     },
 };
 
@@ -215,7 +223,12 @@ export function newDiscussionContextStorageAdapter(input: Readonly<{
         accountGrants: input.participantAccountIds.map(accountId => ({ accountId, accessLevel: 'edit', account: { status: 'active' } })),
         teamGrants: [], groupGrants: [] };
     return {
-        async readAccessFactsInTx(_tx, resourceId) { return resourceId === input.resourceId ? facts : null; },
+        async readAccessFactsBatchInTx(_tx, resourceIds) {
+            return new Map(resourceIds.includes(input.resourceId) ? [[input.resourceId, facts]] : []);
+        },
+        async readAccessFactsInTx(tx, resourceId, actorAccountId) {
+            return (await this.readAccessFactsBatchInTx(tx, [resourceId], actorAccountId)).get(resourceId) ?? null;
+        },
         async resolveConfigurerAccessInTx(_tx, request) {
             return request.resourceId === input.resourceId ? resolveResourceGrantAccessFromFacts(facts, request.actorAccountId) : null;
         },
@@ -281,7 +294,7 @@ export async function resolveDiscussionContextsInTx(tx: Tx, params: Readonly<{
                 encryptedDataKey: true, recipientContentPublicKeyFingerprint: true,
             } },
             participants: { where: principal ? { sessionId: principal.sessionId, removedAt: null } : { sessionId: { in: [] } }, select: { sessionId: true } },
-        } });
+        } }).then(rows => rows.map(row => ({ ...row, ...projectResourceGrantRows(row.grants) })));
     let [rows, account] = await Promise.all([
         readRows(),
         tx.account.findUnique({ where: { id: params.accountId }, select: RECIPIENT_READINESS_SELECT }),
@@ -349,9 +362,9 @@ export async function resolveDiscussionContextsInTx(tx: Tx, params: Readonly<{
 export function discussionCandidateWhere(accountId: string): Prisma.DiscussionWhereInput {
     return { OR: [
         { ownerAccountId: accountId },
-        { accountGrants: { some: { accountId } } },
-        { teamGrants: { some: { team: { memberships: { some: { accountId } } } } } },
-        { groupGrants: { some: { teamGroup: { memberships: { some: { teamMembership: { accountId } } } } } } },
+        { grants: { some: { principalKind: 'account', accountId } } },
+        { grants: { some: { principalKind: 'team', team: { memberships: { some: { accountId } } } } } },
+        { grants: { some: { principalKind: 'group', teamGroup: { memberships: { some: { teamMembership: { accountId } } } } } } },
     ] };
 }
 
@@ -361,11 +374,11 @@ export function discussionCandidateWhere(accountId: string): Prisma.DiscussionWh
  */
 export function discussionCandidateSql(accountId: string): Prisma.Sql {
     return sql.sql`(d.${name('ownerAccountId')} = ${accountId}
-        OR EXISTS (SELECT 1 FROM ${name('DiscussionAccountGrant')} g
+        OR EXISTS (SELECT 1 FROM ${name('DiscussionGrant')} g
             WHERE g.${name('discussionId')} = d.${name('id')} AND g.${name('accountId')} = ${accountId})
-        OR EXISTS (SELECT 1 FROM ${name('DiscussionTeamGrant')} g JOIN ${name('TeamMembership')} m ON m.${name('teamId')} = g.${name('teamId')}
+        OR EXISTS (SELECT 1 FROM ${name('DiscussionGrant')} g JOIN ${name('TeamMembership')} m ON m.${name('teamId')} = g.${name('teamId')}
             WHERE g.${name('discussionId')} = d.${name('id')} AND m.${name('accountId')} = ${accountId})
-        OR EXISTS (SELECT 1 FROM ${name('DiscussionGroupGrant')} g
+        OR EXISTS (SELECT 1 FROM ${name('DiscussionGrant')} g
             JOIN ${name('TeamGroupMembership')} gm ON gm.${name('teamGroupId')} = g.${name('teamGroupId')}
             JOIN ${name('TeamMembership')} m ON m.${name('id')} = gm.${name('teamMembershipId')}
             WHERE g.${name('discussionId')} = d.${name('id')} AND m.${name('accountId')} = ${accountId}))`;
@@ -413,7 +426,7 @@ export async function resolveDiscussionAudiencesInTx(tx: Tx, discussionIds: read
     if (ids.length === 0) return result;
     const rows: DiscussionAccessFacts[] = [];
     for (const chunk of portableQueryChunks({ values: ids, bindingsPerValue: 1 })) {
-        rows.push(...await tx.discussion.findMany({ where: { id: { in: [...chunk] } }, select: discussionAccessFactsSelect() }));
+        rows.push(...await readDiscussionAccessFactsBatchInTx(tx, chunk));
     }
     for (const row of rows) {
         result.set(row.id, projectDiscussionAudienceFromFacts(row));
@@ -481,7 +494,7 @@ export async function filterDiscussionsWithCurrentReadAccessInTx(tx: Tx, params:
         tx.discussion.findMany({ where: { id: { in: [...params.discussionIds] } }, select: {
             ...discussionAccessFactsSelect(),
             participants: { where: principal ? { sessionId: principal.sessionId, removedAt: null } : { sessionId: { in: [] } }, select: { sessionId: true } },
-        } }),
+        } }).then(rows => rows.map(row => ({ ...row, ...projectResourceGrantRows(row.grants) }))),
         tx.account.findMany({ where: { id: { in: accountIds }, status: "active",
             ...(authentication.tokenEpoch === undefined ? {} : { tokenEpoch: authentication.tokenEpoch }) }, select: { id: true } }),
     ]);

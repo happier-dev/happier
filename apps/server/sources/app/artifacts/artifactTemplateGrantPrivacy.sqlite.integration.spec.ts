@@ -44,10 +44,10 @@ describe('Template grant privacy through Artifact HTTP (real SQLite)', () => {
             kind: deriveArtifactStoredKindV1({ kind: 'bot_template.v1' }), header, body,
             dataEncryptionKey: mode === 'plain' ? privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) : seal(owner.contentPublicKey!),
             headerVersion: 1, bodyVersion: 1 } });
-        await db.artifactAccountGrant.createMany({ data: [recipient, peer].map(person => ({
+        await db.artifactGrant.createMany({ data: [recipient, peer].map(person => ({ principalKind: 'account',
             artifactId: artifact.id, accountId: person.id, accessLevel: 'admin' as const, createdByAccountId: owner.id,
         })) });
-        await db.artifactTeamGrant.create({ data: { artifactId: artifact.id, teamId: team.id,
+        await db.artifactGrant.create({ data: { principalKind: 'team', artifactId: artifact.id, teamId: team.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         if (mode === 'e2ee') await db.artifactKeyEnvelope.createMany({ data: [recipient, peer].map(person => ({
             artifactId: artifact.id, recipientAccountId: person.id, encryptedDataKey: seal(person.contentPublicKey!),
@@ -120,7 +120,7 @@ describe('Template grant privacy through Artifact HTTP (real SQLite)', () => {
                 expect(item.recipientCensus.recipients.map((row: { recipientAccountId: string }) => row.recipientAccountId)).toEqual([recipient.id]);
                 expect(item.recipientCensus.callerDataEncryptionKey).toBe(exact.json().dataEncryptionKey);
             }
-            await db.artifactAccountGrant.deleteMany({ where: { artifactId: artifact.id, accountId: recipient.id } });
+            await db.artifactGrant.deleteMany({ where: { principalKind: 'account', artifactId: artifact.id, accountId: recipient.id } });
             const teamReceived = await app.inject({ method: 'GET', url: receivedUrl, headers: headers(recipient.id) });
             expect(teamReceived.statusCode, teamReceived.body).toBe(200);
             expect(teamReceived.json()).toMatchObject({ items: [{ id: artifact.id, access: 'view' }] });

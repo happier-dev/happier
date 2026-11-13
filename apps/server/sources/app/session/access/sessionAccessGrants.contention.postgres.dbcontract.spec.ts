@@ -47,7 +47,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Session grant w
                         { teamId: team.id, accountId: owner.id, role: "owner", sessionAccessStartsAt: null },
                         { teamId: team.id, accountId: member.id, role: "member", sessionAccessStartsAt: null },
                     ] });
-                    if (operation === "remove") await db.sessionTeamGrant.create({ data: {
+                    if (operation === "remove") await db.sessionGrant.create({ data: { principalKind: 'team',
                         sessionId: session.id, teamId: team.id, accessLevel: "edit", effectiveAt: new Date(),
                     } });
                     let resource: { id: string; revision: number } | undefined;
@@ -164,11 +164,11 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Session grant w
                     }
                     expect(interleavings).toBeGreaterThan(0);
                     if (contention === "retired actor") {
-                        expect(await db.sessionTeamGrant.count({ where: { sessionId: session.id } })).toBe(0);
+                        expect(await db.sessionGrant.count({ where: { principalKind: 'team', sessionId: session.id } })).toBe(0);
                         expect(await db.accountChange.count({ where: { entityId: session.id } })).toBe(0);
                         return;
                     }
-                    const grant = await db.sessionTeamGrant.findUnique({ where: {
+                    const grant = await db.sessionGrant.findUnique({ where: { principalKind: 'team',
                         sessionId_teamId: { sessionId: session.id, teamId: team.id },
                     } });
                     if (operation === "remove") expect(grant).toBeNull();

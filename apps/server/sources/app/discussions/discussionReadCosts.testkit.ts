@@ -390,7 +390,7 @@ export function discussionReadCostContracts() {
         const seal = (publicKey: Uint8Array) => sealEncryptedDataKeyEnvelopeV1({ dataKey: tweetnacl.randomBytes(32), recipientPublicKey: publicKey, randomBytes: tweetnacl.randomBytes });
         const [discussionId] = await seedDiscussions(owner.id, 1);
         await db.discussion.update({ where: { id: discussionId }, data: { encryptionMode: 'e2ee', dataEncryptionKey: seal(ownerKeys.publicKey) } });
-        await db.discussionAccountGrant.create({ data: { discussionId, accountId: viewer.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.discussionGrant.create({ data: { principalKind: 'account', discussionId, accountId: viewer.id, accessLevel: 'view', createdByAccountId: owner.id } });
         await db.discussionKeyEnvelope.create({ data: { discussionId, recipientAccountId: viewer.id,
             encryptedDataKey: seal(viewerKeys.publicKey), recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(viewerKeys.publicKey) } });
         const read = () => readDiscussionAttention({ actorAccountId: viewer.id, authentication, limit: 1 });
@@ -401,7 +401,7 @@ export function discussionReadCostContracts() {
         await db.discussionKeyEnvelope.update({ where: { discussionId_recipientAccountId: { discussionId, recipientAccountId: viewer.id } }, data: {
             encryptedDataKey: seal(rotated.publicKey), recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(rotated.publicKey) } });
         expect(await read()).toEqual({ ok: true, value: { incomplete: false, discussions: [], nextCursor: null } });
-        await db.discussionAccountGrant.delete({ where: { discussionId_accountId: { discussionId, accountId: viewer.id } } });
+        await db.discussionGrant.delete({ where: { principalKind: 'account', discussionId_accountId: { discussionId, accountId: viewer.id } } });
         await db.account.update({ where: { id: viewer.id }, data: createSignedAccountContentBinding(viewerKeys.publicKey) });
         expect(await read()).toEqual({ ok: true, value: { incomplete: false, discussions: [], nextCursor: null } });
     });

@@ -221,7 +221,7 @@ export async function startWorkflowApprovedOperationServer(input: Readonly<{
             return { id: machine.id, installationId: machine.installationId!, keys, contentKey };
         }));
         const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
-        if (deploymentTeam) await db.machineTeamGrant.createMany({ data: machines.map(machine => ({
+        if (deploymentTeam) await db.machineGrant.createMany({ data: machines.map(machine => ({ principalKind: 'team',
             machineId: machine.id, teamId: deploymentTeam.id, accessLevel: 'view' as const, createdByAccountId: account.id,
         })) });
         const installedToken = input.installedMachine
@@ -349,7 +349,7 @@ export async function startWorkflowApprovedOperationServer(input: Readonly<{
                     body: decodeBase64(encodePlainArtifactStoredContent({ body: input.body })),
                     dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
                 if (!created.ok) throw new Error(created.error);
-                if (deploymentTeam) await db.artifactTeamGrant.create({ data: {
+                if (deploymentTeam) await db.artifactGrant.create({ data: { principalKind: 'team',
                     artifactId: created.artifact.id, teamId: deploymentTeam.id, accessLevel: 'admin', createdByAccountId: account.id,
                 } });
                 return { contentArtifactId: created.artifact.id, contentHeaderVersion: created.artifact.headerVersion,
@@ -363,7 +363,7 @@ export async function startWorkflowApprovedOperationServer(input: Readonly<{
                         body: decodeBase64(encodePlainArtifactStoredContent({ name: 'Staging' })),
                         dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
                     if (!created.ok) throw new Error(created.error);
-                    if (deploymentTeam) await db.artifactTeamGrant.create({ data: {
+                    if (deploymentTeam) await db.artifactGrant.create({ data: { principalKind: 'team',
                         artifactId: created.artifact.id, teamId: deploymentTeam.id, accessLevel: 'admin', createdByAccountId: account.id,
                     } });
                     return { contentArtifactId: created.artifact.id, contentHeaderVersion: created.artifact.headerVersion,

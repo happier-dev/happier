@@ -1,3 +1,4 @@
+import type { SessionGrant } from '@prisma/client';
 import { resolveStructuralSessionAccessForAccountsInTx } from "./sessionAccess";
 import { decodeBase64 } from "privacy-kit";
 import { resolveCurrentSessionRecipientAccountIdsInTx } from "./sessionRecipients";
@@ -79,6 +80,12 @@ export type SessionAccessDirectShareRow = Readonly<{
     updatedAt: Date;
 }>;
 
+/** Released direct-share events keep their established shape over the unified Account grant. */
+function projectDirectSessionGrant(row: SessionGrant): SessionAccessDirectShareRow {
+    return { id: row.id, sessionId: row.sessionId, sharedByUserId: row.createdByAccountId!, sharedWithUserId: row.accountId!,
+        accessLevel: row.accessLevel, canApprovePermissions: row.canApprovePermissions, createdAt: row.createdAt, updatedAt: row.updatedAt };
+}
+
 /**
  * What the outer transaction and the after-commit publisher need, and nothing more.
  *
@@ -137,14 +144,13 @@ export function sessionAccessGrantMutationCursorLockOptions(input: Readonly<{
                 where: { id: input.sessionId },
                 select: {
                     primaryTeamId: true,
-                    teamGrants: { select: { teamId: true } },
-                    groupGrants: { select: { teamGroup: { select: { teamId: true } } } },
+                    grants: { where: { principalKind: { in: ['team', 'group'] } },
+                        select: { teamId: true, teamGroup: { select: { teamId: true } } } },
                 },
             });
             const teamIds = [...new Set([
                 ...(session?.primaryTeamId ? [session.primaryTeamId] : []),
-                ...(session?.teamGrants.map(grant => grant.teamId) ?? []),
-                ...(session?.groupGrants.map(grant => grant.teamGroup.teamId) ?? []),
+                ...(session?.grants.flatMap(grant => grant.teamId ? [grant.teamId] : grant.teamGroup ? [grant.teamGroup.teamId] : []) ?? []),
                 ...input.subjects.flatMap(subject => subject.kind === "account" ? [] : [subject.teamId]),
             ])];
             const memberships = teamIds.length === 0 ? [] : await tx.teamMembership.findMany({
@@ -394,15 +400,15 @@ export async function applyInitialSessionAccessInTx(
     const directShares: SessionAccessDirectShareRow[] = [];
     for (const item of resolved) {
         if (item.subject.kind === "account") {
-            directShares.push(await tx.sessionShare.create({
-                data: {
+            directShares.push(projectDirectSessionGrant(await tx.sessionGrant.create({
+                data: { principalKind: 'account',
                     sessionId: params.sessionId,
-                    sharedByUserId: params.creatorAccountId,
-                    sharedWithUserId: item.subject.accountId,
+                    createdByAccountId: params.creatorAccountId,
+                    accountId: item.subject.accountId,
                     accessLevel: item.grant.accessLevel as ShareAccessLevel,
                     canApprovePermissions: item.grant.canApprovePermissions,
                 },
-            }));
+            })));
             const encryptedDataKey = envelopeWrites.get(item.subject.accountId);
             if (encryptedDataKey) {
                 const envelopeWrite = await writeSessionDataKeyEnvelopeInTx(tx, {
@@ -414,8 +420,8 @@ export async function applyInitialSessionAccessInTx(
                 if (!envelopeWrite.ok) throw new Error("Admitted session recipient envelope failed persistence validation");
             }
         } else if (item.subject.kind === "team") {
-            await tx.sessionTeamGrant.create({
-                data: {
+            await tx.sessionGrant.create({
+                data: { principalKind: 'team', createdByAccountId: params.creatorAccountId,
                     sessionId: params.sessionId,
                     teamId: item.subject.teamId,
                     accessLevel: item.grant.accessLevel as ShareAccessLevel,
@@ -425,8 +431,8 @@ export async function applyInitialSessionAccessInTx(
                 },
             });
         } else {
-            await tx.sessionGroupGrant.create({
-                data: {
+            await tx.sessionGrant.create({
+                data: { principalKind: 'group', createdByAccountId: params.creatorAccountId,
                     sessionId: params.sessionId,
                     teamGroupId: item.subject.groupId,
                     accessLevel: item.grant.accessLevel as ShareAccessLevel,
@@ -493,9 +499,9 @@ async function loadStoredGrantInTx(
     subject: ShareSubject,
 ): Promise<{ stored: StoredGrant | null; directShare: SessionAccessDirectShareRow | null }> {
     if (subject.kind === "account") {
-        const share = await tx.sessionShare.findUnique({
-            where: {
-                sessionId_sharedWithUserId: { sessionId, sharedWithUserId: subject.accountId },
+        const share = await tx.sessionGrant.findUnique({
+            where: { principalKind: 'account',
+                sessionId_accountId: { sessionId, accountId: subject.accountId },
             },
         });
         if (!share) return { stored: null, directShare: null };
@@ -505,18 +511,18 @@ async function loadStoredGrantInTx(
                 canApprovePermissions: share.canApprovePermissions,
                 requiredByTeamPolicy: false,
             },
-            directShare: share,
+            directShare: projectDirectSessionGrant(share),
         };
     }
     if (subject.kind === "team") {
-        const grant = await tx.sessionTeamGrant.findUnique({
-            where: { sessionId_teamId: { sessionId, teamId: subject.teamId } },
+        const grant = await tx.sessionGrant.findUnique({
+            where: { principalKind: 'team', sessionId_teamId: { sessionId, teamId: subject.teamId } },
             select: { accessLevel: true, canApprovePermissions: true, requiredByTeamPolicy: true },
         });
         return { stored: grant ?? null, directShare: null };
     }
-    const grant = await tx.sessionGroupGrant.findUnique({
-        where: { sessionId_teamGroupId: { sessionId, teamGroupId: subject.groupId } },
+    const grant = await tx.sessionGrant.findUnique({
+        where: { principalKind: 'group', sessionId_teamGroupId: { sessionId, teamGroupId: subject.groupId } },
         select: { accessLevel: true, canApprovePermissions: true },
     });
     return {
@@ -780,17 +786,17 @@ export async function putSessionAccessGrantInTx(
 
     let directShare: SessionAccessDirectShareRow | null = null;
     if (subject.kind === "account") {
-        directShare = await tx.sessionShare.upsert({
-            where: {
-                sessionId_sharedWithUserId: {
+        directShare = projectDirectSessionGrant(await tx.sessionGrant.upsert({
+            where: { principalKind: 'account',
+                sessionId_accountId: {
                     sessionId: params.sessionId,
-                    sharedWithUserId: subject.accountId,
+                    accountId: subject.accountId,
                 },
             },
-            create: {
+            create: { principalKind: 'account',
                 sessionId: params.sessionId,
-                sharedByUserId: params.actorAccountId,
-                sharedWithUserId: subject.accountId,
+                createdByAccountId: params.actorAccountId,
+                accountId: subject.accountId,
                 accessLevel: value.accessLevel as ShareAccessLevel,
                 canApprovePermissions: value.canApprovePermissions,
             },
@@ -798,7 +804,7 @@ export async function putSessionAccessGrantInTx(
                 accessLevel: value.accessLevel as ShareAccessLevel,
                 canApprovePermissions: value.canApprovePermissions,
             },
-        });
+        }));
         // Grant and envelope commit together, so a recipient never sees access
         // without the key the same request sealed for them, and a rejected
         // envelope rolls the grant back with it.
@@ -819,8 +825,8 @@ export async function putSessionAccessGrantInTx(
         // member's historical access, so it is not a last-modified timestamp. Insert
         // and update are separate statements precisely so no update path can touch it.
         if (stored === null) {
-            await tx.sessionTeamGrant.create({
-                data: {
+            await tx.sessionGrant.create({
+                data: { principalKind: 'team', createdByAccountId: params.actorAccountId,
                     sessionId: params.sessionId,
                     teamId: subject.teamId,
                     accessLevel: value.accessLevel as ShareAccessLevel,
@@ -830,8 +836,8 @@ export async function putSessionAccessGrantInTx(
                 },
             });
         } else {
-            await tx.sessionTeamGrant.update({
-                where: { sessionId_teamId: { sessionId: params.sessionId, teamId: subject.teamId } },
+            await tx.sessionGrant.update({
+                where: { principalKind: 'team', sessionId_teamId: { sessionId: params.sessionId, teamId: subject.teamId } },
                 data: {
                     accessLevel: value.accessLevel as ShareAccessLevel,
                     canApprovePermissions: value.canApprovePermissions,
@@ -840,8 +846,8 @@ export async function putSessionAccessGrantInTx(
             });
         }
     } else if (stored === null) {
-        await tx.sessionGroupGrant.create({
-            data: {
+        await tx.sessionGrant.create({
+            data: { principalKind: 'group', createdByAccountId: params.actorAccountId,
                 sessionId: params.sessionId,
                 teamGroupId: subject.groupId,
                 accessLevel: value.accessLevel as ShareAccessLevel,
@@ -850,8 +856,8 @@ export async function putSessionAccessGrantInTx(
             },
         });
     } else {
-        await tx.sessionGroupGrant.update({
-            where: {
+        await tx.sessionGrant.update({
+            where: { principalKind: 'group',
                 sessionId_teamGroupId: {
                     sessionId: params.sessionId,
                     teamGroupId: subject.groupId,
@@ -965,21 +971,21 @@ export async function deleteSessionAccessGrantInTx(
     });
 
     if (subject.kind === "account") {
-        await tx.sessionShare.delete({
-            where: {
-                sessionId_sharedWithUserId: {
+        await tx.sessionGrant.delete({
+            where: { principalKind: 'account',
+                sessionId_accountId: {
                     sessionId: params.sessionId,
-                    sharedWithUserId: subject.accountId,
+                    accountId: subject.accountId,
                 },
             },
         });
     } else if (subject.kind === "team") {
-        await tx.sessionTeamGrant.delete({
-            where: { sessionId_teamId: { sessionId: params.sessionId, teamId: subject.teamId } },
+        await tx.sessionGrant.delete({
+            where: { principalKind: 'team', sessionId_teamId: { sessionId: params.sessionId, teamId: subject.teamId } },
         });
     } else {
-        await tx.sessionGroupGrant.delete({
-            where: {
+        await tx.sessionGrant.delete({
+            where: { principalKind: 'group',
                 sessionId_teamGroupId: {
                     sessionId: params.sessionId,
                     teamGroupId: subject.groupId,
@@ -1047,8 +1053,8 @@ export async function setSessionAccessContextInTx(
     });
     if (!session) return { ok: false, error: "session_access_session_not_found" };
 
-    const markerState = await tx.sessionTeamGrant.findMany({
-        where: { sessionId: params.sessionId, requiredByTeamPolicy: true },
+    const markerState = await tx.sessionGrant.findMany({
+        where: { principalKind: 'team', sessionId: params.sessionId, requiredByTeamPolicy: true },
         select: { teamId: true },
     });
     if (session.primaryTeamId !== params.primaryTeamId
@@ -1076,8 +1082,8 @@ export async function setSessionAccessContextInTx(
 
         targetTeamRequired = team.sessionCreationPolicy === TeamSessionCreationPolicy.team_required;
         if (targetTeamRequired) {
-            targetTeamGrant = await tx.sessionTeamGrant.findUnique({
-                where: { sessionId_teamId: { sessionId: params.sessionId, teamId: params.primaryTeamId } },
+            targetTeamGrant = await tx.sessionGrant.findUnique({
+                where: { principalKind: 'team', sessionId_teamId: { sessionId: params.sessionId, teamId: params.primaryTeamId } },
                 select: { accessLevel: true, canApprovePermissions: true },
             });
         }
@@ -1120,8 +1126,8 @@ export async function setSessionAccessContextInTx(
     });
 
     await tx.session.update({ where: { id: params.sessionId }, data: { primaryTeamId: params.primaryTeamId } });
-    await tx.sessionTeamGrant.updateMany({
-        where: {
+    await tx.sessionGrant.updateMany({
+        where: { principalKind: 'team',
             sessionId: params.sessionId,
             requiredByTeamPolicy: true,
             ...(targetTeamRequired && params.primaryTeamId !== null
@@ -1134,8 +1140,8 @@ export async function setSessionAccessContextInTx(
         const key = { sessionId: params.sessionId, teamId: params.primaryTeamId };
         const requiredGrant = applyRequiredTeamGrantFloor(targetTeamGrant);
         if (targetTeamGrant === null) {
-            await tx.sessionTeamGrant.create({
-                data: {
+            await tx.sessionGrant.create({
+                data: { principalKind: 'team', createdByAccountId: params.actorAccountId,
                     ...key,
                     accessLevel: requiredGrant.accessLevel as ShareAccessLevel,
                     canApprovePermissions: requiredGrant.canApprovePermissions,
@@ -1144,8 +1150,8 @@ export async function setSessionAccessContextInTx(
                 },
             });
         } else {
-            await tx.sessionTeamGrant.update({
-                where: { sessionId_teamId: key },
+            await tx.sessionGrant.update({
+                where: { principalKind: 'team', sessionId_teamId: key },
                 data: {
                     ...(targetTeamGrant.accessLevel === ShareAccessLevel.view
                         ? {
@@ -1175,21 +1181,21 @@ export async function setSessionAccessContextInTx(
 
 /** Entry discovery and cleanup share the authored-or-received retained-share predicate. */
 export async function readSessionAccessGrantsForAccountErasureInTx(tx: Tx, accountId: string) {
-    const shares = await tx.sessionShare.findMany({
-        where: {
-            OR: [{ sharedByUserId: accountId }, { sharedWithUserId: accountId }],
+    const shares = await tx.sessionGrant.findMany({
+        where: { principalKind: 'account',
+            OR: [{ createdByAccountId: accountId }, { accountId: accountId }],
         },
         select: {
             id: true,
             sessionId: true,
-            sharedWithUserId: true,
+            accountId: true,
             session: { select: { accountId: true } },
         },
         orderBy: [{ sessionId: "asc" }, { id: "asc" }],
     });
     // Filter only this Account's grant results: a relational owner inequality
     // lets PostgreSQL drive the join from unrelated Home Sessions instead.
-    return shares.filter(share => share.session.accountId !== accountId);
+    return shares.filter(share => share.session.accountId !== accountId).map(share => ({ ...share, sharedWithUserId: share.accountId! }));
 }
 
 /**
@@ -1224,11 +1230,11 @@ export async function eraseSessionAccessGrantsForAccountInTx(
             accountIds,
         });
         if (share.sharedWithUserId === params.accountId) {
-            await tx.sessionShare.delete({ where: { id: share.id } });
+            await tx.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
         } else {
-            await tx.sessionShare.update({
-                where: { id: share.id },
-                data: { sharedByUserId: share.session.accountId },
+            await tx.sessionGrant.update({
+                where: { principalKind: 'account', id: share.id },
+                data: { createdByAccountId: share.session.accountId },
             });
         }
         const after = await resolveStructuralSessionAccessForAccountsInTx(tx, {

@@ -297,10 +297,10 @@ describe('Environment-owned Automation controller assignment', () => {
             id: crypto.randomUUID(), accountId: creator.id, ...publishedMachine, installationId: crypto.randomUUID(), active: false,
         } })));
         if (!previous || !next) throw new Error('Expected controller placement Machines');
-        await db.machineTeamGrant.createMany({ data: [
-            { machineId: previous.id, teamId: team.id, createdByAccountId: creator.id,
+        await db.machineGrant.createMany({ data: [
+            { principalKind: 'team', machineId: previous.id, teamId: team.id, createdByAccountId: creator.id,
                 accessLevel: scenario === 'view-only new controller' ? 'admin' : 'view' },
-            { machineId: next.id, teamId: team.id, createdByAccountId: creator.id,
+            { principalKind: 'team', machineId: next.id, teamId: team.id, createdByAccountId: creator.id,
                 accessLevel: scenario === 'view-only new controller' ? 'view' : 'admin' },
         ] });
         const artifact = await createArtifact({ actorUserId: creator.id, artifactId: crypto.randomUUID(),
@@ -353,7 +353,7 @@ describe('Environment-owned Automation controller assignment', () => {
         const [first, next] = await Promise.all([creator, manager].map(account => db.machine.create({ data: {
             id: crypto.randomUUID(), accountId: account.id, ...publishedMachine, installationId: crypto.randomUUID(), active: false,
         } })));
-        await db.machineTeamGrant.createMany({ data: [first, next].map(machine => ({ machineId: machine.id,
+        await db.machineGrant.createMany({ data: [first, next].map(machine => ({ principalKind: 'team', machineId: machine.id,
             teamId: team.id, accessLevel: 'view' as const, createdByAccountId: machine.accountId })) });
         const artifact = await createArtifact({ actorUserId: creator.id, artifactId: crypto.randomUUID(),
             header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Team controller' })),
@@ -396,7 +396,7 @@ describe('Environment-owned Automation controller assignment', () => {
         expect(paused?.assignments.map(assignment => assignment.machineId)).toEqual([next.id]);
         const replacement = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: manager.id,
             ...publishedMachine, installationId: crypto.randomUUID(), active: false } });
-        await db.machineTeamGrant.create({ data: { machineId: replacement.id, teamId: team.id,
+        await db.machineGrant.create({ data: { principalKind: 'team', machineId: replacement.id, teamId: team.id,
             accessLevel: 'view', createdByAccountId: manager.id } });
         expect(await inTx(tx => setDeploymentEnvironmentControllerInTx(tx, manager.id, { serverId,
             environmentId: environment.environmentId, expectedRevision: environment.revision + 1,

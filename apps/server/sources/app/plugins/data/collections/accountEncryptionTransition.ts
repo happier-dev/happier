@@ -103,7 +103,7 @@ const pluginCollectionTransitionRowSelect = {
     contractId: true,
     contractDigest: true,
     contentEnvelope: true,
-    _count: { select: { accountGrants: true, teamGrants: true, groupGrants: true, keyEnvelopes: true } },
+    _count: { select: { grants: true, keyEnvelopes: true } },
     contract: {
         select: {
             pluginId: true,
@@ -137,7 +137,7 @@ type ValidatedTransitionRow = Readonly<{
 }>;
 
 function hasResourceKeysOrGrants(row: PersistedTransitionRow): boolean {
-    return row._count.accountGrants + row._count.teamGrants + row._count.groupGrants + row._count.keyEnvelopes > 0;
+    return row._count.grants + row._count.keyEnvelopes > 0;
 }
 
 async function transitionResourceInTx(tx: Tx, accountId: string, row: PersistedTransitionRow) {

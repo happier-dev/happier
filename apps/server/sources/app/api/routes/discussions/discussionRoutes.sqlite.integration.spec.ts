@@ -71,7 +71,7 @@ describe("Session discussion HTTP transport (SQLite)", () => {
         if (!createdDoc.ok) throw new Error(createdDoc.error);
         const doc = { ref: { kind: 'doc' as const, serverId: 'home-a', artifactId: createdDoc.artifact.id },
             revision: { headerVersion: 1, bodyVersion: 1 } };
-        await db.artifactAccountGrant.create({ data: { artifactId: doc.ref.artifactId, accountId: viewer.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: doc.ref.artifactId, accountId: viewer.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         const created = await createDiscussion({ authentication, actorAccountId: owner.id, request: {
             creationLocalId: crypto.randomUUID(), titleContent: plainTitle('Plan review'),
@@ -102,7 +102,7 @@ describe("Session discussion HTTP transport (SQLite)", () => {
                 occurrences: [{ message: { id: posted.value.message.id }, type: 'decision' }] }] });
             actor.accountId = viewer.id;
             expect((await read()).json()).toMatchObject({ discussions: [{ occurrences: [{ type: 'update' }] }] });
-            await db.artifactAccountGrant.deleteMany({ where: { artifactId: doc.ref.artifactId, accountId: viewer.id } });
+            await db.artifactGrant.deleteMany({ where: { principalKind: 'account', artifactId: doc.ref.artifactId, accountId: viewer.id } });
             expect((await read()).json()).toMatchObject({ discussions: [] });
             actor.accountId = owner.id;
             expect(await decideArtifactEditProposal({ authentication, actorAccountId: owner.id, decision: 'decline',
@@ -147,7 +147,7 @@ describe("Session discussion HTTP transport (SQLite)", () => {
             expect(second.json().nextCursor).toBeNull();
             actor.accountId = outsider.id;
             expect((await app.inject({ method: 'GET', url: '/v1/discussions/attention' })).json()).toMatchObject({ discussions: [], incomplete: false });
-            await db.discussionAccountGrant.deleteMany({ where: { accountId: viewer.id, discussionId: { in: ids } } });
+            await db.discussionGrant.deleteMany({ where: { principalKind: 'account', accountId: viewer.id, discussionId: { in: ids } } });
             actor.accountId = viewer.id;
             expect((await app.inject({ method: 'GET', url: '/v1/discussions/attention' })).json()).toMatchObject({ discussions: [], incomplete: false });
         } finally { await app.close(); }
@@ -220,7 +220,7 @@ describe("Session discussion HTTP transport (SQLite)", () => {
             actor.accountId = reader.id;
             expect((await app.inject({ method: 'GET', url })).statusCode).toBe(200);
             expect((await app.inject({ method: 'PUT', url, payload: { settings: {} } })).statusCode).toBe(403);
-            await db.discussionAccountGrant.update({ where: { discussionId_accountId: { discussionId, accountId: reader.id } },
+            await db.discussionGrant.update({ where: { principalKind: 'account', discussionId_accountId: { discussionId, accountId: reader.id } },
                 data: { accessLevel: 'admin' } });
             expect((await app.inject({ method: 'PUT', url, payload: { settings: {} } })).statusCode).toBe(200);
             actor.accountId = outsider.id;

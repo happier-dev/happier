@@ -1597,8 +1597,8 @@ describe("plugin collection UI query route", () => {
             () => db.accountPluginRelease.deleteMany(),
             () => db.pluginCollectionContract.deleteMany(),
             () => db.accountChange.deleteMany(),
-            () => db.sessionShare.deleteMany(),
-            () => db.sessionTeamGrant.deleteMany(),
+            () => db.sessionGrant.deleteMany({ where: { principalKind: 'account' } }),
+            () => db.sessionGrant.deleteMany({ where: { principalKind: 'team' } }),
             () => db.teamMembership.deleteMany(),
             () => db.team.deleteMany(),
             () => db.session.deleteMany(),
@@ -1607,7 +1607,7 @@ describe("plugin collection UI query route", () => {
         ]);
     });
 
-    it("shares a Plain Collection row and enforces live view/edit access before conflicts", async () => {
+    it("grants a Plain Collection row and enforces live view/edit access before conflicts", async () => {
         const owner = "collection-sharing-owner", recipient = "collection-sharing-recipient";
         const { ref } = await seedCurrentCollectionAccount({ accountId: owner, rows: [
             { rowId: "shared-row", revision: 1, status: "open", title: "Shared" },
@@ -1783,7 +1783,7 @@ describe("plugin collection UI query route", () => {
         });
     });
 
-    it("shares E2EE Collection ciphertext through two real Account clients and ends sharing on deletion before private recreation", async () => {
+    it("grants E2EE Collection ciphertext through two real Account clients and ends sharing on deletion before private recreation", async () => {
         const owner = "collection-e2ee-owner", recipient = "collection-e2ee-recipient";
         const material = { type: "legacy" as const, secret: randomBytes(32) };
         const initial = { id: "private-row", status: "open" as const, title: "Encrypted sharing", privateNote: "Owner private note" };
@@ -6588,7 +6588,7 @@ describe("plugin collection UI query route", () => {
             },
         } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId, role: "member" } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id,
             teamId: team.id,
             accessLevel: "view",
@@ -6619,10 +6619,10 @@ describe("plugin collection UI query route", () => {
             expect(unqualified.statusCode).toBe(409);
             expect(unqualified.json()).toEqual({ error: "collection_relation_unavailable" });
 
-            await db.sessionShare.create({ data: {
+            await db.sessionGrant.create({ data: { principalKind: 'account',
                 sessionId: session.id,
-                sharedByUserId: ownerId,
-                sharedWithUserId: accountId,
+                createdByAccountId: ownerId,
+                accountId: accountId,
                 accessLevel: "view",
             } });
             const direct = await app.inject({

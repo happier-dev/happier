@@ -57,7 +57,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
             metadata: encodeBase64(await sealSessionDataKeyBundleV0({ host: 'old' }, dataKey)),
             daemonState: encodeBase64(await sealSessionDataKeyBundleV0({ status: 'offline' }, dataKey)),
         } });
-        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: recipient.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id, accountId: recipient.id, accessLevel: 'view', createdByAccountId: owner.id } });
         const census = await inTx(tx => readMachineRecipientCensusInTx(tx, { actorAccountId: owner.id, machineId: machine.id }));
         if ('kind' in census) throw new Error(census.code);
         const input = {

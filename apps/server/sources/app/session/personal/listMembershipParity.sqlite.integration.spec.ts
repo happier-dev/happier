@@ -30,8 +30,8 @@ describe("viewer projection equals list membership (SQLite)", () => {
         const viewer = await db.account.create({ data: { publicKey: randomUUID() } });
         const session = async (ownerId: string, data: Record<string, unknown> = {}) =>
             await db.session.create({ data: { accountId: ownerId, tag: randomUUID(), metadata: "{}", ...data } });
-        const share = async (sessionId: string) => await db.sessionShare.create({ data: {
-            sessionId, sharedByUserId: owner.id, sharedWithUserId: viewer.id, accessLevel: "edit",
+        const share = async (sessionId: string) => await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId, createdByAccountId: owner.id, accountId: viewer.id, accessLevel: "edit",
         } });
 
         const ids: string[] = [];
@@ -63,7 +63,7 @@ describe("viewer projection equals list membership (SQLite)", () => {
         await db.teamMembership.create({ data: { teamId: team.id, accountId: viewer.id, role: "member" } });
         for (const data of [{}, { seq: 4, pendingPermissionRequestCount: 1, active: true }]) {
             const collective = await add(owner.id, false, data);
-            await db.sessionTeamGrant.create({ data: { sessionId: collective.id, teamId: team.id, accessLevel: "edit", effectiveAt: new Date() } });
+            await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: collective.id, teamId: team.id, accessLevel: "edit", effectiveAt: new Date() } });
         }
 
         const { myWork, attention, ordinary } = await inTx(async (tx) => {

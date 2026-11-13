@@ -56,7 +56,7 @@ describe("session realtime publication privacy (SQLite integration)", () => {
     afterEach(async () => {
         eventRouter.clearIo();
         await harness.resetDbTables([
-            () => db.sessionShare.deleteMany(),
+            () => db.sessionGrant.deleteMany({ where: { principalKind: 'account' } }),
             () => db.accountChange.deleteMany(),
             () => db.session.deleteMany(),
             () => db.account.deleteMany(),
@@ -84,11 +84,11 @@ describe("session realtime publication privacy (SQLite integration)", () => {
                 active: true,
             },
         });
-        await db.sessionShare.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'account',
                 sessionId: session.id,
-                sharedByUserId: owner.id,
-                sharedWithUserId: collaborator.id,
+                createdByAccountId: owner.id,
+                accountId: collaborator.id,
                 accessLevel: "edit",
             },
         });
@@ -199,11 +199,11 @@ describe("session realtime publication privacy (SQLite integration)", () => {
             },
             select: { id: true },
         });
-        await db.sessionShare.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'account',
                 sessionId: session.id,
-                sharedByUserId: owner.id,
-                sharedWithUserId: collaborator.id,
+                createdByAccountId: owner.id,
+                accountId: collaborator.id,
                 accessLevel: "view",
             },
         });

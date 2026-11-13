@@ -29,7 +29,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('T
             headerVersion: 1, bodyVersion: 1 } });
         const source = await artifact();
         const unrelated = await artifact();
-        await db.artifactAccountGrant.create({ data: { artifactId: source.id, accountId: recipient.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: source.id, accountId: recipient.id,
             createdByAccountId: owner.id, accessLevel: 'view' } });
         await db.artifactTemplateAcceptedVersion.createMany({ data: [
             { artifactId: source.id, recipientAccountId: recipient.id, copyId: 'private-a', acceptedVersion: '1.0.0' },

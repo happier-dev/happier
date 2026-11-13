@@ -35,7 +35,7 @@ export function createMachineAdmissionPersistenceBoundary(custodian: string | ((
                     managedResource: null, operationProtocolCapabilities: null, operationProtocolCapabilitiesRevision: 0,
                     account: { id: accountId, status: 'active', encryptionMode: 'plain',
                         name: null, firstName: null, lastName: null, username: null, avatar: null },
-                    accountGrants: [], teamGrants: [], groupGrants: [],
+                    grants: [],
                 } satisfies MachineAdmissionFacts;
             },
         },

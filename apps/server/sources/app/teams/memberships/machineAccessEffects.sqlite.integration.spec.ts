@@ -38,8 +38,8 @@ describe("Machine effective access membership effects (SQLite integration)", () 
             metadata: encodePlainMachineStoredContent({ host: "host", platform: "linux", happyCliVersion: "test", homeDir: "/home/test", happyHomeDir: "/home/test/.happier" }),
             dataEncryptionKey: new Uint8Array(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER)),
         } });
-        await db.machineTeamGrant.create({ data: { machineId: machine.id, teamId: team.id, accessLevel: "view", createdByAccountId: owner.id } });
-        await db.machineGroupGrant.create({ data: { machineId: machine.id, teamGroupId: group.id, accessLevel: "view", createdByAccountId: owner.id } });
+        await db.machineGrant.create({ data: { principalKind: 'team', machineId: machine.id, teamId: team.id, accessLevel: "view", createdByAccountId: owner.id } });
+        await db.machineGrant.create({ data: { principalKind: 'group', machineId: machine.id, teamGroupId: group.id, accessLevel: "view", createdByAccountId: owner.id } });
         const session = await db.session.create({ data: { accountId: member.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain" } });
         await db.accessKey.create({ data: { accountId: member.id, machineId: machine.id, sessionId: session.id, data: "retained-session-key" } });
         function connect(accountId: string, machineId: string, sessionId?: string) {
@@ -99,7 +99,7 @@ describe("Machine effective access membership effects (SQLite integration)", () 
         }, async impacts => {
             await setTeamMembershipStatusInTx(tx, { teamId: f.team.id, membershipId: f.membership.id, accountId: f.member.id, status: "suspended", sessionAccessImpacts: impacts });
             // Replacement independent authority is part of the same atomic bulk change.
-            await tx.machineAccountGrant.create({ data: { machineId: f.machine.id, accountId: f.member.id, accessLevel: "view", createdByAccountId: f.owner.id } });
+            await tx.machineGrant.create({ data: { principalKind: 'account', machineId: f.machine.id, accountId: f.member.id, accessLevel: "view", createdByAccountId: f.owner.id } });
         }));
         expect(f.disconnected).not.toHaveBeenCalled();
         expect(await inTx(tx => resolveEffectiveMachineRoleInTx(tx, { actorAccountId: f.member.id, machineId: f.machine.id }))).toBe("use");
@@ -107,7 +107,7 @@ describe("Machine effective access membership effects (SQLite integration)", () 
 
     it("publishes final Group loss and reconciles every Account in a bulk Team removal", async () => {
         const groupOnly = await fixture();
-        await db.machineTeamGrant.deleteMany({ where: { machineId: groupOnly.machine.id } });
+        await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: groupOnly.machine.id } });
         await inTx(tx => applyTeamGroupContributionInTx(tx, {
             teamId: groupOnly.team.id, teamGroupId: groupOnly.group.id, teamMembershipId: groupOnly.membership.id,
             contribution: { kind: "native" }, desired: "absent", historyAccess: "all_existing",
@@ -130,21 +130,21 @@ describe("Machine effective access membership effects (SQLite integration)", () 
 
     it("refreshes the manager's grant roster when a weaker grant is removed and stronger access survives", async () => {
         const f = await fixture();
-        await db.machineAccountGrant.create({ data: { machineId: f.machine.id, accountId: f.member.id, accessLevel: "admin", createdByAccountId: f.owner.id } });
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: f.machine.id, accountId: f.member.id, accessLevel: "admin", createdByAccountId: f.owner.id } });
         await inTx(tx => removeMachineAccessGrantInTx(tx, {
             actorAccountId: f.owner.id, machineId: f.machine.id,
             principal: { kind: "group", teamId: f.team.id, groupId: f.group.id },
         }));
         expect(f.disconnected).not.toHaveBeenCalled();
-        expect(await db.machineGroupGrant.count({ where: { machineId: f.machine.id } })).toBe(0);
+        expect(await db.machineGrant.count({ where: { principalKind: 'group', machineId: f.machine.id } })).toBe(0);
         expect(await db.accountChange.count({ where: { accountId: f.owner.id, entityId: f.machine.id, kind: "machineRecipientAccess" } })).toBe(1);
     });
 
     it("applies the same exact requester loss after direct Leave without deleting the requester's history", async () => {
         const f = await fixture();
-        await db.machineTeamGrant.deleteMany({ where: { machineId: f.machine.id } });
-        await db.machineGroupGrant.deleteMany({ where: { machineId: f.machine.id } });
-        await db.machineAccountGrant.create({ data: { machineId: f.machine.id, accountId: f.member.id, accessLevel: "view", createdByAccountId: f.owner.id } });
+        await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: f.machine.id } });
+        await db.machineGrant.deleteMany({ where: { principalKind: 'group', machineId: f.machine.id } });
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: f.machine.id, accountId: f.member.id, accessLevel: "view", createdByAccountId: f.owner.id } });
         expect(await inTx(tx => removeMachineAccessGrantInTx(tx, {
             actorAccountId: f.member.id, machineId: f.machine.id,
             principal: { kind: "account", accountId: f.member.id }, leave: true,

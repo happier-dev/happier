@@ -30,7 +30,7 @@ async function measureManagedRows<T>(read: () => Promise<T>) {
     const observe = (tx: Tx): Tx => new Proxy(tx, {
         get(owner, key, receiver) {
             const value: unknown = Reflect.get(owner, key, receiver);
-            if (!['managedMachine', 'machine', 'session', 'automationRun', 'machineAccountGrant', 'teamMembership', 'teamGroupMembership', 'machineTeamGrant', 'machineGroupGrant'].includes(String(key))
+            if (!['managedMachine', 'machine', 'session', 'automationRun', 'machineGrant', 'teamMembership', 'teamGroupMembership', 'machineGrant', 'machineGrant'].includes(String(key))
                 || !value || typeof value !== 'object') return typeof value === 'function' ? value.bind(owner) : value;
             return new Proxy(value, {
                 get(model, method, modelReceiver) {
@@ -108,7 +108,7 @@ describe('managed query selection on disposable PostgreSQL', () => {
         const peers = Array.from({ length: 1_000 }, () => randomUUID());
         await db.account.createMany({ data: peers.map(id => ({ id, encryptionMode: 'plain' })) });
         for (const ids of portableQueryChunks({ values: peers, bindingsPerValue: 4 })) {
-            await db.machineAccountGrant.createMany({ data: ids.map(accountId => ({ accountId, machineId: controller.id,
+            await db.machineGrant.createMany({ data: ids.map(accountId => ({ principalKind: 'account', accountId, machineId: controller.id,
                 accessLevel: 'view', createdByAccountId: custodian.id })) });
         }
         const guest = await db.machine.create({ data: { id: randomUUID(), accountId: custodian.id,
@@ -116,7 +116,9 @@ describe('managed query selection on disposable PostgreSQL', () => {
             installationId: randomUUID() } });
         const resource = { contributionRef: launch.provider, schemaVersion: 1, value: {} };
         await db.managedMachine.update({ where: { id: row.id }, data: { enrolledMachineId: guest.id,
-            allocation: 'bound', resource, wakeOnAcceptedMessage: true } });
+            allocation: 'bound', resource, wakeOnAcceptedMessage: true,
+            retention: { kind: 'unused', afterMs: 3_600_000, effect: 'stop' },
+            observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' } } });
         const extra = Array.from({ length: 1_000 }, () => ({ homeId, custodianAccountId: custodian.id,
             controllerMachineId: controller.id, controllerInstallationId: controller.installationId!,
             admittedActionRequestId: randomUUID(), admittedInput: {}, launch, allocation: 'bound', resource,
@@ -256,8 +258,11 @@ describe('managed query selection on disposable PostgreSQL', () => {
         expect(unmanaged.candidateQueries).toBe(0);
         const team = await db.team.create({ data: { name: 'Exact association authority' } });
         await db.teamMembership.createMany({ data: [{ teamId: team.id, accountId: custodian.id, role: 'admin' },
+            { teamId: team.id, accountId: creator.id, role: 'admin' },
             { teamId: team.id, accountId: stranger.id, role: 'member' }] });
-        await db.machineTeamGrant.create({ data: { machineId: controller.id, teamId: team.id, accessLevel: 'view', createdByAccountId: custodian.id } });
+        // Controller Use cannot grant visibility to its native resources; the
+        // enrolled guest's Team grant is the viewer's read authority.
+        await db.machineGrant.create({ data: { principalKind: 'team', machineId: guest.id, teamId: team.id, accessLevel: 'view', createdByAccountId: creator.id } });
         expect((await read(stranger.id)).value.machines.map(machine => machine.id)).toEqual([row.id]);
         await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId: stranger.id } }, data: { status: 'suspended' } });
         expect((await read(stranger.id)).value.machines).toEqual([]);

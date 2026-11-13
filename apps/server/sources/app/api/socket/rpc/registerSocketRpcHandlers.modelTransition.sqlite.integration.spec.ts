@@ -230,11 +230,11 @@ describe("publisher-authoritative model-transition RPC routing on SQLite", () =>
             },
             select: { id: true },
         });
-        await db.sessionShare.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'account',
                 sessionId: seeded.binding.sessionId,
-                sharedByUserId: seeded.binding.accountId,
-                sharedWithUserId: editor.id,
+                createdByAccountId: seeded.binding.accountId,
+                accountId: editor.id,
                 accessLevel: "edit",
                 canApprovePermissions: false,
             },
@@ -301,11 +301,11 @@ describe("publisher-authoritative model-transition RPC routing on SQLite", () =>
         }, callback);
 
         await specializedCurrentnessSucceeded.promise;
-        await db.sessionShare.delete({
-            where: {
-                sessionId_sharedWithUserId: {
+        await db.sessionGrant.delete({
+            where: { principalKind: 'account',
+                sessionId_accountId: {
                     sessionId: seeded.binding.sessionId,
-                    sharedWithUserId: editor.id,
+                    accountId: editor.id,
                 },
             },
         });

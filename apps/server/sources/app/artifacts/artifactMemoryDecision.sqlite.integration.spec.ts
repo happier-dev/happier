@@ -80,11 +80,11 @@ describe('Memory decision source disclosure at the Artifact HTTP boundary', () =
         const writer = await db.account.create({ data: { encryptionMode: 'plain' } });
         const original = await source(owner.id);
         const other = await source(owner.id);
-        const grant = await db.sessionShare.create({ data: { sessionId: original.session.id, sharedByUserId: owner.id,
-            sharedWithUserId: writer.id, accessLevel: 'view' } });
+        const grant = await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: original.session.id, createdByAccountId: owner.id,
+            accountId: writer.id, accessLevel: 'view' } });
         await withAuthenticatedTestApp(artifactsRoutes, async app => {
             for (const ref of [{ ...original.ref, messageId: other.message.id }, original.ref]) {
-                if (ref.messageId === original.ref.messageId) await db.sessionShare.delete({ where: { id: grant.id } });
+                if (ref.messageId === original.ref.messageId) await db.sessionGrant.delete({ where: { principalKind: 'account', id: grant.id } });
                 const id = randomUUID();
                 const response = await app.inject({ method: 'POST', url: memoryDecisionCreateUrl, headers: { ...protocolHeaders, 'x-test-user-id': writer.id },
                     payload: { id, header: plain({ kind: 'memory_doc.v1' }), body: plain({ body: 'decision' }),
@@ -109,7 +109,7 @@ describe('Memory decision source disclosure at the Artifact HTTP boundary', () =
             expect(denied.statusCode, denied.body).toBe(403);
             expect(denied.json()).toEqual({ error: 'memory_decision_disclosure_denied' });
             expect(await db.artifact.findUnique({ where: { id: memory.id }, select: { bodyVersion: true } })).toEqual({ bodyVersion: 1 });
-            await db.sessionShare.create({ data: { sessionId: original.session.id, sharedByUserId: owner.id, sharedWithUserId: reader.id, accessLevel: 'view' } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: original.session.id, createdByAccountId: owner.id, accountId: reader.id, accessLevel: 'view' } });
             const publication = await db.publicSessionShare.create({ data: { artifactId: memory.id,
                 tokenHash: randomBytes(32), createdByUserId: owner.id } });
             const publicDenied = await write();

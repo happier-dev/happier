@@ -90,8 +90,8 @@ describe('requester Session input through the custodian Machine socket', () => {
         const source = await db.session.create({ data: { accountId: sourceOwner.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
         const destination = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain',
             active: true, lastActiveAt: new Date(1), publisherGeneration: 1n } });
-        const grantSource = (accountId: string) => db.sessionShare.create({ data: { sessionId: source.id,
-            sharedByUserId: sourceOwner.id, sharedWithUserId: accountId, accessLevel: 'view' } });
+        const grantSource = (accountId: string) => db.sessionGrant.create({ data: { principalKind: 'account', sessionId: source.id,
+            createdByAccountId: sourceOwner.id, accountId: accountId, accessLevel: 'view' } });
         await grantSource(owner.id);
         const homeId = await getOrCreateServerIdentityId();
         await db.accessKey.create({ data: { accountId: owner.id, sessionId: destination.id, machineId: machine.id, data: 'opaque' } });
@@ -183,15 +183,15 @@ describe('requester Session input through the custodian Machine socket', () => {
             expect(JSON.stringify(projected)).not.toContain(ruleId);
             expect(await project(unrelatedId)).toBeNull();
             expect(await project('missing-input')).toBeNull();
-            await db.sessionShare.deleteMany({ where: { sessionId: source.id, sharedWithUserId: owner.id } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: source.id, accountId: owner.id } });
             expect(await project()).toBeNull();
             await grantSource(owner.id);
             expect(await project()).not.toBeNull();
             await grantSource(viewer.id);
-            await db.sessionShare.create({ data: { sessionId: destination.id, sharedByUserId: owner.id,
-                sharedWithUserId: viewer.id, accessLevel: 'view' } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: destination.id, createdByAccountId: owner.id,
+                accountId: viewer.id, accessLevel: 'view' } });
             expect(await project()).not.toBeNull();
-            await db.sessionShare.deleteMany({ where: { sessionId: source.id, sharedWithUserId: viewer.id } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: source.id, accountId: viewer.id } });
             expect(await project()).toBeNull();
             await grantSource(viewer.id);
             expect(await project()).not.toBeNull();
@@ -726,8 +726,8 @@ describe('requester Session input through the custodian Machine socket', () => {
             encryptionMode: 'plain', publisherGeneration: 1n, seq: 1 } });
         const destination = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}',
             encryptionMode: 'plain', active: true, lastActiveAt: new Date(1), publisherGeneration: 1n } });
-        if (crossAccount) await db.sessionShare.create({ data: { sessionId: source.id, sharedByUserId: sourceOwner.id,
-            sharedWithUserId: owner.id, accessLevel: 'view' } });
+        if (crossAccount) await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: source.id, createdByAccountId: sourceOwner.id,
+            accountId: owner.id, accessLevel: 'view' } });
         const homeId = await getOrCreateServerIdentityId();
         await db.accessKey.create({ data: { accountId: owner.id, machineId: machine.id, sessionId: destination.id, data: 'opaque' } });
         await db.session.update({ where: { id: destination.id }, data: { runtimeMachineTarget: {

@@ -216,11 +216,11 @@ describe('Artifact inventory through PostgreSQL wire protocol', () => {
         const [teamMachine, groupMachine, directMachine] = await Promise.all(['team', 'group', 'direct'].map(() => db.machine.create({
             data: { id: randomUUID(), accountId: owner.id, metadata: 'fixture' },
         })));
-        await db.machineTeamGrant.create({ data: { machineId: teamMachine.id, teamId: team.id,
+        await db.machineGrant.create({ data: { principalKind: 'team', machineId: teamMachine.id, teamId: team.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
-        await db.machineGroupGrant.create({ data: { machineId: groupMachine.id, teamGroupId: group.id,
+        await db.machineGrant.create({ data: { principalKind: 'group', machineId: groupMachine.id, teamGroupId: group.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
-        await db.machineAccountGrant.create({ data: { machineId: directMachine.id, accountId: guest.id,
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: directMachine.id, accountId: guest.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         const machines = [teamMachine, groupMachine, directMachine];
         const work = await readMachineRecipientWorkInTx(db, { actorAccountId: owner.id,

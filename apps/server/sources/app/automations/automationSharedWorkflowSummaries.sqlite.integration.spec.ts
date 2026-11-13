@@ -31,8 +31,8 @@ describe('Team workflow schedule summaries', () => {
             header: new Uint8Array(privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'workflow-definition.v1' }))),
             body: new Uint8Array(privacyKit.decodeBase64(encodePlainArtifactStoredContent({}))),
             dataEncryptionKey: new Uint8Array(privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER)) } });
-        await db.artifactTeamGrant.create({ data: { artifactId: artifact.id, teamId: team.id, accessLevel: 'edit', createdByAccountId: owner.id } });
-        await db.artifactAccountGrant.create({ data: { artifactId: artifact.id, accountId: personal.id, accessLevel: 'edit', createdByAccountId: owner.id } });
+        await db.artifactGrant.create({ data: { principalKind: 'team', artifactId: artifact.id, teamId: team.id, accessLevel: 'edit', createdByAccountId: owner.id } });
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: artifact.id, accountId: personal.id, accessLevel: 'edit', createdByAccountId: owner.id } });
         const nextRunAt = new Date('2030-01-01T12:00:00Z');
         const makeSchedule = async (visibleTeamId: string | null) => {
             const recipe = AutomationStoredWorkflowDefinitionRecipeV2Schema.parse({ v: 2, templateVersion: 1,
@@ -115,7 +115,7 @@ describe('Team workflow schedule summaries', () => {
             await db.teamMembership.update({ where: { id: member.id }, data: { status: 'suspended' } });
             expect((await query(viewer.id)).json().sharedWorkflowSummaries ?? []).toEqual([]);
             await db.teamMembership.update({ where: { id: member.id }, data: { status: 'active' } });
-            await db.artifactTeamGrant.delete({ where: { artifactId_teamId: { artifactId: artifact.id, teamId: team.id } } });
+            await db.artifactGrant.delete({ where: { principalKind: 'team', artifactId_teamId: { artifactId: artifact.id, teamId: team.id } } });
             expect((await query(viewer.id)).json().sharedWorkflowSummaries ?? []).toEqual([]);
         } finally { await app.close(); }
     });

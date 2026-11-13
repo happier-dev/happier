@@ -30,6 +30,54 @@ describe('Task resource HTTP authority (native database)', () => {
     });
     afterAll(async () => { await db.$disconnect(); });
 
+    it('keeps Team guests outside Task grants while direct and explicit Group grants remain independent through changes and revoke', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const guest = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const member = await db.account.create({ data: { encryptionMode: 'plain' } });
+        await makeShareEligibleForTest(owner.id, [guest.id]);
+        const team = await db.team.create({ data: { name: randomUUID() } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
+        const guestMembership = await db.teamMembership.create({ data: { teamId: team.id, accountId: guest.id, role: 'guest' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: 'member' } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Invited guests', nameKey: randomUUID() } });
+        await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: guestMembership.id } });
+        const taskId = randomUUID();
+        const row = await db.userKVStore.create({ data: { accountId: owner.id, key: `todo.${taskId}`,
+            value: new TextEncoder().encode(JSON.stringify(plain('Shared task'))) } });
+        await withAuthenticatedTestApp(routes, async app => {
+            const url = `/v1/tasks/${owner.id}/${taskId}`;
+            const ownerHeaders = { 'x-test-user-id': owner.id };
+            const guestHeaders = { 'x-test-user-id': guest.id };
+            const memberHeaders = { 'x-test-user-id': member.id };
+            const teamPrincipal = { kind: 'team', teamId: team.id };
+            const groupPrincipal = { kind: 'group', teamId: team.id, groupId: group.id };
+            const directPrincipal = { kind: 'account', accountId: guest.id };
+            const set = (principal: typeof teamPrincipal | typeof groupPrincipal | typeof directPrincipal, accessLevel: 'view' | 'admin' = 'view') =>
+                app.inject({ method: 'PUT', url: `${url}/grants`, headers: ownerHeaders, payload: { principal, accessLevel } });
+            const revoke = (principal: typeof teamPrincipal | typeof groupPrincipal | typeof directPrincipal) =>
+                app.inject({ method: 'DELETE', url: `${url}/grants`, headers: ownerHeaders, payload: { principal } });
+            const read = (headers: typeof guestHeaders) => app.inject({ method: 'GET', url, headers });
+            expect((await set(teamPrincipal)).statusCode).toBe(200);
+            expect((await read(guestHeaders)).statusCode).toBe(404);
+            expect((await app.inject({ method: 'GET', url: '/v1/tasks', headers: guestHeaders })).json()).toEqual({ tasks: [] });
+            expect((await read(memberHeaders)).json()).toMatchObject({ access: 'view', encryptedDataKey: null });
+            expect((await set(groupPrincipal)).statusCode).toBe(200);
+            expect((await read(guestHeaders)).json()).toMatchObject({ access: 'view', content: plain('Shared task'), encryptedDataKey: null });
+            expect((await revoke(groupPrincipal)).statusCode).toBe(200);
+            expect((await read(guestHeaders)).statusCode).toBe(404);
+            expect((await set(directPrincipal)).statusCode).toBe(200);
+            expect((await set(teamPrincipal, 'admin')).statusCode).toBe(200);
+            expect((await read(guestHeaders)).json()).toMatchObject({ access: 'view' });
+            expect((await read(memberHeaders)).json()).toMatchObject({ access: 'admin' });
+            expect((await revoke(directPrincipal)).statusCode).toBe(200);
+            expect((await read(guestHeaders)).statusCode).toBe(404);
+            expect((await revoke(teamPrincipal)).statusCode).toBe(200);
+            expect((await read(memberHeaders)).statusCode).toBe(404);
+        });
+        expect(await db.userKVStore.findUniqueOrThrow({ where: { id: row.id } })).toEqual(row);
+        expect(await db.taskKeyEnvelope.findMany({ where: { taskId: row.id } })).toEqual([]);
+    });
+
     it('reads an exact owner-qualified id set in one Task query without unrelated bodies', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         await db.userKVStore.createMany({ data: Array.from({ length: 1_000 }, (_, index) => ({
@@ -162,9 +210,9 @@ describe('Task resource HTTP authority (native database)', () => {
         const taskId = randomUUID();
         const row = await db.userKVStore.create({ data: { accountId: owner.id, key: `todo.${taskId}`,
             value: new TextEncoder().encode(JSON.stringify({ t: 'encrypted', k: 'task', c: 'opaque-resource-content' })) } });
-        await db.taskAccountGrant.create({ data: { taskId: row.id, accountId: ready.id, accessLevel: 'view', createdByAccountId: owner.id } });
-        await db.taskTeamGrant.create({ data: { taskId: row.id, teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id } });
-        await db.taskGroupGrant.create({ data: { taskId: row.id, teamGroupId: group.id, accessLevel: 'edit', createdByAccountId: owner.id } });
+        await db.taskGrant.create({ data: { principalKind: 'account', taskId: row.id, accountId: ready.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.taskGrant.create({ data: { principalKind: 'team', taskId: row.id, teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.taskGrant.create({ data: { principalKind: 'group', taskId: row.id, teamGroupId: group.id, accessLevel: 'edit', createdByAccountId: owner.id } });
         const dataKey = tweetnacl.randomBytes(32);
         for (const [account, binding] of [[owner, ownerBinding], [ready, readyBinding], [rotated, rotatedBinding]] as const) {
             await db.taskKeyEnvelope.create({ data: { taskId: row.id, recipientAccountId: account.id,
@@ -219,7 +267,7 @@ describe('Task resource HTTP authority (native database)', () => {
             await db.account.update({ where: { id: ready.id }, data: { status: 'active' } });
         });
         const capture = () => inReadSnapshot(async tx => {
-            const observed = observePrismaReads(tx, ['userKVStore', 'taskAccountGrant', 'taskTeamGrant', 'taskGroupGrant', 'account', 'taskKeyEnvelope']);
+            const observed = observePrismaReads(tx, ['userKVStore', 'taskGrant', 'account', 'taskKeyEnvelope']);
             const result = await listTaskGrantsInTx(observed.tx, { actorAccountId: owner.id, ownerAccountId: owner.id, taskId });
             return { result, reads: observed.reads };
         });
@@ -229,7 +277,7 @@ describe('Task resource HTTP authority (native database)', () => {
         await db.teamMembership.createMany({ data: additional.map(account => ({ teamId: team.id, accountId: account.id, role: 'member' as const })) });
         const next = await capture();
         expect(next.reads).toEqual(first.reads);
-        expect(next.reads).toEqual(['userKVStore.findFirst', 'taskAccountGrant.findMany', 'taskTeamGrant.findMany', 'taskGroupGrant.findMany', 'account.findMany', 'taskKeyEnvelope.findMany']);
+        expect(next.reads).toEqual(['userKVStore.findFirst', 'taskGrant.findMany', 'account.findMany', 'taskKeyEnvelope.findMany']);
         expect(next.result).toMatchObject({ ok: true, value: { grants: expect.arrayContaining([expect.objectContaining({
             principal: { kind: 'team', teamId: team.id }, readiness: { readyCount: 1, pendingCount: 1,
                 unavailableCounts: { ...unavailableCounts, plain_account: 101 } },

@@ -55,11 +55,11 @@ describe("Session SystemRecords read snapshots on SQLite", () => {
         const session = await db.session.create({ data: { accountId: owner.id, tag: 'record-revocation', encryptionMode: 'plain', metadata: '{}' } });
         const authentication = createPresentUserSessionAccessAuthentication();
         const address = { owner: 'host', namespace: 'memory', kind: 'synopsis.v1', localId: 'revocation' } satisfies SessionSystemRecordAddress;
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id,
-            sharedWithUserId: collaborator.id, accessLevel: 'edit' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id,
+            accountId: collaborator.id, accessLevel: 'edit' } });
         expect((await upsertSessionSystemRecordV1({ actorUserId: collaborator.id, sessionId: session.id, authentication, address,
             content: { t: 'plain', v: { v: 1, seqTo: 1, updatedAtMs: 1, synopsis: 'private record' } }, expectedRevision: null })).ok).toBe(true);
-        await db.sessionShare.update({ where: { sessionId_sharedWithUserId: { sessionId: session.id, sharedWithUserId: collaborator.id } },
+        await db.sessionGrant.update({ where: { principalKind: 'account', sessionId_accountId: { sessionId: session.id, accountId: collaborator.id } },
             data: { accessLevel: 'view' } });
         const params = { actorUserId: collaborator.id, sessionId: session.id, authentication, address };
         expect(await readSessionSystemRecordV1(params)).toMatchObject({ ok: true,
@@ -81,7 +81,7 @@ describe("Session SystemRecords read snapshots on SQLite", () => {
         const response = readSessionSystemRecordV1(params);
         try {
             expect(await Promise.race([reached.then(() => 'barrier'), response.then(() => 'response')])).toBe('barrier');
-            await db.sessionShare.delete({ where: { sessionId_sharedWithUserId: { sessionId: session.id, sharedWithUserId: collaborator.id } } });
+            await db.sessionGrant.delete({ where: { principalKind: 'account', sessionId_accountId: { sessionId: session.id, accountId: collaborator.id } } });
             resume();
             const result = await response;
             expect(await readSessionSystemRecordV1(params)).toMatchObject({ ok: false, code: 'plugin_session_not_found' });

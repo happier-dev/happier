@@ -139,7 +139,7 @@ describe("Home governance policy singleton", () => {
         }));
         expect(await write()).toEqual({ status: "refused", code: "managed_default_machine_not_member_usable" });
         expect(await db.homeGovernancePolicy.count()).toBe(0);
-        await db.machineAccountGrant.create({ data: {
+        await db.machineGrant.create({ data: { principalKind: 'account',
             machineId: machine.id, accountId: member, accessLevel: "view", createdByAccountId: owner,
         } });
         expect(await write()).toMatchObject({ status: "applied", policy: { sessionDefaults: defaults } });

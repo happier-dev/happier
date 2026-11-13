@@ -63,18 +63,14 @@ async function hasCurrentPrivateAccountVoicePublisherInTx(tx: Tx, input: Readonl
             accountId: true,
             archivedAt: true,
             tag: true,
-            shares: { select: { id: true }, take: 1 },
-            teamGrants: { select: { sessionId: true }, take: 1 },
-            groupGrants: { select: { sessionId: true }, take: 1 },
+            grants: { select: { id: true }, take: 1 },
             publicShare: { select: { sessionId: true } },
         },
     });
     return voiceSession?.accountId === input.accountId
         && voiceSession.archivedAt === null
         && voiceSession.tag === VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG
-        && voiceSession.shares.length === 0
-        && voiceSession.teamGrants.length === 0
-        && voiceSession.groupGrants.length === 0
+        && voiceSession.grants.length === 0
         && voiceSession.publicShare === null;
 }
 

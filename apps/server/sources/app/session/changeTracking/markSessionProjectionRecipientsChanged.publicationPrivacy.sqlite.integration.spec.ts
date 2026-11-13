@@ -37,7 +37,7 @@ describe("markSessionProjectionRecipientsChanged publication privacy (SQLite int
         eventRouter.clearIo();
         await harness.resetDbTables([
             () => db.sessionFollowEdge.deleteMany(),
-            () => db.sessionShare.deleteMany(),
+            () => db.sessionGrant.deleteMany({ where: { principalKind: 'account' } }),
             () => db.accountChange.deleteMany(),
             () => db.session.deleteMany(),
             () => db.account.deleteMany(),
@@ -127,9 +127,9 @@ describe("markSessionProjectionRecipientsChanged publication privacy (SQLite int
                     data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: "plain", metadata: "{}" },
                 })));
                 const lead = destinations[0];
-                await db.sessionShare.createMany({ data: [source, ...destinations].flatMap(session => accounts.slice(1).map(account => ({
-                    sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: account.id, accessLevel: "view",
-                }))) });
+                await db.sessionGrant.createMany({ data: ([source, ...destinations].flatMap(session => accounts.slice(1).map(account => ({
+                    sessionId: session.id, createdByAccountId: owner.id, accountId: account.id, accessLevel: "view",
+                })))).map(data => ({ ...data, principalKind: 'account' })) });
                 await db.sessionFollowEdge.create({ data: { sourceSessionId: source.id, destinationSessionId: lead.id,
                     sourceKey: sourceKeyForSessionFollowSourceV1({ kind: 'session', sessionId: source.id }),
                     policyJson: JSON.stringify({ preset: 'important' }),
@@ -249,11 +249,11 @@ describe("markSessionProjectionRecipientsChanged publication privacy (SQLite int
             },
             select: { id: true },
         });
-        await db.sessionShare.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'account',
                 sessionId: session.id,
-                sharedByUserId: owner.id,
-                sharedWithUserId: collaborator.id,
+                createdByAccountId: owner.id,
+                accountId: collaborator.id,
                 accessLevel: "view",
             },
         });

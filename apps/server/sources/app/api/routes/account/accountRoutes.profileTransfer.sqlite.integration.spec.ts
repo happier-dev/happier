@@ -235,7 +235,7 @@ describe('Account Profile transfer (SQLite)', () => {
             // The secret is usable but the Artifact has no grant. The whole import stays absent.
             expect((await post()).json()).toEqual({ status: 'invalid-reference' });
             expect(await db.userKVStore.count({ where: { accountId: account.id } })).toBe(0);
-            await db.artifactAccountGrant.create({ data: { artifactId: artifact.id, accountId: account.id, accessLevel: 'view', createdByAccountId: owner.id } });
+            await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: artifact.id, accountId: account.id, accessLevel: 'view', createdByAccountId: owner.id } });
             await db.artifact.update({ where: { id: artifact.id }, data: { bodyVersion: 5 } });
             expect((await post()).json()).toEqual({ status: 'invalid-reference' });
             expect(await db.userKVStore.count({ where: { accountId: account.id } })).toBe(0);

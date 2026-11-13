@@ -132,7 +132,7 @@ describe('Artifact private provenance (real SQLite and HTTP)', () => {
                 id, header: await encode({ title: 'Legacy' }, contentKey), body: await encode({ body: 'Legacy' }, contentKey),
                 dataEncryptionKey: wrap(contentKey, owner.contentPublicKey!),
             } })).statusCode).toBe(200);
-            await db.artifactAccountGrant.create({ data: { artifactId: id, accountId: editor.id, accessLevel: 'edit', createdByAccountId: owner.id } });
+            await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: id, accountId: editor.id, accessLevel: 'edit', createdByAccountId: owner.id } });
             const census = (await app.inject({ method: 'GET', url: `/v1/artifacts/${id}/access/recipients`, headers: headers(owner.id) })).json();
             const ownerWrap = wrap(privateKey, owner.contentPublicKey!);
             expect((await app.inject({ method: 'POST', url: `/v1/artifacts/${id}/access/key-envelopes`, headers: headers(owner.id), payload: {
@@ -231,7 +231,7 @@ describe('Artifact private provenance (real SQLite and HTTP)', () => {
                 } });
                 expect(substituted.statusCode, substituted.body).toBe(400);
             }
-            await db.artifactAccountGrant.create({ data: { artifactId: id, accountId: recipient.id, accessLevel: 'view', createdByAccountId: owner.id } });
+            await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: id, accountId: recipient.id, accessLevel: 'view', createdByAccountId: owner.id } });
             let recipientPrivateWrap: string | undefined;
             if (mode === 'e2ee') {
                 const census = await app.inject({ method: 'GET', url: `/v1/artifacts/${id}/access/recipients`, headers: headers(owner.id) });

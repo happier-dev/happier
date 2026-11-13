@@ -12,7 +12,7 @@ import { encodeAccountScopedKvJson } from '@/app/kv/accountScopedKv';
 import { buildSessionFollowRulePhysicalKeyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleV1';
 
 const boundary = createDbMocks({ account: ['findUnique', 'findMany', 'update'], session: ['findUnique', 'findMany'], machine: ['findUnique', 'findMany'],
-    sessionShare: ['findMany'], sessionTeamGrant: ['findMany'], sessionGroupGrant: ['findMany'],
+    sessionGrant: ['findMany'],  
     accessKey: ['findUnique'], userKVStore: ['findUnique'], sessionMessage: ['findUnique'],
     accountSessionFollow: ['findUnique', 'updateMany', 'upsert'], accountChange: ['upsert'], accountPushToken: ['findMany'] });
 const transactions = createDbTransactionMock(() => ({ ...boundary.db,
@@ -37,7 +37,7 @@ function fixture() {
         contentPublicKeySig: null, settings: null, settingsVersion: 0, seq: 0, deliveryMutes: null as string | null };
     const target = { homeId: 'srv_home', accountId: account.id, sessionId: 'session', machineId: 'machine', installationId: 'installation' };
     const session = { id: 'session', accountId: account.id, account, archivedAt: null, runtimeMachineTarget: target,
-        publisherGeneration: 1n, currentStorageState: 'hosted', shares: [], teamGrants: [], groupGrants: [] };
+        publisherGeneration: 1n, currentStorageState: 'hosted', grants: [],   };
     const machine = { id: 'machine', kind: 'persistent', accountId: account.id, account, installationId: 'installation',
         revokedAt: null, replacedByMachineId: null, active: true, metadata: encodePlainMachineStoredContent({}), daemonState: null,
         dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER), accountGrants: [], teamGrants: [], groupGrants: [] };
@@ -131,7 +131,7 @@ it('reads personal receiver mute policy once across matching rules and reads the
     const f = fixture();
     const source = { id: 'source', accountId: 'source-owner', account: { ...f.account, id: 'source-owner' }, archivedAt: null,
         seq: 2, agentStateVersion: 0, publisherGeneration: 1n, encryptionMode: 'plain', currentStorageState: 'hosted',
-        shares: [{ sharedWithUserId: f.account.id, accessLevel: 'view', canApprovePermissions: false }], teamGrants: [], groupGrants: [],
+        grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: f.account.id, accessLevel: 'view', canApprovePermissions: false  }],  
         accountFollows: [{ following: true, followPolicy: '{"preset":"important"}' }], accountReadStates: [] };
     boundary.db.session.findUnique.mockResolvedValue(source);
     boundary.db.sessionMessage.findUnique.mockResolvedValue({ seq: 2, sidechainId: null, createdAt: new Date(10), messageRole: 'agent',
@@ -160,26 +160,26 @@ it('reads personal receiver mute policy once across matching rules and reads the
     f.account.deliveryMutes = null;
     expect(await accept()).toMatchObject({ value: { accepted: true } });
     expect(muteReads()).toBe(3);
-    source.shares = [];
+    source.grants = [];
     expect(await accept()).toMatchObject({ value: { accepted: false } });
     expect(muteReads()).toBe(3);
 });
 
-it('shares the Session receiver mute read across source and rule admission while retaining each mute decision', async () => {
+it('grants the Session receiver mute read across source and rule admission while retaining each mute decision', async () => {
     const f = fixture();
     const receiver = { kind: 'session', sessionId: 'destination' } as const;
     const source = { id: 'source', accountId: f.account.id, account: f.account, archivedAt: null, encryptionMode: 'plain',
         seq: 2, agentStateVersion: 0, publisherGeneration: 1n, currentStorageState: 'hosted', publicShare: null,
-        shares: [], teamGrants: [], groupGrants: [] };
+        grants: [],   };
     const destination = { ...source, id: receiver.sessionId, deliveryMutes: null as string | null };
     boundary.db.session.findUnique.mockImplementation(async ({ where }: { where: { id: string } }) =>
         where.id === source.id ? source : where.id === destination.id ? destination : null);
     boundary.db.session.findMany.mockImplementation(async ({ where }: { where: { id: { in: readonly string[] } } }) =>
         [source, destination].filter(row => where.id.in.includes(row.id)));
     boundary.db.account.findMany.mockResolvedValue([{ id: f.account.id }]);
-    boundary.db.sessionShare.findMany.mockResolvedValue([]);
-    boundary.db.sessionTeamGrant.findMany.mockResolvedValue([]);
-    boundary.db.sessionGroupGrant.findMany.mockResolvedValue([]);
+    boundary.db.sessionGrant.findMany.mockResolvedValue([]);
+    boundary.db.sessionGrant.findMany.mockResolvedValue([]);
+    boundary.db.sessionGrant.findMany.mockResolvedValue([]);
     const value = encodeAccountScopedKvJson({ version: 0, receiver, inception: { createdAt: 1 }, content: { t: 'plain', v: {
         v: 1, enabled: true, filter: normalizeSessionListFilterV1(), policy: { preset: 'important' },
     } } });

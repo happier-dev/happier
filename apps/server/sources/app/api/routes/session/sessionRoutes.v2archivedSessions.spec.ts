@@ -57,9 +57,9 @@ describe("sessionRoutes v2 archived sessions listing", () => {
                     turns: [],
                     active: false,
                     lastActiveAt: now,
-                    shares: [],
-                    teamGrants: [],
-                    groupGrants: [],
+                    grants: [],
+                    
+                    
                 },
             ])
             .mockResolvedValue([]);
@@ -124,14 +124,14 @@ describe("sessionRoutes v2 archived sessions listing", () => {
             turns: [],
             active: false,
             lastActiveAt: now,
-            shares: [{
+            grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null, 
                 id: "legacy-shared-archived-direct",
-                sharedWithUserId: "u1",
+                accountId: "u1",
                 accessLevel: "view",
                 canApprovePermissions: false,
-            }],
-            teamGrants: [],
-            groupGrants: [],
+             }],
+            
+            
         };
         sessionFindMany
             .mockResolvedValueOnce([row])

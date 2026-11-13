@@ -41,8 +41,8 @@ describe("Session mutation transaction authority (SQLite)", () => {
         const session = await db.session.create({
             data: { accountId: owner.id, tag: randomUUID(), metadata: "{}", active: false, currentStorageState: "hosted" },
         });
-        const share = await db.sessionShare.create({
-            data: { sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: editor.id, accessLevel: "admin" },
+        const share = await db.sessionGrant.create({
+            data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id, accountId: editor.id, accessLevel: "admin" },
         });
         return { owner, editor, session, share };
     }
@@ -51,7 +51,7 @@ describe("Session mutation transaction authority (SQLite)", () => {
         const { editor, session, share } = await fixture();
         const archivedAt = operation === "unarchive" ? new Date(1000) : null;
         await db.session.update({ where: { id: session.id }, data: { archivedAt } });
-        beforeNextTransaction(() => db.sessionShare.delete({ where: { id: share.id } }));
+        beforeNextTransaction(() => db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } }));
         await withAuthenticatedTestApp(registerSessionArchiveRoutes, async (app) => {
             // Match the JSON object sent by the canonical archive HTTP caller.
             const response = await app.inject({ method: "POST", url: `/v2/sessions/${session.id}/${operation}`, headers: { "x-test-user-id": editor.id }, payload: {} });
@@ -63,14 +63,14 @@ describe("Session mutation transaction authority (SQLite)", () => {
             expect(next.statusCode, next.body).toBe(403);
             expect(next.json()).toEqual({ error: "Forbidden" });
         });
-        expect(await db.sessionShare.count({ where: { id: share.id } })).toBe(0);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'account', id: share.id } })).toBe(0);
         expect((await db.session.findUniqueOrThrow({ where: { id: session.id } })).archivedAt === null)
             .toBe(operation === "unarchive");
     });
 
     it("denies pending enqueue after the editor grant is revoked before transaction entry", async () => {
         const { editor, session, share } = await fixture();
-        beforeNextTransaction(() => db.sessionShare.delete({ where: { id: share.id } }));
+        beforeNextTransaction(() => db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } }));
         expect(await enqueuePendingMessage({ actorUserId: editor.id, sessionId: session.id, localId: randomUUID(), ciphertext: "cipher", requestedAction: { v: 1, kind: "enqueue" }, authentication })).toEqual({ ok: false, error: "session-not-found" });
         expect(await db.sessionPendingMessage.count({ where: { sessionId: session.id } })).toBe(0);
     });

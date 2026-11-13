@@ -93,9 +93,9 @@ describe('credentialed Workflow ReviewComment authority at Home', () => {
             await db.session.create({ data: { id, accountId: id === targetId || id === siblingId ? targetOwner.id : account.id,
                 tag: id, metadata: '{}', encryptionMode: mode } });
         }
-        await db.sessionShare.createMany({ data: [targetId, siblingId].map(sessionId => ({
-            sessionId, sharedByUserId: targetOwner.id, sharedWithUserId: account.id, accessLevel: 'edit',
-        })) });
+        await db.sessionGrant.createMany({ data: ([targetId, siblingId].map(sessionId => ({
+            sessionId, createdByAccountId: targetOwner.id, accountId: account.id, accessLevel: 'edit',
+        }))).map(data => ({ ...data, principalKind: 'account' })) });
         // A real person explicitly chooses the target. A Session-origin field
         // does not turn this user admission into an autonomous Session grant.
         const address = { serverId: 'home', sessionId: targetId };
@@ -112,7 +112,7 @@ describe('credentialed Workflow ReviewComment authority at Home', () => {
                 const url = new URL(config.url!, 'http://localhost');
                 if (revokeBeforeCommit && url.pathname === '/v1/reviews/comments/mutations/commit') {
                     revokeBeforeCommit = false;
-                    await db.sessionShare.deleteMany({ where: { sessionId: targetId, sharedWithUserId: account.id } });
+                    await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: targetId, accountId: account.id } });
                 }
                 const headers = AxiosHeaders.from(config.headers);
                 if (tamperSignedScope) {
@@ -391,7 +391,7 @@ describe('credentialed Workflow ReviewComment authority at Home', () => {
                     expect(await db.reviewComment.findUniqueOrThrow({ where: { id: comments.get(targetId)! }, select: { serverRevision: true } }))
                         .toEqual({ serverRevision: 2 });
                 }
-                await db.sessionShare.deleteMany({ where: { sessionId: targetId, sharedWithUserId: account.id } });
+                await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: targetId, accountId: account.id } });
                 await expect(transport('reviews.comments.list', { sessionId: targetId }, { principal: firstPrincipal }))
                     .rejects.toMatchObject({ code: 'review_comment_permission_denied' });
             } finally {

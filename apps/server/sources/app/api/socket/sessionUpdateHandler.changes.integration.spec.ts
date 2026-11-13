@@ -67,7 +67,7 @@ installPrismaModuleMock(() => ({
 
 const { db, reset: resetDbMocks } = createDbMocks({
     session: ["findUnique"],
-    sessionShare: ["findUnique"],
+    sessionGrant: ["findUnique"],
     sessionMessage: ["findFirst", "findUnique"],
 } as const);
 const txDbMocks = createDbMocks({
@@ -133,7 +133,7 @@ describe("sessionUpdateHandler (AccountChange integration)", () => {
             }
             return {
                 accountId: "owner",
-                shares: [{ sharedWithUserId: "u2" }],
+                grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
             };
         });
         db.session.findUnique.mockImplementation(async (args: any) => {
@@ -142,10 +142,10 @@ describe("sessionUpdateHandler (AccountChange integration)", () => {
             }
             return {
                 accountId: "owner",
-                shares: [{ sharedWithUserId: "u2" }],
+                grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
             };
         });
-        db.sessionShare.findUnique.mockResolvedValue(null);
+        db.sessionGrant.findUnique.mockResolvedValue(null);
         txDbMocks.db.session.update.mockResolvedValue({ seq: 55 });
         txDbMocks.db.session.updateMany.mockResolvedValue({ count: 1 });
         txDbMocks.db.sessionMessage.findFirst.mockResolvedValue(null);

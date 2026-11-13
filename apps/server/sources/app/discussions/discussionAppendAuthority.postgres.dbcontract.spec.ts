@@ -379,7 +379,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Discussion appe
                         select: { id: true, seq: true }, orderBy: { id: 'asc' } }),
                     changes: await db.accountChange.findMany({ where: { accountId: { in: [current.owner.id, sourceOwner.id, reader.id] } },
                         orderBy: [{ accountId: 'asc' }, { kind: 'asc' }, { entityId: 'asc' }] }),
-                    grants: await db.discussionAccountGrant.findMany({ where: { discussion: { createdByAccountId: current.owner.id } },
+                    grants: await db.discussionGrant.findMany({ where: { principalKind: 'account', discussion: { createdByAccountId: current.owner.id } },
                         orderBy: [{ discussionId: 'asc' }, { accountId: 'asc' }] }),
                 });
                 const revoke = async () => {

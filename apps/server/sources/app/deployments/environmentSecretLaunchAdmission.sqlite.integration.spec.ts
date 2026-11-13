@@ -1,3 +1,4 @@
+import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
 import { afterAll, beforeAll, describe, expect, it, onTestFinished } from 'vitest';
 import nacl from 'tweetnacl';
 import * as privacyKit from 'privacy-kit';
@@ -96,7 +97,7 @@ describe('private installed Environment secret launch transport', () => {
         await db.machine.create({ data: { id: machineId, accountId: custodian.id,
             metadata: encodePlainMachineStoredContent(metadata), dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER), installationId,
             installationPublicKey: new Uint8Array(keys.publicKey) } });
-        await db.machineTeamGrant.create({ data: { machineId, teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id }), machineId } });
         // The definition/binding writer manages the Machine; workload delivery
         // retains only the Team's View grant, including the separate requester.
         expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId,
@@ -109,8 +110,7 @@ describe('private installed Environment secret launch transport', () => {
             await db.machine.create({ data: { id: controller.machineId, accountId: controllerCustodian.id,
                 metadata: encodePlainMachineStoredContent(metadata), dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
                 installationId: controller.installationId, installationPublicKey: new Uint8Array(controller.keys.publicKey) } });
-            await db.machineTeamGrant.create({ data: { machineId: controller.machineId, teamId: team.id,
-                accessLevel: 'view', createdByAccountId: owner.id } });
+            await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id }), machineId: controller.machineId } });
             expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: controllerCustodian.id,
                 machineId: controller.machineId, principal: { kind: 'account', accountId: owner.id }, level: 'admin' })))
                 .toMatchObject({ kind: 'saved' });
@@ -133,8 +133,7 @@ describe('private installed Environment secret launch transport', () => {
                 dataEncryptionKey: mode === 'plain' ? privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER)
                     : new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: ownerKey.publicKey, randomBytes: nacl.randomBytes })) });
             if (!created.ok) throw new Error(created.error);
-            await db.artifactTeamGrant.create({ data: { artifactId: created.artifact.id, teamId: team.id,
-                accessLevel: 'admin', createdByAccountId: owner.id } });
+            await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: owner.id }), artifactId: created.artifact.id } });
             if (mode === 'e2ee') await db.artifactKeyEnvelope.create({ data: { artifactId: created.artifact.id,
                 recipientAccountId: requester.id, encryptedDataKey: new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey,
                     recipientPublicKey: requesterKey.publicKey, randomBytes: nacl.randomBytes })),
@@ -1396,18 +1395,17 @@ describe('private installed Environment secret launch transport', () => {
         const machineId = crypto.randomUUID(), installationId = crypto.randomUUID();
         await db.machine.create({ data: { id: machineId, accountId: custodian.id, ...publishedMachine, installationId,
             installationPublicKey: new Uint8Array(keys.publicKey) } });
-        if (team) await db.machineTeamGrant.create({ data: { machineId, teamId: team.id, accessLevel: 'admin', createdByAccountId: owner.id } });
+        if (team) await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: owner.id }), machineId } });
         const builderKeys = nacl.sign.keyPair();
         const builderMachineId = crypto.randomUUID(), builderInstallationId = crypto.randomUUID();
         await db.machine.create({ data: { id: builderMachineId, accountId: owner.id, ...publishedMachine, installationId: builderInstallationId,
             installationPublicKey: new Uint8Array(builderKeys.publicKey) } });
-        if (team) await db.machineTeamGrant.create({ data: { machineId: builderMachineId, teamId: team.id, accessLevel: 'admin', createdByAccountId: owner.id } });
+        if (team) await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: owner.id }), machineId: builderMachineId } });
         const futureBuilderKeys = nacl.sign.keyPair();
         const futureBuilderMachineId = crypto.randomUUID(), futureBuilderInstallationId = crypto.randomUUID();
         await db.machine.create({ data: { id: futureBuilderMachineId, accountId: owner.id, ...publishedMachine,
             installationId: futureBuilderInstallationId, installationPublicKey: new Uint8Array(futureBuilderKeys.publicKey) } });
-        if (team) await db.machineTeamGrant.create({ data: { machineId: futureBuilderMachineId, teamId: team.id,
-            accessLevel: 'admin', createdByAccountId: owner.id } });
+        if (team) await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: owner.id }), machineId: futureBuilderMachineId } });
         await makeShareEligibleForTest(owner.id, author.id);
         const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, {
             serverId, requestKey: crypto.randomUUID(), name: 'Private launch',
@@ -1425,8 +1423,7 @@ describe('private installed Environment secret launch transport', () => {
                 body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(content) })),
                 dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
             if (!result.ok) throw new Error(result.error);
-            if (team) await db.artifactTeamGrant.create({ data: { artifactId: result.artifact.id, teamId: team.id,
-                accessLevel: 'admin', createdByAccountId: owner.id } });
+            if (team) await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: owner.id }), artifactId: result.artifact.id } });
             return { contentArtifactId: result.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
         }
         let environmentContent = await artifact('deployment-environment.v1', emptyContent);
@@ -1680,12 +1677,11 @@ describe('private installed Environment secret launch transport', () => {
             expect(response.json()).toEqual(result);
             if (team) {
                 expect(await db.teamMembership.count({ where: { teamId: team.id, accountId: custodian.id } })).toBe(0);
-                await db.machineTeamGrant.deleteMany({ where: { machineId, teamId: team.id } });
+                await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId, teamId: team.id } });
                 response = await readInstalled();
                 expect(response.json()).toMatchObject({ ok: false, error: 'machine_unavailable' });
                 expect(response.body).not.toContain(grant.sealedContent);
-                await db.machineTeamGrant.create({ data: { machineId, teamId: team.id,
-                    accessLevel: 'view', createdByAccountId: owner.id } });
+                await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id }), machineId } });
                 expect((await readInstalled()).json()).toEqual(result);
             }
             expect((await read(signed({ ...deployedBody, materialization: { ...deployedBody.materialization,

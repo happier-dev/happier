@@ -1,3 +1,4 @@
+import { sessionDirectGrantProjectionFixture } from '@/app/session/access/sessionAccess.testkit';
 import type { Prisma } from "@prisma/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -30,7 +31,8 @@ import {
 const diagnosticOutput = vi.hoisted(() => [] as string[]);
 // Capture the logging I/O boundary while keeping log projection and Pino serialization real.
 vi.mock("pino", async (importOriginal) => {
-    const original = await importOriginal<typeof import("pino")>();
+    // pino is `export = pino`; its ESM namespace exposes that function as `default`.
+    const original = await importOriginal<{ default: typeof import("pino") }>();
     const capturedPino = Object.assign(
         (options: import("pino").LoggerOptions) => original.default(options, {
             write(chunk: string) { diagnosticOutput.push(chunk); },
@@ -62,9 +64,7 @@ type ProtocolActivationDatabase = Parameters<typeof initializeSessionSystemRecor
 
 type TxMock = {
     account: { findUnique: ReturnType<typeof vi.fn> };
-    sessionShare: { findMany: ReturnType<typeof vi.fn> };
-    sessionTeamGrant: { findMany: ReturnType<typeof vi.fn> };
-    sessionGroupGrant: { findMany: ReturnType<typeof vi.fn> };
+    sessionGrant: { findMany: ReturnType<typeof vi.fn> };
     teamMembership: { findMany: ReturnType<typeof vi.fn> };
     sessionFollowEdge: { findMany: ReturnType<typeof vi.fn> };
     session: {
@@ -127,7 +127,7 @@ vi.mock("@/storage/db", async () => {
                     ...tx,
                     session: {
                         ...tx.session,
-                        findUnique: vi.fn((query: Prisma.SessionFindUniqueArgs) => query.select?.shares
+                        findUnique: vi.fn((query: Prisma.SessionFindUniqueArgs) => query.select?.grants
                             ? testState.readAccessSession(query)
                             : tx.session.findUnique(query)),
                     },
@@ -140,7 +140,7 @@ vi.mock("@/storage/db", async () => {
     };
 });
 
-function accessSessionRow(level: "view" | "edit" | "admin" | "owner", sharedWithUserId = "shared-editor"): SessionAccessProjectionRow {
+function accessSessionRow(level: "view" | "edit" | "admin" | "owner", accountId = "shared-editor"): SessionAccessProjectionRow {
     return {
         id: "s1",
         primaryTeamId: null,
@@ -152,9 +152,9 @@ function accessSessionRow(level: "view" | "edit" | "admin" | "owner", sharedWith
         materializationPublicationId: null,
         materializedThroughSourceAt: null,
         publishedThroughServerSeq: null,
-        shares: level === "owner" ? [] : [{ id: "share-1", sharedWithUserId, accessLevel: level, canApprovePermissions: false }],
-        teamGrants: [],
-        groupGrants: [],
+        grants: level === "owner" ? [] : [sessionDirectGrantProjectionFixture({ id: "share-1", accountId, accessLevel: level, canApprovePermissions: false })],
+        
+        
     };
 }
 
@@ -271,14 +271,14 @@ describe("sessionSystemRecordService account scoping", () => {
                 findMany: async () => [],
             },
         } as unknown as ProtocolActivationDatabase);
-        testState.readAccessSession.mockImplementation(async (query: { select: { shares: { where: { sharedWithUserId: { in: string[] } } } } }) =>
-            accessSessionRow("edit", query.select.shares.where.sharedWithUserId.in[0]),
+        testState.readAccessSession.mockImplementation(async (query: { select: { grants: { where: { OR: readonly { accountId?: { in: readonly string[] } }[] } } } }) =>
+            accessSessionRow("edit", query.select.grants.where.OR.flatMap(branch => branch.accountId?.in ?? [])[0]),
         );
         testState.currentTx = {
             account: { findUnique: vi.fn().mockResolvedValue({ status: "active" }) },
-            sessionShare: { findMany: vi.fn().mockResolvedValue([]) },
-            sessionTeamGrant: { findMany: vi.fn().mockResolvedValue([]) },
-            sessionGroupGrant: { findMany: vi.fn().mockResolvedValue([]) },
+            sessionGrant: { findMany: vi.fn().mockResolvedValue([]) },
+            
+            
             teamMembership: { findMany: vi.fn().mockResolvedValue([]) },
             // Standalone mutations run behind Account admission; these fixtures have no Follow edges.
             sessionFollowEdge: { findMany: vi.fn().mockResolvedValue([]) },
@@ -373,7 +373,7 @@ describe("sessionSystemRecordService account scoping", () => {
         testState.readAccessSession.mockResolvedValue(session);
         tx.session.findUnique.mockResolvedValue(session);
         tx.session.findMany.mockResolvedValue([session]);
-        tx.sessionShare.findMany.mockResolvedValue([{ sessionId: 's1', sharedWithUserId: 'viewer' }]);
+        tx.sessionGrant.findMany.mockResolvedValue([{ sessionId: 's1', principalKind: 'account', accountId: 'viewer', teamId: null, teamGroupId: null, effectiveAt: null }]);
         let stored: ReturnType<typeof activityRecord> | null = null;
         tx.sessionSystemRecord.findFirst.mockImplementation(async () => stored);
         tx.sessionSystemRecord.create.mockImplementation(async ({ data }) => {
@@ -399,7 +399,7 @@ describe("sessionSystemRecordService account scoping", () => {
         testState.publications.length = 0;
         expect(await write(result.result.layoutRevision, 'First')).toMatchObject({ ok: true, result: { outcome: 'unchanged' } });
         expect(testState.publications).toEqual([]);
-        tx.sessionShare.findMany.mockResolvedValue([]);
+        tx.sessionGrant.findMany.mockResolvedValue([]);
         expect(await write(result.result.layoutRevision, 'Second')).toMatchObject({ ok: true, result: { outcome: 'updated' } });
         expect(testState.publications.map(change => change.accountId)).toEqual(['owner-account']);
     });

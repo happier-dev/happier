@@ -340,7 +340,7 @@ export async function loadDiscussionViewerFactsInTx(tx: Tx, params: Readonly<{
     // Match the explicit roster's disclosure boundary. Collective grants do not
     // disclose membership; only Accounts already disclosed by content join the roster.
     const [accountGrants, participants, knownActors] = await Promise.all([
-        tx.discussionAccountGrant.findMany({ where: { discussionId: { in: discussionIds } },
+        tx.discussionGrant.findMany({ where: { principalKind: 'account', discussionId: { in: discussionIds } },
             select: { discussionId: true, accountId: true }, orderBy: { accountId: 'asc' } }),
         tx.discussionParticipant.findMany({ where: { discussionId: { in: discussionIds }, removedAt: null, sessionId: { not: null } },
             select: { discussionId: true, sessionId: true }, orderBy: { participantSlotId: 'asc' } }),
@@ -353,7 +353,7 @@ export async function loadDiscussionViewerFactsInTx(tx: Tx, params: Readonly<{
     }));
     for (const grant of accountGrants) {
         const subjects = accountSubjectsByDiscussion.get(grant.discussionId);
-        if (subjects) addDiscussionAccountActorSubject(subjects, { discussionId: grant.discussionId, accountId: grant.accountId });
+        if (subjects) addDiscussionAccountActorSubject(subjects, { discussionId: grant.discussionId, accountId: grant.accountId! });
     }
     for (const [discussionId, known] of knownActors.subjectsByDiscussion) {
         const subjects = accountSubjectsByDiscussion.get(discussionId);

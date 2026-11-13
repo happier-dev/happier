@@ -118,8 +118,8 @@ describe("Manager listing (SQLite)", () => {
     it('keeps another Account private rule membership unavailable on a shared Session', async () => {
         const { owner, lead } = await fixture();
         const { owner: viewer } = await fixture();
-        await db.sessionShare.create({ data: { sessionId: lead.id, sharedByUserId: owner.id,
-            sharedWithUserId: viewer.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: lead.id, createdByAccountId: owner.id,
+            accountId: viewer.id, accessLevel: 'view' } });
         expect((await setAccountFollowRule({ accountId: owner.id, authentication, ruleId: 'private-rule', mutation: {
             receiver: { kind: 'session', sessionId: lead.id }, expectedVersion: -1,
             content: { t: 'plain', v: { v: 1, enabled: false, filter: normalizeSessionListFilterV1(), policy: { preset: 'quiet' } } },
@@ -147,8 +147,8 @@ describe("Manager listing (SQLite)", () => {
         const { owner, lead } = await fixture();
         const foreign = await fixture();
         await db.session.update({ where: { id: foreign.lead.id }, data: { archivedAt: new Date() } });
-        await db.sessionShare.create({ data: { sessionId: foreign.lead.id, sharedByUserId: foreign.owner.id,
-            sharedWithUserId: owner.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: foreign.lead.id, createdByAccountId: foreign.owner.id,
+            accountId: owner.id, accessLevel: 'view' } });
         await db.sessionFollowEdge.create({ data: managerEdgeData(foreign.lead.id, lead.id) });
         const read = () => listSessionsForAccount({ userId: owner.id, authentication,
             source: { kind: 'query', query: { v: 1, storage: 'active', includeInactive: true, scope: 'all_accessible',
@@ -175,8 +175,8 @@ describe("Manager listing (SQLite)", () => {
         const response = read();
         try {
             expect(await Promise.race([reached.then(() => 'barrier'), response.then(() => 'response')])).toBe('barrier');
-            await db.sessionShare.delete({ where: { sessionId_sharedWithUserId: {
-                sessionId: foreign.lead.id, sharedWithUserId: owner.id } } });
+            await db.sessionGrant.delete({ where: { principalKind: 'account', sessionId_accountId: {
+                sessionId: foreign.lead.id, accountId: owner.id } } });
             resume();
             expect((await response)?.sessions.map(row => row.id)).toEqual([lead.id]);
             expect((await read())?.sessions).toEqual([]);
@@ -189,8 +189,8 @@ describe("Manager listing (SQLite)", () => {
     it('retains admitted Admin list capabilities and observes View on the next request', async () => {
         const { owner: viewer } = await fixture();
         const { owner, lead } = await fixture();
-        const share = await db.sessionShare.create({ data: { sessionId: lead.id, sharedByUserId: owner.id,
-            sharedWithUserId: viewer.id, accessLevel: 'admin', canApprovePermissions: true } });
+        const share = await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: lead.id, createdByAccountId: owner.id,
+            accountId: viewer.id, accessLevel: 'admin', canApprovePermissions: true } });
         expect((await list(viewer.id, lead.id))?.sessions[0]?.effectiveAccess).toMatchObject({ level: 'admin' });
         const reader = await withSqliteReadSnapshot(async tx => tx);
         const delegate = reader.session;
@@ -209,7 +209,7 @@ describe("Manager listing (SQLite)", () => {
         const response = list(viewer.id, lead.id);
         try {
             expect(await Promise.race([reached.then(() => 'barrier'), response.then(() => 'response')])).toBe('barrier');
-            await db.sessionShare.update({ where: { id: share.id }, data: { accessLevel: 'view', canApprovePermissions: false } });
+            await db.sessionGrant.update({ where: { principalKind: 'account', id: share.id }, data: { accessLevel: 'view', canApprovePermissions: false } });
             resume();
             const captured = await response;
             const current = (await list(viewer.id, lead.id))?.sessions[0];
@@ -226,8 +226,8 @@ describe("Manager listing (SQLite)", () => {
     it('retains an admitted report contribution and removes it on the next lead detail request', async () => {
         const { owner, lead } = await fixture();
         const foreign = await fixture();
-        await db.sessionShare.create({ data: { sessionId: foreign.lead.id, sharedByUserId: foreign.owner.id,
-            sharedWithUserId: owner.id, accessLevel: 'edit', canApprovePermissions: true } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: foreign.lead.id, createdByAccountId: foreign.owner.id,
+            accountId: owner.id, accessLevel: 'edit', canApprovePermissions: true } });
         await db.accountSessionFollow.create({ data: { accountId: owner.id, sessionId: foreign.lead.id,
             sourceKey: sourceKeyForSessionFollowSourceV1({ kind: 'session', sessionId: foreign.lead.id }),
             following: true, followPolicy: JSON.stringify({ preset: 'important' }) } });
@@ -259,8 +259,8 @@ describe("Manager listing (SQLite)", () => {
             const response = app.inject(request);
             try {
                 expect(await Promise.race([reached.then(() => 'barrier'), response.then(() => 'response')])).toBe('barrier');
-                await db.sessionShare.delete({ where: { sessionId_sharedWithUserId: {
-                    sessionId: foreign.lead.id, sharedWithUserId: owner.id } } });
+                await db.sessionGrant.delete({ where: { principalKind: 'account', sessionId_accountId: {
+                    sessionId: foreign.lead.id, accountId: owner.id } } });
                 resume();
                 const captured = await response;
                 const current = await app.inject(request);
@@ -592,9 +592,9 @@ describe("Manager listing (SQLite)", () => {
             publishedThroughServerSeq: 0, materializedThroughSourceAt: BigInt(1),
             materializationPublicationId: "   ",
         } });
-        await db.sessionShare.create({ data: {
-            sessionId: foreign.lead.id, sharedByUserId: foreign.owner.id,
-            sharedWithUserId: owner.id, accessLevel: "view",
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: foreign.lead.id, createdByAccountId: foreign.owner.id,
+            accountId: owner.id, accessLevel: "view",
         } });
         await db.sessionFollowEdge.create({ data: managerEdgeData(foreign.lead.id, lead.id) });
         const page = await list(owner.id, lead.id);

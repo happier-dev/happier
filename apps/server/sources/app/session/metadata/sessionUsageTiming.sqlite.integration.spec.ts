@@ -17,7 +17,7 @@ import { createPresentUserSessionAccessAuthentication } from '@/app/session/acce
 import { sourceKeyForSessionFollowSourceV1 } from '@/app/session/follow/sessionFollowSourceIdentity';
 import { commitSessionAgentCurrentView } from '@/app/session/agentTransition/commitSessionAgentCurrentView';
 
-describe('Session timing shares the content CAS', () => {
+describe('Session timing grants the content CAS', () => {
     let harness: LightSqliteHarness;
     beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'session-usage-timing-',
         initAuth: false, initFiles: false }); }, 120_000);
@@ -68,8 +68,8 @@ describe('Session timing shares the content CAS', () => {
             const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), encryptionMode: 'plain',
                 metadata: '{}', agentState: '{}', updatedAt: new Date(100), lastActiveAt: new Date(100),
                 usageTimingV1: { v: 1, metadata: component, agentState: component } } });
-            await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id,
-                sharedWithUserId: recipient.id, accessLevel: 'view', canApprovePermissions: false } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id,
+                accountId: recipient.id, accessLevel: 'view', canApprovePermissions: false } });
             await db.accountSessionFollow.create({ data: { accountId: recipient.id, sessionId: session.id } });
             sessions.push(session);
         }
@@ -102,7 +102,7 @@ describe('Session timing shares the content CAS', () => {
             agentState: { ciphertext: state(1), expectedVersion: 0 }, usageTimingV1: timing };
         expect(await updateSessionMetadataEnvelopeTuple(ownerPatch)).toMatchObject({ ok: true });
         expect((await db.session.findUniqueOrThrow({ where: { id: session.id } })).usageTimingV1).toEqual(timing);
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: editor.id,
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id, accountId: editor.id,
             accessLevel: 'edit', canApprovePermissions: false } });
         await db.accountSessionFollow.create({ data: { accountId: editor.id, sessionId: session.id } });
         const empty = { v: 1 as const, minMs: null, maxMs: null };

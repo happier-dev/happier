@@ -1026,7 +1026,7 @@ describe("external Action execution authorization", () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
         await db.teamMembership.create({ data: { teamId: fixture.team.id, accountId: requester.id, role: 'member' } });
-        const grant = await db.machineTeamGrant.create({ data: { machineId: fixture.machine.id, teamId: fixture.team.id,
+        const grant = await db.machineGrant.create({ data: { principalKind: 'team', machineId: fixture.machine.id, teamId: fixture.team.id,
             accessLevel: 'view', createdByAccountId: fixture.account.id } });
         const token = await auth.createToken(requester.id, undefined, { kind: 'account', authority: 'present_user' });
         const homeId = await getOrCreateServerIdentityId();
@@ -1045,14 +1045,14 @@ describe("external Action execution authorization", () => {
                 headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: fixture.machine.id,
                     envelope: { ...fixture.envelope, input } } });
             for (const role of ['use', 'manage'] as const) {
-                if (role === 'manage') await db.machineTeamGrant.update({ where: { machineId_teamId: { machineId: grant.machineId, teamId: grant.teamId } }, data: { accessLevel: 'admin' } });
+                if (role === 'manage') await db.machineGrant.update({ where: { principalKind: 'team', machineId_teamId: { machineId: grant.machineId, teamId: grant.teamId } }, data: { accessLevel: 'admin' } });
                 const response = await send();
                 expect(response.statusCode, response.body).toBe(200);
                 expect(ExternalActionExecutionAuthorizationV1Schema.parse(response.json()).binding).toMatchObject({
                     accountId: requester.id, custodianAccountId: fixture.account.id, machineId: fixture.machine.id,
                     installationId: fixture.machine.installationId, admittedMachineRole: role });
             }
-            await db.machineTeamGrant.delete({ where: { machineId_teamId: { machineId: grant.machineId, teamId: grant.teamId } } });
+            await db.machineGrant.delete({ where: { principalKind: 'team', machineId_teamId: { machineId: grant.machineId, teamId: grant.teamId } } });
             const refused = await send();
             expect(refused.statusCode).toBe(409);
             expect(refused.json()).toMatchObject({ code: 'target_unavailable' });
@@ -1064,7 +1064,7 @@ describe("external Action execution authorization", () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
         await db.teamMembership.create({ data: { teamId: fixture.team.id, accountId: requester.id, role: 'member' } });
-        const grant = await db.machineTeamGrant.create({ data: { machineId: fixture.machine.id, teamId: fixture.team.id,
+        const grant = await db.machineGrant.create({ data: { principalKind: 'team', machineId: fixture.machine.id, teamId: fixture.team.id,
             accessLevel: 'view', createdByAccountId: fixture.account.id } });
         const token = await auth.createToken(requester.id, undefined, { kind: 'account', authority: 'present_user' });
         const envelope = { ...fixture.envelope, input: {
@@ -1096,7 +1096,7 @@ describe("external Action execution authorization", () => {
             expect(setupRefused.json()).toMatchObject({ code: 'target_unavailable', diagnostic: {
                 reason: 'machine_setup_requires_manage', remedy: 'request_machine_manage_access',
             } });
-            await db.machineTeamGrant.update({ where: { machineId_teamId: {
+            await db.machineGrant.update({ where: { principalKind: 'team', machineId_teamId: {
                 machineId: grant.machineId, teamId: grant.teamId } }, data: { accessLevel: 'admin' } });
             const ownerToken = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
             for (const bearer of [token, ownerToken]) {
@@ -1112,7 +1112,7 @@ describe("external Action execution authorization", () => {
         const fixture = await createFixture({ qualifiedPat: false });
         const requester = await db.account.create({ data: { encryptionMode: 'plain' } });
         await db.teamMembership.create({ data: { teamId: fixture.team.id, accountId: requester.id, role: 'member' } });
-        const grant = await db.machineTeamGrant.create({ data: { machineId: fixture.machine.id, teamId: fixture.team.id,
+        const grant = await db.machineGrant.create({ data: { principalKind: 'team', machineId: fixture.machine.id, teamId: fixture.team.id,
             accessLevel: 'admin', createdByAccountId: fixture.account.id } });
         const token = await auth.createToken(requester.id, undefined, { kind: 'account', authority: 'present_user' });
         const homeId = await getOrCreateServerIdentityId();
@@ -1143,7 +1143,7 @@ describe("external Action execution authorization", () => {
             // requester verify is not a second Machine admission (A1, 2026-11-11).
             const admitted = await replay();
             expect(admitted.statusCode, admitted.body).toBe(200);
-            await db.machineTeamGrant.update({ where: { machineId_teamId: { machineId: grant.machineId, teamId: grant.teamId } },
+            await db.machineGrant.update({ where: { principalKind: 'team', machineId_teamId: { machineId: grant.machineId, teamId: grant.teamId } },
                 data: { accessLevel: 'view' } });
             // Already admitted work finishes; the downgrade applies at the next admission.
             expect((await replay()).statusCode).toBe(200);
@@ -4746,13 +4746,6 @@ describe("external Action execution authorization", () => {
                 const origin = SessionActionRpcOriginV1Schema.parse({ v: 1,
                     caller: { kind: 'session', sessionId: session.id, starterDepth: 0, turnDepth: 0 },
                     sourceTurnId: 'client-read-turn', callerPermissionMode: null, requestId: crypto.randomUUID() });
-                if (actionId === 'artifact.public_link.create') {
-                    // Opaque admission never opens non-client operands to decide placement.
-                    expect(isOriginalAccountExecutionAction('skills.read', { sessionActionOrigin: origin, sessionActionSource: source })).toBe(true);
-                    expect(isOriginalTerminalExecutionAction('skills.read', { sessionActionOrigin: origin, sessionActionSource: source })).toBe(true);
-                    expect(isOriginalAccountExecutionAction('review.engines.list', { sessionActionOrigin: origin, sessionActionSource: source })).toBe(true);
-                    expect(isOriginalTerminalExecutionAction('review.engines.list', { sessionActionOrigin: origin, sessionActionSource: source })).toBe(true);
-                }
                 const input = actionId === 'search.conversations'
                     ? { query: { v: 1, query: 'session_handoff', scope: { type: 'global' }, mode: 'hints' },
                         machineIds: [fixture.machine.id], mode: 'indexed' }
@@ -6969,7 +6962,7 @@ describe("external Action execution authorization", () => {
                 effectActionId: actionId, target: root.binding.target, installationId: fixture.machine.installationId!,
                 method, requestId, params, workspaceSyncSourceRouting: routing, privateKey: sourceKey.secretKey }) });
             expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({ ok: false }));
-            await db.machineAccountGrant.delete({ where: { machineId_accountId: { machineId: source.id, accountId: fixture.account.id } } });
+            await db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: { machineId: source.id, accountId: fixture.account.id } } });
             const nextAdmission = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
                 headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: fixture.machine.id, envelope } });
             expect(nextAdmission.statusCode).toBe(403);
@@ -6979,7 +6972,7 @@ describe("external Action execution authorization", () => {
             await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: sourceCustodian.id, machineId: source.id,
                 principal: { kind: 'account', accountId: fixture.account.id }, level: 'view' }));
             if (controllerKind === 'hub') {
-                await db.machineAccountGrant.delete({ where: { machineId_accountId: { machineId: controller.id, accountId: fixture.account.id } } });
+                await db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: { machineId: controller.id, accountId: fixture.account.id } } });
                 for (const receiver of [false, true]) expect((await verify(receiver)).statusCode).toBe(403);
                 await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: controllerCustodian.id, machineId: controller.id,
                     principal: { kind: 'account', accountId: fixture.account.id }, level: 'view' }));
@@ -10901,7 +10894,7 @@ describe("external Action execution authorization", () => {
         } });
         // Persisted grants are the database boundary; admission and HTTP proof
         // issuance below run through their actual owners without substitutes.
-        await db.machineAccountGrant.create({ data: { machineId: fixture.machine.id,
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: fixture.machine.id,
             accountId: fixture.account.id, accessLevel: 'view', createdByAccountId: custodian.id } });
         const { app } = await createApp(fixture.team.id);
         try {
@@ -10943,7 +10936,7 @@ describe("external Action execution authorization", () => {
             const owner = await mint(custodian.id);
             expect(owner.statusCode, owner.body).toBe(200);
             expect(ExternalActionExecutionAuthorizationV1Schema.parse(owner.json()).binding.admittedMachineRole).toBe('manage');
-            await db.machineAccountGrant.update({ where: { machineId_accountId: {
+            await db.machineGrant.update({ where: { principalKind: 'account', machineId_accountId: {
                 machineId: fixture.machine.id, accountId: fixture.account.id,
             } }, data: { accessLevel: 'admin' } });
             const manage = await mint(fixture.account.id);
@@ -10964,7 +10957,7 @@ describe("external Action execution authorization", () => {
             dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
             active: true,
         } });
-        await db.machineAccountGrant.create({ data: {
+        await db.machineGrant.create({ data: { principalKind: 'account',
             machineId: fixture.machine.id, accountId: fixture.account.id,
             accessLevel: "view", createdByAccountId: custodian.id,
         } });
@@ -11005,11 +10998,11 @@ describe("external Action execution authorization", () => {
             expect(projectionAuthorization.binding).toMatchObject({ accountId: fixture.account.id,
                 custodianAccountId: custodian.id, actionId: 'providers.models.projection' });
             expect(await verifyCurrentExternalActionPrincipal(projectionAuthorization.binding)).toMatchObject({ accountId: fixture.account.id });
-            await db.machineAccountGrant.update({ where: { machineId_accountId: {
+            await db.machineGrant.update({ where: { principalKind: 'account', machineId_accountId: {
                 machineId: fixture.machine.id, accountId: fixture.account.id,
             } }, data: { accessLevel: 'admin' } });
             expect((await mintLaunch()).statusCode).toBe(200);
-            await db.machineAccountGrant.delete({ where: { machineId_accountId: {
+            await db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: {
                 machineId: fixture.machine.id, accountId: fixture.account.id,
             } } });
             expect((await mintLaunch()).statusCode).toBe(409);

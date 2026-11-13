@@ -14,7 +14,7 @@ const ownerSession = {
     id: 'session', accountId: 'account', account: { status: 'active' }, primaryTeamId: null,
     seq: 0, currentStorageState: 'hosted', acceptedThroughServerSeq: null,
     materializationPublicationId: null, materializedThroughSourceAt: null, publishedThroughServerSeq: null,
-    shares: [], teamGrants: [], groupGrants: [],
+    grants: [],  
 } satisfies SessionAccessProjectionRow;
 // The database transaction boundary fails before any admission can commit.
 // Admission, transaction retry classification and result projection stay real.

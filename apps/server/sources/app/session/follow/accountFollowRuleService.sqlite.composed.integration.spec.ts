@@ -34,8 +34,8 @@ describe('private Follow rule service (SQLite)', () => {
         const source = await db.session.create({ data: { accountId: sourceOwner.id, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
         const destination = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
         const share = async (sessionId: string) => {
-            if (placement === 'foreign') await db.sessionShare.create({ data: { sessionId, sharedByUserId: sourceOwner.id,
-                sharedWithUserId: account.id, accessLevel: 'view' } });
+            if (placement === 'foreign') await db.sessionGrant.create({ data: { principalKind: 'account', sessionId, createdByAccountId: sourceOwner.id,
+                accountId: account.id, accessLevel: 'view' } });
         };
         await share(source.id);
         const authentication = createPresentUserSessionAccessAuthentication();

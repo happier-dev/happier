@@ -25,7 +25,7 @@ import { resolveProviderActionRpcRouteV1 } from '@happier-dev/protocol/providers
 import { inTx, type Tx } from '@/storage/inTx';
 import { getDbProviderFromEnv } from '@/storage/db';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
-import { validateResourceGrantPrincipalInTx } from '@/app/teams/resourceGrantAccess';
+import { projectResourceGrantRows, validateResourceGrantPrincipalInTx } from '@/app/teams/resourceGrantAccess';
 import { deriveAccountRecipientEnvelopeReadinessFromRow } from '@/app/encryption/accountRecipientEnvelopeReadiness';
 import { RECIPIENT_READINESS_SELECT } from '@/app/session/encryption/sessionDataKeyRecipientProjection';
 import { resolveAccountDisplayLabelV1, ACCOUNT_DISPLAY_PROFILE_SELECT } from '@/app/account/profile/accountDisplayProfile';
@@ -35,7 +35,7 @@ import { captureMachineAccessImpactsInTx, applyMachineAccessImpactsInTx } from '
 import { isMachineOperationSupportedForRequester, type MachineOperationRequesterContext } from './machineOperationSupport';
 import { isMachineRecipientWorkPending, projectMachineRecipientWork, readMachineAudienceAccountIdsInTx, readMachineAudienceAccountIdsForMachinesInTx, readMachineRecipientWorkInTx } from './machineRecipientWork';
 import { classifyMachineAvailabilityState } from './machineStateGuards';
-import { MACHINE_PERMISSION_FACTS_SELECT, buildMachineActorPermissionFactsSelect, contributions, readMachineRoleGraphInTx, projectMachineRoles, projectMachineTeamRoles, expandMachineIdsWithManagedGuestsInTx } from './machineRole';
+import { MACHINE_PERMISSION_FACTS_SELECT, buildMachineActorPermissionFactsSelect, machineGrantRelationsSelect, contributions, readMachineRoleGraphInTx, projectMachineRoles, projectMachineTeamRoles, expandMachineIdsWithManagedGuestsInTx } from './machineRole';
 import type { SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 
 type MachineActor = Readonly<{ actorAccountId: string; machineId: string }>;
@@ -60,52 +60,43 @@ const MACHINE_RESOURCE_FACTS_SELECT = {
         account: { select: { ...ACCOUNT_DISPLAY_PROFILE_SELECT, encryptionMode: true, status: true } },
     } as const;
 
-const MACHINE_ACCESS_FACTS_SELECT = {
-        ...MACHINE_RESOURCE_FACTS_SELECT,
-        accountGrants: { select: { accountId: true, accessLevel: true, account: { select: { status: true, ...ACCOUNT_DISPLAY_PROFILE_SELECT } } } },
-        teamGrants: { select: { teamId: true, accessLevel: true, team: { select: { name: true, archivedAt: true,
-            memberships: { select: { accountId: true, status: true, role: true, account: { select: { status: true } } } },
-        } } } },
-        groupGrants: { select: { teamGroupId: true, accessLevel: true, teamGroup: { select: {
-            name: true, teamId: true, archivedAt: true, team: { select: { archivedAt: true } },
-            memberships: { select: { teamMembership: { select: { accountId: true, status: true, account: { select: { status: true } } } } } },
-        } } } },
-    } as const;
+function machineAccessGrantRelationsSelect(actorAccountId?: string) {
+    const { grants } = machineGrantRelationsSelect(actorAccountId);
+    return { grants: { ...grants,
+        ...(actorAccountId === undefined ? {} : { where: { ...grants.where,
+            machine: { accountId: { not: actorAccountId } },
+        } }),
+        select: { ...grants.select,
+            account: { select: { status: true, ...ACCOUNT_DISPLAY_PROFILE_SELECT } },
+            team: { select: { ...grants.select.team.select, name: true } },
+            teamGroup: { select: { ...grants.select.teamGroup.select, name: true } },
+        },
+    } } as const;
+}
+
+const MACHINE_ACCESS_FACTS_SELECT = { ...MACHINE_RESOURCE_FACTS_SELECT, ...machineAccessGrantRelationsSelect() } as const;
 
 /** Same current Machine graph for exact Session binding and Machine admission. */
 export function buildMachineAdmissionFactsSelect(actorAccountId: string) {
-    const foreignGrant = { machine: { accountId: { not: actorAccountId } } };
-    const { accountGrants, teamGrants, groupGrants } = MACHINE_ACCESS_FACTS_SELECT;
-    return {
-        ...MACHINE_ACCESS_FACTS_SELECT,
-        accountGrants: { ...accountGrants, where: { ...foreignGrant, accountId: actorAccountId } },
-        teamGrants: { where: foreignGrant, select: { ...teamGrants.select, team: { select: {
-            ...teamGrants.select.team.select,
-            memberships: { ...teamGrants.select.team.select.memberships, where: { accountId: actorAccountId } },
-        } } } },
-        groupGrants: { where: foreignGrant, select: { ...groupGrants.select, teamGroup: { select: {
-            ...groupGrants.select.teamGroup.select,
-            memberships: { ...groupGrants.select.teamGroup.select.memberships, where: { teamMembership: { accountId: actorAccountId } } },
-        } } } },
-    } as const;
+    return { ...MACHINE_RESOURCE_FACTS_SELECT, ...machineAccessGrantRelationsSelect(actorAccountId) } as const;
 }
 
 const MACHINE_OPENING_INCLUDE = {
     managedResource: true,
     account: MACHINE_RESOURCE_FACTS_SELECT.account,
-    accountGrants: MACHINE_ACCESS_FACTS_SELECT.accountGrants,
-    teamGrants: MACHINE_ACCESS_FACTS_SELECT.teamGrants,
-    groupGrants: MACHINE_ACCESS_FACTS_SELECT.groupGrants,
+    grants: MACHINE_ACCESS_FACTS_SELECT.grants,
 } as const;
-type MachineOpeningRow = Prisma.MachineGetPayload<{ include: typeof MACHINE_OPENING_INCLUDE }>;
+type MachineOpeningStorageRow = Prisma.MachineGetPayload<{ include: typeof MACHINE_OPENING_INCLUDE }>;
+type MachineOpeningRow = MachineOpeningStorageRow & ReturnType<typeof projectResourceGrantRows<MachineOpeningStorageRow['grants'][number]>>;
 
 async function readFactsInTx(tx: Tx, machineId: string, actorAccountId?: string) {
-    return tx.machine.findUnique({ where: { id: machineId },
+    const row = await tx.machine.findUnique({ where: { id: machineId },
         select: actorAccountId === undefined ? MACHINE_ACCESS_FACTS_SELECT : buildMachineAdmissionFactsSelect(actorAccountId) });
+    return row ? { ...row, ...projectResourceGrantRows(row.grants) } : null;
 }
 type MachineFacts = NonNullable<Awaited<ReturnType<typeof readFactsInTx>>>;
 type MachineResourceFacts = Prisma.MachineGetPayload<{ select: typeof MACHINE_RESOURCE_FACTS_SELECT }>;
-export type MachineAdmissionFacts = MachineFacts;
+export type MachineAdmissionFacts = Prisma.MachineGetPayload<{ select: ReturnType<typeof buildMachineAdmissionFactsSelect> }>;
 /** Permission only: current grants/current membership, never key presence or Session history. */
 export async function resolveEffectiveMachineRoleInTx(tx: Tx, input: MachineActor): Promise<MachineAccessRoleV1 | null> {
     const roles = await resolveEffectiveMachineAccessForMachinesInTx(tx, { machineIds: [input.machineId], accountIds: [input.actorAccountId] });
@@ -122,12 +113,13 @@ async function machineRolesInTx(tx: Tx, rows: readonly Parameters<typeof readMac
 export async function projectActiveMachineAdmissionFromFacts(
     tx: Tx, row: MachineAdmissionFacts, actorAccountId: string,
 ): Promise<SocketRpcMachineAdmissionContextV1 | null> {
-    const role = (await machineRolesInTx(tx, [row], [actorAccountId])).get(row.id)?.get(actorAccountId) ?? null;
-    const encryptionMode = resourceMode(row);
-    if (!role || !encryptionMode || !row.installationId
-        || classifyMachineAvailabilityState(row) !== 'available') return null;
-    return { actorAccountId, custodianAccountId: row.accountId, machineId: row.id,
-        installationId: row.installationId, role, encryptionMode };
+    const facts = { ...row, ...projectResourceGrantRows(row.grants) };
+    const role = (await machineRolesInTx(tx, [facts], [actorAccountId])).get(facts.id)?.get(actorAccountId) ?? null;
+    const encryptionMode = resourceMode(facts);
+    if (!role || !encryptionMode || !facts.installationId
+        || classifyMachineAvailabilityState(facts) !== 'available') return null;
+    return { actorAccountId, custodianAccountId: facts.accountId, machineId: facts.id,
+        installationId: facts.installationId, role, encryptionMode };
 }
 function resolveMachineRpcRequiredRole(input: Readonly<{
     method: string; owned: boolean; requiredRole: MachineAccessRoleV1; actionId?: string;
@@ -145,14 +137,14 @@ export async function resolveEffectiveMachineAccessForMachinesInTx(tx: Tx, input
     const result = new Map<string, Map<string, MachineAccessRoleV1 | null>>();
     const machineIds = [...new Set(input.machineIds)];
     if (machineIds.length === 0) return result;
-    const byId = new Map<string, Prisma.MachineGetPayload<{ select: typeof MACHINE_PERMISSION_FACTS_SELECT }>>();
+    const byId = new Map<string, Parameters<typeof readMachineRoleGraphInTx>[1][number]>();
     const actorAccountId = input.accountIds.length === 1 ? input.accountIds[0] : undefined;
     const select = actorAccountId === undefined ? MACHINE_PERMISSION_FACTS_SELECT : buildMachineActorPermissionFactsSelect(actorAccountId);
     // Nine relation-projection bindings, including managedResource;
     // singleton reads add three actor predicates.
     for (const ids of portableQueryChunks({ values: machineIds, bindingsPerValue: 1, fixedBindings: actorAccountId === undefined ? 9 : 12 })) {
         const rows = await tx.machine.findMany({ where: { id: { in: [...ids] } }, select });
-        for (const row of rows) byId.set(row.id, row);
+        for (const row of rows) byId.set(row.id, { ...row, ...projectResourceGrantRows(row.grants) });
     }
     const roles = await machineRolesInTx(tx, [...byId.values()], input.accountIds);
     for (const machineId of machineIds) {
@@ -178,7 +170,8 @@ export async function resolveMachinePrincipalAccessForMachinesInTx(tx: Tx, input
     }
     const rows: Parameters<typeof readMachineRoleGraphInTx>[1][number][] = [];
     for (const ids of portableQueryChunks({ values: [...new Set(input.machineIds)], bindingsPerValue: 1, fixedBindings: 9 })) {
-        rows.push(...await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: MACHINE_PERMISSION_FACTS_SELECT }));
+        const loaded = await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: MACHINE_PERMISSION_FACTS_SELECT });
+        rows.push(...loaded.map(row => ({ ...row, ...projectResourceGrantRows(row.grants) })));
     }
     const roles = projectMachineTeamRoles(await readMachineRoleGraphInTx(tx, rows, []), principal.teamId);
     return new Map(input.machineIds.map(id => [id, roles.get(id) ?? null]));
@@ -194,17 +187,17 @@ export async function listMachineCandidatesInTx(
 ): Promise<string[]> {
     const [owned, direct, memberships, groupMemberships] = await Promise.all([
         tx.machine.findMany({ where: { accountId: actorAccountId, ...(options.includeRevokedOwned ? {} : { revokedAt: null }) }, select: { id: true } }),
-        tx.machineAccountGrant.findMany({ where: { accountId: actorAccountId }, select: { machineId: true } }),
+        tx.machineGrant.findMany({ where: { principalKind: 'account', accountId: actorAccountId }, select: { machineId: true } }),
         tx.teamMembership.findMany({ where: { accountId: actorAccountId }, select: { teamId: true } }),
         tx.teamGroupMembership.findMany({ where: { teamMembership: { accountId: actorAccountId } }, select: { teamGroupId: true } }),
     ]);
     const teams: { machineId: string }[] = [];
     const groups: { machineId: string }[] = [];
     for (const ids of portableQueryChunks({ values: memberships.map(member => member.teamId), bindingsPerValue: 1, fixedBindings: 1 })) {
-        teams.push(...await tx.machineTeamGrant.findMany({ where: { teamId: { in: [...ids] } }, select: { machineId: true } }));
+        teams.push(...await tx.machineGrant.findMany({ where: { principalKind: 'team', teamId: { in: [...ids] } }, select: { machineId: true } }));
     }
     for (const ids of portableQueryChunks({ values: groupMemberships.map(member => member.teamGroupId), bindingsPerValue: 1, fixedBindings: 1 })) {
-        groups.push(...await tx.machineGroupGrant.findMany({ where: { teamGroupId: { in: [...ids] } }, select: { machineId: true } }));
+        groups.push(...await tx.machineGrant.findMany({ where: { principalKind: 'group', teamGroupId: { in: [...ids] } }, select: { machineId: true } }));
     }
     return expandMachineIdsWithManagedGuestsInTx(tx,
         [...owned.map(row => row.id), ...direct.map(row => row.machineId), ...teams.map(row => row.machineId), ...groups.map(row => row.machineId)]);
@@ -334,22 +327,22 @@ export async function resolveMachineAdmissionInTx(tx: Tx, input: MachineAdmissio
 }
 
 /** Request-local facts serve namespace selection and the single admission decision. */
-export async function readMachineAdmissionFactsInTx(tx: Tx, input: MachineActor): Promise<MachineFacts | null> {
+export async function readMachineAdmissionFactsInTx(tx: Tx, input: MachineActor): Promise<MachineAdmissionFacts | null> {
     const rows = await readMachineFactsInTx(tx, input.actorAccountId, [input.machineId]);
     return rows.get(input.machineId) ?? null;
 }
 
 /** Ownership decides the role without reading unrelated foreign grant graphs. */
-async function readMachineFactsInTx(tx: Tx, actorAccountId: string, machineIds: readonly string[]): Promise<ReadonlyMap<string, MachineFacts>> {
+async function readMachineFactsInTx(tx: Tx, actorAccountId: string, machineIds: readonly string[]): Promise<ReadonlyMap<string, MachineAdmissionFacts>> {
     const rows: MachineResourceFacts[] = [];
     for (const ids of portableQueryChunks({ values: [...new Set(machineIds)], bindingsPerValue: 1, fixedBindings: 3 })) {
         rows.push(...await tx.machine.findMany({ where: { id: { in: [...ids] } }, select: MACHINE_RESOURCE_FACTS_SELECT }));
     }
-    const result = new Map<string, MachineFacts>();
+    const result = new Map<string, MachineAdmissionFacts>();
     for (const row of rows) if (row.accountId === actorAccountId) {
         // Account status, mode, content, installation and lifecycle still reach
         // the same admission policy. Grants cannot change an owner's role.
-        result.set(row.id, { ...row, accountGrants: [], teamGrants: [], groupGrants: [] });
+        result.set(row.id, { ...row, grants: [] });
     }
     const foreignIds = rows.filter(row => row.accountId !== actorAccountId).map(row => row.id);
     if (foreignIds.length > 0) {
@@ -384,12 +377,11 @@ export async function readAccessibleMachineOpeningsInTx(tx: Tx, input: Readonly<
     const actorFacts = buildMachineAdmissionFactsSelect(input.actorAccountId);
     // Nine relation-projection bindings plus three custody and three actor predicates.
     for (const ids of portableQueryChunks({ values: [...new Set(input.machineIds)], bindingsPerValue: 1, fixedBindings: 15 })) {
-        rows.push(...await tx.machine.findMany({ where: { id: { in: [...ids] } }, include: {
+        const loaded = await tx.machine.findMany({ where: { id: { in: [...ids] } }, include: {
             ...MACHINE_OPENING_INCLUDE,
-            accountGrants: actorFacts.accountGrants,
-            teamGrants: actorFacts.teamGrants,
-            groupGrants: actorFacts.groupGrants,
-        } }));
+            grants: actorFacts.grants,
+        } });
+        rows.push(...loaded.map(row => ({ ...row, ...projectResourceGrantRows(row.grants) })));
     }
     const foreignEncryptedIds = rows.filter(row => row.accountId !== input.actorAccountId && resourceMode(row) === 'e2ee').map(row => row.id);
     const material = foreignEncryptedIds.length > 0
@@ -435,7 +427,8 @@ export function resolveMachineAdmissionsInTx(tx: Tx, input: MachineAdmissionsInp
 export async function resolveMachineAdmissionsInTx(tx: Tx, input: MachineAdmissionsInput & Readonly<{ purpose?: 'workflow' }>): Promise<ReadonlyMap<string, MachineAdmission | WorkflowMachineAdmission>> {
     const machineIds = [...new Set(input.machineIds)];
     if (machineIds.length === 0) return new Map();
-    const byId = await readMachineFactsInTx(tx, input.actorAccountId, machineIds);
+    const stored = await readMachineFactsInTx(tx, input.actorAccountId, machineIds);
+    const byId = new Map([...stored].map(([id, row]) => [id, { ...row, ...projectResourceGrantRows(row.grants) }]));
     const roles = await machineRolesInTx(tx, [...byId.values()], [input.actorAccountId]);
     const foreignEncryptedIds = [...byId.values()].filter(row => row.accountId !== input.actorAccountId
         && roles.get(row.id)?.get(input.actorAccountId) && resourceMode(row) === 'e2ee').map(row => row.id);
@@ -447,10 +440,10 @@ export async function resolveMachineAdmissionsInTx(tx: Tx, input: MachineAdmissi
     return result;
 }
 
-export function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineFacts | null, input: WorkflowMachineAdmissionInput): Promise<WorkflowMachineAdmission>;
-export function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineFacts | null, input: MachineAdmissionInput): Promise<MachineAdmission>;
-export async function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineFacts | null, input: MachineAdmissionInput & Readonly<{ purpose?: 'workflow' }>): Promise<MachineAdmission | WorkflowMachineAdmission> {
-    return machineAdmissionFromFactsWithRoleInTx(tx, row, input);
+export function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineAdmissionFacts | null, input: WorkflowMachineAdmissionInput): Promise<WorkflowMachineAdmission>;
+export function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineAdmissionFacts | null, input: MachineAdmissionInput): Promise<MachineAdmission>;
+export async function resolveMachineAdmissionFromFactsInTx(tx: Tx, row: MachineAdmissionFacts | null, input: MachineAdmissionInput & Readonly<{ purpose?: 'workflow' }>): Promise<MachineAdmission | WorkflowMachineAdmission> {
+    return machineAdmissionFromFactsWithRoleInTx(tx, row ? { ...row, ...projectResourceGrantRows(row.grants) } : null, input);
 }
 async function machineAdmissionFromFactsWithRoleInTx(tx: Tx, row: MachineFacts | null,
     input: MachineAdmissionInput & Readonly<{ purpose?: 'workflow' }>, role?: MachineAccessRoleV1 | null,
@@ -638,16 +631,16 @@ export async function setMachineAccessGrantInTx(tx: Tx, input: MachineActor & Re
     let upsert: () => Promise<unknown>;
     if (principal.kind === 'account') {
         const where = { machineId_accountId: { machineId: row.id, accountId: principal.accountId } };
-        previous = await tx.machineAccountGrant.findUnique({ where });
-        upsert = () => tx.machineAccountGrant.upsert({ where, create: { machineId: row.id, accountId: principal.accountId, ...data }, update: data });
+        previous = await tx.machineGrant.findUnique({ where: { ...where, principalKind: 'account' } });
+        upsert = () => tx.machineGrant.upsert({ where: { ...where, principalKind: 'account' }, create: { principalKind: 'account', machineId: row.id, accountId: principal.accountId, ...data }, update: data });
     } else if (principal.kind === 'team') {
         const where = { machineId_teamId: { machineId: row.id, teamId: principal.teamId } };
-        previous = await tx.machineTeamGrant.findUnique({ where });
-        upsert = () => tx.machineTeamGrant.upsert({ where, create: { machineId: row.id, teamId: principal.teamId, ...data }, update: data });
+        previous = await tx.machineGrant.findUnique({ where: { ...where, principalKind: 'team' } });
+        upsert = () => tx.machineGrant.upsert({ where: { ...where, principalKind: 'team' }, create: { principalKind: 'team', machineId: row.id, teamId: principal.teamId, ...data }, update: data });
     } else {
         const where = { machineId_teamGroupId: { machineId: row.id, teamGroupId: principal.groupId } };
-        previous = await tx.machineGroupGrant.findUnique({ where });
-        upsert = () => tx.machineGroupGrant.upsert({ where, create: { machineId: row.id, teamGroupId: principal.groupId, ...data }, update: data });
+        previous = await tx.machineGrant.findUnique({ where: { ...where, principalKind: 'group' } });
+        upsert = () => tx.machineGrant.upsert({ where: { ...where, principalKind: 'group' }, create: { principalKind: 'group', machineId: row.id, teamGroupId: principal.groupId, ...data }, update: data });
     }
     const principalError = await validateResourceGrantPrincipalInTx(tx, { actorAccountId: input.actorAccountId,
         ownerAccountId: row.accountId, principal, hasExistingGrant: previous !== null });
@@ -696,9 +689,9 @@ export async function removeMachineAccessGrantInTx(tx: Tx, input: MachineActor &
     }
     const before = await resolveCurrentMachineRecipientAccountIdsInTx(tx, row.id);
     const impacts = await mutationImpactInTx(tx, row.id, [...new Set([...before, ...(principal.kind === 'account' ? [principal.accountId] : [])])]);
-    const deleted = principal.kind === 'account' ? await tx.machineAccountGrant.deleteMany({ where: { machineId: row.id, accountId: principal.accountId } })
-        : principal.kind === 'team' ? await tx.machineTeamGrant.deleteMany({ where: { machineId: row.id, teamId: principal.teamId } })
-            : await tx.machineGroupGrant.deleteMany({ where: { machineId: row.id, teamGroupId: principal.groupId } });
+    const deleted = principal.kind === 'account' ? await tx.machineGrant.deleteMany({ where: { principalKind: 'account', machineId: row.id, accountId: principal.accountId } })
+        : principal.kind === 'team' ? await tx.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: row.id, teamId: principal.teamId } })
+            : await tx.machineGrant.deleteMany({ where: { principalKind: 'group', machineId: row.id, teamGroupId: principal.groupId } });
     if (deleted.count) await publishMutationInTx(tx, impacts, principal.kind === 'account' ? principal.accountId : undefined);
     const role = await resolveEffectiveMachineRoleInTx(tx, { machineId: row.id, actorAccountId: principal.kind === 'account' ? principal.accountId : input.actorAccountId });
     if (self && role) return { kind: 'inherited_access_remains', role };

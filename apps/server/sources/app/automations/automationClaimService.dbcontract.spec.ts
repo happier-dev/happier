@@ -16,6 +16,7 @@ import { registerAutomationV3Routes } from "@/app/api/routes/automations/registe
 import { createSignedPluginInstallationPublisherHeader, createTrustedMachineInstallation } from "@/testkit/pluginInstallationPublisherTestkit";
 import { encodeAutomationRunCause } from "./automationRunCauseCodec";
 import { claimAutomationRun } from "./automationClaimService";
+import { automationAccountCurrentnessSelect, deriveAutomationAccountCurrentnessWitness } from "./automationAccountCurrentness";
 
 const provider = process.env.HAPPIER_DB_PROVIDER ?? process.env.HAPPY_DB_PROVIDER ?? "postgres";
 
@@ -69,8 +70,8 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")("Automatio
         } });
         const session = await db.session.create({ data: { accountId: owner.id,
             tag: randomUUID(), encryptionMode: "plain", metadata: "{}" } });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id,
-            sharedWithUserId: recipient.id, accessLevel: "view" } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id,
+            accountId: recipient.id, accessLevel: "view" } });
         // This nonterminal Run is assigned to the worker but cannot be claimed.
         // Its Session has an additional publication recipient absent from run.
         const future = await db.automationRun.create({ data: { accountId: owner.id,
@@ -142,7 +143,12 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")("Automatio
             expect(await db.automationWorkerClaimReceipt.count({ where: { accountId: f.owner.id } })).toBe(1);
             const replay = await app.inject(request);
             expect(replay.statusCode, replay.body).toBe(200);
-            expect(AutomationV3WorkerClaimResponseSchema.parse(replay.json())).toEqual(claimed);
+            // The signed receipt retains its claim outcome; its content witness
+            // comes from the current Account, including the first claim's publication.
+            const accountCurrentness = deriveAutomationAccountCurrentnessWitness(await db.account.findUniqueOrThrow({
+                where: { id: f.owner.id }, select: automationAccountCurrentnessSelect,
+            }));
+            expect(AutomationV3WorkerClaimResponseSchema.parse(replay.json())).toEqual({ ...claimed, accountCurrentness });
 
             // A valid proof for this installation cannot authorize a different
             // request machine, even when that other machine belongs to owner.

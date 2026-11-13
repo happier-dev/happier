@@ -1,9 +1,10 @@
+import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as privacyKit from 'privacy-kit';
 import nacl from 'tweetnacl';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, computeDeploymentTransitionRequestDigestV1,
     signMachineInstallationProof, DeploymentTargetLinkResultV1Schema, DeploymentTargetLinksListResultV1Schema,
-    DeploymentDomainMutationResultV1Schema, deploymentDomainObservationProofPayloadV1,
+    DeploymentDomainMutationResultV1Schema, type DeploymentDomainMutationResultV1, deploymentDomainObservationProofPayloadV1,
     nativeCaddyDomainRouteIdsV1, nativeCaddyRemovalSigningBytes,
     DeploymentChildRpcV1Schema, projectDeploymentChildRoutingV1, type DeploymentChildRpcV1,
     DeploymentReceiptResultV1Schema, MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent,
@@ -28,6 +29,11 @@ import { transitionDeploymentInTx } from './deploymentService';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { verifyExternalActionMachineRpcExecution } from '@/app/auth/externalActionExecutionAuthorization';
+
+function requireDomainMutationApplied(result: DeploymentDomainMutationResultV1) {
+    if (!result.ok) throw new Error(result.error);
+    return result;
+}
 
 describe('current runtime membership replacement', () => {
     const serverId = `srv_${'e'.repeat(32)}`;
@@ -310,8 +316,7 @@ describe('current runtime membership replacement', () => {
             const link = await db.deploymentTargetLink.create({ data: { environmentId: environment.id, id: `${label}-${crypto.randomUUID()}`,
                 createdByAccountId: actorAccountId, role: 'data', sourceKind: 'plugin', pluginId: 'example.deploy', contributionLocalId: 'database',
                 targetKind: 'database', state: 'provisioned', ...await artifact('deployment-target-link.v1', actorAccountId) } });
-            if (scope.kind === 'team') for (const ref of [environment, link]) await db.artifactTeamGrant.create({ data: {
-                artifactId: ref.contentArtifactId, teamId: team.id, accessLevel: 'admin', createdByAccountId: owner.id } });
+            if (scope.kind === 'team') for (const ref of [environment, link]) await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: owner.id }), artifactId: ref.contentArtifactId } });
             return { environment, link };
         }
         const accountScope = { kind: 'account' as const, accountId: owner.id };
@@ -415,17 +420,14 @@ describe('current runtime membership replacement', () => {
             dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
             installationPublicKey: new Uint8Array(keys.publicKey),
         } }) : first;
-        if (team) await db.machineTeamGrant.createMany({ data: [...members, builder].map(machine => ({
-            machineId: machine.id, teamId: team.id, accessLevel: 'view', createdByAccountId: machine.accountId,
-        })) });
+        if (team) await db.machineGrant.createMany({ data: [...members, builder].map(machine => ({ ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view', createdByAccountId: machine.accountId }), machineId: machine.id })) });
         async function artifact(kind: string, value: unknown) {
             const created = await createArtifact({ actorUserId: owner.id, artifactId: crypto.randomUUID(),
                 header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind, title: 'Joining proof' })),
                 body: privacyKit.decodeBase64(encodePlainArtifactStoredContent(value)),
                 dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
             if (!created.ok) throw new Error(created.error);
-            if (team) await db.artifactTeamGrant.create({ data: { artifactId: created.artifact.id, teamId: team.id,
-                accessLevel: 'admin', createdByAccountId: owner.id } });
+            if (team) await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: owner.id }), artifactId: created.artifact.id } });
             return { contentArtifactId: created.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
         }
         const environment = await db.deploymentEnvironment.create({ data: { projectSourceId: source.source.id,
@@ -533,12 +535,13 @@ describe('current runtime membership replacement', () => {
                 let added = DeploymentDomainMutationResultV1Schema.parse(created.json());
                 if (!added.ok) throw new Error(added.error);
                 if (domain === 'up') {
+                    const createdRevision = added.domain.revision;
                     const observations = added.domain.placements!.map(capture => {
                         const observation = { capture, state: 'active' as const, dnsHealth: { status: 'up' as const,
                             evidence: { v: 1 as const, items: [{ source: { kind: 'alert' as const, label: 'dns' },
                                 author: { kind: 'process' as const }, text: 'Existing healthy route' }] } } };
                         return { ...observation, proof: signMachineInstallationProof({ privateKey: keys.secretKey,
-                            payload: deploymentDomainObservationProofPayloadV1({ expectedDomainRevision: added.domain.revision, observation }) }) };
+                            payload: deploymentDomainObservationProofPayloadV1({ expectedDomainRevision: createdRevision, observation }) }) };
                     });
                     const active = await app.inject({ method: 'POST', headers: { 'x-test-user-id': owner.id },
                         url: `/v1/deployments/environments/${environment.id}/domains/${domainId}/transitions`,
@@ -593,25 +596,27 @@ describe('current runtime membership replacement', () => {
                         expect(reconciled.statusCode, reconciled.body).toBe(200);
                         added = DeploymentDomainMutationResultV1Schema.parse(reconciled.json());
                     }, { authentication: 'real' });
-                    if (!added.ok) throw new Error(added.error);
-                    expect(added.domain.placements!.every(capture => capture.placement.requestId === envelope.requestId)).toBe(true);
-                    const capture = added.domain.placements!.find(capture => capture.placement.machineId === members[1]!.id)!;
+                    // Reassigned inside the callback above, which control-flow narrowing cannot see.
+                    const settled = requireDomainMutationApplied(added);
+                    expect(settled.domain.placements!.every(capture => capture.placement.requestId === envelope.requestId)).toBe(true);
+                    const capture = settled.domain.placements!.find(capture => capture.placement.machineId === members[1]!.id)!;
                     const native = DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'domain', actionId: 'deployments.domains.add',
-                        input: { serverId, environmentId: environment.id, domainId }, expectedDomainRevision: added.domain.revision,
+                        input: { serverId, environmentId: environment.id, domainId }, expectedDomainRevision: settled.domain.revision,
                         actionOperationId, capture, machineId: capture.placement.machineId, installationId: capture.placement.installationId });
                     expect(await verifyChild(native)).toMatchObject({ deploymentChildAdmission: { routing: { kind: 'domain' } } });
                 }
                 if (domain !== 'pending') {
-                    const observations = added.domain.placements!.map(capture => {
+                    const current = requireDomainMutationApplied(added);
+                    const observations = current.domain.placements!.map(capture => {
                         const observation = { capture, state: 'active' as const,
                             dnsHealth: { status: domain === 'up' ? 'up' as const : 'down' as const, evidence: { v: 1 as const,
                                 items: [{ source: { kind: 'alert' as const, label: 'dns' }, author: { kind: 'process' as const }, text: 'Membership DNS observation' }] } } };
                         return { ...observation, proof: signMachineInstallationProof({ privateKey: keys.secretKey,
-                            payload: deploymentDomainObservationProofPayloadV1({ expectedDomainRevision: added.domain.revision, observation }) }) };
+                            payload: deploymentDomainObservationProofPayloadV1({ expectedDomainRevision: current.domain.revision, observation }) }) };
                     });
                     const observed = await app.inject({ method: 'POST', headers: { 'x-test-user-id': owner.id },
                         url: `/v1/deployments/environments/${environment.id}/domains/${domainId}/transitions`,
-                        payload: { serverId, environmentId: environment.id, domainId, expectedDomainRevision: added.domain.revision, observations } });
+                        payload: { serverId, environmentId: environment.id, domainId, expectedDomainRevision: current.domain.revision, observations } });
                     expect(observed.statusCode, observed.body).toBe(200);
                 }
             }
@@ -635,11 +640,10 @@ describe('current runtime membership replacement', () => {
                     const stage = await signed({ kind: 'stage', state: 'running' });
                     expect(stage.statusCode, stage.body).toBe(200);
                     if (team) {
-                        await db.machineTeamGrant.deleteMany({ where: { machineId: signer.id, teamId: team.id } });
+                        await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: signer.id, teamId: team.id } });
                         const withdrawn = await signed({ kind: 'stage', state: 'running' });
                         expect(withdrawn.statusCode, 'captured work continues after grant withdrawal').toBe(200);
-                        await db.machineTeamGrant.create({ data: { machineId: signer.id, teamId: team.id,
-                            accessLevel: 'view', createdByAccountId: signer.accountId } });
+                        await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view', createdByAccountId: signer.accountId }), machineId: signer.id } });
                     }
                     const malformedStage = await signed({ kind: 'stage', state: 'failed' });
                     expect(malformedStage.statusCode, malformedStage.body).toBe(400);
@@ -799,7 +803,7 @@ describe('current runtime membership replacement', () => {
                     expect(Array.isArray(persisted.capturedPlacements) && persisted.capturedPlacements.length).toBe(1);
                     // Replacing a definition needs the person's Manage authority;
                     // the admitted finite teardown above needed only Source custody.
-                    if (team) await db.machineTeamGrant.updateMany({ where: { teamId: team.id,
+                    if (team) await db.machineGrant.updateMany({ where: { principalKind: 'team', teamId: team.id,
                         machineId: { in: [...members, builder].map(machine => machine.id) } }, data: { accessLevel: 'admin' } });
                     const dropInput = { serverId, environmentId: environment.id,
                         expectedRevision: (await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } })).revision,

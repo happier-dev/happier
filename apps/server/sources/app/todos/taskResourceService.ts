@@ -94,9 +94,9 @@ export async function readTaskResourceInTx(tx: Tx, input: TaskActorInput): Promi
 export async function listTaskResourcesInTx(tx: Tx, actorAccountId: string, selection?: TaskResourceSelectionV1): Promise<TaskResult<TaskResourcesListResponseV1>> {
     if (selection?.tasks.length === 0) return { ok: true, value: { tasks: [], selectionApplied: true } };
     const access = await resolveResourceGrantPageAccessWhere(actorAccountId, async grants => (await Promise.all([
-        tx.taskAccountGrant.findMany({ where: grants.account, select: { taskId: true } }),
-        tx.taskTeamGrant.findMany({ where: grants.team, select: { taskId: true } }),
-        tx.taskGroupGrant.findMany({ where: grants.group, select: { taskId: true } }),
+        tx.taskGrant.findMany({ where: grants.account, select: { taskId: true } }),
+        tx.taskGrant.findMany({ where: grants.team, select: { taskId: true } }),
+        tx.taskGrant.findMany({ where: grants.group, select: { taskId: true } }),
     ])).map(rows => rows.map(row => row.taskId)));
     const byOwner = new Map<string, string[]>();
     for (const task of selection?.tasks ?? []) {

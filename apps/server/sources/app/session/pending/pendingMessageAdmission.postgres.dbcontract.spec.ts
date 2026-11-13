@@ -42,9 +42,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('P
                 await db.accessKey.create({ data: {
                     accountId: accounts[index].id, machineId: machines[index].id, sessionId: session.id, data: 'encrypted',
                 } });
-                await db.sessionShare.create({ data: {
-                    sessionId: session.id, sharedByUserId: accounts[index].id,
-                    sharedWithUserId: accounts[1 - index].id, accessLevel: 'edit',
+                await db.sessionGrant.create({ data: { principalKind: 'account',
+                    sessionId: session.id, createdByAccountId: accounts[index].id,
+                    accountId: accounts[1 - index].id, accessLevel: 'edit',
                 } });
             }
             const pids: number[] = [];
@@ -142,7 +142,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('P
             db.$transaction = originalTransaction;
             vi.unstubAllEnvs();
             const accountIds = accounts.map(account => account.id);
-            await db.sessionShare.deleteMany({ where: { sharedByUserId: { in: accountIds } } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', createdByAccountId: { in: accountIds } } });
             await db.accessKey.deleteMany({ where: { accountId: { in: accountIds } } });
             await db.session.deleteMany({ where: { accountId: { in: accountIds } } });
             await db.machine.deleteMany({ where: { accountId: { in: accountIds } } });

@@ -53,8 +53,8 @@ describe("Team mutations compose Session access transitions", () => {
         const session = await db.session.create({ data: {
             accountId: owner.id, tag: crypto.randomUUID(), metadata: "{}", encryptionMode: "plain", currentStorageState: "hosted",
             responsibleAccountId: member.id,
-            teamGrants: { create: { teamId: team.id, accessLevel: "edit", effectiveAt: new Date() } },
-            groupGrants: { create: { teamGroupId: group.id, accessLevel: "view", effectiveAt: new Date() } },
+            grants: { create: [{ principalKind: 'team',  teamId: team.id, accessLevel: "edit", effectiveAt: new Date()  }, { principalKind: 'group',  teamGroupId: group.id, accessLevel: "view", effectiveAt: new Date()  }] },
+            
         } });
         expect(await resolveEffectiveSessionAccess(db, { sessionId: session.id, accountId: member.id, authentication: createPresentUserSessionAccessAuthentication() }))
             .toMatchObject({ level: "edit", capabilities: { readTranscript: true } });
@@ -105,8 +105,8 @@ describe("Team mutations compose Session access transitions", () => {
     it("removes final-access state but preserves state covered by an independent direct grant", async () => {
         for (const direct of [false, true]) {
             const f = await fixture();
-            if (direct) await db.sessionShare.create({ data: {
-                sessionId: f.session.id, sharedByUserId: f.owner.id, sharedWithUserId: f.member.id, accessLevel: "admin",
+            if (direct) await db.sessionGrant.create({ data: { principalKind: 'account',
+                sessionId: f.session.id, createdByAccountId: f.owner.id, accountId: f.member.id, accessLevel: "admin",
             } });
             expect(await inTx(tx => removeTeamMemberForActorInTx(tx, f.memberInput))).toMatchObject({ ok: true });
             await expectPersonalState(f, direct);
@@ -250,7 +250,7 @@ describe("Team mutations compose Session access transitions", () => {
         await db.team.update({ where: { id: f.team.id }, data: { defaultSessionHistoryAccess: "all_existing" } });
         await db.teamMembership.update({ where: { id: f.membership.id }, data: { role: "guest" } });
         const replacement = await db.teamGroup.create({ data: { teamId: f.team.id, name: "Replacement", nameKey: "replacement" } });
-        await db.sessionGroupGrant.create({ data: { sessionId: f.session.id, teamGroupId: replacement.id, accessLevel: "view", effectiveAt: new Date() } });
+        await db.sessionGrant.create({ data: { principalKind: 'group', sessionId: f.session.id, teamGroupId: replacement.id, accessLevel: "view", effectiveAt: new Date() } });
         await db.teamDirectoryGroup.create({ data: { directorySourceId: f.source.id, externalGroupId: "group", externalDisplayName: "Directory Group", state: "active" } });
         await db.teamDirectoryGroupMember.create({ data: { directorySourceId: f.source.id, externalGroupId: "group", externalUserId: "person" } });
         const remapped = await setExternalGroupBindingForActor({

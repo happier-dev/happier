@@ -41,7 +41,7 @@ describe('admitted deployment settlement', () => {
             metadata: encodePlainMachineStoredContent({ host: 'Settlement', platform: 'linux', happyCliVersion: 'test',
                 homeDir: '/home/settlement', happyHomeDir: '/home/settlement/.happier' }),
             dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER) } });
-        await db.machineAccountGrant.create({ data: { machineId, accountId: requester.id,
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId, accountId: requester.id,
             accessLevel: 'admin', createdByAccountId: custodian.id } });
         const artifact = async (kind: string) => {
             const result = await createArtifact({ actorUserId: requester.id, artifactId: crypto.randomUUID(),
@@ -89,7 +89,7 @@ describe('admitted deployment settlement', () => {
             actionOperationId: f.input.actionOperationId, machineId: f.machineId, installationId: f.installationId };
         expect(await inTx(tx => transitionDeploymentInTx(tx, f.requester.id,
             f.sign({ ...body, expectedRevision: 1, kind: 'stage', state: 'running' })))).toMatchObject({ ok: true, state: 'running' });
-        await db.machineAccountGrant.deleteMany({ where: { machineId: f.machineId, accountId: f.requester.id } });
+        await db.machineGrant.deleteMany({ where: { principalKind: 'account', machineId: f.machineId, accountId: f.requester.id } });
         const settlement = f.sign({ ...body, expectedRevision: 2, kind: 'settle', state: 'succeeded', expectedTargetLinkRevision: 1 });
         // Captured work still requires the exact installation, requester-bound signature, and receipt CAS.
         expect(await inTx(tx => transitionDeploymentInTx(tx, f.custodian.id, settlement)))

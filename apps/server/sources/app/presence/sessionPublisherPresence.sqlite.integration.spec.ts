@@ -74,11 +74,11 @@ describe("session publisher presence on SQLite", () => {
         await db.accessKey.create({
             data: { accountId: owner.id, machineId, sessionId: session.id, data: "encrypted" },
         });
-        await db.sessionShare.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'account',
                 sessionId: session.id,
-                sharedByUserId: owner.id,
-                sharedWithUserId: participant.id,
+                createdByAccountId: owner.id,
+                accountId: participant.id,
                 accessLevel: "view",
             },
         });

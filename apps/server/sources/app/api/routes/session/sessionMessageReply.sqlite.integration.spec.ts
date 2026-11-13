@@ -223,8 +223,8 @@ describe('original Session input reply custody', () => {
             expect(read.statusCode).toBe(200);
             expect(read.json()).toMatchObject({ message: { messageRole: 'event', content: body.content } });
             const editor = await db.account.create({ data: { encryptionMode: 'plain' } });
-            await db.sessionShare.create({ data: { sessionId: source.id, sharedByUserId: account.id,
-                sharedWithUserId: editor.id, accessLevel: 'edit', canApprovePermissions: false } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: source.id, createdByAccountId: account.id,
+                accountId: editor.id, accessLevel: 'edit', canApprovePermissions: false } });
             invocation.targets[0]!.target.sessionId = 'different-receiver';
             invocation.targets[0]!.immediate.status = 'rejected';
             const replaced = await app.inject({ method: 'POST', url: `/v2/sessions/${source.id}/messages`,
@@ -460,8 +460,8 @@ describe('original Session input reply custody', () => {
         const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
         const source = await db.session.create({ data: { accountId: bob.id, tag: randomUUID(), encryptionMode, metadata: '{}', active: true, lastActiveAt: new Date() } });
         const target = await db.session.create({ data: { accountId: alice.id, tag: randomUUID(), encryptionMode, metadata: '{}', active: true, lastActiveAt: new Date() } });
-        await db.sessionShare.create({ data: { sessionId: target.id, sharedByUserId: alice.id,
-            sharedWithUserId: bob.id, accessLevel: 'edit', canApprovePermissions: false } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: target.id, createdByAccountId: alice.id,
+            accountId: bob.id, accessLevel: 'edit', canApprovePermissions: false } });
         const machine = await db.machine.create({ data: { id: randomUUID(), installationId: randomUUID(), accountId: alice.id,
             metadata: encryptionMode === 'plain' ? encodePlainMachineStoredContent({ host: 'host', platform: 'linux', happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier' }) : 'encrypted-metadata',
             dataEncryptionKey: encryptionMode === 'plain' ? decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER)
@@ -498,13 +498,13 @@ describe('original Session input reply custody', () => {
             const url = `/v2/sessions/${target.id}/pending`;
             const headers = { 'x-test-user-id': bob.id };
             const localId = randomUUID();
-            const sourceShare = { sessionId: source.id, sharedByUserId: bob.id, sharedWithUserId: outsider.id, accessLevel: 'view' } as const;
-            await db.sessionShare.create({ data: sourceShare });
+            const sourceShare = { sessionId: source.id, createdByAccountId: bob.id, accountId: outsider.id, accessLevel: 'view' } as const;
+            await db.sessionGrant.create({ data: { ...sourceShare, principalKind: 'account' } });
             const undisclosable = await app.inject({ method: 'POST', url, headers, payload: { localId, content,
                 targetMachineId: machine.id, reply } });
             expect(undisclosable.statusCode).toBe(400);
             expect(await db.sessionPendingMessage.findUnique({ where: { sessionId_localId: { sessionId: target.id, localId } } })).toBeNull();
-            await db.sessionShare.deleteMany({ where: { sessionId: source.id } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: source.id } });
             const accepted = await app.inject({ method: 'POST', url, headers, payload: { localId, content,
                 targetMachineId: machine.id, reply } });
             expect(accepted.statusCode, accepted.body).toBe(200);
@@ -543,10 +543,10 @@ describe('original Session input reply custody', () => {
             expect((await inventory()).json()).toMatchObject({ entries: [{ requestSessionId: target.id, requestLocalId: localId }] });
             await vi.waitFor(() => expect(requesterSocket.emit).toHaveBeenCalledWith('ephemeral', { type: 'session-message-reply-pending-v1',
                 v: 1, sessionId: target.id, requestLocalId: localId }));
-            await db.sessionShare.create({ data: sourceShare });
+            await db.sessionGrant.create({ data: { ...sourceShare, principalKind: 'account' } });
             expect((await read()).json()).toMatchObject({ status: 'unavailable' });
             expect((await inventory()).json()).toMatchObject({ entries: [] });
-            await db.sessionShare.deleteMany({ where: { sessionId: source.id } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: source.id } });
             const returnedInputLocalId = deriveSessionMessageReplyReturnLocalIdV1({ sessionId: target.id, localId, acceptedTurnId: turnId });
             const acknowledge = (accountId = bob.id, recoveryMachine = returnMachine) => inTx(tx => mutateSessionMessageReplyForMachineInTx(tx, {
                 accountId, installationId: recoveryMachine.installationId!, authentication, mutation: { v: 1, machineId: recoveryMachine.id,
@@ -574,21 +574,21 @@ describe('original Session input reply custody', () => {
             const sourcePublisher = { accountId: bob.id, sessionId: source.id, machineId: sourceHost.id, committedFence: source.lastActiveAt };
             expect(await materializeNextPendingMessage({ actorUserId: bob.id, sessionId: source.id, publisherAuthority: sourcePublisher,
                 deliveryState: 'provider', deliveryTiming: 'after_foreground_ready', foregroundState: 'ready' })).toMatchObject({ ok: true, didMaterialize: true });
-            await db.sessionShare.deleteMany({ where: { sessionId: target.id, sharedWithUserId: bob.id } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: target.id, accountId: bob.id } });
             expect(await settlePendingInputAdmission({ actorUserId: bob.id, sessionId: source.id, localId: returnedInputLocalId,
                 publisherAuthority: sourcePublisher, decision: { kind: 'admit', finalContent: returnedFinal,
                     validation: { returnedAnswer } } })).toMatchObject({ ok: true, result: { status: 'accepted' } });
             expect(await db.sessionMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: source.id, localId: returnedInputLocalId } } }))
                 .toMatchObject({ autonomousExchangeRootSessionId: target.id, autonomousExchangeRootLocalId: localId, autonomousExchangeCause: 'returned_answer' });
-            await db.sessionShare.create({ data: { sessionId: target.id, sharedByUserId: alice.id,
-                sharedWithUserId: bob.id, accessLevel: 'edit', canApprovePermissions: false } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: target.id, createdByAccountId: alice.id,
+                accountId: bob.id, accessLevel: 'edit', canApprovePermissions: false } });
             expect(await acknowledge()).toMatchObject({ ok: true, progress: { disposition: 'returned', humanOrigin, returnedInputLocalId } });
             expect(await acknowledge()).toMatchObject({ ok: true });
-            await db.sessionShare.deleteMany({ where: { sessionId: target.id, sharedWithUserId: bob.id } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: target.id, accountId: bob.id } });
             expect((await read()).json()).toMatchObject({ status: 'unavailable' });
             expect(await acknowledge()).toMatchObject({ ok: false });
-            await db.sessionShare.create({ data: { sessionId: target.id, sharedByUserId: alice.id,
-                sharedWithUserId: bob.id, accessLevel: 'edit', canApprovePermissions: false } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: target.id, createdByAccountId: alice.id,
+                accountId: bob.id, accessLevel: 'edit', canApprovePermissions: false } });
             await db.session.update({ where: { id: source.id }, data: { archivedAt: new Date() } });
             expect((await read()).json()).toMatchObject({ status: 'unavailable' });
             expect(await acknowledge()).toMatchObject({ ok: false });
@@ -779,8 +779,8 @@ describe('original Session input reply custody', () => {
         const next = inputFor(await question());
         if (change === 'audience') {
             const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
-            await db.sessionShare.create({ data: { sessionId: target.id, sharedByUserId: account.id,
-                sharedWithUserId: outsider.id, accessLevel: 'view' } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: target.id, createdByAccountId: account.id,
+                accountId: outsider.id, accessLevel: 'view' } });
         } else {
             expect(await changeDeliveryMute({ accountId: account.id, receiver: { kind: 'session', sessionId: target.id },
                 scope: { kind: 'source', source: { kind: 'discussion', discussionId } }, operation: 'set', authentication }))
@@ -1077,8 +1077,8 @@ describe('original Session input reply custody', () => {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
         const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
         const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: account.id,
-            sharedWithUserId: outsider.id, accessLevel: 'edit' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: account.id,
+            accountId: outsider.id, accessLevel: 'edit' } });
         const body = { v: 1 as const, parts: [{ t: 'text' as const, text: 'Start' }] };
         const created = await createDiscussion({ authentication, actorAccountId: account.id, request: buildDiscussionMutationRequestBodyV1({
             kind: 'create', creationLocalId: randomUUID(), titleContent: { t: 'plain', v: { v: 1, title: 'Private review' } },
@@ -1260,7 +1260,7 @@ describe('original Session input reply custody', () => {
             operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1] }, sessionMessageReply: { protocolVersions: [1] } }, operationProtocolCapabilitiesRevision: 1 } });
         const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
         await db.accessKey.create({ data: { accountId: account.id, machineId: machine.id, sessionId: session.id, data: 'encrypted' } });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: account.id, sharedWithUserId: collaborator.id, accessLevel: 'edit' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: account.id, accountId: collaborator.id, accessLevel: 'edit' } });
         const request: SessionInputRequestV1 = { v: 1, producer: 'pluginSession', caller: { kind: 'plugin', pluginId: 'acme.agent', contributionLocalId: 'assistant' }, permission: {}, replyIntent: { mode: 'wait' } };
         expect(await enqueuePendingMessageByAuthenticatedMachine({ accountId: account.id, sourceMachineId: machine.id, targetMachineId: machine.id,
             sessionId: session.id, localId: 'plugin-wait', requestedAction: { v: 1, kind: 'enqueue' }, reply: { mode: 'wait' },

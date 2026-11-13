@@ -34,7 +34,7 @@ describe("sessionRoutes session turns (integration)", () => {
             () => db.sessionTurnMutationReceipt.deleteMany(),
             () => db.sessionTurn.deleteMany(),
             () => db.sessionMessage.deleteMany(),
-            () => db.sessionShare.deleteMany(),
+            () => db.sessionGrant.deleteMany({ where: { principalKind: 'account' } }),
             () => db.accountChange.deleteMany(),
             () => db.session.deleteMany(),
             () => db.account.deleteMany(),
@@ -485,11 +485,11 @@ describe("sessionRoutes session turns (integration)", () => {
             },
             select: { id: true },
         });
-        await db.sessionShare.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'account',
                 sessionId: session.id,
-                sharedByUserId: owner.id,
-                sharedWithUserId: viewer.id,
+                createdByAccountId: owner.id,
+                accountId: viewer.id,
                 accessLevel: "view",
             },
         });

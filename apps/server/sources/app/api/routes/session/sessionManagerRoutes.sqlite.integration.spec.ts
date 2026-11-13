@@ -101,17 +101,17 @@ describe('authenticated manager resource', () => {
         })));
         const create = () => db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain', active: true } });
         const [child, lead, viewerLead] = await Promise.all([create(), create(), create()]);
-        await db.sessionShare.createMany({ data: [child, lead, viewerLead].map((target) => ({
-            sessionId: target.id, sharedByUserId: owner.id, sharedWithUserId: actor.id,
+        await db.sessionGrant.createMany({ data: ([child, lead, viewerLead].map((target) => ({
+            sessionId: target.id, createdByAccountId: owner.id, accountId: actor.id,
             accessLevel: target.id === viewerLead.id ? 'view' as const : 'edit' as const,
-        })) });
+        }))).map(data => ({ ...data, principalKind: 'account' })) });
         const app = createAuthenticatedTestApp();
         sessionRoutes(app);
         await app.ready();
         const headers = { 'x-test-user-id': actor.id };
         const url = `/v1/sessions/${child.id}/manager/options`;
         try {
-            const before = await db.sessionShare.findMany();
+            const before = await db.sessionGrant.findMany({ where: { principalKind: 'account' } });
             const response = await app.inject({ method: 'POST', url, headers, payload: { candidateSessionIds: [lead.id, viewerLead.id, child.id] } });
             expect(response.statusCode).toBe(200);
             expect(response.json()).toEqual({ sessionId: child.id, currentManagerSessionId: null, candidates: [
@@ -123,7 +123,7 @@ describe('authenticated manager resource', () => {
             const denied = await app.inject({ method: 'POST', url, headers, payload: { candidateSessionIds: [lead.id] } });
             expect(denied.json()).toMatchObject({ candidates: [{ sessionId: lead.id, allowed: false, reason: 'pairwise' }] });
             expect(await db.sessionFollowEdge.count({ where: { managerSourceSessionId: child.id } })).toBe(0);
-            expect(await db.sessionShare.findMany()).toEqual(before);
+            expect(await db.sessionGrant.findMany({ where: { principalKind: 'account' } })).toEqual(before);
             expect(await db.session.findMany({ where: { id: { in: [child.id, lead.id] } }, select: { active: true } })).toEqual([{ active: true }, { active: true }]);
         } finally { await app.close(); }
     });
@@ -165,9 +165,9 @@ describe('authenticated manager resource', () => {
         } });
         const child = await create(workerOwner.id);
         const lead = await create(leadOwner.id);
-        await db.sessionShare.createMany({ data: [
-            { sessionId: child.id, sharedByUserId: workerOwner.id, sharedWithUserId: leadOwner.id, accessLevel: 'edit' },
-            { sessionId: lead.id, sharedByUserId: leadOwner.id, sharedWithUserId: workerOwner.id, accessLevel: 'edit' },
+        await db.sessionGrant.createMany({ data: [
+            { principalKind: 'account', sessionId: child.id, createdByAccountId: workerOwner.id, accountId: leadOwner.id, accessLevel: 'edit' },
+            { principalKind: 'account', sessionId: lead.id, createdByAccountId: leadOwner.id, accountId: workerOwner.id, accessLevel: 'edit' },
         ] });
         let actorId = workerOwner.id;
         const app = createAuthenticatedTestApp();

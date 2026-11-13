@@ -1,3 +1,4 @@
+import { sessionDirectGrantProjectionFixture } from '@/app/session/access/sessionAccess.testkit';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDbMocks, inTxPostgresControlStatementMock, matchesDbMockWhere } from '@/app/api/testkit/dbMocks';
 import { createRouteTestBuilder } from '@/app/api/testkit/routeTestBuilder';
@@ -34,7 +35,7 @@ function fixture() {
     const mocks = createDbMocks({ account: ['findUnique', 'findMany'], session: ['findUnique', 'findFirst', 'findMany'],
         ephemeralRunnerActivation: ['findFirst'], machine: ['findFirst'], accessKey: ['findUnique'],
         sessionFollowEdge: ['findMany'], teamMembership: ['findMany'], homeSettings: ['findUnique'],
-        sessionShare: ['findMany'], sessionTeamGrant: ['findMany'], sessionGroupGrant: ['findMany'],
+        sessionGrant: ['findMany'],  
         homeGovernancePolicy: ['findUnique'], simpleCache: ['findUnique'] });
     const account = { id: 'account', status: 'active', tokenEpoch: 0, encryptionMode: 'plain' };
     const metadata = { path: '/private-owner-workspace' };
@@ -45,8 +46,8 @@ function fixture() {
         archivedAt: null, active: true, seq: 0, workDepth: 0, originKind: 'person', originRunId: null,
         metadata: JSON.stringify(projectSessionSharedMetadataV1({ metadata })), metadataVersion: 0, metadataLayoutVersion: 1,
         ownerMetadata: JSON.stringify(createPlainSessionOwnerMetadataEnvelopeV1(ownerMetadata.ownerMetadata)), agentState: null, agentStateVersion: 0,
-        encryptionMode: 'plain', dataKeyEnvelopes: [], shares: [] as { id: string; sharedWithUserId: string; sharedWithUser: { status: string }; accessLevel: string; canApprovePermissions: boolean }[],
-        teamGrants: [], groupGrants: [], publicShare: null, turns: [], primaryTeamId: null,
+        encryptionMode: 'plain', dataKeyEnvelopes: [], grants: [] as ReturnType<typeof sessionDirectGrantProjectionFixture>[],
+          publicShare: null, turns: [], primaryTeamId: null,
         currentStorageState: 'hosted', acceptedThroughServerSeq: null, publishedThroughServerSeq: null,
         materializationPublicationId: null, materializedThroughSourceAt: null,
         pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0, pendingRequestObservedAt: null,
@@ -75,9 +76,9 @@ function fixture() {
     mocks.db.machine.findFirst.mockResolvedValue({ installationPublicKey: new Uint8Array(32).fill(1) });
     mocks.db.accessKey.findUnique.mockResolvedValue({ accountId: account.id });
     mocks.db.teamMembership.findMany.mockResolvedValue([]);
-    mocks.db.sessionShare.findMany.mockResolvedValue([]);
-    mocks.db.sessionTeamGrant.findMany.mockResolvedValue([]);
-    mocks.db.sessionGroupGrant.findMany.mockResolvedValue([]);
+    mocks.db.sessionGrant.findMany.mockResolvedValue([]);
+    mocks.db.sessionGrant.findMany.mockResolvedValue([]);
+    mocks.db.sessionGrant.findMany.mockResolvedValue([]);
     mocks.db.homeSettings.findUnique.mockResolvedValue(null);
     mocks.db.homeGovernancePolicy.findUnique.mockResolvedValue(null);
     mocks.db.simpleCache.findUnique.mockResolvedValue({ value: 'srv_test_home' });
@@ -160,9 +161,9 @@ describe('restricted coordinator Under-self listing', () => {
     it('retains an admitted shared worker and removes it on the next request after revocation', async () => {
         const f = fixture();
         const hidden = f.rows.find(row => row.id === 'hidden')!;
-        hidden.shares.push({ id: 'worker-read', sharedWithUserId: principal.accountId,
-            sharedWithUser: { status: 'active' }, accessLevel: 'view', canApprovePermissions: false });
-        f.afterCapture(() => { hidden.shares.length = 0; });
+        hidden.grants.push(sessionDirectGrantProjectionFixture({ id: 'worker-read', accountId: principal.accountId,
+            account: { status: 'active' }, accessLevel: 'view', canApprovePermissions: false }));
+        f.afterCapture(() => { hidden.grants.length = 0; });
         expect((await f.read({ limit: 50 }))?.sessions.map(row => row.id).sort()).toEqual(['coordinator', 'grandchild', 'hidden', 'worker']);
         expect((await f.read({ limit: 50 }))?.sessions.map(row => row.id).sort()).toEqual(['coordinator', 'grandchild', 'worker']);
     });

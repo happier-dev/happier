@@ -1,3 +1,4 @@
+import { sessionDirectGrantProjectionFixture } from '@/app/session/access/sessionAccess.testkit';
 import { describe, expect, it, vi } from "vitest";
 
 import type { Tx } from "@/storage/inTx";
@@ -43,21 +44,18 @@ function txFixture(input: Readonly<{
         id: "session-1",
         account: { status: "active" },
         primaryTeamId: null,
-        shares: input.share ? [{
-            id: "share-1",
-            sharedWithUserId: "account-1",
-            ...input.share,
-            canApprovePermissions: false,
-        }] : [],
-        teamGrants: [],
-        groupGrants: [],
+        grants: input.share ? [sessionDirectGrantProjectionFixture({
+            id: "share-1", accountId: "account-1", ...input.share, canApprovePermissions: false,
+        })] : [],
+        
+        
     } : null);
     const sessionShareFindUnique = vi.fn(async () => input.share ?? null);
     const accountChangeFindUnique = vi.fn(async () => input.change ?? null);
     return {
         tx: {
             session: { findUnique: sessionFindUnique },
-            sessionShare: { findUnique: sessionShareFindUnique },
+            sessionGrant: { findUnique: sessionShareFindUnique },
             accountChange: { findUnique: accountChangeFindUnique },
         } as unknown as Tx,
         sessionShareFindUnique,

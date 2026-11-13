@@ -972,15 +972,13 @@ export async function deleteAccountForErasure(input: Readonly<{
         await tx.managedMachine.deleteMany({ where: { custodianAccountId: input.accountId } });
         // Apply Account-FK grant withdrawal before computing access effects;
         // waiting for the terminal Account cascade would lose its before-state.
-        const removedAccountGrants = await tx.machineAccountGrant.deleteMany({ where: { OR: [
+        const removedMachineGrants = await tx.machineGrant.deleteMany({ where: { OR: [
             { accountId: input.accountId }, { createdByAccountId: input.accountId },
         ] } });
-        const removedTeamGrants = await tx.machineTeamGrant.deleteMany({ where: { createdByAccountId: input.accountId } });
-        const removedGroupGrants = await tx.machineGroupGrant.deleteMany({ where: { createdByAccountId: input.accountId } });
         await tx.machine.deleteMany({ where: { accountId: input.accountId } });
         await applyMachineAccessImpactsInTx(tx, {
             impacts: machineAccessImpacts.values(),
-            grantRosterChanged: removedAccountGrants.count + removedTeamGrants.count + removedGroupGrants.count > 0,
+            grantRosterChanged: removedMachineGrants.count > 0,
         });
         afterTx(tx, () => {
             for (const binding of erasedMachineBindings) {

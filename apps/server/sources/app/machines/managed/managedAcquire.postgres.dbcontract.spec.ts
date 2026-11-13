@@ -173,8 +173,9 @@ async function characterizeManagedHotRecipient(request: Parameters<typeof admitM
             creationState: retained ? 'canceled' : 'active', intentRevision: retained ? 1 : 0 } });
         expect(await db.managedMachine.findUniqueOrThrow({ where: { id: result.machine.id } }))
             .toMatchObject({ allocation: result.machine.allocation, creationState: result.machine.creationState });
+        // Controller Use is not resource visibility for its viewer.
         expect(await db.accountChange.findMany({ where: { entityId: result.machine.id }, select: { accountId: true }, orderBy: { accountId: 'asc' } }))
-            .toEqual([request.custodianAccountId, recipientId].sort().map(accountId => ({ accountId })));
+            .toEqual([{ accountId: request.custodianAccountId }]);
     } finally {
         stop = true;
         for (const outcome of await outcomes) if (outcome.status === 'rejected') throw outcome.reason;
@@ -319,7 +320,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
         const viewer = publicationAccount === 'viewer'
             ? await db.account.create({ data: { ...(growAudience ? { id: `a-${randomUUID()}` } : {}),
                 publicKey: randomUUID(), encryptionMode: 'plain' } }) : undefined;
-        if (viewer && !growAudience) await db.machineAccountGrant.create({ data: { machineId: controller.machineId,
+        if (viewer && !growAudience) await db.machineGrant.create({ data: { principalKind: 'account', machineId: controller.machineId,
             accountId: viewer.id, createdByAccountId: account.id, accessLevel: 'view' } });
         const publicationAccountId = viewer?.id ?? account.id;
         const launch = defineProtocolObject({ image: defineProtocolString({ minLength: 1 }) }, { policy: 'closed' });
@@ -541,7 +542,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
                                 writer = inTx(async peer => {
                                     if (retireController) await peer.machine.update({ where: { id: controller.machineId },
                                         data: { installationId: randomUUID() } });
-                                    if (growAudience && viewer) await peer.machineAccountGrant.create({ data: {
+                                    if (growAudience && viewer) await peer.machineGrant.create({ data: { principalKind: 'account',
                                         machineId: controller.machineId, accountId: viewer.id,
                                         createdByAccountId: account.id, accessLevel: 'view' } });
                                     return markAccountChanged(peer, { accountId: publicationAccountId,
@@ -577,7 +578,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
                         const result = Reflect.apply(target, receiver, [async (tx: Tx) => {
                             const query = tx.$queryRawUnsafe.bind(tx);
                             const publicationQuery = new Proxy(query, { async apply(owner, receiver, values: Parameters<typeof query>) {
-                                if (!scheduled && values[0].includes('FROM "Account"') && values[0].endsWith('FOR NO KEY UPDATE')) {
+                                if (!scheduled && values[0].includes('FROM "Account"') && values[0].endsWith('FOR UPDATE')) {
                                     scheduled = true;
                                     let ready!: (pid: number) => void;
                                     const started = new Promise<number>(resolve => { ready = resolve; });
@@ -757,7 +758,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
             expect(await admitManagedAcquire(request)).toMatchObject({ replayed: true, machine: { id: admitted.machine.id } });
             expect(await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } }))
                 .toEqual({ seq: initialSeq + (viewer ? 1 : 2) });
-            if (viewer) expect(await db.account.findUniqueOrThrow({ where: { id: viewer.id }, select: { seq: true } })).toEqual({ seq: viewerSeq + 2 });
+            if (viewer) expect(await db.account.findUniqueOrThrow({ where: { id: viewer.id }, select: { seq: true } })).toEqual({ seq: viewerSeq + 1 });
             if (selectionKind === 'preset') {
                 await expect(admitManagedAcquire({ ...request, input: { ...request.input, requestId: randomUUID() } }))
                     .rejects.toMatchObject({ code: 'preset_limit_reached' });
@@ -848,8 +849,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('m
                     if (outcome.status === 'rejected') throw outcome.reason;
                     return outcome.value;
                 });
-                expect(responses.map(response => response.statusCode).sort()).toEqual([200, 400]);
-                const winningProposal = proposals[responses.findIndex(response => response.statusCode === 200)];
+                // A same-Account re-registration is allowed to rotate the
+                // installation identity after the first fill commits.
+                expect(responses.map(response => response.statusCode)).toEqual([200, 200]);
+                const winningProposal = proposals[1];
                 const retained = await db.machine.findUniqueOrThrow({ where: { id: machine.id } });
                 expect(retained.installationId).toBe(winningProposal.installationId);
                 expect(Buffer.from(retained.installationPublicKey!).toString('base64url')).toBe(winningProposal.installationPublicKey);

@@ -198,13 +198,13 @@ describe('signed-in Artifact links through authenticated HTTP', () => {
                 const refused = await app.inject({ method: 'POST', url: joinUrl, headers: headers(plainRecipient.id), payload: {} });
                 expect(refused.statusCode, refused.body).toBe(409);
                 expect(refused.json()).toMatchObject({ error: 'recipient_key_unavailable', reason: 'plain_account' });
-                expect(await db.artifactAccountGrant.count({ where: { artifactId: artifact.id, accountId: plainRecipient.id } })).toBe(0);
+                expect(await db.artifactGrant.count({ where: { principalKind: 'account', artifactId: artifact.id, accountId: plainRecipient.id } })).toBe(0);
                 expect((await app.inject({ method: 'POST', url: joinUrl, headers: headers(peer.id), payload: { keyEnvelope } })).statusCode).toBe(403);
             }
             const joined = await app.inject({ method: 'POST', url: joinUrl, headers: headers(recipient.id), payload: mode === 'e2ee' ? { keyEnvelope } : {} });
             expect(joined.statusCode, joined.body).toBe(200);
             expect(joined.json()).toEqual({ artifactId: artifact.id, ownerAccountId: owner.id, access: 'view' });
-            await db.artifactAccountGrant.update({ where: { artifactId_accountId: { artifactId: artifact.id, accountId: recipient.id } }, data: { accessLevel: 'edit' } });
+            await db.artifactGrant.update({ where: { principalKind: 'account', artifactId_accountId: { artifactId: artifact.id, accountId: recipient.id } }, data: { accessLevel: 'edit' } });
             const rejoined = await app.inject({ method: 'POST', url: joinUrl, headers: headers(recipient.id), payload: mode === 'e2ee' ? { keyEnvelope } : {} });
             expect(rejoined.json()).toMatchObject({ access: 'edit' });
             expect((await app.inject({ method: 'GET', url: `/v1/artifacts/${artifact.id}`, headers: headers(recipient.id) })).statusCode).toBe(200);

@@ -393,13 +393,13 @@ describe("sessionRoutes v2 sessions snapshot", () => {
         const sharedDisplayedRow = {
             ...pagedSessionRow("shared-displayed"),
             accountId: "owner",
-            shares: [{
+            grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null, 
                 id: "shared-displayed-grant",
-                sharedWithUserId: "u1",
+                accountId: "u1",
                 encryptedDataKey: null,
                 accessLevel: "view",
                 canApprovePermissions: false,
-            }],
+             }],
         };
         sessionFindMany
             .mockResolvedValueOnce([
@@ -540,13 +540,13 @@ describe("sessionRoutes v2 sessions snapshot", () => {
             ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
             agentState: "full-owner-agent-state",
             agentStateVersion: 7,
-            shares: [{
+            grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null, 
                 id: "shared-agent-state-grant",
-                sharedWithUserId: "recipient",
+                accountId: "recipient",
                 encryptedDataKey: null,
                 accessLevel: "view",
                 canApprovePermissions: false,
-            }],
+             }],
             currentStorageState: "hosted",
         } as any;
 
@@ -578,13 +578,13 @@ describe("sessionRoutes v2 sessions snapshot", () => {
             ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
             agentState: "full-owner-agent-state",
             agentStateVersion: 7,
-            shares: [{
+            grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null, 
                 id: "mixed-recipient-grant",
-                sharedWithUserId: "recipient",
+                accountId: "recipient",
                 encryptedDataKey: null,
                 accessLevel: "edit",
                 canApprovePermissions: true,
-            }],
+             }],
             currentStorageState: "hosted",
         } as any;
         const recipient = mapV2SessionListRow({ userId: "recipient", row });
@@ -609,8 +609,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
                 accountId: "owner",
                 metadata: STORED_SHARED_METADATA_V1,
                 ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1,
-                shares: [],
-                teamGrants: [{
+                grants: [{ id: 'team-grant', principalKind: 'team', accountId: null, teamGroupId: null, account: null, teamGroup: null, 
                     teamId: "team-1",
                     effectiveAt: new Date(1),
                     accessLevel: "view",
@@ -623,7 +622,8 @@ describe("sessionRoutes v2 sessions snapshot", () => {
                             sessionAccessStartsAt: null,
                         }],
                     },
-                }],
+                 }],
+                
             } as any,
         });
 
@@ -653,13 +653,13 @@ describe("sessionRoutes v2 sessions snapshot", () => {
                     ownerMetadata: null,
                     agentState: "legacy-owner-state",
                     agentStateVersion: 7,
-                    shares: [{
+                    grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null, 
                         id: "legacy-shared-grant",
-                        sharedWithUserId: "u1",
+                        accountId: "u1",
                         encryptedDataKey: null,
                         accessLevel: "view",
                         canApprovePermissions: false,
-                    }],
+                     }],
                     currentStorageState: "hosted",
                 },
                 pagedSessionRow("owned-current", {
@@ -1153,14 +1153,12 @@ describe("sessionRoutes v2 sessions snapshot", () => {
                     pendingUserActionRequestCount: 2,
                     dataKeyEnvelopes: [createSessionDataKeyEnvelopeFixture(Buffer.from([4, 5]))],
                     accountReadStates: [{ accountId: "u1", lastViewedSessionSeq: 1, unreadSince: null }],
-                    shares: [
-                        {
+                    grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null, 
                             id: "s2-direct-grant",
-                            sharedWithUserId: "u1",
+                            accountId: "u1",
                             accessLevel: "edit",
                             canApprovePermissions: true,
-                        },
-                    ],
+                         }],
                 },
                 {
                     ...pagedSessionRow("s1", {
@@ -1175,7 +1173,7 @@ describe("sessionRoutes v2 sessions snapshot", () => {
                 },
         ];
         txSessionShareFindMany.mockResolvedValue([{
-            sessionId: "s2", sharedWithUserId: "u1", accessLevel: "edit", canApprovePermissions: true,
+            sessionId: "s2", accountId: "u1", accessLevel: "edit", canApprovePermissions: true,
         }]);
         sessionFindMany.mockImplementation(async (query) =>
             rows.filter(row => matchesDbMockWhere(row, query.where))
@@ -1260,13 +1258,13 @@ describe("sessionRoutes v2 sessions snapshot", () => {
             materializationPublicationId: publicationId,
             materializedThroughSourceAt: BigInt(activityAt),
             publishedThroughServerSeq: 1,
-            shares: [{
+            grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null, 
                 id: `${id}-direct-grant`,
-                sharedWithUserId: "u1",
+                accountId: "u1",
                 encryptedDataKey: null,
                 accessLevel: "view",
                 canApprovePermissions: false,
-            }],
+             }],
         });
         const malformed = sharedSnapshotRow("s-malformed", 4_000, " ");
         const first = sharedSnapshotRow("s-first", 3_000, "publication-first");

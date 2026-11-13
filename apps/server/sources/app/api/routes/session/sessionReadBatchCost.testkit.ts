@@ -83,7 +83,7 @@ export function sessionReadBatchCostContract(provider: 'sqlite' | 'postgres') {
             await db.account.delete({ where: { id: owner.id } });
         }
     });
-    it('CR01 spans portable SQL chunks in one snapshot without losing pages or historical actors', async () => {
+    it('CR01 spans portable SQL chunks in one snapshot per access batch without losing pages or historical actors', async () => {
         const owner = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
         const ids = Array.from({ length: SESSION_ACCESS_SESSION_BATCH_SIZE + 1 }, () => crypto.randomUUID());
         // Seven historical authors per Session crosses the profile query's
@@ -155,7 +155,7 @@ export function sessionReadBatchCostContract(provider: 'sqlite' | 'postgres') {
                         expect(message.accountActor).toMatchObject({ accountId: byId.get(message.id)?.authorAccountId, profile: { avatarUrl: null } });
                     }
                 }
-                expect(transactions).toBe(1);
+                expect(transactions).toBe(Math.ceil(ids.length / SESSION_ACCESS_SESSION_BATCH_SIZE));
                 expect(profileBatches.reduce((sum, count) => sum + count, 0)).toBe(actors.length);
                 expect(profileBatches.every(count => count + 2 <= 999)).toBe(true); // SQLite's portable bind contract, including LIMIT/OFFSET.
                 console.info('CR01_CHUNK_COST', JSON.stringify({ provider, sessions: ids.length, transactions, profileBatches }));
@@ -209,7 +209,7 @@ export function sessionReadBatchCostContract(provider: 'sqlite' | 'postgres') {
                 metadataLayoutVersion: 1, metadata: JSON.stringify(SessionSharedMetadataV1Schema.parse({ v: 1 })),
                 ownerMetadata: JSON.stringify({ t: 'plain', v: SessionOwnerMetadataV1Schema.parse({ v: 1 }) }), encryptionMode: 'plain' } });
         const privateSession = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'e2ee' } });
-        const share = () => db.sessionShare.create({ data: { sessionId: shared.id, sharedByUserId: owner.id, sharedWithUserId: reader.id, accessLevel: 'view' } });
+        const share = () => db.sessionGrant.create({ data: { principalKind: 'account', sessionId: shared.id, createdByAccountId: owner.id, accountId: reader.id, accessLevel: 'view' } });
         try {
             await share();
             const sharedContent = { t: 'plain', v: { role: 'agent', content: [{ type: 'text', text: 'shared-content' }] } } satisfies Prisma.SessionMessageCreateManyInput['content'];
@@ -233,7 +233,7 @@ export function sessionReadBatchCostContract(provider: 'sqlite' | 'postgres') {
                     return results;
                 };
                 expect((await read())[1]?.messages).toMatchObject({ status: 200, body: { messages: [{ content: sharedContent }] } });
-                await db.sessionShare.deleteMany({ where: { sessionId: shared.id } });
+                await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: shared.id } });
                 expect((await read())[1]).toMatchObject({ detail: { status: 404 }, messages: { status: 404 } });
                 await share();
                 expect((await read())[1]).toMatchObject({ detail: { status: 200 }, turns: { status: 200 }, messages: { status: 200 } });
@@ -244,7 +244,7 @@ export function sessionReadBatchCostContract(provider: 'sqlite' | 'postgres') {
         }
         finally {
             await db.sessionMessage.deleteMany({ where: { sessionId: { in: [own.id, shared.id, privateSession.id] } } });
-            await db.sessionShare.deleteMany({ where: { sessionId: { in: [own.id, shared.id, privateSession.id] } } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: { in: [own.id, shared.id, privateSession.id] } } });
             await db.session.deleteMany({ where: { accountId: { in: [owner.id, reader.id] } } });
             await db.account.deleteMany({ where: { id: { in: [owner.id, reader.id] } } });
         }

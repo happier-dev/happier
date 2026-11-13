@@ -1,3 +1,4 @@
+import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
 import { randomUUID } from 'node:crypto';
 import { PrismaClient, type Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -432,8 +433,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
             header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Private' })),
             body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ private: 'must-not-open' })),
             dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) } });
-        await db.artifactTeamGrant.create({ data: { artifactId: artifact.id, teamId: team.id,
-            accessLevel: 'admin', createdByAccountId: owner.id } });
+        await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: owner.id }), artifactId: artifact.id } });
         const environmentIds = Array.from({ length: 128 }, () => randomUUID());
         await db.deploymentEnvironment.createMany({ data: environmentIds.map((id, index) => ({ id,
             projectSourceId: additionalSourceIds[index - 64] ?? source.source.id, createdByAccountId: owner.id, controllerMachineId: machine.id,
@@ -885,8 +885,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
             ...publishedMachine, installationId: randomUUID() } });
         const team = await db.team.create({ data: { name: 'Native links' } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
-        await db.machineTeamGrant.createMany({ data: [machine, controller].map(placement => ({ machineId: placement.id,
-            teamId: team.id, accessLevel: 'view', createdByAccountId: custodian.id })) });
+        await db.machineGrant.createMany({ data: [machine, controller].map(placement => ({ ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view', createdByAccountId: custodian.id }), machineId: placement.id })) });
         async function content(kind: string) {
             const artifact = await db.artifact.create({ data: { id: randomUUID(), accountId: owner.id,
                 kind: `v1:other:${kind}`, headerVersion: 1, bodyVersion: 1,
@@ -903,8 +902,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
                 createdByAccountId: owner.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
                 controllerMachineId: controller.id, ...await content('deployment-environment.v1') } });
             const reference = await content('deployment-target-link.v1');
-            if (scope.kind === 'team') for (const ref of [environment, reference]) await db.artifactTeamGrant.create({ data: {
-                artifactId: ref.contentArtifactId, teamId: team.id, accessLevel: 'admin', createdByAccountId: owner.id } });
+            if (scope.kind === 'team') for (const ref of [environment, reference]) await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: owner.id }), artifactId: ref.contentArtifactId } });
             const input = DeploymentTargetLinkInputV1Schema.parse({ serverId, environmentId: environment.id, expectedRevision: 1,
                 role: 'data', source: { kind: 'plugin', contribution: { pluginId: 'example.deploy', localId: 'database' } },
                 targetId: 'example.deploy/database', targetKind: 'database', machines: [], machineId: machine.id,
@@ -915,7 +913,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('exact Machine 
                     .toEqual({ ok: false, error: 'deployment_access_denied' });
                 expect(await db.deploymentTargetLink.count({ where: { environmentId: environment.id } })).toBe(0);
                 expect((await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: environment.id } })).revision).toBe(1);
-                await db.machineTeamGrant.updateMany({ where: { teamId: team.id }, data: { accessLevel: 'admin' } });
+                await db.machineGrant.updateMany({ where: { principalKind: 'team', teamId: team.id }, data: { accessLevel: 'admin' } });
             }
             const linked = await inTx(tx => linkDeploymentTargetInTx(tx, owner.id, input));
             expect(linked, 'Team-granted requester Manage and exact installation must admit native storage').toMatchObject({ ok: true });

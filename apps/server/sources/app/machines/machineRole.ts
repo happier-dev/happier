@@ -1,45 +1,36 @@
 import type { Prisma } from '@prisma/client';
 import type { MachineAccessRoleV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
-import { isTeamPrincipalRoleV1 } from '@happier-dev/protocol/teams';
+import { projectResourceGrantRows, resourceGrantRelationsSelect, iterateResourceGrantPrincipalAccountIdsFromFacts } from '@/app/teams/resourceGrantAccess';
 import { isEffectiveTeamMembership } from '@/app/teams/memberships/effectiveMembership';
 import { isEffectiveTeamGroupMembership } from '@/app/teams/groups/effectiveGroupMembership';
 import { resolveAccountDisplayLabelV1 } from '@/app/account/profile/accountDisplayProfile';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import type { Tx } from '@/storage/inTx';
 import { inheritManagedControllerRole } from './managed/managedRole';
-import type { MachineAdmissionFacts } from './machineAccess';
+import type { MachineAdmissionFacts as MachineAdmissionStorageFacts } from './machineAccess';
+type MachineAdmissionFacts = MachineAdmissionStorageFacts & ReturnType<typeof projectResourceGrantRows<MachineAdmissionStorageFacts['grants'][number]>>;
+
+/** Machine identity extends the shared stored-grant projection. */
+export function machineGrantRelationsSelect(actorAccountId?: string) {
+    const { grants } = resourceGrantRelationsSelect(actorAccountId);
+    return { grants: { ...grants, select: { ...grants.select,
+        teamGroup: { select: { ...grants.select.teamGroup.select, teamId: true } },
+    } } } as const;
+}
 
 // Bulk role maps need current permission facts, not Machine content or key material.
 export const MACHINE_PERMISSION_FACTS_SELECT = {
     id: true, kind: true, accountId: true,
     managedResource: { select: { custodianAccountId: true, controllerMachineId: true } },
     account: { select: { status: true } },
-    accountGrants: { select: { accountId: true, accessLevel: true, account: { select: { status: true } } } },
-    teamGrants: { select: { teamId: true, accessLevel: true, team: { select: { archivedAt: true,
-        memberships: { select: { accountId: true, status: true, role: true, account: { select: { status: true } } } },
-    } } } },
-    groupGrants: { select: { teamGroupId: true, accessLevel: true, teamGroup: { select: {
-        teamId: true, archivedAt: true, team: { select: { archivedAt: true } },
-        memberships: { select: { teamMembership: { select: { accountId: true, status: true, account: { select: { status: true } } } } } },
-    } } } },
+    ...machineGrantRelationsSelect(),
 } as const;
-type MachinePermissionFacts = Prisma.MachineGetPayload<{ select: typeof MACHINE_PERMISSION_FACTS_SELECT }>;
+type MachinePermissionRow = Prisma.MachineGetPayload<{ select: typeof MACHINE_PERMISSION_FACTS_SELECT }>;
+type MachinePermissionFacts = MachinePermissionRow & ReturnType<typeof projectResourceGrantRows<MachinePermissionRow['grants'][number]>>;
 
 export function buildMachineActorPermissionFactsSelect(actorAccountId: string) {
-    const { accountGrants, teamGrants, groupGrants } = MACHINE_PERMISSION_FACTS_SELECT;
-    return {
-        ...MACHINE_PERMISSION_FACTS_SELECT,
-        accountGrants: { ...accountGrants, where: { accountId: actorAccountId } },
-        teamGrants: { select: { ...teamGrants.select, team: { select: {
-            ...teamGrants.select.team.select,
-            memberships: { ...teamGrants.select.team.select.memberships, where: { accountId: actorAccountId } },
-        } } } },
-        groupGrants: { select: { ...groupGrants.select, teamGroup: { select: {
-            ...groupGrants.select.teamGroup.select,
-            memberships: { ...groupGrants.select.teamGroup.select.memberships, where: { teamMembership: { accountId: actorAccountId } } },
-        } } } },
-    } as const;
+    return { ...MACHINE_PERMISSION_FACTS_SELECT, ...machineGrantRelationsSelect(actorAccountId) } as const;
 }
 
 export type Contribution = Readonly<{ principal: PrincipalRefV1; level: 'view' | 'admin'; displayName: string | null; accountIds: readonly string[] }>;
@@ -47,16 +38,24 @@ export type Contribution = Readonly<{ principal: PrincipalRefV1; level: 'view' |
 export function contributions(row: MachinePermissionFacts | MachineAdmissionFacts): Contribution[] {
     return [
         ...row.accountGrants.map(grant => ({ principal: { kind: 'account' as const, accountId: grant.accountId }, level: grant.accessLevel,
-            displayName: resolveAccountDisplayLabelV1('name' in grant.account ? grant.account : {}), accountIds: grant.account.status === 'active' ? [grant.accountId] : [] })),
+            displayName: resolveAccountDisplayLabelV1('name' in grant.account ? grant.account : {}),
+            accountIds: [...iterateResourceGrantPrincipalAccountIdsFromFacts({ kind: 'account', accountId: grant.accountId,
+                active: grant.account.status === 'active' })] })),
         ...row.teamGrants.map(grant => ({ principal: { kind: 'team' as const, teamId: grant.teamId }, level: grant.accessLevel,
-            displayName: 'name' in grant.team ? grant.team.name : null, accountIds: grant.team.memberships.filter(member => isTeamPrincipalRoleV1(member.role) && isEffectiveTeamMembership({
-                accountStatus: member.account.status, membershipStatus: member.status, teamArchivedAt: grant.team.archivedAt,
-            })).map(member => member.accountId) })),
+            displayName: 'name' in grant.team ? grant.team.name : null,
+            accountIds: [...iterateResourceGrantPrincipalAccountIdsFromFacts({ kind: 'team', memberships: grant.team.memberships.map(member => ({
+                accountId: member.accountId, role: member.role, effective: isEffectiveTeamMembership({
+                    accountStatus: member.account.status, membershipStatus: member.status, teamArchivedAt: grant.team.archivedAt,
+                }),
+            })) })] })),
         ...row.groupGrants.map(grant => ({ principal: { kind: 'group' as const, teamId: grant.teamGroup.teamId, groupId: grant.teamGroupId }, level: grant.accessLevel,
-            displayName: 'name' in grant.teamGroup ? grant.teamGroup.name : null, accountIds: grant.teamGroup.memberships.filter(({ teamMembership: member }) => isEffectiveTeamGroupMembership({
-                accountStatus: member.account.status, membershipStatus: member.status,
-                teamArchivedAt: grant.teamGroup.team.archivedAt, groupArchivedAt: grant.teamGroup.archivedAt,
-            })).map(({ teamMembership: member }) => member.accountId) })),
+            displayName: 'name' in grant.teamGroup ? grant.teamGroup.name : null,
+            accountIds: [...iterateResourceGrantPrincipalAccountIdsFromFacts({ kind: 'group', memberships: grant.teamGroup.memberships.map(({ teamMembership: member }) => ({
+                accountId: member.accountId, effective: isEffectiveTeamGroupMembership({
+                    accountStatus: member.account.status, membershipStatus: member.status,
+                    teamArchivedAt: grant.teamGroup.team.archivedAt, groupArchivedAt: grant.teamGroup.archivedAt,
+                }),
+            })) })] })),
     ];
 }
 function directRole(row: MachinePermissionFacts, actorAccountId: string, sources?: readonly Contribution[]): MachineAccessRoleV1 | null {
@@ -84,7 +83,7 @@ export async function readMachineRoleGraphInTx(tx: Tx, machines: readonly Machin
         for (const chunk of portableQueryChunks({ values: ids, bindingsPerValue: 1, fixedBindings: accountIds.length === 1 ? 12 : 9 })) {
             const rows = await tx.machine.findMany({ where: { id: { in: [...chunk] } }, select });
             for (const row of rows) {
-                graph.set(row.id, row);
+                graph.set(row.id, { ...row, ...projectResourceGrantRows(row.grants) });
                 if (row.managedResource?.controllerMachineId) pending.push(row.managedResource.controllerMachineId);
             }
         }

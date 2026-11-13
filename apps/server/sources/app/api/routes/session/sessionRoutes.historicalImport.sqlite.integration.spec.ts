@@ -39,7 +39,7 @@ describe("session historical transcript import route (SQLite integration)", () =
             () => db.sessionPendingMessage.deleteMany(),
             () => db.sessionMessage.deleteMany(),
             () => db.sessionSystemRecord.deleteMany(),
-            () => db.sessionShare.deleteMany(),
+            () => db.sessionGrant.deleteMany({ where: { principalKind: 'account' } }),
             () => db.accountChange.deleteMany(),
             () => db.session.deleteMany(),
             () => db.account.deleteMany(),
@@ -334,11 +334,11 @@ describe("session historical transcript import route (SQLite integration)", () =
             },
             select: { id: true },
         });
-        await db.sessionShare.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'account',
                 sessionId: session.id,
-                sharedByUserId: owner.id,
-                sharedWithUserId: collaborator.id,
+                createdByAccountId: owner.id,
+                accountId: collaborator.id,
                 accessLevel: "edit",
             },
         });

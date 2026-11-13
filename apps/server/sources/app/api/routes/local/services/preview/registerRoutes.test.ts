@@ -165,7 +165,7 @@ describe('local service preview routes', () => {
             metadata: encodePlainMachineStoredContent(MachinePublishedMetadataV1Schema.parse({ host: 'machine', platform: 'linux',
                 happyCliVersion: '0.3', homeDir: '/home/user', happyHomeDir: '/home/user/.happier' })),
             dataEncryptionKey: Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'), account,
-            accountGrants: [], teamGrants: [], groupGrants: [] });
+            grants: [],   });
         const resource: LocalServicePreviewResourceV1 = { ...preview, sessionId: undefined,
             owner: { kind: 'user', id: 'user_1' }, serviceTarget: { kind: 'managed_service', machineId: 'machine_1',
                 managedServiceId: 'instance_1', cwd: '/workspace/app',
@@ -255,8 +255,8 @@ describe('local service preview routes', () => {
             metadata: encodePlainMachineStoredContent(MachinePublishedMetadataV1Schema.parse({ host: 'machine', platform: 'linux',
                 happyCliVersion: '0.3', homeDir: '/home/user', happyHomeDir: '/home/user/.happier' })),
             dataEncryptionKey: Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'), account: account('user_1'),
-            accountGrants: ['starter_1', 'viewer_1'].map(accountId => ({ accountId, accessLevel: 'view', account: account(accountId) })),
-            teamGrants: [], groupGrants: [] };
+            grants: (['starter_1', 'viewer_1'].map(accountId => ({ accountId, accessLevel: 'view', account: account(accountId) }))).map(grant => ({ ...grant, principalKind: 'account' as const, teamId: null, teamGroupId: null, team: null, teamGroup: null })),
+              };
         machineFindUnique.mockResolvedValue(facts);
         machineFindFirst.mockResolvedValue({ id: 'machine_1', revokedAt: null, replacedByMachineId: null,
             operationProtocolCapabilitiesRevision: 1, operationProtocolCapabilities: {
@@ -404,7 +404,7 @@ describe('local service preview routes', () => {
             }
             for (const removedPrincipal of ['viewer_1', 'starter_1']) {
                 machineFindUnique.mockResolvedValue({ ...facts,
-                    accountGrants: facts.accountGrants.filter(grant => grant.accountId !== removedPrincipal) });
+                    grants: (facts.grants.filter(grant => grant.accountId !== removedPrincipal)).map(grant => ({ ...grant, principalKind: 'account' as const, teamId: null, teamGroupId: null, team: null, teamGroup: null })) });
                 const refused = createReplyStub();
                 await getRouteHandler(app, 'POST', '/v1/local-services/preview/:previewId/access')(accessRequest, refused);
                 expect(refused.statusCode).toBe(403);
@@ -501,7 +501,7 @@ describe('local service preview routes', () => {
                     serviceTarget: target, mode: 'public', ttlMs: 60_000, confirmation: { acknowledged: true } } };
                 revokeAtAdmissionReply = () => {
                     machineFindUnique.mockResolvedValue({ ...facts,
-                        accountGrants: facts.accountGrants.filter(grant => grant.accountId !== 'viewer_1') });
+                        grants: (facts.grants.filter(grant => grant.accountId !== 'viewer_1')).map(grant => ({ ...grant, principalKind: 'account' as const, teamId: null, teamGroupId: null, team: null, teamGroup: null })) });
                     eventRouter.disconnectMachineAndSessionSockets({ accountId: 'viewer_1', machineId: resource.machineId, sessionBindings: [] });
                 };
                 try {
@@ -529,7 +529,7 @@ describe('local service preview routes', () => {
                 // rather than at its preceding Machine-availability query.
                 if (select?.operationProtocolCapabilities && !revokedDuringEndpointRead) {
                     revokedDuringEndpointRead = true;
-                    machineFindUnique.mockResolvedValue({ ...facts, accountGrants: facts.accountGrants.filter(grant => grant.accountId !== 'viewer_1') });
+                    machineFindUnique.mockResolvedValue({ ...facts, grants: (facts.grants.filter(grant => grant.accountId !== 'viewer_1')).map(grant => ({ ...grant, principalKind: 'account' as const, teamId: null, teamGroupId: null, team: null, teamGroup: null })) });
                     eventRouter.disconnectMachineAndSessionSockets({ accountId: 'viewer_1', machineId: resource.machineId, sessionBindings: [] });
                 }
                 return { id: resource.machineId, revokedAt: null, replacedByMachineId: null };
@@ -551,7 +551,7 @@ describe('local service preview routes', () => {
                     } });
                 const revoke = () => {
                     machineFindUnique.mockResolvedValue({ ...facts,
-                        accountGrants: facts.accountGrants.filter(grant => grant.accountId !== 'viewer_1') });
+                        grants: (facts.grants.filter(grant => grant.accountId !== 'viewer_1')).map(grant => ({ ...grant, principalKind: 'account' as const, teamId: null, teamGroupId: null, team: null, teamGroup: null })) });
                     eventRouter.disconnectMachineAndSessionSockets({ accountId: 'viewer_1', machineId: resource.machineId, sessionBindings: [] });
                 };
                 if (mode === 'native') {

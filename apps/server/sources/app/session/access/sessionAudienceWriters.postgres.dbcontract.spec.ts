@@ -88,10 +88,10 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Session audienc
                     waiting = row.waiting;
                 }
                 expect(waiting).toBe(true);
-                expect(await tx.sessionShare.count({ where: { sessionId: session.id, sharedWithUserId: reader.id } })).toBe(0);
+                expect(await tx.sessionGrant.count({ where: { principalKind: 'account', sessionId: session.id, accountId: reader.id } })).toBe(0);
             });
             expect(await writer).toMatchObject({ ok: true, changed: true });
-            expect(await db.sessionShare.count({ where: { sessionId: session.id, sharedWithUserId: reader.id } })).toBe(1);
+            expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId: session.id, accountId: reader.id } })).toBe(1);
         } finally {
             await writer;
             await db.session.delete({ where: { id: session.id } });
@@ -110,8 +110,8 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Session audienc
         const mayCommit = new Promise<void>(resolve => { release = resolve; });
         const sourceHeld = new Promise<void>(resolve => { holderReady = resolve; });
         try {
-            await db.sessionShare.create({ data: { sessionId: source.id, sharedByUserId: sourceOwner.id,
-                sharedWithUserId: destinationOwner.id, accessLevel: "edit" } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: source.id, createdByAccountId: sourceOwner.id,
+                accountId: destinationOwner.id, accessLevel: "edit" } });
             let holderPid = -1;
             const holder = inTx(async tx => {
                 await acquireAccountSessionOwnerMetadataFenceInTx(tx, sourceOwner.id, "exclusive");
@@ -162,7 +162,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Session audienc
         const childHeld = new Promise<void>(resolve => { holderReady = resolve; });
         const authentication = { env: process.env, authority: "present_user", authenticationEvidence: [] } as const;
         try {
-            await db.sessionShare.create({ data: { sessionId: child.id, sharedByUserId: childOwner.id, sharedWithUserId: leadOwner.id, accessLevel: "edit" } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: child.id, createdByAccountId: childOwner.id, accountId: leadOwner.id, accessLevel: "edit" } });
             expect(await setSessionManager({ accountId: leadOwner.id, sessionId: child.id, managerSessionId: lead.id,
                 expectedManagerSessionId: null, authentication })).toMatchObject({ ok: true });
             await db.userRelationship.create({ data: { fromUserId: leadOwner.id, toUserId: reader.id, status: "friend" } });
@@ -226,8 +226,8 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Session audienc
         const mayCommit = new Promise<void>(resolve => { release = resolve; });
         const ownerHeld = new Promise<void>(resolve => { holderReady = resolve; });
         try {
-            await db.sessionShare.create({ data: {
-                sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: reader.id, accessLevel: "view",
+            await db.sessionGrant.create({ data: { principalKind: 'account',
+                sessionId: session.id, createdByAccountId: owner.id, accountId: reader.id, accessLevel: "view",
             } });
             let holderPid = -1;
             const holder = inTx(async tx => {
@@ -292,8 +292,8 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Session audienc
             const mayCommit = new Promise<void>(resolve => { release = resolve; });
             const mutationComplete = new Promise<void>(resolve => { completed = resolve; });
             try {
-                await db.sessionShare.create({ data: {
-                    sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: actor.id, accessLevel: "admin",
+                await db.sessionGrant.create({ data: { principalKind: 'account',
+                    sessionId: session.id, createdByAccountId: owner.id, accountId: actor.id, accessLevel: "admin",
                 } });
                 await db.userRelationship.create({ data: { fromUserId: actor.id, toUserId: recipient.id, status: "friend" } });
                 await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: "owner" } });
@@ -306,9 +306,9 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Session audienc
                 } });
                 await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: member.id } });
                 if (transition === "team_reactivation") {
-                    await db.sessionTeamGrant.create({ data: { sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date() } });
+                    await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date() } });
                 } else if (transition === "group_restore") {
-                    await db.sessionGroupGrant.create({ data: { sessionId: session.id, teamGroupId: group.id, accessLevel: "view", effectiveAt: new Date() } });
+                    await db.sessionGrant.create({ data: { principalKind: 'group', sessionId: session.id, teamGroupId: group.id, accessLevel: "view", effectiveAt: new Date() } });
                 }
                 expect(await inTx(tx => resolveCurrentSessionRecipientAccountIdsInTx(tx, { sessionId: session.id })))
                     .not.toContain(recipient.id);

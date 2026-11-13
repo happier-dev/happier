@@ -107,10 +107,10 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
                         accountId: owner.id, tag: `batch-${count}`, encryptionMode: "plain", metadata: "{}",
                         currentStorageState: "hosted", primaryTeamId: team.id,
                     } });
-                    await db.sessionShare.createMany({ data: recipients.slice(0, count).map((account) => ({
-                        sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: account.id,
+                    await db.sessionGrant.createMany({ data: (recipients.slice(0, count).map((account) => ({
+                        sessionId: session.id, createdByAccountId: owner.id, accountId: account.id,
                         accessLevel: "edit" as const,
-                    })) });
+                    }))).map(data => ({ ...data, principalKind: 'account' })) });
                     const before = observer.count();
                     const response = await app.inject({ method: "POST", url: "/v2/sessions/access-grants/list", headers: headers(owner.id), payload: { sessionId: session.id } });
                     measured.push({ grants: count, reads: observer.count() - before });
@@ -152,8 +152,8 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
                         accountId: owner.id, tag: `collective-batch-${count}`, encryptionMode: "plain", metadata: "{}",
                         currentStorageState: "hosted", primaryTeamId: team.id,
                     } });
-                    await db.sessionTeamGrant.createMany({ data: teams.slice(0, count).map((parent) => ({ sessionId: session.id, teamId: parent.id, accessLevel: "edit" as const, requiredByTeamPolicy: true, effectiveAt: new Date() })) });
-                    await db.sessionGroupGrant.createMany({ data: groups.slice(0, count).map((group) => ({ sessionId: session.id, teamGroupId: group.id, accessLevel: "edit" as const, effectiveAt: new Date() })) });
+                    await db.sessionGrant.createMany({ data: (teams.slice(0, count).map((parent) => ({ sessionId: session.id, teamId: parent.id, accessLevel: "edit" as const, requiredByTeamPolicy: true, effectiveAt: new Date() }))).map(data => ({ ...data, principalKind: 'team' })) });
+                    await db.sessionGrant.createMany({ data: (groups.slice(0, count).map((group) => ({ sessionId: session.id, teamGroupId: group.id, accessLevel: "edit" as const, effectiveAt: new Date() }))).map(data => ({ ...data, principalKind: 'group' })) });
                     const before = observer.count();
                     const response = await app.inject({ method: "POST", url: "/v2/sessions/access-grants/list", headers: headers(owner.id), payload: { sessionId: session.id } });
                     measured.push({ grants: count, reads: observer.count() - before });
@@ -173,6 +173,50 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
         console.info("Team/Group grant inspection database reads", measured);
         expect(measured[0]!.reads).toBeGreaterThan(0);
         expect(measured, JSON.stringify(measured)).toEqual(measured.map(({ grants }) => ({ grants, reads: measured[0]!.reads })));
+    });
+
+    it("keeps guest Account and explicit Group grants usable through HTTP create/change/revoke while whole-Team access stays excluded", async () => {
+        const { owner, recipient: guest, team } = await fixture();
+        const membership = await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId: guest.id } },
+            data: { role: 'guest', sessionAccessStartsAt: null } });
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Guests', nameKey: 'guests' } });
+        await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id,
+            teamMembershipId: membership.id, sessionAccessStartsAt: null } });
+        await withAuthenticatedTestApp(sessionRoutes, async app => {
+            const created = await app.inject({ method: 'POST', url: '/v1/sessions', headers: headers(owner.id), payload: {
+                ...body('guest-three-principals'), initialAccess: { grants: [{ subject: { kind: 'team', teamId: team.id },
+                    accessLevel: 'view', canApprovePermissions: false }] },
+            } });
+            expect(created.statusCode, created.body).toBe(200);
+            const sessionId = created.json().session.id;
+            const detail = () => app.inject({ method: 'GET', url: `/v2/sessions/${sessionId}?accessProjectionVersion=1`, headers: headers(guest.id) });
+            expect((await detail()).statusCode).toBe(404);
+            for (const subject of [{ kind: 'account', accountId: guest.id }, { kind: 'group', teamId: team.id, groupId: group.id }]) {
+                for (const [accessLevel, inputAllowed] of [['view', false], ['edit', true]] as const) {
+                    const changed = await app.inject({ method: 'POST', url: '/v2/sessions/access-grants/set', headers: headers(owner.id),
+                        payload: { sessionId, subject, accessLevel, canApprovePermissions: false } });
+                    expect(changed.statusCode, changed.body).toBe(200);
+                    const response = await detail();
+                    expect(response.statusCode, response.body).toBe(200);
+                    const record = SessionCurrentProjectionRecordV1Schema.parse(V2SessionByIdResponseSchema.parse(response.json()).session);
+                    expect(record.effectiveAccess).toMatchObject({ level: accessLevel,
+                        capabilities: { readTranscript: true, submitAgentInput: inputAllowed } });
+                }
+                const removed = await app.inject({ method: 'POST', url: '/v2/sessions/access-grants/remove', headers: headers(owner.id),
+                    payload: { sessionId, subject } });
+                expect(removed.statusCode, removed.body).toBe(200);
+                expect((await detail()).statusCode).toBe(404);
+            }
+            const teamChanged = await app.inject({ method: 'POST', url: '/v2/sessions/access-grants/set', headers: headers(owner.id),
+                payload: { sessionId, subject: { kind: 'team', teamId: team.id }, accessLevel: 'edit', canApprovePermissions: false } });
+            expect(teamChanged.statusCode, teamChanged.body).toBe(200);
+            expect((await detail()).statusCode).toBe(404);
+            const teamRemoved = await app.inject({ method: 'POST', url: '/v2/sessions/access-grants/remove', headers: headers(owner.id),
+                payload: { sessionId, subject: { kind: 'team', teamId: team.id } } });
+            expect(teamRemoved.statusCode, teamRemoved.body).toBe(200);
+            expect((await detail()).statusCode).toBe(404);
+            expect(await db.sessionDataKeyEnvelope.count({ where: { sessionId } })).toBe(0);
+        });
     });
 
     it("serves serialized owner detail accepted by the current CLI reader schemas", async () => {
@@ -232,8 +276,8 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
         const session = await db.session.create({ data: {
             accountId: owner.id, tag: "recipient-access", encryptionMode: "plain", metadata: "{}", currentStorageState: "hosted",
         } });
-        await db.sessionShare.create({ data: {
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: recipient.id, accessLevel: "edit",
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: session.id, createdByAccountId: owner.id, accountId: recipient.id, accessLevel: "edit",
         } });
         await withAuthenticatedTestApp(sessionRoutes, async (app) => {
             const inspect = async () => {
@@ -247,11 +291,11 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
             expect(await inspect()).toMatchObject({ visibility: "complete", recipientAccess: {
                 accountId: recipient.id, effectiveAccess: { level: "edit", capabilities: { readTranscript: true, submitAgentInput: true } },
             } });
-            await db.sessionShare.updateMany({ where: { sessionId: session.id }, data: { accessLevel: "view" } });
+            await db.sessionGrant.updateMany({ where: { principalKind: 'account', sessionId: session.id }, data: { accessLevel: "view" } });
             expect(await inspect()).toMatchObject({ recipientAccess: {
                 accountId: recipient.id, effectiveAccess: { level: "view", capabilities: { readTranscript: true, submitAgentInput: false } },
             } });
-            await db.sessionShare.deleteMany({ where: { sessionId: session.id } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session.id } });
             expect(await inspect()).toMatchObject({ recipientAccess: { accountId: recipient.id, effectiveAccess: null } });
         });
     });
@@ -261,8 +305,8 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
         const session = await db.session.create({ data: {
             accountId: owner.id, tag: "recipient-access-private", encryptionMode: "plain", metadata: "{}", currentStorageState: "hosted",
         } });
-        await db.sessionShare.create({ data: {
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: recipient.id, accessLevel: "edit",
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: session.id, createdByAccountId: owner.id, accountId: recipient.id, accessLevel: "edit",
         } });
         await withAuthenticatedTestApp(sessionRoutes, async (app) => {
             for (const recipientAccountId of [recipient.id, owner.id, "missing-account"]) {
@@ -281,7 +325,7 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
         const session = await db.session.create({ data: {
             accountId: owner.id, tag: "recipient-access-team", encryptionMode: "plain", metadata: "{}", currentStorageState: "hosted",
         } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id, teamId: team.id, accessLevel: "edit", effectiveAt: new Date(),
         } });
         await withAuthenticatedTestApp(sessionRoutes, async (app) => {
@@ -307,8 +351,8 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
             } finally {
                 vi.stubEnv("HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED", "1");
             }
-            await db.sessionShare.create({ data: {
-                sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: recipient.id, accessLevel: "view",
+            await db.sessionGrant.create({ data: { principalKind: 'account',
+                sessionId: session.id, createdByAccountId: owner.id, accountId: recipient.id, accessLevel: "view",
             } });
             expect(await inspect()).toMatchObject({ recipientAccess: {
                 accountId: recipient.id, effectiveAccess: { level: "view", capabilities: { submitAgentInput: false } },
@@ -351,54 +395,54 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
                 currentStorageState: "hosted",
             },
         });
-        await db.sessionShare.createMany({
+        await db.sessionGrant.createMany({
             data: [
-                {
+                { principalKind: 'account',
                     sessionId: session.id,
-                    sharedByUserId: owner.id,
-                    sharedWithUserId: manager.id,
+                    createdByAccountId: owner.id,
+                    accountId: manager.id,
                     accessLevel: "admin",
                     canApprovePermissions: false,
                 },
-                {
+                { principalKind: 'account',
                     sessionId: session.id,
-                    sharedByUserId: owner.id,
-                    sharedWithUserId: recipient.id,
+                    createdByAccountId: owner.id,
+                    accountId: recipient.id,
                     accessLevel: "admin",
                     canApprovePermissions: true,
                 },
-                {
+                { principalKind: 'account',
                     sessionId: session.id,
-                    sharedByUserId: owner.id,
-                    sharedWithUserId: editableRecipient.id,
+                    createdByAccountId: owner.id,
+                    accountId: editableRecipient.id,
                     accessLevel: "edit",
                     canApprovePermissions: true,
                 },
-                {
+                { principalKind: 'account',
                     sessionId: session.id,
-                    sharedByUserId: owner.id,
-                    sharedWithUserId: viewer.id,
+                    createdByAccountId: owner.id,
+                    accountId: viewer.id,
                     accessLevel: "view",
                     canApprovePermissions: false,
                 },
-                {
+                { principalKind: 'account',
                     sessionId: session.id,
-                    sharedByUserId: owner.id,
-                    sharedWithUserId: editor.id,
+                    createdByAccountId: owner.id,
+                    accountId: editor.id,
                     accessLevel: "edit",
                     canApprovePermissions: false,
                 },
-                {
+                { principalKind: 'account',
                     sessionId: session.id,
-                    sharedByUserId: owner.id,
-                    sharedWithUserId: administrator.id,
+                    createdByAccountId: owner.id,
+                    accountId: administrator.id,
                     accessLevel: "admin",
                     canApprovePermissions: false,
                 },
             ],
         });
-        await db.sessionTeamGrant.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'team',
                 sessionId: session.id,
                 teamId: team.id,
                 accessLevel: "admin",
@@ -445,11 +489,11 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
                 reason: "session_access_self_grant_invalid",
             });
 
-            await db.sessionShare.delete({
-                where: {
-                    sessionId_sharedWithUserId: {
+            await db.sessionGrant.delete({
+                where: { principalKind: 'account',
+                    sessionId_accountId: {
                         sessionId: session.id,
-                        sharedWithUserId: manager.id,
+                        accountId: manager.id,
                     },
                 },
             });
@@ -498,13 +542,13 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
             metadata: "{}",
             currentStorageState: "hosted",
         } });
-        await db.sessionShare.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'account',
             sessionId: session.id,
-            sharedByUserId: owner.id,
-            sharedWithUserId: recipient.id,
+            createdByAccountId: owner.id,
+            accountId: recipient.id,
             accessLevel: "edit",
         } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id,
             teamId: team.id,
             accessLevel: "admin",
@@ -571,7 +615,7 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
             metadata: "{}",
             currentStorageState: "hosted",
         } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id,
             teamId: team.id,
             accessLevel: "admin",
@@ -676,9 +720,9 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
             } });
             expect(created.statusCode, created.body).toBe(200);
             const session = await db.session.findUniqueOrThrow({ where: { accountId_tag: { accountId: owner.id, tag: "atomic-grants" } } });
-            expect(await db.sessionShare.findUnique({ where: { sessionId_sharedWithUserId: { sessionId: session.id, sharedWithUserId: recipient.id } }, select: { accessLevel: true } }))
+            expect(await db.sessionGrant.findUnique({ where: { principalKind: 'account', sessionId_accountId: { sessionId: session.id, accountId: recipient.id } }, select: { accessLevel: true } }))
                 .toEqual({ accessLevel: "view" });
-            expect(await db.sessionTeamGrant.findUnique({ where: { sessionId_teamId: { sessionId: session.id, teamId: team.id } }, select: { accessLevel: true } }))
+            expect(await db.sessionGrant.findUnique({ where: { principalKind: 'team', sessionId_teamId: { sessionId: session.id, teamId: team.id } }, select: { accessLevel: true } }))
                 .toEqual({ accessLevel: "edit" });
             const recipientView = await app.inject({ method: "POST", url: "/v2/sessions/access-grants/list", headers: headers(recipient.id), payload: { sessionId: session.id } });
             expect(recipientView.statusCode, recipientView.body).toBe(200);
@@ -765,8 +809,8 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
             const session = await db.session.findUniqueOrThrow({
                 where: { accountId_tag: { accountId: owner.id, tag: "atomic-e2ee-recipient" } },
             });
-            expect(await db.sessionShare.count({
-                where: { sessionId: session.id, sharedWithUserId: recipient.id },
+            expect(await db.sessionGrant.count({
+                where: { principalKind: 'account', sessionId: session.id, accountId: recipient.id },
             })).toBe(1);
             const storedEnvelope = await db.sessionDataKeyEnvelope.findUniqueOrThrow({
                 where: {
@@ -879,7 +923,7 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
             const created = await app.inject({ method: "POST", url: "/v1/sessions", headers: headers(owner.id), payload: body("team-by-id") });
             expect(created.statusCode, created.body).toBe(200);
             const session = await db.session.findUniqueOrThrow({ where: { accountId_tag: { accountId: owner.id, tag: "team-by-id" } }, select: { id: true } });
-            await db.sessionTeamGrant.create({ data: {
+            await db.sessionGrant.create({ data: { principalKind: 'team',
                 sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date(1),
             } });
             const releasedDetail = await app.inject({ method: "GET", url: `/v2/sessions/${session.id}`, headers: headers(recipient.id) });
@@ -1030,13 +1074,13 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
             ownerMetadata: JSON.stringify({ t: "plain", v: { v: 1 } }),
             currentStorageState: "hosted",
         } });
-        await db.sessionShare.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'account',
             sessionId: session.id,
-            sharedByUserId: owner.id,
-            sharedWithUserId: recipient.id,
+            createdByAccountId: owner.id,
+            accountId: recipient.id,
             accessLevel: "view",
         } });
-        await db.sessionGroupGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'group',
             sessionId: session.id,
             teamGroupId: group.id,
             accessLevel: "edit",
@@ -1086,8 +1130,8 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
             });
             expect(first.statusCode, first.body).toBe(200);
             expect(first.json()).toEqual({ changed: true, primaryTeamId: team.id });
-            expect(await db.session.findUnique({ where: { id: session.id }, select: { primaryTeamId: true, teamGrants: true } }))
-                .toMatchObject({ primaryTeamId: team.id, teamGrants: [] });
+            expect(await db.session.findUnique({ where: { id: session.id }, select: { primaryTeamId: true, grants: { where: { principalKind: 'team' } } } }))
+                .toMatchObject({ primaryTeamId: team.id, grants: [] });
 
             const again = await app.inject({
                 method: "POST", url: "/v2/sessions/access-context/set", headers: headers(owner.id),
@@ -1119,7 +1163,7 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
             accountId: owner.id, tag: "credential-consequences", encryptionMode: "plain", metadata: "{}",
             currentStorageState: "hosted", primaryTeamId: team.id,
         } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id, teamId: team.id, accessLevel: "view", canApprovePermissions: false,
             effectiveAt: new Date(),
         } });
@@ -1203,11 +1247,11 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
             expect(response.statusCode, response.body).toBe(403);
             expect(response.json()).toEqual({ error: "session_access_external_sharing_disabled" });
         });
-        await expect(db.sessionShare.findUnique({
-            where: {
-                sessionId_sharedWithUserId: {
+        await expect(db.sessionGrant.findUnique({
+            where: { principalKind: 'account',
+                sessionId_accountId: {
                     sessionId: session.id,
-                    sharedWithUserId: outsider.id,
+                    accountId: outsider.id,
                 },
             },
         })).resolves.toBeNull();
@@ -1229,11 +1273,11 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
             metadata: "{}",
             currentStorageState: "hosted",
         } });
-        await db.sessionShare.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'account',
                 sessionId: session.id,
-                sharedByUserId: owner.id,
-                sharedWithUserId: outsider.id,
+                createdByAccountId: owner.id,
+                accountId: outsider.id,
                 accessLevel: "view",
             },
         });
@@ -1270,8 +1314,8 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
             expect(response.json()).toEqual({ changed: true, primaryTeamId: team.id });
             expect(await db.session.findUnique({ where: { id: session.id }, select: { primaryTeamId: true } }))
                 .toMatchObject({ primaryTeamId: team.id });
-            expect(await db.sessionTeamGrant.findUnique({
-                where: { sessionId_teamId: { sessionId: session.id, teamId: team.id } },
+            expect(await db.sessionGrant.findUnique({
+                where: { principalKind: 'team', sessionId_teamId: { sessionId: session.id, teamId: team.id } },
                 select: { accessLevel: true, canApprovePermissions: true, requiredByTeamPolicy: true },
             })).toMatchObject({ accessLevel: "edit", canApprovePermissions: false, requiredByTeamPolicy: true });
 
@@ -1281,7 +1325,7 @@ describe("Session access HTTP and initial creation (SQLite integration)", () => 
             });
             expect(accepted.statusCode, accepted.body).toBe(200);
             expect(accepted.json()).toEqual({ changed: false, primaryTeamId: team.id });
-            expect(await db.sessionTeamGrant.findUnique({ where: { sessionId_teamId: { sessionId: session.id, teamId: team.id } }, select: { requiredByTeamPolicy: true } }))
+            expect(await db.sessionGrant.findUnique({ where: { principalKind: 'team', sessionId_teamId: { sessionId: session.id, teamId: team.id } }, select: { requiredByTeamPolicy: true } }))
                 .toMatchObject({ requiredByTeamPolicy: true });
 
             const blocked = await app.inject({

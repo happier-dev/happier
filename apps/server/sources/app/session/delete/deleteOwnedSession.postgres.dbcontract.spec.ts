@@ -133,7 +133,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")(
         it('deletes a native resource when its controller has a recipient outside the Team', async () => {
             const f = await createNativeSessionTeamCredentialFixture();
             const recipient = await db.account.create({ data: { encryptionMode: 'plain' } });
-            await db.machineAccountGrant.create({ data: { machineId: f.controller.id, accountId: recipient.id,
+            await db.machineGrant.create({ data: { principalKind: 'account', machineId: f.controller.id, accountId: recipient.id,
                 accessLevel: 'view', createdByAccountId: f.custodian.id } });
             expect(await inTx(tx => writeSessionTeamCredentialBindingsInTx(tx, { sessionId: f.session.id,
                 accountId: f.creator.id, intents: [f.intent], authentication: TEST_AUTHENTICATION }))).toEqual({ ok: true });

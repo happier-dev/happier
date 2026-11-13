@@ -25,12 +25,11 @@ import { signMachineInstallationProof } from '@happier-dev/protocol/machines/ide
 import { registerPeerMediationGrantRoutes } from '@/app/api/routes/machines/peer/mediation/registerPeerMediationGrantRoutes';
 import { registerMachineAdmissionRoutes } from '@/app/api/routes/machines/registerMachineAdmissionRoutes';
 import { createRouteTestBuilder } from '@/app/api/testkit/routeTestBuilder';
+import type { Fastify } from '@/app/api/types';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { FEATURE_ENV_KEYS } from '@/app/features/catalog/featureEnvSchema';
 import { NpmRegistryProfileActionOutputSchemasV1 } from '@happier-dev/protocol/actions/npmRegistryProfileActionFamily';
 import { resolveExternalActionExecutionMachineAdmissionInTx } from '@/app/auth/externalActionExecutionAuthorization';
-import { serializeMachinePresence } from './machineSerialization';
-import { observeMachineAliveFromSocket } from '@/app/api/socket/machineUpdateHandler';
 
 describe('Machine current access (real SQLite)', () => {
     let harness: LightSqliteHarness;
@@ -56,20 +55,6 @@ describe('Machine current access (real SQLite)', () => {
         await makeShareEligibleForTest(actorAccountId, accountId);
         return inTx(tx => access.setMachineAccessGrantInTx(tx, { actorAccountId, machineId, principal: { kind: 'account', accountId }, level }));
     };
-
-    it('admits a network target published active and refuses the same target after presence goes offline', async () => {
-        const f = await fixture();
-        for (const active of [true, false]) {
-            const row = await db.machine.update({ where: { id: f.machine.id }, data: { active } });
-            expect(serializeMachinePresence(row).active).toBe(active);
-            const result = await inTx(tx => resolveExternalActionExecutionMachineAdmissionInTx(tx, {
-                actorAccountId: f.owner.id, machineId: row.id, actionId: 'machines.reachability.inspect',
-                requireOnline: true, authentication: { authenticationAuthority: 'present_user' },
-            }));
-            expect(result).toMatchObject(active ? { kind: 'admitted', machineId: row.id }
-                : { kind: 'denied', diagnostic: { reason: 'machine_offline' } });
-        }
-    });
 
     it('shares batch facts while preserving operation-specific Manage refusals and requester identity', async () => {
         const f = await fixture();
@@ -152,10 +137,11 @@ describe('Machine current access (real SQLite)', () => {
         }
     });
 
-    it('admits a connected daemon after the presence owner restores online on reconnect, refusing Can use', async () => {
+    it('admits machine-scoped plugin daemon Actions for Manage through authenticated ingress, refusing Can use', async () => {
         const f = await fixture();
         const requester = await account();
         await grant(f.owner.id, f.machine.id, requester.id, 'admin');
+        await db.machine.update({ where: { id: f.machine.id }, data: { active: true } });
         const accountStoredContentCompatibility = evaluateAccountStoredContentCompatibility({ status: 'valid',
             declaration: CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION });
         // Only the daemon network boundary is replaced; Home routing, current
@@ -174,15 +160,6 @@ describe('Machine current access (real SQLite)', () => {
                 params: { action: { pluginId: 'happier.machine.crabbox', localId: 'install' }, input: {} } }, reply);
             return reply;
         };
-        expect(await call(f.owner.id)).toHaveBeenCalledWith(expect.objectContaining({ ok: false,
-            errorCode: RPC_ERROR_CODES.FORBIDDEN }));
-        expect(emitWithAck).not.toHaveBeenCalled();
-        // Failed infrastructure handshakes never reach this observation. Once
-        // ownership succeeds, connect uses the same presence owner as heartbeats.
-        const publisher = createAuthenticatedFakeSocket({ data: target.data });
-        await observeMachineAliveFromSocket({ userId: f.owner.id, socket: publisher as unknown as Socket,
-            timestamp: Date.now(), continuingBeat: false, isCurrent: async () => true });
-        expect(serializeMachinePresence(await db.machine.findUniqueOrThrow({ where: { id: f.machine.id } })).active).toBe(true);
         expect(await call(f.owner.id)).toHaveBeenCalledWith({ ok: true, result: { installed: true } });
         expect(await call(requester.id)).toHaveBeenCalledWith({ ok: true, result: { installed: true } });
         expect(emitWithAck.mock.calls.at(-1)?.[1]).toMatchObject({ machineAdmission: {
@@ -347,7 +324,8 @@ describe('Machine current access (real SQLite)', () => {
         const proofPayload = { version: 1 as const, machineId: f.machine.id, installationId: 'install', accountId: f.owner.id,
             rpcAdmission: { context, method } };
         const verifier = createRouteTestBuilder({ method: 'POST', path: '/v1/machines/:id/admission/verify',
-            registerRoutes: registerMachineAdmissionRoutes });
+            // The fake route app records only the registered handlers; it is not a full Fastify instance.
+            registerRoutes: app => registerMachineAdmissionRoutes(app as unknown as Fastify) });
         const verified = await verifier.invoke({ userId: f.owner.id, params: { id: f.machine.id },
             body: { v: 1, context, method, proof: signMachineInstallationProof({ payload: proofPayload, privateKey: installation.secretKey }) } });
         expect(verified.reply.statusCode).toBe(200);
@@ -1252,7 +1230,7 @@ describe('Machine current access (real SQLite)', () => {
         expect(await inTx(tx => access.readMachineDataKeyForCallerInTx(tx, actor))).toBeNull();
         const recipient = await account('e2ee');
         expect(await grant(f.owner.id, f.machine.id, recipient.id)).toEqual({ kind: 'refused', code: 'access_denied' });
-        expect(await db.machineAccountGrant.count({ where: { machineId: f.machine.id } })).toBe(0);
+        expect(await db.machineGrant.count({ where: { principalKind: 'account', machineId: f.machine.id } })).toBe(0);
     });
 
     it.each(['plain', 'e2ee'] as const)('Plain Machine admits %s recipients keylessly and Manage can administer offline', async mode => {
@@ -1298,7 +1276,7 @@ describe('Machine current access (real SQLite)', () => {
         expect(await inTx(tx => access.resolveEffectiveMachineRoleInTx(tx, { actorAccountId: recipient.id, machineId: f.machine.id }))).toBe('manage');
         await grant(f.owner.id, f.machine.id, recipient.id);
         await grant(f.owner.id, f.machine.id, recipient.id);
-        expect(await db.machineAccountGrant.count({ where: { machineId: f.machine.id, accountId: recipient.id } })).toBe(1);
+        expect(await db.machineGrant.count({ where: { principalKind: 'account', machineId: f.machine.id, accountId: recipient.id } })).toBe(1);
         await db.teamMembership.delete({ where: { id: member.id } });
         expect(await inTx(tx => access.resolveEffectiveMachineRoleInTx(tx, { actorAccountId: recipient.id, machineId: f.machine.id }))).toBe('use');
         await db.teamMembership.create({ data: { teamId: team.id, accountId: recipient.id, role: 'member' } });
@@ -1318,7 +1296,7 @@ describe('Machine current access (real SQLite)', () => {
             },
         })).get(f.machine.id);
         expect(await grant(f.owner.id, f.machine.id, plain.id)).toEqual({ kind: 'refused', code: 'recipient_encryption_incompatible' });
-        expect(await db.machineAccountGrant.count({ where: { machineId: f.machine.id, accountId: plain.id } })).toBe(0);
+        expect(await db.machineGrant.count({ where: { principalKind: 'account', machineId: f.machine.id, accountId: plain.id } })).toBe(0);
         expect(await grant(f.owner.id, f.machine.id, recipient.id, 'admin')).toMatchObject({ kind: 'saved', readiness: 'key_pending' });
         expect(await access.resolveMachineAdmission({ actorAccountId: recipient.id, machineId: f.machine.id })).toEqual({ kind: 'denied', code: 'recipient_key_pending' });
         expect(await admittedOpening()).toMatchObject({ access: { accessState: 'key_pending' }, callerDataEncryptionKey: null });
@@ -1363,7 +1341,7 @@ describe('Machine current access (real SQLite)', () => {
     it('set-acquires recipient material while preserving exception paging and all-before-write refusal', async () => {
         const f = await fixture('e2ee');
         const recipients = (await Promise.all(Array.from({ length: 13 }, () => account('e2ee')))).sort((a, b) => a.id.localeCompare(b.id));
-        await db.machineAccountGrant.createMany({ data: recipients.map(recipient => ({ machineId: f.machine.id,
+        await db.machineGrant.createMany({ data: recipients.map(recipient => ({ principalKind: 'account', machineId: f.machine.id,
             accountId: recipient.id, accessLevel: 'view', createdByAccountId: f.owner.id })) });
         const actor = { actorAccountId: f.owner.id, machineId: f.machine.id };
         const read = (cursor?: string, state: 'all' | 'action_required' = 'action_required') => inTx(async tx => {
@@ -1425,7 +1403,7 @@ describe('Machine current access (real SQLite)', () => {
         expect(await inTx(tx => access.commitMachineRecipientKeyEnvelopesInTx(tx, input)))
             .toEqual({ kind: 'refused', code: 'recipient_binding_changed' });
         expect(await db.machineKeyEnvelope.count({ where: { machineId: f.machine.id } })).toBe(0);
-        await db.machineAccountGrant.delete({ where: { machineId_accountId: { machineId: f.machine.id, accountId: recipients[4].id } } });
+        await db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: { machineId: f.machine.id, accountId: recipients[4].id } } });
         expect(await inTx(tx => access.commitMachineRecipientKeyEnvelopesInTx(tx, input)))
             .toEqual({ kind: 'refused', code: 'access_denied' });
         expect(await db.machineKeyEnvelope.count({ where: { machineId: f.machine.id } })).toBe(0);

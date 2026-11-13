@@ -15,27 +15,25 @@ describe("Machine sharing relational constraints (real SQLite)", () => {
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id, metadata: "{}" } });
         const team = await db.team.create({ data: { name: "Machine schema" } });
         const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Group", nameKey: crypto.randomUUID() } });
-        for (const [table, principalColumn, principalId] of [
-            ["MachineAccountGrant", "accountId", recipient.id],
-            ["MachineTeamGrant", "teamId", team.id],
-            ["MachineGroupGrant", "teamGroupId", group.id],
+        for (const [principalKind, principalColumn, principalId] of [
+            ["account", "accountId", recipient.id],
+            ["team", "teamId", team.id],
+            ["group", "teamGroupId", group.id],
         ] as const) {
             const insert = (machineId: string, principal: string, role: string, creator = owner.id) =>
-                db.$executeRawUnsafe(`INSERT INTO "${table}" ("machineId", "${principalColumn}", "accessLevel", "createdByAccountId") VALUES (?, ?, ?, ?)`, machineId, principal, role, creator);
+                db.$executeRawUnsafe(`INSERT INTO "MachineGrant" ("id", "machineId", "principalKind", "${principalColumn}", "accessLevel", "createdByAccountId") VALUES (?, ?, ?, ?, ?, ?)`, crypto.randomUUID(), machineId, principalKind, principal, role, creator);
             await expect(insert(machine.id, principalId, "edit")).rejects.toThrow();
             await expect(insert("missing-machine", principalId, "view")).rejects.toThrow();
             await expect(insert(machine.id, "missing-principal", "view")).rejects.toThrow();
             await expect(insert(machine.id, principalId, "view", "missing-creator")).rejects.toThrow();
             await expect(insert(machine.id, principalId, "view")).resolves.toBe(1);
             await expect(insert(machine.id, principalId, "admin")).rejects.toThrow();
-            await db.$executeRawUnsafe(`UPDATE "${table}" SET "accessLevel" = ? WHERE "machineId" = ?`, "admin", machine.id);
-            expect(await db.$queryRawUnsafe(`SELECT "accessLevel", "createdAt" FROM "${table}" WHERE "machineId" = ?`, machine.id))
+            await db.$executeRawUnsafe(`UPDATE "MachineGrant" SET "accessLevel" = ? WHERE "machineId" = ? AND "principalKind" = ?`, "admin", machine.id, principalKind);
+            expect(await db.$queryRawUnsafe(`SELECT "accessLevel", "createdAt" FROM "MachineGrant" WHERE "machineId" = ? AND "principalKind" = ?`, machine.id, principalKind))
                 .toEqual([{ accessLevel: "admin", createdAt: expect.any(Date) }]);
         }
         await db.machine.delete({ where: { id: machine.id } });
-        for (const table of ["MachineAccountGrant", "MachineTeamGrant", "MachineGroupGrant"]) {
-            expect(await db.$queryRawUnsafe(`SELECT * FROM "${table}" WHERE "machineId" = ?`, machine.id)).toEqual([]);
-        }
+        expect(await db.machineGrant.count({ where: { machineId: machine.id } })).toBe(0);
     });
 
     it("binds one recipient envelope to its machine and both currentness fingerprints", async () => {

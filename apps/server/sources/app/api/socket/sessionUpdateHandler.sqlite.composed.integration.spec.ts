@@ -59,8 +59,8 @@ describe("session update handler on SQLite", () => {
         const participant = await db.account.create({ data: { encryptionMode: "plain" } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(),
             encryptionMode: "plain", metadata: "{}", agentState: "{}" } });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id,
-            sharedWithUserId: participant.id, accessLevel: "view" } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id,
+            accountId: participant.id, accessLevel: "view" } });
         await db.accountPushToken.create({ data: { accountId: owner.id,
             token: "ExponentPushToken[metadata-owner-badge]" } });
         const socket = createAuthenticatedFakeSocket();
@@ -1196,8 +1196,8 @@ describe("session update handler on SQLite", () => {
         try {
             const { sessionId, heartbeat, binding } = await createReleasedAliveSession(() => clockMs);
             const viewer = await db.account.create({ data: { encryptionMode: "plain" }, select: { id: true } });
-            await db.sessionShare.create({ data: { sessionId, sharedByUserId: binding.accountId,
-                sharedWithUserId: viewer.id, accessLevel: "view" } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId, createdByAccountId: binding.accountId,
+                accountId: viewer.id, accessLevel: "view" } });
             await heartbeat();
             await expect(db.session.findUniqueOrThrow({ where: { id: sessionId }, select: { active: true } }))
                 .resolves.toEqual({ active: true });

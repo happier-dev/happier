@@ -105,7 +105,7 @@ describe("Discussion grant service (SQLite)", () => {
         await db.userRelationship.create({ data: { fromUserId: owner.id, toUserId: colleague.id, status: 'friend' } });
         const own = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'e2ee' } });
         const foreign = await db.session.create({ data: { accountId: colleague.id, tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
-        await db.sessionShare.create({ data: { sessionId: foreign.id, sharedByUserId: colleague.id, sharedWithUserId: owner.id, accessLevel: 'edit' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: foreign.id, createdByAccountId: colleague.id, accountId: owner.id, accessLevel: 'edit' } });
         const dataKey = tweetnacl.randomBytes(32);
         const envelope = (recipientPublicKey: Uint8Array) => privacyKit.encodeBase64(sealEncryptedDataKeyEnvelopeV1({
             dataKey, recipientPublicKey, randomBytes: tweetnacl.randomBytes,

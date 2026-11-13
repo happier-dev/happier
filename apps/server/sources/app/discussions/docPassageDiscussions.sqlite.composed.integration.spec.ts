@@ -136,7 +136,7 @@ describe('Doc passage Discussions through the canonical writer and client codec 
             expect((await app.inject({ method: 'GET', url: `${exactUrl}&limit=1` })).statusCode).toBe(400);
             const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
             const destination = await db.session.create({ data: { accountId: reader.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
-            await db.sessionShare.create({ data: { sessionId: destination.id, sharedByUserId: reader.id, sharedWithUserId: outsider.id, accessLevel: 'edit' } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: destination.id, createdByAccountId: reader.id, accountId: outsider.id, accessLevel: 'edit' } });
             const forbiddenContext = await listDiscussions({ actorAccountId: reader.id,
                 authentication: { ...authentication, contentDisclosureSessionId: destination.id }, ...{ anchorDocArtifactId: doc.ref.artifactId } });
             expect(forbiddenContext).toMatchObject({ ok: true, value: { discussions: [{ id: first.discussion.id, firstMessage: null }] } });

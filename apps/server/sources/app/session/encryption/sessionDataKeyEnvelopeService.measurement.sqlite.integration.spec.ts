@@ -105,13 +105,13 @@ describe("Session data-key envelope full-page PATCH measurement (SQLite)", () =>
                 })),
             })),
         });
-        await db.sessionShare.createMany({
-            data: recipients.map(recipient => ({
+        await db.sessionGrant.createMany({
+            data: (recipients.map(recipient => ({
                 sessionId: session.id,
-                sharedByUserId: owner.id,
-                sharedWithUserId: recipient.id,
+                createdByAccountId: owner.id,
+                accountId: recipient.id,
                 accessLevel: "view",
-            })),
+            }))).map(data => ({ ...data, principalKind: 'account' })),
         });
 
         const entries = recipients.map(recipient => ({

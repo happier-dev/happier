@@ -488,6 +488,6 @@ describe("Account Session owner-metadata fence database contract", () => {
         });
         expect(await db.account.findUniqueOrThrow({ where: { id: recipient.id }, select: { seq: true } }))
             .toEqual({ seq: beforeReplay.seq + 1 });
-        expect(await db.discussionAccountGrant.count({ where: { discussionId, accountId: recipient.id } })).toBe(1);
+        expect(await db.discussionGrant.count({ where: { principalKind: 'account', discussionId, accountId: recipient.id } })).toBe(1);
     });
 });

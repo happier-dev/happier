@@ -17,7 +17,7 @@ const getPushNotificationReceiptsAsyncSpy = vi.hoisted(() => vi.fn(async (_ids: 
 // resolves for each Account through the canonical access owner.
 const dbMocks = createDbMocks({
     account: ["findMany", "findUnique"],
-    sessionShare: ["findMany"],
+    sessionGrant: ["findMany"],
     session: ["findMany"],
     discussion: ["findMany", "groupBy"],
     discussionMessage: ["findMany"],
@@ -37,9 +37,9 @@ dbMocks.db.session.findMany.mockImplementation(async (...args: unknown[]) => {
         return {
             primaryTeamId: null,
             account: { status: "active" },
-            shares: [],
-            teamGrants: [],
-            groupGrants: [],
+            grants: [],
+            
+            
             messages: [],
             accountReadStates: [{ accountId, lastViewedSessionSeq: cursor, unreadSince: null }],
             accountFollows: [],
@@ -106,8 +106,8 @@ describe("refreshAccountActivityBadgePushes", () => {
         dbMocks.db.account.findMany.mockReset();
         dbMocks.db.account.findUnique.mockReset();
         dbMocks.db.account.findUnique.mockResolvedValue({ status: "active" });
-        dbMocks.db.sessionShare.findMany.mockReset();
-        dbMocks.db.sessionShare.findMany.mockResolvedValue([]);
+        dbMocks.db.sessionGrant.findMany.mockReset();
+        dbMocks.db.sessionGrant.findMany.mockResolvedValue([]);
         dbMocks.db.discussion.findMany.mockReset();
         dbMocks.db.discussion.groupBy.mockReset();
         dbMocks.db.discussionMessage.findMany.mockReset();
@@ -125,9 +125,10 @@ describe("refreshAccountActivityBadgePushes", () => {
         dbMocks.db.accountSessionFollow.findMany.mockResolvedValue([]);
     });
 
-    afterEach(() => {
+    afterEach(async () => {
         vi.unstubAllEnvs();
         vi.useRealTimers();
+        (await import("./refreshAccountActivityBadgePushes")).resetAccountActivityBadgeDeliveryMemoryForTests();
     });
 
     it("sends a badge-only Expo push with the authoritative badge count for each requested account", async () => {
@@ -194,6 +195,41 @@ describe("refreshAccountActivityBadgePushes", () => {
         // Whichever case runs first pays this file's module graph cost; it was
         // measured at ~28.5s on a loaded shared executor, so the 20s lane
         // default and a 30s budget both expire before the assertions run.
+    }, 60_000);
+
+    it("pushes a badge to a device only when its count differs from the last count Expo accepted for it", async () => {
+        const session = (lastViewedSessionSeq: number) => ({
+            accountId: "a1", id: "s-a1", currentStorageState: "hosted", acceptedThroughServerSeq: null,
+            materializationPublicationId: null, materializedThroughSourceAt: null, publishedThroughServerSeq: null,
+            seq: 5, pendingCount: 0, lastViewedSessionSeq, pendingPermissionRequestCount: 0,
+            pendingUserActionRequestCount: 0, active: true, archivedAt: null,
+        });
+        dbAccountPushTokenFindMany.mockResolvedValue([
+            { accountId: "a1", token: "ExponentPushToken[memo-a1-phone]" },
+            { accountId: "a1", token: "ExponentPushToken[memo-a1-tablet]" },
+        ]);
+        const { refreshAccountActivityBadgePushes } = await import("./refreshAccountActivityBadgePushes");
+        const sentMessages = () => sendPushNotificationsAsyncSpy.mock.calls.flatMap(([chunk]) => chunk as Array<{ to: string; badge: number }>);
+
+        // Unread (1), then four read-cursor refreshes that keep it unread, then read (0), then read again.
+        const workload = [1, 1, 1, 1, 1, 5, 5];
+        for (const lastViewedSessionSeq of workload) {
+            dbSessionFindMany.mockResolvedValue([session(lastViewedSessionSeq)]);
+            await refreshAccountActivityBadgePushes({ accountIds: ["a1"] });
+        }
+        // 7 refreshes x 2 devices = 14 pushes before; only the two real count changes reach each device.
+        expect(sentMessages().map((message) => `${message.to}:${message.badge}`)).toEqual([
+            "ExponentPushToken[memo-a1-phone]:1", "ExponentPushToken[memo-a1-tablet]:1",
+            "ExponentPushToken[memo-a1-phone]:0", "ExponentPushToken[memo-a1-tablet]:0",
+        ]);
+
+        // A count Expo did not accept is not remembered: the next refresh retries it.
+        sendPushNotificationsAsyncSpy.mockClear();
+        sendPushNotificationsAsyncSpy.mockImplementationOnce(async (chunk: unknown[]) => chunk.map(() => ({ status: "error", message: "unavailable" })));
+        dbSessionFindMany.mockResolvedValue([session(1)]);
+        await refreshAccountActivityBadgePushes({ accountIds: ["a1"] });
+        await refreshAccountActivityBadgePushes({ accountIds: ["a1"] });
+        expect(sentMessages().map((message) => message.badge)).toEqual([1, 1, 1, 1]);
     }, 60_000);
 
     it("does not publish badge attention for transcript rows above a partial import ceiling", async () => {

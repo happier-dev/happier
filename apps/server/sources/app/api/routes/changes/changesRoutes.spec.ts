@@ -7,7 +7,7 @@ const { db, reset: resetDbMocks } = createDbMocks({
     account: ["findUnique"],
     accountChange: ["findMany", "findUnique"],
     session: ["findUnique", "findMany"],
-    sessionShare: ["findUnique"],
+    sessionGrant: ["findUnique"],
     sessionPendingMessage: ["findMany"],
 });
 
@@ -16,7 +16,7 @@ const accountChangeFindMany = db.accountChange.findMany;
 const accountChangeFindUnique = db.accountChange.findUnique;
 const sessionFindUnique = db.session.findUnique;
 const sessionFindMany = db.session.findMany;
-const sessionShareFindUnique = db.sessionShare.findUnique;
+const sessionShareFindUnique = db.sessionGrant.findUnique;
 const { transaction, wrapDb } = createDbTransactionMock(() => ({ ...inTxPostgresControlStatementMock, ...db }));
 
 const changesRequestsInc = vi.fn();
@@ -54,16 +54,16 @@ function hostedSession(accountId: string, id = "session-current") {
         materializationPublicationId: null,
         materializedThroughSourceAt: null,
         publishedThroughServerSeq: null,
-        shares: [],
-        teamGrants: [],
-        groupGrants: [],
+        grants: [],
+        
+        
     };
 }
 
 function credentialRestrictedTeamSession(accountId: string, id = "session-restricted") {
     return {
         ...hostedSession("owner", id),
-        teamGrants: [{
+        grants: [{ id: 'team-grant', principalKind: 'team', accountId: null, teamGroupId: null, account: null, teamGroup: null, 
             teamId: "team-restricted",
             effectiveAt: new Date(2),
             accessLevel: "view",
@@ -73,9 +73,9 @@ function credentialRestrictedTeamSession(accountId: string, id = "session-restri
                 // An unreadable policy is an indeterminate authentication
                 // boundary, not structural evidence that the grant vanished.
                 authenticationPolicy: { v: 999 },
-                memberships: [{ accountId, sessionAccessStartsAt: null }],
+                memberships: [{ accountId, role: "member", sessionAccessStartsAt: null }],
             },
-        }],
+         }],
     };
 }
 

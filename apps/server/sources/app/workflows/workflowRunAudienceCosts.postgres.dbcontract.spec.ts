@@ -56,7 +56,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Workflow audien
             dataEncryptionKey: new Uint8Array(decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER)) });
         const sourceArtifactId = randomUUID();
         await db.artifact.create({ data: artifactData(sourceArtifactId) });
-        await db.artifactTeamGrant.create({ data: { artifactId: sourceArtifactId, teamId: team.id,
+        await db.artifactGrant.create({ data: { principalKind: 'team', artifactId: sourceArtifactId, teamId: team.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         const createRuns = async (count: number, automationId?: string) => {
             const ids = Array.from({ length: count }, () => randomUUID());
@@ -103,7 +103,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Workflow audien
         const one = await read();
         const additionalIds = Array.from({ length: 100 }, () => randomUUID());
         await db.artifact.createMany({ data: additionalIds.map(f.artifactData) });
-        await db.artifactTeamGrant.createMany({ data: additionalIds.map(artifactId => ({ artifactId, teamId: f.team.id,
+        await db.artifactGrant.createMany({ data: additionalIds.map(artifactId => ({ principalKind: 'team', artifactId, teamId: f.team.id,
             accessLevel: 'view', createdByAccountId: f.owner.id })) });
         const many = await read();
         console.info('WORKFLOW_DEFAULT_SOURCE_SQL', JSON.stringify({ attention, sources: 101,
@@ -115,7 +115,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Workflow audien
 
         const overflowIds = Array.from({ length: 900 }, () => randomUUID());
         await db.artifact.createMany({ data: overflowIds.map(f.artifactData) });
-        await db.artifactTeamGrant.createMany({ data: overflowIds.map(artifactId => ({ artifactId, teamId: f.team.id,
+        await db.artifactGrant.createMany({ data: overflowIds.map(artifactId => ({ principalKind: 'team', artifactId, teamId: f.team.id,
             accessLevel: 'view', createdByAccountId: f.owner.id })) });
         const overflow = await read();
         console.info('WORKFLOW_DEFAULT_SOURCE_BIND_SQL', JSON.stringify({ attention, sources: 1001,
@@ -218,7 +218,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Workflow audien
         await db.artifact.createMany({ data: unrelatedIds.map(f.artifactData) });
         await db.team.createMany({ data: unrelatedTeams.map(id => ({ id, name: 'Unrelated workflow Team' })) });
         await db.teamMembership.createMany({ data: unrelatedTeams.map(teamId => ({ teamId, accountId: f.viewer.id, role: 'member' })) });
-        await db.artifactTeamGrant.createMany({ data: unrelatedIds.map((artifactId, index) => ({ artifactId, teamId: unrelatedTeams[index]!,
+        await db.artifactGrant.createMany({ data: unrelatedIds.map((artifactId, index) => ({ principalKind: 'team', artifactId, teamId: unrelatedTeams[index]!,
             accessLevel: 'view', createdByAccountId: f.owner.id })) });
         for (const selector of [{ runId: runId! }, { runIds: [runId!] }]) {
             const selected = await exact(selector);

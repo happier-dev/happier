@@ -149,10 +149,10 @@ export function discussionAttachmentContracts(): void {
             // A shared-use Machine is not this Account's installed publisher,
             // even when its retained Session tuple and signature are valid.
             await db.machine.update({ where: { id: machine.id }, data: { accountId: outsider.id } });
-            await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: owner.id,
+            await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id, accountId: owner.id,
                 accessLevel: 'admin', createdByAccountId: outsider.id } });
             expect((await upload(signed(create))).statusCode).toBe(403);
-            await db.machineAccountGrant.delete({ where: { machineId_accountId: { machineId: machine.id, accountId: owner.id } } });
+            await db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: { machineId: machine.id, accountId: owner.id } } });
             await db.machine.update({ where: { id: machine.id }, data: { accountId: owner.id } });
             externalAction = true;
             expect((await upload(signed(create))).statusCode).toBe(403);
@@ -354,7 +354,7 @@ export function discussionAttachmentContracts(): void {
             // Withdrawal takes effect when the reader starts another request.
             const raced = vi.spyOn(privateFiles, 'readPrivateFile').mockImplementation(async key => {
                 const value = await readPrivateFile(key);
-                await db.discussionAccountGrant.deleteMany({ where: { discussionId, accountId: reader.id } });
+                await db.discussionGrant.deleteMany({ where: { discussionId, principalKind: 'account', accountId: reader.id } });
                 return value;
             });
             try {

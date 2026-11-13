@@ -66,7 +66,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: target.id, role: 'member' } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'e2ee' } });
-        await db.sessionTeamGrant.create({ data: { sessionId: session.id, teamId: team.id, accessLevel: 'view', effectiveAt: new Date() } });
+        await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: team.id, accessLevel: 'view', effectiveAt: new Date() } });
         const seal = (key: Uint8Array) => new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey: tweetnacl.randomBytes(32), recipientPublicKey: key, randomBytes: tweetnacl.randomBytes }));
         await db.sessionDataKeyEnvelope.create({ data: { sessionId: session.id, recipientAccountId: owner.id, encryptedDataKey: seal(ownerBinding.contentPublicKey) } });
         const originalTransaction = db.$transaction;
@@ -141,7 +141,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         const target = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: target.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id, accountId: target.id, accessLevel: 'view' } });
         vi.stubEnv('HAPPIER_DB_TX_MAX_RETRIES', '0');
         try {
             const result = await duringSessionAudienceDiscovery(async () => {
@@ -174,7 +174,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         }));
         const recipientEnvelope = envelope(recipientBinding.contentPublicKey);
         await db.sessionDataKeyEnvelope.create({ data: { sessionId: session.id, recipientAccountId: owner.id, encryptedDataKey: envelope(ownerBinding.contentPublicKey) } });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: recipient.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id, accountId: recipient.id, accessLevel: 'view' } });
         vi.stubEnv('HAPPIER_DB_TX_MAX_RETRIES', '0');
         try {
             const result = await duringSessionAudienceDiscovery(async () => {

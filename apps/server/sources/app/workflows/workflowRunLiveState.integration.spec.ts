@@ -21,7 +21,7 @@ describe("workflow Run live state", () => {
             () => db.accountChange.deleteMany(), () => db.workflowRunInvocation.deleteMany(),
             () => db.automationRunAssignment.deleteMany(), () => db.automationRun.deleteMany(),
             () => db.automation.deleteMany(),
-            () => db.artifactAccountGrant.deleteMany(), () => db.artifact.deleteMany(),
+            () => db.artifactGrant.deleteMany(), () => db.artifact.deleteMany(),
             () => db.machine.deleteMany(), () => db.account.deleteMany(),
         ]);
     });
@@ -45,9 +45,9 @@ describe("workflow Run live state", () => {
                     dataEncryptionKey: Buffer.alloc(0),
                 } });
             } else if (source.accountId !== seeded.accountId) {
-                await db.artifactAccountGrant.upsert({
-                    where: { artifactId_accountId: { artifactId: sourceArtifactId, accountId: seeded.accountId } },
-                    create: { artifactId: sourceArtifactId, accountId: seeded.accountId, accessLevel: "view", createdByAccountId: source.accountId },
+                await db.artifactGrant.upsert({
+                    where: { principalKind: 'account', artifactId_accountId: { artifactId: sourceArtifactId, accountId: seeded.accountId } },
+                    create: { principalKind: 'account', artifactId: sourceArtifactId, accountId: seeded.accountId, accessLevel: "view", createdByAccountId: source.accountId },
                     update: {},
                 });
             }

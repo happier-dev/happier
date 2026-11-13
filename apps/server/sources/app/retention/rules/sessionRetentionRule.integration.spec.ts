@@ -38,7 +38,7 @@ describe('sessionRetentionRule', () => {
             () => db.publicShareAccessLog.deleteMany(),
             () => db.publicSessionShare.deleteMany(),
             () => db.sessionShareAccessLog.deleteMany(),
-            () => db.sessionShare.deleteMany(),
+            () => db.sessionGrant.deleteMany({ where: { principalKind: 'account' } }),
             () => db.accountChange.deleteMany(),
             () => db.usageReport.deleteMany(),
             () => db.sessionMessage.deleteMany(),
@@ -82,11 +82,11 @@ describe('sessionRetentionRule', () => {
                 },
             },
         });
-        await db.sessionShare.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'account',
                 sessionId: 's1',
-                sharedByUserId: 'owner',
-                sharedWithUserId: 'u2',
+                createdByAccountId: 'owner',
+                accountId: 'u2',
             },
         });
 

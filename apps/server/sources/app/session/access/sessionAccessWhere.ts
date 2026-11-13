@@ -1,3 +1,4 @@
+import { projectResourceGrantRows } from '@/app/teams/resourceGrantAccess';
 import type { Prisma } from "@prisma/client";
 import type { Tx } from "@/storage/inTx";
 import { TEAM_PRINCIPAL_ROLES_V1, isTeamPrincipalRoleV1 } from '@happier-dev/protocol/teams';
@@ -47,7 +48,7 @@ export type SessionCollectiveAccessSnapshot = Readonly<{
     accountActive?: boolean;
     memberships: readonly SessionCollectiveAccessMembership[];
     qualifiedTeamIds: ReadonlySet<string>;
-    /** The Account's direct shares, read once by `sharedWithUserId` in this snapshot. */
+    /** The Account's direct shares, read once by `accountId` in this snapshot. */
     directShares?: readonly SessionDirectShareFact[];
 }>;
 
@@ -73,9 +74,9 @@ function directShareSessionIdsFor(capability: SessionCapability, shares: readonl
 }
 
 function directShareWhere(input: AccessWhereInput, activeAccountResolved: boolean) {
-    return { sharedWithUserId: input.accountId,
-        ...(activeAccountResolved ? {} : { sharedWithUser: { status: "active" as const } }),
-        ...grantCapabilityWhere(input.capability) } satisfies Prisma.SessionShareWhereInput;
+    return { principalKind: 'account', accountId: input.accountId,
+        ...(activeAccountResolved ? {} : { account: { status: "active" as const } }),
+        ...grantCapabilityWhere(input.capability) } satisfies Prisma.SessionGrantWhereInput;
 }
 
 /**
@@ -85,21 +86,27 @@ function directShareWhere(input: AccessWhereInput, activeAccountResolved: boolea
  * Account's Sessions; exact ids let PostgreSQL combine the owner index with the
  * primary key. Row-bounded callers keep the EXISTS form.
  */
-function composeAccessWhere(input: AccessWhereInput, collective: Prisma.SessionWhereInput[] = [], activeAccountResolved = false,
-    directShareSessionIds?: readonly string[]): Prisma.SessionWhereInput {
+function composeAccessWhereBranches(input: AccessWhereInput, collective: Prisma.SessionWhereInput[] = [], activeAccountResolved = false,
+    directShareSessionIds?: readonly string[]): Prisma.SessionWhereInput[] {
     const rule = SESSION_CAPABILITY_RULES[input.capability];
     const owner: Prisma.SessionWhereInput = { accountId: input.accountId,
         ...(activeAccountResolved ? {} : { account: { status: "active" as const } }) };
-    if (rule.level === "owner") return owner;
-    return { OR: [
+    if (rule.level === "owner") return [owner];
+    return [
         owner,
-        { AND: [createSessionTranscriptShareableWhere(), { OR: [
+        { accountId: { not: input.accountId }, AND: [createSessionTranscriptShareableWhere(), { OR: [
             directShareSessionIds
                 ? { id: { in: [...new Set(directShareSessionIds)] } }
-                : { shares: { some: directShareWhere(input, activeAccountResolved) } },
+                : { grants: { some: directShareWhere(input, activeAccountResolved) } },
             ...collective,
         ] }] },
-    ] };
+    ];
+}
+
+function composeAccessWhere(input: AccessWhereInput, collective: Prisma.SessionWhereInput[] = [], activeAccountResolved = false,
+    directShareSessionIds?: readonly string[]): Prisma.SessionWhereInput {
+    const branches = composeAccessWhereBranches(input, collective, activeAccountResolved, directShareSessionIds);
+    return branches.length === 1 ? branches[0]! : { OR: branches };
 }
 
 /**
@@ -108,16 +115,21 @@ function composeAccessWhere(input: AccessWhereInput, collective: Prisma.SessionW
  * once through their keys, so the page is served by Session indexes.
  */
 async function readDirectShareFactsInTx(tx: Tx, accountIds: readonly string[]) {
-    return tx.sessionShare.findMany({ where: { sharedWithUserId: { in: [...accountIds] } },
-        select: { sessionId: true, sharedWithUserId: true, accessLevel: true, canApprovePermissions: true } });
+    return tx.sessionGrant.findMany({ where: { principalKind: 'account', accountId: { in: [...accountIds] } },
+        select: { sessionId: true, accountId: true, accessLevel: true, canApprovePermissions: true } });
 }
 
-export async function resolveLegacySessionPageAccessWhereInTx(tx: Tx, input: AccessWhereInput): Promise<Prisma.SessionWhereInput> {
+export async function resolveLegacySessionPageAccessQueryInTx(tx: Tx, input: AccessWhereInput): Promise<Readonly<{
+    where: Prisma.SessionWhereInput;
+    queryBranches: readonly Prisma.SessionWhereInput[];
+}>> {
     const account = await tx.account.findUnique({ where: { id: input.accountId }, select: { status: true } });
-    if (account?.status !== "active") return { id: { in: [] } };
-    if (SESSION_CAPABILITY_RULES[input.capability].level === "owner") return composeAccessWhere(input, [], true);
-    const shares = await readDirectShareFactsInTx(tx, [input.accountId]);
-    return composeAccessWhere(input, [], true, directShareSessionIdsFor(input.capability, shares));
+    const shares = account?.status === "active" && SESSION_CAPABILITY_RULES[input.capability].level !== "owner"
+        ? await readDirectShareFactsInTx(tx, [input.accountId]) : [];
+    const queryBranches: Prisma.SessionWhereInput[] = account?.status === "active"
+        ? composeAccessWhereBranches(input, [], true, directShareSessionIdsFor(input.capability, shares))
+        : [{ id: { in: [] } }];
+    return { where: queryBranches.length === 1 ? queryBranches[0]! : { OR: queryBranches }, queryBranches };
 }
 
 /** Compose with domain filters through AND so a caller cannot overwrite access. */
@@ -142,6 +154,8 @@ export async function resolveEffectiveSessionAccessWhere(
     input: EffectiveAccessWhereInput,
 ): Promise<Readonly<{
     where: Prisma.SessionWhereInput;
+    /** Disjoint arms of the same admitted relation for ordered keyset reads. */
+    queryBranches: readonly Prisma.SessionWhereInput[];
     qualifiedTeamIds: ReadonlySet<string>;
     collectiveAccessSnapshot: SessionCollectiveAccessSnapshot;
 }>> {
@@ -152,7 +166,7 @@ export async function resolveEffectiveSessionAccessWhere(
         ?? ((await input.tx.account.findUnique({ where: { id: input.accountId }, select: { status: true } }))?.status === "active");
     if (!accountActive) {
         return {
-            where: { id: { in: [] } }, qualifiedTeamIds: new Set(),
+            where: { id: { in: [] } }, queryBranches: [{ id: { in: [] } }], qualifiedTeamIds: new Set(),
             collectiveAccessSnapshot: { accountId: input.accountId, accountActive, memberships: [], qualifiedTeamIds: new Set() },
         };
     }
@@ -165,13 +179,15 @@ export async function resolveEffectiveSessionAccessWhere(
         const allowed = runtimePrincipal.accountId === input.accountId
             && await verifyCurrentMaterializedRunnerPrincipalInTx(input.tx, runtimePrincipal) !== null
             && capabilities[input.capability];
-        return {
-            where: allowed
+        const where: Prisma.SessionWhereInput = allowed
                 ? {
                     id: runtimePrincipal.sessionId,
                     accountId: runtimePrincipal.accountId,
                 }
-                : { id: { in: [] } },
+                : { id: { in: [] } };
+        return {
+            where,
+            queryBranches: [where],
             qualifiedTeamIds: new Set(),
             collectiveAccessSnapshot: {
                 accountId: input.accountId,
@@ -190,9 +206,11 @@ export async function resolveEffectiveSessionAccessWhere(
         {},
     );
     const directShares = collectiveAccessSnapshot.directShares;
+    const queryBranches = composeAccessWhereBranches(input, collective, true,
+        directShares && directShareSessionIdsFor(input.capability, directShares));
     return {
-        where: composeAccessWhere(input, collective, true,
-            directShares && directShareSessionIdsFor(input.capability, directShares)),
+        where: queryBranches.length === 1 ? queryBranches[0]! : { OR: queryBranches },
+        queryBranches,
         qualifiedTeamIds: collectiveAccessSnapshot.qualifiedTeamIds,
         collectiveAccessSnapshot,
     };
@@ -265,7 +283,7 @@ export async function resolveSessionCollectiveAccessSnapshotsInTx(
         return snapshots;
     }
     const shares = await readDirectShareFactsInTx(tx, accountIds);
-    const sharesOf = (accountId: string) => shares.filter(share => share.sharedWithUserId === accountId);
+    const sharesOf = (accountId: string) => shares.filter(share => share.accountId === accountId);
     if (!isSessionCollaborationEnabled()) {
         for (const accountId of accountIds) {
             snapshots.set(accountId, { accountId, memberships: [], qualifiedTeamIds: new Set(), directShares: sharesOf(accountId) });
@@ -364,7 +382,7 @@ async function buildCollectiveAccessBranches(
             bucket.membershipIds.add(membership.id);
         }
     }
-    const teamGrantAlternatives: Prisma.SessionTeamGrantWhereInput[] = [...teamGrantBuckets.values()].map((bucket) => ({
+    const teamGrantAlternatives: Prisma.SessionGrantWhereInput[] = [...teamGrantBuckets.values()].map((bucket) => ({
         teamId: { in: [...bucket.audienceIds] },
         ...grant,
         ...(bucket.sessionAccessStartsAt === null ? {} : { effectiveAt: { gt: bucket.sessionAccessStartsAt } }),
@@ -375,7 +393,7 @@ async function buildCollectiveAccessBranches(
             sessionAccessStartsAt: bucket.sessionAccessStartsAt,
         } } },
     }));
-    const groupGrantAlternatives: Prisma.SessionGroupGrantWhereInput[] = [...groupGrantBuckets.values()].map((bucket) => ({
+    const groupGrantAlternatives: Prisma.SessionGrantWhereInput[] = [...groupGrantBuckets.values()].map((bucket) => ({
         teamGroupId: { in: [...bucket.audienceIds] },
         ...grant,
         ...(bucket.sessionAccessStartsAt === null ? {} : { effectiveAt: { gt: bucket.sessionAccessStartsAt } }),
@@ -387,10 +405,10 @@ async function buildCollectiveAccessBranches(
     }));
     return [
         ...(teamGrantAlternatives.length > 0
-            ? [{ teamGrants: { some: { OR: teamGrantAlternatives } } }]
+            ? [{ grants: { some: { principalKind: 'team', OR: teamGrantAlternatives } } }]
             : []),
         ...(groupGrantAlternatives.length > 0
-            ? [{ groupGrants: { some: { OR: groupGrantAlternatives } } }]
+            ? [{ grants: { some: { principalKind: 'group', OR: groupGrantAlternatives } } }]
             : []),
     ];
 }
@@ -441,8 +459,8 @@ export async function createApplicableAudienceWhere(input: {
         }
     }
     const allTopology: Prisma.SessionWhereInput[] = [
-        { teamGrants: { some: { team: { archivedAt: null } } } },
-        { groupGrants: { some: { teamGroup: { archivedAt: null, team: { archivedAt: null } } } } },
+        { grants: { some: { principalKind: 'team', team: { archivedAt: null } } } },
+        { grants: { some: { principalKind: 'group', teamGroup: { archivedAt: null, team: { archivedAt: null } } } } },
     ];
     const branches: Prisma.SessionWhereInput[] = [];
     if (includesOutsideTeams) branches.push({ NOT: await applicable({}, allTopology) });
@@ -457,7 +475,7 @@ export async function createApplicableAudienceWhere(input: {
         const selectedGroupIds = selectedGroups
             .filter((group) => groupIdsByTeamId.get(group.teamId)?.has(group.id) === true)
             .map((group) => group.id);
-        const groupTopology: Prisma.SessionGroupGrantWhereInput[] = [
+        const groupTopology: Prisma.SessionGrantWhereInput[] = [
             ...(teamIds.size > 0 ? [{ teamGroup: {
                 teamId: { in: [...teamIds] }, archivedAt: null, team: { archivedAt: null },
             } }] : []),
@@ -467,10 +485,10 @@ export async function createApplicableAudienceWhere(input: {
             }] : []),
         ];
         const selectedTopology: Prisma.SessionWhereInput[] = [
-            ...(teamIds.size > 0 ? [{ teamGrants: { some: {
+            ...(teamIds.size > 0 ? [{ grants: { some: { principalKind: 'team',
                 teamId: { in: [...teamIds] }, team: { archivedAt: null },
             } } }] : []),
-            ...(groupTopology.length > 0 ? [{ groupGrants: { some: { OR: groupTopology } } }] : []),
+            ...(groupTopology.length > 0 ? [{ grants: { some: { principalKind: 'group', OR: groupTopology } } }] : []),
         ];
         branches.push(await applicable({ audience: { teamIds, groupIdsByTeamId } }, selectedTopology));
     }
@@ -534,24 +552,30 @@ export async function buildSessionReadableAccountWhereInTx(input: {
     const grant = grantCapabilityWhere(capability);
     const session = await input.tx.session.findUnique({ where: { id: input.sessionId }, select: {
         ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
-        teamGrants: { where: { ...grant, team: { archivedAt: null } }, select: { teamId: true, effectiveAt: true, team: { select: { authenticationPolicy: true } } } },
-        groupGrants: { where: { ...grant, teamGroup: { archivedAt: null, team: { archivedAt: null } } }, select: { teamGroupId: true, effectiveAt: true, teamGroup: { select: { teamId: true, team: { select: { authenticationPolicy: true } } } } } },
+        grants: { where: { OR: [
+            { principalKind: 'team', ...grant, team: { archivedAt: null } },
+            { principalKind: 'group', ...grant, teamGroup: { archivedAt: null, team: { archivedAt: null } } },
+        ] }, select: { principalKind: true, accountId: true, teamId: true, teamGroupId: true, effectiveAt: true,
+            team: { select: { authenticationPolicy: true } },
+            teamGroup: { select: { teamId: true, team: { select: { authenticationPolicy: true } } } },
+        } },
     } });
     if (!session) return { id: { in: [] } };
     const sources: Prisma.AccountWhereInput[] = [{ id: session.accountId }];
+    const sessionGrants = projectResourceGrantRows(session.grants);
     if (SESSION_CAPABILITY_RULES[capability].level !== "owner" && (input.includeUnpublishedGrants || isSessionTranscriptShareable(session))) {
         sources.push({ SharedWithSessions: { some: { sessionId: input.sessionId, ...grant } } });
         if (isSessionCollaborationEnabled()) {
-            for (const grant of session.teamGrants) {
+            for (const grant of sessionGrants.teamGrants) {
                 sources.push({ teamMemberships: { some: {
                     teamId: grant.teamId, status: "active", role: { in: [...TEAM_PRINCIPAL_ROLES_V1] },
-                    ...membershipHorizonWhere(grant.effectiveAt), team: { archivedAt: null },
+                    ...membershipHorizonWhere(grant.effectiveAt!), team: { archivedAt: null },
                 } } });
             }
-            for (const grant of session.groupGrants) {
+            for (const grant of sessionGrants.groupGrants) {
                 sources.push({ teamMemberships: { some: {
                     teamId: grant.teamGroup.teamId, status: "active", team: { archivedAt: null },
-                    groupMemberships: { some: { teamGroupId: grant.teamGroupId, ...membershipHorizonWhere(grant.effectiveAt), group: { archivedAt: null } } },
+                    groupMemberships: { some: { teamGroupId: grant.teamGroupId, ...membershipHorizonWhere(grant.effectiveAt!), group: { archivedAt: null } } },
                 } } });
             }
         }

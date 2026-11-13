@@ -33,15 +33,15 @@ describe('SessionManager Home fence', () => {
         })));
         // Every actor has real input authority on both endpoints. The audience
         // is identical in both directions, so only cycle/CAS can refuse a move.
-        await db.sessionShare.createMany({
-            data: [first, second].flatMap((session) => accounts
+        await db.sessionGrant.createMany({
+            data: ([first, second].flatMap((session) => accounts
                 .filter((account) => account.id !== session.accountId)
                 .map((account) => ({
                     sessionId: session.id,
-                    sharedByUserId: session.accountId,
-                    sharedWithUserId: account.id,
+                    createdByAccountId: session.accountId,
+                    accountId: account.id,
                     accessLevel: 'edit',
-                }))),
+                })))).map(data => ({ ...data, principalKind: 'account' })),
         });
         const authentication = createPresentUserSessionAccessAuthentication({ env: {} });
         let entered = 0;

@@ -58,11 +58,11 @@ async function createFixture(params: Readonly<{
             seq: 4,
         },
     });
-    const share = await db.sessionShare.create({
-        data: {
+    const share = await db.sessionGrant.create({
+        data: { principalKind: 'account',
             sessionId: session.id,
-            sharedByUserId: owner.id,
-            sharedWithUserId: collaborator.id,
+            createdByAccountId: owner.id,
+            accountId: collaborator.id,
             accessLevel: params.collaboratorLevel ?? "view",
             canApprovePermissions: false,
         },
@@ -274,7 +274,7 @@ describe("Session responsibility owner (SQLite integration)", () => {
         it("grants no access and does not move Session activity or metadata", async () => {
             const fixture = await createFixture();
             const before = await readSession(fixture.session.id);
-            const sharesBefore = await db.sessionShare.findMany({ where: { sessionId: fixture.session.id } });
+            const sharesBefore = await db.sessionGrant.findMany({ where: { principalKind: 'account', sessionId: fixture.session.id } });
 
             await setSessionResponsibility({
                 actorAccountId: fixture.owner.id,
@@ -290,7 +290,7 @@ describe("Session responsibility owner (SQLite integration)", () => {
                 agentState: before.agentState,
                 encryptionMode: before.encryptionMode,
             });
-            expect(await db.sessionShare.findMany({ where: { sessionId: fixture.session.id } }))
+            expect(await db.sessionGrant.findMany({ where: { principalKind: 'account', sessionId: fixture.session.id } }))
                 .toEqual(sharesBefore);
         });
 
@@ -398,11 +398,11 @@ describe("Session responsibility owner (SQLite integration)", () => {
                 subject: { kind: "account", accountId: fixture.collaborator.id },
             }));
 
-            await db.sessionShare.create({
-                data: {
+            await db.sessionGrant.create({
+                data: { principalKind: 'account',
                     sessionId: fixture.session.id,
-                    sharedByUserId: fixture.owner.id,
-                    sharedWithUserId: fixture.collaborator.id,
+                    createdByAccountId: fixture.owner.id,
+                    accountId: fixture.collaborator.id,
                     accessLevel: "view",
                     canApprovePermissions: false,
                 },
@@ -417,7 +417,7 @@ describe("Session responsibility owner (SQLite integration)", () => {
             await db.teamMembership.create({ data: {
                 teamId: team.id, accountId: fixture.collaborator.id, role: "member",
             } });
-            await db.sessionTeamGrant.create({ data: {
+            await db.sessionGrant.create({ data: { principalKind: 'team',
                 sessionId: fixture.session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date(),
             } });
             await assign(fixture);
@@ -450,11 +450,11 @@ describe("Session responsibility owner (SQLite integration)", () => {
         it("keeps the assignment when another Account's grant is removed", async () => {
             const fixture = await createFixture();
             const bystander = await createAccount();
-            await db.sessionShare.create({
-                data: {
+            await db.sessionGrant.create({
+                data: { principalKind: 'account',
                     sessionId: fixture.session.id,
-                    sharedByUserId: fixture.owner.id,
-                    sharedWithUserId: bystander.id,
+                    createdByAccountId: fixture.owner.id,
+                    accountId: bystander.id,
                     accessLevel: "view",
                     canApprovePermissions: false,
                 },
@@ -506,7 +506,7 @@ describe("Session responsibility owner (SQLite integration)", () => {
             const fixture = await createFixture();
             await assign(fixture);
 
-            await db.sessionShare.deleteMany({ where: { sharedWithUserId: fixture.collaborator.id } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', accountId: fixture.collaborator.id } });
             await db.account.delete({ where: { id: fixture.collaborator.id } });
 
             expect((await readSession(fixture.session.id)).responsibleAccountId).toBeNull();
@@ -530,8 +530,8 @@ describe("Session responsibility owner (SQLite integration)", () => {
             await db.teamMembership.create({
                 data: { teamId: team.id, accountId: fixture.collaborator.id, role: "member" },
             });
-            await db.sessionTeamGrant.create({
-                data: {
+            await db.sessionGrant.create({
+                data: { principalKind: 'team',
                     sessionId: fixture.session.id,
                     teamId: team.id,
                     accessLevel: "admin",
@@ -595,7 +595,7 @@ describe("Session responsibility owner (SQLite integration)", () => {
                 expect((await request(fixture.collaborator.id, "assignment")).statusCode).toBe(403);
                 const ownerMention = await request(fixture.owner.id, "mention");
                 for (const row of ownerMention.json().candidates) expect(row).not.toHaveProperty("accessHint");
-                await db.sessionShare.update({ where: { id: fixture.share.id }, data: { accessLevel: "view" } });
+                await db.sessionGrant.update({ where: { principalKind: 'account', id: fixture.share.id }, data: { accessLevel: "view" } });
                 // Mention admission is `submitAgentInput` plus Lane 05 discussion
                 // admission: a view-only collaborator cannot mention.
                 expect((await request(fixture.collaborator.id, "mention")).statusCode).toBe(403);

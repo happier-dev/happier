@@ -10,8 +10,8 @@ import { deriveAccountRecipientEnvelopeReadinessFromRow, type AccountRecipientEn
 import { projectRecipientContentKey, RECIPIENT_READINESS_SELECT, type RecipientReadinessRow } from '@/app/session/encryption/sessionDataKeyRecipientProjection';
 import type { Tx } from '@/storage/inTx';
 import type { AccountStatus, TeamMembershipStatus } from '@/storage/enums.generated';
-import { EFFECTIVE_TEAM_MEMBERSHIP_WHERE, isEffectiveTeamMembership } from './memberships/effectiveMembership';
-import { EFFECTIVE_TEAM_GROUP_MEMBERSHIP_WHERE, isEffectiveTeamGroupMembership } from './groups/effectiveGroupMembership';
+import { EFFECTIVE_TEAM_MEMBERSHIP_WHERE, isEffectiveTeamMembership, type TeamMembershipLifetimeContext } from './memberships/effectiveMembership';
+import { EFFECTIVE_TEAM_GROUP_MEMBERSHIP_WHERE, isEffectiveTeamGroupMembership, type TeamGroupMembershipLifetimeContext } from './groups/effectiveGroupMembership';
 import { getDbProviderFromEnv, prismaRuntime } from '@/storage/prisma';
 import { resolveShareAccountSubjectsInTx, resolveShareSubjectInTx, type ShareSubjectError } from './shareEligibility';
 
@@ -23,11 +23,16 @@ export interface ResourceGrantAccessFacts {
     encryptionMode: 'plain' | 'e2ee' | null;
     accountGrants: readonly Readonly<{ accountId: string; accessLevel: ResourceAccessLevelV1; account: Readonly<{ status: AccountStatus }> }>[];
     teamGrants: readonly Readonly<{ teamId?: string; accessLevel: ResourceAccessLevelV1; team: Readonly<{ archivedAt: Date | null; memberships: readonly (Member & { role: TeamRoleV1 })[] }> }>[];
-    groupGrants: readonly Readonly<{ accessLevel: ResourceAccessLevelV1; teamGroup: Readonly<{
+    groupGrants: readonly Readonly<{ teamGroupId?: string; accessLevel: ResourceAccessLevelV1; teamGroup: Readonly<{
         archivedAt: Date | null; team: Readonly<{ archivedAt: Date | null }>;
         memberships: readonly Readonly<{ teamMembership: Member }>[];
     }> }>[];
 }
+
+export type ResourceGrantContribution =
+    | Readonly<{ kind: 'account'; accountId: string; accessLevel: ResourceAccessLevelV1 }>
+    | Readonly<{ kind: 'team'; teamId?: string; accessLevel: ResourceAccessLevelV1 }>
+    | Readonly<{ kind: 'group'; teamGroupId?: string; accessLevel: ResourceAccessLevelV1 }>;
 
 export interface ResourceGrantAccess {
     ownerAccountId: string;
@@ -35,33 +40,131 @@ export interface ResourceGrantAccess {
     encryptionMode: 'plain' | 'e2ee' | null;
 }
 
+/** Independent qualifying grants; capability owners must not combine their delegation flags. */
+export interface ResourceGrantAccessDecision extends ResourceGrantAccess {
+    readonly matchedGrants: readonly ResourceGrantContribution[];
+}
+
 export interface ResourceGrantStorageAdapter {
+    readAccessFactsBatchInTx(tx: Tx, resourceIds: readonly string[], actorAccountId?: string): Promise<ReadonlyMap<string, ResourceGrantAccessFacts>>;
     readAccessFactsInTx(tx: Tx, resourceId: string, actorAccountId?: string): Promise<ResourceGrantAccessFacts | null>;
 }
 
 /** Common relation projection; resource identity and persisted mode remain adapter-owned. */
 export function resourceGrantRelationsSelect(actorAccountId?: string) {
     const accountFilter = actorAccountId === undefined ? {} : { accountId: actorAccountId };
+    return { grants: {
+        ...(actorAccountId === undefined ? {} : { where: { OR: [
+            { accountId: actorAccountId }, { teamId: { not: null } }, { teamGroupId: { not: null } },
+        ] } }),
+        select: { id: true, principalKind: true, accountId: true, teamId: true, teamGroupId: true, accessLevel: true,
+            account: { select: { status: true } },
+            team: { select: { archivedAt: true, memberships: { where: accountFilter, select: {
+                accountId: true, status: true, role: true, account: { select: { status: true } },
+            } } } },
+            teamGroup: { select: { archivedAt: true, team: { select: { archivedAt: true } },
+                memberships: { where: { teamMembership: accountFilter }, select: { teamMembership: {
+                    select: { accountId: true, status: true, account: { select: { status: true } } },
+                } } },
+            } },
+        },
+    } } as const;
+}
+
+/** The persisted principal constraint owns non-nullability; this projects its typed arms once. */
+export function projectResourceGrantRows<T extends Readonly<{
+    principalKind: string; accountId: string | null; teamId: string | null; teamGroupId: string | null;
+    account?: unknown; team?: unknown; teamGroup?: unknown;
+}>>(grants: readonly T[]) {
     return {
-        accountGrants: { where: accountFilter, select: { accountId: true, accessLevel: true, account: { select: { status: true } } } },
-        teamGrants: { select: { accessLevel: true, team: { select: {
-            archivedAt: true, memberships: { where: accountFilter, select: { accountId: true, status: true, role: true, account: { select: { status: true } } } },
-        } } } },
-        groupGrants: { select: { accessLevel: true, teamGroup: { select: {
-            archivedAt: true, team: { select: { archivedAt: true } },
-            memberships: { where: { teamMembership: accountFilter }, select: { teamMembership: {
-                select: { accountId: true, status: true, account: { select: { status: true } } },
-            } } },
-        } } } },
-    } as const;
+        accountGrants: grants.flatMap(grant => grant.principalKind === 'account'
+            ? [{ ...grant, accountId: grant.accountId!, account: grant.account! as NonNullable<T['account']> }] : []),
+        teamGrants: grants.flatMap(grant => grant.principalKind === 'team'
+            ? [{ ...grant, teamId: grant.teamId!, team: grant.team! as NonNullable<T['team']> }] : []),
+        groupGrants: grants.flatMap(grant => grant.principalKind === 'group'
+            ? [{ ...grant, teamGroupId: grant.teamGroupId!, teamGroup: grant.teamGroup! as NonNullable<T['teamGroup']> }] : []),
+    };
+}
+
+/** Lifecycle facts are supplied by the existing membership owners; grant matching lives here. */
+export type ResourceGrantPrincipalFacts =
+    | Readonly<{ kind: 'account'; accountId: string; active: boolean }>
+    | Readonly<{ kind: 'team'; memberships: readonly Pick<TeamMembershipLifetimeContext, 'accountId' | 'role' | 'effective'>[] }>
+    | Readonly<{ kind: 'group'; memberships: readonly Pick<TeamGroupMembershipLifetimeContext, 'accountId' | 'effective'>[] }>
+    | Readonly<{ kind: 'team_member'; teamMembershipId: string;
+        membership: Pick<TeamMembershipLifetimeContext, 'accountId' | 'teamMembershipId' | 'effective'> | null }>;
+
+/** One principal policy for per-actor admission and linear recipient census. */
+export function* iterateResourceGrantPrincipalAccountIdsFromFacts(principal: ResourceGrantPrincipalFacts): IterableIterator<string> {
+    switch (principal.kind) {
+        case 'account':
+            if (principal.active) yield principal.accountId;
+            break;
+        case 'team_member':
+            if (principal.membership?.effective && principal.membership.teamMembershipId === principal.teamMembershipId) {
+                yield principal.membership.accountId;
+            }
+            break;
+        case 'team':
+            for (const member of principal.memberships) {
+                if (member.effective && isTeamPrincipalRoleV1(member.role)) yield member.accountId;
+            }
+            break;
+        case 'group':
+            for (const member of principal.memberships) {
+                if (member.effective) yield member.accountId;
+            }
+            break;
+    }
+}
+
+/** Return each qualifying contribution independently; domains retain their capability semantics. */
+export function resolveResourceGrantMatchedContributionsFromFacts<T>(
+    grants: readonly Readonly<{ principal: ResourceGrantPrincipalFacts; contribution: T }>[], actorAccountId: string,
+): T[] {
+    return grants.flatMap(({ principal, contribution }) => {
+        for (const accountId of iterateResourceGrantPrincipalAccountIdsFromFacts(principal)) {
+            if (accountId === actorAccountId) return [contribution];
+        }
+        return [];
+    });
+}
+
+export type ResourceGrantTeamPrincipal =
+    | Readonly<{ kind: 'team' }>
+    | Readonly<{ kind: 'team_group'; teamGroupId: string }>
+    | Readonly<{ kind: 'team_member'; teamMembershipId: string }>;
+
+/** Scoped Team resources retain exact membership lifetimes, unlike ordinary Account grants. */
+export function resolveTeamResourceGrantMatchedContributionsFromFacts<T>(input: Readonly<{
+    teamId: string;
+    membership: TeamMembershipLifetimeContext | null;
+    groupMemberships: readonly TeamGroupMembershipLifetimeContext[];
+    grants: readonly Readonly<{ principal: ResourceGrantTeamPrincipal; contribution: T }>[];
+}>): T[] {
+    const membership = input.membership;
+    if (!membership || membership.teamId !== input.teamId) return [];
+    const grants = input.grants.map(({ principal, contribution }): Readonly<{ principal: ResourceGrantPrincipalFacts; contribution: T }> => {
+        if (principal.kind === 'team') return { principal: { kind: 'team', memberships: [membership] }, contribution };
+        if (principal.kind === 'team_member') return { principal: { ...principal, membership }, contribution };
+        return { principal: { kind: 'group', memberships: input.groupMemberships.map(group => ({
+            accountId: group.accountId,
+            effective: membership.effective && group.effective && group.teamId === input.teamId
+                && group.teamGroupId === principal.teamGroupId && group.teamMembershipId === membership.teamMembershipId,
+        })) }, contribution };
+    });
+    return resolveResourceGrantMatchedContributionsFromFacts(grants, membership.accountId);
 }
 
 const accessRank = { view: 1, edit: 2, admin: 3, owner: 4 } as const;
 
 function hasEffectiveTeamGrant(grant: ResourceGrantAccessFacts['teamGrants'][number], actorAccountId: string): boolean {
-    return grant.team.memberships.some(member => member.accountId === actorAccountId && isTeamPrincipalRoleV1(member.role) && isEffectiveTeamMembership({
-        accountStatus: member.account.status, membershipStatus: member.status, teamArchivedAt: grant.team.archivedAt,
-    }));
+    return resolveResourceGrantMatchedContributionsFromFacts([{
+        principal: { kind: 'team', memberships: grant.team.memberships.map(member => ({
+            ...member, effective: isEffectiveTeamMembership({ accountStatus: member.account.status,
+                membershipStatus: member.status, teamArchivedAt: grant.team.archivedAt }),
+        })) }, contribution: true,
+    }], actorAccountId).length > 0;
 }
 
 /** The caller's direct Team audience, using the same membership policy as access admission. */
@@ -133,16 +236,16 @@ export function resourceGrantAccessSqlPredicate(input: Readonly<{
         provider === 'postgres' || provider === 'pglite' ? sql`CAST(${role} AS ${identifier('TeamRole')})` : sql`${role}`));
     const teamMemberMatches = sql`${memberMatches} AND ${column('m', 'role')} IN (${teamRoles})`;
     return sql`(${column('a', 'accountId')} = ${actor}
-        OR EXISTS (SELECT 1 FROM ${identifier(`${input.resourceTablePrefix}AccountGrant`)} g
+        OR EXISTS (SELECT 1 FROM ${identifier(`${input.resourceTablePrefix}Grant`)} g
             JOIN ${account} c ON ${column('c', 'id')} = ${column('g', 'accountId')}
             WHERE ${column('g', input.resourceIdColumn)} = ${resourceId}
             AND ${column('g', 'accountId')} = ${actor} AND ${column('c', 'status')} = ${activeAccount})
-        OR EXISTS (SELECT 1 FROM ${identifier(`${input.resourceTablePrefix}TeamGrant`)} g
+        OR EXISTS (SELECT 1 FROM ${identifier(`${input.resourceTablePrefix}Grant`)} g
             JOIN ${membership} m ON ${column('m', 'teamId')} = ${column('g', 'teamId')}
             JOIN ${account} c ON ${column('c', 'id')} = ${column('m', 'accountId')}
             JOIN ${team} t ON ${column('t', 'id')} = ${column('m', 'teamId')}
             WHERE ${column('g', input.resourceIdColumn)} = ${resourceId} AND ${teamMemberMatches})
-        OR EXISTS (SELECT 1 FROM ${identifier(`${input.resourceTablePrefix}GroupGrant`)} g
+        OR EXISTS (SELECT 1 FROM ${identifier(`${input.resourceTablePrefix}Grant`)} g
             JOIN ${identifier('TeamGroup')} r ON ${column('r', 'id')} = ${column('g', 'teamGroupId')}
             JOIN ${identifier('TeamGroupMembership')} gm ON ${column('gm', 'teamGroupId')} = ${column('r', 'id')}
                 AND ${column('gm', 'teamId')} = ${column('r', 'teamId')}
@@ -155,26 +258,29 @@ export function resourceGrantAccessSqlPredicate(input: Readonly<{
 }
 
 /** Ownership or the highest live direct/Team/Group grant, independent of key readiness. */
-export function resolveResourceGrantAccessFromFacts(row: ResourceGrantAccessFacts, actorAccountId: string): ResourceGrantAccess | null {
+export function resolveResourceGrantAccessFromFacts(row: ResourceGrantAccessFacts, actorAccountId: string): ResourceGrantAccessDecision | null {
     const access = { ownerAccountId: row.ownerAccountId, encryptionMode: row.encryptionMode };
-    if (row.ownerAccountId === actorAccountId) return { ...access, level: 'owner' };
+    if (row.ownerAccountId === actorAccountId) return { ...access, level: 'owner', matchedGrants: [] };
     let level: ResourceCallerAccessV1 | null = null;
     const include = (candidate: ResourceAccessLevelV1) => {
         if (level === null || accessRank[candidate] > accessRank[level]) level = candidate;
     };
-    for (const grant of row.accountGrants) {
-        if (grant.accountId === actorAccountId && grant.account.status === 'active') include(grant.accessLevel);
-    }
-    for (const grant of row.teamGrants) {
-        if (hasEffectiveTeamGrant(grant, actorAccountId)) include(grant.accessLevel);
-    }
-    for (const grant of row.groupGrants) {
-        if (grant.teamGroup.memberships.some(({ teamMembership: member }) => member.accountId === actorAccountId && isEffectiveTeamGroupMembership({
-            accountStatus: member.account.status, membershipStatus: member.status,
-            teamArchivedAt: grant.teamGroup.team.archivedAt, groupArchivedAt: grant.teamGroup.archivedAt,
-        }))) include(grant.accessLevel);
-    }
-    return level === null ? null : { ...access, level };
+    const grants: Readonly<{ principal: ResourceGrantPrincipalFacts; contribution: ResourceGrantContribution }>[] = [
+        ...row.accountGrants.map(grant => ({ principal: { kind: 'account' as const, accountId: grant.accountId,
+            active: grant.account.status === 'active' }, contribution: { kind: 'account' as const, accountId: grant.accountId, accessLevel: grant.accessLevel } })),
+        ...row.teamGrants.map(grant => ({ principal: { kind: 'team' as const, memberships: grant.team.memberships.map(member => ({
+            ...member, effective: isEffectiveTeamMembership({ accountStatus: member.account.status,
+                membershipStatus: member.status, teamArchivedAt: grant.team.archivedAt }),
+        })) }, contribution: { kind: 'team' as const, ...(grant.teamId !== undefined ? { teamId: grant.teamId } : {}), accessLevel: grant.accessLevel } })),
+        ...row.groupGrants.map(grant => ({ principal: { kind: 'group' as const, memberships: grant.teamGroup.memberships.map(({ teamMembership: member }) => ({
+            accountId: member.accountId, effective: isEffectiveTeamGroupMembership({ accountStatus: member.account.status,
+                membershipStatus: member.status, teamArchivedAt: grant.teamGroup.team.archivedAt,
+                groupArchivedAt: grant.teamGroup.archivedAt }),
+        })) }, contribution: { kind: 'group' as const, ...(grant.teamGroupId !== undefined ? { teamGroupId: grant.teamGroupId } : {}), accessLevel: grant.accessLevel } })),
+    ];
+    const matchedGrants = resolveResourceGrantMatchedContributionsFromFacts(grants, actorAccountId);
+    for (const candidate of matchedGrants) include(candidate.accessLevel);
+    return level === null ? null : { ...access, level, matchedGrants };
 }
 
 export function resolveResourceGrantAudienceFromFacts(row: ResourceGrantAccessFacts): string[] {
@@ -184,10 +290,24 @@ export function resolveResourceGrantAudienceFromFacts(row: ResourceGrantAccessFa
     return [...candidates].filter(accountId => resolveResourceGrantAccessFromFacts(row, accountId) !== null).sort();
 }
 
+/** One storage snapshot and one decision per distinct resource in this admission. */
+export async function resolveResourceGrantAccessBatchInTx(tx: Tx, adapter: ResourceGrantStorageAdapter,
+    input: Readonly<{ resourceIds: readonly string[]; actorAccountId: string }>): Promise<readonly (ResourceGrantAccessDecision | null)[]> {
+    const ids = [...new Set(input.resourceIds)];
+    if (ids.length === 0) return [];
+    const facts = await adapter.readAccessFactsBatchInTx(tx, ids, input.actorAccountId);
+    const decisions = new Map(ids.map(id => {
+        const row = facts.get(id);
+        return [id, row ? resolveResourceGrantAccessFromFacts(row, input.actorAccountId) : null] as const;
+    }));
+    return input.resourceIds.map(id => decisions.get(id) ?? null);
+}
+
 export async function resolveResourceGrantAccessInTx(tx: Tx, adapter: ResourceGrantStorageAdapter,
-    input: Readonly<{ resourceId: string; actorAccountId: string }>): Promise<ResourceGrantAccess | null> {
-    const row = await adapter.readAccessFactsInTx(tx, input.resourceId, input.actorAccountId);
-    return row ? resolveResourceGrantAccessFromFacts(row, input.actorAccountId) : null;
+    input: Readonly<{ resourceId: string; actorAccountId: string }>): Promise<ResourceGrantAccessDecision | null> {
+    return (await resolveResourceGrantAccessBatchInTx(tx, adapter, {
+        resourceIds: [input.resourceId], actorAccountId: input.actorAccountId,
+    }))[0] ?? null;
 }
 
 export async function resolveResourceGrantAudienceInTx(tx: Tx, adapter: ResourceGrantStorageAdapter, resourceId: string): Promise<string[]> {
@@ -210,12 +330,12 @@ export async function readResourceGrantPrincipalFactsInTx(tx: Tx, input: Readonl
             const account = await tx.account.findUnique({ where: { id: principal.accountId }, select: { status: true } });
             if (account) accountGrants.push({ accountId: principal.accountId, accessLevel: 'view', account });
         } else if (principal.kind === 'team') {
-            const team = await tx.team.findUnique({ where: { id: principal.teamId }, select: relations.teamGrants.select.team.select });
+            const team = await tx.team.findUnique({ where: { id: principal.teamId }, select: relations.grants.select.team.select });
             if (team) teamGrants.push({ teamId: principal.teamId, accessLevel: 'view', team });
         } else {
             const group = await tx.teamGroup.findUnique({ where: { id: principal.groupId },
-                select: { ...relations.groupGrants.select.teamGroup.select, teamId: true } });
-            if (group?.teamId === principal.teamId) groupGrants.push({ accessLevel: 'view', teamGroup: group });
+                select: { ...relations.grants.select.teamGroup.select, teamId: true } });
+            if (group?.teamId === principal.teamId) groupGrants.push({ teamGroupId: principal.groupId, accessLevel: 'view', teamGroup: group });
         }
     }
     return { ownerAccountId: input.ownerAccountId, encryptionMode: null, accountGrants, teamGrants, groupGrants };

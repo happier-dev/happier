@@ -186,18 +186,18 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')(`browser Artifa
         const groupDocument = await makeDocument(owner.id);
         const denied = await makeDocument(owner.id);
         const unreadable = await makeDocument(owner.id, true);
-        for (const document of [direct, unreadable]) await db.artifactAccountGrant.create({ data: {
+        for (const document of [direct, unreadable]) await db.artifactGrant.create({ data: { principalKind: 'account',
             artifactId: document.id, accountId: reader.id, accessLevel: 'view', createdByAccountId: owner.id,
         } });
         const team = await db.team.create({ data: { name: 'Artifact access contract' } });
         const member = await db.teamMembership.create({ data: { teamId: team.id, accountId: reader.id, role: 'member' } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: otherMember.id, role: 'member' } });
-        await db.artifactTeamGrant.create({ data: { artifactId: teamDocument.id, teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.artifactGrant.create({ data: { principalKind: 'team', artifactId: teamDocument.id, teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id } });
         const groupTeam = await db.team.create({ data: { name: 'Artifact Group access contract' } });
         const groupMember = await db.teamMembership.create({ data: { teamId: groupTeam.id, accountId: reader.id, role: 'member' } });
         const group = await db.teamGroup.create({ data: { teamId: groupTeam.id, name: 'Artifact Group', nameKey: randomUUID() } });
         await db.teamGroupMembership.create({ data: { teamId: groupTeam.id, teamGroupId: group.id, teamMembershipId: groupMember.id } });
-        await db.artifactGroupGrant.create({ data: { artifactId: groupDocument.id, teamGroupId: group.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.artifactGrant.create({ data: { principalKind: 'group', artifactId: groupDocument.id, teamGroupId: group.id, accessLevel: 'view', createdByAccountId: owner.id } });
         const allIds = [owned, direct, teamDocument, groupDocument, denied, unreadable].map(row => row.id);
         const verify = async (expectedIds: readonly string[]) => db.$transaction(async tx => {
             const table = prismaRuntime.raw(provider === 'mysql' ? '`Artifact`' : '"Artifact"');
@@ -232,7 +232,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')(`browser Artifa
         await db.account.update({ where: { id: reader.id }, data: { status: 'suspended' } });
         await verify([owned.id]);
         await db.account.update({ where: { id: reader.id }, data: { status: 'active' } });
-        await db.artifactAccountGrant.delete({ where: { artifactId_accountId: { artifactId: direct.id, accountId: reader.id } } });
+        await db.artifactGrant.delete({ where: { principalKind: 'account', artifactId_accountId: { artifactId: direct.id, accountId: reader.id } } });
         await verify(initial.filter(id => id !== direct.id));
         await db.teamGroupMembership.delete({ where: { teamGroupId_teamMembershipId: { teamGroupId: group.id, teamMembershipId: groupMember.id } } });
         await verify([owned.id, teamDocument.id, unreadable.id]);
@@ -247,7 +247,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')(`browser Artifa
             ...data, id: randomUUID(), accountId: owner.id, updatedAt: new Date(index < 3 ? 0 : 1),
         } })));
         const shared = await db.artifact.create({ data: { ...data, id: randomUUID(), accountId: foreign.id } });
-        await db.artifactAccountGrant.create({ data: { artifactId: shared.id, accountId: owner.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: shared.id, accountId: owner.id,
             accessLevel: 'view', createdByAccountId: foreign.id } });
         const seen: string[] = [];
         let cursor: Parameters<typeof listArtifactHeadersForCallerInTx>[1]['cursor'] = null;

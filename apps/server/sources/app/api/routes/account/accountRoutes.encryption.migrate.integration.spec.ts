@@ -4100,11 +4100,11 @@ describe("registerAccountEncryptionMigrateRoutes (integration)", () => {
             migrationItem(omittedProducer.id),
             { ...migrationItem(unavailableShared.id), ownerDisplay: targetOwnerDisplay.envelope },
         ] };
-        await db.sessionShare.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'account',
                 sessionId: session.id,
-                sharedByUserId: owner.id,
-                sharedWithUserId: sharedRecipient.id,
+                createdByAccountId: owner.id,
+                accountId: sharedRecipient.id,
             },
         });
 

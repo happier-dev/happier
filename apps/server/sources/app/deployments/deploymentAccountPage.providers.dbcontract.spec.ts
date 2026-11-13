@@ -1,8 +1,9 @@
-import fastify from 'fastify';
+import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
+import fastify, { type FastifyRequest } from 'fastify';
 import { validatorCompiler, serializerCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
 import { randomUUID } from 'node:crypto';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, type DeploymentDomain, type DeploymentEnvironment } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
@@ -66,13 +67,12 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('a
                 header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind, title: 'Page fixture' })),
                 body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: '{}' })),
                 dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) } });
-            if (teamOwned) await db.artifactTeamGrant.create({ data: { artifactId: artifact.id,
-                teamId: team.id, accessLevel: 'admin', createdByAccountId: owner.id } });
+            if (teamOwned) await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: owner.id }), artifactId: artifact.id } });
             return { contentArtifactId: artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
         }
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: '{}' } });
-        const environments = [];
-        const domains = [];
+        const environments: DeploymentEnvironment[] = [];
+        const domains: DeploymentDomain[] = [];
         for (const [index, selected] of [ownSource, sharedSource, teamSource, privateSource].entries()) {
             const accountId = index === 0 ? reader.id : owner.id;
             const environment = await db.deploymentEnvironment.create({ data: {
@@ -148,7 +148,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('a
             app.setValidatorCompiler(validatorCompiler);
             app.setSerializerCompiler(serializerCompiler);
             // Authentication is the system boundary; the complete page handler and access owners remain real.
-            app.decorate('authenticate', async request => {
+            app.decorate('authenticate', async (request: FastifyRequest) => {
                 request.userId = reader.id;
                 request.authAuthority = 'present_user';
             });

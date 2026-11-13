@@ -144,16 +144,17 @@ export async function exerciseManagedCreatorAccess() {
         await expect(getManagedMachine({ actorAccountId: creator.id, input: { homeId, managedId } })).rejects.toMatchObject({ code: 'permission_denied' });
         await expect(cancelManagedCreation({ actorAccountId: creator.id, input: { homeId, managedId, expectedIntentRevision: 0 } })).rejects.toMatchObject({ code: 'permission_denied' });
     }
-    const controls = [
-        { action: 'machines.managed.power.set', requestId: randomUUID(), input: { ...target, when: 'now', intent: 'start', expectedRevision: 0 } },
-        { action: 'machines.managed.resize', requestId: randomUUID(), input: { ...target, size: { cpuCores: 2 } } },
+    const controlsFor = (managedId: string) => [
+        { action: 'machines.managed.power.set', requestId: randomUUID(), input: { homeId, managedId, when: 'now', intent: 'start', expectedRevision: 0 } },
+        { action: 'machines.managed.resize', requestId: randomUUID(), input: { homeId, managedId, size: { cpuCores: 2 } } },
     ] as const;
+    const controls = controlsFor(row.id);
     for (const input of controls) await expect(admitManagedControl({ actorAccountId: creator.id,
         custodianAccountId: custodian.id, input })).rejects.toMatchObject({ code: 'permission_denied' });
     const recovery = await create(creator.id);
     const remove = { action: 'machines.managed.delete' as const, requestId: randomUUID(), input: {
         homeId, managedId: recovery.id, when: 'now' as const, intent: 'delete' as const,
-        expectedRevision: 0, reviewedDependencies: true,
+        expectedRevision: 0, reviewedDependencies: true as const,
     } };
     await expect(admitManagedControl({ actorAccountId: stranger.id, custodianAccountId: custodian.id, input: remove }))
         .rejects.toMatchObject({ code: 'permission_denied' });
@@ -162,7 +163,7 @@ export async function exerciseManagedCreatorAccess() {
     const enrolled = await create(creator.id);
     const guest = await db.machine.create({ data: { id: randomUUID(), accountId: creator.id,
         metadata: '{}', installationId: randomUUID() } });
-    await db.machineAccountGrant.create({ data: { machineId: guest.id, accountId: stranger.id,
+    await db.machineGrant.create({ data: { principalKind: 'account', machineId: guest.id, accountId: stranger.id,
         accessLevel: 'admin', createdByAccountId: creator.id } });
     await db.managedMachine.update({ where: { id: enrolled.id }, data: { enrolledMachineId: guest.id, allocation: 'bound',
         resource: { contributionRef: launch.provider, schemaVersion: 1, value: { id: 'guest-native-resource' } },
@@ -177,8 +178,8 @@ export async function exerciseManagedCreatorAccess() {
         const listed = (await listManagedMachines({ actorAccountId: actor.id, input: { homeId } })).machines.find(machine => machine.id === enrolled.id);
         expect(listed?.launch).not.toHaveProperty('credentials');
         expect(listed).not.toHaveProperty('bootstrapCredentialRef');
-        for (const input of controls) await expect(admitManagedControl({ actorAccountId: actor.id,
-            custodianAccountId: custodian.id, input: { ...input, input: { ...input.input, managedId: enrolled.id } } }))
+        for (const input of controlsFor(enrolled.id)) await expect(admitManagedControl({ actorAccountId: actor.id,
+            custodianAccountId: custodian.id, input }))
             .rejects.toMatchObject({ code: 'permission_denied' });
     }
     expect(await cancelManagedCreation({ actorAccountId: creator.id, input: { ...target, expectedIntentRevision: 0 } }))
@@ -245,7 +246,7 @@ export async function exerciseManagedCreatorBirth() {
 export async function exerciseManagedCreatorSetupRecovery() {
     const { homeId, creator, stranger, launch, row } = await createCreatorFixture();
     const guest = await db.machine.create({ data: { id: randomUUID(), accountId: creator.id, metadata: '{}', installationId: randomUUID() } });
-    await db.machineAccountGrant.create({ data: { machineId: guest.id, accountId: stranger.id,
+    await db.machineGrant.create({ data: { principalKind: 'account', machineId: guest.id, accountId: stranger.id,
         accessLevel: 'admin', createdByAccountId: creator.id } });
     const setup = { scripts: [{ body: 'echo admitted' }] };
     await db.managedMachine.update({ where: { id: row.id }, data: { allocation: 'bound', enrolledMachineId: guest.id,

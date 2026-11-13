@@ -27,7 +27,7 @@ export async function readSessionAccessMembershipChangeSessionIdsInTx(
     const sessionIds = new Set<string>();
     for (const change of changes) {
         if (change.kind !== "teamGroupMembership") {
-            const grants = await tx.sessionTeamGrant.findMany({ where: { teamId: change.teamId }, select: { sessionId: true } });
+            const grants = await tx.sessionGrant.findMany({ where: { principalKind: 'team', teamId: change.teamId }, select: { sessionId: true } });
             for (const grant of grants) sessionIds.add(grant.sessionId);
         }
         if (change.kind === "teamRole") continue;
@@ -35,7 +35,7 @@ export async function readSessionAccessMembershipChangeSessionIdsInTx(
             ...(change.kind === "teamGroupMembership" ? { id: { in: [...change.teamGroupIds] } } : {}) }, select: { id: true } });
         if (groups.length === 0) continue;
         for (const ids of portableQueryChunks({ values: groups.map(group => group.id), bindingsPerValue: 1 })) {
-            const grants = await tx.sessionGroupGrant.findMany({ where: { teamGroupId: { in: [...ids] } }, select: { sessionId: true } });
+            const grants = await tx.sessionGrant.findMany({ where: { principalKind: 'group', teamGroupId: { in: [...ids] } }, select: { sessionId: true } });
             for (const grant of grants) sessionIds.add(grant.sessionId);
         }
     }

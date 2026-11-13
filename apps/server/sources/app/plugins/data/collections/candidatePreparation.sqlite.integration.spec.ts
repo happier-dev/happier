@@ -1293,7 +1293,7 @@ describe("plugin Collection candidate preparation", () => {
         await seedLiveSourceRow({ accountId: ACCOUNT_ID, contract: { ...sourceContract, ...source }, rowId: "retained-live" });
         const recipient = await db.account.create({ data: { encryptionMode: 'plain' } });
         const sharedRow = await db.pluginCollectionRow.findFirstOrThrow({ where: { accountId: ACCOUNT_ID, rowId: 'retained-live' } });
-        await db.pluginCollectionAccountGrant.create({ data: { rowDbId: sharedRow.id, accountId: recipient.id,
+        await db.pluginCollectionGrant.create({ data: { principalKind: 'account', rowDbId: sharedRow.id, accountId: recipient.id,
             accessLevel: 'view', createdByAccountId: ACCOUNT_ID } });
         await inTx(tx => backfillPluginCollectionUsageTotalsInTx({ tx, accountId: ACCOUNT_ID }));
         const before = await db.account.findUniqueOrThrow({ where: { id: ACCOUNT_ID },
@@ -1312,7 +1312,7 @@ describe("plugin Collection candidate preparation", () => {
         await expect(db.account.findUniqueOrThrow({ where: { id: ACCOUNT_ID },
             select: { pluginCollectionRows: true, pluginCollectionEncodedBytes: true } })).resolves.toEqual(before);
         await assertPluginCollectionUsageTotalsMatchRows(ACCOUNT_ID);
-        expect(await db.pluginCollectionAccountGrant.count({ where: { rowDbId: sharedRow.id } })).toBe(1);
+        expect(await db.pluginCollectionGrant.count({ where: { rowDbId: sharedRow.id } })).toBe(1);
         expect(await db.accountChange.findMany({ where: { accountId: recipient.id, kind: 'pluginDomain' } })).toEqual(expect.arrayContaining([
             expect.objectContaining({ hint: expect.objectContaining({ pluginDomain: 'dataCollection',
                 contractDigest: target.contractDigest, rowIds: ['retained-live'] }) }),
@@ -1342,7 +1342,7 @@ describe("plugin Collection candidate preparation", () => {
         const ciphertext = sealPluginCollectionPrivatePayloadV1({ material, payload: {}, randomBytes: tweetnacl.randomBytes });
         const content = { t: 'encrypted' as const, c: ciphertext, k: 'collection' as const };
         await db.pluginCollectionRow.update({ where: { id: row.id }, data: { contentEnvelope: content } });
-        await db.pluginCollectionAccountGrant.create({ data: { rowDbId: row.id, accountId: OTHER_ACCOUNT_ID,
+        await db.pluginCollectionGrant.create({ data: { principalKind: 'account', rowDbId: row.id, accountId: OTHER_ACCOUNT_ID,
             accessLevel: 'view', createdByAccountId: ACCOUNT_ID } });
         for (const identity of identities) await db.pluginCollectionKeyEnvelope.create({ data: { rowDbId: row.id,
             recipientAccountId: identity.accountId, recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(identity.keys.publicKey),
@@ -1374,7 +1374,7 @@ describe("plugin Collection candidate preparation", () => {
             expect(opened).toEqual(dataKey);
             expect(openPluginCollectionPrivatePayloadV1({ material: { type: 'dataKey', machineKey: opened! }, ciphertext })).toEqual({});
         }
-        expect(await db.pluginCollectionAccountGrant.count({ where: { rowDbId: row.id } })).toBe(1);
+        expect(await db.pluginCollectionGrant.count({ where: { rowDbId: row.id } })).toBe(1);
         expect(await db.accountChange.findMany({ where: { accountId: OTHER_ACCOUNT_ID, kind: 'pluginDomain' } })).toEqual(expect.arrayContaining([
             expect.objectContaining({ hint: expect.objectContaining({ rowIds: ['shared-candidate'], revision: 2 }) }),
         ]));

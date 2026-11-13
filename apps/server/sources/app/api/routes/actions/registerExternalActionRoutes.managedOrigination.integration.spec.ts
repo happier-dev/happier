@@ -257,7 +257,7 @@ describe('ordinary Account managed Action origination', () => {
             selection: { kind: 'preset', homeId, id: presetId, revision: 0 }, controller: selected.controller,
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
         const admitted = await admitManagedAcquire({ custodianAccountId: selected.account.id,
-            requesterAccountId: requester.account.id, input: { input: acquireInput,
+            requesterAccountId: requester.account.id, requestEnvelopeDigest: 'a'.repeat(43), input: { input: acquireInput,
                 requestId: selected.requestId, continuationPresent: false } });
         const actionId = 'machines.managed.cancel';
         const input = { homeId, managedId: admitted.machine.id, expectedIntentRevision: 0 };
@@ -272,7 +272,7 @@ describe('ordinary Account managed Action origination', () => {
                 timeout: () => ({ emitWithAck: async () => undefined }) });
             qualifyCurrentAccountStoredContentSocket(receiver);
             expect(await params.targetGuard?.filterTargets([receiver])).toHaveLength(1);
-            const machineAdmission = await params.createMachineAdmission?.();
+            const machineAdmission = await params.createMachineAdmission?.({ target: receiver });
             expect(machineAdmission).not.toHaveProperty('managedCreationRecovery');
             expect(SocketRpcMachineAdmissionContextV1Schema.safeParse(machineAdmission).success).toBe(true);
             const dispatched = ExternalActionDaemonDispatchRequestSchema.parse(params.callParams);
@@ -404,7 +404,7 @@ describe('ordinary Account managed Action origination', () => {
             launch: selected.input.selection.launch, allocation: 'bound', resource: { contributionRef: selected.input.selection.launch.provider,
                 schemaVersion: 1, value: { id: 'portable-resource' } }, presetId, presetRevision: 0,
             machineSetup: { setup, state: 'pending' }, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true } });
-        const sources = [{ kind: 'accountPreset', presetId, presetRevision: 0, setup }, { kind: 'direct', setup: {} }];
+        const sources = [{ kind: 'accountPreset', presetId, presetRevision: 0, setup }, { kind: 'direct', setup: {} }] as const;
         const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target: { kind: 'machine' as const, machineId: selected.controller.machineId },
             input: { homeId, machineId: selected.controller.machineId, sources, mode: 'effects' } };
         const instance = await app(async () => { throw new Error('Proof issuance must not dispatch a native effect'); });
@@ -787,7 +787,7 @@ describe('ordinary Account managed Action origination', () => {
         const token = await auth.createToken(selected.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
         const envelope = { v: 1 as const, requestId: selected.requestId,
             target: { kind: 'machine' as const, machineId: selected.controller.machineId },
-            input: actionId === 'computer.target.close' ? { machineId: selected.controller.machineId } : {} };
+            input: {} };
         let delivered = false;
         const instance = await app(async () => { delivered = true; return { ok: false, error: 'unexpected_delivery' }; });
         const headers = { authorization: `Bearer ${token}`, [AUTHORITY_CEILING_HEADER_V1]: 'account_automation' };
@@ -1640,7 +1640,7 @@ describe('ordinary Account managed Action origination', () => {
                 execution: { ok: true, result: { managedId: row.id } },
             })) };
         });
-        const issue = (token = requester.token, requestedEnvelope = envelope) => instance.inject({ method: 'POST',
+        const issue = (token = requester.token, requestedEnvelope: Omit<typeof envelope, 'target'> & Readonly<{ target: Readonly<{ kind: 'machine'; machineId: string }> }> = envelope) => instance.inject({ method: 'POST',
             url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.managed.acquire'),
             headers: { authorization: `Bearer ${token}` },
             payload: { v: 1, machineId: requestedEnvelope.target.machineId, envelope: requestedEnvelope } });
@@ -1941,7 +1941,8 @@ describe('ordinary Account managed Action origination', () => {
         const instance = await app(async () => { throw new Error('Fact reporting must not dispatch another Action'); }, undefined, source);
         const makeEnvelope = (rootActionId: typeof actionId, requestId: string, value: unknown) => {
             const target = { kind: 'machine' as const, machineId: selected.controller.machineId };
-            return mode === 'plain' ? { v: 1 as const, requestId, target, input: value }
+            // Plain envelopes go through the canonical envelope schema, as every reader parses them.
+            return mode === 'plain' ? ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId, target, input: value })
                 : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: homeId, accountId: selected.account.id,
                     authentication: { kind: 'account', tokenEpoch: selected.account.tokenEpoch },
                     actionId: rootActionId, requestId, target }, input: value,
@@ -1982,12 +1983,13 @@ describe('ordinary Account managed Action origination', () => {
             const correlation = { homeId, managedId: row.id, requestId: selected.requestId,
                 expectedIntentRevision: row.intentRevision, ...(controller ? { controller } : {}) };
             if (actionId === 'machines.managed.bootstrap.retry') {
-                const retryEnvelope = makeEnvelope(actionId, crypto.randomUUID(),
+                const retryRequestId = crypto.randomUUID();
+                const retryEnvelope = makeEnvelope(actionId, retryRequestId,
                     { homeId, managedId: row.id, expectedIntentRevision: row.intentRevision });
-                const retryOrigin = { ...origin, requestId: retryEnvelope.requestId };
+                const retryOrigin = { ...origin, requestId: retryRequestId };
                 const retryProof = signMachineInstallationProof({ privateKey: selected.keys.secretKey,
                     payload: { version: 1, accountId: selected.account.id, ...selected.controller,
-                        externalActionOrigin: { homeId, actionId, requestId: retryEnvelope.requestId,
+                        externalActionOrigin: { homeId, actionId, requestId: retryRequestId,
                             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(retryEnvelope), origin: retryOrigin } } });
                 const retry = await instance.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
                     headers: { authorization: `Bearer ${selected.token}` }, payload: { v: 1,
@@ -2086,7 +2088,7 @@ describe('ordinary Account managed Action origination', () => {
         const requestId = crypto.randomUUID();
         const target = { kind: 'machine' as const, machineId: selected.controller.machineId };
         const deleteInput = { homeId, managedId: created.machine.id, expectedRevision: 0,
-            when: 'now' as const, intent: 'delete' as const, reviewedDependencies: true };
+            when: 'now' as const, intent: 'delete' as const, reviewedDependencies: true as const };
         const envelope = mode === 'plain' ? { v: 1 as const, requestId, target, input: deleteInput }
             : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: homeId, accountId: selected.account.id,
                 authentication: { kind: 'account', tokenEpoch: selected.account.tokenEpoch }, actionId, requestId, target },
@@ -2174,7 +2176,7 @@ describe('ordinary Account managed Action origination', () => {
                     schemaVersion: 1, value: { id: 'enrolled-creation-plan' } }, enrolledMachineId: guest.id,
                 retention: selected.input.selection.retention, wakeOnAcceptedMessage: false } });
             const path = bindExternalActionExecutionAuthorizationHttpPathV1('machines.setup.plan');
-            const mint = (machineId = guest.id, creationRequestId = selected.requestId) => {
+            const mint = (machineId = guest.id, creationRequestId: string = selected.requestId) => {
                 const body = { v: 1, machineId,
                     envelope: seal('machines.setup.plan', machineId, 'creation-plan', { homeId, machineId }),
                     managedContinuation: { managedId: row.id, creationRequestId, expectedIntentRevision: 0 } };
@@ -2302,7 +2304,7 @@ describe('ordinary Account managed Action origination', () => {
     it('refuses a viewing actor or replaced installation before creating an allocation', async () => {
         const selected = await fixture(true);
         const viewer = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
-        await db.machineAccountGrant.create({ data: { machineId: selected.controller.machineId,
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: selected.controller.machineId,
             accountId: viewer.id, accessLevel: 'view', createdByAccountId: selected.account.id } });
         const viewerToken = await auth.createToken(viewer.id, undefined, { kind: 'account', authority: 'present_user' });
         const instance = await app(async () => { throw new Error('Refused admission must not reach socket delivery'); });
@@ -2960,7 +2962,7 @@ describe('ordinary Account managed Action origination', () => {
         });
         try {
             const seal = (actionId: string, machineId: string, input: unknown, requestId: string = selected.requestId) =>
-                mode === 'plain' ? { v: 1 as const, requestId, target: { kind: 'machine' as const, machineId }, input }
+                mode === 'plain' ? ExternalActionRequestEnvelopeSchema.parse({ v: 1, requestId, target: { kind: 'machine', machineId }, input })
                     : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: homeId, accountId: selected.account.id,
                         authentication: { kind: 'account', tokenEpoch: selected.account.tokenEpoch }, actionId,
                         requestId, target: { kind: 'machine', machineId } }, input,
@@ -3010,7 +3012,7 @@ describe('ordinary Account managed Action origination', () => {
             let recipient: ReturnType<typeof ManagedControllerContextOutputV1Schema.parse>['enrollmentInstallation'];
             let childEnvelope: ReturnType<typeof ExternalActionRequestEnvelopeSchema.parse> | undefined;
             let childRevision = 0;
-            let childCreationRequestId = selected.requestId;
+            let childCreationRequestId: string = selected.requestId;
             let rootSigningKey = selected.keys.secretKey;
             const mint = (value = input) => {
                 const continuation = { managedId: row.id, creationRequestId: childCreationRequestId, expectedIntentRevision: childRevision };

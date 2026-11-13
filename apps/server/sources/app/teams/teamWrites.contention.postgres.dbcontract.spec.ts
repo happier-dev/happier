@@ -268,9 +268,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
         return {
             owner, url: "/v1/teams/credential-resources/create", payload: {
                 teamId: team.id, resourceId, displayName: "Contended broker resource", source,
-                disclosureCeiling: "brokered_only", sessionUsePolicy: "personal_allowed",
+                deliveryPolicy: { preferredAllowedModes: ["brokered"] }, sessionUsePolicy: "personal_allowed",
                 brokerPlacement: { kind: "machine", machineId: machine.id }, requestPolicy: null,
-                allMembersDeliveryMode: "brokered", groupGrants: [], memberGrants: [], usageLimits: [],
+                allMembersAllowedRoutes: ["brokered"], groupGrants: [], memberGrants: [], usageLimits: [],
             },
             verify: async (body: { id: string }) => {
                 expect(body.id).toBe(resourceId);
@@ -359,7 +359,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("T
         } });
         const machine = await db.machine.create({ data: {
             id: randomUUID(), accountId: owner.id, metadata: "{}", kind: "persistent",
-            groupGrants: { create: { teamGroupId: group.id, accessLevel: "view", createdByAccountId: owner.id } },
+            grants: { create: { principalKind: 'group', teamGroupId: group.id, accessLevel: "view", createdByAccountId: owner.id } },
         } });
         const invitation = await db.teamInvitation.create({ data: {
             teamId: team.id, tokenHash: Buffer.from(randomUUID()), role: "member", historyAccess: "from_membership",

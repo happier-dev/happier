@@ -339,7 +339,7 @@ describe('startApi Home search production composition', () => {
             });
             const team = await db.team.create({ data: { name: `home-search-team-${randomUUID()}` } });
             await db.teamMembership.create({ data: { teamId: team.id, accountId: viewer.id, role: 'member' } });
-            await db.sessionTeamGrant.create({ data: { sessionId: session.id, teamId: team.id, accessLevel: 'view', effectiveAt: new Date() } });
+            await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: team.id, accessLevel: 'view', effectiveAt: new Date() } });
             const published = await createSessionMessage({
                 actorUserId: owner.id,
                 sessionId: session.id,

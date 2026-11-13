@@ -56,7 +56,7 @@ describe("stored-content public share owner (real SQLite)", () => {
             else process.env.HAPPIER_PUBLIC_SHARES_ALLOW_SUBPATH = previousOptIn;
         });
 
-        it('prefers isolation for public shares without a private Artifact shell while opt-in is enabled', async () => {
+        it('prefers isolation for public grants without a private Artifact shell while opt-in is enabled', async () => {
             const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
             const artifact = await db.artifact.create({ data: { id: crypto.randomUUID(), accountId: owner.id, headerVersion: 1, bodyVersion: 1,
                 header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'html', title: 'Public HTML' })),
@@ -68,7 +68,7 @@ describe("stored-content public share owner (real SQLite)", () => {
                 expect((await app.inject({ method: 'GET', url: `/a/${artifact.id}`, headers: { host: 'home.example.test' } })).statusCode).toBe(404);
                 process.env.HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN = 'preview.example.test';
                 const lookupId = crypto.randomUUID();
-                const created = await app.inject({ method: 'POST', url: '/v1/public-shares', headers: ownerHeaders,
+                const created = await app.inject({ method: 'POST', url: '/v1/public-grants', headers: ownerHeaders,
                     payload: { subject: { kind: 'artifact', id: artifact.id }, lookupId, keyDerivation: 'fragment_v1' } });
                 expect(created.statusCode, created.body).toBe(200);
                 const host = new URL(created.json().viewerOrigin).host;
@@ -119,7 +119,7 @@ describe("stored-content public share owner (real SQLite)", () => {
                 });
                 publicShareRoutes(app);
             }, async app => {
-                const request = { method: 'POST' as const, url: '/v1/public-shares', headers: { 'x-test-user-id': owner.id },
+                const request = { method: 'POST' as const, url: '/v1/public-grants', headers: { 'x-test-user-id': owner.id },
                     payload: { subject: { kind: 'artifact', id: artifact.id }, lookupId: crypto.randomUUID(), keyDerivation: 'fragment_v1' } };
                 const capturedOff = await app.inject(request);
                 expect(capturedOff.statusCode, capturedOff.body).toBe(503);
@@ -146,7 +146,7 @@ describe("stored-content public share owner (real SQLite)", () => {
             const lookupId = crypto.randomUUID();
             try {
                 await withAuthenticatedTestApp(publicShareRoutes, async app => {
-                    const request = { method: 'POST' as const, url: '/v1/public-shares', headers: { 'x-test-user-id': owner.id },
+                    const request = { method: 'POST' as const, url: '/v1/public-grants', headers: { 'x-test-user-id': owner.id },
                         payload: { subject: { kind: 'artifact', id: artifact.id }, lookupId, keyDerivation: 'fragment_v1' } };
                     const blocked = await app.inject(request);
                     expect(blocked.statusCode, blocked.body).toBe(503);
@@ -168,9 +168,9 @@ describe("stored-content public share owner (real SQLite)", () => {
                     const first = await app.inject({ method: 'GET', url: `/s/${lookupId}`, headers });
                     expect(first.statusCode, first.body).toBe(200);
                     expect((await app.inject({ method: 'GET', url: `/s/${lookupId}`, headers })).statusCode).toBe(200);
-                    const content = await app.inject({ method: 'GET', url: `/v1/public-shares/${lookupId}/content`, headers });
+                    const content = await app.inject({ method: 'GET', url: `/v1/public-grants/${lookupId}/content`, headers });
                     expect(content.statusCode).toBe(200);
-                    expect((await app.inject({ method: 'GET', url: `/v1/public-shares/${lookupId}/content`, headers })).statusCode).toBe(429);
+                    expect((await app.inject({ method: 'GET', url: `/v1/public-grants/${lookupId}/content`, headers })).statusCode).toBe(429);
                     expect((await db.publicSessionShare.findUniqueOrThrow({ where: { artifactId: artifact.id } })).useCount).toBe(1);
                 });
             } finally {
@@ -207,7 +207,7 @@ describe("stored-content public share owner (real SQLite)", () => {
             const payload = { lookupId, keyDerivation: 'fragment_v1', isConsentRequired: true, maxUses: 2,
                 ...(mode === 'e2ee' ? { encryptedDataKey: sealPublicShareDataKeyV1({ dataKey: key, secret, randomBytes: length => new Uint8Array(length).fill(4) }) } : {}),
                 ...(route === 'session' ? {} : { subject: { kind: route === 'artifact' ? 'artifact' : 'session', id: subject.id } }) };
-            const url = route === 'session' ? `/v1/sessions/${subject.id}/public-share` : '/v1/public-shares';
+            const url = route === 'session' ? `/v1/sessions/${subject.id}/public-share` : '/v1/public-grants';
             const subjectWhere = route === 'artifact' ? { artifactId: subject.id } : { sessionId: subject.id };
             await withAuthenticatedTestApp(publicShareRoutes, async app => {
                 const ownerHeaders = { 'x-test-user-id': owner.id };
@@ -222,7 +222,7 @@ describe("stored-content public share owner (real SQLite)", () => {
                 expect(created.json().viewerOrigin).toBe('https://home.example.test');
                 const shareId = created.json().publicShare.id;
                 const headers = { host: 'home.example.test' };
-                const contentUrl = `/v1/public-shares/${lookupId}/content`;
+                const contentUrl = `/v1/public-grants/${lookupId}/content`;
                 for (const viewerUrl of [`/s/${lookupId}`, `/s/${lookupId}/viewer.js`]) {
                     const navigation = await app.inject({ method: 'GET', url: viewerUrl, headers: { ...headers, cookie: 'account=secret' } });
                     expect(navigation.statusCode, navigation.body).toBe(200);
@@ -247,7 +247,7 @@ describe("stored-content public share owner (real SQLite)", () => {
                 expect((await app.inject({ method: 'GET', url: contentUrl + '?consent=true', headers })).statusCode).toBe(200);
                 expect((await app.inject({ method: 'GET', url: contentUrl + '?consent=true', headers })).statusCode).toBe(404);
                 expect((await db.publicSessionShare.findUniqueOrThrow({ where: { id: shareId } })).useCount).toBe(2);
-                const deletionUrl = route === 'session' ? url : `/v1/public-shares/${shareId}`;
+                const deletionUrl = route === 'session' ? url : `/v1/public-grants/${shareId}`;
                 expect((await app.inject({ method: 'DELETE', url: deletionUrl, headers: ownerHeaders })).statusCode).toBe(200);
                 expect((await app.inject({ method: 'GET', url: contentUrl + '?consent=true', headers })).statusCode).toBe(404);
                 expect((await app.inject({ method: 'GET', url: `/s/${lookupId}/viewer.js`, headers: { ...headers, cookie: 'account=secret' } })).statusCode).toBe(200);
@@ -296,7 +296,7 @@ describe("stored-content public share owner (real SQLite)", () => {
         } });
         const lookupId = crypto.randomUUID();
         await withAuthenticatedTestApp(publicShareRoutes, async app => {
-            const created = await app.inject({ method: 'POST', url: '/v1/public-shares', headers: { 'x-test-user-id': owner.id }, payload: {
+            const created = await app.inject({ method: 'POST', url: '/v1/public-grants', headers: { 'x-test-user-id': owner.id }, payload: {
                 subject: { kind: 'session', id: session.id }, lookupId, keyDerivation: 'fragment_v1', isConsentRequired: true,
                 ...(mode === 'e2ee' ? { encryptedDataKey: sealPublicShareDataKeyV1({ dataKey: key, secret, randomBytes: length => new Uint8Array(length).fill(4) }) } : {}),
             } });
@@ -363,7 +363,7 @@ describe("stored-content public share owner (real SQLite)", () => {
             ownerMetadata: JSON.stringify({ t: 'encrypted', c: 'oRoBAgMEBQYHCAkKCwwNDg8QERITFBUWFxh8aC0+8+YDECLScN6uQTItPyWVR7XbQA==' }) } });
         const lookupId = crypto.randomUUID();
         const payload = { lookupId, keyDerivation: 'fragment_v1', ...(route === 'stored-content' ? { subject: { kind: 'session', id: session.id } } : {}) };
-        const url = route === 'session' ? `/v1/sessions/${session.id}/public-share` : '/v1/public-shares';
+        const url = route === 'session' ? `/v1/sessions/${session.id}/public-share` : '/v1/public-grants';
         await withAuthenticatedTestApp(publicShareRoutes, async app => {
             const previous = process.env.HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN;
             delete process.env.HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN;
@@ -390,7 +390,7 @@ describe("stored-content public share owner (real SQLite)", () => {
         const session = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{"v":1}', metadataLayoutVersion: 1,
             ownerMetadata: JSON.stringify(createPlainSessionOwnerMetadataEnvelopeV1({ v: 1, workspace: {} })) } });
         const lookupId = crypto.randomUUID();
-        const url = route === 'session' ? `/v1/sessions/${session.id}/public-share` : '/v1/public-shares';
+        const url = route === 'session' ? `/v1/sessions/${session.id}/public-share` : '/v1/public-grants';
         await withAuthenticatedTestApp(publicShareRoutes, async app => {
             const created = await app.inject({ method: 'POST', url, headers: { 'x-test-user-id': owner.id }, payload: {
                 lookupId, keyDerivation: 'fragment_v1', networkOff: true,
@@ -398,7 +398,7 @@ describe("stored-content public share owner (real SQLite)", () => {
             } });
             expect(created.statusCode, created.body).toBe(200);
             expect(created.json().publicShare.networkOff).toBe(true);
-            const read = await app.inject({ method: 'GET', url: `/v1/public-shares/${lookupId}/content`,
+            const read = await app.inject({ method: 'GET', url: `/v1/public-grants/${lookupId}/content`,
                 headers: { host: new URL(created.json().viewerOrigin).host } });
             expect(read.statusCode, read.body).toBe(200);
             expect(read.json().networkOff).toBe(true);
@@ -439,17 +439,17 @@ describe("stored-content public share owner (real SQLite)", () => {
             process.env.HAPPIER_PUBLIC_SHARES_ALLOW_SUBPATH = 'true';
         }
         try { await withAuthenticatedTestApp(publicShareRoutes, async app => {
-            const created = await app.inject({ method: 'POST', url: '/v1/public-shares', headers: { 'x-test-user-id': owner.id }, payload: {
+            const created = await app.inject({ method: 'POST', url: '/v1/public-grants', headers: { 'x-test-user-id': owner.id }, payload: {
                 subject: { kind: 'session', id: session.id }, lookupId, keyDerivation: 'fragment_v1', networkOff: true, isConsentRequired: true, maxUses: 1,
                 ...(mode === 'e2ee' ? { encryptedDataKey: sealPublicShareDataKeyV1({ dataKey: key, secret, randomBytes: length => new Uint8Array(length).fill(4) }) } : {}),
             } });
             expect(created.statusCode, created.body).toBe(200);
             const headers = { host: new URL(created.json().viewerOrigin).host };
-            const page = await app.inject({ method: 'GET', url: `/v1/public-shares/${lookupId}/content?consent=true`, headers });
+            const page = await app.inject({ method: 'GET', url: `/v1/public-grants/${lookupId}/content?consent=true`, headers });
             expect(page.statusCode, page.body).toBe(200);
             expect(page.json().content.messages.map((message: { id: string }) => message.id)).toEqual([admitted.id]);
             const grantHeaders = { ...headers, 'x-public-share-messages-access-token': page.json().messagesAccessToken };
-            const url = `/v1/public-shares/${lookupId}/visual/${admitted.id}`;
+            const url = `/v1/public-grants/${lookupId}/visual/${admitted.id}`;
             expect((await app.inject({ method: 'GET', url: url + '?consent=true', headers: { ...grantHeaders, host: 'attacker.example.test' } })).statusCode).toBe(404);
             for (const credentials of [{ cookie: 'account=secret' }, { authorization: 'Bearer secret' }]) {
                 expect((await app.inject({ method: 'GET', url: url + '?consent=true', headers: { ...grantHeaders, ...credentials } })).statusCode).toBe(403);
@@ -460,7 +460,7 @@ describe("stored-content public share owner (real SQLite)", () => {
             expect(visual.statusCode, visual.body).toBe(200);
             expect(visual.json()).toMatchObject({ messageId: admitted.id, networkOff: true, record: { id: recordId, content: recordData.content } });
             for (const denied of [unpublished.id, sidechain.id, 'arbitrary-item-id']) {
-                expect((await app.inject({ method: 'GET', url: `/v1/public-shares/${lookupId}/visual/${denied}?consent=true`, headers: grantHeaders })).statusCode).toBe(404);
+                expect((await app.inject({ method: 'GET', url: `/v1/public-grants/${lookupId}/visual/${denied}?consent=true`, headers: grantHeaders })).statusCode).toBe(404);
             }
             expect((await db.publicSessionShare.findUniqueOrThrow({ where: { sessionId: session.id } })).useCount).toBe(1);
             expect(await db.publicShareAccessLog.count({ where: { publicShareId: created.json().publicShare.id } })).toBe(1);
@@ -526,7 +526,7 @@ describe("stored-content public share owner (real SQLite)", () => {
             body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: '{}' })),
             dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) } });
         await withAuthenticatedTestApp(publicShareRoutes, async app => {
-            const response = await app.inject({ method: 'POST', url: '/v1/public-shares', headers: { 'x-test-user-id': owner.id },
+            const response = await app.inject({ method: 'POST', url: '/v1/public-grants', headers: { 'x-test-user-id': owner.id },
                 payload: { subject: { kind: 'artifact', id: artifact.id }, lookupId: crypto.randomUUID(), keyDerivation: 'fragment_v1' } });
             expect(response.statusCode, response.body).toBe(400);
             expect(response.json()).toEqual({ error: 'artifact_kind_not_shareable' });
@@ -573,16 +573,16 @@ describe("stored-content public share owner (real SQLite)", () => {
             } });
             expect(created.statusCode, created.body).toBe(200);
             const lookupId = crypto.randomUUID();
-            const shared = await app.inject({ method: 'POST', url: '/v1/public-shares', headers,
+            const shared = await app.inject({ method: 'POST', url: '/v1/public-grants', headers,
                 payload: { subject: { kind: 'artifact', id }, lookupId, keyDerivation: 'fragment_v1' } });
             expect(shared.statusCode, shared.body).toBe(200);
             const readHeaders = { host: new URL(shared.json().viewerOrigin).host };
-            const read = await app.inject({ method: 'GET', url: `/v1/public-shares/${lookupId}/content`, headers: readHeaders });
+            const read = await app.inject({ method: 'GET', url: `/v1/public-grants/${lookupId}/content`, headers: readHeaders });
             expect(read.statusCode, read.body).toBe(200);
             expect(read.json().content.blob).toEqual({ blobId, content: { t: 'plain', v: bytes.toString('base64') } });
-            expect((await app.inject({ method: 'GET', url: `/v1/public-shares/${lookupId}/content`, headers: { ...readHeaders, cookie: 'account=secret' } })).statusCode).toBe(403);
-            await app.inject({ method: 'DELETE', url: `/v1/public-shares/${shared.json().publicShare.id}`, headers });
-            expect((await app.inject({ method: 'GET', url: `/v1/public-shares/${lookupId}/content`, headers: readHeaders })).statusCode).toBe(404);
+            expect((await app.inject({ method: 'GET', url: `/v1/public-grants/${lookupId}/content`, headers: { ...readHeaders, cookie: 'account=secret' } })).statusCode).toBe(403);
+            await app.inject({ method: 'DELETE', url: `/v1/public-grants/${shared.json().publicShare.id}`, headers });
+            expect((await app.inject({ method: 'GET', url: `/v1/public-grants/${lookupId}/content`, headers: readHeaders })).statusCode).toBe(404);
         });
     });
 
@@ -606,7 +606,7 @@ describe("stored-content public share owner (real SQLite)", () => {
                 } });
                 expect(created.statusCode, created.body).toBe(200);
                 const lookupId = crypto.randomUUID();
-                const share = await app.inject({ method: 'POST', url: '/v1/public-shares', headers, payload: {
+                const share = await app.inject({ method: 'POST', url: '/v1/public-grants', headers, payload: {
                     subject: { kind: 'artifact', id }, lookupId, keyDerivation: 'fragment_v1', isConsentRequired: true,
                     ...(mode === 'e2ee' ? { encryptedDataKey: sealPublicShareDataKeyV1({ dataKey: key, secret, randomBytes: length => new Uint8Array(length).fill(4) }) } : {}),
                 } });
@@ -624,7 +624,7 @@ describe("stored-content public share owner (real SQLite)", () => {
                 expect(await loadPublicShareViewerContent({ location, fetch, consent: true })).toMatchObject({ status: 'ready', binary: { bytes, mime } });
                 expect(await db.publicShareAccessLog.count({ where: { publicShareId: share.json().publicShare.id } })).toBe(1);
                 expect((await app.inject({ method: 'GET', url: `/v1/artifacts/${id}/blobs/${blobId}`, headers: { 'x-test-user-id': stranger.id } })).statusCode).toBe(404);
-                await app.inject({ method: 'DELETE', url: `/v1/public-shares/${share.json().publicShare.id}`, headers });
+                await app.inject({ method: 'DELETE', url: `/v1/public-grants/${share.json().publicShare.id}`, headers });
                 expect(await loadPublicShareViewerContent({ location, fetch, consent: true })).toEqual({ status: 'unavailable' });
             }
         });
@@ -650,7 +650,7 @@ describe("stored-content public share owner (real SQLite)", () => {
         await withAuthenticatedTestApp(publicShareRoutes, async app => {
             const headers = { 'x-test-user-id': owner.id };
             const lookupId = crypto.randomUUID();
-            const share = await app.inject({ method: 'POST', url: '/v1/public-shares', headers, payload: {
+            const share = await app.inject({ method: 'POST', url: '/v1/public-grants', headers, payload: {
                 subject: { kind: 'artifact', id }, lookupId, keyDerivation: 'fragment_v1', isConsentRequired: true,
                 ...(mode === 'e2ee' ? { encryptedDataKey: sealPublicShareDataKeyV1({ dataKey: key, secret, randomBytes: length => new Uint8Array(length).fill(4) }) } : {}),
             } });
@@ -666,7 +666,7 @@ describe("stored-content public share owner (real SQLite)", () => {
             expect(await loadPublicShareViewerContent({ location, fetch })).toEqual({ status: 'consent_required' });
             expect(await loadPublicShareViewerContent({ location, fetch, consent: true })).toMatchObject({ status: 'ready', widgetDefinition: definition });
             expect(await db.publicShareAccessLog.count({ where: { publicShareId: share.json().publicShare.id } })).toBe(1);
-            await app.inject({ method: 'DELETE', url: `/v1/public-shares/${share.json().publicShare.id}`, headers });
+            await app.inject({ method: 'DELETE', url: `/v1/public-grants/${share.json().publicShare.id}`, headers });
             expect(await loadPublicShareViewerContent({ location, fetch, consent: true })).toEqual({ status: 'unavailable' });
         });
     });
@@ -681,22 +681,22 @@ describe("stored-content public share owner (real SQLite)", () => {
         const lookupId = crypto.randomUUID();
         const headers = { "x-test-user-id": owner.id };
         await withAuthenticatedTestApp(publicShareRoutes, async app => {
-            const create = await app.inject({ method: "POST", url: "/v1/public-shares", headers,
+            const create = await app.inject({ method: "POST", url: "/v1/public-grants", headers,
                 payload: { subject: { kind: "artifact", id: artifact.id }, lookupId, keyDerivation: "fragment_v1", maxUses: 1, isConsentRequired: true } });
             expect(create.statusCode, create.body).toBe(200);
             const share = create.json().publicShare;
             expect(share.subject).toEqual({ kind: "artifact", id: artifact.id });
-            expect((await app.inject({ method: "GET", url: `/v1/public-shares?subjectKind=artifact&subjectId=${artifact.id}`, headers: { "x-test-user-id": stranger.id } })).statusCode).toBe(403);
+            expect((await app.inject({ method: "GET", url: `/v1/public-grants?subjectKind=artifact&subjectId=${artifact.id}`, headers: { "x-test-user-id": stranger.id } })).statusCode).toBe(403);
             const origin = create.json().viewerOrigin;
             expect(origin).toBe(resolveStoredContentPublicShareOrigin(artifact.id));
             const readHeaders = { host: new URL(origin).host };
-            expect((await app.inject({ method: "GET", url: `/v1/public-shares/${lookupId}/content`, headers: readHeaders })).json()).toMatchObject({ requiresConsent: true });
-            expect((await app.inject({ method: "GET", url: `/v1/public-shares/${lookupId}/content?consent=true`, headers: readHeaders })).json()).toMatchObject({ encryptionMode: "plain", encryptedDataKey: null, content: { kind: "artifact", body: encodePlainArtifactStoredContent({ body: "Public text" }) } });
-            expect((await app.inject({ method: "GET", url: `/v1/public-shares/${lookupId}/content?consent=true`, headers: readHeaders })).statusCode).toBe(404);
-            const logs = await app.inject({ method: "GET", url: `/v1/public-shares/${share.id}/access-log`, headers });
+            expect((await app.inject({ method: "GET", url: `/v1/public-grants/${lookupId}/content`, headers: readHeaders })).json()).toMatchObject({ requiresConsent: true });
+            expect((await app.inject({ method: "GET", url: `/v1/public-grants/${lookupId}/content?consent=true`, headers: readHeaders })).json()).toMatchObject({ encryptionMode: "plain", encryptedDataKey: null, content: { kind: "artifact", body: encodePlainArtifactStoredContent({ body: "Public text" }) } });
+            expect((await app.inject({ method: "GET", url: `/v1/public-grants/${lookupId}/content?consent=true`, headers: readHeaders })).statusCode).toBe(404);
+            const logs = await app.inject({ method: "GET", url: `/v1/public-grants/${share.id}/access-log`, headers });
             expect(logs.json().accessLog).toHaveLength(1);
-            expect((await app.inject({ method: "DELETE", url: `/v1/public-shares/${share.id}`, headers })).statusCode).toBe(200);
-            expect((await app.inject({ method: "GET", url: `/v1/public-shares/${lookupId}/content?consent=true`, headers: readHeaders })).statusCode).toBe(404);
+            expect((await app.inject({ method: "DELETE", url: `/v1/public-grants/${share.id}`, headers })).statusCode).toBe(200);
+            expect((await app.inject({ method: "GET", url: `/v1/public-grants/${lookupId}/content?consent=true`, headers: readHeaders })).statusCode).toBe(404);
         });
     });
 
@@ -709,7 +709,7 @@ describe("stored-content public share owner (real SQLite)", () => {
         await db.accountPluginRelease.create({ data: { accountId: owner.id, pluginId: "com.test.public", version: "1.0.0", archiveDigestSha256: "0".repeat(64), normalizedManifest: {}, collectionContracts: {}, uiSlots: [], packageAssetArtifactId: artifact.id } });
         await withAuthenticatedTestApp(publicShareRoutes, async app => {
             expect((await app.inject({ method: "GET", url: `/v1/public-share/${token}`, headers: buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) })).statusCode).toBe(200);
-            const response = await app.inject({ method: "POST", url: "/v1/public-shares", headers: { "x-test-user-id": owner.id }, payload: { subject: { kind: "artifact", id: artifact.id }, lookupId: crypto.randomUUID(), keyDerivation: "fragment_v1" } });
+            const response = await app.inject({ method: "POST", url: "/v1/public-grants", headers: { "x-test-user-id": owner.id }, payload: { subject: { kind: "artifact", id: artifact.id }, lookupId: crypto.randomUUID(), keyDerivation: "fragment_v1" } });
             expect(response.statusCode).toBe(403);
         });
     });
@@ -721,7 +721,7 @@ describe("stored-content public share owner (real SQLite)", () => {
         await withAuthenticatedTestApp(publicShareRoutes, async app => {
             const lookupId = crypto.randomUUID();
             const headers = { "x-test-user-id": owner.id };
-            const created = await app.inject({ method: "POST", url: "/v1/public-shares", headers, payload: { subject: { kind: "artifact", id: artifact.id }, lookupId, keyDerivation: "fragment_v1" } });
+            const created = await app.inject({ method: "POST", url: "/v1/public-grants", headers, payload: { subject: { kind: "artifact", id: artifact.id }, lookupId, keyDerivation: "fragment_v1" } });
             expect(created.statusCode, created.body).toBe(200);
             const host = new URL(created.json().viewerOrigin).host;
             for (const url of [`/s/${lookupId}`, `/s/${lookupId}/viewer.js`]) {
@@ -729,33 +729,33 @@ describe("stored-content public share owner (real SQLite)", () => {
                 expect((await app.inject({ method: 'GET', url, headers: { host, authorization: 'Bearer secret' } })).statusCode).toBe(404);
             }
             expect((await app.inject({ method: "GET", url: `/s/${lookupId}`, headers: { host: "home.example.test" } })).statusCode).toBe(404);
-            expect((await app.inject({ method: "GET", url: `/v1/public-shares/${lookupId}/content`, headers: { host: "home.example.test" } })).statusCode).toBe(404);
+            expect((await app.inject({ method: "GET", url: `/v1/public-grants/${lookupId}/content`, headers: { host: "home.example.test" } })).statusCode).toBe(404);
             const shell = await app.inject({ method: "GET", url: `/s/${lookupId}`, headers: { host } });
             expect(shell.statusCode, shell.body).toBe(200);
             expect(shell.headers["content-security-policy"]).toContain("connect-src 'self'");
             expect(shell.headers["set-cookie"]).toBeUndefined();
             expect((await app.inject({ method: "GET", url: `/s/${lookupId}/viewer.js`, headers: { host } })).headers["content-type"]).toContain("application/javascript");
             await db.account.update({ where: { id: owner.id }, data: { encryptionMode: "e2ee" } });
-            const mismatched = await app.inject({ method: "GET", url: `/v1/public-shares/${lookupId}/content`, headers: { host } });
+            const mismatched = await app.inject({ method: "GET", url: `/v1/public-grants/${lookupId}/content`, headers: { host } });
             expect(mismatched.statusCode, mismatched.body).toBe(404);
             expect((await db.publicSessionShare.findUniqueOrThrow({ where: { id: created.json().publicShare.id } })).useCount).toBe(0);
             expect(await db.publicShareAccessLog.count({ where: { publicShareId: created.json().publicShare.id } })).toBe(0);
             await db.account.update({ where: { id: owner.id }, data: { encryptionMode: "plain" } });
             await db.artifact.update({ where: { id: artifact.id }, data: { deletedAt: new Date() } });
-            expect((await app.inject({ method: "GET", url: `/v1/public-shares/${lookupId}/content`, headers: { host } })).statusCode).toBe(404);
+            expect((await app.inject({ method: "GET", url: `/v1/public-grants/${lookupId}/content`, headers: { host } })).statusCode).toBe(404);
             expect((await app.inject({ method: "GET", url: `/s/${lookupId}`, headers: { host } })).statusCode).toBe(200);
             expect((await app.inject({ method: "GET", url: `/s/${lookupId}/viewer.js`, headers: { host } })).statusCode).toBe(200);
-            expect((await app.inject({ method: "POST", url: "/v1/public-shares", headers,
+            expect((await app.inject({ method: "POST", url: "/v1/public-grants", headers,
                 payload: { subject: { kind: "artifact", id: artifact.id }, lookupId: crypto.randomUUID(), keyDerivation: "fragment_v1" } })).statusCode).toBe(403);
             expect((await db.publicSessionShare.findUniqueOrThrow({ where: { id: created.json().publicShare.id } })).useCount).toBe(0);
             await db.artifact.update({ where: { id: artifact.id }, data: { deletedAt: null } });
-            await app.inject({ method: "DELETE", url: `/v1/public-shares/${created.json().publicShare.id}`, headers });
+            await app.inject({ method: "DELETE", url: `/v1/public-grants/${created.json().publicShare.id}`, headers });
             const revoked = await app.inject({ method: "GET", url: `/s/${lookupId}`, headers: { host } });
             expect(revoked.statusCode).toBe(200);
             expect(revoked.body).toBe(shell.body);
             expect(revoked.headers["content-type"]).toContain("text/html");
             expect((await app.inject({ method: "GET", url: `/s/${lookupId}/viewer.js`, headers: { host } })).statusCode).toBe(200);
-            expect((await app.inject({ method: "GET", url: `/v1/public-shares/${lookupId}/content`, headers: { host } })).statusCode).toBe(404);
+            expect((await app.inject({ method: "GET", url: `/v1/public-grants/${lookupId}/content`, headers: { host } })).statusCode).toBe(404);
         });
     });
 
@@ -779,7 +779,7 @@ describe("stored-content public share owner (real SQLite)", () => {
             await db.$executeRawUnsafe('UPDATE "SessionMessage" SET "content"=? WHERE "sessionId"=? AND "seq"=2', JSON.stringify({ ciphertext: privacyKit.encodeBase64(sealed) }), subject.id);
         }
         await withAuthenticatedTestApp(publicShareRoutes, async app => {
-            const created = await app.inject({ method: "POST", url: "/v1/public-shares", headers, payload: { subject: { kind, id: subject.id }, lookupId, encryptedDataKey, keyDerivation: "fragment_v1", maxUses: 1 } });
+            const created = await app.inject({ method: "POST", url: "/v1/public-grants", headers, payload: { subject: { kind, id: subject.id }, lookupId, encryptedDataKey, keyDerivation: "fragment_v1", maxUses: 1 } });
             expect(created.statusCode, created.body).toBe(200);
             const stored = await db.publicSessionShare.findUniqueOrThrow({ where: { id: created.json().publicShare.id } });
             expect(Buffer.from(stored.tokenHash).toString("hex")).toBe(createHash("sha256").update(lookupId).digest("hex"));
@@ -788,7 +788,7 @@ describe("stored-content public share owner (real SQLite)", () => {
             expect(openPublicShareDataKeyV1({ encryptedDataKey: envelope, secret: lookupId })).toBeNull();
             expect(openPublicShareDataKeyV1({ encryptedDataKey: envelope, secret: Buffer.from(stored.tokenHash).toString("hex") })).toBeNull();
             const readHeaders = { host: new URL(created.json().viewerOrigin).host };
-            const read = await app.inject({ method: "GET", url: `/v1/public-shares/${lookupId}/content?limit=1`, headers: readHeaders });
+            const read = await app.inject({ method: "GET", url: `/v1/public-grants/${lookupId}/content?limit=1`, headers: readHeaders });
             expect(read.statusCode, read.body).toBe(200);
             const value = read.json();
             const openedKey = openPublicShareDataKeyV1({ encryptedDataKey: value.encryptedDataKey, secret });
@@ -798,7 +798,7 @@ describe("stored-content public share owner (real SQLite)", () => {
             expect((await app.inject({ method: "GET", url: `/v1/public-share/${lookupId}`, headers })).statusCode).toBe(404);
             if (kind === "session") {
                 expect(value.content.hasMore).toBe(true);
-                const url = `/v1/public-shares/${lookupId}/content?beforeSeq=${value.content.nextBeforeSeq}&limit=1`;
+                const url = `/v1/public-grants/${lookupId}/content?beforeSeq=${value.content.nextBeforeSeq}&limit=1`;
                 expect((await app.inject({ method: "GET", url, headers: readHeaders })).statusCode).toBe(404);
                 const page = await app.inject({ method: "GET", url, headers: { ...readHeaders, "x-public-share-messages-access-token": value.messagesAccessToken } });
                 expect(page.statusCode, page.body).toBe(200);
@@ -820,11 +820,11 @@ describe("stored-content public share owner (real SQLite)", () => {
                 header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ title: "Limited" })), body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: "Text" })), dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) } });
             await withAuthenticatedTestApp(publicShareRoutes, async app => {
                 const lookupId = crypto.randomUUID();
-                const created = await app.inject({ method: "POST", url: "/v1/public-shares", headers: { "x-test-user-id": owner.id }, payload: { subject: { kind: "artifact", id: artifact.id }, lookupId, keyDerivation: "fragment_v1" } });
+                const created = await app.inject({ method: "POST", url: "/v1/public-grants", headers: { "x-test-user-id": owner.id }, payload: { subject: { kind: "artifact", id: artifact.id }, lookupId, keyDerivation: "fragment_v1" } });
                 expect(created.statusCode, created.body).toBe(200);
                 const headers = { host: new URL(created.json().viewerOrigin).host };
-                expect((await app.inject({ method: "GET", url: `/v1/public-shares/${lookupId}/content`, headers })).statusCode).toBe(200);
-                expect((await app.inject({ method: "GET", url: `/v1/public-shares/${lookupId}/content`, headers })).statusCode).toBe(429);
+                expect((await app.inject({ method: "GET", url: `/v1/public-grants/${lookupId}/content`, headers })).statusCode).toBe(200);
+                expect((await app.inject({ method: "GET", url: `/v1/public-grants/${lookupId}/content`, headers })).statusCode).toBe(429);
                 expect((await app.inject({ method: "GET", url: `/s/${lookupId}`, headers })).statusCode).toBe(200);
                 expect((await app.inject({ method: "GET", url: `/s/${lookupId}/viewer.js`, headers })).statusCode).toBe(200);
                 expect((await db.publicSessionShare.findUniqueOrThrow({ where: { id: created.json().publicShare.id } })).useCount).toBe(1);
@@ -906,7 +906,7 @@ describe("stored-content public share owner (real SQLite)", () => {
         const lookupId = crypto.randomUUID();
         const share = await db.publicSessionShare.create({ data: { sessionId: session.id, createdByUserId: owner.id, tokenHash: createHash("sha256").update(lookupId).digest(), keyDerivation: "fragment_v1", maxUses: 1 } });
         await withAuthenticatedTestApp(publicShareRoutes, async app => {
-            const pending = await app.inject({ method: "GET", url: `/v1/public-shares/${lookupId}/content`, headers: { host: new URL(resolveStoredContentPublicShareOrigin(share.id)!).host } });
+            const pending = await app.inject({ method: "GET", url: `/v1/public-grants/${lookupId}/content`, headers: { host: new URL(resolveStoredContentPublicShareOrigin(share.id)!).host } });
             expect(pending.statusCode, pending.body).toBe(409);
             expect(pending.json()).toMatchObject({ code: "metadata_privacy_upgrade_required" });
             expect(pending.body).not.toContain("/modern/owner/private");
@@ -926,7 +926,7 @@ describe("stored-content public share owner (real SQLite)", () => {
         const unshared = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: "plain", metadata: JSON.stringify(metadata) } });
         const stranger = await db.account.create({ data: { encryptionMode: "plain" } });
         const direct = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: "plain", metadata: JSON.stringify(metadata), archivedAt: new Date() } });
-        await db.sessionShare.create({ data: { sessionId: direct.id, sharedByUserId: owner.id, sharedWithUserId: stranger.id } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: direct.id, createdByAccountId: owner.id, accountId: stranger.id } });
         const headers = { "x-test-user-id": owner.id, ...buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) };
         await withAuthenticatedTestApp(app => { publicShareRoutes(app); registerSessionListingRoutes(app); registerSessionPatchRoute(app); }, async app => {
             const response = await app.inject({ method: "GET", url: `/v1/public-share/${token}`, headers });
@@ -979,9 +979,9 @@ describe("stored-content public share owner (real SQLite)", () => {
         const encryptedDataKey = sealPublicShareDataKeyV1({ dataKey: key, secret: "local-fragment-secret", randomBytes: size => new Uint8Array(size).fill(5) });
         await withAuthenticatedTestApp(publicShareRoutes, async app => {
             const headers = { "x-test-user-id": owner.id, ...buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) };
-            const created = await app.inject({ method: "POST", url: "/v1/public-shares", headers, payload: { subject: { kind: "session", id: session.id }, lookupId, encryptedDataKey, keyDerivation: "fragment_v1" } });
+            const created = await app.inject({ method: "POST", url: "/v1/public-grants", headers, payload: { subject: { kind: "session", id: session.id }, lookupId, encryptedDataKey, keyDerivation: "fragment_v1" } });
             expect(created.statusCode, created.body).toBe(200);
-            const response = await app.inject({ method: "GET", url: `/v1/public-shares/${lookupId}/content`, headers: { host: new URL(created.json().viewerOrigin).host } });
+            const response = await app.inject({ method: "GET", url: `/v1/public-grants/${lookupId}/content`, headers: { host: new URL(created.json().viewerOrigin).host } });
             expect(response.statusCode, response.body).toBe(404);
             expect(response.body).not.toContain("Retained inconsistent plaintext");
             const shareId = created.json().publicShare.id;

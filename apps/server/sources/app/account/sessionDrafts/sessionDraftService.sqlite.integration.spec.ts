@@ -148,7 +148,7 @@ describe('sessionDraftService (SQLite integration)', () => {
     afterEach(async () => {
         emitEphemeral.mockClear();
         harness.resetEnv();
-        await db.sessionShare.deleteMany();
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account' } });
         await db.session.deleteMany();
         await db.team.deleteMany();
         await db.account.deleteMany();
@@ -416,7 +416,7 @@ describe('sessionDraftService (SQLite integration)', () => {
         const owner = await db.account.create({ data: { publicKey: `pk-${randomUUID()}`, encryptionMode: 'plain' } });
         const recipient = await db.account.create({ data: { publicKey: `pk-${randomUUID()}`, encryptionMode: 'plain' } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: `s-${randomUUID()}`, metadata: '{}', encryptionMode: 'plain' } });
-        const share = await db.sessionShare.create({ data: { sessionId: session.id, sharedWithUserId: recipient.id, sharedByUserId: owner.id, accessLevel: 'view' } });
+        const share = await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, accountId: recipient.id, createdByAccountId: owner.id, accessLevel: 'view' } });
         const address = { kind: 'session' as const, sessionId: session.id };
         expect(await mutateSessionDraft({ accountId: recipient.id, address, expectedRevision: 'absent', content: plainContent(address) })).toMatchObject({ status: 'updated' });
         await db.session.update({ where: { id: session.id }, data: { currentStorageState: 'legacy_external_unknown' } });
@@ -424,7 +424,7 @@ describe('sessionDraftService (SQLite integration)', () => {
         expect(await readSessionDraft({ accountId: recipient.id, address })).toEqual({ status: 'absent' });
         expect(await mutateSessionDraft({ accountId: recipient.id, address, expectedRevision: 0, content: null })).toEqual({ status: 'sessionUnavailable' });
         await db.session.update({ where: { id: session.id }, data: { currentStorageState: 'hosted' } });
-        await db.sessionShare.delete({ where: { id: share.id } });
+        await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
         expect((await listSessionDrafts({ accountId: recipient.id, limit: 10 })).items).toEqual([]);
         expect(await readSessionDraft({ accountId: recipient.id, address })).toEqual({ status: 'absent' });
     });
@@ -699,13 +699,13 @@ describe('sessionDraftService (SQLite integration)', () => {
             teamId: team.id, accountId: actor.id, role: grantKind === 'group' ? 'guest' : 'member',
         } });
         if (grantKind === 'team') {
-            await db.sessionTeamGrant.create({ data: { teamId: team.id, sessionId: session.id, effectiveAt: new Date() } });
+            await db.sessionGrant.create({ data: { principalKind: 'team', teamId: team.id, sessionId: session.id, effectiveAt: new Date() } });
         } else {
             const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Authors', nameKey: 'authors' } });
             await db.teamGroupMembership.create({ data: {
                 teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, nativeContribution: true,
             } });
-            await db.sessionGroupGrant.create({ data: { teamGroupId: group.id, sessionId: session.id, effectiveAt: new Date() } });
+            await db.sessionGrant.create({ data: { principalKind: 'group', teamGroupId: group.id, sessionId: session.id, effectiveAt: new Date() } });
         }
         const address = { kind: 'run' as const, sessionId: session.id, runId: 'run-a' };
         expect(await mutateSessionDraft({
@@ -738,7 +738,7 @@ describe('sessionDraftService (SQLite integration)', () => {
             authenticationPolicy: { v: 1, mode: 'restricted', accepted: [{ kind: 'home_method', methodId: 'key_challenge' }] },
         } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: 'member' } });
-        await db.sessionTeamGrant.create({ data: { teamId: team.id, sessionId: session.id, effectiveAt: new Date() } });
+        await db.sessionGrant.create({ data: { principalKind: 'team', teamId: team.id, sessionId: session.id, effectiveAt: new Date() } });
         const address = { kind: 'run' as const, sessionId: session.id, runId: 'qualified-run' };
         const authentication = {
             env: process.env,
@@ -784,7 +784,7 @@ describe('sessionDraftService (SQLite integration)', () => {
                 accountId: owner.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain',
             } });
             await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: 'member' } });
-            await db.sessionTeamGrant.create({ data: { teamId: team.id, sessionId: session.id, effectiveAt: new Date() } });
+            await db.sessionGrant.create({ data: { principalKind: 'team', teamId: team.id, sessionId: session.id, effectiveAt: new Date() } });
             return session;
         };
         const openTeam = await db.team.create({ data: { name: 'Open drafts' } });

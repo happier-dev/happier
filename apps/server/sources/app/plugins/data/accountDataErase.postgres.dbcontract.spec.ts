@@ -258,8 +258,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
                     } });
                     sessionId = session.id;
                     // A previously delegated access but no longer has any access itself.
-                    await db.sessionShare.create({ data: { sessionId, sharedByUserId: accountId,
-                        sharedWithUserId: recipientId, accessLevel: 'view' } });
+                    await db.sessionGrant.create({ data: { principalKind: 'account', sessionId, createdByAccountId: accountId,
+                        accountId: recipientId, accessLevel: 'view' } });
                 } else {
                     const discussion = await db.discussion.create({ data: {
                         ownerAccountId: shape === 'owned-discussion' ? accountId : ownerId,
@@ -283,10 +283,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
                 } else if (sessionId) {
                     expect(await db.session.findUniqueOrThrow({ where: { id: sessionId }, select: { accountId: true } }))
                         .toEqual({ accountId: ownerId });
-                    expect(await db.sessionShare.findUniqueOrThrow({ where: {
-                        sessionId_sharedWithUserId: { sessionId, sharedWithUserId: recipientId },
-                    }, select: { sharedByUserId: true, accessLevel: true } }))
-                        .toEqual({ sharedByUserId: ownerId, accessLevel: 'view' });
+                    expect(await db.sessionGrant.findUniqueOrThrow({ where: { principalKind: 'account',
+                        sessionId_accountId: { sessionId, accountId: recipientId },
+                    }, select: { createdByAccountId: true, accessLevel: true } }))
+                        .toEqual({ createdByAccountId: ownerId, accessLevel: 'view' });
                 } else if (shape === 'owned-discussion') {
                     expect(await db.discussion.findUnique({ where: { id: discussionId } })).toBeNull();
                 } else {
@@ -325,9 +325,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
         const erasedSession = await db.session.create({ data: {
             accountId: erasedAccountId, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}',
         } });
-        if (shape === 'received-session') await db.sessionShare.create({ data: {
-            sessionId: sharedSession.id, sharedByUserId: ownerAccountId,
-            sharedWithUserId: erasedAccountId, accessLevel: 'edit',
+        if (shape === 'received-session') await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: sharedSession.id, createdByAccountId: ownerAccountId,
+            accountId: erasedAccountId, accessLevel: 'edit',
         } });
         const erasedDiscussion = shape === 'owned-discussion' ? await db.discussion.create({ data: {
             ownerAccountId: erasedAccountId, encryptionMode: 'plain', dataEncryptionKey: new Uint8Array(),
@@ -397,7 +397,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
 
             // No grant-removal or attribution cascade can become visible while
             // the other Account's complete entry cohort is holding erasure out.
-            expect(await db.sessionShare.count({ where: { sessionId: sharedSession.id, sharedWithUserId: erasedAccountId } }))
+            expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId: sharedSession.id, accountId: erasedAccountId } }))
                 .toBe(shape === 'received-session' ? 1 : 0);
             expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: sharedSession.id, localId } },
                 select: { authorAccountId: true } })).toEqual({ authorAccountId });
@@ -429,7 +429,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
                 expect(await db.accountChange.count({ where: { accountId: ownerAccountId,
                     kind: 'discussion', entityId: erasedDiscussion.id } })).toBeGreaterThan(0);
             }
-            expect(await db.sessionShare.count({ where: { sessionId: sharedSession.id, sharedWithUserId: erasedAccountId } })).toBe(0);
+            expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId: sharedSession.id, accountId: erasedAccountId } })).toBe(0);
             expect(await db.accountChange.count({ where: { accountId: ownerAccountId, entityId: sharedSession.id } })).toBeGreaterThan(0);
         } finally {
             releaseResource.resolve();

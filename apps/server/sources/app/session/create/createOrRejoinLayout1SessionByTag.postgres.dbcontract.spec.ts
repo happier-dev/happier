@@ -128,8 +128,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("t
             expect(result.kind).toBe("created");
             if (result.kind !== "created") throw new Error("Expected Session birth");
             expect(await db.session.count({ where: { accountId: account.id, tag: input.tag } })).toBe(1);
-            if (admission === "grant") expect(await db.sessionShare.findUnique({ where: {
-                sessionId_sharedWithUserId: { sessionId: result.session.id, sharedWithUserId: recipient.id },
+            if (admission === "grant") expect(await db.sessionGrant.findUnique({ where: { principalKind: 'account',
+                sessionId_accountId: { sessionId: result.session.id, accountId: recipient.id },
             } })).toMatchObject({ accessLevel: "view" });
             else if (credential) expect(await db.sessionTeamCredentialBinding.findFirst({ where: { sessionId: result.session.id } }))
                 .toMatchObject({ resourceId: credential.resource.id, resourceRevision: credential.resource.revision });
@@ -342,7 +342,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("t
                 const delegate = Reflect.get(inner, property, innerReceiver);
                 // The Session row exists, and grant admission has finished. Pause
                 // at the native persistence boundary before a grant is visible.
-                const boundary = admission === "grant" ? "sessionShare" : "sessionTeamGrant";
+                const boundary = "sessionGrant";
                 if (property !== boundary) return delegate;
                 return new Proxy(delegate, { get(model, method, modelReceiver) {
                     const operation = Reflect.get(model, method, modelReceiver);
@@ -367,7 +367,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("t
             expect(withdrawal).toBeDefined();
             expect(result.kind).toBe("created");
             expect(await db.session.count({ where: { accountId: owner.id, tag: input.tag } })).toBe(1);
-            expect(await db.sessionShare.count({ where: { sharedByUserId: owner.id } })).toBe(admission === "grant" ? 1 : 0);
+            expect(await db.sessionGrant.count({ where: { principalKind: 'account', createdByAccountId: owner.id } })).toBe(admission === "grant" ? 1 : 0);
             expect(await createOrRejoinLayout1SessionByTag({ ...input, tag: randomUUID() }, authentication))
                 .toMatchObject({ kind: "rejected", rejection: { reason: "session-initial-access-invalid", code: "session_access_subject_ineligible" } });
             expect(await db.session.count({ where: { accountId: owner.id } })).toBe(1);

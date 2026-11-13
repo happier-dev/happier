@@ -413,10 +413,10 @@ describe("SessionSystemRecord CONTRACT on SQLite", () => {
         })).resolves.toEqual({ ok: false, code: "plugin_session_record_forbidden" });
     });
 
-    it("shares the owner's Board tuple, commits one concurrent CAS winner, and revokes editor writes", async () => {
+    it("grants the owner's Board tuple, commits one concurrent CAS winner, and revokes editor writes", async () => {
         const { account, session } = await createAccountAndSession(`board-shared-${randomUUID()}`);
         const editor = await db.account.create({ data: { publicKey: `board-editor-${randomUUID()}`, encryptionMode: "plain" } });
-        const share = await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: account.id, sharedWithUserId: editor.id, accessLevel: "edit" } });
+        const share = await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: account.id, accountId: editor.id, accessLevel: "edit" } });
         let actorUserId = editor.id;
         const app = Fastify().withTypeProvider<ZodTypeProvider>();
         app.setValidatorCompiler(validatorCompiler);
@@ -447,7 +447,7 @@ describe("SessionSystemRecord CONTRACT on SQLite", () => {
             } })));
             expect(attempts.map(response => response.statusCode).sort()).toEqual([200, 409]);
             const winner = attempts.find(response => response.statusCode === 200)!;
-            await db.sessionShare.delete({ where: { id: share.id } });
+            await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
             const revoked = await app.inject({ method: "PUT", url, payload: { operation: "update_layout", expectedLayoutRevision: winner.json().layoutRevision,
                 layoutContent: { t: "plain", v: { v: 1, tabs: [] } } } });
             expect(revoked.statusCode).toBe(403);
@@ -719,8 +719,8 @@ describe("SessionSystemRecord CONTRACT on SQLite", () => {
         const suffix = randomUUID();
         const { account, session } = await createAccountAndSession(`downgrade-${suffix}`);
         const editor = await db.account.create({ data: { publicKey: `ssr-editor-${suffix}`, encryptionMode: "plain" } });
-        const share = await db.sessionShare.create({ data: {
-            sessionId: session.id, sharedByUserId: account.id, sharedWithUserId: editor.id, accessLevel: "edit",
+        const share = await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: session.id, createdByAccountId: account.id, accountId: editor.id, accessLevel: "edit",
         } });
         const address = { owner: "host" as const, namespace: "activity" as const, kind: "workflow_run.v1" as const, localId: "activity:workflow_run:v1:downgrade" };
         const content = { t: "plain" as const, v: {
@@ -740,7 +740,7 @@ describe("SessionSystemRecord CONTRACT on SQLite", () => {
             ];
             const findUnique = db.session.findUnique.bind(db.session);
             for (const operation of operations) {
-                await db.sessionShare.update({ where: { id: share.id }, data: { accessLevel: "edit" } });
+                await db.sessionGrant.update({ where: { principalKind: 'account', id: share.id }, data: { accessLevel: "edit" } });
                 let downgraded = false;
                 // Intercept only the database boundary; execute the real read before changing the persisted share.
                 const read = vi.spyOn(db.session, "findUnique").mockImplementation((args) => {
@@ -751,9 +751,9 @@ describe("SessionSystemRecord CONTRACT on SQLite", () => {
                         get(target, property, receiver) {
                             if (property !== "then") return Reflect.get(target, property, receiver);
                             return (...callbacks: Parameters<typeof query.then>) => query.then(async row => {
-                                if (!downgraded && args.select?.shares) {
+                                if (!downgraded && args.select?.grants) {
                                     downgraded = true;
-                                    await db.sessionShare.update({ where: { id: share.id }, data: { accessLevel: "view" } });
+                                    await db.sessionGrant.update({ where: { principalKind: 'account', id: share.id }, data: { accessLevel: "view" } });
                                 }
                                 return row;
                             }).then(...callbacks);

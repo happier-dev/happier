@@ -38,8 +38,8 @@ describe('Machine receiver current admission on SQLite', () => {
             homeId, accountId: alice.id, sessionId: session.id, machineId: machine.id,
             installationId: machine.installationId!,
         } } });
-        const share = await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: alice.id,
-            sharedWithUserId: bob.id, accessLevel: 'edit', canApprovePermissions: false } });
+        const share = await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: alice.id,
+            accountId: bob.id, accessLevel: 'edit', canApprovePermissions: false } });
         const context = { actorAccountId: alice.id, custodianAccountId: alice.id, machineId: machine.id,
             installationId: machine.installationId!, role: 'manage' as const, encryptionMode: 'plain' as const };
         const sessionDecision = { sessionId: session.id,
@@ -62,17 +62,17 @@ describe('Machine receiver current admission on SQLite', () => {
             expect((await verify(body)).statusCode).toBe(200);
             expect((await verify({ ...body, sessionDecision: { ...sessionDecision,
                 actor: { ...sessionDecision.actor, accountId: alice.id } } })).statusCode).toBe(403);
-            await db.sessionShare.update({ where: { id: share.id }, data: { accessLevel: 'view' } });
+            await db.sessionGrant.update({ where: { principalKind: 'account', id: share.id }, data: { accessLevel: 'view' } });
             expect((await verify(body)).statusCode).toBe(403);
-            await db.sessionShare.update({ where: { id: share.id }, data: { accessLevel: 'edit' } });
+            await db.sessionGrant.update({ where: { principalKind: 'account', id: share.id }, data: { accessLevel: 'edit' } });
             await db.account.update({ where: { id: bob.id }, data: { tokenEpoch: { increment: 1 } } });
             expect((await verify(body)).statusCode).toBe(403);
             await db.account.update({ where: { id: bob.id }, data: { tokenEpoch: bob.tokenEpoch } });
-            await db.sessionShare.delete({ where: { id: share.id } });
+            await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
             const team = await db.team.create({ data: { name: `Bot Team ${randomUUID()}`,
                 authenticationPolicy: { v: 1, mode: 'restricted', accepted: [{ kind: 'home_method', methodId: 'key_challenge' }] } } });
             await db.teamMembership.create({ data: { teamId: team.id, accountId: bob.id, role: 'member' } });
-            await db.sessionTeamGrant.create({ data: { sessionId: session.id, teamId: team.id,
+            await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: team.id,
                 accessLevel: 'edit', canApprovePermissions: false, effectiveAt: new Date() } });
             await db.account.update({ where: { id: bob.id }, data: { encryptionMode: 'e2ee' } });
             expect((await verify(body)).statusCode).toBe(403);

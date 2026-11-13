@@ -96,7 +96,16 @@ beforeEach(async () => {
                     throw Object.assign(new Error("duplicate run"), { code: "P2002" });
                 }),
             },
-            machine: { findFirst: async () => ({ id: "machine-1" }), findMany: async () => [{ accountId: account.id }] },
+            // Workflow admission reads the full Machine facts through the canonical access owner.
+            machine: {
+                findUnique: async () => ({ id: "machine-1", accountId: account.id, kind: "regular", active: true,
+                    revokedAt: null, replacedByMachineId: null, installationId: "installation-1",
+                    account: { encryptionMode: "plain", status: "active" },
+                    metadata: null, daemonState: null, dataEncryptionKey: null, managedResource: null,
+                    grants: [],   }),
+                findFirst: async () => ({ id: "machine-1" }),
+                findMany: async () => [{ accountId: account.id }],
+            },
     };
 });
 

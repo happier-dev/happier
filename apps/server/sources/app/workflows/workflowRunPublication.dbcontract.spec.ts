@@ -94,8 +94,8 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")("Workflow 
         // This independent review Run publishes only when it changes. Admission
         // of another occurrence must not republish its historical Session origin.
         const reviewSession = await db.session.create({ data: { accountId: accounts[2].id, tag: randomUUID(), encryptionMode: "plain", metadata: "{}" } });
-        await db.sessionShare.create({ data: { sessionId: reviewSession.id, sharedByUserId: accounts[2].id,
-            sharedWithUserId: accounts[3].id, accessLevel: "view" } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: reviewSession.id, createdByAccountId: accounts[2].id,
+            accountId: accounts[3].id, accessLevel: "view" } });
         const reviewTriggerId = randomUUID();
         const reviewOccurrence = { v: 1 as const, kind: "sessionLifecycle" as const, event: "parentTurnCompleted" as const,
             sourceSessionId: reviewSession.id, sourceTurnId: randomUUID(), occurredAt: Date.now() };
@@ -526,8 +526,8 @@ describe.skipIf(provider !== "postgres" && provider !== "postgresql")("Workflow 
             accountId: watcher.id, tag: randomUUID(), encryptionMode: "plain", metadata: "{}", active: false,
         } }) : null;
         if (archiveSession) {
-            await db.sessionShare.create({ data: { sessionId: archiveSession.id, sharedByUserId: watcher.id,
-                sharedWithUserId: lower.id, accessLevel: "view" } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: archiveSession.id, createdByAccountId: watcher.id,
+                accountId: lower.id, accessLevel: "view" } });
             await db.automationTrigger.create({ data: { automationId: f.watcher.id, kind: "sessionLifecycle", enabled: true,
                 ...encodeAutomationSessionLifecycleConfiguration({ kind: "sessionLifecycle", sourceSessionId: archiveSession.id,
                     events: ["sessionArchived"], policy: { kind: "everyMatch" } }) } });

@@ -219,8 +219,8 @@ it.each([
         const otherAccount = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
         const sharedChild = await db.session.create({ data: { accountId: otherAccount.id,
             tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}', active: false } });
-        await db.sessionShare.create({ data: { sessionId: sharedChild.id, sharedByUserId: otherAccount.id,
-            sharedWithUserId: fixture.account.id, accessLevel: 'edit' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: sharedChild.id, createdByAccountId: otherAccount.id,
+            accountId: fixture.account.id, accessLevel: 'edit' } });
         expect(await setSessionManager({ accountId: fixture.account.id, sessionId: sharedChild.id,
             managerSessionId: caller.id, expectedManagerSessionId: null, authentication })).toMatchObject({ ok: true });
         expect(await verify('PATCH', patch, sharedChild.id)).toBeNull();

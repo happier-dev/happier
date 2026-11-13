@@ -1,3 +1,4 @@
+import { sessionDirectGrantProjectionFixture } from '@/app/session/access/sessionAccess.testkit';
 import { beforeEach, describe, expect, it } from "vitest";
 import { V2SessionByIdResponseSchema } from "@happier-dev/protocol";
 import { SessionCurrentProjectionRecordV1Schema } from "@happier-dev/protocol/sessions/listing/response";
@@ -61,20 +62,17 @@ type SessionByIdRowFixture = Readonly<Record<string, unknown> & {
 }>;
 
 function sessionByIdRow(row: SessionByIdRowFixture) {
-    const rawShares = Array.isArray(row.shares)
-        ? row.shares.filter((share): share is Record<string, unknown> =>
+    const rawShares = Array.isArray(row.grants)
+        ? row.grants.filter((share): share is Record<string, unknown> =>
             typeof share === "object" && share !== null)
         : [];
-    const shares = rawShares.map((share, index) => ({
-        ...share,
-        id: typeof share.id === "string" ? share.id : `${row.id}-share-${index}`,
-        sharedWithUserId: typeof share.sharedWithUserId === "string"
-            ? share.sharedWithUserId
-            : "u1",
-        accessLevel: share.accessLevel === "edit" || share.accessLevel === "admin"
-            ? share.accessLevel
-            : "view",
-        canApprovePermissions: share.canApprovePermissions === true,
+    const grants = rawShares.map((share, index) => share.principalKind === 'team' || share.principalKind === 'group' ? share : ({
+        ...share, ...sessionDirectGrantProjectionFixture({
+            id: typeof share.id === 'string' ? share.id : `${row.id}-share-${index}`,
+            accountId: typeof share.accountId === 'string' ? share.accountId : 'u1',
+            accessLevel: share.accessLevel === 'edit' || share.accessLevel === 'admin' ? share.accessLevel : 'view',
+            canApprovePermissions: share.canApprovePermissions === true,
+        }),
     }));
     const rawEnvelope = row.dataEncryptionKey instanceof Uint8Array
         ? row.dataEncryptionKey
@@ -108,7 +106,7 @@ function sessionByIdRow(row: SessionByIdRowFixture) {
             ? []
             : [createSessionDataKeyEnvelopeFixture(rawEnvelope)],
         ...row,
-        shares,
+        grants,
     };
 }
 
@@ -167,7 +165,7 @@ describe("sessionRoutes v2 session by id", () => {
             pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0,
             pendingCount: 0, pendingVersion: 0, latestTurnId: null, latestTurnStatus: null,
             latestTurnStatusObservedAt: null, lastRuntimeIssue: null, turns: [],
-            dataEncryptionKey: Buffer.from([1, 2, 3]), shares: [],
+            dataEncryptionKey: Buffer.from([1, 2, 3]), grants: [],
         });
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions/:sessionId");
         const { response } = await route.invoke({
@@ -242,10 +240,7 @@ describe("sessionRoutes v2 session by id", () => {
             pendingVersion: 0,
             active: false,
             lastActiveAt: now,
-            shares: [],
-            accountReadStates: [{ accountId: "u1", lastViewedSessionSeq: 1, unreadSince: now }],
-            accountFollows: [{ accountId: "u1", following: true, followPolicy: JSON.stringify({ preset: "important" }) }],
-            teamGrants: [{
+            grants: [{ id: 'team-grant', principalKind: 'team', accountId: null, teamGroupId: null, account: null, teamGroup: null, 
                 teamId: "team-1",
                 effectiveAt: new Date(0),
                 accessLevel: "edit",
@@ -255,7 +250,10 @@ describe("sessionRoutes v2 session by id", () => {
                     authenticationPolicy: null,
                     memberships: [{ accountId: "u1", role: "member", sessionAccessStartsAt: null }],
                 },
-            }],
+             }],
+            accountReadStates: [{ accountId: "u1", lastViewedSessionSeq: 1, unreadSince: now }],
+            accountFollows: [{ accountId: "u1", following: true, followPolicy: JSON.stringify({ preset: "important" }) }],
+            
         });
         txAccountFindUnique.mockResolvedValue({
             publicKey: null,
@@ -313,7 +311,7 @@ describe("sessionRoutes v2 session by id", () => {
             lastRuntimeIssue: null, latestReadyEventSeq: null,
             turns: [], pendingCount: 0, pendingBlockedCount: 0, pendingVersion: 0,
             dataEncryptionKey: null, active: false, lastActiveAt: now,
-            shares: [{ id: "direct", accessLevel: "view", canApprovePermissions: false, encryptedDataKey: null }],
+            grants: [{ principalKind: 'account', accountId: null, teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  id: "direct", accessLevel: "view", canApprovePermissions: false, encryptedDataKey: null  }],
         });
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions/:sessionId");
         const { response } = await route.invoke({ params: { sessionId: "private-read" } });
@@ -346,12 +344,12 @@ describe("sessionRoutes v2 session by id", () => {
             lastRuntimeIssue: null, latestReadyEventSeq: null, turns: [], pendingCount: 0,
             pendingBlockedCount: 0, pendingVersion: 0, dataEncryptionKey: null,
             active: false, lastActiveAt: now,
-            shares: [{ id: "direct", sharedWithUserId: "u1", accessLevel: "view", canApprovePermissions: false }],
+            grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  id: "direct", accountId: "u1", accessLevel: "view", canApprovePermissions: false  }],
         });
         txSessionFindMany.mockResolvedValue([strictSnapshotRow]);
         txSessionShareFindMany.mockResolvedValue([{
             sessionId: "strict-snapshot",
-            sharedWithUserId: "u2",
+            accountId: "u2",
         }]);
 
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions/:sessionId");
@@ -405,7 +403,7 @@ describe("sessionRoutes v2 session by id", () => {
             dataEncryptionKey: null,
             active: false,
             lastActiveAt: now,
-            shares: [],
+            grants: [],
         });
 
         const route = await createSessionRouteTestBuilder(
@@ -464,7 +462,7 @@ describe("sessionRoutes v2 session by id", () => {
             dataEncryptionKey: Buffer.from([1, 2, 3]),
             active: true,
             lastActiveAt: now,
-            shares: [],
+            grants: [],
         });
 
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions/:sessionId");
@@ -538,7 +536,7 @@ describe("sessionRoutes v2 session by id", () => {
                 sessionPins: [{ accountId: "u1" }],
                 sessionAttentionStandings: [{ accountId: "u1", standing: true, remindAt: null }],
                 messages: [{ id: "private-account-authorship" }],
-                shares: [],
+                grants: [],
             });
 
             const route = await createSessionRouteTestBuilder(
@@ -655,7 +653,7 @@ describe("sessionRoutes v2 session by id", () => {
             dataEncryptionKey: null,
             active: true,
             lastActiveAt: now,
-            shares: [],
+            grants: [],
         });
 
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions/:sessionId");
@@ -699,7 +697,7 @@ describe("sessionRoutes v2 session by id", () => {
             latestReadyEventSeq: 8, latestReadyEventAt: now,
             thinking: true, thinkingAt: new Date(1_000),
             pendingCount: 1, pendingBlockedCount: 0, pendingVersion: 1,
-            dataEncryptionKey: null, active: true, lastActiveAt: now, shares: [], turns: [],
+            dataEncryptionKey: null, active: true, lastActiveAt: now, grants: [], turns: [],
             responsibleAccountId: "u1",
             responsibleAccount: {
                 id: "u1",
@@ -758,7 +756,7 @@ describe("sessionRoutes v2 session by id", () => {
                 pendingVersion: 0,
                 active: true,
                 lastActiveAt: now,
-                shares: [],
+                grants: [],
             })]);
 
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions/:sessionId");
@@ -821,7 +819,7 @@ describe("sessionRoutes v2 session by id", () => {
             pendingVersion: 0,
             active: false,
             lastActiveAt: now,
-            shares: [],
+            grants: [],
         });
         const missingColumn = Object.assign(
             new Error("Column SessionTurn.rollbackState does not exist"),
@@ -861,13 +859,11 @@ describe("sessionRoutes v2 session by id", () => {
             dataEncryptionKey: null,
             active: true,
             lastActiveAt: now,
-            shares: [
-                {
+            grants: [{ id: 'account-grant', principalKind: 'account', accountId: null, teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null, 
                     encryptedDataKey: Buffer.from([4, 5]),
                     accessLevel: "edit",
                     canApprovePermissions: true,
-                },
-            ],
+                 }],
         });
 
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions/:sessionId");
@@ -931,11 +927,11 @@ describe("sessionRoutes v2 session by id", () => {
             dataEncryptionKey: null,
             active: true,
             lastActiveAt: now,
-            shares: [{
+            grants: [{ id: 'account-grant', principalKind: 'account', accountId: null, teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null, 
                 encryptedDataKey: Buffer.from([4, 5]),
                 accessLevel: "view",
                 canApprovePermissions: false,
-            }],
+             }],
         });
 
         const route = await createSessionRouteTestBuilder(
@@ -978,13 +974,11 @@ describe("sessionRoutes v2 session by id", () => {
             dataEncryptionKey: null,
             active: true,
             lastActiveAt: now,
-            shares: [
-                {
+            grants: [{ id: 'account-grant', principalKind: 'account', accountId: null, teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null, 
                     encryptedDataKey: Buffer.from([4, 5]),
                     accessLevel: "view",
                     canApprovePermissions: false,
-                },
-            ],
+                 }],
         });
 
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions/:sessionId");
@@ -1035,11 +1029,11 @@ describe("sessionRoutes v2 session by id", () => {
                 dataEncryptionKey: null,
                 active: false,
                 lastActiveAt: now,
-                shares: [{
+                grants: [{ id: 'account-grant', principalKind: 'account', accountId: null, teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null, 
                     encryptedDataKey: Buffer.from([4, 5]),
                     accessLevel: "view",
                     canApprovePermissions: false,
-                }],
+                 }],
             });
 
             const route = await createSessionRouteTestBuilder("GET", "/v2/sessions/:sessionId");
@@ -1177,7 +1171,7 @@ describe("sessionRoutes v2 session by id", () => {
                         rollbackState: "eligible",
                     },
                 ],
-                shares: [],
+                grants: [],
                 ...publication,
             });
 
@@ -1259,7 +1253,7 @@ describe("sessionRoutes v2 session by id", () => {
             pendingVersion: 4,
             active: true,
             lastActiveAt: now,
-            shares: [],
+            grants: [],
         });
         sessionPendingMessageCount.mockResolvedValue(2);
         sessionUpdate.mockResolvedValue({ pendingCount: 2, pendingVersion: 5 });

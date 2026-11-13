@@ -126,12 +126,12 @@ describe("Membership history envelope 10k measurement (SQLite)", () => {
             metadata: JSON.stringify({ t: "encrypted", c: "" }),
             seq: 1,
         })) });
-        await db.sessionTeamGrant.createMany({ data: rows.map(row => ({
+        await db.sessionGrant.createMany({ data: (rows.map(row => ({
             sessionId: row.id,
             teamId: team.id,
             accessLevel: "view",
             effectiveAt: new Date(0),
-        })) });
+        }))).map(data => ({ ...data, principalKind: 'team' })) });
         const dataKey = new Uint8Array(32).fill(73);
         const managerEnvelope = sealEncryptedDataKeyEnvelopeV1({
             dataKey,

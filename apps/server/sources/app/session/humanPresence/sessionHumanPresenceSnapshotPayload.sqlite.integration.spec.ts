@@ -110,8 +110,8 @@ describe("human presence snapshot is not bounded by the inbound transport limit"
         const session = await db.session.create({
             data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: "plain", metadata: "{}" },
         });
-        await Promise.all([first, second].map(account => db.sessionShare.create({ data: {
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: account.id, accessLevel: "view",
+        await Promise.all([first, second].map(account => db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: session.id, createdByAccountId: owner.id, accountId: account.id, accessLevel: "view",
         } })));
         const sockets = [owner, first, second].map((account, index) =>
             createAdmittedPresenceSocketFixture({ id: `payload-socket-${index}`, accountId: account.id, sessionId: session.id }));
@@ -153,7 +153,7 @@ describe("human presence snapshot is not bounded by the inbound transport limit"
             { teamId: team.id, accountId: owner.id, role: "owner" },
             { teamId: team.id, accountId: member.id, role: "member" },
         ] });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id,
             teamId: team.id,
             accessLevel: "view",
@@ -375,7 +375,7 @@ describe("human presence snapshot is not bounded by the inbound transport limit"
                 tag: crypto.randomUUID(),
                 encryptionMode: "plain",
                 metadata: "{}",
-                teamGrants: { create: { teamId: team.id, accessLevel: "view", effectiveAt: new Date() } },
+                grants: { create: [{ principalKind: 'team',  teamId: team.id, accessLevel: "view", effectiveAt: new Date()  }] },
             } });
             const socket = createAdmittedPresenceSocketFixture({
                 id: `applicability-${suffix}`, accountId: member.id, sessionId: session.id,

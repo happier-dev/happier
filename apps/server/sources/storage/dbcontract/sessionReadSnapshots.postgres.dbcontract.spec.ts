@@ -34,8 +34,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
     beforeAll(async () => {
         const suppliedDatabaseUrl = process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL;
         if (!suppliedDatabaseUrl || process.env.DATABASE_URL !== suppliedDatabaseUrl
-            || new URL(suppliedDatabaseUrl).pathname !== "/serialaudit_c5_sessionreaders") {
-            throw new Error("Run against the dedicated disposable Session-reader database");
+            || !process.env.HAPPIER_DB_CONTRACT_CONTAINER_ID) {
+            throw new Error("Run against the disposable PostgreSQL DB-contract container");
         }
         originalDatabaseUrl = suppliedDatabaseUrl;
         vi.stubEnv("HAPPIER_FEATURE_TEAMS__ENABLED", "1");
@@ -302,8 +302,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
         const account = await db.account.create({ data: { publicKey: randomUUID() } });
         const recipient = await db.account.create({ data: { publicKey: randomUUID() } });
         const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), metadata: "{}" } });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: account.id,
-            sharedWithUserId: recipient.id, accessLevel: "view" } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: account.id,
+            accountId: recipient.id, accessLevel: "view" } });
         const app = createAuthenticatedTestApp();
         registerSessionListingRoutes(app);
         await app.ready();
@@ -312,7 +312,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
                 lock: tx => tx.$executeRaw`LOCK TABLE "SessionShare" IN ACCESS EXCLUSIVE MODE`,
                 write: async tx => {
                     await tx.session.update({ where: { id: session.id }, data: { metadataLayoutVersion: 1 } });
-                    await tx.sessionShare.deleteMany({ where: { sessionId: session.id } });
+                    await tx.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session.id } });
                 },
                 read: async () => {
                     const response = await app.inject({ method: "GET", url: "/v2/sessions/metadata-upgrades", headers: { "x-test-user-id": account.id } });

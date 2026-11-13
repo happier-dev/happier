@@ -105,18 +105,18 @@ export async function verifySparseSessionListing(provider: "sqlite" | "postgres"
         if (index === 0) {
             // Two independent access paths for the same Session: the page must
             // still emit it once.
-            await db.sessionShare.create({
-                data: {
+            await db.sessionGrant.create({
+                data: { principalKind: 'account',
                     sessionId: session.id,
-                    sharedByUserId: owner.id,
-                    sharedWithUserId: viewer.id,
+                    createdByAccountId: owner.id,
+                    accountId: viewer.id,
                     accessLevel: "view",
                 },
             });
         }
         if (index < 2) {
-            await db.sessionTeamGrant.create({
-                data: {
+            await db.sessionGrant.create({
+                data: { principalKind: 'team',
                     sessionId: session.id,
                     teamId: team.id,
                     accessLevel: "view",
@@ -125,8 +125,8 @@ export async function verifySparseSessionListing(provider: "sqlite" | "postgres"
                 },
             });
         } else {
-            await db.sessionGroupGrant.create({
-                data: {
+            await db.sessionGrant.create({
+                data: { principalKind: 'group',
                     sessionId: session.id,
                     teamGroupId: groupOnlyTeams[0]!.groupId,
                     accessLevel: "view",
@@ -180,13 +180,13 @@ export async function verifySparseSessionListing(provider: "sqlite" | "postgres"
     }));
     await db.session.createMany({ data: inBaseFalseAttention });
     await Promise.all([
-        db.sessionTeamGrant.createMany({ data: inBaseFalseAttention.map((session) => ({
+        db.sessionGrant.createMany({ data: (inBaseFalseAttention.map((session) => ({
             sessionId: session.id,
             teamId: team.id,
             accessLevel: "view",
             requiredByTeamPolicy: true,
             effectiveAt: new Date(0),
-        })) }),
+        }))).map(data => ({ ...data, principalKind: 'team' })) }),
         db.sessionTagAssignment.createMany({ data: inBaseFalseAttention.map((session) => ({
             accountId: viewer.id,
             sessionId: session.id,
@@ -224,9 +224,9 @@ export async function verifySparseSessionListing(provider: "sqlite" | "postgres"
     });
 
     const sessionCount = await db.session.count();
-    const grantCount = await db.sessionShare.count()
-        + await db.sessionTeamGrant.count()
-        + await db.sessionGroupGrant.count();
+    const grantCount = await db.sessionGrant.count({ where: { principalKind: 'account' } })
+        + await db.sessionGrant.count({ where: { principalKind: 'team' } })
+        + await db.sessionGrant.count({ where: { principalKind: 'group' } });
     const audiences = [
         { kind: "team" as const, teamId: team.id },
         ...additionalTeams.map((selectedTeam) => ({

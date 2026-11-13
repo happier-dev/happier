@@ -103,9 +103,9 @@ describe("SessionSystemRecord native CONTRACT database behavior", () => {
         const collaborator = await db.account.create({ data: { publicKey: `board-editor-${randomUUID()}`, encryptionMode: 'plain' } });
         const team = actor === 'team collaborator' ? await db.team.create({ data: { name: 'Board collaborators',
             memberships: { create: { accountId: collaborator.id, role: 'member' } } } }) : null;
-        const share = team ? null : await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: account.id,
-            sharedWithUserId: collaborator.id, accessLevel: 'edit' } });
-        if (team) await db.sessionTeamGrant.create({ data: { sessionId: session.id, teamId: team.id,
+        const share = team ? null : await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: account.id,
+            accountId: collaborator.id, accessLevel: 'edit' } });
+        if (team) await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: team.id,
             accessLevel: 'edit', effectiveAt: new Date() } });
         const actorUserId = actor === 'owner' ? account.id : collaborator.id;
         const invoke = (mutation: unknown) => mutateSessionBoard({ actorUserId, sessionId: session.id, authentication, mutation });
@@ -132,14 +132,14 @@ describe("SessionSystemRecord native CONTRACT database behavior", () => {
                 expectedLayoutRevision: layoutRevision, layoutContent: { t: 'plain', v: { v: 1, tabs: [] } } }))
                 .resolves.toMatchObject({ ok: true, result: { outcome: 'removed' } });
             expect(await db.sessionSystemRecord.count({ where: { sessionId: session.id, kind: 'item.v1' } })).toBe(0);
-            if (share) await db.sessionShare.delete({ where: { id: share.id } });
+            if (share) await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
             if (team) await db.teamMembership.updateMany({ where: { teamId: team.id, accountId: collaborator.id }, data: { status: 'suspended' } });
             await expect(mutateSessionBoard({ actorUserId: collaborator.id, sessionId: session.id, authentication,
                 mutation: { operation: 'upsert_item', itemId: 'revoked', expectedItemRevision: null, itemContent } }))
                 .resolves.toEqual({ ok: false, result: { error: 'session_board_forbidden' } });
             if (team) await db.teamMembership.updateMany({ where: { teamId: team.id, accountId: collaborator.id }, data: { status: 'active' } });
-            else await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: account.id,
-                sharedWithUserId: collaborator.id, accessLevel: 'edit' } });
+            else await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: account.id,
+                accountId: collaborator.id, accessLevel: 'edit' } });
             await expect(mutateSessionBoard({ actorUserId: collaborator.id, sessionId: session.id, authentication,
                 mutation: { operation: 'upsert_item', itemId: 'revoked', expectedItemRevision: null, itemContent } }))
                 .resolves.toMatchObject({ ok: true, result: { outcome: 'created' } });
@@ -153,8 +153,8 @@ describe("SessionSystemRecord native CONTRACT database behavior", () => {
     it('retains exact record publication independently of later transcript changes and current access', async () => {
         const { account, session } = await createAccountAndSession(`record-publication-${randomUUID()}`);
         const viewer = await db.account.create({ data: { publicKey: `record-viewer-${randomUUID()}`, encryptionMode: 'plain' } });
-        const share = await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: account.id,
-            sharedWithUserId: viewer.id, accessLevel: 'view' } });
+        const share = await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: account.id,
+            accountId: viewer.id, accessLevel: 'view' } });
         const write = (revision: string | null, title: string) => mutateSessionBoard({ authentication, actorUserId: account.id, sessionId: session.id,
             mutation: { operation: 'update_layout', expectedLayoutRevision: revision,
                 layoutContent: { t: 'plain', v: { v: 1, tabs: [{ id: 'main', title, items: [] }] } } } });
@@ -176,7 +176,7 @@ describe("SessionSystemRecord native CONTRACT database behavior", () => {
             const ownerCursor = changes.find(change => change.accountId === account.id)?.cursor;
             await write(created.result.layoutRevision, 'First');
             expect((await db.accountChange.findFirstOrThrow({ where: { kind: 'account', entityId: `session-record:${record.id}`, accountId: account.id } })).cursor).toBe(ownerCursor);
-            await db.sessionShare.delete({ where: { id: share.id } });
+            await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
             const viewerCursor = changes.find(change => change.accountId === viewer.id)?.cursor;
             await write(created.result.layoutRevision, 'Second');
             expect((await db.accountChange.findFirstOrThrow({ where: { kind: 'account', entityId: `session-record:${record.id}`, accountId: viewer.id } })).cursor).toBe(viewerCursor);

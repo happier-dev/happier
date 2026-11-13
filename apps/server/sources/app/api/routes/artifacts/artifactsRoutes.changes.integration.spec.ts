@@ -177,7 +177,7 @@ describe("artifactsRoutes (AccountChange integration)", () => {
             recipientPublicKey: publicKey, randomBytes: tweetnacl.randomBytes }));
         await db.artifact.create({ data: { id, accountId: owner.id, header: Buffer.from('opaque header'), body: Buffer.from('opaque body'),
             dataEncryptionKey: wrap(owner.contentPublicKey!), headerVersion: 1, bodyVersion: 1 } });
-        await db.artifactAccountGrant.create({ data: { artifactId: id, accountId: viewer.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: id, accountId: viewer.id, accessLevel: 'view', createdByAccountId: owner.id } });
         const { computeContentPublicKeyFingerprint } = await import('@happier-dev/protocol');
         // Batch capture includes other recipients' envelopes. Admission must select the caller's tuple.
         await db.artifactKeyEnvelope.create({ data: { artifactId: id, recipientAccountId: late.id,
@@ -197,10 +197,10 @@ describe("artifactsRoutes (AccountChange integration)", () => {
                     const result = await original(...args);
                     if (args[0] === 'ROLLBACK;' && !changed) {
                         changed = true;
-                        if (change === 'grant') await db.artifactAccountGrant.deleteMany({ where: { artifactId: id, accountId: viewer.id } });
+                        if (change === 'grant') await db.artifactGrant.deleteMany({ where: { principalKind: 'account', artifactId: id, accountId: viewer.id } });
                         if (change === 'mode') await db.account.update({ where: { id: owner.id }, data: { encryptionMode: 'plain' } });
                         if (change === 'recipient-key') await db.account.update({ where: { id: viewer.id }, data: createSignedAccountContentBinding() });
-                        if (change === 'census') await db.artifactAccountGrant.create({ data: { artifactId: id, accountId: late.id,
+                        if (change === 'census') await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: id, accountId: late.id,
                             accessLevel: 'view', createdByAccountId: owner.id } });
                     }
                     return result;
@@ -226,7 +226,7 @@ describe("artifactsRoutes (AccountChange integration)", () => {
             header: Buffer.from(encodePlainArtifactStoredContent({ title: 'Profile', kind: 'launch-profile.v1' }), 'base64'),
             body: Buffer.from('unreadable stored body'), dataEncryptionKey: Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64'),
             headerVersion: 1, bodyVersion: 1, seq: 1 } });
-        await db.artifactAccountGrant.create({ data: { artifactId: id, accountId: recipient.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: id, accountId: recipient.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         await withAuthenticatedTestApp(app => artifactsRoutes(app), async app => {
             for (const caller of [owner, recipient]) {

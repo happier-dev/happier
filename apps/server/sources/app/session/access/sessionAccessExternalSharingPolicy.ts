@@ -210,16 +210,16 @@ export async function enforceSessionContextExternalSharingPolicyInTx(
             where: { sessionId: input.sessionId },
             select: { expiresAt: true },
         }),
-        tx.sessionTeamGrant.findFirst({
-            where: {
+        tx.sessionGrant.findFirst({
+            where: { principalKind: 'team',
                 sessionId: input.sessionId,
                 teamId: { not: primaryTeamId },
                 team: { archivedAt: null },
             },
             select: { teamId: true },
         }),
-        tx.sessionGroupGrant.findFirst({
-            where: {
+        tx.sessionGrant.findFirst({
+            where: { principalKind: 'group',
                 sessionId: input.sessionId,
                 teamGroup: {
                     teamId: { not: primaryTeamId },

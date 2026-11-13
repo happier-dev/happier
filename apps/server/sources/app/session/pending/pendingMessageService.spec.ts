@@ -75,10 +75,9 @@ const updatePendingMessageCompat = updatePendingMessage as unknown as (params: a
 type PendingSessionFixture = Readonly<{
     id: string;
     currentStorageState: "hosted";
-    shares: { id: string; sharedWithUserId: string; accessLevel: "view" | "edit" | "admin"; canApprovePermissions: boolean }[];
+    grants: import("@/app/session/access/sessionAccess").SessionAccessProjectionRow["grants"];
     account: { status: "active" };
-    teamGrants: [];
-    groupGrants: [];
+ 
     primaryTeamId: null;
     accountId: string;
     active: boolean;
@@ -107,10 +106,10 @@ function createPendingSessionFixture(
     return {
         id: "s1",
         currentStorageState: "hosted",
-        shares: [],
+        grants: [],
         account: { status: "active" },
-        teamGrants: [],
-        groupGrants: [],
+        
+        
         primaryTeamId: null,
         accountId: "u1",
         active: true,
@@ -156,9 +155,9 @@ describe("pendingMessageService", () => {
                 update: vi.fn(async () => ({ pendingQueueSeq: 1 })),
             },
             sessionFollowEdge: { findMany: vi.fn(async () => []) },
-            sessionShare: { findMany: vi.fn(async () => []) },
-            sessionTeamGrant: { findMany: vi.fn(async () => []) },
-            sessionGroupGrant: { findMany: vi.fn(async () => []) },
+            sessionGrant: { findMany: vi.fn(async () => []) },
+            
+            
             managedMachine: { findUnique: vi.fn(async () => null) },
             sessionMessage: {
                 findUnique: vi.fn(async () => null),
@@ -384,7 +383,7 @@ describe("pendingMessageService", () => {
         currentTx.session.findUnique.mockResolvedValue(createPendingSessionFixture({
             accountId: "owner",
             encryptionMode: "plain",
-            shares: [{ id: "admin-share", sharedWithUserId: "u1", accessLevel: "admin", canApprovePermissions: false }],
+            grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  id: "admin-share", accountId: "u1", accessLevel: "admin", canApprovePermissions: false  }],
         }));
         currentTx.sessionPendingMessage.findUnique.mockResolvedValue(null);
         currentTx.sessionPendingMessage.findFirst.mockResolvedValue(null);
@@ -706,8 +705,8 @@ describe("pendingMessageService", () => {
         currentTx.session.findUnique.mockResolvedValue({
             ...createPendingSessionFixture({ encryptionMode: "plain" }),
             account: { status: "active" },
-            teamGrants: [],
-            groupGrants: [],
+            grants: [],
+            
             primaryTeamId: null,
         });
         currentTx.accessKey.findUnique.mockResolvedValue({
@@ -843,7 +842,7 @@ describe("pendingMessageService", () => {
         storagePolicyEnv.set("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
         currentTx.session.findUnique.mockResolvedValue(createPendingSessionFixture({
             accountId: "owner",
-            shares: [{ id: "editor-share", sharedWithUserId: "u1", accessLevel: "edit", canApprovePermissions: false }],
+            grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  id: "editor-share", accountId: "u1", accessLevel: "edit", canApprovePermissions: false  }],
             encryptionMode: "plain",
             pendingCount: 1,
             pendingVersion: 1,

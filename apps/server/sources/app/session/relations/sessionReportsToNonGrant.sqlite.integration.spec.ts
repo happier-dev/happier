@@ -27,9 +27,9 @@ describe('manager never grants Session authority (SQLite integration)', () => {
             outsiderChild: await resolveEffectiveSessionAccess(tx, { accountId: outsider.id, sessionId: child.id, authentication }),
             outsiderLead: await resolveEffectiveSessionAccess(tx, { accountId: outsider.id, sessionId: lead.id, authentication }),
             keys: await tx.sessionDataKeyEnvelope.findMany({ where: { sessionId: { in: [child.id, lead.id] } } }),
-            shares: await tx.sessionShare.findMany({ where: { sessionId: { in: [child.id, lead.id] } } }),
-            teamGrants: await tx.sessionTeamGrant.findMany({ where: { sessionId: { in: [child.id, lead.id] } } }),
-            groupGrants: await tx.sessionGroupGrant.findMany({ where: { sessionId: { in: [child.id, lead.id] } } }),
+            grants: await tx.sessionGrant.findMany({ where: { principalKind: 'account', sessionId: { in: [child.id, lead.id] } } }),
+            teamGrants: await tx.sessionGrant.findMany({ where: { principalKind: 'team', sessionId: { in: [child.id, lead.id] } } }),
+            groupGrants: await tx.sessionGrant.findMany({ where: { principalKind: 'group', sessionId: { in: [child.id, lead.id] } } }),
         }));
         const before = await snapshot();
         expect(await setSessionManager({ accountId: owner.id, sessionId: child.id, managerSessionId: lead.id,

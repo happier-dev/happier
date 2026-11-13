@@ -17,15 +17,13 @@ const captured = Symbol("Machine access impact");
 
 /** Account erasure follows retained grants, including grants authored on foreign Machines. */
 export async function readMachineAccessGrantsForAccountErasureInTx(tx: Tx, accountId: string): Promise<string[]> {
-    const [owned, received, authored, teams, groups] = await Promise.all([
+    const [owned, received, authored] = await Promise.all([
         tx.machine.findMany({ where: { accountId }, select: { id: true } }),
-        tx.machineAccountGrant.findMany({ where: { accountId }, select: { machineId: true } }),
-        tx.machineAccountGrant.findMany({ where: { createdByAccountId: accountId }, select: { machineId: true } }),
-        tx.machineTeamGrant.findMany({ where: { createdByAccountId: accountId }, select: { machineId: true } }),
-        tx.machineGroupGrant.findMany({ where: { createdByAccountId: accountId }, select: { machineId: true } }),
+        tx.machineGrant.findMany({ where: { accountId }, select: { machineId: true } }),
+        tx.machineGrant.findMany({ where: { createdByAccountId: accountId }, select: { machineId: true } }),
     ]);
     return [...new Set([...owned.map(machine => machine.id), ...received.map(grant => grant.machineId),
-        ...authored.map(grant => grant.machineId), ...teams.map(grant => grant.machineId), ...groups.map(grant => grant.machineId)])];
+        ...authored.map(grant => grant.machineId)])];
 }
 
 /** Transaction-local structural before-state, never persisted or supplied by a caller over transport. */

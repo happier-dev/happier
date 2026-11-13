@@ -124,7 +124,7 @@ describe("Collection Account-encryption transition inventory", () => {
             buildState: 'ready', indexedThroughRevision: 1 } });
         await db.pluginCollectionIndexEntry.create({ data: { indexStateId: index.id, rowId: row.rowId,
             rowRevision: 1, encodedSortKey: new Uint8Array([1, 2, 3]) } });
-        await db.pluginCollectionAccountGrant.create({ data: { rowDbId: row.id, accountId: peer, accessLevel: 'edit', createdByAccountId: owner } });
+        await db.pluginCollectionGrant.create({ data: { principalKind: 'account', rowDbId: row.id, accountId: peer, accessLevel: 'edit', createdByAccountId: owner } });
         await inTx(tx => backfillPluginCollectionUsageTotalsInTx({ tx, accountId: owner }));
         const rowKey = randomBytes(32);
         const wraps = identities.map(identity => ({ recipientAccountId: identity.accountId,
@@ -155,7 +155,7 @@ describe("Collection Account-encryption transition inventory", () => {
             limits: parameters.limits, directive: { action: 'migrate', items: [plain] } }))).resolves.toEqual({ status: 'applied' });
         await db.account.update({ where: { id: owner }, data: { encryptionMode: 'plain', publicKey: null, contentPublicKey: null, contentPublicKeySig: null } });
         expect(await db.pluginCollectionKeyEnvelope.count({ where: { rowDbId: row.id } })).toBe(0);
-        expect(await db.pluginCollectionAccountGrant.count({ where: { rowDbId: row.id } })).toBe(1);
+        expect(await db.pluginCollectionGrant.count({ where: { rowDbId: row.id } })).toBe(1);
         expect(await db.pluginCollectionRow.findUniqueOrThrow({ where: { id: row.id } })).toMatchObject({ revision: 3, contentEnvelope: plain.targetEnvelope });
     });
 

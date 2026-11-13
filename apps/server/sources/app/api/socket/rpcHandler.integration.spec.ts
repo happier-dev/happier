@@ -125,8 +125,8 @@ describe("rpcHandler", () => {
             { kind: 'refused', sessionId: foreignSession.id, errorCode: RPC_ERROR_CODES.FORBIDDEN },
             { kind: 'refused', sessionId: missingSessionId, errorCode: RPC_ERROR_CODES.FORBIDDEN },
         ] });
-        await db.sessionShare.create({ data: { sessionId: foreignSession.id, sharedByUserId: ownerId,
-            sharedWithUserId: accountId, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: foreignSession.id, createdByAccountId: ownerId,
+            accountId: accountId, accessLevel: 'view' } });
         const sharedRead = vi.fn();
         await getSocketHandler(caller, SOCKET_RPC_EVENTS.CALL)({ method, params: 'opaque-encrypted-evidence-request',
             authorization: { kind: 'scm.workEvidence', sessionIds: [foreignSession.id] } }, sharedRead);
@@ -167,8 +167,8 @@ describe("rpcHandler", () => {
         await handler({ method, params: 'opaque-request', authorization: { kind: 'session.write', sessionId: foreignSession.id } }, refused);
         expect(refused).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
         expect(target.emitWithAck).not.toHaveBeenCalled();
-        await db.sessionShare.create({ data: { sessionId: foreignSession.id, sharedByUserId: ownerId,
-            sharedWithUserId: accountId, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: foreignSession.id, createdByAccountId: ownerId,
+            accountId: accountId, accessLevel: 'view' } });
         const admitted = vi.fn();
         await handler({ method, params: 'opaque-request', authorization: { kind: 'session.write', sessionId: foreignSession.id } }, admitted);
         expect(admitted).toHaveBeenCalledWith({ ok: true, result: { ok: true } });
@@ -193,8 +193,8 @@ describe("rpcHandler", () => {
         const target = { homeId, accountId: ownerId, sessionId, machineId, installationId };
         await db.session.update({ where: { id: sessionId }, data: { accountId: ownerId, runtimeMachineTarget: target } });
         await db.accessKey.create({ data: { accountId: ownerId, sessionId, machineId, data: '{}' } });
-        if (level && level !== 'owner') await db.sessionShare.create({ data: { sessionId, sharedByUserId: ownerId,
-            sharedWithUserId: accountId, accessLevel: level } });
+        if (level && level !== 'owner') await db.sessionGrant.create({ data: { principalKind: 'account', sessionId, createdByAccountId: ownerId,
+            accountId: accountId, accessLevel: level } });
         const destinationMethod = `${machineId}:${operation}`;
         const daemon = createTarget('session-browser-daemon', { status: 'ready' });
         const accountStoredContentCompatibility = evaluateAccountStoredContentCompatibility({ status: 'valid',
@@ -267,8 +267,8 @@ describe("rpcHandler", () => {
             authorization: { kind: 'session.read', sessionId },
             machineAdmission: expect.objectContaining({ actorAccountId: accountId, custodianAccountId: ownerId, role: 'use' }),
         }));
-        await db.sessionShare.create({ data: { sessionId: foreignSession.id, sharedByUserId: ownerId,
-            sharedWithUserId: accountId, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: foreignSession.id, createdByAccountId: ownerId,
+            accountId: accountId, accessLevel: 'view' } });
         const readOnly = vi.fn();
         await getSocketHandler(caller, SOCKET_RPC_EVENTS.CALL)({ method, params: { opaque: 'encrypted-request' },
             authorization: { kind: 'session.read', sessionId: foreignSession.id } }, readOnly);
@@ -422,8 +422,8 @@ describe("rpcHandler", () => {
 
     it("refuses shared-editor native Realtime Start before forwarding, including a forged owner marker", async () => {
         await db.session.update({ where: { id: sessionId }, data: { accountId: ownerId } });
-        await db.sessionShare.create({ data: { sessionId, sharedByUserId: ownerId,
-            sharedWithUserId: accountId, accessLevel: "edit", canApprovePermissions: false } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId, createdByAccountId: ownerId,
+            accountId: accountId, accessLevel: "edit", canApprovePermissions: false } });
         const method = `${sessionId}:session.agentRealtime.start`;
         const target = createTarget("owner-realtime-socket", { ok: true, status: "started" });
         const { io } = createIo({ [`rpc:${ownerId}:${method}`]: [[target.socket]] });
@@ -443,8 +443,8 @@ describe("rpcHandler", () => {
     it.each([SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND, RPC_METHODS.SESSION_USER_ACTION_ANSWER])(
         "keeps shared-editor ordinary input and question RPC available without owner proof: %s", async rpcMethod => {
         await db.session.update({ where: { id: sessionId }, data: { accountId: ownerId } });
-        await db.sessionShare.create({ data: { sessionId, sharedByUserId: ownerId,
-            sharedWithUserId: accountId, accessLevel: "edit", canApprovePermissions: false } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId, createdByAccountId: ownerId,
+            accountId: accountId, accessLevel: "edit", canApprovePermissions: false } });
         const method = `${sessionId}:${rpcMethod}`;
         const target = createTarget("owner-input-socket", { ok: true });
         const { io } = createIo({ [`rpc:${ownerId}:${method}`]: [[target.socket]] });
@@ -464,8 +464,8 @@ describe("rpcHandler", () => {
 
     it("routes delegated permission RPCs through the owner room", async () => {
         await db.session.update({ where: { id: sessionId }, data: { accountId: ownerId } });
-        await db.sessionShare.create({ data: { sessionId, sharedByUserId: ownerId,
-            sharedWithUserId: accountId, accessLevel: "edit", canApprovePermissions: true } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId, createdByAccountId: ownerId,
+            accountId: accountId, accessLevel: "edit", canApprovePermissions: true } });
         const target = createTarget("owner-socket", { ok: true, value: "owner" });
         const { io, inMock } = createIo({
             [`rpc:${ownerId}:${sessionId}:permission`]: [[target.socket]],
@@ -498,8 +498,8 @@ describe("rpcHandler", () => {
 
     it("returns forbidden for delegated permission RPCs when approval is denied", async () => {
         await db.session.update({ where: { id: sessionId }, data: { accountId: ownerId } });
-        await db.sessionShare.create({ data: { sessionId, sharedByUserId: ownerId,
-            sharedWithUserId: accountId, accessLevel: "edit", canApprovePermissions: false } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId, createdByAccountId: ownerId,
+            accountId: accountId, accessLevel: "edit", canApprovePermissions: false } });
         const target = createTarget("owner-socket", { ok: true });
         const { io, inMock } = createIo({
             [`rpc:${ownerId}:${sessionId}:permission`]: [[target.socket]],

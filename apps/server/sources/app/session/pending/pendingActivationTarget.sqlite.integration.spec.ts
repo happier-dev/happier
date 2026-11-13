@@ -256,8 +256,8 @@ describe('exact requester pending activation target (real SQLite)', () => {
         const f = await fixture();
         const human = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         const source = await db.session.create({ data: { accountId: human.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
-        await db.sessionShare.create({ data: { sessionId: f.session.id, sharedByUserId: f.requester.id,
-            sharedWithUserId: human.id, accessLevel: 'edit' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: f.session.id, createdByAccountId: f.requester.id,
+            accountId: human.id, accessLevel: 'edit' } });
         const reply = { mode: 'return', humanOrigin: { sessionId: source.id } } as const;
         await db.machine.update({ where: { id: f.selectedMachine.id }, data: { operationProtocolCapabilities: {
             sessionInputAdmission: { protocolVersions: [1, 2] }, sessionMessageReply: { protocolVersions: [1] },
@@ -274,7 +274,7 @@ describe('exact requester pending activation target (real SQLite)', () => {
         expect(await materializeNextPendingMessage({ actorUserId: f.requester.id, sessionId: f.session.id,
             deliveryState: 'provider', deliveryTiming: 'after_foreground_ready', foregroundState: 'ready', publisherAuthority }))
             .toMatchObject({ ok: true, didMaterialize: true });
-        await db.sessionShare.deleteMany({ where: { sessionId: f.session.id, sharedWithUserId: human.id } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: f.session.id, accountId: human.id } });
         expect(await settlePendingInputAdmission({ actorUserId: f.requester.id, sessionId: f.session.id,
             localId: input.localId, publisherAuthority,
             decision: { kind: 'admit', finalContent, validation: { reply } } }))

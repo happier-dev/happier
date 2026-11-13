@@ -78,7 +78,7 @@ async function fixture() {
     const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
     const viewer = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
     const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain', seq: 10 } });
-    await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: viewer.id, accessLevel: 'view' } });
+    await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id, accountId: viewer.id, accessLevel: 'view' } });
     return { owner, viewer, session, key: { accountId: viewer.id, sessionId: session.id } };
 }
 
@@ -118,7 +118,7 @@ describe('Account Follow service', () => {
         await db.accountPushToken.deleteMany();
         await db.accountSessionReadState.deleteMany();
         await db.accountSessionFollow.deleteMany();
-        await db.sessionShare.deleteMany();
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account' } });
         await db.sessionMessage.deleteMany();
         await db.accessKey.deleteMany();
         await db.session.deleteMany();
@@ -433,7 +433,7 @@ describe('Account Follow service', () => {
 
     it('keeps a first-request intent armed when a later revision cannot prove its exact current request', async () => {
         const { session, key } = await fixture();
-        await db.sessionShare.updateMany({ where: { sessionId: session.id, sharedWithUserId: key.accountId }, data: { accessLevel: 'edit' } });
+        await db.sessionGrant.updateMany({ where: { principalKind: 'account', sessionId: session.id, accountId: key.accountId }, data: { accessLevel: 'edit' } });
         await setAccountSessionFollow({ ...key, preferences: { once: { kind: 'first_needs_you' } } });
         const armed = await db.accountSessionFollow.findUniqueOrThrow({ where: { accountId_sessionId: key } });
         if (!armed.notifyOnce) throw new Error('Expected armed one-shot');
@@ -446,7 +446,7 @@ describe('Account Follow service', () => {
     it('accepts the exact original request transaction once before a later withdrawal can hide its source', async () => {
         const { acceptSessionPersonalEventOnceInTx } = await import('@/app/session/personal/eventEligibility');
         const { session, key } = await fixture();
-        await db.sessionShare.updateMany({ where: { sessionId: session.id, sharedWithUserId: key.accountId }, data: { accessLevel: 'edit' } });
+        await db.sessionGrant.updateMany({ where: { principalKind: 'account', sessionId: session.id, accountId: key.accountId }, data: { accessLevel: 'edit' } });
         await removeAccountSessionFollow(key);
         await setAccountSessionFollow({ ...key, preferences: { once: { kind: 'first_needs_you' } } });
         const occurrence = { event: 'user_action_required' as const, requestId: 'original-request', agentStateVersion: session.agentStateVersion + 1 };
@@ -465,7 +465,7 @@ describe('Account Follow service', () => {
         const { acceptSessionPersonalEventOnceInTx } = await import('@/app/session/personal/eventEligibility');
         const { changeDeliveryMute } = await import('./sessionDeliveryMuteService');
         const { session, key } = await fixture();
-        await db.sessionShare.updateMany({ where: { sessionId: session.id, sharedWithUserId: key.accountId }, data: { accessLevel: 'edit' } });
+        await db.sessionGrant.updateMany({ where: { principalKind: 'account', sessionId: session.id, accountId: key.accountId }, data: { accessLevel: 'edit' } });
         await setAccountSessionFollow({ ...key, preferences: { once: { kind: 'first_needs_you' } } });
         await changeDeliveryMute({ accountId: key.accountId, receiver: { kind: 'account' },
             scope: { kind: 'source', source: { kind: 'session', sessionId: session.id } },
@@ -508,8 +508,8 @@ describe('Account Follow service', () => {
         const second = await db.session.create({ data: {
             accountId: owner.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain', seq: 11,
         } });
-        await db.sessionShare.create({ data: {
-            sessionId: second.id, sharedByUserId: owner.id, sharedWithUserId: viewer.id, accessLevel: 'view',
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: second.id, createdByAccountId: owner.id, accountId: viewer.id, accessLevel: 'view',
         } });
         await setAccountSessionFollow({ ...key, preferences: { notificationLevel: 'important', includeInVoice: true } });
         await setAccountSessionFollow({
@@ -618,7 +618,7 @@ describe('Account Follow service', () => {
         const viewerIds = viewers.map(viewer => viewer.id);
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain', seq: 10 } });
         for (const viewer of viewers) {
-            await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: viewer.id, accessLevel: 'view' } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id, accountId: viewer.id, accessLevel: 'view' } });
         }
         for (const viewerId of viewerIds) {
             await setAccountSessionFollow({ accountId: viewerId, sessionId: session.id, preferences: { notificationLevel: 'important', includeInVoice: false } });
@@ -632,7 +632,7 @@ describe('Account Follow service', () => {
         await new Promise(resolve => setTimeout(resolve, 100));
         sendPushNotificationsAsync.mockClear();
         // Revoke every direct share so the next call observes final access loss.
-        await db.sessionShare.deleteMany({ where: { sessionId: session.id } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session.id } });
 
         const removed = await inTx(tx => removeAccountSessionFollowsOnAccessLossInTx(tx, {
             sessionId: session.id, accountIds: viewerIds,
@@ -961,16 +961,16 @@ describe('Account Follow service', () => {
         await expect(observe()).resolves.toBeNull();
         await expect(observe({ ...current, parentSessionId: session.id })).resolves.toBeNull();
 
-        const share = await db.sessionShare.create({ data: {
+        const share = await db.sessionGrant.create({ data: { principalKind: 'account',
             sessionId: voiceSession.id,
-            sharedByUserId: viewer.id,
-            sharedWithUserId: (await db.account.create({ data: {
+            createdByAccountId: viewer.id,
+            accountId: (await db.account.create({ data: {
                 publicKey: randomUUID(), encryptionMode: 'plain',
             } })).id,
             accessLevel: 'view',
         } });
         await expect(observe(current)).resolves.toBeNull();
-        await db.sessionShare.delete({ where: { id: share.id } });
+        await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
         const pending = await observe(current);
         expect(pending).toEqual([expect.objectContaining({
             sourceSessionId: session.id,
@@ -992,7 +992,7 @@ describe('Account Follow service', () => {
         const { key } = await fixture();
         await setAccountSessionFollow({ ...key, preferences: { notificationLevel: 'none', includeInVoice: true } });
         expect(await inTx(tx => resolveSessionFollowFactsInTx(tx, key))).toMatchObject({ follows: true, notificationLevel: 'none' });
-        await db.sessionShare.deleteMany({ where: { sessionId: key.sessionId } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: key.sessionId } });
         expect(await getAccountSessionFollow(key)).toEqual({ ok: false, error: 'session_not_found' });
         expect(await removeAccountSessionFollow(key)).toEqual({ ok: true, value: { changed: true } });
         expect(await inTx(tx => resolveSessionFollowFactsInTx(tx, key))).toMatchObject({ follows: false, notificationLevel: 'none' });
@@ -1116,7 +1116,7 @@ describe('Account Follow service', () => {
             authenticationPolicy: { v: 1, mode: 'restricted', accepted: [{ kind: 'home_method', methodId: 'github' }] },
         } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: viewer.id, role: 'member' } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id, teamId: team.id, accessLevel: 'view', effectiveAt: new Date(0),
         } });
 
@@ -1130,8 +1130,8 @@ describe('Account Follow service', () => {
         // A separate direct-share arm qualifies the same Account even while the
         // restricted Team remains unqualified; this is the canonical access
         // composition, not a Team-policy bypass.
-        await db.sessionShare.create({ data: {
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: viewer.id, accessLevel: 'view',
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: session.id, createdByAccountId: owner.id, accountId: viewer.id, accessLevel: 'view',
         } });
         await expect(setAccountSessionFollow({
             accountId: viewer.id, sessionId: session.id, preferences: { notificationLevel: 'important', includeInVoice: false },

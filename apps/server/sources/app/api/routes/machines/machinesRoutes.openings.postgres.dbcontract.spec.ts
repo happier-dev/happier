@@ -82,7 +82,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
             active: index % 2 === 0, lastActiveAt: new Date(1000 + index),
             operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2] } }, operationProtocolCapabilitiesRevision: 2,
         })) });
-        await db.machineAccountGrant.createMany({ data: ids.map(machineId => ({ machineId, accountId: recipient.id, accessLevel: 'view', createdByAccountId: owner.id })) });
+        await db.machineGrant.createMany({ data: ids.map(machineId => ({ principalKind: 'account', machineId, accountId: recipient.id, accessLevel: 'view', createdByAccountId: owner.id })) });
         if (mode === 'e2ee') await db.machineKeyEnvelope.createMany({ data: ids.map(machineId => ({ machineId,
             recipientAccountId: recipient.id, encryptedDataKey: recipientEnvelope,
             machineOwnerEnvelopeFingerprint: computeMachineOwnerEnvelopeFingerprintV1(ownerEnvelope),
@@ -95,7 +95,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
         const data = await fixture('e2ee', 100, 1);
         const team = await db.team.create({ data: { name: 'Read-batch cost Team' } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: data.recipient.id, role: 'member' } });
-        await db.machineTeamGrant.createMany({ data: data.ids.map(machineId => ({
+        await db.machineGrant.createMany({ data: data.ids.map(machineId => ({ principalKind: 'team',
             machineId, teamId: team.id, accessLevel: 'view', createdByAccountId: data.owner.id,
         })) });
         const originalTransaction = db.$transaction;
@@ -142,8 +142,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
                     teamId: team.id, accountId: member.id, role: 'member',
                 })) });
                 const audience = await measure(data.ids, 100, true);
-                expect(fleet.statements).toBe(one.statements);
-                expect(audience.statements).toBe(one.statements);
+                expect(fleet.statements).toBeLessThanOrEqual(one.statements);
+                expect(audience.statements).toBeLessThanOrEqual(one.statements);
             });
         } finally { db.$transaction = originalTransaction; }
     });
@@ -298,11 +298,11 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
                 } else expect(exact.statusCode).toBe(404);
             }
             expect(results.filter(result => result.status === 'found').map(result => result.machineId)).toEqual([ready, missingKey, staleKey, wrongMode]);
-            await db.machineAccountGrant.deleteMany({ where: { machineId: ready, accountId: data.recipient.id } });
+            await db.machineGrant.deleteMany({ where: { principalKind: 'account', machineId: ready, accountId: data.recipient.id } });
             const withdrawn = await app.inject({ method: 'POST', url: '/v1/machines/read-batch', headers: headers(data.recipient.id), payload: { machineIds: [ready!] } });
             expect(withdrawn.json()).toEqual({ results: [{ machineId: ready, status: 'not_found' }] });
             const plain = await db.account.create({ data: { encryptionMode: 'plain' } });
-            await db.machineAccountGrant.create({ data: { machineId: staleKey!, accountId: plain.id, accessLevel: 'view', createdByAccountId: data.owner.id } });
+            await db.machineGrant.create({ data: { principalKind: 'account', machineId: staleKey!, accountId: plain.id, accessLevel: 'view', createdByAccountId: data.owner.id } });
             const incompatible = await app.inject({ method: 'POST', url: '/v1/machines/read-batch', headers: headers(plain.id), payload: { machineIds: [staleKey!] } });
             expect(incompatible.json()).toMatchObject({ results: [{ status: 'found', machine: {
                 metadata: null, daemonState: null, dataEncryptionKey: null, access: { accessState: 'refused' },

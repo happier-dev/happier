@@ -758,8 +758,8 @@ describe('First-class Discussions service (SQLite)', () => {
                 phase: 'session_publisher' as const, retryable: true } } };
         if (mode === 'participant') {
             const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
-            await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id,
-                sharedWithUserId: viewer.id, accessLevel: 'view' } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id,
+                accountId: viewer.id, accessLevel: 'view' } });
             expect(await inTx(tx => mutateSessionMessageReplyForAccountInTx(tx, { ...lateMutation, accountId: viewer.id })))
                 .toMatchObject({ ok: false, error: 'forbidden' });
             expect(await inTx(tx => mutateSessionMessageReplyForAccountInTx(tx, { ...lateMutation, messageId: 'another-question' })))
@@ -885,12 +885,12 @@ describe('First-class Discussions service (SQLite)', () => {
             sessionId: session.id, localId, kind: 'discussion_publication', discussionId, messageId: discussion.messageId, acceptedTurnId, publication }));
         if (state === 'terminal_failure') {
             const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
-            const share = await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id,
-                sharedWithUserId: viewer.id, accessLevel: 'view' } });
+            const share = await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id,
+                accountId: viewer.id, accessLevel: 'view' } });
             expect(await inTx(tx => mutateSessionMessageReplyForAccountInTx(tx, { authentication, accountId: viewer.id,
                 sessionId: session.id, localId, kind: 'discussion_publication', discussionId, messageId: discussion.messageId, acceptedTurnId, publication })))
                 .toMatchObject({ ok: false, error: 'forbidden' });
-            await db.sessionShare.delete({ where: { id: share.id } });
+            await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
             expect(await inTx(tx => mutateSessionMessageReplyForAccountInTx(tx, { authentication, accountId: owner.id,
                 sessionId: session.id, localId, kind: 'discussion_publication', discussionId, messageId: 'another-question', acceptedTurnId, publication })))
                 .toMatchObject({ ok: false, error: 'conflict' });
@@ -1378,10 +1378,10 @@ describe('First-class Discussions service (SQLite)', () => {
         const session = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
         const invite = () => inviteDiscussionParticipant({ authentication, actorAccountId: owner.id, discussionId,
             request: { participant: { kind: 'session', sessionId: session.id }, answerPolicy: 'when_addressed' } });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: outsider.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id, accountId: outsider.id, accessLevel: 'view' } });
         expect(await invite()).toEqual({ ok: false, error: 'discussion_access_forbidden' });
         expect(await db.discussionParticipant.count({ where: { discussionId } })).toBe(0);
-        await db.sessionShare.deleteMany({ where: { sessionId: session.id } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session.id } });
         expect(await invite()).toMatchObject({ ok: true });
         expect(await invite()).toMatchObject({ ok: true, value: { changed: false } });
         expect(await db.discussionParticipant.count({ where: { discussionId } })).toBe(1);
@@ -1389,7 +1389,7 @@ describe('First-class Discussions service (SQLite)', () => {
             participants: [{ participant: { kind: 'session', sessionId: session.id }, answerPolicy: 'when_addressed' }],
         } });
         const otherSession = await db.session.create({ data: { accountId: invitee.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
-        await db.sessionShare.create({ data: { sessionId: otherSession.id, sharedByUserId: invitee.id, sharedWithUserId: owner.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: otherSession.id, createdByAccountId: invitee.id, accountId: owner.id, accessLevel: 'view' } });
         expect(await inviteDiscussionParticipant({ authentication, actorAccountId: owner.id, discussionId,
             request: { participant: { kind: 'session', sessionId: otherSession.id } } })).toEqual({ ok: false, error: 'discussion_access_forbidden' });
         expect(await db.discussionMessage.count({ where: { discussionId } })).toBe(1);
@@ -1420,7 +1420,7 @@ describe('First-class Discussions service (SQLite)', () => {
             policy: { preset: 'quiet' }, event: { kind: 'needs_you', type: 'decision', mode: 'wait' } }]);
         expect(await inTx(tx => resolveEffectiveSessionAccess(tx, { accountId: invitee.id, sessionId: target.id, authentication }))).toBeNull();
         const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
-        await db.sessionShare.create({ data: { sessionId: target.id, sharedByUserId: owner.id, sharedWithUserId: outsider.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: target.id, createdByAccountId: owner.id, accountId: outsider.id, accessLevel: 'view' } });
         expect((await inTx(tx => observePendingSessionFollowForDestinationInTx(tx, {
             principal: { kind: 'destination_runtime', destinationRuntimeAccountId: owner.id, authentication }, destinationSessionId: target.id,
         }))).observations).toEqual([]);
@@ -1431,7 +1431,7 @@ describe('First-class Discussions service (SQLite)', () => {
         const target = await db.session.create({ data: { accountId: invitee.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
         // The configuring actor needs actual input permission on the target;
         // the reverse grant to the private source is deliberately absent.
-        await db.sessionShare.create({ data: { sessionId: target.id, sharedByUserId: invitee.id, sharedWithUserId: owner.id, accessLevel: 'edit' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: target.id, createdByAccountId: invitee.id, accountId: owner.id, accessLevel: 'edit' } });
         for (const session of [source, target]) expect(await inviteDiscussionParticipant({ authentication, actorAccountId: owner.id, discussionId,
             request: { participant: { kind: 'session', sessionId: session.id } } })).toMatchObject({ ok: true });
         expect(await inTx(tx => resolveEffectiveSessionAccess(tx, { accountId: invitee.id, sessionId: source.id, authentication }))).toBeNull();
@@ -1479,7 +1479,7 @@ describe('First-class Discussions service (SQLite)', () => {
         const receiver = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
         const foreign = await db.session.create({ data: { accountId: invitee.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
         const localSource = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
-        await db.sessionShare.create({ data: { sessionId: foreign.id, sharedByUserId: invitee.id, sharedWithUserId: owner.id, accessLevel: 'edit' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: foreign.id, createdByAccountId: invitee.id, accountId: owner.id, accessLevel: 'edit' } });
         for (const session of [receiver, foreign, localSource]) expect(await inviteDiscussionParticipant({ authentication, actorAccountId: owner.id, discussionId,
             request: { participant: { kind: 'session', sessionId: session.id } } })).toMatchObject({ ok: true });
         const sourceSession = { sourceSessionId: foreign.id, sourceTurnId: 'foreign-turn', sourceInputId: 'foreign-input', via: 'action' as const };
@@ -1563,7 +1563,7 @@ describe('First-class Discussions service (SQLite)', () => {
         const receiver = await db.session.create({ data: { accountId: invitee.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
         // Only the inviter receives input permission; the receiver's owner never
         // receives the source's private transcript or its permission authority.
-        await db.sessionShare.create({ data: { sessionId: receiver.id, sharedByUserId: invitee.id, sharedWithUserId: owner.id, accessLevel: 'edit' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: receiver.id, createdByAccountId: invitee.id, accountId: owner.id, accessLevel: 'edit' } });
         for (const session of [source, receiver]) expect(await inviteDiscussionParticipant({ authentication, actorAccountId: owner.id, discussionId,
             request: { participant: { kind: 'session', sessionId: session.id } } })).toMatchObject({ ok: true });
         const sourceSession = { sourceSessionId: source.id, sourceTurnId: 'private-turn', sourceInputId: 'private-input', via: 'action' as const };
@@ -1614,7 +1614,7 @@ describe('First-class Discussions service (SQLite)', () => {
         const { owner, invitee, discussionId } = await fixture();
         const source = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
         const receiver = await db.session.create({ data: { accountId: invitee.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
-        await db.sessionShare.create({ data: { sessionId: receiver.id, sharedByUserId: invitee.id, sharedWithUserId: owner.id, accessLevel: 'edit' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: receiver.id, createdByAccountId: invitee.id, accountId: owner.id, accessLevel: 'edit' } });
         for (const session of [source, receiver]) expect(await inviteDiscussionParticipant({ authentication, actorAccountId: owner.id, discussionId,
             request: { participant: { kind: 'session', sessionId: session.id } } })).toMatchObject({ ok: true });
         const sourceSession = { sourceSessionId: source.id, sourceTurnId: 'original-turn', sourceInputId: 'original-input', via: 'action' as const };
@@ -1671,12 +1671,12 @@ describe('First-class Discussions service (SQLite)', () => {
         // Selected Workflow models use this same ordinary birth owner. A
         // broader Session audience cannot become an entitled Discussion input
         // destination merely because its slot and creator are correct.
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id,
-            sharedWithUserId: outsider.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id,
+            accountId: outsider.id, accessLevel: 'view' } });
         expect(await bind()).toEqual({ ok: false, error: 'discussion_access_forbidden' });
         expect(await db.discussionParticipant.findUniqueOrThrow({ where: { discussionId_participantSlotId: discussionParticipant } }))
             .toMatchObject({ sessionId: null });
-        await db.sessionShare.deleteMany({ where: { sessionId: session.id } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session.id } });
         expect(await bind()).toMatchObject({ ok: true, value: { sessionId: session.id } });
         expect(await bind()).toMatchObject({ ok: true, value: { sessionId: session.id } });
         expect(await invite()).toMatchObject({ ok: true, value: { changed: false, modelParticipant: { sessionId: session.id } } });
@@ -1756,9 +1756,9 @@ describe('First-class Discussions service (SQLite)', () => {
             .toMatchObject({ ok: true, value: { participants: [] } });
         expect(await inviteDiscussionParticipant({ authentication, actorAccountId: invitee.id, discussionId, request: { participant } }))
             .toEqual({ ok: false, error: 'discussion_access_forbidden' });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: outsider.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id, accountId: outsider.id, accessLevel: 'view' } });
         expect(await invite()).toEqual({ ok: false, error: 'discussion_access_forbidden' });
-        await db.sessionShare.deleteMany({ where: { sessionId: session.id } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session.id } });
         const intervening = await postDiscussionMessage({ authentication, actorAccountId: owner.id, discussionId, request: postRequest('While removed') });
         if (!intervening.ok) throw new Error(intervening.error);
 

@@ -1,3 +1,4 @@
+import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { db } from '@/storage/db';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
@@ -71,7 +72,7 @@ describe('current Source deployment authority', () => {
         if (!source.ok) throw new Error(source.error);
         const signing = nacl.sign.keyPair();
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
-            installationId: crypto.randomUUID(), installationPublicKey: privacyKit.encodeBase64(signing.publicKey),
+            installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(signing.publicKey),
             metadata: encodePlainMachineStoredContent(MachinePublishedMetadataV1Schema.parse({
                 host: 'database-cutover', platform: 'linux', happyCliVersion: 'test', homeDir: '/home/test', happyHomeDir: '/home/test/.happier',
             })), dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER) } });
@@ -111,7 +112,7 @@ describe('current Source deployment authority', () => {
         if (!secret.ok) throw new Error(secret.error);
         const binding = { purpose: 'variable' as const, phase: 'runtime' as const, name: 'DATABASE_PASSWORD',
             source: { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: secret.value.revision } };
-        const operationalBinding = { purpose: 'backupDestination' as const, configKey: 'destination', role: 'repositoryPassword',
+        const operationalBinding = { purpose: 'backupDestination' as const, configKey: 'destination' as const, role: 'repositoryPassword' as const,
             source: binding.source };
         const ownServer = { rollout: 'recreate' as const, autoRestorePreviousRelease: true };
         const serviceExport = { key: 'database', service: 'db', containerPort: 5432, scheme: 'postgres',
@@ -234,7 +235,7 @@ describe('current Source deployment authority', () => {
         if (!source.ok) throw new Error(source.error);
         const signing = nacl.sign.keyPair();
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
-            installationId: crypto.randomUUID(), installationPublicKey: privacyKit.encodeBase64(signing.publicKey),
+            installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(signing.publicKey),
             metadata: encodePlainMachineStoredContent({}),
             dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER) } });
         const content = { name: 'Backup setup', retainPreviousDeployments: 1, bindings: [],
@@ -277,7 +278,7 @@ describe('current Source deployment authority', () => {
         expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: created.environmentId } }))
             .toMatchObject({ ...initial, revision: created.revision });
 
-        const authored = DeploymentEnvironmentUpdateInputV1Schema.parse({ ...base, patch: { backup, previewTemplate } });
+        const authored = DeploymentEnvironmentUpdateInputV1Schema.parse({ ...base, patch: { previewTemplate } });
         const target = { kind: 'machine' as const, machineId: machine.id };
         const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input: authored };
         const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
@@ -286,7 +287,12 @@ describe('current Source deployment authority', () => {
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input: authored });
         const native = authorization.binding.deploymentNativeAdmission;
         if (!isDeploymentEnvironmentUpdateNativeAdmissionV1(native)) throw new Error('Expected prepared Environment admission');
-        const prepared = await artifact({ ...content, backup, previewTemplate }, createDeploymentEnvironmentContentArtifactIdV1({
+        const forgedBackup = await artifact({ ...content, backup, previewTemplate });
+        expect(await inTx(tx => updateDeploymentEnvironmentInTx(tx, owner.id,
+            DeploymentEnvironmentUpdateStorageInputV1Schema.parse({ ...base, ...forgedBackup,
+                patch: {}, authoredInputDigest: native.inputDigest }), {}, 'environment', undefined, undefined,
+            authorization.binding))).toMatchObject({ ok: false, error: 'deployment_conflict' });
+        const prepared = await artifact({ ...content, previewTemplate }, createDeploymentEnvironmentContentArtifactIdV1({
             ...authorization.binding, environmentId: created.environmentId }));
         const payload = DeploymentEnvironmentUpdateStorageInputV1Schema.parse({ ...base, ...prepared,
             patch: {}, authoredInputDigest: native.inputDigest });
@@ -307,7 +313,7 @@ describe('current Source deployment authority', () => {
             .toMatchObject({ ...prepared, revision: created.revision + 1 });
     });
 
-    it('persists only the reviewed retention policy through the existing Environment CAS', async () => {
+    it('reserves backup configuration and retention for the backup writer under Environment CAS', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const source = await inTx(tx => createProjectSourceInTx(tx, owner.id, { serverId,
             name: 'Backup retention', requestKey: crypto.randomUUID() }));
@@ -340,15 +346,14 @@ describe('current Source deployment authority', () => {
         if (!configured.ok) throw new Error(configured.error);
         const retention = { kind: 'keep', last: 7, monthly: 12 };
         const selected = await artifact({ ...content, backup: { ...backup, retention } });
-        const input = { ...selected, serverId, environmentId: created.environmentId, expectedRevision: configured.revision,
-            patch: { backupRetention: { configRevision: 3, retention } } };
+        const input = { ...selected, serverId, environmentId: created.environmentId, expectedRevision: configured.revision };
         const update = (value: unknown) => inTx(tx => updateDeploymentEnvironmentInTx(tx, owner.id,
             DeploymentEnvironmentUpdateInputV1Schema.parse(value)));
-        expect(await update({ ...input, patch: { backupRetention: { configRevision: 2, retention } } }))
-            .toMatchObject({ ok: false });
         expect(await update({ ...input, ...await artifact({ ...content, backup: { ...backup, retention,
             config: { bucket: 'unreviewed' } } }) })).toMatchObject({ ok: false });
-        expect(await update(input)).toMatchObject({ ok: true, revision: configured.revision + 1 });
+        expect(await update(input)).toMatchObject({ ok: false, error: 'deployment_conflict' });
+        expect(await inTx(tx => setDeploymentEnvironmentBackupInTx(tx, owner.id, input)))
+            .toMatchObject({ ok: true, revision: configured.revision + 1 });
         expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: created.environmentId } }))
             .toMatchObject(selected);
         expect(await update(input)).toMatchObject({ ok: false, error: 'deployment_conflict' });
@@ -385,8 +390,7 @@ describe('current Source deployment authority', () => {
         const [controller, target, peer] = machines;
         if (!controller || !target || !peer) throw new Error('Expected exact placement fixtures');
         const limitedMachine = writer === 'placedController' ? peer : target;
-        await db.machineTeamGrant.createMany({ data: machines.map(machine => ({ machineId: machine.id,
-            teamId: team.id, accessLevel: 'admin', createdByAccountId: custodian.id })) });
+        await db.machineGrant.createMany({ data: machines.map(machine => ({ ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: custodian.id }), machineId: machine.id })) });
         const body = (revision: number) => ({ name: 'Definition writer', retainPreviousDeployments: 1, bindings: [],
             definition: { kind: 'stored', document: `services:\n  app:\n    image: app:${revision}\n`, contentRevision: revision,
                 composeDigest: `sha256:${String(revision).repeat(64)}`, profiles: [], services: ['app'] } });
@@ -468,16 +472,16 @@ describe('current Source deployment authority', () => {
         const beforeGrants = await db.machineSecretGrant.findMany({ where: { environmentId: created.environmentId } });
         const beforeSequence = (await db.account.findUniqueOrThrow({ where: { id: actor.id } })).seq;
         const count = await db.deploymentEnvironment.count({ where: { projectSourceId: source.source.id } });
-        await db.machineTeamGrant.update({ where: { machineId_teamId: { machineId: limitedMachine.id, teamId: team.id } }, data: { accessLevel: 'view' } });
+        await db.machineGrant.update({ where: { principalKind: 'team', machineId_teamId: { machineId: limitedMachine.id, teamId: team.id } }, data: { accessLevel: 'view' } });
         expect(await run()).toMatchObject({ ok: false, error: 'deployment_access_denied' });
         expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: created.environmentId } })).toEqual(before);
         expect(await db.deploymentTargetLink.findMany({ where: { environmentId: created.environmentId }, include: { machines: true } })).toEqual(beforeLinks);
         expect(await db.machineSecretGrant.findMany({ where: { environmentId: created.environmentId } })).toEqual(beforeGrants);
         expect((await db.account.findUniqueOrThrow({ where: { id: actor.id } })).seq).toBe(beforeSequence);
         expect(await db.deploymentEnvironment.count({ where: { projectSourceId: source.source.id } })).toBe(count);
-        await db.machineTeamGrant.delete({ where: { machineId_teamId: { machineId: limitedMachine.id, teamId: team.id } } });
+        await db.machineGrant.delete({ where: { principalKind: 'team', machineId_teamId: { machineId: limitedMachine.id, teamId: team.id } } });
         expect(await run()).toMatchObject({ ok: false });
-        await db.machineTeamGrant.create({ data: { machineId: limitedMachine.id, teamId: team.id, accessLevel: 'admin', createdByAccountId: custodian.id } });
+        await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: custodian.id }), machineId: limitedMachine.id } });
         // Custody alone cannot replace the separate Source-management requirement.
         expect(await run(custodian.id)).toMatchObject({ ok: false });
         let requesterFactReads = 0;
@@ -485,14 +489,14 @@ describe('current Source deployment authority', () => {
             if (request.model !== 'Machine' || request.action !== 'findMany' || !request.args || typeof request.args !== 'object') return;
             const select: unknown = Reflect.get(request.args, 'select');
             if (select && typeof select === 'object' && Reflect.get(select, 'metadata') === true
-                && Reflect.get(select, 'accountGrants') !== undefined) requesterFactReads++;
+                && Reflect.get(select, 'grants') !== undefined) requesterFactReads++;
         } });
         try {
             const result = await run();
             expect(result).toMatchObject({ ok: true });
             expect(requesterFactReads, 'one batched requester-role decision per public writer').toBe(1);
             if (writer === 'grant' && result.ok) {
-                await db.machineTeamGrant.update({ where: { machineId_teamId: { machineId: target.id, teamId: team.id } }, data: { accessLevel: 'view' } });
+                await db.machineGrant.update({ where: { principalKind: 'team', machineId_teamId: { machineId: target.id, teamId: team.id } }, data: { accessLevel: 'view' } });
                 expect(await run(actor.id, result.revision)).toMatchObject({ ok: true, revision: result.revision });
                 expect(requesterFactReads, 'unchanged seal maintenance is not another definition admission').toBe(1);
             }
@@ -596,7 +600,7 @@ describe('current Source deployment authority', () => {
             targetLinkId: retainedLink.id, domainId: retainedDomain.id, machineId: edge.id,
             installationId: edge.installationId!, actionOperationId: 'captured-operation', requestId: 'captured-request',
             nativeServer: 'happier_public' }, content: selected, desired: false, listener: 'public',
-            installationPublicKey: privacyKit.encodeBase64(nacl.sign.keyPair().publicKey) }];
+            installationPublicKey: privacyKit.encodeBase64(new Uint8Array(nacl.sign.keyPair().publicKey)) }];
         await db.deploymentDomain.update({ where: { id: retainedDomain.id }, data: { capturedPlacements } });
         // A Tunnel has one connector per active member; a singleton does not
         // need the separate multi-Machine edge-Caddy placement contract.
@@ -650,7 +654,7 @@ describe('current Source deployment authority', () => {
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
             metadata: mode === 'plain' ? encodePlainMachineStoredContent({}) : '{}',
             ...(mode === 'plain' ? { dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER) } : {}),
-            installationId: crypto.randomUUID(), installationPublicKey: privacyKit.encodeBase64(signing.publicKey) } });
+            installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(signing.publicKey) } });
         const key = nacl.randomBytes(32);
         const header = { kind: 'deployment-environment.v1', title: 'New catalog app' };
         const body = { body: JSON.stringify({ name: 'New catalog app', retainPreviousDeployments: 1, bindings: [],
@@ -667,10 +671,8 @@ describe('current Source deployment authority', () => {
                     recipientPublicKey: contentKeys.publicKey, randomBytes: nacl.randomBytes })) });
         if (!content.ok) throw new Error(content.error);
         if (team) {
-            await db.machineTeamGrant.create({ data: { machineId: machine.id, teamId: team.id,
-                accessLevel: 'view', createdByAccountId: owner.id } });
-            await db.artifactTeamGrant.create({ data: { artifactId: content.artifact.id, teamId: team.id,
-                accessLevel: 'admin', createdByAccountId: owner.id } });
+            await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id }), machineId: machine.id } });
+            await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: owner.id }), artifactId: content.artifact.id } });
         }
         const input = { serverId, requestKey: crypto.randomUUID(), newProject: { name: `APP-ENTRY ${owner.id}`,
             owner: team ? { kind: 'team' as const, teamId: team.id } : { kind: 'account' as const, accountId: owner.id }, requestKey: crypto.randomUUID() },
@@ -742,10 +744,9 @@ describe('current Source deployment authority', () => {
         if (!source.ok) throw new Error(source.error);
         const [first, joining] = await Promise.all([0, 1].map(() => db.machine.create({ data: {
             id: crypto.randomUUID(), accountId: creator.id, metadata: '{}', installationId: crypto.randomUUID(),
-            installationPublicKey: privacyKit.encodeBase64(nacl.sign.keyPair().publicKey),
+            installationPublicKey: new Uint8Array(nacl.sign.keyPair().publicKey),
         } })));
-        await db.machineTeamGrant.createMany({ data: [first!, joining!].map(machine => ({ machineId: machine.id,
-            teamId: team.id, accessLevel: 'view' as const, createdByAccountId: creator.id })) });
+        await db.machineGrant.createMany({ data: [first!, joining!].map(machine => ({ ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view' as const, createdByAccountId: creator.id }), machineId: machine.id })) });
         const artifact = async (kind: string, storedKind: string, content: unknown) => {
             const key = nacl.randomBytes(32);
             const created = await createArtifact({ actorUserId: creator.id, artifactId: crypto.randomUUID(), kind: storedKind,
@@ -754,8 +755,7 @@ describe('current Source deployment authority', () => {
                 dataEncryptionKey: new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey: key,
                     recipientPublicKey: keys.publicKey, randomBytes: nacl.randomBytes })) });
             if (!created.ok) throw new Error(created.error);
-            await db.artifactTeamGrant.create({ data: { artifactId: created.artifact.id, teamId: team.id,
-                accessLevel: 'admin', createdByAccountId: creator.id } });
+            await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: creator.id }), artifactId: created.artifact.id } });
             return { contentArtifactId: created.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
         };
         const definition = { kind: 'stored' as const, document: '{"services":{"app":{"image":"app:1"}}}',
@@ -799,6 +799,10 @@ describe('current Source deployment authority', () => {
             ...boundContent, referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(bindings), grants: [grant(first)],
         }));
         if (!bound.ok) throw new Error(bound.error);
+        expect(await inTx(tx => setDeploymentEnvironmentBindingsInTx(tx, creator.id, {
+            serverId, environmentId: environment.environmentId, expectedRevision: bound.revision,
+            ...boundContent, referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(bindings), grants: [grant(first)],
+        }))).toEqual(bound);
         const appendedTargetContent = await artifact('deployment-target-link.v1', DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1, {});
         const appended = await inTx(tx => linkDeploymentTargetInTx(tx, creator.id, { serverId,
             environmentId: environment.environmentId, expectedRevision: bound.revision, requestKey: crypto.randomUUID(),
@@ -835,15 +839,13 @@ describe('current Source deployment authority', () => {
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: creator.id,
             metadata: encodePlainMachineStoredContent({}), dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
             installationId: crypto.randomUUID() } });
-        await db.machineTeamGrant.create({ data: { machineId: machine.id, teamId: team.id,
-            accessLevel: 'view', createdByAccountId: creator.id } });
+        await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view', createdByAccountId: creator.id }), machineId: machine.id } });
         const artifact = await createArtifact({ actorUserId: creator.id, artifactId: crypto.randomUUID(),
             header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'CI custody' })),
             body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({})),
             dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
         if (!artifact.ok) throw new Error(artifact.error);
-        await db.artifactTeamGrant.create({ data: { artifactId: artifact.artifact.id, teamId: team.id,
-            accessLevel: 'admin', createdByAccountId: creator.id } });
+        await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: creator.id }), artifactId: artifact.artifact.id } });
         const environment = await db.deploymentEnvironment.create({ data: { projectSourceId: source.source.id,
             createdByAccountId: creator.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
             controllerMachineId: machine.id, contentArtifactId: artifact.artifact.id,
@@ -912,16 +914,15 @@ describe('current Source deployment authority', () => {
         };
         await refusedWithoutEffect();
         // Direct access for today's members is not the Team's durable management grant.
-        await db.artifactAccountGrant.create({ data: { artifactId: artifact.id, accountId: manager.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: artifact.id, accountId: manager.id,
             accessLevel: 'admin', createdByAccountId: creator.id } });
         if (mode === 'e2ee') await db.artifactKeyEnvelope.create({ data: { artifactId: artifact.id,
             recipientAccountId: manager.id, encryptedDataKey: wrap(keys[1]!.publicKey),
             recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(keys[1]!.publicKey) } });
         await refusedWithoutEffect();
-        await db.artifactAccountGrant.deleteMany({ where: { artifactId: artifact.id, accountId: manager.id } });
+        await db.artifactGrant.deleteMany({ where: { principalKind: 'account', artifactId: artifact.id, accountId: manager.id } });
         await db.artifactKeyEnvelope.deleteMany({ where: { artifactId: artifact.id, recipientAccountId: manager.id } });
-        await db.artifactTeamGrant.create({ data: { artifactId: artifact.id, teamId: team.id,
-            accessLevel: 'edit', createdByAccountId: creator.id } });
+        await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'edit', createdByAccountId: creator.id }), artifactId: artifact.id } });
         if (mode === 'e2ee') {
             await refusedWithoutEffect();
             await db.artifactKeyEnvelope.create({ data: { artifactId: artifact.id, recipientAccountId: manager.id,
@@ -950,7 +951,7 @@ describe('current Source deployment authority', () => {
             expect(await inTx(tx => readProjectDeploymentDefaultsInTx(tx, reader.id,
                 { serverId, projectSourceId: source.source.id }))).toMatchObject({ ok: true, content });
         }
-        await db.artifactAccountGrant.create({ data: { artifactId: artifact.id, accountId: reader.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: artifact.id, accountId: reader.id,
             accessLevel: 'view', createdByAccountId: manager.id } });
         if (mode === 'e2ee') {
             await db.artifactKeyEnvelope.create({ data: { artifactId: artifact.id, recipientAccountId: reader.id,
@@ -978,8 +979,7 @@ describe('current Source deployment authority', () => {
             header: encode({ kind: 'project-deployment-defaults.v1', title: 'Team defaults' }),
             body: encode({ body: JSON.stringify({ projectSourceId: source.source.id, deploymentDefaults: { retainPreviousDeployments: 0 } }) }),
             dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) } });
-        await db.artifactTeamGrant.create({ data: { artifactId: artifact.id, teamId: team.id,
-            accessLevel: 'admin', createdByAccountId: administrator.id } });
+        await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: administrator.id }), artifactId: artifact.id } });
         const content = { contentArtifactId: artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
         expect(await inTx(tx => setProjectDeploymentDefaultsInTx(tx, administrator.id, { serverId,
             projectSourceId: source.source.id, expectedSourceRevision: source.source.revision, expectedRevision: 0, content })))
@@ -1009,7 +1009,7 @@ describe('current Source deployment authority', () => {
         const machines = await Promise.all(Array.from({ length: 9 }, () => db.machine.create({ data: {
             id: crypto.randomUUID(), accountId: creator.id, metadata: encodePlainMachineStoredContent({}),
             dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER), installationId: crypto.randomUUID(),
-            installationPublicKey: privacyKit.encodeBase64(nacl.sign.keyPair().publicKey),
+            installationPublicKey: new Uint8Array(nacl.sign.keyPair().publicKey),
         } })));
         const [controller, builder, edge, first, second, retiring, detached, acceptedController, acceptedBuilder] = machines;
         const artifact = async (kind: string) => {
@@ -1089,17 +1089,12 @@ describe('current Source deployment authority', () => {
         };
         await unchanged();
         // Prepare through the existing resource grant tables before testing each missing fact independently.
-        for (const machine of [controller!, builder!, edge!, first!, acceptedController!, acceptedBuilder!]) await db.machineTeamGrant.create({ data: {
-            machineId: machine.id, teamId: team.id, accessLevel: 'view', createdByAccountId: creator.id,
-        } });
-        await db.machineTeamGrant.create({ data: { machineId: second!.id, teamId: team.id,
-            accessLevel: 'view', createdByAccountId: creator.id } });
-        await db.machineTeamGrant.create({ data: { machineId: retiring!.id, teamId: team.id,
-            accessLevel: 'view', createdByAccountId: creator.id } });
+        for (const machine of [controller!, builder!, edge!, first!, acceptedController!, acceptedBuilder!]) await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view', createdByAccountId: creator.id }), machineId: machine.id } });
+        await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view', createdByAccountId: creator.id }), machineId: second!.id } });
+        await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view', createdByAccountId: creator.id }), machineId: retiring!.id } });
         // Retained detached/retiring link and receipt content must remain readable too.
         for (const content of contents) {
-            await db.artifactTeamGrant.create({ data: { artifactId: content.contentArtifactId, teamId: team.id,
-                accessLevel: 'admin', createdByAccountId: creator.id } });
+            await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: creator.id }), artifactId: content.contentArtifactId } });
         }
         await db.savedSecretTeamGrant.create({ data: { resourceId, teamId: team.id, createdByAccountId: creator.id } });
         // Even complete delivered grants cannot prove a retained resource-only capture's purpose.
@@ -1112,16 +1107,14 @@ describe('current Source deployment authority', () => {
             }))),
         } });
         for (const machine of [controller!, builder!, edge!, first!, second!, retiring!, acceptedController!, acceptedBuilder!]) {
-            await db.machineTeamGrant.deleteMany({ where: { machineId: machine.id, teamId: team.id } });
+            await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: machine.id, teamId: team.id } });
             await unchanged();
-            await db.machineTeamGrant.create({ data: { machineId: machine.id, teamId: team.id,
-                accessLevel: 'view', createdByAccountId: creator.id } });
+            await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view', createdByAccountId: creator.id }), machineId: machine.id } });
         }
         for (const content of contents) {
-            await db.artifactTeamGrant.deleteMany({ where: { artifactId: content.contentArtifactId, teamId: team.id } });
+            await db.artifactGrant.deleteMany({ where: { principalKind: 'team', artifactId: content.contentArtifactId, teamId: team.id } });
             await unchanged();
-            await db.artifactTeamGrant.create({ data: { artifactId: content.contentArtifactId, teamId: team.id,
-                accessLevel: 'admin', createdByAccountId: creator.id } });
+            await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: creator.id }), artifactId: content.contentArtifactId } });
         }
         await db.savedSecretTeamGrant.deleteMany({ where: { resourceId, teamId: team.id } });
         await unchanged();
@@ -1157,8 +1150,8 @@ describe('current Source deployment authority', () => {
             { serverId, projectSourceId: source.source.id }))).toMatchObject({ ok: false, error: 'deployment_unavailable' });
         const childReads: string[] = [];
         const stop = observeSqliteRequests({ before: request => {
-            if (request.model && ['DeploymentEnvironment', 'ProjectDeploymentDefaults', 'Artifact', 'ArtifactTeamGrant',
-                'Machine', 'MachineTeamGrant', 'MachineSecretGrant', 'SavedSecretResource', 'AccountApiToken', 'Automation']
+            if (request.model && ['DeploymentEnvironment', 'ProjectDeploymentDefaults', 'Artifact', 'ArtifactGrant',
+                'Machine', 'MachineGrant', 'MachineSecretGrant', 'SavedSecretResource', 'AccountApiToken', 'Automation']
                 .includes(request.model)) childReads.push(`${request.model}:${request.action}`);
         } });
         try {
@@ -1327,8 +1320,7 @@ describe('current Source deployment authority', () => {
         // Owning the Machine personally cannot replace the Source Team grant.
         expect(await inTx(tx => admitDeploymentMachinesInTx(tx, admitted.admission.owner, destinations)))
             .toMatchObject({ ok: false, error: 'machine_unavailable' });
-        await db.machineTeamGrant.create({ data: { machineId: machine.id, teamId: team.id,
-            accessLevel: 'view', createdByAccountId: creator.id } });
+        await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view', createdByAccountId: creator.id }), machineId: machine.id } });
         expect(await inTx(tx => admitDeploymentMachinesInTx(tx, admitted.admission.owner, destinations))).toBeNull();
         const resourceId = crypto.randomUUID();
         const secret = await inTx(tx => createSavedSecretResourceInTx(tx, { accountId: creator.id, resourceId,
@@ -1346,7 +1338,7 @@ describe('current Source deployment authority', () => {
         expect(JSON.stringify(resources)).not.toContain('never-in-use-facts');
         await db.savedSecretTeamGrant.deleteMany({ where: { resourceId, teamId: team.id } });
         expect(await inTx(tx => readSavedSecretResourcesForPrincipalInTx(tx, admitted.admission.owner, [resourceId]))).toEqual([]);
-        await db.machineTeamGrant.deleteMany({ where: { machineId: machine.id, teamId: team.id } });
+        await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: machine.id, teamId: team.id } });
         expect(await inTx(tx => admitDeploymentMachinesInTx(tx, admitted.admission.owner, destinations)))
             .toMatchObject({ ok: false, error: 'machine_unavailable' });
     });
@@ -1371,13 +1363,12 @@ describe('current Source deployment authority', () => {
                 homeDir: '/home/deployment', happyHomeDir: '/home/deployment/.happier',
             })), dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
             installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(keys.publicKey) } });
-        await db.machineTeamGrant.create({ data: { machineId: machine.id, teamId: team.id, accessLevel, createdByAccountId: custodian.id } });
+        await db.machineGrant.create({ data: { principalKind: 'team', machineId: machine.id, teamId: team.id, accessLevel, createdByAccountId: custodian.id } });
         const artifact = await createArtifact({ actorUserId: manager.id, artifactId: crypto.randomUUID(),
             header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Team operation' })),
             body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({})), dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
         if (!artifact.ok) throw new Error(artifact.error);
-        await db.artifactTeamGrant.create({ data: { artifactId: artifact.artifact.id, teamId: team.id,
-            accessLevel: 'admin', createdByAccountId: manager.id } });
+        await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: manager.id }), artifactId: artifact.artifact.id } });
         const content = { contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
         const environment = await db.deploymentEnvironment.create({ data: { projectSourceId: source.source.id, createdByAccountId: manager.id,
             protection: 'production', purpose: 'standard', deployerMode: 'managers', controllerMachineId: machine.id,
@@ -1407,8 +1398,7 @@ describe('current Source deployment authority', () => {
             header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-receipt.v1', title: 'Team operation' })),
             body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({})), dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
         if (!candidate.ok) throw new Error(candidate.error);
-        await db.artifactTeamGrant.create({ data: { artifactId: candidate.artifact.id, teamId: team.id,
-            accessLevel: 'admin', createdByAccountId: manager.id } });
+        await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: manager.id }), artifactId: candidate.artifact.id } });
         const deployInput = { serverId, environmentId: environment.id, expectedRevision: environment.revision,
             targetLinkId: link.id, expectedTargetLinkRevision: link.revision, requestKey: crypto.randomUUID(),
             contentArtifactId: candidate.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
@@ -1459,8 +1449,10 @@ describe('current Source deployment authority', () => {
                 execution: { ok: true, result: { accepted: true } },
             })) };
         } });
+        const authentication = authorization.binding.authentication;
+        if (authentication.kind !== 'account') throw new Error('Deploy dispatch requires the signed Account authentication.');
         const dispatched = await dispatch({ actionId: 'deployments.deploy', envelope, principal: {
-            accountId: manager.id, authentication: authorization.binding.authentication, authority: 'present_user',
+            accountId: manager.id, authentication, authority: 'present_user',
         } });
         expect(relayedRole).toBe(accessLevel === 'view' ? 'use' : 'manage');
         expect(dispatched).toMatchObject({ kind: 'response' });
@@ -1496,7 +1488,7 @@ describe('current Source deployment authority', () => {
         expect(await inTx(tx => readEnvironmentSecretLaunchAdmissionInTx(tx, custodian.id, input)))
             .toMatchObject({ ok: false, error: 'deployment_unavailable' });
         await db.deployment.update({ where: { id: receipt.id }, data: { cancelRequestedAt: null } });
-        await db.machineTeamGrant.deleteMany({ where: { machineId: machine.id, teamId: team.id } });
+        await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: machine.id, teamId: team.id } });
         expect(await inTx(tx => readEnvironmentSecretLaunchAdmissionInTx(tx, custodian.id, input)))
             .toMatchObject({ ok: false, error: 'machine_unavailable' });
     });
@@ -1575,10 +1567,8 @@ describe('current Source deployment authority', () => {
         const team = await db.team.create({ data: { name: 'Admitted setup target' } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: requester.id, role: 'owner' } });
         await db.machine.update({ where: { id: target.id }, data: { accountId: custodian.id } });
-        await db.machineTeamGrant.create({ data: { machineId: target.id, teamId: team.id,
-            accessLevel: 'admin', createdByAccountId: custodian.id } });
-        await db.machineTeamGrant.create({ data: { machineId: host.id, teamId: team.id,
-            accessLevel: 'admin', createdByAccountId: custodian.id } });
+        await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: custodian.id }), machineId: target.id } });
+        await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: custodian.id }), machineId: host.id } });
         const admission = binding.deploymentPreparationAdmission;
         if (!admission) throw new Error('Expected setup preparation admission');
         const admit = () => inTx(tx => isDeploymentPreparationAuthorizedInTx(tx, binding, admission));
@@ -1612,7 +1602,7 @@ describe('current Source deployment authority', () => {
                 if (request.model !== 'Machine' || !request.args || typeof request.args !== 'object'
                     || !('select' in request.args)) return;
                 const selection = request.args.select;
-                if (selection && typeof selection === 'object' && 'metadata' in selection && 'accountGrants' in selection) {
+                if (selection && typeof selection === 'object' && 'metadata' in selection && 'grants' in selection) {
                     machineAdmissionReads++;
                 }
             } });
@@ -1626,18 +1616,16 @@ describe('current Source deployment authority', () => {
                 expect(machineAdmissionReads).toBe(1);
             } finally { stop(); }
         }, { authentication: 'real' });
-        await db.machineTeamGrant.deleteMany({ where: { machineId: target.id, teamId: team.id } });
+        await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: target.id, teamId: team.id } });
         expect(await admit()).toBe(false);
         await expect(auth.mintExternalActionExecutionAuthorization(mintInput, { input })).rejects.toMatchObject({ code: 'credential_scope_denied' });
-        await db.machineTeamGrant.create({ data: { machineId: target.id, teamId: team.id,
-            accessLevel: 'view', createdByAccountId: custodian.id } });
+        await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view', createdByAccountId: custodian.id }), machineId: target.id } });
         await expect.soft(auth.mintExternalActionExecutionAuthorization(mintInput, { input }), 'Setup admission requires target Manage')
             .rejects.toMatchObject({ code: 'credential_scope_denied' });
-        await db.machineTeamGrant.deleteMany({ where: { machineId: target.id, teamId: team.id } });
+        await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: target.id, teamId: team.id } });
         for (const proof of reads) expect.soft(await read(proof), 'admitted setup survives Machine Manage withdrawal').toBe(true);
         expect.soft(await receiverRead()).toMatchObject({ binding: { accountId: requester.id }, setupReceiverMachineId: target.id });
-        await db.machineTeamGrant.create({ data: { machineId: target.id, teamId: team.id,
-            accessLevel: 'admin', createdByAccountId: custodian.id } });
+        await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: custodian.id }), machineId: target.id } });
         expect(await inTx(tx => setDeploymentEnvironmentControllerInTx(tx, requester.id, { serverId,
             environmentId: environment.id, expectedRevision: environment.revision, controllerMachineId: target.id })))
             .toMatchObject({ ok: true });

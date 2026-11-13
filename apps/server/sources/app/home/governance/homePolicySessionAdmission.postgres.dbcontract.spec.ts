@@ -65,7 +65,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("H
                 v: 1, mode: "restricted", accepted: [{ kind: "team_connection", connectionId: connection.id }],
             } } });
             const session = await db.session.create({ data: { accountId: sessionOwner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain" } });
-            await db.sessionTeamGrant.create({ data: { sessionId: session.id, teamId: team.id, accessLevel: "edit", effectiveAt: new Date() } });
+            await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: team.id, accessLevel: "edit", effectiveAt: new Date() } });
             const identity = await db.accountIdentity.create({ data: {
                 accountId: member.id, provider: providerId, providerUserId: randomUUID(), profile: {}, eligibilityStatus: "eligible",
             } });

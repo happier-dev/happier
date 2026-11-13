@@ -60,7 +60,7 @@ describe("private viewer read state (SQLite integration)", () => {
             () => db.discussionReadState.deleteMany(),
             () => db.discussion.deleteMany(),
             () => db.accountSessionReadState.deleteMany(),
-            () => db.sessionShare.deleteMany(),
+            () => db.sessionGrant.deleteMany({ where: { principalKind: 'account' } }),
             () => db.userKVStore.deleteMany(),
             () => db.accountChange.deleteMany(),
             () => db.session.deleteMany(),
@@ -83,11 +83,11 @@ describe("private viewer read state (SQLite integration)", () => {
                 active: true,
             },
         });
-        await db.sessionShare.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'account',
                 sessionId: session.id,
-                sharedWithUserId: collaborator.id,
-                sharedByUserId: owner.id,
+                accountId: collaborator.id,
+                createdByAccountId: owner.id,
                 accessLevel: "edit",
             },
         });
@@ -137,8 +137,8 @@ describe("private viewer read state (SQLite integration)", () => {
         const second = await db.session.create({ data: { accountId: session.accountId, tag: crypto.randomUUID(),
             encryptionMode: "plain", metadataLayoutVersion: 1, metadata: JSON.stringify({ v: 1 }),
             ownerMetadata: JSON.stringify({ t: "plain", v: { v: 1 } }), currentStorageState: "hosted" } });
-        await db.sessionShare.create({ data: { sessionId: second.id, sharedByUserId: session.accountId,
-            sharedWithUserId: collaborator.id, accessLevel: "view" } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: second.id, createdByAccountId: session.accountId,
+            accountId: collaborator.id, accessLevel: "view" } });
         await withAuthenticatedTestApp(registerSessionReadBatchRoute, async app => {
             let ruleCensusReads = 0;
             const stop = observeSqliteRequests({ before: request => {
@@ -318,7 +318,7 @@ describe("private viewer read state (SQLite integration)", () => {
 
     it("lets a tracked view-only reader change its own frontier without changing another Account", async () => {
         const { owner, collaborator, session } = await createSharedSession({ seq: 5 });
-        await db.sessionShare.updateMany({ where: { sessionId: session.id, sharedWithUserId: collaborator.id }, data: { accessLevel: "view" } });
+        await db.sessionGrant.updateMany({ where: { principalKind: 'account', sessionId: session.id, accountId: collaborator.id }, data: { accessLevel: "view" } });
         await db.accountSessionFollow.create({ data: { accountId: collaborator.id, sessionId: session.id, following: true, followPolicy: JSON.stringify({ preset: "custom", events: {} }) } });
         await inTx(async (tx) => {
             await beginViewerReadTrackingOnFollowEntryInTx({
@@ -349,7 +349,7 @@ describe("private viewer read state (SQLite integration)", () => {
 
     it("lets an accessible untracked reader mark its own frontier without enrolling it in attention", async () => {
         const { owner, collaborator, session } = await createSharedSession({ seq: 5 });
-        await db.sessionShare.updateMany({ where: { sessionId: session.id, sharedWithUserId: collaborator.id }, data: { accessLevel: "view" } });
+        await db.sessionGrant.updateMany({ where: { principalKind: 'account', sessionId: session.id, accountId: collaborator.id }, data: { accessLevel: "view" } });
 
         const marked = await applyViewerReadCursorOperation({
             accountId: collaborator.id,
@@ -379,7 +379,7 @@ describe("private viewer read state (SQLite integration)", () => {
 
     it("seeds only the main frontier when an untracked reader marks a Session that has Discussions", async () => {
         const { owner, collaborator, session } = await createSharedSession({ seq: 5 });
-        await db.sessionShare.updateMany({ where: { sessionId: session.id, sharedWithUserId: collaborator.id }, data: { accessLevel: "view" } });
+        await db.sessionGrant.updateMany({ where: { principalKind: 'account', sessionId: session.id, accountId: collaborator.id }, data: { accessLevel: "view" } });
         await db.discussion.create({
             data: {
                 ownerAccountId: owner.id, encryptionMode: "plain", dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER),

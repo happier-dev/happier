@@ -107,8 +107,8 @@ describe("Session data-key envelope collection (SQLite)", () => {
     }
 
     async function shareWith(sessionId: string, ownerId: string, accountId: string, accessLevel: "view" | "edit" | "admin" = "view") {
-        await db.sessionShare.create({ data: {
-            sessionId, sharedByUserId: ownerId, sharedWithUserId: accountId, accessLevel,
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId, createdByAccountId: ownerId, accountId: accountId, accessLevel,
         } });
     }
 
@@ -216,7 +216,7 @@ describe("Session data-key envelope collection (SQLite)", () => {
             },
         } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: manager.id, role: "member" } });
-        const grant = await db.sessionTeamGrant.create({ data: {
+        const grant = await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id, teamId: team.id, accessLevel: "admin", effectiveAt: new Date(),
         } });
         const url = `/v2/sessions/${session.id}/data-key/envelopes`;
@@ -265,10 +265,10 @@ describe("Session data-key envelope collection (SQLite)", () => {
                     sessionId_recipientAccountId: { sessionId: session.id, recipientAccountId: recipient.id },
                 } })).toEqual(stored);
 
-                await db.sessionTeamGrant.delete({
-                    where: { sessionId_teamId: { sessionId: session.id, teamId: grant.teamId } },
+                await db.sessionGrant.delete({
+                    where: { principalKind: 'team', sessionId_teamId: { sessionId: session.id, teamId: grant.teamId } },
                 });
-                await db.sessionShare.deleteMany({ where: { sessionId: session.id, sharedWithUserId: manager.id } });
+                await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session.id, accountId: manager.id } });
                 for (const method of ["GET", "PATCH"] as const) {
                     const response = await app.inject({ method, url, headers: qualifiedHeaders, ...(method === "PATCH" ? { payload } : {}) });
                     expect(response.statusCode, response.body).toBe(404);
@@ -295,10 +295,10 @@ describe("Session data-key envelope collection (SQLite)", () => {
         await db.teamGroupMembership.create({ data: {
             teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, sessionAccessStartsAt: null,
         } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date(),
         } });
-        await db.sessionGroupGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'group',
             sessionId: session.id, teamGroupId: group.id, accessLevel: "view", effectiveAt: new Date(),
         } });
 
@@ -518,8 +518,8 @@ describe("Session data-key envelope collection (SQLite)", () => {
             query: { state: "action_required", limit: 24 },
         });
         expect(discovered.ok).toBe(true);
-        await db.sessionShare.updateMany({
-            where: { sessionId: session.id, sharedWithUserId: manager.id }, data: { accessLevel: "view" },
+        await db.sessionGrant.updateMany({
+            where: { principalKind: 'account', sessionId: session.id, accountId: manager.id }, data: { accessLevel: "view" },
         });
         expect(await applySessionDataKeyEnvelopes({
             actorAccountId: manager.id, sessionId: session.id,
@@ -655,7 +655,7 @@ describe("Session data-key envelope collection (SQLite)", () => {
                 sessionAccessStartsAt: null,
             })),
         });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id,
             teamId: team.id,
             accessLevel: "view",
@@ -716,7 +716,7 @@ describe("Session data-key envelope collection (SQLite)", () => {
         await db.teamMembership.create({ data: {
             teamId: team.id, accountId: recipient.id, role: "member", sessionAccessStartsAt: null,
         } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date(),
         } });
         const dataKey = tweetnacl.randomBytes(32);
@@ -775,7 +775,7 @@ describe("Session data-key envelope collection (SQLite)", () => {
         await db.teamGroupMembership.create({ data: {
             teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, sessionAccessStartsAt: null,
         } });
-        await db.sessionGroupGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'group',
             sessionId: session.id, teamGroupId: group.id, accessLevel: "view", effectiveAt: new Date(),
         } });
         const dataKey = tweetnacl.randomBytes(32);
@@ -812,14 +812,14 @@ describe("Session data-key envelope collection (SQLite)", () => {
     it("keeps one tuple across overlapping Team and direct grants and withholds it after final revocation", async () => {
         const { owner, session } = await managedSession();
         const recipient = await e2eeAccount();
-        const share = await db.sessionShare.create({ data: {
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: recipient.id, accessLevel: "view",
+        const share = await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: session.id, createdByAccountId: owner.id, accountId: recipient.id, accessLevel: "view",
         } });
         const team = await db.team.create({ data: { name: crypto.randomUUID() } });
         await db.teamMembership.create({ data: {
             teamId: team.id, accountId: recipient.id, role: "member", sessionAccessStartsAt: null,
         } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date(),
         } });
         const sealed = encodeBase64(envelopeFor(recipient.binding.contentPublicKey));
@@ -828,7 +828,7 @@ describe("Session data-key envelope collection (SQLite)", () => {
             authentication,
             entries: [{ recipientAccountId: recipient.id, encryptedDataKey: sealed }],
         })).toEqual({ ok: true, appliedCount: 1 });
-        await db.sessionShare.delete({ where: { id: share.id } });
+        await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
         const stillVisible = await readSessionDataKeyEnvelopePage({
             actorAccountId: owner.id, sessionId: session.id,
             authentication,
@@ -837,8 +837,8 @@ describe("Session data-key envelope collection (SQLite)", () => {
         expect(stillVisible.ok).toBe(true);
         if (!stillVisible.ok || stillVisible.page.status !== "required") throw new Error("expected a required page");
         expect(stillVisible.page.items.some(item => item.recipientAccountId === recipient.id)).toBe(true);
-        await db.sessionTeamGrant.delete({
-            where: { sessionId_teamId: { sessionId: session.id, teamId: team.id } },
+        await db.sessionGrant.delete({
+            where: { principalKind: 'team', sessionId_teamId: { sessionId: session.id, teamId: team.id } },
         });
         expect(await applySessionDataKeyEnvelopes({
             actorAccountId: owner.id, sessionId: session.id,

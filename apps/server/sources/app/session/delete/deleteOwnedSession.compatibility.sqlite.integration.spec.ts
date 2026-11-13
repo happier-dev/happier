@@ -218,8 +218,8 @@ describe("deleteOwnedSession stored-content compatibility (SQLite)", () => {
         await db.session.createMany({ data: ['draft-parent', 'draft-parent-sibling'].map(id => ({
             id, tag: id, accountId: 'owner', metadata: '{}', encryptionMode: 'e2ee',
         })) });
-        await db.sessionShare.create({ data: {
-            sessionId: 'draft-parent', sharedWithUserId: 'collaborator', sharedByUserId: 'owner', accessLevel: 'view',
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: 'draft-parent', accountId: 'collaborator', createdByAccountId: 'owner', accessLevel: 'view',
         } });
         const addresses = [
             { kind: 'session', sessionId: 'draft-parent' },

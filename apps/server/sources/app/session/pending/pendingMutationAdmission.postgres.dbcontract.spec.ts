@@ -124,11 +124,11 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('P
         const f = await fixture(operation);
         try {
             const input = { actorUserId: f.other.id, sessionId: f.session.id, localId: f.localId, authentication };
-            const refused = await observeAdmission(f.other.id, () => mutations[operation](input));
+            const refused = await observeAdmission<unknown>(f.other.id, () => mutations[operation](input));
             expect(refused.result).toEqual(operation.startsWith('share') ? { type: 'forbidden' } : { ok: false, error: 'session-not-found' });
             expect(refused.accessReads).toEqual([false]);
             expect(refused.lockQueries).toBe(0);
-            const admitted = await observeAdmission(f.owner.id, () => mutations[operation]({ ...input, actorUserId: f.owner.id }));
+            const admitted = await observeAdmission<unknown>(f.owner.id, () => mutations[operation]({ ...input, actorUserId: f.owner.id }));
             expect(admitted.result).toMatchObject(operation.startsWith('share') ? { type: 'ok' } : { ok: true });
             expect(admitted.lockQueries).toBeGreaterThan(0);
             expect(admitted.accessReads).toEqual([false]);
@@ -140,11 +140,11 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('P
     it('finishes an admitted shared mutation and observes revocation on the next request', async () => {
         const f = await fixture('discard');
         try {
-            await db.sessionShare.create({ data: { sessionId: f.session.id, sharedByUserId: f.owner.id,
-                sharedWithUserId: f.other.id, accessLevel: 'edit' } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: f.session.id, createdByAccountId: f.owner.id,
+                accountId: f.other.id, accessLevel: 'edit' } });
             const input = { actorUserId: f.other.id, sessionId: f.session.id, localId: f.localId, authentication };
             const admitted = await observeAdmission(f.other.id, () => discardPendingMessage(input), async () => {
-                await db.sessionShare.deleteMany({ where: { sessionId: f.session.id, sharedWithUserId: f.other.id } });
+                await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: f.session.id, accountId: f.other.id } });
             });
             expect(admitted.interleaved).toBe(true);
             expect(admitted.result).toMatchObject({ ok: true });

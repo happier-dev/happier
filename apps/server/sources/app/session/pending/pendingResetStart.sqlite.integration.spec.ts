@@ -101,8 +101,8 @@ describe('Pending reset start custody (real SQLite)', () => {
         const f = await fixture();
         const editor = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         await db.session.update({ where: { id: f.session.id }, data: { currentStorageState: 'hosted' } });
-        await db.sessionShare.create({ data: { sessionId: f.session.id, sharedByUserId: f.params.actorUserId,
-            sharedWithUserId: editor.id, accessLevel: 'edit' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: f.session.id, createdByAccountId: f.params.actorUserId,
+            accountId: editor.id, accessLevel: 'edit' } });
         const shared = { ...f.params, actorUserId: editor.id };
         expect(await updatePendingRequestedAction({ ...shared, requestedAction: { v: 1, kind: 'steer_now' } })).toMatchObject({ ok: true });
         expect.soft(await updatePendingRequestedAction({ ...shared, requestedAction: held })).toMatchObject({ ok: false, error: 'reset-start-unsupported' });

@@ -44,7 +44,7 @@ it.each(['plain', 'e2ee'] as const)('issues requester-bound Browser and Computer
             happyCliVersion: 'test', homeDir: '/home/shared', happyHomeDir: '/home/shared/.happier' }) : 'encrypted-metadata',
         dataEncryptionKey: mode === 'plain' ? decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')
             : sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: owner.keys.publicKey, randomBytes: nacl.randomBytes }),
-        installationId: crypto.randomUUID(), installationPublicKey: nacl.sign.keyPair().publicKey,
+        installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(nacl.sign.keyPair().publicKey),
         operationProtocolCapabilitiesRevision: 1,
         operationProtocolCapabilities: { requesterExecutionIsolation: { protocolVersions: [1] } } } });
     const grant = () => inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: owner.id,
@@ -100,10 +100,10 @@ it.each(['plain', 'e2ee'] as const)('issues requester-bound Browser and Computer
             expect((await issue(guest.id, actionId, ownerSession.id)).statusCode,
                 `unshared owner Session: ${actionId}`).toBe(409);
         }
-        const share = await db.sessionShare.create({ data: { sessionId: ownerSession.id,
-            sharedByUserId: owner.id, sharedWithUserId: guest.id, accessLevel: 'view' } });
+        const share = await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: ownerSession.id,
+            createdByAccountId: owner.id, accountId: guest.id, accessLevel: 'view' } });
         expect((await issue(guest.id, 'browser.view.open', ownerSession.id)).statusCode).toBe(200);
-        await db.sessionShare.delete({ where: { id: share.id } });
+        await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
         expect((await issue(guest.id, 'browser.view.open', ownerSession.id)).statusCode).toBe(409);
         expect((await issue(guest.id)).statusCode).toBe(200);
         for (const actionId of ['browser.extensions.install', 'browser.profile.logins.import', 'browser.sandbox.install']) {

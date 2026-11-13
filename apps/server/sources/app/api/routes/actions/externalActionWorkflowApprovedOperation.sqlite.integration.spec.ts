@@ -144,9 +144,8 @@ it.each(['ask', 'trigger-template', 'e2ee', 'teardown'] as const)('issues normal
         const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(await response.json());
         expect(authorization.binding).toMatchObject({ machineId: receiver.id, installationId: receiver.installationId,
             workflowActionOrigin, accountEncryptionMode: mode });
-        expect(authorization.binding.deploymentCandidatePublication).toEqual(actionId === 'deployments.deploy'
-            ? expect.objectContaining({ environmentId: environment.id,
-                source: { id: project.projectSourceId, revision: 1 } }) : undefined);
+        expect(authorization.binding.deploymentCandidatePublication).toEqual(expect.objectContaining({
+            environmentId: environment.id, source: { id: project.projectSourceId, revision: 1 } }));
     } finally {
         if (mode === 'e2ee') await db.account.update({ where: { id: server.accountId }, data: {
             encryptionMode: 'plain', publicKey: null, contentPublicKey: null, contentPublicKeySig: null,
@@ -162,11 +161,14 @@ it.each(['ask', 'trigger-template', 'e2ee', 'teardown'] as const)('issues normal
 it('does not let a compact Workflow root continue an independently admitted receipt reusing its candidate Artifact', async () => {
     const [publisher, receiver] = server.machines;
     const project = await server.createDeploymentProject();
+    const environmentContent = await server.createDeploymentArtifact({
+        header: { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Workflow Environment' },
+        body: JSON.stringify(createDeploymentEnvironmentDetailV1().content) });
     const headers = { authorization: `Bearer ${server.token}`, 'content-type': 'application/json' };
     const create = await fetch(`${server.baseUrl}/v1/deployments/environments`, { method: 'POST', headers,
         body: JSON.stringify({ serverId: server.homeId, projectSourceId: project.projectSourceId, requestKey: randomUUID(),
             protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
-            controllerMachineId: receiver.id, buildMachineId: publisher.id, ...project.environmentContent }) });
+            controllerMachineId: receiver.id, buildMachineId: publisher.id, ...environmentContent }) });
     expect(create.status).toBe(200);
     const environment = await create.json() as { ok: boolean; environmentId: string; revision: number };
     expect(environment.ok).toBe(true);
@@ -366,7 +368,9 @@ it('admits installed Workflow deployment provenance at current placement without
     expect((await mint({ ...envelope, input: { ...semanticInput, requestKey: randomUUID() } })).status).toBe(200);
     // A missing selected link is unavailable; an existing live link is no substitute.
     await db.deploymentEnvironment.update({ where: { id: created.environmentId }, data: { runtimeTargetLinkId: null } });
-    expect((await mint({ ...envelope, input: semanticInput })).status).toBe(401);
+    const missingLink = await mint({ ...envelope, input: semanticInput });
+    expect(missingLink.status).toBe(403);
+    expect(await missingLink.json()).toMatchObject({ error: 'credential_scope_denied' });
     await db.deploymentEnvironment.update({ where: { id: created.environmentId }, data: { runtimeTargetLinkId: linked.targetLinkId } });
     const path = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(actionId);
     const verifyBody = { v: 1, ...(authorization.binding.admittedMachineRole === undefined
@@ -623,7 +627,8 @@ it('admits same-Account accepted Run placement without deciding receiver consent
     expect(deliveries).toBe(1);
     const unsignedLegacy = await fetch(`${server.baseUrl}/v1/actions/${actionId}`, { method: 'POST',
         headers: { authorization: `Bearer ${legacyToken}`, 'content-type': 'application/json' }, body: JSON.stringify(envelope) });
-    expect(unsignedLegacy.status).toBe(401);
+    expect(unsignedLegacy.status).toBe(403);
+    expect(await unsignedLegacy.json()).toMatchObject({ error: 'credential_scope_denied' });
     expect(deliveries).toBe(1);
     const path = bindExternalActionExecutionAuthorizationVerifyHttpPathV1(actionId);
     const verifyBody = { v: 1, ...(authorization.binding.admittedMachineRole === undefined
@@ -663,7 +668,7 @@ it('admits same-Account accepted Run placement without deciding receiver consent
     const team = await db.team.create({ data: { name: 'Shared receiver' } });
     await db.teamMembership.createMany({ data: [{ teamId: team.id, accountId: foreign.id, role: 'owner' },
         { teamId: team.id, accountId: server.accountId, role: 'member' }] });
-    await db.machineTeamGrant.create({ data: { machineId: receiver.id, teamId: team.id,
+    await db.machineGrant.create({ data: { principalKind: 'team', machineId: receiver.id, teamId: team.id,
         accessLevel: 'admin', createdByAccountId: foreign.id } });
     expect((await mint()).status).toBe(401);
     expect((await verify()).status).toBe(401);

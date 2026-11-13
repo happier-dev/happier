@@ -293,8 +293,8 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Discussion arch
             const response = await current.app.inject({ method: 'POST', url: DISCUSSION_HTTP_PATHS_V1.messages.replace(':discussionId', current.discussionId),
                 payload: { localId: randomUUID(), content: { t: 'plain', v: { v: 1, parts: [{ t: 'text', text: 'Must stay unsent' }] } }, mentionedAccountIds: [] } });
             expect(changed).toBe(true);
-            expect(response.statusCode, response.body).toBe(change === 'archive' ? 409 : 403);
-            expect(response.json()).toEqual({ error: change === 'archive' ? 'discussion_archived' : 'discussion_post_denied' });
+            expect(response.statusCode, response.body).toBe(change === 'archive' ? 409 : 400);
+            expect(response.json()).toEqual({ error: change === 'archive' ? 'discussion_archived' : 'discussion_publication_context_unavailable' });
             expect(await db.discussionMessage.count({ where: { discussionId: current.discussionId } })).toBe(1);
             expect(await db.discussion.findUniqueOrThrow({ where: { id: current.discussionId } })).toMatchObject({ messageSeq: 1 });
         } finally { db.$transaction = original; await current.close(); await db.account.delete({ where: { id: reader.id } }); }
@@ -381,7 +381,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Discussion arch
                                 // A real committed grant appears after preparation,
                                 // before Account admission. It must trigger whole-
                                 // attempt replay, never late lower-id acquisition.
-                                await db.discussionAccountGrant.create({ data: { discussionId: current.discussionId,
+                                await db.discussionGrant.create({ data: { principalKind: 'account', discussionId: current.discussionId,
                                     accountId: recipient.id, accessLevel: 'view', createdByAccountId: current.owner.id } });
                             });
                         };

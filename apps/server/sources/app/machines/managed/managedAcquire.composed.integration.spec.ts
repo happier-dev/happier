@@ -160,7 +160,7 @@ describe("managed acquisition durable authority", () => {
             metadata: '{}', installationId: crypto.randomUUID() } });
         const guest = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: requester.id,
             metadata: '{}', installationId: crypto.randomUUID() } });
-        await db.machineAccountGrant.create({ data: { machineId: controller.id, accountId: requester.id,
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: controller.id, accountId: requester.id,
             accessLevel: 'admin', createdByAccountId: custodian.id } });
         const launch = { provider: { pluginId: 'fixture.setup', localId: 'vm' }, schemaVersion: 1, name: 'Requester', choices: {} };
         const setup = { scripts: [{ body: 'echo requester' }] };
@@ -386,7 +386,7 @@ describe("managed acquisition durable authority", () => {
         const controller = { machineId: `managed-rebuild-controller-${fixtureSuffix}`, installationId: `managed-rebuild-controller-install-${fixtureSuffix}` };
         await db.machine.create({ data: { id: controller.machineId, accountId: account.id, metadata: "ciphertext", installationId: controller.installationId,
             pluginMaterializationRevision: BigInt(1) } });
-        if (enrollmentAccount.id !== account.id) await db.machineAccountGrant.create({ data: {
+        if (enrollmentAccount.id !== account.id) await db.machineGrant.create({ data: { principalKind: 'account',
             machineId: controller.machineId, accountId: enrollmentAccount.id, accessLevel: 'admin', createdByAccountId: account.id,
         } });
         const native = defineProtocolObject({ id: defineProtocolString({ minLength: 1 }) }, { policy: "closed" });
@@ -794,7 +794,7 @@ describe("managed acquisition durable authority", () => {
         const { account: custodian, homeId, controller } = fixture;
         const requester = await db.account.create({ data: { ...createSignedAccountContentBinding(), encryptionMode: 'e2ee' } });
         await db.account.update({ where: { id: custodian.id }, data: createSignedAccountContentBinding() });
-        await db.machineAccountGrant.create({ data: { machineId: controller.machineId, accountId: requester.id,
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: controller.machineId, accountId: requester.id,
             accessLevel: 'admin', createdByAccountId: custodian.id } });
         const request = { ...fixture.request, requesterAccountId: requester.id };
         const created = await admitManagedAcquire(request);
@@ -1744,7 +1744,7 @@ describe("managed acquisition durable authority", () => {
         await expect(inTx(tx => linkManagedEnrollmentInTx(tx, { ...moveCorrelation, resource: moveResource }, account.id,
             clonedController.id))).rejects.toMatchObject({ code: 'resource_mismatch' });
         const pendingRecipient = await db.account.create({ data: { publicKey: 'managed-child-key-pending-recipient' } });
-        await db.machineAccountGrant.create({ data: { machineId: moveGuest.machineId, accountId: pendingRecipient.id,
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: moveGuest.machineId, accountId: pendingRecipient.id,
             createdByAccountId: account.id, accessLevel: 'view' } });
         expect(await inTx(tx => resolveMachineAccessInTx(tx, { machineId: moveGuest.machineId,
             actorAccountId: pendingRecipient.id }))).toMatchObject({ accessState: 'key_pending' });
@@ -2368,7 +2368,7 @@ describe("managed acquisition durable authority", () => {
         const viewer = await db.account.create({ data: { publicKey: "managed-reader-viewer" } });
         const manager = await db.account.create({ data: { publicKey: "managed-reader-manager" } });
         const controller = await db.machine.create({ data: { id: "managed-reader-controller", accountId: owner.id, metadata: "ciphertext", installationId: "reader-installation" } });
-        await db.machineAccountGrant.createMany({ data: [{ machineId: controller.id, accountId: viewer.id, accessLevel: "view", createdByAccountId: owner.id }, { machineId: controller.id, accountId: manager.id, accessLevel: "admin", createdByAccountId: owner.id }] });
+        await db.machineGrant.createMany({ data: [{ principalKind: 'account', machineId: controller.id, accountId: viewer.id, accessLevel: "view", createdByAccountId: owner.id }, { principalKind: 'account', machineId: controller.id, accountId: manager.id, accessLevel: "admin", createdByAccountId: owner.id }] });
         const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: owner.id, controllerMachineId: controller.id, controllerInstallationId: "reader-installation", admittedActionRequestId: "reader-request", admittedInput: { futureStoredMember: true }, launch: { provider: { pluginId: "fixture.compute", localId: "compute" }, schemaVersion: 1, name: "reviewed", choices: {}, futureStoredMember: true }, retention: { kind: "until-delete", futureStoredMember: true }, wakeOnAcceptedMessage: false } });
         await expect(getManagedMachine({ actorAccountId: viewer.id, input: { homeId, managedId: row.id } })).rejects.toMatchObject({ code: 'permission_denied' });
         const cancel = { homeId, managedId: row.id, expectedIntentRevision: 0 };
@@ -2407,7 +2407,7 @@ describe("managed acquisition durable authority", () => {
         await expect(cancelManagedCreation({ actorAccountId: manager.id, input: cancel })).rejects.toMatchObject({ code: "intent_changed" });
         expect((await db.account.findUniqueOrThrow({ where: { id: viewer.id } })).seq).toBe(0);
         expect((await db.account.findUniqueOrThrow({ where: { id: manager.id } })).seq).toBeGreaterThan(0);
-        await db.machineAccountGrant.delete({ where: { machineId_accountId: { machineId: controller.id, accountId: viewer.id } } });
+        await db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: { machineId: controller.id, accountId: viewer.id } } });
         await expect(getManagedMachine({ actorAccountId: viewer.id, input: { homeId, managedId: row.id } })).rejects.toMatchObject({ code: "permission_denied" });
     });
 });

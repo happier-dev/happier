@@ -683,7 +683,7 @@ describe("review comment durable storage", () => {
             sourceKey: sourceKeyForSessionFollowSourceV1({ kind: 'session', sessionId: nestedId }),
             policyJson: serializeFollowPolicyV1({ preset: 'important' }),
             relation: 'manager', managerSourceSessionId: nestedId } });
-        await db.sessionShare.create({ data: { sessionId: readOnlyId, sharedByUserId: foreign.id, sharedWithUserId: account.id, accessLevel: "view" } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: readOnlyId, createdByAccountId: foreign.id, accountId: account.id, accessLevel: "view" } });
         const keyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(36));
         const machineId = "machine-lead-review";
         const installationId = "installation-lead-review";

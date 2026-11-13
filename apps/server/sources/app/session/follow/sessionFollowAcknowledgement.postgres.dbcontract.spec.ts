@@ -458,9 +458,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('F
     it('admits personal progress before a Session deletion lock can wait on its Account publication', async () => {
         const account = await db.account.create({ data: { id: `z-${randomUUID()}`, publicKey: randomUUID(), encryptionMode: 'plain' } });
         const viewer = await db.account.create({ data: { id: `a-${randomUUID()}`, publicKey: randomUUID(), encryptionMode: 'plain' } });
-        const previousHome = process.env.HAPPIER_SERVER_IDENTITY_ID;
-        const homeId = `srv_${'f'.repeat(32)}`;
-        process.env.HAPPIER_SERVER_IDENTITY_ID = homeId;
+        const homeId = await getOrCreateServerIdentityId();
         try {
             const authentication = createPresentUserSessionAccessAuthentication({ env: {} });
             const installationId = randomUUID();
@@ -468,14 +466,14 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('F
                 dataEncryptionKey: new Uint8Array(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER)) } });
             const source = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain',
                 agentStateVersion: 1, pendingUserActionRequestCount: 1 } });
-            await db.sessionShare.create({ data: { sessionId: source.id, sharedByUserId: account.id, sharedWithUserId: viewer.id, accessLevel: 'view' } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: source.id, createdByAccountId: account.id, accountId: viewer.id, accessLevel: 'view' } });
             await db.accessKey.create({ data: { accountId: account.id, sessionId: source.id, machineId: machine.id,
                 data: MACHINE_PLAIN_DATA_KEY_MARKER } });
             await db.session.update({ where: { id: source.id }, data: { runtimeMachineTarget: {
                 homeId, accountId: account.id, sessionId: source.id, machineId: machine.id, installationId,
             } } });
             await db.accountSessionFollow.create({ data: { accountId: account.id, sessionId: source.id,
-                following: true, followPolicy: JSON.stringify({ preset: "important" }) } });
+                following: true, hasPersistentFollow: true, followPolicy: JSON.stringify({ preset: "important" }) } });
             const scope = { accountId: account.id, authentication, ruleId: randomUUID() };
             const created = await setAccountFollowRule({ ...scope, mutation: { receiver: { kind: 'account' }, expectedVersion: -1,
                 content: { t: 'plain', v: { v: 1, enabled: true, filter: normalizeSessionListFilterV1(), policy: { preset: 'important' } } } } });
@@ -532,27 +530,27 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('F
                 await progress?.catch(() => undefined);
             }
         } finally {
-            if (previousHome === undefined) delete process.env.HAPPIER_SERVER_IDENTITY_ID;
-            else process.env.HAPPIER_SERVER_IDENTITY_ID = previousHome;
             // The disposable database harness owns teardown of this connected
             // Session/Machine fixture, as it does the socket ACK fixtures below.
         }
     });
 
-    it('observes pending Follow work while the same socket heartbeat waits on Account publication', async () => {
+    it('observes pending Follow work while the same socket heartbeat waits on its Session row', async () => {
         const previousSessions = process.env.HAPPIER_FEATURE_SESSIONS__ENABLED;
         const previousFollowing = process.env.HAPPIER_FEATURE_SESSIONS_FOLLOWING__ENABLED;
         process.env.HAPPIER_FEATURE_SESSIONS__ENABLED = '1';
         process.env.HAPPIER_FEATURE_SESSIONS_FOLLOWING__ENABLED = '1';
         try {
             await assertConcurrentFailedTurnRouteAcknowledgements({
-                duringObservation: async ({ accountId, presence, socket, observe }) => {
+                duringObservation: async ({ destinationSessionId, presence, socket, observe }) => {
                     let release!: () => void;
                     let locked!: (pid: number) => void;
                     const gate = new Promise<void>(resolve => { release = resolve; });
                     const acquired = new Promise<number>(resolve => { locked = resolve; });
                     const holder = db.$transaction(async tx => {
-                        await tx.$queryRaw`SELECT "id" FROM "Account" WHERE "id" = ${accountId} FOR NO KEY UPDATE`;
+                        // Active heartbeats now lock only their Session row.
+                        // Read-only Follow observation must stay independent.
+                        await tx.$queryRaw`SELECT "id" FROM "Session" WHERE "id" = ${destinationSessionId} FOR NO KEY UPDATE`;
                         const [backend] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
                         locked(backend!.pid);
                         await gate;
@@ -595,13 +593,13 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('F
         process.env.HAPPIER_FEATURE_SESSIONS__ENABLED = '1';
         process.env.HAPPIER_FEATURE_SESSIONS_FOLLOWING__ENABLED = '1';
         try { await assertConcurrentFailedTurnRouteAcknowledgements({
-            duringAcknowledgements: async ({ accountId, presence, socket, acknowledge }) => {
+            duringAcknowledgements: async ({ destinationSessionId, presence, socket, acknowledge }) => {
                 let release!: () => void;
                 let locked!: (pid: number) => void;
                 const gate = new Promise<void>(resolve => { release = resolve; });
                 const acquired = new Promise<number>(resolve => { locked = resolve; });
                 const holder = db.$transaction(async tx => {
-                    await tx.$queryRaw`SELECT "id" FROM "Account" WHERE "id" = ${accountId} FOR NO KEY UPDATE`;
+                    await tx.$queryRaw`SELECT "id" FROM "Session" WHERE "id" = ${destinationSessionId} FOR NO KEY UPDATE`;
                     const [backend] = await tx.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
                     locked(backend!.pid);
                     await gate;
@@ -611,14 +609,14 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('F
                     const pid = await acquired;
                     heartbeat = presence.touchPublisher({ socket });
                     // Prove the same socket's heartbeat is actually waiting for
-                    // this Account holder, rather than inferring from elapsed time.
+                    // this Session holder, rather than inferring from elapsed time.
                     await vi.waitFor(async () => {
                         const [waiting] = await db.$queryRaw<Array<{ blocked: boolean }>>`
                             SELECT EXISTS(SELECT 1 FROM pg_stat_activity
                                 WHERE ${pid}::int = ANY(pg_blocking_pids(pid))) AS blocked`;
                         expect(waiting?.blocked).toBe(true);
                     });
-                    await acknowledge(); // Must commit both routes before releasing Account.
+                    await acknowledge(); // Must commit both routes before releasing the Session.
                 } finally {
                     release();
                     await holder;

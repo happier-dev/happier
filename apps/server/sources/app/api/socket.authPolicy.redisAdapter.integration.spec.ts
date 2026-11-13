@@ -340,16 +340,16 @@ describe("startSocket account revocation with the configured Redis adapter", () 
             accountId: actor.id,
             role: "member",
         } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id,
             teamId: team.id,
             accessLevel: "view",
             effectiveAt: new Date(),
         } });
-        await db.sessionShare.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'account',
             sessionId: session.id,
-            sharedByUserId: owner.id,
-            sharedWithUserId: directActor.id,
+            createdByAccountId: owner.id,
+            accountId: directActor.id,
             accessLevel: "view",
         } });
 

@@ -453,10 +453,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("h
         await db.teamMembership.createMany({ data: teamIds.map(teamId => ({ teamId, accountId: viewer, role: "member" as const, sessionAccessStartsAt: null })) });
         const teamSessions = bystanderCorpus.sessionIds.filter((_, index) => index % 5 !== 4).slice(-scale.viewerTeamSessions);
         for (let offset = 0; offset < teamSessions.length; offset += 5_000) {
-            await db.sessionTeamGrant.createMany({ data: teamSessions.slice(offset, offset + 5_000).map((sessionId, slot) => ({
-                sessionId, teamId: teamIds[(offset + slot) % teamIds.length]!, effectiveAt: new Date(1), accessLevel: "view" as const })) });
+            await db.sessionGrant.createMany({ data: (teamSessions.slice(offset, offset + 5_000).map((sessionId, slot) => ({
+                sessionId, teamId: teamIds[(offset + slot) % teamIds.length]!, effectiveAt: new Date(1), accessLevel: "view" as const }))).map(data => ({ ...data, principalKind: 'team' })) });
         }
-        await db.$executeRawUnsafe('ANALYZE "Team", "TeamMembership", "SessionTeamGrant"');
+        await db.$executeRawUnsafe('ANALYZE "Team", "TeamMembership", "SessionShare"');
         const teamQuery = (name: string, payload: Record<string, unknown>) => ({ name, method: "POST" as const, url: "/v2/sessions/query", payload: {
             v: 1, storage: "active", scope: "all_accessible", attention: "any", audiences: [], tagIds: [], limit: 50, ...payload } });
         const teamRows = [];

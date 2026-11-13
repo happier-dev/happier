@@ -65,9 +65,9 @@ describe("sessionRoutes v2 active sessions listing", () => {
                     accountFollows: [],
                     sessionPins: [],
                     sessionAttentionStandings: [],
-                    shares: [],
-                    teamGrants: [],
-                    groupGrants: [],
+                    grants: [],
+                    
+                    
             },
             {
                 ...createSessionAccessProjectionRelations(),
@@ -97,16 +97,14 @@ describe("sessionRoutes v2 active sessions listing", () => {
                     accountFollows: [],
                     sessionPins: [],
                     sessionAttentionStandings: [],
-                    shares: [
-                        {
+                    grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null, 
                             id: "shared-active-grant",
-                            sharedWithUserId: "u1",
+                            accountId: "u1",
                         accessLevel: "edit",
                         canApprovePermissions: true,
-                        },
-                    ],
-                    teamGrants: [],
-                    groupGrants: [],
+                         }],
+                    
+                    
             },
             {
                 ...createSessionAccessProjectionRelations(),
@@ -138,14 +136,14 @@ describe("sessionRoutes v2 active sessions listing", () => {
                     accountFollows: [],
                     sessionPins: [],
                     sessionAttentionStandings: [],
-                    shares: [{
+                    grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null, 
                         id: "shared-partial-grant",
-                        sharedWithUserId: "u1",
+                        accountId: "u1",
                     accessLevel: "view",
                         canApprovePermissions: false,
-                    }],
-                    teamGrants: [],
-                    groupGrants: [],
+                     }],
+                    
+                    
             },
         ]).mockResolvedValue([]);
 
@@ -170,10 +168,10 @@ describe("sessionRoutes v2 active sessions listing", () => {
                         where: { recipientAccountId: "u1" },
                         select: expect.objectContaining({ encryptedDataKey: true }),
                     }),
-                    shares: expect.objectContaining({
+                    grants: expect.objectContaining({
                         // The direct-share relation is filtered to currently
                         // active recipient Accounts by the access owner.
-                        where: { sharedWithUserId: { in: ["u1"] }, sharedWithUser: { status: "active" } },
+                        where: { OR: expect.arrayContaining([{ principalKind: 'account', accountId: { in: ["u1"] }, account: { status: "active" } }]) },
                         select: expect.objectContaining({
                             accessLevel: true,
                             canApprovePermissions: true,
@@ -194,7 +192,7 @@ describe("sessionRoutes v2 active sessions listing", () => {
                             expect.objectContaining({
                                 OR: expect.arrayContaining([
                                     expect.objectContaining({
-                                        shares: { some: expect.objectContaining({ sharedWithUserId: "u1" }) },
+                                        grants: { some: expect.objectContaining({ accountId: "u1" }) },
                                     }),
                                 ]),
                             }),
@@ -289,15 +287,15 @@ describe("sessionRoutes v2 active sessions listing", () => {
             accountFollows: [],
             sessionPins: [],
             sessionAttentionStandings: [],
-            shares: [{
+            grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null, 
                 id: `${id}-grant`,
-                sharedWithUserId: "u1",
+                accountId: "u1",
                 encryptedDataKey: null,
                 accessLevel: "view",
                 canApprovePermissions: false,
-            }],
-            teamGrants: [],
-            groupGrants: [],
+             }],
+            
+            
         });
         const malformed = sharedRow("z-malformed", " ");
         const first = sharedRow("y-first", null);
@@ -356,11 +354,11 @@ describe("sessionRoutes v2 active sessions listing", () => {
             dataEncryptionKey: null,
             active: true,
             lastActiveAt: now,
-            shares: [{
+            grants: [{ id: 'account-grant', principalKind: 'account', accountId: null, teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null, 
                 encryptedDataKey: null,
                 accessLevel: "view",
                 canApprovePermissions: false,
-            }],
+             }],
         }]);
 
         const route = await createSessionRouteTestBuilder("GET", "/v2/sessions/active");

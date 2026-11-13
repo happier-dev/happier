@@ -141,7 +141,7 @@ describe("Saved Secret resource service (SQLite integration)", () => {
             () => db.machine.deleteMany(),
             () => db.accountSettingsSnapshot.deleteMany(),
             () => db.userKVStore.deleteMany(),
-            () => db.artifactAccountGrant.deleteMany(),
+            () => db.artifactGrant.deleteMany(),
             () => db.artifactRevision.deleteMany(),
             () => db.artifact.deleteMany(),
             () => db.teamGroupMembership.deleteMany(),
@@ -1019,7 +1019,7 @@ describe("Saved Secret resource service (SQLite integration)", () => {
             header: bytes({ kind: 'launch-profile.v1', profileId: 'selected', name: 'Selected' }),
             body: bytes({ body: JSON.stringify(body) }), dataEncryptionKey: new Uint8Array(Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64')),
         }))).toMatchObject({ ok: true });
-        await db.artifactAccountGrant.create({ data: { artifactId, accountId: owner.id, accessLevel: 'view', createdByAccountId: foreign.id } });
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId, accountId: owner.id, accessLevel: 'view', createdByAccountId: foreign.id } });
         const capturedStoredArtifact = await db.artifact.findUniqueOrThrow({ where: { id: artifactId } });
         const content = { t: 'plain' as const, v: { v: 1 as const, id: 'selected',
             definition: { kind: 'artifact' as const, artifactId }, enabled: true, promptStack: [], skillSeeds: [], secretBindings: {} } };
@@ -1038,7 +1038,7 @@ describe("Saved Secret resource service (SQLite integration)", () => {
                 header: { expectedVersion: 1, bytes: bytes({ kind: 'launch-profile.v1', profileId: 'selected', name: 'Selected', title: 'Renamed header title' }) },
             }))).toMatchObject({ ok: true });
         } else if (changed === 'access') {
-            await db.artifactAccountGrant.deleteMany({ where: { artifactId, accountId: owner.id } });
+            await db.artifactGrant.deleteMany({ where: { principalKind: 'account', artifactId, accountId: owner.id } });
         }
         const resourceId = deriveSavedSecretImportResourceIdV1({ accountId: owner.id,
             source: { kind: 'personal-saved-secret', secretId: 'source-secret' } });
@@ -1063,7 +1063,7 @@ describe("Saved Secret resource service (SQLite integration)", () => {
             expect(artifact).toMatchObject({ accountId: foreign.id, headerVersion: 1, bodyVersion: 1 });
             expect(artifact?.body).toEqual(capturedStoredArtifact.body);
             expect(artifact?.header).toEqual(capturedStoredArtifact.header);
-            expect(await db.artifactAccountGrant.findMany({ where: { artifactId, accountId: owner.id } })).toHaveLength(1);
+            expect(await db.artifactGrant.findMany({ where: { principalKind: 'account', artifactId, accountId: owner.id } })).toHaveLength(1);
             return;
         }
         expect(result).toEqual({ ok: false, error: 'references_conflict' });
@@ -1091,7 +1091,7 @@ describe("Saved Secret resource service (SQLite integration)", () => {
             header: bytes({ kind: 'launch-profile.v1', profileId: 'selected', name: 'Selected' }),
             body: bytes({ body: JSON.stringify(content) }), dataEncryptionKey: new Uint8Array(Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64')),
         }))).toMatchObject({ ok: true });
-        await db.artifactAccountGrant.create({ data: { artifactId, accountId: owner.id, accessLevel: 'view', createdByAccountId: foreign.id } });
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId, accountId: owner.id, accessLevel: 'view', createdByAccountId: foreign.id } });
         if (selected) {
             await db.userKVStore.createMany({ data: [
                 { accountId: owner.id, key: buildProfilePhysicalKey('selected'), version: 0, value: new TextEncoder().encode(JSON.stringify({
@@ -1109,7 +1109,7 @@ describe("Saved Secret resource service (SQLite integration)", () => {
         }));
         expect(result).toEqual(selected ? { ok: false, error: 'resource_in_use' } : { ok: true, value: { resourceId } });
         expect(await db.savedSecretResource.findUnique({ where: { id: resourceId } })).toEqual(selected ? expect.objectContaining({ id: resourceId }) : null);
-        expect(await db.artifactAccountGrant.findMany({ where: { artifactId, accountId: owner.id } })).toHaveLength(1);
+        expect(await db.artifactGrant.findMany({ where: { principalKind: 'account', artifactId, accountId: owner.id } })).toHaveLength(1);
         expect(await db.artifact.findUnique({ where: { id: artifactId } })).toMatchObject({ bodyVersion: 1 });
         if (!selected) {
             const record = { v: 1 as const, id: 'selected', definition: { kind: 'artifact' as const, artifactId },
@@ -1128,14 +1128,14 @@ describe("Saved Secret resource service (SQLite integration)", () => {
                     artifactRevision: { artifactId, headerVersion: 1, bodyVersion: 1 } }] })))
                 .toMatchObject({ status: 'invalid-reference' });
             expect(await db.userKVStore.findMany({ where: { accountId: owner.id }, orderBy: { key: 'asc' } })).toEqual(before);
-            await db.artifactAccountGrant.deleteMany({ where: { artifactId, accountId: owner.id } });
+            await db.artifactGrant.deleteMany({ where: { principalKind: 'account', artifactId, accountId: owner.id } });
             expect(await inTx(tx => mutateProfileRowsInTx(tx, { accountId: owner.id,
                 expectedReferenceGuardRevision: 0, mutations: [{ id: record.id, operation: 'create', expectedRevision: 'absent',
                     content: { t: 'plain', v: { ...record, secretBindings: { TOKEN: null } } }, referencedSavedSecretIds: [],
                     artifactRevision: { artifactId, headerVersion: 1, bodyVersion: 1 } }] })))
                 .toMatchObject({ status: 'invalid-reference' });
             expect(await db.userKVStore.findMany({ where: { accountId: owner.id }, orderBy: { key: 'asc' } })).toEqual(before);
-            await db.artifactAccountGrant.create({ data: { artifactId, accountId: owner.id, accessLevel: 'view', createdByAccountId: foreign.id } });
+            await db.artifactGrant.create({ data: { principalKind: 'account', artifactId, accountId: owner.id, accessLevel: 'view', createdByAccountId: foreign.id } });
             let revision = { artifactId, headerVersion: 1, bodyVersion: 1 };
             for (const changed of ['header', 'body'] as const) {
                 const captured = revision;

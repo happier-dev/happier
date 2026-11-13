@@ -156,11 +156,11 @@ describe('SessionManager service (SQLite integration)', () => {
         const [owner, actor] = await Promise.all([account(), account()]);
         const [child, lead] = await Promise.all([session(owner.id), session(owner.id)]);
         expect(await set(actor.id, child.id, lead.id)).toEqual({ ok: false, error: 'manager_forbidden', reason: 'read' });
-        for (const target of [child, lead]) await db.sessionShare.create({ data: {
-            sessionId: target.id, sharedByUserId: owner.id, sharedWithUserId: actor.id, accessLevel: 'view',
+        for (const target of [child, lead]) await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: target.id, createdByAccountId: owner.id, accountId: actor.id, accessLevel: 'view',
         } });
         expect(await set(actor.id, child.id, lead.id)).toEqual({ ok: false, error: 'manager_forbidden', reason: 'input' });
-        await db.sessionShare.updateMany({ data: { accessLevel: 'edit' } });
+        await db.sessionGrant.updateMany({ where: { principalKind: 'account' }, data: { accessLevel: 'edit' } });
         await db.account.update({ where: { id: actor.id }, data: { status: 'disabled' } });
         expect(await set(actor.id, child.id, lead.id)).toEqual({ ok: false, error: 'manager_forbidden', reason: 'read' });
         expect(await db.sessionFollowEdge.count({ where: { relation: 'manager' } })).toBe(0);
@@ -170,14 +170,14 @@ describe('SessionManager service (SQLite integration)', () => {
         const [workerOwner, leadOwner, other] = await Promise.all([account(), account(), account()]);
         const child = await session(workerOwner.id);
         const lead = await session(leadOwner.id);
-        await db.sessionShare.create({ data: { sessionId: lead.id, sharedByUserId: leadOwner.id, sharedWithUserId: workerOwner.id, accessLevel: 'edit' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: lead.id, createdByAccountId: leadOwner.id, accountId: workerOwner.id, accessLevel: 'edit' } });
         expect(await set(workerOwner.id, child.id, lead.id)).toEqual({ ok: false, error: 'manager_forbidden', reason: 'pairwise' });
-        await db.sessionShare.create({ data: { sessionId: child.id, sharedByUserId: workerOwner.id, sharedWithUserId: leadOwner.id, accessLevel: 'edit' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: child.id, createdByAccountId: workerOwner.id, accountId: leadOwner.id, accessLevel: 'edit' } });
         expect((await set(workerOwner.id, child.id, lead.id)).ok).toBe(true);
         expect(await inTx((tx) => removeUnsafeSessionManagerEdgesForAccessChangeInTx(tx, { sessionId: lead.id }))).toBe(0);
         await inTx(async (tx) => {
             const before = await resolveEffectiveSessionAccess(tx, { accountId: other.id, sessionId: lead.id, authentication });
-            await tx.sessionShare.create({ data: { sessionId: lead.id, sharedByUserId: leadOwner.id, sharedWithUserId: other.id, accessLevel: 'view' } });
+            await tx.sessionGrant.create({ data: { principalKind: 'account', sessionId: lead.id, createdByAccountId: leadOwner.id, accountId: other.id, accessLevel: 'view' } });
             const after = await resolveEffectiveSessionAccess(tx, { accountId: other.id, sessionId: lead.id, authentication });
             await applySessionAccessTransitionEffectsInTx(tx, {
                 sessionId: lead.id, before: new Map([[other.id, before]]), after: new Map([[other.id, after]]),

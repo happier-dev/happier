@@ -1,3 +1,4 @@
+import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
 import { randomUUID } from 'node:crypto';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
@@ -335,13 +336,13 @@ describe('deployment detail admission cost', () => {
             do {
                 const queries: { model?: string; action: string }[] = [];
                 const stop = observeSqliteRequests({ before: request => { queries.push(request); } });
-                const page = await read(`${base}&includeDeleted=true&limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`)
+                const page: Awaited<ReturnType<typeof read>> = await read(`${base}&includeDeleted=true&limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ''}`)
                     .finally(stop);
                 expect(page.statusCode, page.body).toBe(200);
                 expect(queries.filter(query => query.model === 'DeploymentEnvironment' && query.action === 'findMany')).toHaveLength(1);
                 expect(queries.filter(query => query.model === 'Artifact')).toEqual([]);
                 expect(page.body).not.toContain('private-retained-body');
-                const result = page.json();
+                const result: { coverage: string; items: { id: string }[]; nextCursor: string | null } = page.json();
                 expect(result.coverage).toBe('complete');
                 found.push(...result.items.map((item: { id: string }) => item.id));
                 cursor = result.nextCursor;
@@ -452,8 +453,7 @@ describe('deployment detail admission cost', () => {
                 body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: 'unopened' })),
                 dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
             if (!created.ok) throw new Error(created.error);
-            if (kind === 'team') await db.artifactTeamGrant.create({ data: { artifactId: created.artifact.id,
-                teamId: team.id, accessLevel: 'admin', createdByAccountId: owner.id } });
+            if (kind === 'team') await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: owner.id }), artifactId: created.artifact.id } });
             return { contentArtifactId: created.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
         }
         const environment = await db.deploymentEnvironment.create({ data: { projectSourceId: source.source.id,
@@ -473,7 +473,7 @@ describe('deployment detail admission cost', () => {
                 headers: { 'x-test-user-id': owner.id } });
             const queries: string[] = [];
             const stop = observeSqliteRequests({ before: request => {
-                if (request.model === 'Artifact' || request.model === 'ArtifactTeamGrant') queries.push(`${request.model}.${request.action}`);
+                if (request.model === 'Artifact' || request.model === 'ArtifactGrant') queries.push(`${request.model}.${request.action}`);
             } });
             try {
                 const result = await read();
@@ -481,13 +481,13 @@ describe('deployment detail admission cost', () => {
                 expect(result.json()).toMatchObject({ ok: true, environment: { runtimeTargetLinkId: ids.at(-1) } });
                 expect(result.json().targetLinks).toHaveLength(ids.length);
                 expect(queries.filter(query => query.startsWith('Artifact.'))).toHaveLength(1);
-                expect(queries.filter(query => query.startsWith('ArtifactTeamGrant.'))).toHaveLength(kind === 'team' ? 1 : 0);
+                expect(queries.filter(query => query.startsWith('ArtifactGrant.'))).toHaveLength(kind === 'team' ? 1 : 0);
             } finally { stop(); }
             await db.deploymentTargetLink.update({ where: { id: ids[0]! }, data: { contentBodyVersion: 2 } });
             expect((await read()).json()).toMatchObject({ ok: false, error: 'deployment_conflict' });
             await db.deploymentTargetLink.update({ where: { id: ids[0]! }, data: { contentBodyVersion: 1 } });
             if (kind === 'team') {
-                await db.artifactTeamGrant.deleteMany({ where: { artifactId: reference.contentArtifactId, teamId: team.id } });
+                await db.artifactGrant.deleteMany({ where: { principalKind: 'team', artifactId: reference.contentArtifactId, teamId: team.id } });
                 expect((await read()).json()).toMatchObject({ ok: false, error: 'deployment_content_unavailable' });
             }
         });
@@ -584,7 +584,7 @@ describe('deployment detail admission cost', () => {
             expect.soft({ status: memberRead.statusCode, result: result.ok ? 'ok' : result.error,
                 targetLinkIds: result.targetLinks?.map((target: { id: string }) => target.id) })
                 .toMatchObject({ status: 200, result: 'ok', targetLinkIds: [link.targetLinkId] });
-            expect(await db.artifactTeamGrant.count({ where: { artifactId: { in: artifactIds } } })).toBe(0);
+            expect(await db.artifactGrant.count({ where: { principalKind: 'team', artifactId: { in: artifactIds } } })).toBe(0);
             for (const artifactId of artifactIds) expect((await readArtifact(artifactId)).statusCode).toBe(200);
             expect(await inTx(tx => setArtifactAccessGrantInTx(tx, { actorAccountId: member.id,
                 artifactId: artifactIds[0]!, principal: { kind: 'team', teamId: team.id }, accessLevel: 'view' })))

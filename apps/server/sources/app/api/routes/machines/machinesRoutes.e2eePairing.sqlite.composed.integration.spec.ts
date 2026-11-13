@@ -69,7 +69,7 @@ describe('E2EE CLI pairing and retained Machine discovery (real SQLite)', () => 
                 expect(registered.statusCode, routeError?.stack ?? registered.body).toBe(200);
                 expect(registered.json()).toMatchObject({ machine: { id: machineId, metadata } });
             }
-            expect(await db.machineAccountGrant.count({ where: { machineId } })).toBe(0);
+            expect(await db.machineGrant.count({ where: { principalKind: 'account', machineId } })).toBe(0);
             expect(await db.machineKeyEnvelope.count({ where: { machineId } })).toBe(0);
             // A retained/disconnected Machine must remain discoverable before daemon reactivation.
             // The shared dev Machine also predates a persisted content-key fingerprint.

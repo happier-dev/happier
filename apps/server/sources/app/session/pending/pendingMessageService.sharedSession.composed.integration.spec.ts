@@ -307,11 +307,11 @@ describe("pendingMessageService (shared sessions)", () => {
         participantId: string;
         accessLevel: "edit" | "view";
     }) => {
-        return db.sessionShare.create({
-            data: {
+        return db.sessionGrant.create({
+            data: { principalKind: 'account',
                 sessionId: params.sessionId,
-                sharedByUserId: params.ownerId,
-                sharedWithUserId: params.participantId,
+                createdByAccountId: params.ownerId,
+                accountId: params.participantId,
                 accessLevel: params.accessLevel,
                 canApprovePermissions: false,
             },
@@ -421,7 +421,7 @@ describe("pendingMessageService (shared sessions)", () => {
         expect(await enqueuePendingMessage({ actorUserId: editor.id, sessionId: session.id, localId: "actor-input", ciphertext: "cipher", messageRole: "user" })).toMatchObject({
             ok: true, pending: { accountActor: { accountId: editor.id, profile: { name: "Alice", firstName: "Alice" } } },
         });
-        await db.sessionShare.delete({ where: { id: share.id } });
+        await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
         expect(await listPendingMessages({ actorUserId: owner.id, sessionId: session.id })).toMatchObject({
             ok: true, pending: [{ accountActor: { accountId: editor.id, profile: { name: "Alice", firstName: "Alice" } } }],
         });
@@ -941,7 +941,7 @@ describe("pendingMessageService (shared sessions)", () => {
         db.$transaction = (async (...args: Parameters<typeof db.$transaction>) => {
             if (!withdrawn) {
                 withdrawn = true;
-                await db.sessionShare.delete({ where: { id: share.id } });
+                await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
             }
             return originalTransaction.apply(db, args);
         }) as typeof db.$transaction;
@@ -999,7 +999,7 @@ describe("pendingMessageService (shared sessions)", () => {
             db.$transaction = (async (...args: Parameters<typeof db.$transaction>) => {
                 if (!withdrawn) {
                     withdrawn = true;
-                    await db.sessionShare.delete({ where: { id: share.id } });
+                    await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
                 }
                 return originalTransaction.apply(db, args);
             }) as typeof db.$transaction;
@@ -7560,8 +7560,8 @@ describe("pendingMessageService (shared sessions)", () => {
                 },
             },
         });
-        await db.sessionTeamGrant.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'team',
                 sessionId: session.id,
                 teamId: team.id,
                 accessLevel: "edit",

@@ -68,8 +68,8 @@ describe("Session access persistence provider contract", () => {
                 accountId: owner.id, tag: suffix, encryptionMode: "plain", metadata: "{}",
             } });
             sessionId = session.id;
-            await db.sessionShare.create({ data: {
-                sessionId, sharedByUserId: owner.id, sharedWithUserId: reader.id,
+            await db.sessionGrant.create({ data: { principalKind: 'account',
+                sessionId, createdByAccountId: owner.id, accountId: reader.id,
                 accessLevel: "view", canApprovePermissions: false,
             } });
             const result = await listSessionResponsibilityCandidates({
@@ -125,23 +125,23 @@ describe("Session access persistence provider contract", () => {
             });
             sessionId = session.id;
 
-            await db.sessionTeamGrant.create({
-                data: { sessionId: session.id, teamId: team.id, effectiveAt: new Date(1) },
+            await db.sessionGrant.create({
+                data: { principalKind: 'team', sessionId: session.id, teamId: team.id, effectiveAt: new Date(1) },
             });
-            await db.sessionGroupGrant.create({
-                data: { sessionId: session.id, teamGroupId: group.id, effectiveAt: new Date(2) },
+            await db.sessionGrant.create({
+                data: { principalKind: 'group', sessionId: session.id, teamGroupId: group.id, effectiveAt: new Date(2) },
             });
 
-            await expect(db.sessionTeamGrant.findUniqueOrThrow({
-                where: { sessionId_teamId: { sessionId: session.id, teamId: team.id } },
+            await expect(db.sessionGrant.findUniqueOrThrow({
+                where: { principalKind: 'team', sessionId_teamId: { sessionId: session.id, teamId: team.id } },
                 select: { accessLevel: true, canApprovePermissions: true, requiredByTeamPolicy: true },
             })).resolves.toEqual({
                 accessLevel: "view",
                 canApprovePermissions: false,
                 requiredByTeamPolicy: false,
             });
-            await expect(db.sessionGroupGrant.findUniqueOrThrow({
-                where: { sessionId_teamGroupId: { sessionId: session.id, teamGroupId: group.id } },
+            await expect(db.sessionGrant.findUniqueOrThrow({
+                where: { principalKind: 'group', sessionId_teamGroupId: { sessionId: session.id, teamGroupId: group.id } },
                 select: { accessLevel: true, canApprovePermissions: true },
             })).resolves.toEqual({ accessLevel: "view", canApprovePermissions: false });
 
@@ -152,11 +152,11 @@ describe("Session access persistence provider contract", () => {
             })).resolves.toEqual({ responsibleAccountId: null });
 
             await db.teamGroup.delete({ where: { id: group.id } });
-            await expect(db.sessionGroupGrant.count({ where: { sessionId: session.id } })).resolves.toBe(0);
+            await expect(db.sessionGrant.count({ where: { principalKind: 'group', sessionId: session.id } })).resolves.toBe(0);
 
             await db.team.delete({ where: { id: team.id } });
             teamId = null;
-            await expect(db.sessionTeamGrant.count({ where: { sessionId: session.id } })).resolves.toBe(0);
+            await expect(db.sessionGrant.count({ where: { principalKind: 'team', sessionId: session.id } })).resolves.toBe(0);
             await expect(db.session.findUniqueOrThrow({
                 where: { id: session.id },
                 select: { primaryTeamId: true },
@@ -215,10 +215,10 @@ describe("Session access persistence provider contract", () => {
             }, select: { id: true } });
             sessionId = session.id;
 
-            await db.sessionShare.create({ data: {
+            await db.sessionGrant.create({ data: { principalKind: 'account',
                 sessionId: session.id,
-                sharedByUserId: owner.id,
-                sharedWithUserId: collaborator.id,
+                createdByAccountId: owner.id,
+                accountId: collaborator.id,
                 accessLevel: "view",
             } });
             const teamInsert = await inTx(tx => putSessionAccessGrantInTx(tx, {
@@ -229,8 +229,8 @@ describe("Session access persistence provider contract", () => {
                 authentication: presentUserAuthentication,
             }));
             expect(teamInsert).toMatchObject({ ok: true, transition: "inserted" });
-            const teamEffectiveAt = await db.sessionTeamGrant.findUniqueOrThrow({
-                where: { sessionId_teamId: { sessionId: session.id, teamId: team.id } },
+            const teamEffectiveAt = await db.sessionGrant.findUniqueOrThrow({
+                where: { principalKind: 'team', sessionId_teamId: { sessionId: session.id, teamId: team.id } },
                 select: { effectiveAt: true },
             });
             const teamReplace = await inTx(tx => putSessionAccessGrantInTx(tx, {
@@ -241,8 +241,8 @@ describe("Session access persistence provider contract", () => {
                 authentication: presentUserAuthentication,
             }));
             expect(teamReplace).toMatchObject({ ok: true, transition: "replaced" });
-            await expect(db.sessionTeamGrant.findUniqueOrThrow({
-                where: { sessionId_teamId: { sessionId: session.id, teamId: team.id } },
+            await expect(db.sessionGrant.findUniqueOrThrow({
+                where: { principalKind: 'team', sessionId_teamId: { sessionId: session.id, teamId: team.id } },
                 select: { accessLevel: true, effectiveAt: true },
             })).resolves.toEqual({ accessLevel: "edit", effectiveAt: teamEffectiveAt.effectiveAt });
 
@@ -254,8 +254,8 @@ describe("Session access persistence provider contract", () => {
                 authentication: presentUserAuthentication,
             }));
             expect(groupInsert).toMatchObject({ ok: true, transition: "inserted" });
-            const groupEffectiveAt = await db.sessionGroupGrant.findUniqueOrThrow({
-                where: { sessionId_teamGroupId: { sessionId: session.id, teamGroupId: group.id } },
+            const groupEffectiveAt = await db.sessionGrant.findUniqueOrThrow({
+                where: { principalKind: 'group', sessionId_teamGroupId: { sessionId: session.id, teamGroupId: group.id } },
                 select: { effectiveAt: true },
             });
 
@@ -395,8 +395,8 @@ describe("Session access persistence provider contract", () => {
                 initialAccess: { grants: [] },
                 authentication: presentUserAuthentication,
             }))).resolves.toMatchObject({ ok: true });
-            await expect(db.sessionTeamGrant.findUniqueOrThrow({
-                where: { sessionId_teamId: { sessionId: session.id, teamId: team.id } },
+            await expect(db.sessionGrant.findUniqueOrThrow({
+                where: { principalKind: 'team', sessionId_teamId: { sessionId: session.id, teamId: team.id } },
                 select: { accessLevel: true, canApprovePermissions: true, requiredByTeamPolicy: true },
             })).resolves.toEqual({
                 accessLevel: "edit",
@@ -422,8 +422,8 @@ describe("Session access persistence provider contract", () => {
                 expect(result).toMatchObject({ ok: true, changed: true });
                 throw abort;
             })).rejects.toBe(abort);
-            await expect(db.sessionShare.count({
-                where: { sessionId: session.id, sharedWithUserId: collaborator.id },
+            await expect(db.sessionGrant.count({
+                where: { principalKind: 'account', sessionId: session.id, accountId: collaborator.id },
             })).resolves.toBe(0);
             await expect(db.accountChange.count({
                 where: { entityId: session.id },
@@ -485,14 +485,14 @@ describe("Session access persistence provider contract", () => {
                 encryptionMode: "plain",
                 metadata: "{}",
                 currentStorageState: "hosted",
-                teamGrants: { create: {
+                grants: { create: [{ principalKind: 'team', 
                     teamId: team.id,
                     accessLevel: "admin",
                     effectiveAt: new Date(1),
-                } },
+                 }] },
             } });
             sessionId = session.id;
-            await db.sessionTeamGrant.create({ data: {
+            await db.sessionGrant.create({ data: { principalKind: 'team',
                 sessionId: session.id,
                 teamId: unqualifiedTeam.id,
                 accessLevel: "admin",
@@ -507,7 +507,10 @@ describe("Session access persistence provider contract", () => {
             const required = { ...qualified, authenticationEvidence: [] };
             const unavailable = {
                 ...required,
-                env: { HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "0" },
+                env: {
+                    HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "0",
+                    HAPPIER_FEATURE_AUTH_EMAIL_PASSWORD__ENABLED: "0",
+                },
             };
 
             await expect(inTx(tx => resolveSessionAccessForOperation(tx, {
@@ -574,8 +577,8 @@ describe("Session access persistence provider contract", () => {
                 expect(unavailableRow).toBeNull();
             });
 
-            await db.sessionTeamGrant.delete({
-                where: { sessionId_teamId: { sessionId: session.id, teamId: unqualifiedTeam.id } },
+            await db.sessionGrant.delete({
+                where: { principalKind: 'team', sessionId_teamId: { sessionId: session.id, teamId: unqualifiedTeam.id } },
             });
             await db.team.update({
                 where: { id: team.id },

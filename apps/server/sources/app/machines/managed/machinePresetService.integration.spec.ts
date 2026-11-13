@@ -204,7 +204,7 @@ describe("Machine preset relational owner", () => {
         const listed = await requestPreset(member, 'list', { homeId });
         expect(listed.statusCode, listed.body).toBe(200);
         expect(listed.json().presets).toContainEqual(preset);
-        expect(await db.machineAccountGrant.count({ where: { machineId: controller.machineId, accountId: member } })).toBe(0);
+        expect(await db.machineGrant.count({ where: { principalKind: 'account', machineId: controller.machineId, accountId: member } })).toBe(0);
     });
 
     it('projects only public delegated controller and fixed review facts for a Plain member without Machine access', async () => {
@@ -238,7 +238,7 @@ describe("Machine preset relational owner", () => {
         expect(result.delegatedAcquire).not.toHaveProperty('credentialPurposes');
         expect(result.delegatedAcquire.controller).not.toHaveProperty('metadata');
         expect((await requestPreset(owner, 'get', target)).json().preset).not.toHaveProperty('delegatedAcquire');
-        expect(await db.machineAccountGrant.count({ where: { machineId: controller.machineId, accountId: member } })).toBe(0);
+        expect(await db.machineGrant.count({ where: { principalKind: 'account', machineId: controller.machineId, accountId: member } })).toBe(0);
         expect((await requestPreset(owner, 'update', { ...target, expectedRevision: 0,
             patch: { controllerDisplayName: 'Renamed builder' } })).json()).toMatchObject({ kind: 'saved',
                 preset: { controllerDisplayName: 'Renamed builder', revision: 1 } });
@@ -297,8 +297,8 @@ describe("Machine preset relational owner", () => {
                 installationPublicKey: encodeBase64(installationPublicKey, 'base64url') },
                 reviewedFacts: { controller, launch: { ...launch, name: 'Guest' }, optionStatus: 'unavailable' } });
             expect(preset.delegatedAcquire).not.toHaveProperty('credentialPurposes');
-            expect(preset.delegatedAcquire.controller).not.toHaveProperty('metadata');
-            expect(preset.delegatedAcquire.reviewedFacts).not.toHaveProperty('credentials');
+            expect(preset).not.toHaveProperty(['delegatedAcquire', 'controller', 'metadata']);
+            expect(preset).not.toHaveProperty(['delegatedAcquire', 'reviewedFacts', 'credentials']);
         };
 
         const target = { homeId, id: definition.id };
@@ -306,7 +306,7 @@ describe("Machine preset relational owner", () => {
         assertPublicProjection(first);
         const listed = (await requestPreset(member, 'list', { homeId })).json().presets as Record<string, unknown>[];
         assertPublicProjection(listed.find(preset => preset.id === definition.id)!);
-        expect(await db.machineAccountGrant.count({ where: { machineId: controller.machineId, accountId: member } })).toBe(0);
+        expect(await db.machineGrant.count({ where: { principalKind: 'account', machineId: controller.machineId, accountId: member } })).toBe(0);
 
         const renamed = await requestPreset(owner, 'update', { ...target, expectedRevision: 0,
             patch: { controllerDisplayName: 'Renamed E2EE builder' } });
@@ -912,7 +912,7 @@ describe("Machine preset relational owner", () => {
         expect((await requestPreset("preset-team-admin", "update", { ...target, expectedRevision: 0, patch: { name: "Managed" } })).statusCode).toBe(200);
         await expect(inTx(tx => resolveMachinePresetForAcquireInTx(tx, { accountId: "preset-team-member", ...target, revision: 1 })))
             .rejects.toMatchObject({ code: "permission_denied" });
-        await db.machineAccountGrant.create({ data: { machineId: controller.machineId, accountId: "preset-team-member", accessLevel: "admin", createdByAccountId: "preset-team-admin" } });
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: controller.machineId, accountId: "preset-team-member", accessLevel: "admin", createdByAccountId: "preset-team-admin" } });
         await expect(inTx(tx => resolveMachinePresetForAcquireInTx(tx, { accountId: "preset-team-member", ...target, revision: 1 })))
             .resolves.toMatchObject({ kind: "ready", custodianAccountId: "preset-team-admin" });
         await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId: "preset-team-member" } }, data: { status: "suspended" } });
@@ -1014,7 +1014,7 @@ describe("Machine preset relational owner", () => {
         ] });
         const controller = await seedCurrentProvisioner(owner, homeId, undefined, false, resourceKind);
         if (authority === 'manager') {
-            await db.machineAccountGrant.create({ data: { machineId: controller.machineId, accountId: member,
+            await db.machineGrant.create({ data: { principalKind: 'account', machineId: controller.machineId, accountId: member,
                 accessLevel: 'admin', createdByAccountId: owner } });
         }
         const definition = { id: `preset-effect-${resourceKind}-${authority}`, homeId, name: 'Reviewed effects',
@@ -1073,7 +1073,7 @@ describe("Machine preset relational owner", () => {
         const select = (revision: number) => inTx(tx => resolveMachinePresetForAcquireInTx(tx, { accountId: member,
             homeId, id: definition.id, revision }));
         await expect(select(0)).rejects.toMatchObject({ code: 'permission_denied' });
-        expect(await db.machineAccountGrant.count({ where: { machineId: controller.machineId, accountId: member } })).toBe(0);
+        expect(await db.machineGrant.count({ where: { principalKind: 'account', machineId: controller.machineId, accountId: member } })).toBe(0);
         expect((await requestPreset(admin, 'update', { homeId, id: definition.id, expectedRevision: 0,
             patch: { teamAcquireDelegated: true } })).json()).toEqual({ kind: 'refused', code: 'permission_denied' });
         expect((await requestPreset(owner, 'update', { homeId, id: definition.id, expectedRevision: 0,
@@ -1254,7 +1254,7 @@ describe("Machine preset relational owner", () => {
                 retention: reviewedFacts.retention, wakeOnAcceptedMessage: reviewedFacts.wakeOnAcceptedMessage, reviewedFacts,
             } } });
         expect(acquired.machine).toMatchObject({ enrollmentAccountId: member, custodianAccountId: owner, controller });
-        expect(await db.machineAccountGrant.count({ where: { machineId: controller.machineId, accountId: member } })).toBe(0);
+        expect(await db.machineGrant.count({ where: { principalKind: 'account', machineId: controller.machineId, accountId: member } })).toBe(0);
         expect(await select(member)).toEqual({ kind: 'refused', code: 'preset_limit_reached' });
         await db.managedMachine.update({ where: { id: acquired.machine.id }, data: { allocation: 'confirmed-absent' } });
         await db.managedMachinePreset.update({ where: { id: definition.id }, data: { teamAcquireDelegated: false } });

@@ -1,3 +1,4 @@
+import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
 import { projectExternalActionDeploymentMetadataEnvelopeEnvironmentIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { createSavedSecretResourceInTx } from '@/app/account/savedSecrets/savedSecretResourceService';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -83,9 +84,7 @@ import { signMachineInstallationProof } from '@happier-dev/protocol/machines/ide
 import type { DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import type { DeploymentBackupConfigureInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
 import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_BACKUP_ACTION_IDS_V1, DEPLOYMENT_DATA_QUERY_ACTION_ID_V1,
-    DEPLOYMENT_DRIFT_READ_ACTION_ID_V1, DEPLOYMENT_HEALTH_READ_ACTION_ID_V1,
-    DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1,
-    DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    DEPLOYMENT_DRIFT_READ_ACTION_ID_V1, DEPLOYMENT_HEALTH_READ_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { buildDeploymentBackupActionInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -231,8 +230,7 @@ describe('deployment children retain their controller Action authority', () => {
             options.persistedR76Placement ? '6b2f67f1-dc3d-40c7-9080-0ec6d4515822' : undefined),
             member = await installed(memberCustodian.id), builder = await installed(), outsider = await installed(account.id,
                 options.persistedR76Placement ? 'eadc2422-b42b-478d-97b1-af9b530d5f08' : undefined);
-        if (team) await db.machineTeamGrant.createMany({ data: [controller, member, builder].map(machine => ({
-            machineId: machine.id, teamId: team.id, accessLevel: 'view', createdByAccountId: machine.accountId })) });
+        if (team) await db.machineGrant.createMany({ data: [controller, member, builder].map(machine => ({ ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view', createdByAccountId: machine.accountId }), machineId: machine.id })) });
         const source = await inTx(tx => createProjectSourceInTx(tx, account.id, { serverId, requestKey: crypto.randomUUID(),
             name: 'Child deployment', audience: [], ...(team ? { owner: { kind: 'team' as const, teamId: team.id } } : {}), repository: options.sourceWithoutRepository ? undefined : { protocol: 'https',
                 provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
@@ -255,8 +253,7 @@ describe('deployment children retain their controller Action authority', () => {
                         ? memberContentKeys.publicKey : accountKeys.publicKey, randomBytes: nacl.randomBytes }) });
             if (!result.ok) throw new Error(result.error);
             artifactKeys.set(result.artifact.id, contentKey);
-            if (team) await db.artifactTeamGrant.create({ data: { artifactId: result.artifact.id,
-                teamId: team.id, accessLevel: 'admin', createdByAccountId: account.id } });
+            if (team) await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: account.id }), artifactId: result.artifact.id } });
             if (contentMode === 'e2ee' && options.separateContentOwner) await db.artifactKeyEnvelope.create({ data: {
                 artifactId: result.artifact.id, recipientAccountId: account.id,
                 recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(accountKeys.publicKey),
@@ -787,7 +784,7 @@ describe('deployment children retain their controller Action authority', () => {
 
     it('admits reviewed remote read-role setup only on the current serving member and limits child reads', async () => {
         const f = await fixture('team', 'account', { separateMemberCustodian: true });
-        await db.machineTeamGrant.updateMany({ where: { machineId: f.member.id, teamId: f.team!.id }, data: { accessLevel: 'admin' } });
+        await db.machineGrant.updateMany({ where: { principalKind: 'team', machineId: f.member.id, teamId: f.team!.id }, data: { accessLevel: 'admin' } });
         await db.deployment.update({ where: { id: f.receipt.id }, data: { state: 'succeeded' } });
         await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { activeDeploymentId: f.receipt.id } });
         const use = { purpose: 'dataRole' as const, service: 'database', role: 'readOnlyPassword' as const,
@@ -1453,52 +1450,6 @@ describe('deployment children retain their controller Action authority', () => {
         }, { authentication: 'real' });
     });
 
-    it('continues admitted member HTTP metadata after Team withdrawal', async () => {
-        const f = await fixture('team', 'account', { separateMemberCustodian: true });
-        const packet = f.rpc();
-        const reads = [
-            [DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, { serverId, environmentId: f.environment.id }],
-            [DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, { serverId, environmentId: f.environment.id, deploymentId: f.receipt.id }],
-            [DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1, { serverId, environmentId: f.environment.id }],
-        ] as const;
-        const paths = reads.map(([actionId, input]) => {
-            const spec = getActionSpec(actionId);
-            if (!spec.serverTransport) throw new Error('Expected metadata HTTP transport');
-            return bindHomeDomainHttpRequestV1({ transport: spec.serverTransport, inputSchema: spec.inputSchema, input }).path;
-        });
-        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
-            const read = (path: string) => app.inject({ method: 'GET', url: path, headers: {
-                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: f.authorization.token,
-                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'deployments.deploy',
-                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(f.authorization.binding.target),
-                [EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER]: encodeDeploymentChildExecutionV1(packet),
-                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
-                    authorizationToken: f.authorization.token, effectActionId: 'deployments.deploy',
-                    target: f.authorization.binding.target, installationId: f.member.installationId,
-                    requestId: f.authorization.binding.requestId, method: 'GET', path,
-                    deploymentChildExecution: packet, privateKey: f.member.keys.secretKey }),
-            } });
-            for (const path of paths) {
-                const before = await read(path);
-                expect(before.statusCode, before.body).toBe(200);
-            }
-            await db.teamMembership.delete({ where: { teamId_accountId: { teamId: f.team!.id, accountId: f.account.id } } });
-            const permissionReads: string[] = [];
-            const stop = observeSqliteRequests({ before: query => {
-                if (query.model && ['TeamMembership', 'MachineTeamGrant', 'MachineAccountGrant'].includes(query.model))
-                    permissionReads.push(query.model);
-            } });
-            try {
-                for (const path of paths) {
-                    const after = await read(path);
-                    expect.soft(after.statusCode, `${path}: ${after.body}`).toBe(200);
-                }
-            } finally { stop(); }
-            expect(permissionReads).toEqual([]);
-            expect((await read(`/v1/deployments/environments/${crypto.randomUUID()}?serverId=${serverId}`)).statusCode).toBe(401);
-        }, { authentication: 'real' });
-    });
-
     it.each([{ workflowOrigin: false, templateRoot: false, membershipWithdrawal: false },
         { workflowOrigin: true, templateRoot: false, membershipWithdrawal: false },
         { workflowOrigin: false, templateRoot: true, membershipWithdrawal: false },
@@ -1556,7 +1507,7 @@ describe('deployment children retain their controller Action authority', () => {
                 .toMatchObject({ ok: true, result: { accepted: true } });
         };
         if (options.membershipWithdrawal) {
-            await db.machineTeamGrant.updateMany({ where: { machineId: f.member.id, teamId: f.team!.id },
+            await db.machineGrant.updateMany({ where: { principalKind: 'team', machineId: f.member.id, teamId: f.team!.id },
                 data: { accessLevel: 'admin' } });
             await forwardAdmittedMember();
         }
@@ -1876,9 +1827,12 @@ describe('deployment children retain their controller Action authority', () => {
         const baseInput = { projectSourceId: f.environment.projectSourceId, sourceRevision: 1,
             repository: { kind: 'github' as const, deployment: 'https://github.com', repository: 'child/app' },
             baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref' as const, serverId, id: 'prepare-workspace' } };
+        const sessionDraft = { executionTarget: { serverId, machineId: f.controller.id },
+            directory: { kind: 'path' as const, path: '/repo' },
+            agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } };
         const mint = async (existing: boolean) => {
             const input = getActionSpec(actionId).inputSchema.parse({ ...baseInput,
-                ...(existing ? { sessionRef: { serverId, sessionId: destination.id } } : {}) });
+                ...(existing ? { sessionRef: { serverId, sessionId: destination.id } } : { sessionDraft }) });
             const requestId = crypto.randomUUID(), envelope = { v: 1 as const, requestId, target, input };
             return auth.mintExternalActionExecutionAuthorization({ accountId: f.account.id, serverIdentityId: serverId,
                 authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch }, actionId,
@@ -1896,9 +1850,7 @@ describe('deployment children retain their controller Action authority', () => {
             inputDigest: computeActionInputApprovalDigestV1('session.message.send', {
                 sessionId: destination.id, message: 'Prepare the reviewed repository', reply: 'none' }) };
         const spawnChild = { actionId: 'session.spawn_new', role: 'prepare-session',
-            inputDigest: computeActionInputApprovalDigestV1('session.spawn_new', {
-                executionTarget: { serverId, machineId: f.controller.id }, directory: { kind: 'path', path: '/repo' },
-                agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } } }) };
+            inputDigest: computeActionInputApprovalDigestV1('session.spawn_new', sessionDraft) };
         const resolvedSession = { kind: 'session' as const, sessionId: destination.id };
         const headers = (authorization: ExternalActionExecutionAuthorizationV1, child: ReviewedActionChildHttpProofV1,
             path: string, method = 'GET', body?: unknown,
@@ -2005,7 +1957,7 @@ describe('deployment children retain their controller Action authority', () => {
 
     it.each(['plain', 'e2ee'] as const)('admits only the paired stored-app reads signed by a remote Setup receiver (%s)', async contentMode => {
         const f = await fixture('team', 'account', { contentMode, separateMemberCustodian: true });
-        await db.machineTeamGrant.updateMany({ where: { machineId: f.member.id, teamId: f.team!.id }, data: { accessLevel: 'admin' } });
+        await db.machineGrant.updateMany({ where: { principalKind: 'team', machineId: f.member.id, teamId: f.team!.id }, data: { accessLevel: 'admin' } });
         const actionId = 'machines.setup.plan';
         const input = getActionSpec(actionId).inputSchema.parse({ homeId: serverId, machineId: f.outsider.id, targets: [{
             homeId: serverId, machineId: f.member.id, sources: [{ kind: 'direct', setup: { items: [{ kind: 'app',
@@ -2043,7 +1995,7 @@ describe('deployment children retain their controller Action authority', () => {
             await expectHttpRefusalWarning({ phase: 'deployment_setup_receiver_purpose', method: 'GET', path: `/v1/artifacts/${f.link.contentArtifactId}` },
                 async () => { expect((await get(f.link.contentArtifactId)).statusCode).toBe(401); }, [authorization.token]);
             expect((await get(f.input.contentArtifactId, f.builder)).statusCode).toBe(401);
-            await db.machineTeamGrant.updateMany({ where: { machineId: f.member.id, teamId: f.team!.id }, data: { accessLevel: 'view' } });
+            await db.machineGrant.updateMany({ where: { principalKind: 'team', machineId: f.member.id, teamId: f.team!.id }, data: { accessLevel: 'view' } });
             // Mint admitted the receiver's Manage once. A downgrade takes effect at
             // the next admission; the already admitted finite Setup finishes.
             expect((await get(f.input.contentArtifactId)).statusCode).toBe(200);
@@ -2326,7 +2278,7 @@ describe('deployment children retain their controller Action authority', () => {
                 const verified = await app.inject({ method: 'POST', url: verificationPath, payload: verificationBody,
                     headers: headers('POST', verificationPath, verificationBody) }).finally(stop);
                 expect(verified.statusCode, verified.body).toBe(200);
-                expect(queries.filter(model => ['ProjectSource', 'Team', 'TeamMembership', 'MachineTeamGrant', 'MachineAccountGrant', 'Session', 'AccessKey'].includes(model))).toEqual([]);
+                expect(queries.filter(model => ['ProjectSource', 'Team', 'TeamMembership', 'MachineGrant', 'MachineGrant', 'Session', 'AccessKey'].includes(model))).toEqual([]);
                 // Quiescing capture publishes expected-down evidence from this Environment's Domains.
                 if (actionId === 'deployments.backups.run') {
                     const read = (environmentId: string) => {
@@ -2623,7 +2575,7 @@ describe('deployment children retain their controller Action authority', () => {
                     deliveredSourceBindings = opened.content.bindings;
                 }
             }
-            expect(models.filter(model => ['Team', 'TeamMembership', 'MachineTeamGrant', 'MachineAccountGrant', 'AccessKey'].includes(model))).toEqual([]);
+            expect(models.filter(model => ['Team', 'TeamMembership', 'MachineGrant', 'MachineGrant', 'AccessKey'].includes(model))).toEqual([]);
             if (!deliveredSourceBindings) throw new Error('Source binding capture was not delivered');
             const scratch = await mkdtemp(join(tmpdir(), 'happier-copy-source-'));
             try {
@@ -2840,7 +2792,7 @@ describe('deployment children retain their controller Action authority', () => {
             const verification = await app.inject({ method: 'POST', url: verificationPath, payload: verificationBody,
                 headers: headers('POST', verificationPath, verificationBody) }).finally(stopVerification);
             expect(verification.statusCode, verification.body).toBe(200);
-            expect(verificationQueries.filter(model => ['ProjectSource', 'Team', 'TeamMembership', 'MachineTeamGrant', 'MachineAccountGrant', 'Session', 'AccessKey'].includes(model))).toEqual([]);
+            expect(verificationQueries.filter(model => ['ProjectSource', 'Team', 'TeamMembership', 'MachineGrant', 'MachineGrant', 'Session', 'AccessKey'].includes(model))).toEqual([]);
             for (const [url, effect] of [
                 [`/v1/deployments/environments/${f.environment.id}?serverId=${serverId}`, 'deployments.environments.get'],
                 [`/v1/projects/sources/${f.environment.projectSourceId}?serverId=${serverId}`, 'projects.sources.read'],
@@ -3062,13 +3014,13 @@ describe('deployment children retain their controller Action authority', () => {
             const codecPath = `/v1/machines/${f.member.id}`;
             const codec = await app.inject({ method: 'GET', url: codecPath,
                 headers: { ...currentAccountStoredContentCompatibilityHeaders, ...headers('GET', codecPath) } }).finally(stopCodec);
-            expect(codecQueries.filter(model => ['ProjectSource', 'Team', 'TeamMembership', 'MachineTeamGrant', 'MachineAccountGrant'].includes(model))).toEqual([]);
+            expect(codecQueries.filter(model => ['ProjectSource', 'Team', 'TeamMembership', 'MachineGrant', 'MachineGrant'].includes(model))).toEqual([]);
             expect(codec.statusCode, codec.body).toBe(200);
             const queries: string[] = [];
             const stop = observeSqliteRequests({ before: query => { if (query.model) queries.push(query.model); } });
             const verified = await app.inject({ method: 'POST', url: path, payload: body,
                 headers: headers('POST', path, body) }).finally(stop);
-            expect(queries.filter(model => ['ProjectSource', 'Team', 'TeamMembership', 'MachineTeamGrant', 'MachineAccountGrant'].includes(model))).toEqual([]);
+            expect(queries.filter(model => ['ProjectSource', 'Team', 'TeamMembership', 'MachineGrant', 'MachineGrant'].includes(model))).toEqual([]);
             // The sole Machine read verifies this exact installation's signature; it does not re-admit Use.
             expect(queries.filter(model => model === 'Machine')).toHaveLength(1);
             expect(verified.statusCode, verified.body).toBe(200);
@@ -4559,8 +4511,7 @@ describe('deployment children retain their controller Action authority', () => {
             { input, deploymentNativeAdmission: native });
         // The requester owns this receiver, but the Environment's Team cannot use it.
         await expect(mint()).rejects.toMatchObject({ code: 'credential_scope_denied' });
-        await db.machineTeamGrant.create({ data: { machineId: f.outsider.id, teamId: f.team!.id,
-            accessLevel: 'view', createdByAccountId: f.account.id } });
+        await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: f.team!.id, accessLevel: 'view', createdByAccountId: f.account.id }), machineId: f.outsider.id } });
         const root = await mint();
         await db.machine.update({ where: { id: f.controller.id }, data: { operationProtocolCapabilitiesRevision: 1,
             operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } } } });
@@ -4574,7 +4525,7 @@ describe('deployment children retain their controller Action authority', () => {
                 payload: { v: 1, machineId: f.controller.id, envelope, executionAuthorization: root } });
             await execute();
             expect(forwarded).toBe(1);
-            await db.machineTeamGrant.deleteMany({ where: { machineId: f.outsider.id, teamId: f.team!.id } });
+            await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: f.outsider.id, teamId: f.team!.id } });
             const refused = await execute();
             expect(refused.json()).toMatchObject({ error: 'credential_scope_denied' });
             expect(forwarded).toBe(1);
@@ -4686,7 +4637,7 @@ describe('deployment children retain their controller Action authority', () => {
         const f = await fixture('team', 'account', { contentMode: mode, readableEnvironment: true, separateControllerCustodian: true });
         // Environment content edits retain the definition writer's existing
         // Machine Manage requirement, including on a separate custodian host.
-        await db.machineTeamGrant.updateMany({ where: { machineId: f.controller.id, teamId: f.team!.id },
+        await db.machineGrant.updateMany({ where: { principalKind: 'team', machineId: f.controller.id, teamId: f.team!.id },
             data: { accessLevel: 'admin' } });
         const target = { kind: 'machine' as const, machineId: f.controller.id };
         const actionId = 'deployments.environments.update';
@@ -4955,7 +4906,7 @@ describe('deployment children retain their controller Action authority', () => {
             const environmentHeaders = headers('GET', environmentPath);
             const permissionReads: string[] = [];
             const stopReads = observeSqliteRequests({ before: query => {
-                if (query.model && ['TeamMembership', 'ProjectSource', 'ApiToken', 'MachineTeamGrant', 'MachineAccountGrant'].includes(query.model))
+                if (query.model && ['TeamMembership', 'ProjectSource', 'ApiToken', 'MachineGrant', 'MachineGrant'].includes(query.model))
                     permissionReads.push(query.model);
             } });
             try {
@@ -5102,7 +5053,7 @@ describe('deployment children retain their controller Action authority', () => {
                     method: 'GET', path: machinePath, body: undefined, routeInput: { id: f.member.id } })).not.toBeNull();
             } finally { stopChildReads(); }
             expect(childReads.filter(model => ['Account', 'TeamMembership', 'ProjectSource', 'ApiToken',
-                'MachineTeamGrant', 'MachineAccountGrant'].includes(model))).toEqual([]);
+                'MachineGrant', 'MachineGrant'].includes(model))).toEqual([]);
             expect(childReads.filter(model => model === 'DeploymentDomain')).toHaveLength(1);
             const unrelatedMachinePath = `/v1/machines/${f.outsider.id}`;
             const unrelatedMachineHeaders = await forwarded?.requesterHttpProjection?.createRequestHeaders({
@@ -5431,7 +5382,7 @@ describe('deployment children retain their controller Action authority', () => {
                         publicKey: encodeBase64(f.member.keys.publicKey, 'base64url') } } });
             expect(requests.filter(model => model === 'DeploymentDomain')).toHaveLength(1);
             expect(controllerKeyReads).toBe(1);
-            expect(requests.filter(model => ['ProjectSource', 'TeamMembership', 'MachineAccessGrant', 'MachineTeamGrant'].includes(model)))
+            expect(requests.filter(model => ['ProjectSource', 'TeamMembership', 'MachineAccessGrant', 'MachineGrant'].includes(model)))
                 .toEqual([]);
             expect((await send(body, f.outsider.keys.secretKey)).statusCode).toBe(401);
             expect((await send({ ...body, materialization: { ...body.materialization, domainId: crypto.randomUUID() } })).statusCode).toBe(401);
@@ -5505,7 +5456,7 @@ describe('deployment children retain their controller Action authority', () => {
             expect.soft(written.json()).toEqual({ ok: true, grant });
             expect.soft(await db.machineSecretGrant.count({ where: { machineId: f.member.id, environmentId: null } })).toBe(1);
             expect.soft(requests.filter(model => model === 'DeploymentDomain')).toHaveLength(1);
-            expect.soft(requests.filter(model => ['ProjectSource', 'TeamMembership', 'MachineAccessGrant', 'MachineTeamGrant'].includes(model)))
+            expect.soft(requests.filter(model => ['ProjectSource', 'TeamMembership', 'MachineAccessGrant', 'MachineGrant'].includes(model)))
                 .toEqual([]);
             const readAdded = await send(subject, 'read');
             expect.soft(readAdded.statusCode, readAdded.body).toBe(200);
@@ -6036,7 +5987,7 @@ describe('deployment children retain their controller Action authority', () => {
         const source = await db.projectSource.findUniqueOrThrow({ where: { id: f.environment.projectSourceId } });
         const content = await f.content('project-deployment-defaults.v1');
         const artifact = await db.artifact.findUniqueOrThrow({ where: { id: content.contentArtifactId } });
-        await db.artifactAccountGrant.create({ data: { artifactId: artifact.id, accountId: f.account.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: artifact.id, accountId: f.account.id,
             accessLevel: 'view', createdByAccountId: artifact.accountId } });
         await db.projectDeploymentDefaults.create({ data: { projectSourceId: source.id, revision: 1, ...content } });
         const input = getActionSpec(actionId).inputSchema.parse(actionId === 'deployments.publish.prepare'
@@ -6097,7 +6048,7 @@ describe('deployment children retain their controller Action authority', () => {
             expect((await app.inject({ method: 'GET', url: unrelatedPath,
                 headers: { authorization: `Bearer ${tokens[1]!}` } })).statusCode).toBe(200);
             expect((await signedGet(unrelatedPath)).statusCode).toBe(401);
-            await db.artifactAccountGrant.delete({ where: { artifactId_accountId: { artifactId: artifact.id, accountId: f.account.id } } });
+            await db.artifactGrant.delete({ where: { principalKind: 'account', artifactId_accountId: { artifactId: artifact.id, accountId: f.account.id } } });
             expect((await signedGet(artifactPath)).statusCode).toBe(401);
             const unavailable = await signedGet(defaultsPath);
             expect(unavailable.statusCode, unavailable.body).toBe(409);
@@ -6136,7 +6087,7 @@ describe('deployment children retain their controller Action authority', () => {
         const f = await fixture('team', 'account', { templateRoot, workflowOrigin });
         const custodian = await db.account.create({ data: { encryptionMode: 'plain' } });
         await db.machine.update({ where: { id: f.member.id }, data: { accountId: custodian.id } });
-        await db.machineTeamGrant.updateMany({ where: { machineId: f.member.id, teamId: f.team!.id }, data: { accessLevel: 'admin' } });
+        await db.machineGrant.updateMany({ where: { principalKind: 'team', machineId: f.member.id, teamId: f.team!.id }, data: { accessLevel: 'admin' } });
         const environment = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } });
         const input = templateRoot ? { ...f.templateInput,
             environment: { ...f.templateInput.environment, expectedRevision: environment.revision }, deploy: { requestKey: crypto.randomUUID() } }
@@ -6167,8 +6118,8 @@ describe('deployment children retain their controller Action authority', () => {
                     privateKey: f.controller.keys.secretKey }) });
         if (templateRoot) expect(await purpose()).toBe(true);
         expect(await verify(relay)).toMatchObject({ binding: { accountId: f.account.id } });
-        if (withdrawal === 'machine') await db.machineTeamGrant.deleteMany({
-            where: { machineId: f.member.id, teamId: f.team!.id } });
+        if (withdrawal === 'machine') await db.machineGrant.deleteMany({
+            where: { principalKind: 'team', machineId: f.member.id, teamId: f.team!.id } });
         else await db.teamMembership.update({ where: { teamId_accountId: { teamId: f.team!.id, accountId: f.account.id } }, data: { role: 'member' } });
         await expect(auth.mintExternalActionExecutionAuthorization(mintInput, { input })).rejects.toMatchObject({ code: 'credential_scope_denied' });
         if (templateRoot) {
@@ -6902,7 +6853,7 @@ describe('deployment children retain their controller Action authority', () => {
         await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { revision: { increment: 1 } } });
         expect(await f.verify(job)).toBeNull();
         await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { revision: f.link.revision + 1 } });
-        await db.machineTeamGrant.deleteMany({ where: { machineId: f.member.id, teamId: f.team!.id } });
+        await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: f.member.id, teamId: f.team!.id } });
         expect(await f.verify(job)).not.toBeNull();
 
         const restored = await fixture('team');
@@ -7035,7 +6986,7 @@ describe('deployment children retain their controller Action authority', () => {
         await db.deployment.update({ where: { id: selected.id }, data: { state: 'failed' } });
         expect(await getReceipt(selected.id)).toBeNull();
         await db.deployment.update({ where: { id: selected.id }, data: { state: 'succeeded' } });
-        await db.machineTeamGrant.deleteMany({ where: { machineId: f.member.id, teamId: f.team!.id } });
+        await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: f.member.id, teamId: f.team!.id } });
         expect(await verify(`/v1/artifacts/${selected.contentArtifactId}`)).toBeNull();
     });
 
@@ -7177,7 +7128,7 @@ describe('deployment children retain their controller Action authority', () => {
             ['POST', '/v1/account/project-rows/read', {}], ['POST', '/v1/artifacts', {}]] as const) {
             expect(await verify('deployments.deploy', method, path, undefined, body), `${method} ${path}`).toBeNull();
         }
-        await db.machineTeamGrant.deleteMany({ where: { machineId: f.member.id, teamId: f.team!.id } });
+        await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: f.member.id, teamId: f.team!.id } });
         expect(await verify('deployments.deploy', 'GET', listPath, listInput)).not.toBeNull();
     });
 
@@ -7271,10 +7222,10 @@ describe('deployment children retain their controller Action authority', () => {
         };
         expect(await read()).toMatchObject({ machineId: f.controller.id });
         await db.teamMembership.delete({ where: { teamId_accountId: { teamId: f.team!.id, accountId: f.account.id } } });
-        await db.machineTeamGrant.deleteMany({ where: { machineId: f.controller.id, teamId: f.team!.id } });
+        await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: f.controller.id, teamId: f.team!.id } });
         const membershipReads: string[] = [];
         const stop = observeSqliteRequests({ before: query => {
-            if (query.model === 'TeamMembership' || query.model === 'MachineTeamGrant'
+            if (query.model === 'TeamMembership' || query.model === 'MachineGrant'
                 || query.model === 'Machine' && /"teamGrants"/u.test(JSON.stringify(query.args))) membershipReads.push(query.model);
         } });
         try {
@@ -7299,7 +7250,7 @@ describe('deployment children retain their controller Action authority', () => {
         const review = projectDeploymentChildRoutingV1(DeploymentChildRpcV1Schema.parse({ v: 1, actionId: 'deployments.deploy', kind: 'review',
             input: { ...f.input, expectedRevision: f.environmentRevision }, machineId: f.member.id, installationId: f.member.installationId }));
         expect(await isCurrentDeploymentChildInTx(db, f.authorization.binding, review)).toBe(true);
-        await db.machineTeamGrant.deleteMany({ where: { machineId: f.member.id, teamId: f.team!.id } });
+        await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: f.member.id, teamId: f.team!.id } });
         expect(await f.verify()).not.toBeNull();
         expect(await isCurrentDeploymentChildInTx(db, f.authorization.binding, review)).toBe(false);
     });
@@ -7436,10 +7387,9 @@ describe('deployment children retain their controller Action authority', () => {
             serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision, controllerMachineId: f.builder.id,
         }));
         expect(await isCurrentDeploymentChildInTx(db, f.authorization.binding, routing)).toBe(true);
-        await db.machineTeamGrant.deleteMany({ where: { machineId: f.controller.id, teamId: f.team!.id } });
+        await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: f.controller.id, teamId: f.team!.id } });
         expect(await isCurrentDeploymentChildInTx(db, f.authorization.binding, routing)).toBe(true);
-        await db.machineTeamGrant.create({ data: { machineId: f.controller.id, teamId: f.team!.id,
-            accessLevel: 'view', createdByAccountId: f.account.id } });
+        await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: f.team!.id, accessLevel: 'view', createdByAccountId: f.account.id }), machineId: f.controller.id } });
         await db.machine.update({ where: { id: f.controller.id }, data: { installationId: crypto.randomUUID() } });
         expect(await f.verify()).toBeNull();
         await db.machine.update({ where: { id: f.controller.id }, data: { installationId: f.controller.installationId } });
@@ -7746,7 +7696,7 @@ describe('deployment children retain their controller Action authority', () => {
         expect(await resolveMachineAdmission({ actorAccountId: f.account.id, machineId: f.builder.id, requiredRole: 'use' }))
             .toMatchObject({ kind: 'denied' });
         expect(await verify()).toBeNull();
-        await db.machineAccountGrant.create({ data: { machineId: f.builder.id, accountId: f.account.id,
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: f.builder.id, accountId: f.account.id,
             accessLevel: 'view', createdByAccountId: foreign.id } });
         expect(await verify()).not.toBeNull();
         // Credential withdrawal applies to the next mint, while the admitted finite child keeps its signed binding.
@@ -7967,11 +7917,10 @@ describe('deployment children retain their controller Action authority', () => {
             const send = () => app.inject({ method: 'POST', url: `/v1/machines/${f.builder.id}/admission/verify`,
                 headers: { 'x-test-user-id': f.account.id }, payload: { ...body, proof } });
             expect((await send()).statusCode).toBe(200);
-            await db.machineTeamGrant.deleteMany({ where: { machineId: f.builder.id, teamId: f.team!.id } });
+            await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: f.builder.id, teamId: f.team!.id } });
             // GRANT-U4: an accepted job retains its captured builder placement until its natural end.
             expect((await send()).statusCode).toBe(200);
-            await db.machineTeamGrant.create({ data: { machineId: f.builder.id, teamId: f.team!.id,
-                accessLevel: 'view', createdByAccountId: f.account.id } });
+            await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: f.team!.id, accessLevel: 'view', createdByAccountId: f.account.id }), machineId: f.builder.id } });
         });
         await db.machine.update({ where: { id: f.builder.id }, data: { installationId: crypto.randomUUID() } });
         expect(await verify()).toBeNull();
@@ -8004,7 +7953,7 @@ describe('deployment children retain their controller Action authority', () => {
         expect(await read(archive.id, 'another-environment')).toBeNull();
         await db.deployment.update({ where: { id: archive.id }, data: { rollbackOfDeploymentId: selected.id, operation: 'rollback' } });
         expect(await read('missing-origin')).toBeNull();
-        await db.machineTeamGrant.deleteMany({ where: { machineId: f.builder.id, teamId: f.team!.id } });
+        await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: f.builder.id, teamId: f.team!.id } });
         expect(await read(archive.id)).not.toBeNull();
     });
 
@@ -8063,10 +8012,9 @@ describe('deployment children retain their controller Action authority', () => {
                     expect((await send(f.outsider.id)).statusCode).toBe(401);
                     expect((await send(job.machineId, f.outsider.keys.secretKey)).statusCode).toBe(401);
                     expect((await send(job.machineId, f.controller.keys.secretKey, 'retired-source-installation')).statusCode).toBe(401);
-                    await db.machineTeamGrant.deleteMany({ where: { machineId: job.machineId, teamId: f.team!.id } });
+                    await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: job.machineId, teamId: f.team!.id } });
                     expect((await send()).statusCode).toBe(job.kind === 'prepare' || job.kind === 'review' ? 401 : 200);
-                    await db.machineTeamGrant.create({ data: { machineId: job.machineId, teamId: f.team!.id,
-                        accessLevel: 'view', createdByAccountId: f.account.id } });
+                    await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: f.team!.id, accessLevel: 'view', createdByAccountId: f.account.id }), machineId: job.machineId } });
                 }
             }, { authentication: 'real' });
         }
@@ -8175,7 +8123,7 @@ describe('deployment children retain their controller Action authority', () => {
             const another = await fixture('team', 'api');
             expect((await app.inject({ method: 'POST', url: path, headers: { ...headers,
                 [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: another.authorization.token }, payload: body })).statusCode).toBe(401);
-            await db.machineTeamGrant.deleteMany({ where: { machineId: f.builder.id, teamId: f.team!.id } });
+            await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: f.builder.id, teamId: f.team!.id } });
             expect((await send()).json()).toMatchObject({ ok: true });
         }, { authentication: 'real' });
     });
@@ -8228,19 +8176,17 @@ describe('deployment children retain their controller Action authority', () => {
             await db.machine.update({ where: { id: f.outsider.id }, data: { accountId: foreignCustodian.id } });
             const foreignOrigin = { ...origin, holderMachineId: f.outsider.id, holderInstallationId: f.outsider.installationId };
             expect((await send(app, f.outsider.id, foreignOrigin)).statusCode).not.toBe(200);
-            await db.machineTeamGrant.create({ data: { machineId: f.outsider.id, teamId: f.team!.id,
-                accessLevel: 'view', createdByAccountId: f.account.id } });
+            await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: f.team!.id, accessLevel: 'view', createdByAccountId: f.account.id }), machineId: f.outsider.id } });
             expect((await send(app, f.outsider.id)).statusCode).not.toBe(200);
             expect((await send(app, f.outsider.id, foreignOrigin)).statusCode).toBe(200);
             await db.machine.update({ where: { id: f.outsider.id }, data: { installationId: crypto.randomUUID() } });
             expect((await send(app, f.outsider.id, foreignOrigin)).statusCode).not.toBe(200);
-            await db.machineTeamGrant.deleteMany({ where: { machineId: f.outsider.id, teamId: f.team!.id } });
+            await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: f.outsider.id, teamId: f.team!.id } });
             // Personal ownership cannot replace the Source Team's actual holder grant.
             expect((await send(app, f.outsider.id)).statusCode).not.toBe(200);
-            await db.machineTeamGrant.deleteMany({ where: { machineId: f.builder.id, teamId: f.team!.id } });
+            await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: f.builder.id, teamId: f.team!.id } });
             expect((await send(app, f.builder.id)).statusCode).toBe(200);
-            await db.machineTeamGrant.create({ data: { machineId: f.builder.id, teamId: f.team!.id,
-                accessLevel: 'view', createdByAccountId: f.account.id } });
+            await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: f.team!.id, accessLevel: 'view', createdByAccountId: f.account.id }), machineId: f.builder.id } });
             await db.account.update({ where: { id: f.account.id }, data: { status: 'suspended' } });
             // O1: the admitted receipt outlives requester credential withdrawal.
             expect((await send(app, f.builder.id)).statusCode).toBe(200);

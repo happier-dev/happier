@@ -22,26 +22,26 @@ describe('Session recipient transport bind budget', () => {
                 materializationPublicationId: null, materializedThroughSourceAt: null, publishedThroughServerSeq: null,
                 account: { status: 'active' },
             })) },
-            sessionShare: { findMany: async (input: Parameters<typeof selected>[1]) => selected('Share', input)
-                .map(sessionId => ({ sessionId, sharedWithUserId: 'direct' })) },
-            sessionTeamGrant: { findMany: async (input: Parameters<typeof selected>[1]) => selected('Team', input)
-                .map(sessionId => ({ sessionId, teamId: `team-${sessionId}`, effectiveAt: new Date(1) })) },
-            sessionGroupGrant: { findMany: async (input: Parameters<typeof selected>[1]) => selected('Group', input)
-                .map(sessionId => ({ sessionId, teamGroupId: 'group-id', effectiveAt: new Date(1) })) },
+            sessionGrant: { findMany: async (input: Parameters<typeof selected>[1]) => selected('Grant', input)
+                .flatMap(sessionId => [
+                    { sessionId, principalKind: 'account', accountId: 'direct', teamId: null, teamGroupId: null, effectiveAt: null },
+                    { sessionId, principalKind: 'team', accountId: null, teamId: `team-${sessionId}`, teamGroupId: null, effectiveAt: new Date(1) },
+                    { sessionId, principalKind: 'group', accountId: null, teamId: null, teamGroupId: 'group-id', effectiveAt: new Date(1) },
+                ]) },
             teamMembership: { findMany: async (input: Parameters<typeof selected>[1]) => selected('TeamMembership', input)
-                .map(teamId => ({ teamId, accountId: 'team', sessionAccessStartsAt: new Date(0) })) },
+                .map(teamId => ({ teamId, accountId: 'team', role: 'member', sessionAccessStartsAt: new Date(0) })) },
             teamGroupMembership: { findMany: async () => [{ teamGroupId: 'group-id', teamMembership: { accountId: 'group' },
                 sessionAccessStartsAt: new Date(0) }] },
         } as unknown as Tx;
         const result = await resolveCurrentSessionRecipientAccountIdsBySessionInTx(tx, { sessionIds: ['', ...sessionIds, sessionIds[0]!] });
         expect(result.size).toBe(sessionIds.length);
         for (const id of sessionIds) expect(result.get(id)).toEqual(['direct', 'group', 'owner', 'team']);
-        for (const kind of ['Session', 'Share', 'Team', 'Group']) {
+        for (const kind of ['Session', 'Grant']) {
             const reads = acquisitions.filter(read => read.kind === kind);
             expect(reads.length).toBeGreaterThan(0);
             expect(reads.flatMap(read => read.ids)).toEqual(sessionIds);
             // Session/share/grant acquisitions retain their existing portable transport allowance.
-            expect(Math.max(...reads.map(read => read.ids.length + 4))).toBeLessThanOrEqual(999);
+            expect(Math.max(...reads.map(read => read.ids.length + 5))).toBeLessThanOrEqual(999);
         }
         const membershipReads = acquisitions.filter(read => read.kind === 'TeamMembership');
         expect(membershipReads.flatMap(read => read.ids)).toEqual(sessionIds.map(id => `team-${id}`));

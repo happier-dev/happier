@@ -1,3 +1,4 @@
+import { projectResourceGrantRows } from '@/app/teams/resourceGrantAccess';
 import { isDeepStrictEqual } from "node:util";
 import type { Prisma } from "@prisma/client";
 import * as privacyKit from "privacy-kit";
@@ -89,9 +90,9 @@ export async function resolveArtifactAccessInTx(tx: Tx, input: Readonly<{
 /** Index-servable access for ordered inventory pages and their counts (see the grant owner). */
 export async function readArtifactCandidateWhereInTx(tx: Tx, actorAccountId: string): Promise<Prisma.ArtifactWhereInput> {
     return resolveResourceGrantPageAccessWhere(actorAccountId, async grants => (await Promise.all([
-        tx.artifactAccountGrant.findMany({ where: grants.account, select: { artifactId: true } }),
-        tx.artifactTeamGrant.findMany({ where: grants.team, select: { artifactId: true } }),
-        tx.artifactGroupGrant.findMany({ where: grants.group, select: { artifactId: true } }),
+        tx.artifactGrant.findMany({ where: { ...grants.account, principalKind: 'account' }, select: { artifactId: true } }),
+        tx.artifactGrant.findMany({ where: { ...grants.team, principalKind: 'team' }, select: { artifactId: true } }),
+        tx.artifactGrant.findMany({ where: { ...grants.group, principalKind: 'group' }, select: { artifactId: true } }),
     ])).map(rows => rows.map(row => row.artifactId)));
 }
 
@@ -108,15 +109,15 @@ export async function isArtifactAudienceContainedInTx(tx: Tx, input: Readonly<{
     // Current reader overlap cannot attenuate a stored principal: a foreign
     // Team can add members later, and a direct grant survives Team departure.
     const stored = await tx.artifact.findUnique({ where: { id: input.artifactId }, select: {
-        accountId: true, accountGrants: { select: { accountId: true } },
-        teamGrants: { select: { teamId: true } }, groupGrants: { select: { teamGroupId: true } },
+        accountId: true, grants: { select: { principalKind: true, accountId: true, teamId: true, teamGroupId: true } },
         signedInLink: { select: { artifactId: true } },
     } });
-    if (stored && (stored.signedInLink !== null || stored.accountId !== input.actorAccountId
-        || stored.accountGrants.some(grant => grant.accountId !== input.actorAccountId
+    const storedGrants = stored ? projectResourceGrantRows(stored.grants) : null;
+    if (stored && storedGrants && (stored.signedInLink !== null || stored.accountId !== input.actorAccountId
+        || storedGrants.accountGrants.some(grant => grant.accountId !== input.actorAccountId
             && !input.principals?.some(principal => principal.kind === 'account' && principal.accountId === grant.accountId))
-        || stored.teamGrants.some(grant => !input.principals?.some(principal => principal.kind === 'team' && principal.teamId === grant.teamId))
-        || stored.groupGrants.some(grant => !input.principals?.some(principal => principal.kind === 'group' && principal.groupId === grant.teamGroupId)))) return false;
+        || storedGrants.teamGrants.some(grant => !input.principals?.some(principal => principal.kind === 'team' && principal.teamId === grant.teamId))
+        || storedGrants.groupGrants.some(grant => !input.principals?.some(principal => principal.kind === 'group' && principal.groupId === grant.teamGroupId)))) return false;
     const allowed = new Set([input.actorAccountId, ...(await Promise.all((input.principals ?? []).map(principal =>
         readResourceGrantPrincipalAudienceInTx(tx, { ownerAccountId: input.actorAccountId, principal })))).flat()]);
     const [audience, recipients, publication] = await Promise.all([
@@ -816,12 +817,12 @@ export async function reportArtifactTemplateAcceptedVersionInTx(tx: Tx,
 /** Internal grant facts for an already admitted resource relationship; never admits a caller. */
 export async function readArtifactAccessGrantsForAdmittedCustodyInTx(tx: Tx,
     artifactId: string, selfAccountId?: string): Promise<ArtifactAccessGrantsListResponseV1['grants']> {
-    const [accounts, teams, groups] = await Promise.all([
-        tx.artifactAccountGrant.findMany({ where: { artifactId, ...(selfAccountId === undefined ? {} : { accountId: selfAccountId }) },
-            include: { account: { select: ACCOUNT_DISPLAY_PROFILE_SELECT } } }),
-        selfAccountId === undefined ? tx.artifactTeamGrant.findMany({ where: { artifactId }, include: { team: { select: { name: true } } } }) : [],
-        selfAccountId === undefined ? tx.artifactGroupGrant.findMany({ where: { artifactId }, include: { teamGroup: { select: { name: true, teamId: true } } } }) : [],
-    ]);
+    const { accountGrants: accounts, teamGrants: teams, groupGrants: groups } = projectResourceGrantRows(
+        await tx.artifactGrant.findMany({ where: { artifactId, ...(selfAccountId === undefined ? {}
+            : { principalKind: 'account', accountId: selfAccountId }) }, include: {
+            account: { select: ACCOUNT_DISPLAY_PROFILE_SELECT }, team: { select: { name: true } },
+            teamGroup: { select: { name: true, teamId: true } },
+        } }));
     return [
             ...accounts.map(row => ({ principal: { kind: "account" as const, accountId: row.accountId }, accessLevel: row.accessLevel,
                 createdByAccountId: row.createdByAccountId, createdAt: row.createdAt.getTime(), display: { name: resolveAccountDisplayLabelV1(row.account), username: row.account.username } })),
@@ -907,16 +908,16 @@ async function readArtifactGrantMutationInTx(tx: Tx, input: ArtifactAccessGrantS
     let upsert: () => Promise<unknown>;
     if (principal.kind === "account") {
         const where = { artifactId_accountId: { artifactId: input.artifactId, accountId: principal.accountId } };
-        previous = await tx.artifactAccountGrant.findUnique({ where });
-        upsert = () => tx.artifactAccountGrant.upsert({ where, create: { artifactId: input.artifactId, accountId: principal.accountId, ...data }, update: data });
+        previous = await tx.artifactGrant.findUnique({ where: { ...where, principalKind: 'account' } });
+        upsert = () => tx.artifactGrant.upsert({ where: { ...where, principalKind: 'account' }, create: { principalKind: 'account', artifactId: input.artifactId, accountId: principal.accountId, ...data }, update: data });
     } else if (principal.kind === "team") {
         const where = { artifactId_teamId: { artifactId: input.artifactId, teamId: principal.teamId } };
-        previous = await tx.artifactTeamGrant.findUnique({ where });
-        upsert = () => tx.artifactTeamGrant.upsert({ where, create: { artifactId: input.artifactId, teamId: principal.teamId, ...data }, update: data });
+        previous = await tx.artifactGrant.findUnique({ where: { ...where, principalKind: 'team' } });
+        upsert = () => tx.artifactGrant.upsert({ where: { ...where, principalKind: 'team' }, create: { principalKind: 'team', artifactId: input.artifactId, teamId: principal.teamId, ...data }, update: data });
     } else {
         const where = { artifactId_teamGroupId: { artifactId: input.artifactId, teamGroupId: principal.groupId } };
-        previous = await tx.artifactGroupGrant.findUnique({ where });
-        upsert = () => tx.artifactGroupGrant.upsert({ where, create: { artifactId: input.artifactId, teamGroupId: principal.groupId, ...data }, update: data });
+        previous = await tx.artifactGrant.findUnique({ where: { ...where, principalKind: 'group' } });
+        upsert = () => tx.artifactGrant.upsert({ where: { ...where, principalKind: 'group' }, create: { principalKind: 'group', artifactId: input.artifactId, teamGroupId: principal.groupId, ...data }, update: data });
     }
     return { previous, upsert };
 }
@@ -934,10 +935,10 @@ export async function removeArtifactAccessGrantInTx(tx: Tx, input: ArtifactAcces
         if (!group || group.teamId !== principal.teamId) return { ok: false, error: "artifact_subject_not_found" };
     }
     const deleted = principal.kind === "account"
-        ? await tx.artifactAccountGrant.deleteMany({ where: { artifactId: input.artifactId, accountId: principal.accountId } })
+        ? await tx.artifactGrant.deleteMany({ where: { principalKind: 'account', artifactId: input.artifactId, accountId: principal.accountId } })
         : principal.kind === "team"
-            ? await tx.artifactTeamGrant.deleteMany({ where: { artifactId: input.artifactId, teamId: principal.teamId } })
-            : await tx.artifactGroupGrant.deleteMany({ where: { artifactId: input.artifactId, teamGroupId: principal.groupId } });
+            ? await tx.artifactGrant.deleteMany({ where: { principalKind: 'team', artifactId: input.artifactId, teamId: principal.teamId } })
+            : await tx.artifactGrant.deleteMany({ where: { principalKind: 'group', artifactId: input.artifactId, teamGroupId: principal.groupId } });
     const audience = await resolveArtifactAudienceInTx(tx, input.artifactId);
     await tx.artifactKeyEnvelope.deleteMany({ where: { artifactId: input.artifactId, recipientAccountId: { notIn: audience } } });
     if (deleted.count > 0) {

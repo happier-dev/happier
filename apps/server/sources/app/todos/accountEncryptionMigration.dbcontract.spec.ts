@@ -58,7 +58,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('Task Account-m
         const team = await db.team.create({ data: { name: randomUUID() } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: recipient.id, role: 'member' } });
-        const grant = await db.taskTeamGrant.create({ data: { taskId: row.id, teamId: team.id, accessLevel: 'edit', createdByAccountId: owner.id } });
+        const grant = await db.taskGrant.create({ data: { principalKind: 'team', taskId: row.id, teamId: team.id, accessLevel: 'edit', createdByAccountId: owner.id } });
         const dataKey = tweetnacl.randomBytes(32);
         const envelope = (recipientAccountId: string, contentPublicKey: Uint8Array) => ({ recipientAccountId,
             recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(contentPublicKey),
@@ -98,7 +98,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('Task Account-m
             expect(await inTx(tx => matchAccountJsonKvEncryptionMigrationPostStateInTx({ tx, accountId: owner.id, namespace: 'todo', toMode: 'e2ee', directive: encryptedDirective }))).toEqual({ status: 'matched' });
             expect(await convert('e2ee', 'plain', { action: 'migrate', items: [{ key: row.key, expectedVersion: 4, value: encoded(plain), recipientKeyEnvelopes: [] }] })).toMatchObject({ success: true, mode: 'plain' });
             expect(await db.userKVStore.findMany({ where: { accountId: owner.id } })).toMatchObject([{ id: row.id, key: row.key, version: 5, value: bytes(plain) }]);
-            expect(await db.taskTeamGrant.findUniqueOrThrow({ where: { taskId_teamId: { taskId: row.id, teamId: team.id } } })).toEqual(grant);
+            expect(await db.taskGrant.findUniqueOrThrow({ where: { taskId_teamId: { taskId: row.id, teamId: team.id } } })).toEqual(grant);
             expect(await db.taskKeyEnvelope.count({ where: { taskId: row.id } })).toBe(0);
         });
     });
@@ -109,14 +109,14 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('Task Account-m
         const recipient = await db.account.create({ data: { encryptionMode: 'plain' } });
         const row = await db.userKVStore.create({ data: { accountId: owner.id, key: `todo.${randomUUID()}`, version: 2,
             value: bytes({ t: 'encrypted', k: 'task', c: 'retained-resource-ciphertext' }) } });
-        await db.taskAccountGrant.create({ data: { taskId: row.id, accountId: recipient.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.taskGrant.create({ data: { principalKind: 'account', taskId: row.id, accountId: recipient.id, accessLevel: 'view', createdByAccountId: owner.id } });
         const key = privacyKit.decodeBase64(privacyKit.encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: tweetnacl.randomBytes(32), recipientPublicKey: binding.contentPublicKey, randomBytes: tweetnacl.randomBytes })));
         await db.taskKeyEnvelope.create({ data: { taskId: row.id, recipientAccountId: owner.id, encryptedDataKey: key,
             recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(binding.contentPublicKey) } });
         await db.userKVStore.create({ data: { accountId: owner.id, key: 'todo.index', value: new Uint8Array([1, 2, 3]), version: 1 } });
         await db.userKVStore.create({ data: { accountId: owner.id, key: 'todo.bad', value: bytes({ t: 'encrypted' }), version: 5 } });
         const before = await Promise.all([db.account.findUniqueOrThrow({ where: { id: owner.id } }), db.userKVStore.findMany({ where: { accountId: owner.id }, orderBy: { key: 'asc' } }),
-            db.taskAccountGrant.findMany({ where: { taskId: row.id } }), db.taskKeyEnvelope.findMany({ where: { taskId: row.id } })]);
+            db.taskGrant.findMany({ where: { taskId: row.id } }), db.taskKeyEnvelope.findMany({ where: { taskId: row.id } })]);
         const result = await inTx(tx => migrateAccountJsonKvEncryptionInTx({ tx, accountId: owner.id, namespace: 'todo', fromMode: 'e2ee', toMode: 'plain',
             directive: { action: 'migrate', items: [{ key: row.key, expectedVersion: row.version, value: encoded({ t: 'plain', v: {} }), recipientKeyEnvelopes: [] }] } }));
         expect(result).toEqual({ status: 'migration_incomplete' });
@@ -128,7 +128,7 @@ describe.skipIf(provider !== 'postgres' && provider !== 'mysql')('Task Account-m
                 { key: 'todo.bad', expectedVersion: 5, value: encoded({ t: 'plain', v: {} }) },
             ] } }))).toEqual({ status: 'invalid_content' });
         expect(await Promise.all([db.account.findUniqueOrThrow({ where: { id: owner.id } }), db.userKVStore.findMany({ where: { accountId: owner.id }, orderBy: { key: 'asc' } }),
-            db.taskAccountGrant.findMany({ where: { taskId: row.id } }), db.taskKeyEnvelope.findMany({ where: { taskId: row.id } })])).toEqual(before);
+            db.taskGrant.findMany({ where: { taskId: row.id } }), db.taskKeyEnvelope.findMany({ where: { taskId: row.id } })])).toEqual(before);
     });
 
     it('inventories every nonnull owner Todo row, including legacy, index and malformed content, without disclosing another Account', async () => {

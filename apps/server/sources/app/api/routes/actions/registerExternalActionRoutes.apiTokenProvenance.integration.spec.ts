@@ -152,7 +152,7 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
         const controller = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: account.id,
             metadata: encodePlainMachineStoredContent({ host: 'ci-controller', platform: 'linux' }),
             dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
-            installationId: crypto.randomUUID(), installationPublicKey: installationKeys.publicKey, active: true,
+            installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(installationKeys.publicKey), active: true,
             operationProtocolCapabilitiesRevision: 1,
             operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } },
         } });
@@ -182,9 +182,8 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
             targets: { sessions: [], machines: [], environments: [environmentId] }, approve: false, create: null,
         });
         const deployment = { serverId, environmentId, deployApproval: 'automatic' as const };
-        const deploymentApproval = { input: { serverId, environmentId } };
         const pat = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(),
-            label: "Staging CI", grant, deployment, deploymentApproval });
+            label: "Staging CI", grant, deployment });
         const askToken = await auth.createApiToken({ accountId: account.id, tokenId: crypto.randomUUID(),
             label: 'Independent Ask token', grant, deployment: { ...deployment, deployApproval: 'ask' } });
         const forwarded: string[] = [];
@@ -324,7 +323,7 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
             await auth.updateApiToken({ accountId: account.id, tokenId: pat.tokenId,
                 deployment: { ...deployment, deployApproval: 'ask' } });
             expect(await verifyCurrentExternalActionPrincipal(issuedBinding)).toBeNull();
-            await auth.updateApiToken({ accountId: account.id, tokenId: pat.tokenId, deployment, deploymentApproval });
+            await auth.updateApiToken({ accountId: account.id, tokenId: pat.tokenId, deployment });
             expect(await verifyCurrentExternalActionPrincipal(issuedBinding)).not.toBeNull();
             await db.accountApiToken.update({ where: { id: pat.tokenId }, data: { expiresAt: new Date(Date.now() - 1) } });
             expect(await verifyCurrentExternalActionPrincipal(issuedBinding)).toBeNull();
@@ -354,7 +353,7 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
         await db.machine.create({ data: { id: machineId, accountId: account.id,
             metadata: encodePlainMachineStoredContent({ host: "grant-test", platform: "linux" }),
             dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, "base64"),
-            installationId, installationPublicKey: installationKeys.publicKey, active: true,
+            installationId, installationPublicKey: new Uint8Array(installationKeys.publicKey), active: true,
             operationProtocolCapabilitiesRevision: 1,
             operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } },
         } });
@@ -696,7 +695,7 @@ describe("registerExternalActionRoutes (API-token provenance) (integration)", ()
             operationProtocolCapabilitiesRevision: 1,
             operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } } } });
         // `view` is the Machine Use role.
-        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: grantee.id,
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id, accountId: grantee.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         const surface = { serverId: await getOrCreateServerIdentityId(), accountId: owner.id,
             owner: { kind: 'companion' as const, sessionId: crypto.randomUUID() } };

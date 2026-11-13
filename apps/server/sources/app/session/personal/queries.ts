@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 import type { SessionListScopeV1 } from '@happier-dev/protocol/sessions/listing/query';
 import { type Tx } from "@/storage/inTx";
 import { db } from "@/storage/db";
+import { getDbProviderFromEnv } from "@/storage/prisma";
 import {
     createSessionsWithDiscussionMentionWhere,
     createSessionsWithHumanDiscussionAuthorshipWhere,
@@ -127,6 +128,10 @@ export async function countSessionPersonalAttentionRowsInTx(tx: Tx, params: Read
     let count = 0;
     for await (const rows of iterateBoundedSessionPersonalAttentionRows<SessionPersonalAttentionProjectionRow, string>({
         readCandidates: async ({ cursor, take }) => await tx.session.findMany({
+            // Keep the large access/audience predicate out of PostgreSQL's
+            // lateral projection joins. Prisma batches relations after LIMIT
+            // inside this same transaction, as the Artifact inventory does.
+            ...(getDbProviderFromEnv(process.env, "postgres") === "postgres" ? { relationLoadStrategy: "query" as const } : {}),
             where: {
                 AND: [
                     params.where,
@@ -191,6 +196,7 @@ export async function countAccountPersonalAttentionRowsForAccountsInTx(
 
         for await (const rows of iterateBoundedSessionPersonalAttentionRows<SessionPersonalAttentionProjectionRow, string>({
             readCandidates: async ({ cursor, take }) => await tx.session.findMany({
+                ...(getDbProviderFromEnv(process.env, "postgres") === "postgres" ? { relationLoadStrategy: "query" as const } : {}),
                 where: {
                     AND: [
                         { archivedAt: null },
@@ -328,7 +334,7 @@ function sessionIdsWhere(...sets: ReadonlyArray<readonly string[]>): Prisma.Sess
  */
 async function createSessionParticipationWhere(tx: Tx, accountId: string): Promise<readonly Prisma.SessionWhereInput[]> {
     const [shares, authored, discussionAuthorship] = await Promise.all([
-        tx.sessionShare.findMany({ where: { sharedWithUserId: accountId }, select: { sessionId: true } }),
+        tx.sessionGrant.findMany({ where: { principalKind: 'account', accountId: accountId }, select: { sessionId: true } }),
         // Owned Sessions already match the ownership arm; transcript authorship
         // only adds another Account's Session.
         tx.sessionMessage.groupBy({

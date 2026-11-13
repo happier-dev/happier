@@ -126,7 +126,7 @@ it.each([
             metadata: encodePlainMachineStoredContent(MachinePublishedMetadataV1Schema.parse({
                 host: 'fixture', platform: 'linux', happyCliVersion: '0.3.0', homeDir: '/fixture', happyHomeDir: '/fixture',
             })) } });
-        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: account.id,
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id, accountId: account.id,
             accessLevel: 'admin', createdByAccountId: owner.id } });
     }
     let response: unknown;

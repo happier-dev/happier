@@ -30,7 +30,7 @@ describe('deleteSessionTree', () => {
             account: { status: 'active' }, currentStorageState: 'hosted',
             acceptedThroughServerSeq: null, materializationPublicationId: null,
             materializedThroughSourceAt: null, publishedThroughServerSeq: null,
-            teamGrants: [], groupGrants: [],
+            grants: [], 
         };
         const account = {
             findMany: vi.fn(async () => [{ id: 'account-1' }]),
@@ -49,9 +49,9 @@ describe('deleteSessionTree', () => {
             account,
             accountChange,
             $queryRawUnsafe: queryRawUnsafe,
-            sessionShare: { findMany: vi.fn(async () => []) },
-            sessionTeamGrant: { findMany: vi.fn(async () => []) },
-            sessionGroupGrant: { findMany: vi.fn(async () => []) },
+            sessionGrant: { findMany: vi.fn(async () => []) },
+            
+            
             sessionMessage: { deleteMany: deleteMessages },
             usageReport: { deleteMany: vi.fn(async () => ({ count: 0 })) },
             accessKey: { deleteMany: vi.fn(async () => ({ count: 0 })) },

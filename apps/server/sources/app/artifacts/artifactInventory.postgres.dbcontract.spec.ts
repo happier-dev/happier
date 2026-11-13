@@ -69,7 +69,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
         await db.artifact.create({ data: data(owner.id, 'prompt') });
         const unknown = await db.artifact.create({ data: data(owner.id, null) });
         await db.artifact.create({ data: data(stranger.id, null) });
-        await db.artifactAccountGrant.createMany({ data: [skill, unknown].map(artifact => ({ artifactId: artifact.id,
+        await db.artifactGrant.createMany({ data: [skill, unknown].map(artifact => ({ principalKind: 'account', artifactId: artifact.id,
             accountId: recipient.id, accessLevel: 'view' as const, createdByAccountId: owner.id })) });
         await db.$transaction(async tx => {
             const rows = await listArtifactHeadersForCallerInTx(tx, { actorAccountId: recipient.id, kind: 'skill', limit: 500, cursor: null });
@@ -84,7 +84,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
             const filtered = await app.inject({ method: 'GET', url: '/v1/artifacts?kind=skill&limit=1', headers });
             expect(filtered.statusCode, filtered.body).toBe(200);
             expect(filtered.json()).toMatchObject({ items: [{ id: skill.id, kind: 'skill' }], hasUnclassified: true });
-            await db.artifactAccountGrant.deleteMany({ where: { artifactId: unknown.id, accountId: recipient.id } });
+            await db.artifactGrant.deleteMany({ where: { principalKind: 'account', artifactId: unknown.id, accountId: recipient.id } });
             const afterRevocation = await app.inject({ method: 'GET', url: '/v1/artifacts?kind=skill&limit=1', headers });
             expect(afterRevocation.statusCode, afterRevocation.body).toBe(200);
             expect(afterRevocation.json()).toMatchObject({ items: [{ id: skill.id }], hasUnclassified: false });
@@ -104,7 +104,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
             headerVersion: 1, bodyVersion: 1, seq: 1 });
         await db.artifact.createMany({ data: Array.from({ length: 2500 }, () => artifactData(owner.id)) });
         const shared = await db.artifact.create({ data: artifactData(other.id) });
-        await db.artifactAccountGrant.create({ data: { artifactId: shared.id, accountId: owner.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: shared.id, accountId: owner.id,
             accessLevel: 'view', createdByAccountId: other.id } });
 
         type Variant = 'owner' | 'batched-control';

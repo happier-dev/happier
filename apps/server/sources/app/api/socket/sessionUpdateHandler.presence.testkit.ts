@@ -54,8 +54,8 @@ export async function assertKeepaliveRealtimeFreshness(): Promise<void> {
         latestTurnId: 'finished-turn', latestTurnStatus: 'completed', thinking: false,
         runtimeActivityState: 'unknown', runtimeActivityActiveCount: 0,
     } });
-    await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id,
-        sharedWithUserId: viewer.id, accessLevel: 'view' } });
+    await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id,
+        accountId: viewer.id, accessLevel: 'view' } });
     await db.accessKey.create({ data: { accountId: owner.id, machineId: machine.id, sessionId: session.id, data: 'encrypted' } });
     let clockMs = Date.now();
     const startedAt = clockMs;

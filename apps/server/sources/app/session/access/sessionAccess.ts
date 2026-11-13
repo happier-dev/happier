@@ -1,3 +1,4 @@
+import { resolveResourceGrantMatchedContributionsFromFacts, projectResourceGrantRows, type ResourceGrantPrincipalFacts } from '@/app/teams/resourceGrantAccess';
 import { db } from "@/storage/db";
 import { inReadSnapshot, type Tx } from "@/storage/inTx";
 import type { Prisma } from "@prisma/client";
@@ -8,7 +9,6 @@ import type { SessionCollectiveAccessSnapshot } from "./sessionAccessWhere";
 import { verifyCurrentMaterializedRunnerPrincipalInTx } from "@/app/ephemeralRunner/materializedRunnerPrincipalCurrentness";
 import { mayInjectSessionContextInTx } from './sessionContextInjection';
 import {
-    qualifySessionTeamAuthenticationInTx,
     qualifySessionTeamAuthenticationsInTx,
     resolveQualifiedSessionTeamIdsInTx,
     type SessionAccessAuthentication,
@@ -100,24 +100,21 @@ export function buildSessionAccessProjectionSelectForAccounts(accountIds: readon
         primaryTeamId: true,
         ...SESSION_TRANSCRIPT_PUBLICATION_SELECT,
         account: { select: { status: true } },
-        shares: { where: { sharedWithUserId: { in: [...accountIds] }, sharedWithUser: { status: "active" } }, select: { id: true, sharedWithUserId: true, accessLevel: true, canApprovePermissions: true } },
-        teamGrants: {
-            // Reuse the list's already-captured membership audience. Repeating
-            // its inverse EXISTS here lets sparse grant tables drive a nested
-            // Team/membership/Account scan for every Session. The nested select
-            // retains exact membership identity, status and horizon facts.
-            where: { ...(teamIds ? { teamId: { in: teamIds } } : {}), team: { archivedAt: null,
-                ...(snapshot || !collectiveEnabled ? {} : { memberships: { some: teamMembership } }) } },
+        grants: {
+            where: { OR: [
+                { principalKind: 'account', accountId: { in: [...accountIds] }, account: { status: 'active' } },
+                { principalKind: 'team', ...(teamIds ? { teamId: { in: teamIds } } : {}), team: { archivedAt: null,
+                    ...(snapshot || !collectiveEnabled ? {} : { memberships: { some: teamMembership } }) } },
+                { principalKind: 'group', ...(groupIds ? { teamGroupId: { in: groupIds } } : {}),
+                    teamGroup: { archivedAt: null, team: { archivedAt: null },
+                        ...(snapshot || !collectiveEnabled ? {} : { memberships: { some: groupMembership } }) } },
+            ] },
             select: {
-                teamId: true, effectiveAt: true, accessLevel: true, canApprovePermissions: true, requiredByTeamPolicy: true,
-                team: { select: { authenticationPolicy: true, memberships: { where: teamMembership, select: { accountId: true, sessionAccessStartsAt: true } } } },
-            },
-        },
-        groupGrants: {
-            where: { ...(groupIds ? { teamGroupId: { in: groupIds } } : {}), teamGroup: { archivedAt: null, team: { archivedAt: null },
-                ...(snapshot || !collectiveEnabled ? {} : { memberships: { some: groupMembership } }) } },
-            select: {
-                teamGroupId: true, effectiveAt: true, accessLevel: true, canApprovePermissions: true,
+                id: true, principalKind: true, accountId: true, teamId: true, teamGroupId: true,
+                effectiveAt: true, accessLevel: true, canApprovePermissions: true, requiredByTeamPolicy: true,
+                account: { select: { status: true } },
+                team: { select: { authenticationPolicy: true, memberships: { where: teamMembership,
+                    select: { accountId: true, role: true, sessionAccessStartsAt: true } } } },
                 teamGroup: { select: { teamId: true, team: { select: { authenticationPolicy: true } }, memberships: {
                     where: groupMembership, select: { sessionAccessStartsAt: true, teamMembership: { select: { accountId: true } } },
                 } } },
@@ -125,6 +122,7 @@ export function buildSessionAccessProjectionSelectForAccounts(accountIds: readon
         },
     } as const satisfies Prisma.SessionSelect;
 }
+
 export function buildSessionAccessProjectionSelect(accountId: string, context: SessionAccessProjectionContext = {}) {
     return buildSessionAccessProjectionSelectForAccounts([accountId], context);
 }
@@ -184,27 +182,60 @@ export function projectEffectiveSessionAccess(
     const owner = row.accountId === accountId;
     if (owner && !isActiveHomeAccountStatus(row.account.status)) return null;
     if (!owner && !isSessionTranscriptShareable(row)) return null;
-    const grants: ApplicableSessionGrant[] = row.shares.filter(grant => grant.sharedWithUserId === accountId).map(grant => ({
-        source: { kind: "direct", shareId: grant.id }, accessLevel: grant.accessLevel, canApprovePermissions: grant.canApprovePermissions,
-    }));
-    for (const grant of options.mode === "legacy_owner_or_direct" ? [] : row.teamGrants) {
-        if (!options.includeCredentialRestrictedTeamEntitlements
-            && !options.qualifiedTeamIds?.has(grant.teamId)) continue;
-        const membership = grant.team.memberships.find(value => value.accountId === accountId);
-        if (!membership || !isGrantAfterMembershipHorizon(grant.effectiveAt, membership.sessionAccessStartsAt)) continue;
-        grants.push({ source: { kind: "team", teamId: grant.teamId, requiredByTeamPolicy: grant.requiredByTeamPolicy }, accessLevel: grant.accessLevel, canApprovePermissions: grant.canApprovePermissions });
-    }
-    for (const grant of options.mode === "legacy_owner_or_direct" ? [] : row.groupGrants) {
-        if (!options.includeCredentialRestrictedTeamEntitlements
-            && !options.qualifiedTeamIds?.has(grant.teamGroup.teamId)) continue;
-        const membership = grant.teamGroup.memberships.find(value => value.teamMembership.accountId === accountId);
-        if (!membership || !isGrantAfterMembershipHorizon(grant.effectiveAt, membership.sessionAccessStartsAt)) continue;
-        grants.push({ source: { kind: "group", teamId: grant.teamGroup.teamId, groupId: grant.teamGroupId }, accessLevel: grant.accessLevel, canApprovePermissions: grant.canApprovePermissions });
-    }
+    const grants = matchSessionGrantContributions(row, accountId, options.mode !== 'legacy_owner_or_direct')
+        .filter(({ team }) => !team || options.includeCredentialRestrictedTeamEntitlements || options.qualifiedTeamIds?.has(team.id))
+        .map(({ grant }) => grant);
     const access = projectApplicableSessionGrants(accountId, row.id, owner, grants);
     // Authored context is safe display context for every authorized reader. It is
     // not audience authority and may name a Team unrelated to the decisive grant.
     return access ? { ...access, primaryTeamId: row.primaryTeamId ?? null } : null;
+}
+
+interface SessionGrantContribution {
+    readonly grant: ApplicableSessionGrant;
+    readonly team?: Readonly<{ id: string; authenticationPolicy: unknown }>;
+}
+
+/** Storage filters supply current lifecycle facts; Session alone adds its strict history horizon. */
+function matchSessionGrantContributions(row: SessionAccessProjectionRow, accountId: string, collective: boolean): SessionGrantContribution[] {
+    const projected = projectResourceGrantRows(row.grants);
+    const facts: { principal: ResourceGrantPrincipalFacts; contribution: SessionGrantContribution }[] = projected.accountGrants.map(grant => ({
+        principal: { kind: 'account', accountId: grant.accountId, active: isActiveHomeAccountStatus(grant.account.status) },
+        contribution: { grant: { source: { kind: 'direct', shareId: grant.id }, accessLevel: grant.accessLevel,
+            canApprovePermissions: grant.canApprovePermissions } },
+    }));
+    if (collective) {
+        for (const grant of projected.teamGrants) facts.push({
+            principal: { kind: 'team', memberships: grant.team.memberships.map(member => ({
+                accountId: member.accountId, role: member.role,
+                effective: isGrantAfterMembershipHorizon(grant.effectiveAt!, member.sessionAccessStartsAt),
+            })) },
+            contribution: { team: { id: grant.teamId, authenticationPolicy: grant.team.authenticationPolicy }, grant: {
+                source: { kind: 'team', teamId: grant.teamId, requiredByTeamPolicy: grant.requiredByTeamPolicy },
+                accessLevel: grant.accessLevel, canApprovePermissions: grant.canApprovePermissions,
+            } },
+        });
+        for (const grant of projected.groupGrants) facts.push({
+            principal: { kind: 'group', memberships: grant.teamGroup.memberships.map(member => ({
+                accountId: member.teamMembership.accountId,
+                effective: isGrantAfterMembershipHorizon(grant.effectiveAt!, member.sessionAccessStartsAt),
+            })) },
+            contribution: { team: { id: grant.teamGroup.teamId, authenticationPolicy: grant.teamGroup.team.authenticationPolicy }, grant: {
+                source: { kind: 'group', teamId: grant.teamGroup.teamId, groupId: grant.teamGroupId },
+                accessLevel: grant.accessLevel, canApprovePermissions: grant.canApprovePermissions,
+            } },
+        });
+    }
+    return resolveResourceGrantMatchedContributionsFromFacts(facts, accountId);
+}
+
+/** Team policy facts are projected from the same unified Session grant rows. */
+function sessionGrantTeams(row: SessionAccessProjectionRow) {
+    const grants = projectResourceGrantRows(row.grants);
+    return [
+        ...grants.teamGrants.map(grant => ({ id: grant.teamId, authenticationPolicy: grant.team.authenticationPolicy })),
+        ...grants.groupGrants.map(grant => ({ id: grant.teamGroup.teamId, authenticationPolicy: grant.teamGroup.team.authenticationPolicy })),
+    ];
 }
 
 export type SessionAccessOperationDecision =
@@ -212,15 +243,6 @@ export type SessionAccessOperationDecision =
     | Readonly<{ status: "authentication_required" }>
     | Readonly<{ status: "authentication_unavailable" }>
     | Readonly<{ status: "unavailable" }>;
-
-function projectIndependentSessionAccess(row: SessionAccessProjectionRow, accountId: string): EffectiveSessionAccess | null {
-    const independentRow = {
-        ...row,
-        teamGrants: [],
-        groupGrants: [],
-    };
-    return projectEffectiveSessionAccess(independentRow, accountId);
-}
 
 function projectExactSessionRuntimeAccess(
     row: SessionAccessProjectionRow,
@@ -253,14 +275,7 @@ function projectExactSessionRuntimeAccess(
     };
 }
 
-/**
- * Credential-qualified protected-operation decision. Structural entitlement and Team
- * authentication remain separate until this single composition point; owner/direct OR
- * paths therefore cannot be suppressed by a failing Team-derived path.
- */
-export async function resolveSessionAccessForOperation(
-    reader: Tx,
-    input: Readonly<{
+export type SessionAccessOperationInput = Readonly<{
         accountId: string;
         sessionId: string;
         authentication: SessionAccessAuthentication;
@@ -286,169 +301,101 @@ export async function resolveSessionAccessForOperation(
          * exact Session, so a released reader still pays for one row read.
          */
         row?: SessionAccessProjectionRow;
-    }>,
-): Promise<SessionAccessOperationDecision> {
-    return resolveSessionAccessForOperationWithTeamQualifications(reader, input);
+    }>;
+export type SessionAccessCapabilityRequest = Pick<SessionAccessOperationInput, 'capability' | 'accessMode'>;
+type SessionAccessActor = Omit<SessionAccessOperationInput, 'capability' | 'accessMode'>;
+type SessionTeamQualifications = Awaited<ReturnType<typeof qualifySessionTeamAuthenticationsInTx>>;
+
+/** Single-operation callers consume the same batch-of-one capability decision. */
+export async function resolveSessionAccessForOperation(reader: Tx, input: SessionAccessOperationInput): Promise<SessionAccessOperationDecision> {
+    const { capability, accessMode, ...actor } = input;
+    return (await resolveSessionAccessCapabilityDecisions(reader, actor, [{ capability, accessMode }]))[0]!;
 }
 
-/** Batch callers carry same-snapshot qualification facts; every access decision stays here. */
-async function resolveSessionAccessForOperationWithTeamQualifications(
-    reader: Tx,
-    input: Parameters<typeof resolveSessionAccessForOperation>[1],
-    teamQualifications?: Awaited<ReturnType<typeof qualifySessionTeamAuthenticationsInTx>>,
-): Promise<SessionAccessOperationDecision> {
-    const grant = input.authentication.apiTokenGrant;
-    const exactTokenAction = grant && input.apiTokenAction;
-    if (grant && exactTokenAction && !evaluateApiTokenGrantV1({
-        grant, actionId: exactTokenAction.actionId,
-        target: { kind: "session", sessionId: input.sessionId },
-        targetMachineId: exactTokenAction.targetMachineId,
-    }).ok) return { status: "unavailable" };
-    const admitAccess = async (resolved: EffectiveSessionAccess): Promise<SessionAccessOperationDecision> => {
-        let access = resolved;
-        if (input.authentication.apiTokenGrant) {
-            const ceiling = new Set<string>(resolveApiTokenSessionCapabilityCeilingV1(input.authentication.apiTokenGrant));
-            const capabilities = { ...resolved.capabilities };
-            for (const capability of Object.keys(capabilities) as SessionCapability[]) {
-                capabilities[capability] = capabilities[capability] && ceiling.has(capability);
-            }
-            access = { ...resolved, capabilities };
-        }
-        // Exact Action admission still requires the underlying Account/share
-        // capability; the capped projection continues to describe the UI surface.
-        if (input.capability !== undefined && !(exactTokenAction ? resolved : access).capabilities[input.capability]) {
-            return { status: 'unavailable' };
-        }
-        const destinationSessionId = input.authentication.contentDisclosureSessionId;
-        if (input.capability === 'readTranscript' && destinationSessionId && destinationSessionId !== input.sessionId) {
-            // Read admission, including the post-snapshot fence, observes the
-            // complete current destination audience. Pairwise projections do
-            // not request a content capability and therefore do not recurse.
-            const disclosure = await mayInjectSessionContextInTx(reader, { configuringAccountId: input.accountId,
-                sourceSessionId: input.sessionId, destinationSessionId, authentication: input.authentication });
-            if (!disclosure.ok) return { status: 'unavailable' };
-        }
-        return { status: 'allowed', access };
-    };
-    const runtimePrincipal = input.authentication.sessionRuntimePrincipal;
-    if (
-        runtimePrincipal
-        && !await verifyCurrentMaterializedRunnerPrincipalInTx(reader, runtimePrincipal)
-    ) {
-        return { status: "unavailable" };
+/** One row/facts pass, with independent capability and released-reader projections. */
+export async function resolveSessionAccessCapabilityDecisions(reader: Tx, actor: SessionAccessActor,
+    requests: readonly SessionAccessCapabilityRequest[], teamQualifications?: SessionTeamQualifications,
+): Promise<readonly SessionAccessOperationDecision[]> {
+    if (requests.length === 0) return [];
+    const principal = actor.authentication.sessionRuntimePrincipal;
+    if (principal && !await verifyCurrentMaterializedRunnerPrincipalInTx(reader, principal)) {
+        return requests.map(() => ({ status: 'unavailable' }));
     }
-    const row = input.row ?? await reader.session.findUnique({
-        where: { id: input.sessionId },
-        select: buildSessionAccessProjectionSelect(input.accountId),
+    return resolveSessionAccessCapabilityDecisionsFromRow(reader, actor, requests, actor.row, teamQualifications);
+}
+
+async function resolveSessionAccessCapabilityDecisionsFromRow(reader: Tx, actor: SessionAccessActor,
+    requests: readonly SessionAccessCapabilityRequest[], suppliedRow: SessionAccessProjectionRow | null | undefined,
+    teamQualifications?: SessionTeamQualifications,
+): Promise<readonly SessionAccessOperationDecision[]> {
+    const unavailable = (): readonly SessionAccessOperationDecision[] => requests.map(() => ({ status: 'unavailable' }));
+    const tokenGrant = actor.authentication.apiTokenGrant;
+    const exactTokenAction = tokenGrant && actor.apiTokenAction;
+    if (tokenGrant && exactTokenAction && !evaluateApiTokenGrantV1({ grant: tokenGrant, actionId: exactTokenAction.actionId,
+        target: { kind: 'session', sessionId: actor.sessionId }, targetMachineId: exactTokenAction.targetMachineId }).ok) return unavailable();
+    const row = suppliedRow === undefined ? await reader.session.findUnique({ where: { id: actor.sessionId },
+        select: buildSessionAccessProjectionSelect(actor.accountId) }) : suppliedRow;
+    if (!row || row.id !== actor.sessionId) return unavailable();
+    const runtimePrincipal = actor.authentication.sessionRuntimePrincipal;
+    const runtimeAccess = runtimePrincipal ? projectExactSessionRuntimeAccess(row, actor.accountId, actor.authentication) : null;
+    if (runtimePrincipal && !runtimeAccess) return unavailable();
+    const owner = row.accountId === actor.accountId;
+    const shareable = isSessionTranscriptShareable(row);
+    const collective = !runtimePrincipal && !owner && shareable
+        && requests.some(request => request.accessMode !== 'legacy_owner_or_direct');
+    const contributions = !runtimePrincipal && (owner || shareable) ? matchSessionGrantContributions(row, actor.accountId, collective) : [];
+    const independent = runtimeAccess ?? ((owner && isActiveHomeAccountStatus(row.account.status)) || (!owner && shareable)
+        ? projectApplicableSessionGrants(actor.accountId, row.id, owner, contributions.filter(item => !item.team).map(item => item.grant)) : null);
+    const independentAccess = independent ? { ...independent, primaryTeamId: row.primaryTeamId ?? null } : null;
+    const qualifications = teamQualifications ?? await qualifySessionTeamAuthenticationsInTx(reader, {
+        accountId: actor.accountId, authentication: actor.authentication,
+        teams: contributions.flatMap(({ team }) => team ? [team] : []),
     });
-    // A supplied row that names another Session fails closed instead of
-    // authorizing it; the decision below reads the row, not the requested id.
-    if (!row || row.id !== input.sessionId) return { status: "unavailable" };
-
-    if (runtimePrincipal) {
-        const access = projectExactSessionRuntimeAccess(row, input.accountId, input.authentication);
-        if (!access) return { status: "unavailable" };
-        return admitAccess(access);
+    const grants: ApplicableSessionGrant[] = [];
+    const unqualified: { capabilities: EffectiveSessionAccess['capabilities']; status: 'authentication_required' | 'unavailable' }[] = [];
+    for (const contribution of contributions) {
+        const qualification = contribution.team ? qualifications.get(contribution.team.id) ?? { status: 'unavailable' as const } : null;
+        if (qualification && qualification.status !== 'satisfied') unqualified.push({ capabilities: projectSessionAccessCapabilitiesV1({ owner: false, grants: [contribution.grant] }), status: qualification.status });
+        else grants.push(contribution.grant);
     }
-
-    if (input.accessMode === "legacy_owner_or_direct") {
-        // Released seam projection. Collective entitlement is not merely
-        // unqualified here, it is absent from the answer, so an old reader can
-        // never receive Team- or Group-derived access or a Team-derived
-        // authentication continuation.
-        const released = projectIndependentSessionAccess(row, input.accountId);
-        if (!released) return { status: "unavailable" };
-        return admitAccess(released);
-    }
-
-    const independent = projectIndependentSessionAccess(row, input.accountId);
-    // Ownership is already the strongest possible answer. A direct grant is not:
-    // it must be combined with any credential-qualified collective grants so a
-    // direct View row cannot mask an applicable Team Edit/Admin row.
-    if (independent?.level === "owner") return admitAccess(independent);
-    if (!isSessionTranscriptShareable(row)) return { status: "unavailable" };
-
-    const grants: ApplicableSessionGrant[] = row.shares
-        .filter(grant => grant.sharedWithUserId === input.accountId)
-        .map(grant => ({
-            source: { kind: "direct" as const, shareId: grant.id },
-            accessLevel: grant.accessLevel,
-            canApprovePermissions: grant.canApprovePermissions,
-        }));
-    let sawAuthenticationRequired = false;
-    let sawAuthenticationUnavailable = false;
-    let sawCollectiveEntitlement = false;
-    const qualificationByTeamId = new Map<string, Awaited<ReturnType<typeof qualifySessionTeamAuthenticationInTx>>>();
-    const qualifyTeam = async (team: Readonly<{ id: string; authenticationPolicy: unknown }>) => {
-        if (teamQualifications) return teamQualifications.get(team.id) ?? { status: 'unavailable' as const };
-        const existing = qualificationByTeamId.get(team.id);
-        if (existing) return existing;
-        const qualification = await qualifySessionTeamAuthenticationInTx(reader, {
-            accountId: input.accountId,
-            team,
-            authentication: input.authentication,
-        });
-        qualificationByTeamId.set(team.id, qualification);
-        return qualification;
+    const collectiveAccess = collective ? projectApplicableSessionGrants(actor.accountId, row.id, false, grants) : null;
+    const access = collectiveAccess ? { ...collectiveAccess, primaryTeamId: row.primaryTeamId ?? null } : null;
+    const ceiling = tokenGrant ? new Set<string>(resolveApiTokenSessionCapabilityCeilingV1(tokenGrant)) : null;
+    const cap = (resolved: EffectiveSessionAccess): EffectiveSessionAccess => {
+        if (!ceiling) return resolved;
+        const capabilities = { ...resolved.capabilities };
+        for (const capability of Object.keys(capabilities) as SessionCapability[]) capabilities[capability] &&= ceiling.has(capability);
+        return { ...resolved, capabilities };
     };
-
-    const grantCanSupplyRequestedCapability = (grant: ApplicableSessionGrant): boolean =>
-        input.capability === undefined
-        || projectSessionAccessCapabilitiesV1({ owner: false, grants: [grant] })[input.capability];
-
-    const recordUnsatisfiedQualification = (
-        grant: ApplicableSessionGrant,
-        qualification: Awaited<ReturnType<typeof qualifySessionTeamAuthenticationInTx>>,
-    ): void => {
-        if (!grantCanSupplyRequestedCapability(grant)) return;
-        if (qualification.status === "authentication_required") sawAuthenticationRequired = true;
-        if (qualification.status === "unavailable") sawAuthenticationUnavailable = true;
+    const cappedIndependent = independentAccess ? cap(independentAccess) : null;
+    const cappedCollective = access ? cap(access) : null;
+    let disclosure: Promise<boolean> | undefined;
+    const admit = async (resolved: EffectiveSessionAccess, projected: EffectiveSessionAccess, request: SessionAccessCapabilityRequest): Promise<SessionAccessOperationDecision> => {
+        if (request.capability !== undefined && !(exactTokenAction ? resolved : projected).capabilities[request.capability]) return { status: 'unavailable' };
+        const destinationSessionId = actor.authentication.contentDisclosureSessionId;
+        if (request.capability === 'readTranscript' && destinationSessionId && destinationSessionId !== actor.sessionId) {
+            disclosure ??= mayInjectSessionContextInTx(reader, { configuringAccountId: actor.accountId, sourceSessionId: actor.sessionId,
+                destinationSessionId, authentication: actor.authentication }).then(result => result.ok);
+            if (!await disclosure) return { status: 'unavailable' };
+        }
+        return { status: 'allowed', access: projected };
     };
-
-    for (const grant of row.teamGrants) {
-        const membership = grant.team.memberships.find(value => value.accountId === input.accountId);
-        if (!membership || !isGrantAfterMembershipHorizon(grant.effectiveAt, membership.sessionAccessStartsAt)) continue;
-        sawCollectiveEntitlement = true;
-        const applicableGrant: ApplicableSessionGrant = {
-            source: { kind: "team", teamId: grant.teamId, requiredByTeamPolicy: grant.requiredByTeamPolicy },
-            accessLevel: grant.accessLevel,
-            canApprovePermissions: grant.canApprovePermissions,
-        };
-        const qualification = await qualifyTeam({ id: grant.teamId, authenticationPolicy: grant.team.authenticationPolicy });
-        if (qualification.status !== "satisfied") {
-            recordUnsatisfiedQualification(applicableGrant, qualification);
+    const decisions: SessionAccessOperationDecision[] = [];
+    for (const request of requests) {
+        if (runtimePrincipal || request.accessMode === 'legacy_owner_or_direct' || independentAccess?.level === 'owner') {
+            decisions.push(independentAccess ? await admit(independentAccess, cappedIndependent!, request) : { status: 'unavailable' });
             continue;
         }
-        grants.push(applicableGrant);
-    }
-    for (const grant of row.groupGrants) {
-        const membership = grant.teamGroup.memberships.find(value => value.teamMembership.accountId === input.accountId);
-        if (!membership || !isGrantAfterMembershipHorizon(grant.effectiveAt, membership.sessionAccessStartsAt)) continue;
-        sawCollectiveEntitlement = true;
-        const applicableGrant: ApplicableSessionGrant = {
-            source: { kind: "group", teamId: grant.teamGroup.teamId, groupId: grant.teamGroupId },
-            accessLevel: grant.accessLevel,
-            canApprovePermissions: grant.canApprovePermissions,
-        };
-        const qualification = await qualifyTeam({ id: grant.teamGroup.teamId, authenticationPolicy: grant.teamGroup.team.authenticationPolicy });
-        if (qualification.status !== "satisfied") {
-            recordUnsatisfiedQualification(applicableGrant, qualification);
+        if (access && (request.capability === undefined || access.capabilities[request.capability])) {
+            decisions.push(await admit(access, cappedCollective!, request));
             continue;
         }
-        grants.push(applicableGrant);
+        const relevant = unqualified.filter(({ capabilities }) => request.capability === undefined || capabilities[request.capability]);
+        decisions.push({ status: relevant.some(item => item.status === 'authentication_required') ? 'authentication_required'
+            : relevant.some(item => item.status === 'unavailable') || (request.capability === undefined && contributions.some(item => item.team))
+                ? 'authentication_unavailable' : 'unavailable' });
     }
-    const access = projectApplicableSessionGrants(input.accountId, row.id, false, grants);
-    if (access && (input.capability === undefined || access.capabilities[input.capability])) {
-        return admitAccess({ ...access, primaryTeamId: row.primaryTeamId ?? null });
-    }
-    if (sawAuthenticationRequired) return { status: "authentication_required" };
-    if (sawAuthenticationUnavailable) return { status: "authentication_unavailable" };
-    if (access && input.capability === undefined) return admitAccess({ ...access, primaryTeamId: row.primaryTeamId ?? null });
-    return {
-        status: input.capability === undefined && sawCollectiveEntitlement
-            ? "authentication_unavailable"
-            : "unavailable",
-    };
+    return decisions;
 }
 
 /**
@@ -485,21 +432,34 @@ export async function resolveEffectiveSessionAccess(reader: Tx, input: { account
     return decision.status === "allowed" ? decision.access : null;
 }
 
-/** Same-snapshot row decisions share Team qualification, never access policy or a later admission fence. */
-export async function resolveSessionAccessForRowsInTx(reader: Tx, input: Omit<Parameters<typeof resolveSessionAccessForOperation>[1], 'sessionId' | 'row'>,
+/** One actor's same-snapshot facts serve all requested capability projections. */
+export async function resolveSessionAccessCapabilitiesForRowsInTx(reader: Tx, actor: Omit<SessionAccessActor, 'sessionId' | 'row'>,
+    rows: readonly SessionAccessProjectionRow[], requests: readonly SessionAccessCapabilityRequest[],
+): Promise<readonly ReadonlyMap<string, SessionAccessOperationDecision>[]> {
+    const results = requests.map(() => new Map<string, SessionAccessOperationDecision>());
+    if (requests.length === 0 || rows.length === 0) return results;
+    const principal = actor.authentication.sessionRuntimePrincipal;
+    if (principal && !await verifyCurrentMaterializedRunnerPrincipalInTx(reader, principal)) {
+        for (const row of rows) for (const result of results) result.set(row.id, { status: 'unavailable' });
+        return results;
+    }
+    const teams = principal || requests.every(request => request.accessMode === 'legacy_owner_or_direct') ? [] : rows
+        .filter(row => row.accountId !== actor.accountId && isSessionTranscriptShareable(row))
+        .flatMap(sessionGrantTeams);
+    const qualifications = await qualifySessionTeamAuthenticationsInTx(reader, { ...actor, teams });
+    for (const row of rows) {
+        const decisions = await resolveSessionAccessCapabilityDecisionsFromRow(reader, { ...actor, sessionId: row.id }, requests, row, qualifications);
+        decisions.forEach((decision, index) => results[index]!.set(row.id, decision));
+    }
+    return results;
+}
+
+/** Existing single-capability row consumers are a batch of one projection. */
+export async function resolveSessionAccessForRowsInTx(reader: Tx, input: Omit<SessionAccessOperationInput, 'sessionId' | 'row'>,
     rows: readonly SessionAccessProjectionRow[],
 ): Promise<ReadonlyMap<string, SessionAccessOperationDecision>> {
-    const teams = input.authentication.sessionRuntimePrincipal || input.accessMode === 'legacy_owner_or_direct' ? [] : rows
-        .filter(row => row.accountId !== input.accountId && isSessionTranscriptShareable(row))
-        .flatMap(row => [
-            ...row.teamGrants.map(grant => ({ id: grant.teamId, authenticationPolicy: grant.team.authenticationPolicy })),
-            ...row.groupGrants.map(grant => ({ id: grant.teamGroup.teamId, authenticationPolicy: grant.teamGroup.team.authenticationPolicy })),
-        ]);
-    const teamQualifications = await qualifySessionTeamAuthenticationsInTx(reader, { ...input, teams });
-    const result = new Map<string, SessionAccessOperationDecision>();
-    for (const row of rows) result.set(row.id,
-        await resolveSessionAccessForOperationWithTeamQualifications(reader, { ...input, sessionId: row.id, row }, teamQualifications));
-    return result;
+    const { capability, accessMode, ...actor } = input;
+    return (await resolveSessionAccessCapabilitiesForRowsInTx(reader, actor, rows, [{ capability, accessMode }]))[0]!;
 }
 
 /**
@@ -577,7 +537,7 @@ export async function assertSessionTeamReadableGrantInTx(input: {
     const session = await input.tx.session.findFirst({
         where: { AND: [
             { id: input.sessionId },
-            { teamGrants: { some: { teamId: input.teamId, team: { archivedAt: null } } } },
+            { grants: { some: { principalKind: 'team', teamId: input.teamId, team: { archivedAt: null } } } },
         ] },
         select: SESSION_TRANSCRIPT_PUBLICATION_SELECT,
     });
@@ -625,10 +585,7 @@ export async function resolveSessionAccessForAccountsInTx(tx: Tx, input: Readonl
         if (!row || row.id !== input.sessionId) continue;
         const qualifiedTeamIds = await resolveQualifiedSessionTeamIdsInTx(tx, {
             accountIds: batch,
-            teams: [
-                ...row.teamGrants.map(grant => ({ id: grant.teamId, authenticationPolicy: grant.team.authenticationPolicy })),
-                ...row.groupGrants.map(grant => ({ id: grant.teamGroup.teamId, authenticationPolicy: grant.teamGroup.team.authenticationPolicy })),
-            ],
+            teams: sessionGrantTeams(row),
             authentication: input.authentication,
         });
         for (const accountId of batch) {
@@ -665,10 +622,7 @@ export async function resolveSessionAccessForSessionsInTx(tx: Tx, input: Readonl
                 where: { id: { in: sessionBatch } },
                 select: buildSessionAccessProjectionSelectForAccounts(accountBatch),
             });
-            const teams = rows.flatMap(row => [
-                ...row.teamGrants.map(grant => ({ id: grant.teamId, authenticationPolicy: grant.team.authenticationPolicy })),
-                ...row.groupGrants.map(grant => ({ id: grant.teamGroup.teamId, authenticationPolicy: grant.teamGroup.team.authenticationPolicy })),
-            ]);
+            const teams = rows.flatMap(sessionGrantTeams);
             const qualifiedTeamIds = await resolveQualifiedSessionTeamIdsInTx(tx, {
                 accountIds: accountBatch,
                 teams,

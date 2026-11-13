@@ -206,11 +206,11 @@ export async function admitDiscussionSecondOpinionGrantInTx(tx: Tx, input: Actor
         if (!account) return discussionFailure('discussion_subject_not_found');
         facts.accountGrants = [...current.accountGrants, { accountId: principal.accountId, accessLevel: 'view', account }];
     } else if (principal.kind === 'team') {
-        const team = await tx.team.findUnique({ where: { id: principal.teamId }, select: relation.teamGrants.select.team.select });
+        const team = await tx.team.findUnique({ where: { id: principal.teamId }, select: relation.grants.select.team.select });
         if (!team) return discussionFailure('discussion_subject_not_found');
         facts.teamGrants = [...current.teamGrants, { accessLevel: 'view', team }];
     } else {
-        const teamGroup = await tx.teamGroup.findUnique({ where: { id: principal.groupId }, select: relation.groupGrants.select.teamGroup.select });
+        const teamGroup = await tx.teamGroup.findUnique({ where: { id: principal.groupId }, select: relation.grants.select.teamGroup.select });
         if (!teamGroup) return discussionFailure('discussion_subject_not_found');
         facts.groupGrants = [...current.groupGrants, { accessLevel: 'view', teamGroup }];
     }

@@ -156,8 +156,8 @@ describe("committed session mutations produce Home remote alerts", () => {
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: '{}', kind: 'persistent' } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
         await db.accessKey.create({ data: { accountId: owner.id, machineId: machine.id, sessionId: session.id, data: 'encrypted' } });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id,
-            sharedWithUserId: follower.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id,
+            accountId: follower.id, accessLevel: 'view' } });
         await db.accountSessionFollow.createMany({ data: [owner, follower].map(account => ({ accountId: account.id,
             sessionId: session.id, following: true,
             followPolicy: JSON.stringify({ preset: 'custom', events: { message: { delivery: 'interrupt' },
@@ -302,8 +302,8 @@ describe("committed session mutations produce Home remote alerts", () => {
         const viewer = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: '{}' } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}', encryptionMode } });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id,
-            sharedWithUserId: viewer.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id,
+            accountId: viewer.id, accessLevel: 'view' } });
         const publisherAuthority = await registerRuntimePublisher({ accountId: owner.id, machineId: machine.id, sessionId: session.id });
         await enrollRemoteAlerts(viewer.id);
         await setAccountSessionFollow({ accountId: viewer.id, sessionId: session.id, authentication: presentUserAuthentication,
@@ -332,8 +332,8 @@ describe("committed session mutations produce Home remote alerts", () => {
         const owner = await db.account.create({ data: { publicKey: randomUUID() } });
         const assignee = await db.account.create({ data: { publicKey: randomUUID() } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: "{}" } });
-        await db.sessionShare.create({ data: {
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: assignee.id, accessLevel: "view",
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: session.id, createdByAccountId: owner.id, accountId: assignee.id, accessLevel: "view",
         } });
         await enrollRemoteAlerts(owner.id);
         await enrollRemoteAlerts(assignee.id);
@@ -372,8 +372,8 @@ describe("committed session mutations produce Home remote alerts", () => {
         const owner = await db.account.create({ data: { publicKey: randomUUID() } });
         const assignee = await db.account.create({ data: { publicKey: randomUUID() } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: "{}" } });
-        await db.sessionShare.create({ data: {
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: assignee.id, accessLevel: "view",
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: session.id, createdByAccountId: owner.id, accountId: assignee.id, accessLevel: "view",
         } });
         await db.accountSessionFollow.create({ data: {
             sessionId: session.id, accountId: assignee.id, following: true, followPolicy: JSON.stringify({ preset: "important" }),
@@ -400,8 +400,8 @@ describe("committed session mutations produce Home remote alerts", () => {
             },
         });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: "{}" } });
-        await db.sessionShare.create({ data: {
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: assignee.id, accessLevel: "view",
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: session.id, createdByAccountId: owner.id, accountId: assignee.id, accessLevel: "view",
         } });
         if (explicitUnfollow) {
             await db.accountSessionFollow.create({ data: {
@@ -454,8 +454,8 @@ describe("committed session mutations produce Home remote alerts", () => {
             id: `machine-${randomUUID()}`, accountId: owner.id, metadata: "{}", kind: "persistent",
         } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: "{}" } });
-        await db.sessionShare.create({ data: {
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: follower.id, accessLevel: "view",
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: session.id, createdByAccountId: owner.id, accountId: follower.id, accessLevel: "view",
         } });
         await db.accountSessionFollow.create({ data: {
             sessionId: session.id, accountId: follower.id, following: true,
@@ -495,8 +495,8 @@ describe("committed session mutations produce Home remote alerts", () => {
                 id: `machine-${randomUUID()}`, accountId: owner.id, metadata: "{}", kind: machineKind,
             } });
             const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: "{}" } });
-            await db.sessionShare.create({ data: {
-                sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: follower.id, accessLevel: "view",
+            await db.sessionGrant.create({ data: { principalKind: 'account',
+                sessionId: session.id, createdByAccountId: owner.id, accountId: follower.id, accessLevel: "view",
             } });
             await db.accountSessionFollow.create({ data: {
                 sessionId: session.id, accountId: follower.id, following: true,
@@ -544,8 +544,8 @@ describe("committed session mutations produce Home remote alerts", () => {
         const machine = await db.machine.create({ data: {
             id: `machine-${randomUUID()}`, accountId: owner.id, metadata: "{}", kind: "persistent",
         } });
-        await db.sessionShare.create({ data: {
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: follower.id,
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: session.id, createdByAccountId: owner.id, accountId: follower.id,
             accessLevel: "edit", canApprovePermissions: true,
         } });
         await db.accountSessionFollow.create({ data: {
@@ -646,8 +646,8 @@ describe("committed session mutations produce Home remote alerts", () => {
             const session = await db.session.create({ data: {
                 accountId: owner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain",
             } });
-            await db.sessionShare.create({ data: {
-                sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: follower.id,
+            await db.sessionGrant.create({ data: { principalKind: 'account',
+                sessionId: session.id, createdByAccountId: owner.id, accountId: follower.id,
                 accessLevel: "edit", canApprovePermissions: true,
             } });
             await db.accountSessionFollow.create({ data: {
@@ -709,8 +709,8 @@ describe("committed session mutations produce Home remote alerts", () => {
             const session = await db.session.create({ data: {
                 accountId: owner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain",
             } });
-            await db.sessionShare.create({ data: {
-                sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: follower.id, accessLevel: "view",
+            await db.sessionGrant.create({ data: { principalKind: 'account',
+                sessionId: session.id, createdByAccountId: owner.id, accountId: follower.id, accessLevel: "view",
             } });
             await db.accountSessionFollow.create({ data: {
                 sessionId: session.id, accountId: follower.id, following: true, followPolicy: JSON.stringify({ preset: "important" }),
@@ -766,9 +766,9 @@ describe("committed session mutations produce Home remote alerts", () => {
         const session = await db.session.create({ data: {
             accountId: owner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain",
         } });
-        await db.sessionShare.createMany({ data: [author, allMessages, customHuman].map((account) => ({
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: account.id, accessLevel: "edit" as const,
-        })) });
+        await db.sessionGrant.createMany({ data: ([author, allMessages, customHuman].map((account) => ({
+            sessionId: session.id, createdByAccountId: owner.id, accountId: account.id, accessLevel: "edit" as const,
+        }))).map(data => ({ ...data, principalKind: 'account' })) });
         await db.accountSessionFollow.createMany({ data: [
             { sessionId: session.id, accountId: author.id, following: true, followPolicy: JSON.stringify({ preset: "everything" }) },
             { sessionId: session.id, accountId: allMessages.id, following: true, followPolicy: JSON.stringify({ preset: "everything" }) },
@@ -813,9 +813,9 @@ describe("committed session mutations produce Home remote alerts", () => {
         const session = await db.session.create({ data: {
             accountId: owner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain",
         } });
-        await db.sessionShare.createMany({ data: [allMessages, important].map((account) => ({
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: account.id, accessLevel: "view" as const,
-        })) });
+        await db.sessionGrant.createMany({ data: ([allMessages, important].map((account) => ({
+            sessionId: session.id, createdByAccountId: owner.id, accountId: account.id, accessLevel: "view" as const,
+        }))).map(data => ({ ...data, principalKind: 'account' })) });
         await db.accountSessionFollow.createMany({ data: [
             { sessionId: session.id, accountId: allMessages.id, following: true,
                 followPolicy: JSON.stringify({ preset: 'custom', events: { message: { delivery: 'interrupt' } } }) },
@@ -850,8 +850,8 @@ describe("committed session mutations produce Home remote alerts", () => {
             accountId: owner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain",
         } });
         await db.accessKey.create({ data: { accountId: owner.id, machineId: machine.id, sessionId: session.id, data: "opaque" } });
-        await db.sessionShare.create({ data: {
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: follower.id, accessLevel: "view",
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: session.id, createdByAccountId: owner.id, accountId: follower.id, accessLevel: "view",
         } });
         await db.accountSessionFollow.create({ data: {
             sessionId: session.id, accountId: follower.id, following: true, followPolicy: JSON.stringify({ preset: "important" }),

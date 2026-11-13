@@ -240,11 +240,11 @@ describe('durable subagent custody on SQLite', () => {
         const { account: owner, session } = await seed();
         const participant = await db.account.create({ data: { publicKey: `pk-${randomUUID()}` } });
         const outsider = await db.account.create({ data: { publicKey: `pk-${randomUUID()}` } });
-        const share = await db.sessionShare.create({
-            data: {
+        const share = await db.sessionGrant.create({
+            data: { principalKind: 'account',
                 sessionId: session.id,
-                sharedByUserId: owner.id,
-                sharedWithUserId: participant.id,
+                createdByAccountId: owner.id,
+                accountId: participant.id,
                 accessLevel: 'view',
                 canApprovePermissions: false,
             },
@@ -272,7 +272,7 @@ describe('durable subagent custody on SQLite', () => {
                 expect.objectContaining({ accountId: participant.id, _count: 1 }),
             ]));
 
-        await db.sessionShare.delete({ where: { id: share.id } });
+        await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
         await expect(listSessionSubagentCustody({ actorUserId: participant.id, authentication, sessionId: session.id, query: { ...scope, custodyKey: ownerWrite.custodyKey } }))
             .resolves.toEqual({ ok: false, error: 'session-not-found' });
     });
@@ -581,11 +581,11 @@ describe('durable subagent custody on SQLite', () => {
             data: { accountId: owner.id, tag: `tag-${randomUUID()}`, metadata: '{}', encryptionMode: 'e2ee' },
         });
         const participant = await db.account.create({ data: { publicKey: `pk-${randomUUID()}` } });
-        await db.sessionShare.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'account',
                 sessionId: session.id,
-                sharedByUserId: owner.id,
-                sharedWithUserId: participant.id,
+                createdByAccountId: owner.id,
+                accountId: participant.id,
                 accessLevel: 'view',
                 canApprovePermissions: false,
             },

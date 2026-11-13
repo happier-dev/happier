@@ -1,3 +1,4 @@
+import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import * as privacyKit from 'privacy-kit';
 import nacl from 'tweetnacl';
@@ -52,8 +53,7 @@ async function fixture(teamOwned = false) {
     const keys = nacl.sign.keyPair();
     const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
         ...publishedMachine, installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(keys.publicKey) } });
-    if (team) await db.machineTeamGrant.create({ data: { machineId: machine.id, teamId: team.id,
-        accessLevel: 'view', createdByAccountId: owner.id } });
+    if (team) await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id }), machineId: machine.id } });
     const content = async (kind: string) => {
         const created = await createArtifact({ actorUserId: owner.id, artifactId: crypto.randomUUID(),
             header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind, title: 'Disposition' })),
@@ -175,7 +175,7 @@ it('publishes receipt cancellation availability from the admitted lifecycle owne
     const input = { serverId, environmentId: f.environment.id, deploymentId: receipt.id };
     const read = (actor = f.owner.id) => inTx(tx => readDeploymentReceiptInTx(tx, actor, input));
     expect(await read()).toMatchObject({ ok: true, cancellable: true });
-    await db.artifactAccountGrant.create({ data: { artifactId: receipt.contentArtifactId, accountId: f.reader.id,
+    await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: receipt.contentArtifactId, accountId: f.reader.id,
         accessLevel: 'view', createdByAccountId: f.owner.id } });
     expect(await read(f.reader.id)).toMatchObject({ ok: true, cancellable: false });
     expect(await read(f.foreign.id)).toMatchObject({ ok: false });

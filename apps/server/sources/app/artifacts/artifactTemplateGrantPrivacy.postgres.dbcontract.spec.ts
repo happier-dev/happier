@@ -35,7 +35,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('T
             kind: deriveArtifactStoredKindV1({ kind: 'bot_template.v1' }), header: new TextEncoder().encode('encrypted header'),
             body: new TextEncoder().encode('encrypted release'), dataEncryptionKey: seal(owner.contentPublicKey!),
             headerVersion: 1, bodyVersion: 1 } });
-        await db.artifactAccountGrant.createMany({ data: [recipient, peer].map(person => ({ artifactId: artifact.id,
+        await db.artifactGrant.createMany({ data: [recipient, peer].map(person => ({ principalKind: 'account', artifactId: artifact.id,
             accountId: person.id, accessLevel: 'view' as const, createdByAccountId: owner.id })) });
         await db.artifactKeyEnvelope.createMany({ data: [recipient, peer].map(person => ({ artifactId: artifact.id,
             recipientAccountId: person.id, encryptedDataKey: seal(person.contentPublicKey!),

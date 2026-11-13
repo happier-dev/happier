@@ -1483,8 +1483,8 @@ describe('Runner activation and draft lifecycle', () => {
         }] } } };
         expect(await materializeEphemeralRunner({ creatorAccountId: fixture.account.id, request,
             authentication: presentUserAuthentication, env: process.env })).toMatchObject({ status: 'materialized' });
-        expect(await db.sessionShare.findFirst({ where: {
-            sessionId: fixture.created.activation.sessionId, sharedWithUserId: viewer.id,
+        expect(await db.sessionGrant.findFirst({ where: { principalKind: 'account',
+            sessionId: fixture.created.activation.sessionId, accountId: viewer.id,
         } })).toMatchObject({ accessLevel: 'view' });
         expect(await db.accountChange.findFirst({ where: { accountId: viewer.id,
             kind: 'session', entityId: fixture.created.activation.sessionId } })).toMatchObject({ accountId: viewer.id });
@@ -1494,7 +1494,7 @@ describe('Runner activation and draft lifecycle', () => {
         ['Session row', 'AFTER INSERT ON "Session"'],
         ['owner DEK tuple', 'AFTER INSERT ON "SessionDataKeyEnvelope"'],
         ['owner read state', 'AFTER INSERT ON "AccountSessionReadState"'],
-        ['required Team access', 'AFTER INSERT ON "SessionTeamGrant"'],
+        ['required Team access', `AFTER INSERT ON "SessionShare" WHEN NEW."principalKind" = 'team'`],
         ['Session publication', 'AFTER INSERT ON "AccountChange" WHEN NEW."kind" = \'session\''],
         ['Runner Machine', 'AFTER INSERT ON "Machine" WHEN NEW."kind" = \'ephemeral_session_runner\''],
         ['Machine publication', 'AFTER INSERT ON "AccountChange" WHEN NEW."kind" = \'machine\''],
@@ -1533,7 +1533,7 @@ describe('Runner activation and draft lifecycle', () => {
         await expect(db.session.count({ where: { id: binding.sessionId } })).resolves.toBe(0);
         await expect(db.sessionDataKeyEnvelope.count({ where: { sessionId: binding.sessionId } })).resolves.toBe(0);
         await expect(db.accountSessionReadState.count({ where: { sessionId: binding.sessionId } })).resolves.toBe(0);
-        await expect(db.sessionTeamGrant.count({ where: { sessionId: binding.sessionId } })).resolves.toBe(0);
+        await expect(db.sessionGrant.count({ where: { principalKind: 'team', sessionId: binding.sessionId } })).resolves.toBe(0);
         await expect(db.machine.count({ where: { id: binding.machineId } })).resolves.toBe(0);
         await expect(db.accessKey.count({ where: binding })).resolves.toBe(0);
         await expect(db.ephemeralRunnerActivation.findUnique({ where: { id: request.activationId } }))
@@ -1622,8 +1622,8 @@ describe('Runner activation and draft lifecycle', () => {
             authentication: presentUserAuthentication,
             env: process.env,
         })).resolves.toMatchObject({ status: 'materialized' });
-        await expect(db.sessionTeamGrant.findUniqueOrThrow({
-            where: {
+        await expect(db.sessionGrant.findUniqueOrThrow({
+            where: { principalKind: 'team',
                 sessionId_teamId: {
                     sessionId: fixture.created.activation.sessionId,
                     teamId: fixture.team.id,

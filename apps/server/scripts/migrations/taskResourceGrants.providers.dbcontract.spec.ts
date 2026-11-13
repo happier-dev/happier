@@ -9,6 +9,7 @@ import { runPrismaCli } from '../prismaCli';
 
 const serverRoot = join(import.meta.dirname, '../..');
 const taskMigration = '20261031120000_add_task_resource_grants';
+const consolidationMigration = '20261112170000_consolidate_resource_grants';
 const taskTables = ['TaskAccountGrant', 'TaskGroupGrant', 'TaskKeyEnvelope', 'TaskTeamGrant'];
 
 describe('Task grants additive migration upgrade', () => {
@@ -47,7 +48,8 @@ describe('Task grants additive migration upgrade', () => {
                     : `CREATE DATABASE \`${name}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
                 created = true;
                 const names = (await readdir(join(root, 'migrations'), { withFileTypes: true }))
-                    .filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
+                    .filter(entry => entry.isDirectory()).map(entry => entry.name)
+                    .filter(name => name < consolidationMigration).sort();
                 expect(names).toContain(taskMigration);
                 const oldNames = names.filter(migration => migration < taskMigration);
                 await stageMigrations(oldNames);

@@ -70,7 +70,7 @@ describe("Artifact revisions and storage budgets (real SQLite)", () => {
                 blob: { blobId, content: { t: 'plain', v: privacyKit.encodeBase64(bytes) } },
             } });
             expect(created.statusCode, created.body).toBe(200);
-            await db.artifactAccountGrant.create({ data: { artifactId: id, accountId: grantee.id, accessLevel: 'view', createdByAccountId: owner.id } });
+            await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: id, accountId: grantee.id, accessLevel: 'view', createdByAccountId: owner.id } });
             const url = `/v1/artifacts/${id}/blobs/${blobId}`;
             const callerHeaders = headers(caller === 'owner' ? owner.id : grantee.id);
             expect((await app.inject({ method: 'GET', url, headers: callerHeaders })).json()).toEqual({
@@ -91,7 +91,7 @@ describe("Artifact revisions and storage budgets (real SQLite)", () => {
             const response = app.inject({ method: 'GET', url, headers: callerHeaders });
             try {
                 expect(await Promise.race([reached.then(() => 'file'), response.then(() => 'response')])).toBe('file');
-                if (caller === 'revoked') await db.artifactAccountGrant.deleteMany({ where: { artifactId: id, accountId: grantee.id } });
+                if (caller === 'revoked') await db.artifactGrant.deleteMany({ where: { principalKind: 'account', artifactId: id, accountId: grantee.id } });
                 resume();
                 const result = await response;
                 if (caller === 'revoked') {
@@ -809,7 +809,7 @@ describe("Artifact revisions and storage budgets (real SQLite)", () => {
             } })).statusCode).toBe(200);
             expect((await app.inject({ method: "POST", url: `/v1/artifacts/${id}`, headers: headers(owner.id),
                 payload: { body: privacyKit.encodeBase64(replacement), expectedBodyVersion: 1 } })).statusCode).toBe(200);
-            await db.artifactAccountGrant.create({ data: { artifactId: id, accountId: editor.id, accessLevel: "edit", createdByAccountId: owner.id } });
+            await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: id, accountId: editor.id, accessLevel: "edit", createdByAccountId: owner.id } });
             expect((await app.inject({ method: "GET", url: `/v1/artifacts/${id}/revisions`, headers: headers(editor.id) })).statusCode).toBe(503);
             expect((await app.inject({ method: 'POST', url: `/v1/artifacts/${id}/revisions/1/restore`, headers: headers(editor.id),
                 payload: { header: privacyKit.encodeBase64(restoredHeader), body: privacyKit.encodeBase64(restoredHeader),
@@ -829,7 +829,7 @@ describe("Artifact revisions and storage budgets (real SQLite)", () => {
             expect(restored.body).toEqual(original);
             expect(restored.header).toEqual(restoredHeader);
             expect((await db.artifactRevision.findUniqueOrThrow({ where: { artifactId_bodyVersion: { artifactId: id, bodyVersion: 2 } } })).body).toEqual(replacement);
-            await db.artifactAccountGrant.update({ where: { artifactId_accountId: { artifactId: id, accountId: editor.id } }, data: { accessLevel: "view" } });
+            await db.artifactGrant.update({ where: { principalKind: 'account', artifactId_accountId: { artifactId: id, accountId: editor.id } }, data: { accessLevel: "view" } });
             expect((await app.inject({ method: "POST", url: `/v1/artifacts/${id}/revisions/1/restore`, headers: headers(editor.id),
                 payload: { header: privacyKit.encodeBase64(restoredHeader), body: privacyKit.encodeBase64(restoredHeader),
                     expectedHeaderVersion: 2, expectedBodyVersion: 3 } })).statusCode).toBe(404);

@@ -1,3 +1,4 @@
+import { projectResourceGrantRows } from '@/app/teams/resourceGrantAccess';
 import { readDiscussionAccessGrantsForAccountErasureInTx } from "./accountErasureGrants";
 export { readDiscussionAccessGrantsForAccountErasureInTx } from "./accountErasureGrants";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
@@ -116,8 +117,8 @@ export async function validateInitialDiscussionGrantsInTx(tx: Tx, input: Readonl
 export async function applyInitialDiscussionGrantsInTx(tx: Tx, input: Readonly<{
     actorAccountId: string; discussionId: string; initial: InitialDiscussionGrants;
 }>): Promise<void> {
-    if (input.initial.participantAccountIds.length > 0) await tx.discussionAccountGrant.createMany({
-        data: input.initial.participantAccountIds.map(accountId => ({ discussionId: input.discussionId,
+    if (input.initial.participantAccountIds.length > 0) await tx.discussionGrant.createMany({
+        data: input.initial.participantAccountIds.map(accountId => ({ principalKind: 'account', discussionId: input.discussionId,
             accountId, accessLevel: "edit" as const, createdByAccountId: input.actorAccountId })),
     });
     for (const envelope of input.initial.recipientKeyEnvelopes) {
@@ -130,12 +131,13 @@ export async function listDiscussionGrantsInTx(tx: Tx, input: DiscussionActorInp
     const context = await resolveDiscussionContextInTx(tx, { discussionId: input.discussionId, accountId: input.actorAccountId,
         authentication: input.authentication, includeActorAudience: true });
     if (!context) return discussionFailure("discussion_not_found");
-    const [accounts, teams, groups, knownActors] = await Promise.all([
-        tx.discussionAccountGrant.findMany({ where: { discussionId: input.discussionId } }),
-        tx.discussionTeamGrant.findMany({ where: { discussionId: input.discussionId }, include: { team: { select: { name: true } } } }),
-        tx.discussionGroupGrant.findMany({ where: { discussionId: input.discussionId }, include: { teamGroup: { select: { name: true, teamId: true } } } }),
+    const [grantRows, knownActors] = await Promise.all([
+        tx.discussionGrant.findMany({ where: { discussionId: input.discussionId }, include: {
+            team: { select: { name: true } }, teamGroup: { select: { name: true, teamId: true } },
+        } }),
         loadDiscussionKnownAccountActorFactsInTx(tx, [input.discussionId]),
     ]);
+    const { accountGrants: accounts, teamGrants: teams, groupGrants: groups } = projectResourceGrantRows(grantRows);
     const subjects: DiscussionAccountActorSubject[] = [
         { discussionId: input.discussionId, accountId: context.ownerAccountId },
         ...accounts.map(row => ({ discussionId: input.discussionId, accountId: row.accountId })),
@@ -191,16 +193,16 @@ export async function setDiscussionGrantInTx(tx: Tx, input: DiscussionActorInput
     let upsert: () => Promise<unknown>;
     if (principal.kind === "account") {
         const where = { discussionId_accountId: { discussionId: input.discussionId, accountId: principal.accountId } };
-        previous = await tx.discussionAccountGrant.findUnique({ where });
-        upsert = () => tx.discussionAccountGrant.upsert({ where, create: { discussionId: input.discussionId, accountId: principal.accountId, ...data }, update: data });
+        previous = await tx.discussionGrant.findUnique({ where: { ...where, principalKind: 'account' } });
+        upsert = () => tx.discussionGrant.upsert({ where: { ...where, principalKind: 'account' }, create: { principalKind: 'account', discussionId: input.discussionId, accountId: principal.accountId, ...data }, update: data });
     } else if (principal.kind === "team") {
         const where = { discussionId_teamId: { discussionId: input.discussionId, teamId: principal.teamId } };
-        previous = await tx.discussionTeamGrant.findUnique({ where });
-        upsert = () => tx.discussionTeamGrant.upsert({ where, create: { discussionId: input.discussionId, teamId: principal.teamId, ...data }, update: data });
+        previous = await tx.discussionGrant.findUnique({ where: { ...where, principalKind: 'team' } });
+        upsert = () => tx.discussionGrant.upsert({ where: { ...where, principalKind: 'team' }, create: { principalKind: 'team', discussionId: input.discussionId, teamId: principal.teamId, ...data }, update: data });
     } else {
         const where = { discussionId_teamGroupId: { discussionId: input.discussionId, teamGroupId: principal.groupId } };
-        previous = await tx.discussionGroupGrant.findUnique({ where });
-        upsert = () => tx.discussionGroupGrant.upsert({ where, create: { discussionId: input.discussionId, teamGroupId: principal.groupId, ...data }, update: data });
+        previous = await tx.discussionGrant.findUnique({ where: { ...where, principalKind: 'group' } });
+        upsert = () => tx.discussionGrant.upsert({ where: { ...where, principalKind: 'group' }, create: { principalKind: 'group', discussionId: input.discussionId, teamGroupId: principal.groupId, ...data }, update: data });
     }
     const error = await validateResourceGrantPrincipalInTx(tx, { actorAccountId: input.actorAccountId,
         ownerAccountId: context.ownerAccountId, principal, hasExistingGrant: previous !== null });
@@ -216,10 +218,10 @@ export async function setDiscussionGrantInTx(tx: Tx, input: DiscussionActorInput
 
 async function deleteDiscussionGrantInTx(tx: Tx, discussionId: string, principal: PrincipalRefV1): Promise<number> {
     const deleted = principal.kind === "account"
-        ? await tx.discussionAccountGrant.deleteMany({ where: { discussionId, accountId: principal.accountId } })
+        ? await tx.discussionGrant.deleteMany({ where: { principalKind: 'account', discussionId, accountId: principal.accountId } })
         : principal.kind === "team"
-            ? await tx.discussionTeamGrant.deleteMany({ where: { discussionId, teamId: principal.teamId } })
-            : await tx.discussionGroupGrant.deleteMany({ where: { discussionId, teamGroupId: principal.groupId } });
+            ? await tx.discussionGrant.deleteMany({ where: { principalKind: 'team', discussionId, teamId: principal.teamId } })
+            : await tx.discussionGrant.deleteMany({ where: { principalKind: 'group', discussionId, teamGroupId: principal.groupId } });
     return deleted.count;
 }
 
@@ -550,8 +552,8 @@ export async function transferDiscussionOwnerInTx(tx: Tx, input: DiscussionActor
         oldOwnerEnvelope = { recipientAccountId: input.actorAccountId, encryptedDataKey: privacyKit.encodeBase64(new Uint8Array(row.dataEncryptionKey)),
             recipientContentPublicKeyFingerprint: readiness.binding.contentPublicKeyFingerprint };
     }
-    await tx.discussionAccountGrant.upsert({ where: { discussionId_accountId: { discussionId: input.discussionId, accountId: input.actorAccountId } },
-        create: { discussionId: input.discussionId, accountId: input.actorAccountId, accessLevel: "admin", createdByAccountId: input.actorAccountId },
+    await tx.discussionGrant.upsert({ where: { principalKind: 'account', discussionId_accountId: { discussionId: input.discussionId, accountId: input.actorAccountId } },
+        create: { principalKind: 'account', discussionId: input.discussionId, accountId: input.actorAccountId, accessLevel: "admin", createdByAccountId: input.actorAccountId },
         update: { accessLevel: "admin" } });
     await tx.discussion.update({ where: { id: input.discussionId }, data: { ownerAccountId: recipient.id, dataEncryptionKey: nextKey } });
     await deleteDiscussionGrantInTx(tx, input.discussionId, { kind: "account", accountId: recipient.id });
@@ -562,6 +564,9 @@ export async function transferDiscussionOwnerInTx(tx: Tx, input: DiscussionActor
 }
 
 const discussionRecipientEnvelopeStorageAdapter: ResourceRecipientEnvelopeStorageAdapter<ResourceRecipientKeyEnvelopeInputV1> = {
+    readAccessFactsBatchInTx(tx, discussionIds, actorAccountId) {
+        return discussionGrantStorageAdapter.readAccessFactsBatchInTx(tx, discussionIds, actorAccountId);
+    },
     readAccessFactsInTx(tx, discussionId, actorAccountId) {
         return discussionGrantStorageAdapter.readAccessFactsInTx(tx, discussionId, actorAccountId);
     },
@@ -611,12 +616,12 @@ export async function commitDiscussionRecipientKeyEnvelopesInTx(tx: Tx, input: D
 async function readDiscussionGrantAudienceRowsForTeamsInTx(tx: Tx, teamIds: readonly string[]) {
     if (teamIds.length === 0) return [];
     const [teamGrants, groups] = await Promise.all([
-        tx.discussionTeamGrant.findMany({ where: { teamId: { in: [...teamIds] } }, select: { discussionId: true } }),
+        tx.discussionGrant.findMany({ where: { principalKind: 'team', teamId: { in: [...teamIds] } }, select: { discussionId: true } }),
         tx.teamGroup.findMany({ where: { teamId: { in: [...teamIds] } }, select: { id: true } }),
     ]);
     const discussionIds = new Set(teamGrants.map(grant => grant.discussionId));
     for (const ids of portableQueryChunks({ values: groups.map(group => group.id), bindingsPerValue: 1 })) {
-        const grants = await tx.discussionGroupGrant.findMany({ where: { teamGroupId: { in: [...ids] } }, select: { discussionId: true } });
+        const grants = await tx.discussionGrant.findMany({ where: { principalKind: 'group', teamGroupId: { in: [...ids] } }, select: { discussionId: true } });
         for (const grant of grants) discussionIds.add(grant.discussionId);
     }
     const rows: Array<{ id: string; readStates: Array<{ accountId: string }> }> = [];
@@ -664,9 +669,7 @@ export async function eraseDiscussionAccessGrantsForAccountInTx(tx: Tx, input: R
         }
         const where = { discussionId: row.id, createdByAccountId: input.accountId };
         const data = { createdByAccountId: row.ownerAccountId };
-        await tx.discussionAccountGrant.updateMany({ where, data });
-        await tx.discussionTeamGrant.updateMany({ where, data });
-        await tx.discussionGroupGrant.updateMany({ where, data });
+        await tx.discussionGrant.updateMany({ where, data });
         await deleteDiscussionGrantInTx(tx, row.id, { kind: "account", accountId: input.accountId });
         await reconcileDiscussionGrantAudienceInTx(tx, row.id, previousAudience);
     }

@@ -1,3 +1,4 @@
+import { projectResourceGrantRows } from '@/app/teams/resourceGrantAccess';
 import { projectSessionAccessGrantTransitionsV1, type SessionAccessGrantRowV1, type SessionAccessGrantsListResponseV1 } from '@happier-dev/protocol/sessions/access/sessionAccessOperationsV1';
 import { ACCOUNT_DISPLAY_PROFILE_SELECT, projectAccountDisplayProfileV1 } from "@/app/account/profile/accountDisplayProfile";
 import { listSessionTeamCredentialBindingConsequencesInTx } from "@/app/teams/credentials/sessionBinding";
@@ -57,21 +58,24 @@ export async function inspectSessionAccessGrants(params: Readonly<{
         const roster = await tx.session.findUniqueOrThrow({
             where: { id: params.sessionId },
             select: {
-                shares: { select: { accessLevel: true, canApprovePermissions: true, sharedWithUser: { select: ACCOUNT_DISPLAY_PROFILE_SELECT } }, orderBy: { sharedWithUserId: "asc" } },
-                teamGrants: { select: { accessLevel: true, canApprovePermissions: true, requiredByTeamPolicy: true, team: { select: { id: true, name: true } } }, orderBy: { teamId: "asc" } },
-                groupGrants: { select: { accessLevel: true, canApprovePermissions: true, teamGroup: { select: { id: true, name: true, teamId: true, team: { select: { name: true } } } } }, orderBy: { teamGroupId: "asc" } },
+                grants: { select: { principalKind: true, accountId: true, teamId: true, teamGroupId: true,
+                    accessLevel: true, canApprovePermissions: true, requiredByTeamPolicy: true,
+                    account: { select: ACCOUNT_DISPLAY_PROFILE_SELECT }, team: { select: { id: true, name: true } },
+                    teamGroup: { select: { id: true, name: true, teamId: true, team: { select: { name: true } } } } },
+                    orderBy: [{ principalKind: 'asc' }, { accountId: 'asc' }, { teamId: 'asc' }, { teamGroupId: 'asc' }] },
             },
         });
+        const grantArms = projectResourceGrantRows(roster.grants);
         const facts: Omit<SessionAccessGrantRowV1, "allowedTransitions">[] = [
-            ...roster.shares.map((row) => ({
-                grant: { subject: { kind: "account" as const, accountId: row.sharedWithUser.id }, accessLevel: row.accessLevel, canApprovePermissions: row.canApprovePermissions },
-                principal: { kind: "account" as const, accountId: row.sharedWithUser.id, ...projectAccountDisplayProfileV1(row.sharedWithUser) },
+            ...grantArms.accountGrants.map((row) => ({
+                grant: { subject: { kind: "account" as const, accountId: row.account.id }, accessLevel: row.accessLevel, canApprovePermissions: row.canApprovePermissions },
+                principal: { kind: "account" as const, accountId: row.account.id, ...projectAccountDisplayProfileV1(row.account) },
             })),
-            ...roster.teamGrants.map((row) => ({
+            ...grantArms.teamGrants.map((row) => ({
                 grant: { subject: { kind: "team" as const, teamId: row.team.id }, accessLevel: row.accessLevel, canApprovePermissions: row.canApprovePermissions, requiredByTeamPolicy: row.requiredByTeamPolicy },
                 principal: { kind: "team" as const, teamId: row.team.id, name: row.team.name },
             })),
-            ...roster.groupGrants.map((row) => ({
+            ...grantArms.groupGrants.map((row) => ({
                 grant: { subject: { kind: "group" as const, teamId: row.teamGroup.teamId, groupId: row.teamGroup.id }, accessLevel: row.accessLevel, canApprovePermissions: row.canApprovePermissions },
                 principal: { kind: "group" as const, teamId: row.teamGroup.teamId, groupId: row.teamGroup.id, name: row.teamGroup.name, teamName: row.teamGroup.team.name },
             })),
@@ -121,7 +125,7 @@ export async function inspectSessionAccessGrants(params: Readonly<{
         const credentialBindingConsequences = await listSessionTeamCredentialBindingConsequencesInTx(tx, {
             sessionId: params.sessionId,
             teamIds: [...new Set([
-                ...roster.teamGrants.map((row) => row.team.id),
+                ...grantArms.teamGrants.map((row) => row.team.id),
                 ...(primaryTeamId === null ? [] : [primaryTeamId]),
             ])],
         });

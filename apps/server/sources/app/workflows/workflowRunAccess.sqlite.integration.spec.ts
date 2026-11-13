@@ -209,10 +209,10 @@ describe("Workflow Run live Team access (real SQLite)", () => {
         await expect(admitWorkflowRun({ ...input, origin: { ...origin,
             discussion: { ...origin.discussion, throughSeq: origin.discussion.throughSeq + 1 } } }))
             .rejects.toMatchObject({ code: 'invalid_input' });
-        const share = await db.sessionShare.create({ data: { sessionId: target.id, sharedByUserId: f.owner.id,
-            sharedWithUserId: f.viewer.id, accessLevel: 'view' } });
+        const share = await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: target.id, createdByAccountId: f.owner.id,
+            accountId: f.viewer.id, accessLevel: 'view' } });
         await expect(admitWorkflowRun(input)).rejects.toMatchObject({ code: 'run_access_denied' });
-        await db.sessionShare.delete({ where: { id: share.id } });
+        await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
         await db.discussionParticipant.update({ where: { discussionId_sessionId: { discussionId, sessionId: target.id } },
             data: { answerPolicy: 'reads_only' } });
         await expect(admitWorkflowRun(input)).rejects.toMatchObject({ code: 'run_access_denied' });
@@ -222,8 +222,8 @@ describe("Workflow Run live Team access (real SQLite)", () => {
             encryptionMode: 'plain', metadata: '{}' } });
         await db.discussionAccountGrant.create({ data: { discussionId, accountId: f.viewer.id, accessLevel: 'view',
             createdByAccountId: f.owner.id } });
-        await db.sessionShare.create({ data: { sessionId: foreign.id, sharedByUserId: f.viewer.id,
-            sharedWithUserId: f.owner.id, accessLevel: 'edit' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: foreign.id, createdByAccountId: f.viewer.id,
+            accountId: f.owner.id, accessLevel: 'edit' } });
         expect(await inviteDiscussionParticipant({ actorAccountId: f.owner.id, authentication, discussionId,
             request: { participant: { kind: 'session', sessionId: foreign.id } } })).toMatchObject({ ok: true });
         // The current protected Workflow input contract has no cross-Account
@@ -378,7 +378,7 @@ describe("Workflow Run live Team access (real SQLite)", () => {
         });
     });
 
-    it("shares identical live Team authority reads across a Run page and rechecks them on the next invocation", async () => {
+    it("grants identical live Team authority reads across a Run page and rechecks them on the next invocation", async () => {
         const f = await fixture();
         const runIds = [f.runId, ...Array.from({ length: 128 }, () => crypto.randomUUID())];
         await db.automationRun.createMany({ data: runIds.slice(1).map(id => ({

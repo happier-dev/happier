@@ -13,7 +13,7 @@ import { projectSourceRoutes } from '@/app/api/routes/projects/projectSourceRout
 import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { auth } from '@/app/auth/auth';
 import { accessKeyHandler } from '@/app/api/socket/accessKeyHandler';
-import { createFakeSocket, getSocketHandler } from '@/app/api/testkit/socketHarness';
+import { createAuthenticatedFakeSocket, getSocketHandler } from '@/app/api/testkit/socketHarness';
 import { dispatchMachineAccessLossCustody, recoverMachineAccessLossCustody } from '@/app/machines/machineAccessCustody';
 import { eventRouter } from '@/app/events/connectionEventRouter';
 import { resolveMachineSetup } from '@/app/machines/managed/machineSetup';
@@ -123,7 +123,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
         const afterBinding = createSignedAccountContentBinding();
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: 'before', daemonState: 'opaque', installationId: randomUUID(),
             dataEncryptionKey: new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey: tweetnacl.randomBytes(32), recipientPublicKey: owner.contentPublicKey!, randomBytes: tweetnacl.randomBytes })) } });
-        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: recipient.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id, accountId: recipient.id, accessLevel: 'view', createdByAccountId: owner.id } });
         try {
             await withAuthenticatedTestApp(machinesRoutes, async (app: FastifyInstance) => {
                 const read = () => app.inject({ method: 'GET', url: `/v1/machines/${machine.id}/data-key-envelopes`, headers: headers(owner.id) });
@@ -186,7 +186,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: '{}' } });
         await db.accessKey.create({ data: { accountId: owner.id, sessionId: session.id, machineId: machine.id, data: 'before' } });
         const token = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
-        const socket = Object.assign(createFakeSocket({ data: { clientType: 'user-scoped' } }), { handshake: { auth: { token } }, disconnect: vi.fn() });
+        const socket = Object.assign(createAuthenticatedFakeSocket({ data: { clientType: 'user-scoped', userId: owner.id,
+            authTokenKind: 'account' } }), { handshake: { auth: { token } }, disconnect: vi.fn() });
         const transport = socket as unknown as Socket;
         accessKeyHandler(owner.id, transport, { connectionType: 'user-scoped', socket: transport, userId: owner.id });
         const read = async () => {
@@ -199,7 +200,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
                 await tx.machine.update({ where: { id: machine.id }, data: { revokedAt: new Date() } });
                 await tx.accessKey.update({ where: { accountId_machineId_sessionId: { accountId: owner.id, machineId: machine.id, sessionId: session.id } }, data: { data: 'after' } });
             } });
-            expect(captured.result).toMatchObject({ ok: true, accessKey: { data: 'before' } });
+            expect(captured.result, JSON.stringify({ connected: socket.connected, userId: socket.data?.userId }))
+                .toMatchObject({ ok: true, accessKey: { data: 'before' } });
             expect(await read()).toMatchObject({ ok: false });
             expect(captured.observed).toEqual({ locks: 0, readOnly: 'on' });
         } finally {
@@ -221,14 +223,14 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
         const read = () => dispatchMachineAccessLossCustody({ machineId: machine.id, subjectAccountId: subject.id,
             expectedCustodianAccountId: owner.id, expectedInstallationId: machine.installationId! });
         try {
-            const captured = await acrossCommit({ model: 'machine', method: 'findUnique', read, write: async tx => {
-                await tx.machineAccountGrant.create({ data: { machineId: machine.id, accountId: subject.id, accessLevel: 'view', createdByAccountId: owner.id } });
+            const captured = await acrossCommit({ model: 'machine', method: 'findMany', read, write: async tx => {
+                await tx.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id, accountId: subject.id, accessLevel: 'view', createdByAccountId: owner.id } });
                 await tx.machine.update({ where: { id: machine.id }, data: { installationId: randomUUID() } });
             } });
             expect(captured.result).toEqual({ kind: 'settled' });
             expect(forward.mock.calls[0]?.[0]).toMatchObject({ machineAdmission: { installationId: machine.installationId } });
             forward.mockClear();
-            expect(await read()).toEqual({ kind: 'settled' });
+            expect(await read()).toEqual({ kind: 'incomplete', reason: 'installation_mismatch' });
             expect(forward).not.toHaveBeenCalled();
             expect(captured.observed).toEqual({ locks: 0, readOnly: 'on' });
         } finally {

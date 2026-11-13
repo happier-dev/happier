@@ -188,11 +188,11 @@ describe("session attention standings on SQLite", () => {
             select: { id: true },
         });
         const sessionId = await createSession(owner.id);
-        await db.sessionShare.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'account',
                 sessionId,
-                sharedByUserId: owner.id,
-                sharedWithUserId: reader.id,
+                createdByAccountId: owner.id,
+                accountId: reader.id,
                 accessLevel: "view",
             },
         });

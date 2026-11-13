@@ -99,9 +99,9 @@ export function listSharedCollectionResources(actorAccountId: string, request: P
         if (request.cursor && !/^[A-Za-z0-9_-]+$/.test(request.cursor)) throw new CollectionSharingError('collection_cursor_invalid');
         const limit = request.limit ?? PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1;
         const received = await resolveReceivedResourceGrantWhere(actorAccountId, async grants => (await Promise.all([
-            tx.pluginCollectionAccountGrant.findMany({ where: grants.account, select: { rowDbId: true } }),
-            tx.pluginCollectionTeamGrant.findMany({ where: grants.team, select: { rowDbId: true } }),
-            tx.pluginCollectionGroupGrant.findMany({ where: grants.group, select: { rowDbId: true } }),
+            tx.pluginCollectionGrant.findMany({ where: { principalKind: 'account', ...grants.account }, select: { rowDbId: true } }),
+            tx.pluginCollectionGrant.findMany({ where: { principalKind: 'team', ...grants.team }, select: { rowDbId: true } }),
+            tx.pluginCollectionGrant.findMany({ where: { principalKind: 'group', ...grants.group }, select: { rowDbId: true } }),
         ])).map(rows => rows.map(row => row.rowDbId)));
         const rows = await tx.pluginCollectionRow.findMany({ where: { pluginId: request.pluginId, collectionId: request.collectionId,
             deletedAt: null, accountId: { not: actorAccountId }, ...(request.cursor ? { id: { gt: request.cursor } } : {}),

@@ -36,30 +36,20 @@ model Account {
     managedMachines ManagedMachine[]
     managedMachinePresets ManagedMachinePreset[]
     projectSources ProjectSource[]
-    machineAccountGrants MachineAccountGrant[] @relation("MachineAccountGrantRecipient")
-    createdMachineAccountGrants MachineAccountGrant[] @relation("MachineAccountGrantCreator")
-    createdMachineTeamGrants MachineTeamGrant[] @relation("MachineTeamGrantCreator")
-    createdMachineGroupGrants MachineGroupGrant[] @relation("MachineGroupGrantCreator")
+    machineGrants MachineGrant[] @relation("MachineGrantRecipient")
+    createdMachineGrants MachineGrant[] @relation("MachineGrantCreator")
     machineKeyEnvelopes MachineKeyEnvelope[] @relation("MachineKeyEnvelopeRecipient")
-    artifactAccountGrants ArtifactAccountGrant[] @relation("ArtifactAccountGrantRecipient")
-    createdArtifactAccountGrants ArtifactAccountGrant[] @relation("ArtifactAccountGrantCreator")
-    createdArtifactTeamGrants ArtifactTeamGrant[] @relation("ArtifactTeamGrantCreator")
-    createdArtifactGroupGrants ArtifactGroupGrant[] @relation("ArtifactGroupGrantCreator")
+    artifactGrants ArtifactGrant[] @relation("ArtifactGrantRecipient")
+    createdArtifactGrants ArtifactGrant[] @relation("ArtifactGrantCreator")
     artifactKeyEnvelopes ArtifactKeyEnvelope[] @relation("ArtifactKeyEnvelopeRecipient")
-    taskAccountGrants TaskAccountGrant[] @relation("TaskAccountGrantRecipient")
-    createdTaskAccountGrants TaskAccountGrant[] @relation("TaskAccountGrantCreator")
-    createdTaskTeamGrants TaskTeamGrant[] @relation("TaskTeamGrantCreator")
-    createdTaskGroupGrants TaskGroupGrant[] @relation("TaskGroupGrantCreator")
+    taskGrants TaskGrant[] @relation("TaskGrantRecipient")
+    createdTaskGrants TaskGrant[] @relation("TaskGrantCreator")
     taskKeyEnvelopes TaskKeyEnvelope[] @relation("TaskKeyEnvelopeRecipient")
-    collectionAccountGrants PluginCollectionAccountGrant[] @relation("PluginCollectionAccountGrantRecipient")
-    createdCollectionAccountGrants PluginCollectionAccountGrant[] @relation("PluginCollectionAccountGrantCreator")
-    createdCollectionTeamGrants PluginCollectionTeamGrant[] @relation("PluginCollectionTeamGrantCreator")
-    createdCollectionGroupGrants PluginCollectionGroupGrant[] @relation("PluginCollectionGroupGrantCreator")
+    collectionGrants PluginCollectionGrant[] @relation("PluginCollectionGrantRecipient")
+    createdCollectionGrants PluginCollectionGrant[] @relation("PluginCollectionGrantCreator")
     collectionKeyEnvelopes PluginCollectionKeyEnvelope[] @relation("PluginCollectionKeyEnvelopeRecipient")
-    discussionAccountGrants DiscussionAccountGrant[] @relation("DiscussionAccountGrantRecipient")
-    createdDiscussionAccountGrants DiscussionAccountGrant[] @relation("DiscussionAccountGrantCreator")
-    createdDiscussionTeamGrants DiscussionTeamGrant[] @relation("DiscussionTeamGrantCreator")
-    createdDiscussionGroupGrants DiscussionGroupGrant[] @relation("DiscussionGroupGrantCreator")
+    discussionGrants DiscussionGrant[] @relation("DiscussionGrantRecipient")
+    createdDiscussionGrants DiscussionGrant[] @relation("DiscussionGrantCreator")
     discussionKeyEnvelopes DiscussionKeyEnvelope[] @relation("DiscussionKeyEnvelopeRecipient")
     workflowRunDataKeyEnvelopes WorkflowRunDataKeyEnvelope[]
     teamCredentialActivityEvents TeamCredentialActivityEvent[] @relation("CredentialActivityActor")
@@ -169,8 +159,8 @@ model Account {
     PluginCollectionIndexStates PluginCollectionIndexState[]
     PluginCollectionRelations PluginCollectionRelation[]
     PluginCollectionCandidatePreparationStages PluginCollectionCandidatePreparationStage[]
-    SharedBySessions       SessionShare[]             @relation("SharedBySessions")
-    SharedWithSessions     SessionShare[]             @relation("SharedWithSessions")
+    SharedBySessions       SessionGrant[]             @relation("SharedBySessions")
+    SharedWithSessions     SessionGrant[]             @relation("SharedWithSessions")
     sessionDataKeyEnvelopes SessionDataKeyEnvelope[]
     SessionShareAccessLogs SessionShareAccessLog[]    @relation("SessionShareAccessLogs")
     PublicSessionShares    PublicSessionShare[]       @relation("PublicSessionShares")
@@ -314,11 +304,11 @@ enum TeamAdmissionMode {
 model Team {
     machinePools MachinePool[]
     managedMachinePresets ManagedMachinePreset[]
-    machineGrants MachineTeamGrant[]
-    artifactGrants ArtifactTeamGrant[]
-    taskGrants TaskTeamGrant[]
-    collectionGrants PluginCollectionTeamGrant[]
-    discussionGrants DiscussionTeamGrant[]
+    machineGrants MachineGrant[]
+    artifactGrants ArtifactGrant[]
+    taskGrants TaskGrant[]
+    collectionGrants PluginCollectionGrant[]
+    discussionGrants DiscussionGrant[]
     credentialActivityEvents TeamCredentialActivityEvent[]
     credentialResources TeamCredentialResource[]
     id                          String                    @id @default(cuid())
@@ -338,7 +328,7 @@ model Team {
     memberships   TeamMembership[]
     groups        TeamGroup[]
     invitations   TeamInvitation[]
-    sessionGrants SessionTeamGrant[]
+    sessionGrants SessionGrant[]
     primaryContextSessions Session[] @relation("SessionPrimaryTeam")
     identityProviderInstances IdentityProviderInstance[]
     identityConnections TeamIdentityConnection[]
@@ -637,11 +627,11 @@ model TeamDirectoryGroupMember {
 }
 
 model TeamGroup {
-    machineGrants MachineGroupGrant[]
-    artifactGrants ArtifactGroupGrant[]
-    taskGrants TaskGroupGrant[]
-    collectionGrants PluginCollectionGroupGrant[]
-    discussionGrants DiscussionGroupGrant[]
+    machineGrants MachineGrant[]
+    artifactGrants ArtifactGrant[]
+    taskGrants TaskGrant[]
+    collectionGrants PluginCollectionGrant[]
+    discussionGrants DiscussionGrant[]
     credentialGrants TeamCredentialGroupGrant[]
     id               String   @id @default(cuid())
     teamId           String
@@ -655,7 +645,7 @@ model TeamGroup {
     team             Team                       @relation(fields: [teamId], references: [id], onDelete: Cascade)
     memberships      TeamGroupMembership[]
     externalBindings TeamExternalGroupBinding[]
-    sessionGrants    SessionGroupGrant[]
+    sessionGrants    SessionGrant[]
     savedSecretGroupGrants SavedSecretGroupGrant[]
 
     @@unique([id, teamId])
@@ -1608,10 +1598,9 @@ model Session {
     usageReports      UsageReport[]
     usageEvents       UsageEvent[]
     accessKeys        AccessKey[]
-    shares            SessionShare[]
+    grants SessionGrant[]
     dataKeyEnvelopes   SessionDataKeyEnvelope[]
-    teamGrants        SessionTeamGrant[]
-    groupGrants       SessionGroupGrant[]
+
     publicShare       PublicSessionShare?
     sessionFolderAssignments SessionFolderAssignment[]
     sessionPins                   SessionPin[]
@@ -2040,9 +2029,7 @@ model Discussion {
     createdByAccount           Account? @relation("DiscussionCreator", fields: [createdByAccountId], references: [id], onDelete: SetNull)
     messages                   DiscussionMessage[]
     readStates                 DiscussionReadState[]
-    accountGrants              DiscussionAccountGrant[]
-    teamGrants                 DiscussionTeamGrant[]
-    groupGrants                DiscussionGroupGrant[]
+    grants DiscussionGrant[]
     keyEnvelopes               DiscussionKeyEnvelope[]
     participants               DiscussionParticipant[]
     followDestinations         SessionFollowEdge[] @relation("DiscussionFollowSource")
@@ -2125,50 +2112,34 @@ model DiscussionReadState {
     @@index([accountId, discussionId])
 }
 
-model DiscussionAccountGrant {
+model DiscussionGrant {
+    id                 String @id @default(cuid())
     discussionId String
-    accountId String
-    accessLevel ShareAccessLevel
+    /// Provider database constraint enforces exactly one real principal FK to this selected arm.
+    principalKind      String
+    accountId          String?
+    teamId             String?
+    teamGroupId        String?
+    accessLevel        ShareAccessLevel
     createdByAccountId String
-    createdAt DateTime @default(now())
+    createdAt          DateTime @default(now())
 
     discussion Discussion @relation(fields: [discussionId], references: [id], onDelete: Cascade)
-    account Account @relation("DiscussionAccountGrantRecipient", fields: [accountId], references: [id], onDelete: Cascade)
-    createdBy Account @relation("DiscussionAccountGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
+    account   Account? @relation("DiscussionGrantRecipient", fields: [accountId], references: [id], onDelete: Cascade)
+    team      Team? @relation(fields: [teamId], references: [id], onDelete: Cascade)
+    teamGroup TeamGroup? @relation(fields: [teamGroupId], references: [id], onDelete: Cascade)
+    createdBy Account @relation("DiscussionGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
 
-    @@id([discussionId, accountId])
+    @@unique([discussionId, accountId])
+    @@unique([discussionId, teamId])
+    @@unique([discussionId, teamGroupId])
     @@index([accountId, discussionId])
-}
-
-model DiscussionTeamGrant {
-    discussionId String
-    teamId String
-    accessLevel ShareAccessLevel
-    createdByAccountId String
-    createdAt DateTime @default(now())
-
-    discussion Discussion @relation(fields: [discussionId], references: [id], onDelete: Cascade)
-    team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
-    createdBy Account @relation("DiscussionTeamGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
-
-    @@id([discussionId, teamId])
     @@index([teamId, discussionId])
-}
-
-model DiscussionGroupGrant {
-    discussionId String
-    teamGroupId String
-    accessLevel ShareAccessLevel
-    createdByAccountId String
-    createdAt DateTime @default(now())
-
-    discussion Discussion @relation(fields: [discussionId], references: [id], onDelete: Cascade)
-    teamGroup TeamGroup @relation(fields: [teamGroupId], references: [id], onDelete: Cascade)
-    createdBy Account @relation("DiscussionGroupGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
-
-    @@id([discussionId, teamGroupId])
     @@index([teamGroupId, discussionId])
+    @@index([createdByAccountId])
 }
+
+
 
 model DiscussionKeyEnvelope {
     discussionId String
@@ -2650,9 +2621,7 @@ model Machine {
     deploymentTargetLinks DeploymentTargetLink[]
     accountExecutionRunFollowSources AccountSessionFollow[] @relation("AccountFollowExecutionRunMachineSource")
     sessionExecutionRunFollowSources SessionFollowEdge[] @relation("ExecutionRunMachineFollowSource")
-    accountGrants MachineAccountGrant[]
-    teamGrants MachineTeamGrant[]
-    groupGrants MachineGroupGrant[]
+    grants MachineGrant[]
     keyEnvelopes MachineKeyEnvelope[]
     managedResource ManagedMachine?
     brokeredTeamCredentialResources TeamCredentialResource[]
@@ -2789,50 +2758,34 @@ enum MachineShareAccessLevel {
     admin
 }
 
-model MachineAccountGrant {
+model MachineGrant {
+    id                 String @id @default(cuid())
     machineId String
-    accountId String
-    accessLevel MachineShareAccessLevel
+    /// Provider database constraint enforces exactly one real principal FK to this selected arm.
+    principalKind      String
+    accountId          String?
+    teamId             String?
+    teamGroupId        String?
+    accessLevel        MachineShareAccessLevel
     createdByAccountId String
-    createdAt DateTime @default(now())
+    createdAt          DateTime @default(now())
 
     machine Machine @relation(fields: [machineId], references: [id], onDelete: Cascade)
-    account Account @relation("MachineAccountGrantRecipient", fields: [accountId], references: [id], onDelete: Cascade)
-    createdBy Account @relation("MachineAccountGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
+    account   Account? @relation("MachineGrantRecipient", fields: [accountId], references: [id], onDelete: Cascade)
+    team      Team? @relation(fields: [teamId], references: [id], onDelete: Cascade)
+    teamGroup TeamGroup? @relation(fields: [teamGroupId], references: [id], onDelete: Cascade)
+    createdBy Account @relation("MachineGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
 
-    @@id([machineId, accountId])
+    @@unique([machineId, accountId])
+    @@unique([machineId, teamId])
+    @@unique([machineId, teamGroupId])
     @@index([accountId, machineId])
-}
-
-model MachineTeamGrant {
-    machineId String
-    teamId String
-    accessLevel MachineShareAccessLevel
-    createdByAccountId String
-    createdAt DateTime @default(now())
-
-    machine Machine @relation(fields: [machineId], references: [id], onDelete: Cascade)
-    team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
-    createdBy Account @relation("MachineTeamGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
-
-    @@id([machineId, teamId])
     @@index([teamId, machineId])
-}
-
-model MachineGroupGrant {
-    machineId String
-    teamGroupId String
-    accessLevel MachineShareAccessLevel
-    createdByAccountId String
-    createdAt DateTime @default(now())
-
-    machine Machine @relation(fields: [machineId], references: [id], onDelete: Cascade)
-    teamGroup TeamGroup @relation(fields: [teamGroupId], references: [id], onDelete: Cascade)
-    createdBy Account @relation("MachineGroupGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
-
-    @@id([machineId, teamGroupId])
     @@index([teamGroupId, machineId])
+    @@index([createdByAccountId])
 }
+
+
 
 model MachineKeyEnvelope {
     machineId String
@@ -3663,9 +3616,7 @@ model Artifact {
     templateAcceptedVersions ArtifactTemplateAcceptedVersion[]
     revisions ArtifactRevision[]
     blobs ArtifactBlob[]
-    accountGrants ArtifactAccountGrant[]
-    teamGrants ArtifactTeamGrant[]
-    groupGrants ArtifactGroupGrant[]
+    grants ArtifactGrant[]
     keyEnvelopes ArtifactKeyEnvelope[]
     id                String   @id // UUID provided by client
     accountId         String
@@ -3942,50 +3893,34 @@ model ArtifactBlob {
     @@index([artifactId])
 }
 
-model ArtifactAccountGrant {
+model ArtifactGrant {
+    id                 String @id @default(cuid())
     artifactId String
-    accountId String
-    accessLevel ShareAccessLevel
+    /// Provider database constraint enforces exactly one real principal FK to this selected arm.
+    principalKind      String
+    accountId          String?
+    teamId             String?
+    teamGroupId        String?
+    accessLevel        ShareAccessLevel
     createdByAccountId String
-    createdAt DateTime @default(now())
+    createdAt          DateTime @default(now())
 
     artifact Artifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
-    account Account @relation("ArtifactAccountGrantRecipient", fields: [accountId], references: [id], onDelete: Cascade)
-    createdBy Account @relation("ArtifactAccountGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
+    account   Account? @relation("ArtifactGrantRecipient", fields: [accountId], references: [id], onDelete: Cascade)
+    team      Team? @relation(fields: [teamId], references: [id], onDelete: Cascade)
+    teamGroup TeamGroup? @relation(fields: [teamGroupId], references: [id], onDelete: Cascade)
+    createdBy Account @relation("ArtifactGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
 
-    @@id([artifactId, accountId])
+    @@unique([artifactId, accountId])
+    @@unique([artifactId, teamId])
+    @@unique([artifactId, teamGroupId])
     @@index([accountId, artifactId])
-}
-
-model ArtifactTeamGrant {
-    artifactId String
-    teamId String
-    accessLevel ShareAccessLevel
-    createdByAccountId String
-    createdAt DateTime @default(now())
-
-    artifact Artifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
-    team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
-    createdBy Account @relation("ArtifactTeamGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
-
-    @@id([artifactId, teamId])
     @@index([teamId, artifactId])
-}
-
-model ArtifactGroupGrant {
-    artifactId String
-    teamGroupId String
-    accessLevel ShareAccessLevel
-    createdByAccountId String
-    createdAt DateTime @default(now())
-
-    artifact Artifact @relation(fields: [artifactId], references: [id], onDelete: Cascade)
-    teamGroup TeamGroup @relation(fields: [teamGroupId], references: [id], onDelete: Cascade)
-    createdBy Account @relation("ArtifactGroupGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
-
-    @@id([artifactId, teamGroupId])
     @@index([teamGroupId, artifactId])
+    @@index([createdByAccountId])
 }
+
+
 
 model ArtifactKeyEnvelope {
     artifactId String
@@ -4376,9 +4311,7 @@ model UserKVStore {
     version   Int      @default(0)
     createdAt DateTime @default(now())
     updatedAt DateTime @updatedAt
-    accountGrants TaskAccountGrant[]
-    teamGrants TaskTeamGrant[]
-    groupGrants TaskGroupGrant[]
+    grants TaskGrant[]
     keyEnvelopes TaskKeyEnvelope[]
 
     @@unique([accountId, key])
@@ -4386,50 +4319,34 @@ model UserKVStore {
 }
 
 /// Task content remains in the owning UserKVStore todo.<id> row.
-model TaskAccountGrant {
+model TaskGrant {
+    id                 String @id @default(cuid())
     taskId String
-    accountId String
-    accessLevel ShareAccessLevel
+    /// Provider database constraint enforces exactly one real principal FK to this selected arm.
+    principalKind      String
+    accountId          String?
+    teamId             String?
+    teamGroupId        String?
+    accessLevel        ShareAccessLevel
     createdByAccountId String
-    createdAt DateTime @default(now())
+    createdAt          DateTime @default(now())
 
     task UserKVStore @relation(fields: [taskId], references: [id], onDelete: Cascade)
-    account Account @relation("TaskAccountGrantRecipient", fields: [accountId], references: [id], onDelete: Cascade)
-    createdBy Account @relation("TaskAccountGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
+    account   Account? @relation("TaskGrantRecipient", fields: [accountId], references: [id], onDelete: Cascade)
+    team      Team? @relation(fields: [teamId], references: [id], onDelete: Cascade)
+    teamGroup TeamGroup? @relation(fields: [teamGroupId], references: [id], onDelete: Cascade)
+    createdBy Account @relation("TaskGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
 
-    @@id([taskId, accountId])
+    @@unique([taskId, accountId])
+    @@unique([taskId, teamId])
+    @@unique([taskId, teamGroupId])
     @@index([accountId, taskId])
-}
-
-model TaskTeamGrant {
-    taskId String
-    teamId String
-    accessLevel ShareAccessLevel
-    createdByAccountId String
-    createdAt DateTime @default(now())
-
-    task UserKVStore @relation(fields: [taskId], references: [id], onDelete: Cascade)
-    team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
-    createdBy Account @relation("TaskTeamGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
-
-    @@id([taskId, teamId])
     @@index([teamId, taskId])
-}
-
-model TaskGroupGrant {
-    taskId String
-    teamGroupId String
-    accessLevel ShareAccessLevel
-    createdByAccountId String
-    createdAt DateTime @default(now())
-
-    task UserKVStore @relation(fields: [taskId], references: [id], onDelete: Cascade)
-    teamGroup TeamGroup @relation(fields: [teamGroupId], references: [id], onDelete: Cascade)
-    createdBy Account @relation("TaskGroupGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
-
-    @@id([taskId, teamGroupId])
     @@index([teamGroupId, taskId])
+    @@index([createdByAccountId])
 }
+
+
 
 /// Owner and recipient copies of the resource data key share one envelope owner.
 model TaskKeyEnvelope {
@@ -4448,50 +4365,34 @@ model TaskKeyEnvelope {
 }
 
 /// Collection grants attach to the canonical Collection row.
-model PluginCollectionAccountGrant {
+model PluginCollectionGrant {
+    id                 String @id @default(cuid())
     rowDbId String @db.VarChar(25)
-    accountId String
-    accessLevel ShareAccessLevel
+    /// Provider database constraint enforces exactly one real principal FK to this selected arm.
+    principalKind      String
+    accountId          String?
+    teamId             String?
+    teamGroupId        String?
+    accessLevel        ShareAccessLevel
     createdByAccountId String
-    createdAt DateTime @default(now())
+    createdAt          DateTime @default(now())
 
     row PluginCollectionRow @relation(fields: [rowDbId], references: [id], onDelete: Cascade)
-    account Account @relation("PluginCollectionAccountGrantRecipient", fields: [accountId], references: [id], onDelete: Cascade)
-    createdBy Account @relation("PluginCollectionAccountGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
+    account   Account? @relation("PluginCollectionGrantRecipient", fields: [accountId], references: [id], onDelete: Cascade)
+    team      Team? @relation(fields: [teamId], references: [id], onDelete: Cascade)
+    teamGroup TeamGroup? @relation(fields: [teamGroupId], references: [id], onDelete: Cascade)
+    createdBy Account @relation("PluginCollectionGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
 
-    @@id([rowDbId, accountId])
+    @@unique([rowDbId, accountId])
+    @@unique([rowDbId, teamId])
+    @@unique([rowDbId, teamGroupId])
     @@index([accountId, rowDbId])
-}
-
-model PluginCollectionTeamGrant {
-    rowDbId String @db.VarChar(25)
-    teamId String
-    accessLevel ShareAccessLevel
-    createdByAccountId String
-    createdAt DateTime @default(now())
-
-    row PluginCollectionRow @relation(fields: [rowDbId], references: [id], onDelete: Cascade)
-    team Team @relation(fields: [teamId], references: [id], onDelete: Cascade)
-    createdBy Account @relation("PluginCollectionTeamGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
-
-    @@id([rowDbId, teamId])
     @@index([teamId, rowDbId])
-}
-
-model PluginCollectionGroupGrant {
-    rowDbId String @db.VarChar(25)
-    teamGroupId String
-    accessLevel ShareAccessLevel
-    createdByAccountId String
-    createdAt DateTime @default(now())
-
-    row PluginCollectionRow @relation(fields: [rowDbId], references: [id], onDelete: Cascade)
-    teamGroup TeamGroup @relation(fields: [teamGroupId], references: [id], onDelete: Cascade)
-    createdBy Account @relation("PluginCollectionGroupGrantCreator", fields: [createdByAccountId], references: [id], onDelete: Cascade)
-
-    @@id([rowDbId, teamGroupId])
     @@index([teamGroupId, rowDbId])
+    @@index([createdByAccountId])
 }
+
+
 
 /// Owner and recipient copies of the resource data key share one envelope owner.
 model PluginCollectionKeyEnvelope {
@@ -4620,9 +4521,7 @@ model PluginCollectionRow {
     updatedAt      DateTime @updatedAt
     deletedAt      DateTime?
 
-    accountGrants PluginCollectionAccountGrant[]
-    teamGrants PluginCollectionTeamGrant[]
-    groupGrants PluginCollectionGroupGrant[]
+    grants PluginCollectionGrant[]
     keyEnvelopes PluginCollectionKeyEnvelope[]
 
     projections      PluginCollectionProjection[]
@@ -4942,73 +4841,48 @@ enum ShareAccessLevel {
     admin
 }
 
-/// Direct session share between users (friend-to-friend sharing)
-model SessionShare {
-    id                String           @id @default(cuid())
-    sessionId         String
-    session           Session          @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-    sharedByUserId    String
-    sharedByUser      Account          @relation("SharedBySessions", fields: [sharedByUserId], references: [id])
-    sharedWithUserId  String
-    sharedWithUser    Account          @relation("SharedWithSessions", fields: [sharedWithUserId], references: [id])
-    accessLevel       ShareAccessLevel @default(view)
-    /// Whether this recipient can approve permission prompts for this session (delegated to the owner daemon)
-    canApprovePermissions Boolean       @default(false)
-    createdAt         DateTime         @default(now())
-    updatedAt         DateTime         @updatedAt
-    accessLogs        SessionShareAccessLog[]
-
-    @@unique([sessionId, sharedWithUserId])
-    @@index([sharedWithUserId])
-    @@index([sharedByUserId])
-    @@index([sessionId])
-}
-
-/// One Session access grant to a whole Team.
-///
-/// Team membership itself is never copied into rows here: the grant is durable and
-/// membership is evaluated live, so removing a member revokes their access without
-/// touching this row. `effectiveAt` is minted once by the canonical grant service
-/// from the same transaction-scoped database clock that mints Lane 01 membership
-/// horizons, and is preserved by later desired-state replacements, because it is the
-/// only fact that can decide a `from_membership` member's historical access.
-model SessionTeamGrant {
+/// Session grants keep the released direct-share identity and access-log FK.
+model SessionGrant {
+    id                    String @id @default(cuid())
     sessionId             String
-    teamId                String
+    /// Provider database constraint enforces one principal arm and its Session history fields.
+    principalKind         String
+    accountId             String? @map("sharedWithUserId")
+    teamId                String?
+    teamGroupId           String?
+    createdByAccountId    String? @map("sharedByUserId")
     accessLevel           ShareAccessLevel @default(view)
-    canApprovePermissions Boolean          @default(false)
-    /// Set only by the Team session-policy composition; never accepted from a client.
-    requiredByTeamPolicy  Boolean          @default(false)
-    effectiveAt           DateTime
+    canApprovePermissions Boolean @default(false)
+    requiredByTeamPolicy  Boolean @default(false)
+    effectiveAt           DateTime?
+    createdAt             DateTime @default(now())
+    updatedAt             DateTime @updatedAt
 
-    session Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-    team    Team    @relation(fields: [teamId], references: [id], onDelete: Cascade)
+    session   Session @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+    account   Account? @relation("SharedWithSessions", fields: [accountId], references: [id], onDelete: Restrict)
+    createdBy Account? @relation("SharedBySessions", fields: [createdByAccountId], references: [id], onDelete: Restrict)
+    team      Team? @relation(fields: [teamId], references: [id], onDelete: Cascade)
+    teamGroup TeamGroup? @relation(fields: [teamGroupId], references: [id], onDelete: Cascade)
+    accessLogs SessionShareAccessLog[]
 
-    @@id([sessionId, teamId])
-    @@index([teamId, sessionId])
+    @@unique([sessionId, accountId], map: "SessionShare_sessionId_sharedWithUserId_key")
+    @@unique([sessionId, teamId], map: "SessionShare_sessionId_teamId_key")
+    @@unique([sessionId, teamGroupId], map: "SessionShare_sessionId_teamGroupId_key")
+    @@index([accountId, sessionId], map: "SessionShare_sharedWithUserId_sessionId_idx")
+    @@index([teamId, sessionId], map: "SessionShare_teamId_sessionId_idx")
+    @@index([teamGroupId, sessionId], map: "SessionShare_teamGroupId_sessionId_idx")
+    @@index([createdByAccountId], map: "SessionShare_sharedByUserId_idx")
+    @@index([sessionId], map: "SessionShare_sessionId_idx")
+    @@map("SessionShare")
 }
 
-/// One Session access grant to a flat Team Group. The Group reaches its Team through
-/// its own relation, so no redundant `teamId` column is stored here.
-model SessionGroupGrant {
-    sessionId             String
-    teamGroupId           String
-    accessLevel           ShareAccessLevel @default(view)
-    canApprovePermissions Boolean          @default(false)
-    effectiveAt           DateTime
 
-    session   Session   @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-    teamGroup TeamGroup @relation(fields: [teamGroupId], references: [id], onDelete: Cascade)
-
-    @@id([sessionId, teamGroupId])
-    @@index([teamGroupId, sessionId])
-}
 
 /// Access log for direct session shares
 model SessionShareAccessLog {
     id             String       @id @default(cuid())
     sessionShareId String
-    sessionShare   SessionShare @relation(fields: [sessionShareId], references: [id], onDelete: Cascade)
+    sessionShare   SessionGrant @relation(fields: [sessionShareId], references: [id], onDelete: Cascade)
     userId         String
     user           Account      @relation("SessionShareAccessLogs", fields: [userId], references: [id])
     accessedAt     DateTime     @default(now())

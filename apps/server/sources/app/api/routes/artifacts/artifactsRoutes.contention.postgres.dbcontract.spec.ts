@@ -32,9 +32,10 @@ function interleaveAccountPublisher(artifactId: string, publish: () => Promise<v
             return callback(new Proxy(tx, { get(inner, property, innerReceiver) {
                 if (property === 'artifact') return new Proxy(inner.artifact, { get(delegate, method, delegateReceiver) {
                     const query = Reflect.get(delegate, method, delegateReceiver);
-                    if (method !== 'findFirst') return query;
+                    if (method !== 'findFirst' && method !== 'findUnique' && method !== 'findMany') return query;
                     return (...queryArgs: Parameters<typeof tx.artifact.findFirst>) => {
-                        if (queryArgs[0]?.where?.id === artifactId) addressed = true;
+                        const id = queryArgs[0]?.where?.id;
+                        if (id === artifactId || (typeof id === 'object' && Array.isArray(id?.in) && id.in.includes(artifactId))) addressed = true;
                         return Reflect.apply(query, delegate, queryArgs);
                     };
                 } });
@@ -96,7 +97,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
             const peerArtifact = await db.artifact.create({ data: { id: randomUUID(), accountId: owner.id,
                 header: artifact.header, body: artifact.body, dataEncryptionKey: artifact.dataEncryptionKey, bodyVersion: 1 } });
             const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}' } });
-            if (operation !== 'grant') await db.artifactAccountGrant.create({ data: {
+            if (operation !== 'grant') await db.artifactGrant.create({ data: { principalKind: 'account',
                 artifactId: artifact.id, accountId: recipient.id, accessLevel: 'view', createdByAccountId: owner.id,
             } });
             const recipientEnvelope = { recipientAccountId: recipient.id, encryptedDataKey: privacyKit.encodeBase64(wrap(recipient.contentPublicKey!)),
@@ -138,7 +139,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('A
                     if (operation === 'envelope') expect(result.json()).toEqual({ appliedRecipientAccountIds: [recipient.id], skippedRecipientAccountIds: [] });
                     else expect(result.json()).toMatchObject({ changed: true });
                 });
-                expect(await db.artifactAccountGrant.count({ where: { artifactId: artifact.id } })).toBe(operation === 'revoke' ? 0 : 1);
+                expect(await db.artifactGrant.count({ where: { principalKind: 'account', artifactId: artifact.id } })).toBe(operation === 'revoke' ? 0 : 1);
                 expect(await db.artifactKeyEnvelope.count({ where: { artifactId: artifact.id } })).toBe(operation === 'envelope' ? 1 : 0);
                 const changes = await db.accountChange.findMany({ where: { accountId: owner.id }, orderBy: { cursor: 'asc' } });
                 // Envelope commits notify the applied recipient; they do not

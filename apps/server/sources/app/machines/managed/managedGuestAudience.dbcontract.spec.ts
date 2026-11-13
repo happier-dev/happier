@@ -25,9 +25,9 @@ describe('Machine audience SQL across database providers', () => {
         ]);
         const machine = await db.machine.create({ data: { id: `m_${randomUUID().slice(0, 12)}`, accountId: custodian.id,
             metadata: '{}', installationId: randomUUID() } });
-        await db.machineAccountGrant.createMany({ data: [
-            { machineId: machine.id, accountId: viewer.id, createdByAccountId: custodian.id, accessLevel: 'view' },
-            { machineId: machine.id, accountId: manager.id, createdByAccountId: custodian.id, accessLevel: 'admin' },
+        await db.machineGrant.createMany({ data: [
+            { principalKind: 'account', machineId: machine.id, accountId: viewer.id, createdByAccountId: custodian.id, accessLevel: 'view' },
+            { principalKind: 'account', machineId: machine.id, accountId: manager.id, createdByAccountId: custodian.id, accessLevel: 'admin' },
         ] });
         const audience = (knownCustodian?: string) => inTx(tx => readMachineAudienceAccountIdsInTx(tx, machine.id, knownCustodian));
         expect(await audience()).toEqual([custodian.id, viewer.id, manager.id].sort());
@@ -43,9 +43,9 @@ describe('Machine audience SQL across database providers', () => {
         const machines = await Promise.all([0, 1].map(() => db.machine.create({ data: {
             id: randomUUID(), accountId: owner.id, metadata: '{}', installationId: randomUUID(),
         } })));
-        await db.machineAccountGrant.createMany({ data: [
-            { machineId: machines[0].id, accountId: viewer.id, createdByAccountId: owner.id, accessLevel: 'view' },
-            { machineId: machines[1].id, accountId: manager.id, createdByAccountId: owner.id, accessLevel: 'admin' },
+        await db.machineGrant.createMany({ data: [
+            { principalKind: 'account', machineId: machines[0].id, accountId: viewer.id, createdByAccountId: owner.id, accessLevel: 'view' },
+            { principalKind: 'account', machineId: machines[1].id, accountId: manager.id, createdByAccountId: owner.id, accessLevel: 'admin' },
         ] });
         const work = await inTx(tx => readMachineRecipientWorkInTx(tx, { actorAccountId: owner.id,
             ownerFingerprints: new Map(machines.map(machine => [machine.id, null])) }));
@@ -71,10 +71,10 @@ describe('Machine audience SQL across database providers', () => {
         } });
         const firstManaged = await createManaged(host, first);
         await createManaged(first, second);
-        await db.machineAccountGrant.createMany({ data: [
-            { machineId: host.id, accountId: viewer.id, createdByAccountId: hostOwner.id, accessLevel: 'view' },
-            { machineId: host.id, accountId: manager.id, createdByAccountId: hostOwner.id, accessLevel: 'admin' },
-            { machineId: second.id, accountId: guestViewer.id, createdByAccountId: guestOwner.id, accessLevel: 'view' },
+        await db.machineGrant.createMany({ data: [
+            { principalKind: 'account', machineId: host.id, accountId: viewer.id, createdByAccountId: hostOwner.id, accessLevel: 'view' },
+            { principalKind: 'account', machineId: host.id, accountId: manager.id, createdByAccountId: hostOwner.id, accessLevel: 'admin' },
+            { principalKind: 'account', machineId: second.id, accountId: guestViewer.id, createdByAccountId: guestOwner.id, accessLevel: 'view' },
         ] });
         const audience = (knownCustodian?: string) => inTx(tx => readMachineAudienceAccountIdsInTx(tx, second.id, knownCustodian));
         expect(await audience()).toEqual([hostOwner.id, guestOwner.id, manager.id, guestViewer.id].sort());

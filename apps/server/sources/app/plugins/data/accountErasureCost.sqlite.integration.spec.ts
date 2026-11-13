@@ -46,16 +46,16 @@ describe("Account erasure resource census cost", () => {
             // Retained foreign grants exercise the unindexed creator arms reserved for B6.
             // Ten grants of each kind per resource: 60,000 unrelated grant rows at crowded scale.
             for (let recipient = 0; recipient < 10; recipient++) {
-                await db.machineAccountGrant.createMany({ data: Array.from({ length: size }, (_, i) => ({ machineId: `erase-machine-${i}`,
-                    accountId: `erase-cost-${recipient}`, createdByAccountId: `erase-cost-${i % 100}`, accessLevel: "view" })) });
+                await db.machineGrant.createMany({ data: (Array.from({ length: size }, (_, i) => ({ machineId: `erase-machine-${i}`,
+                    accountId: `erase-cost-${recipient}`, createdByAccountId: `erase-cost-${i % 100}`, accessLevel: "view" }))).map(grant => ({ ...grant, principalKind: 'account' as const })) });
                 await db.discussionAccountGrant.createMany({ data: Array.from({ length: size }, (_, i) => ({ discussionId: `erase-discussion-${i}`,
                     accountId: `erase-cost-${recipient}`, createdByAccountId: `erase-cost-${i % 100}`, accessLevel: "view" })) });
-                await db.machineTeamGrant.createMany({ data: Array.from({ length: size }, (_, i) => ({ machineId: `erase-machine-${i}`,
-                    teamId: `erase-team-${recipient}`, createdByAccountId: `erase-cost-${i % 100}`, accessLevel: "view" })) });
+                await db.machineGrant.createMany({ data: (Array.from({ length: size }, (_, i) => ({ machineId: `erase-machine-${i}`,
+                    teamId: `erase-team-${recipient}`, createdByAccountId: `erase-cost-${i % 100}`, accessLevel: "view" }))).map(grant => ({ ...grant, principalKind: 'team' as const })) });
                 await db.discussionTeamGrant.createMany({ data: Array.from({ length: size }, (_, i) => ({ discussionId: `erase-discussion-${i}`,
                     teamId: `erase-team-${recipient}`, createdByAccountId: `erase-cost-${i % 100}`, accessLevel: "view" })) });
-                await db.machineGroupGrant.createMany({ data: Array.from({ length: size }, (_, i) => ({ machineId: `erase-machine-${i}`,
-                    teamGroupId: `erase-group-${recipient}`, createdByAccountId: `erase-cost-${i % 100}`, accessLevel: "view" })) });
+                await db.machineGrant.createMany({ data: (Array.from({ length: size }, (_, i) => ({ machineId: `erase-machine-${i}`,
+                    teamGroupId: `erase-group-${recipient}`, createdByAccountId: `erase-cost-${i % 100}`, accessLevel: "view" }))).map(grant => ({ ...grant, principalKind: 'group' as const })) });
                 await db.discussionGroupGrant.createMany({ data: Array.from({ length: size }, (_, i) => ({ discussionId: `erase-discussion-${i}`,
                     teamGroupId: `erase-group-${recipient}`, createdByAccountId: `erase-cost-${i % 100}`, accessLevel: "view" })) });
             }

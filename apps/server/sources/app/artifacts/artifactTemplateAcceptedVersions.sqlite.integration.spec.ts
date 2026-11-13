@@ -38,7 +38,7 @@ describe('Template accepted versions through Artifact sharing (real SQLite)', ()
             dataEncryptionKey: mode === 'plain' ? privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER)
                 : new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey: tweetnacl.randomBytes(32),
                     recipientPublicKey: owner.contentPublicKey!, randomBytes: tweetnacl.randomBytes })), headerVersion: 1, bodyVersion: 1 } });
-        await db.artifactAccountGrant.createMany({ data: [recipient, other].map(account => ({ artifactId: artifact.id,
+        await db.artifactGrant.createMany({ data: [recipient, other].map(account => ({ principalKind: 'account', artifactId: artifact.id,
             accountId: account.id, accessLevel: 'view' as const, createdByAccountId: owner.id })) });
         return { owner, recipient, other, artifact };
     }
@@ -71,7 +71,7 @@ describe('Template accepted versions through Artifact sharing (real SQLite)', ()
             expect(recipient.statusCode).toBe(200);
             expect(recipient.json().grants).toHaveLength(1);
             expect(recipient.json().grants[0]).not.toHaveProperty('acceptedVersions');
-            await db.artifactAccountGrant.update({ where: { artifactId_accountId: { artifactId: f.artifact.id,
+            await db.artifactGrant.update({ where: { principalKind: 'account', artifactId_accountId: { artifactId: f.artifact.id,
                 accountId: f.recipient.id } }, data: { accessLevel: 'admin' } });
             const admin = await app.inject({ method: 'GET', url: `/v1/artifacts/${f.artifact.id}/access/grants`,
                 headers: { 'x-test-user-id': f.recipient.id } });
@@ -105,10 +105,10 @@ describe('Template accepted versions through Artifact sharing (real SQLite)', ()
 
     it('accepts the current Team grant without inventing an aggregate on the Team row', async () => {
         const f = await fixture();
-        await db.artifactAccountGrant.deleteMany({ where: { artifactId: f.artifact.id } });
+        await db.artifactGrant.deleteMany({ where: { principalKind: 'account', artifactId: f.artifact.id } });
         const team = await db.team.create({ data: { name: 'Recipient Team' } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: f.recipient.id, role: 'member' } });
-        await db.artifactTeamGrant.create({ data: { artifactId: f.artifact.id, teamId: team.id,
+        await db.artifactGrant.create({ data: { principalKind: 'team', artifactId: f.artifact.id, teamId: team.id,
             accessLevel: 'view', createdByAccountId: f.owner.id } });
         await withAuthenticatedTestApp(artifactsRoutes, async app => {
             const report = await app.inject({ method: 'PUT', url: `/v1/artifacts/${f.artifact.id}/access/accepted-version`,
@@ -132,7 +132,7 @@ describe('Template accepted versions through Artifact sharing (real SQLite)', ()
             expect((await send({ ...input, recipientAccountId: f.other.id })).statusCode).toBe(400);
             expect((await send({ ...input, acceptedVersion: 'not a version' })).statusCode).toBe(400);
             expect((await send(input)).statusCode).toBe(200);
-            await db.artifactAccountGrant.delete({ where: { artifactId_accountId: { artifactId: f.artifact.id, accountId: f.recipient.id } } });
+            await db.artifactGrant.delete({ where: { principalKind: 'account', artifactId_accountId: { artifactId: f.artifact.id, accountId: f.recipient.id } } });
             expect((await send({ ...input, acceptedVersion: '2.0.0' })).statusCode).toBe(404);
             const listed = await app.inject({ method: 'GET', url: `/v1/artifacts/${f.artifact.id}/access/grants`,
                 headers: { 'x-test-user-id': f.owner.id } });

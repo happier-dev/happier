@@ -25,7 +25,7 @@ async function fixture() {
         daemonState: encodePlainMachineStoredContent({ status: 'offline' }),
         dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
     } });
-    await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: recipient.id,
+    await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id, accountId: recipient.id,
         accessLevel: 'view', createdByAccountId: owner.id } });
     return { owner, recipient, machine };
 }
@@ -72,7 +72,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
     });
     afterAll(async () => { await db.$disconnect(); });
 
-    it('acquires its audience once at admission and once at canonical publication', async () => {
+    it('acquires its audience once at admission and reuses it for canonical publication', async () => {
         const f = await fixture();
         let reads: readonly string[] = [];
         let audienceQueries = 0;
@@ -85,14 +85,14 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
                 const value = Reflect.get(target, property, receiver);
                 if (property !== '$queryRawUnsafe') return typeof value === 'function' ? value.bind(target) : value;
                 return async (...args: unknown[]) => {
-                    if (typeof args[0] === 'string' && args[0].includes('WITH selected AS')) audienceQueries++;
+                    if (typeof args[0] === 'string' && /WITH(?: RECURSIVE)? selected AS/u.test(args[0])) audienceQueries++;
                     return Reflect.apply(value, target, args);
                 };
             } });
             await acquireMachineAccessPublicationLocksInTx(traced, f.machine.id);
             await markAccountChanged(traced, { accountId: f.owner.id, kind: 'machine', entityId: f.machine.id });
         });
-        expect(reads.length + audienceQueries).toBe(2);
+        expect(reads.length + audienceQueries).toBe(1);
         expect(await db.accountChange.findFirst({ where: {
             accountId: f.owner.id, kind: 'machine', entityId: f.machine.id,
         } })).toMatchObject({ entityId: f.machine.id });
@@ -141,7 +141,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
             // A real database boundary makes an unnecessary grant read observable
             // without an elapsed-time threshold or an internal policy mock.
             await db.$transaction(async holder => {
-                await holder.$executeRawUnsafe('LOCK TABLE "MachineAccountGrant" IN ACCESS EXCLUSIVE MODE');
+                await holder.$executeRawUnsafe('LOCK TABLE "MachineGrant" IN ACCESS EXCLUSIVE MODE');
                 const [{ pid }] = await holder.$queryRaw<Array<{ pid: number }>>`SELECT pg_backend_pid() AS pid`;
                 admissions = Promise.all([
                     inTx(tx => resolveMachineAdmissionInTx(tx, { actorAccountId: f.owner.id, machineId: f.machine.id })),
@@ -207,7 +207,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
                 expect(MachineAccessMutationResultV1Schema.parse(response.json())).toMatchObject(
                     phase === 'upgrade' ? { kind: 'saved', grant: { level: 'admin' } } : { kind: 'removed', effectiveAccess: 'none' });
             });
-            expect(await db.machineAccountGrant.findUnique({ where: { machineId_accountId: { machineId: f.machine.id, accountId: f.recipient.id } } }))
+            expect(await db.machineGrant.findUnique({ where: { principalKind: 'account', machineId_accountId: { machineId: f.machine.id, accountId: f.recipient.id } } }))
                 .toEqual(phase === 'upgrade' ? expect.objectContaining({ accessLevel: 'admin' }) : null);
             expect(await db.accountChange.findMany({ where: { kind: 'machineRecipientAccess', entityId: f.machine.id },
                 select: { accountId: true }, orderBy: { accountId: 'asc' } }))
@@ -226,7 +226,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
         const restore = beforeAdmissionFence(async () => {
             if (change === 'authority') await db.account.update({ where: { id: f.owner.id }, data: { status: 'suspended' } });
             else if (change === 'currentness') await db.machine.update({ where: { id: f.machine.id }, data: { revokedAt: new Date() } });
-            else await db.machineAccountGrant.create({ data: { machineId: f.machine.id, accountId: manager.id,
+            else await db.machineGrant.create({ data: { principalKind: 'account', machineId: f.machine.id, accountId: manager.id,
                 accessLevel: 'admin', createdByAccountId: f.owner.id } });
         });
         try {
@@ -238,7 +238,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
                 expect(MachineAccessMutationResultV1Schema.parse(response.json())).toMatchObject(
                     change === 'audience' ? { kind: 'saved' } : { kind: 'refused', code: 'access_denied' });
             });
-            expect(await db.machineAccountGrant.findUniqueOrThrow({ where: { machineId_accountId: { machineId: f.machine.id, accountId: f.recipient.id } } }))
+            expect(await db.machineGrant.findUniqueOrThrow({ where: { principalKind: 'account', machineId_accountId: { machineId: f.machine.id, accountId: f.recipient.id } } }))
                 .toMatchObject({ accessLevel: change === 'audience' ? 'admin' : 'view' });
             expect(await db.accountChange.count({ where: { kind: 'machineRecipientAccess', entityId: f.machine.id, accountId: manager.id } }))
                 .toBe(change === 'audience' ? 1 : 0);
@@ -270,7 +270,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
                     ? { error: 'database_transaction_conflict_exhausted' } : { kind: 'saved' });
             });
             const where = { machineId: f.machine.id };
-            expect(kind === 'team' ? await db.machineTeamGrant.count({ where }) : await db.machineGroupGrant.count({ where }))
+            expect(kind === 'team' ? await db.machineGrant.count({ where: { ...where, principalKind: 'team' } }) : await db.machineGrant.count({ where: { ...where, principalKind: 'group' } }))
                 .toBe(retries === '0' ? 0 : 1);
             expect(await db.accountChange.count({ where: { accountId: member.id, kind: 'machineRecipientAccess', entityId: f.machine.id } }))
                 .toBe(retries === '0' ? 0 : 1);
@@ -289,9 +289,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, installationId: randomUUID(),
             metadata: 'opaque', dataEncryptionKey: new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey,
                 recipientPublicKey: ownerKeys.publicKey, randomBytes: tweetnacl.randomBytes })) } });
-        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: recipient.id,
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id, accountId: recipient.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
-        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: earlier.id,
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id, accountId: earlier.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         const census = await inTx(tx => readMachineRecipientCensusInTx(tx, { machineId: machine.id, actorAccountId: owner.id }));
         if ('kind' in census) throw new Error(census.code);
@@ -299,7 +299,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
         const restore = beforeAdmissionFence(async () => {
             if (change === 'content') await db.machine.update({ where: { id: machine.id }, data: { metadataVersion: { increment: 1 } } });
             else if (change === 'recipient') await db.account.update({ where: { id: recipient.id }, data: createSignedAccountContentBinding() });
-            else await db.machineAccountGrant.delete({ where: { machineId_accountId: { machineId: machine.id, accountId: recipient.id } } });
+            else await db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: { machineId: machine.id, accountId: recipient.id } } });
         });
         try {
             await withAuthenticatedTestApp(registerMachineAccessRoutes, async app => {

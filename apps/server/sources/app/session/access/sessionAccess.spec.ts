@@ -11,7 +11,7 @@ function session(overrides: Partial<SessionAccessProjectionRow> = {}): SessionAc
     return { id: "session", primaryTeamId: null, accountId: "owner", account: { status: "active" }, seq: 0, currentStorageState: "hosted",
         acceptedThroughServerSeq: null, materializationPublicationId: null,
         materializedThroughSourceAt: null, publishedThroughServerSeq: null,
-        shares: [], teamGrants: [], groupGrants: [], ...overrides };
+        grants: [],   ...overrides };
 }
 
 describe("Session effective capability projection", () => {
@@ -34,8 +34,8 @@ describe("Session effective capability projection", () => {
         expect(await resolveSessionAccessForOperation(reader, { ...operation,
             apiTokenAction: { actionId: "session.goal.set" } })).toEqual({ status: "unavailable" });
         expect(await resolveSessionAccessForOperation(reader, { ...operation, row: session({
-            accountId: "other-owner", shares: [{ id: "share", sharedWithUserId: "owner",
-                accessLevel: "view", canApprovePermissions: false }],
+            accountId: "other-owner", grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  id: "share", accountId: "owner",
+                accessLevel: "view", canApprovePermissions: false  }],
         }) })).toEqual({ status: "unavailable" });
     });
     it("preserves verified Action-effect constraints without applying a direct-token capability ceiling", async () => {
@@ -100,7 +100,7 @@ describe("Session effective capability projection", () => {
         expect(projectEffectiveSessionAccess(session({ account: { status } }), "owner")).toBeNull();
     });
     it.each(["view", "edit", "admin"] as const)("projects the direct %s level without implicit runtime delegation", level => {
-        const access = projectEffectiveSessionAccess(session({ shares: [{ id: "grant", sharedWithUserId: "reader", accessLevel: level, canApprovePermissions: false }] }), "reader");
+        const access = projectEffectiveSessionAccess(session({ grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  id: "grant", accountId: "reader", accessLevel: level, canApprovePermissions: false  }] }), "reader");
         expect(access?.capabilities.readTranscript).toBe(true);
         expect(access?.capabilities.submitAgentInput).toBe(level !== "view");
         expect(access?.capabilities.manageAccess).toBe(level === "admin");
@@ -111,17 +111,17 @@ describe("Session effective capability projection", () => {
         expect(access?.capabilities.managePublicLink).toBe(false);
     });
     it.each(["view", "edit", "admin"] as const)("requires same-grant level for delegated %s authority", level => {
-        const access = projectEffectiveSessionAccess(session({ shares: [{ id: "grant", sharedWithUserId: "reader", accessLevel: level, canApprovePermissions: true }] }), "reader");
+        const access = projectEffectiveSessionAccess(session({ grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  id: "grant", accountId: "reader", accessLevel: level, canApprovePermissions: true  }] }), "reader");
         expect(access?.capabilities.approveRuntimePermissions).toBe(level !== "view");
         expect(access?.capabilities.managePermissionDelegation).toBe(level === "admin");
     });
     it("preserves every applicable relationship kind when decisive sources omit weaker grants", () => {
         const access = projectEffectiveSessionAccess(session({
-            shares: [{ id: "direct", sharedWithUserId: "reader", accessLevel: "view", canApprovePermissions: false }],
-            teamGrants: [{ teamId: "team", effectiveAt: new Date(1), accessLevel: "admin", canApprovePermissions: false, requiredByTeamPolicy: false,
-                team: { authenticationPolicy: null, memberships: [{ accountId: "reader", sessionAccessStartsAt: null }] } }],
-            groupGrants: [{ teamGroupId: "group", effectiveAt: new Date(1), accessLevel: "view", canApprovePermissions: false,
-                teamGroup: { teamId: "team", team: { authenticationPolicy: null }, memberships: [{ sessionAccessStartsAt: null, teamMembership: { accountId: "reader" } }] } }],
+            grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  id: "direct", accountId: "reader", accessLevel: "view", canApprovePermissions: false  }, { id: 'team-grant', principalKind: 'team', accountId: null, teamGroupId: null, account: null, teamGroup: null,  teamId: "team", effectiveAt: new Date(1), accessLevel: "admin", canApprovePermissions: false, requiredByTeamPolicy: false,
+                team: { authenticationPolicy: null, memberships: [{ accountId: "reader", role: "member", sessionAccessStartsAt: null }] }  }, { id: 'group-grant', principalKind: 'group', accountId: null, teamId: null, requiredByTeamPolicy: false, account: null, team: null,  teamGroupId: "group", effectiveAt: new Date(1), accessLevel: "view", canApprovePermissions: false,
+                teamGroup: { teamId: "team", team: { authenticationPolicy: null }, memberships: [{ sessionAccessStartsAt: null, teamMembership: { accountId: "reader" } }] }  }],
+            
+            
         }), "reader", { includeCredentialRestrictedTeamEntitlements: true });
         expect(access?.sources).toEqual([{ kind: "team", teamId: "team", requiredByTeamPolicy: false }]);
         expect(access?.relationshipKinds).toEqual(["direct", "team", "group"]);
@@ -130,18 +130,15 @@ describe("Session effective capability projection", () => {
     });
     it("projects only the exact credential-qualified Teams instead of trusting row-wide query admission", () => {
         const access = projectEffectiveSessionAccess(session({
-            teamGrants: [
-                {
+            grants: [{ id: 'team-grant', principalKind: 'team', accountId: null, teamGroupId: null, account: null, teamGroup: null, 
                     teamId: "qualified-team", effectiveAt: new Date(1), accessLevel: "edit",
                     canApprovePermissions: false, requiredByTeamPolicy: false,
-                    team: { authenticationPolicy: { kind: "method", methodId: "qualified" }, memberships: [{ accountId: "reader", sessionAccessStartsAt: null }] },
-                },
-                {
+                    team: { authenticationPolicy: { kind: "method", methodId: "qualified" }, memberships: [{ accountId: "reader", role: "member", sessionAccessStartsAt: null }] },
+                 }, { id: 'team-grant', principalKind: 'team', accountId: null, teamGroupId: null, account: null, teamGroup: null, 
                     teamId: "unqualified-team", effectiveAt: new Date(1), accessLevel: "admin",
                     canApprovePermissions: true, requiredByTeamPolicy: false,
-                    team: { authenticationPolicy: { kind: "method", methodId: "unqualified" }, memberships: [{ accountId: "reader", sessionAccessStartsAt: null }] },
-                },
-            ],
+                    team: { authenticationPolicy: { kind: "method", methodId: "unqualified" }, memberships: [{ accountId: "reader", role: "member", sessionAccessStartsAt: null }] },
+                 }],
         }), "reader", { qualifiedTeamIds: new Set(["qualified-team"]) });
 
         expect(access).toMatchObject({
@@ -152,12 +149,12 @@ describe("Session effective capability projection", () => {
     });
     it("keeps the released projection owner/direct-only even for an unrestricted stronger Team grant", () => {
         const access = projectEffectiveSessionAccess(session({
-            shares: [{ id: "direct", sharedWithUserId: "reader", accessLevel: "view", canApprovePermissions: false }],
-            teamGrants: [{
+            grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  id: "direct", accountId: "reader", accessLevel: "view", canApprovePermissions: false  }, { id: 'team-grant', principalKind: 'team', accountId: null, teamGroupId: null, account: null, teamGroup: null, 
                 teamId: "team", effectiveAt: new Date(1), accessLevel: "admin",
                 canApprovePermissions: true, requiredByTeamPolicy: false,
-                team: { authenticationPolicy: null, memberships: [{ accountId: "reader", sessionAccessStartsAt: null }] },
-            }],
+                team: { authenticationPolicy: null, memberships: [{ accountId: "reader", role: "member", sessionAccessStartsAt: null }] },
+             }],
+            
         }), "reader", { mode: "legacy_owner_or_direct" });
 
         expect(access).toMatchObject({
@@ -176,7 +173,7 @@ describe("Session effective capability projection", () => {
     it("projects safe authored Team context to an authorized direct recipient without exposing grants", () => {
         const access = projectEffectiveSessionAccess(session({
             primaryTeamId: "context-team",
-            shares: [{ id: "grant", sharedWithUserId: "reader", accessLevel: "view", canApprovePermissions: false }],
+            grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  id: "grant", accountId: "reader", accessLevel: "view", canApprovePermissions: false  }],
         }), "reader");
         expect(access).toMatchObject({
             level: "view",
@@ -186,6 +183,6 @@ describe("Session effective capability projection", () => {
     });
     it("does not admit a missing grant or unpublished recipient", () => {
         expect(projectEffectiveSessionAccess(session(), "reader")).toBeNull();
-        expect(projectEffectiveSessionAccess(session({ currentStorageState: "machine_only", shares: [{ id: "grant", sharedWithUserId: "reader", accessLevel: "admin", canApprovePermissions: true }] }), "reader")).toBeNull();
+        expect(projectEffectiveSessionAccess(session({ currentStorageState: "machine_only", grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  id: "grant", accountId: "reader", accessLevel: "admin", canApprovePermissions: true  }] }), "reader")).toBeNull();
     });
 });

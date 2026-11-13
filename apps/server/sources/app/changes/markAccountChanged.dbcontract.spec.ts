@@ -463,8 +463,8 @@ describe("AccountChange coalescing database contract", () => {
             accountId: owner.id, tag: stem, encryptionMode: "plain", metadata: "{}",
             currentStorageState: state === "unpublished" ? "external" : "hosted",
         } });
-        await db.sessionShare.create({ data: {
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: reader.id, accessLevel: "view",
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: session.id, createdByAccountId: owner.id, accountId: reader.id, accessLevel: "view",
         } });
         let locked!: () => void;
         const locksAcquired = new Promise<void>(resolve => { locked = resolve; });

@@ -332,8 +332,8 @@ describe('finite managed wake original Action authority (real storage)', () => {
         } });
         const session = await db.session.create({ data: { accountId: test.account.id, tag: randomUUID(),
             metadata: '{}', encryptionMode: 'plain', active: false } });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: test.account.id,
-            sharedWithUserId: collaborator.id, accessLevel: 'edit', canApprovePermissions: false } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: test.account.id,
+            accountId: collaborator.id, accessLevel: 'edit', canApprovePermissions: false } });
         expect(await inTx(tx => createSessionMachineAccessKeyInTx(tx, { accountId: test.account.id,
             sessionId: session.id, machineId: test.guest.id, data: 'private-key-ciphertext' }))).toMatchObject({ ok: true });
         const localId = randomUUID();
@@ -390,8 +390,8 @@ describe('finite managed wake original Action authority (real storage)', () => {
                 operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1, 2] } } } });
             const ordinarySession = await db.session.create({ data: { accountId: test.account.id,
                 tag: randomUUID(), metadata: '{}', encryptionMode: 'plain', active: false } });
-            await db.sessionShare.create({ data: { sessionId: ordinarySession.id, sharedByUserId: test.account.id,
-                sharedWithUserId: collaborator.id, accessLevel: 'edit', canApprovePermissions: false } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: ordinarySession.id, createdByAccountId: test.account.id,
+                accountId: collaborator.id, accessLevel: 'edit', canApprovePermissions: false } });
             expect(await inTx(tx => createSessionMachineAccessKeyInTx(tx, { accountId: test.account.id,
                 sessionId: ordinarySession.id, machineId: ordinaryGuest.id, data: 'private-key-ciphertext' }))).toMatchObject({ ok: true });
             expect(await enqueuePendingMessage({ ...input, sessionId: ordinarySession.id,

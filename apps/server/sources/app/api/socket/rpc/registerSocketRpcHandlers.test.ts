@@ -1,3 +1,4 @@
+import { sessionDirectGrantProjectionFixture } from '@/app/session/access/sessionAccess.testkit';
 import { ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
     RPC_ERROR_CODES,
@@ -96,9 +97,9 @@ function createOwnedSessionAccessRow(sessionId = "sess_1") {
         materializationPublicationId: null,
         materializedThroughSourceAt: null,
         publishedThroughServerSeq: null,
-        shares: [],
-        teamGrants: [],
-        groupGrants: [],
+        grants: [],
+        
+        
     };
 }
 
@@ -110,7 +111,7 @@ async function retainSessionMachineFixture() {
             ? { accountId: target.accountId, revokedAt: null, replacedByMachineId: null, installationId: target.installationId }
             : null);
     sessionFindUniqueMock.mockResolvedValue({ ...createOwnedSessionAccessRow(target.sessionId),
-        accountId: target.accountId, runtimeMachineTarget: target, shares: [await sessionShareFindUniqueMock()] });
+        accountId: target.accountId, runtimeMachineTarget: target, grants: [await sessionShareFindUniqueMock()] });
     accessKeyFindUniqueMock.mockResolvedValue({ accountId: target.accountId, machineId: target.machineId,
         session: { accountId: target.accountId }, machine: { revokedAt: null, replacedByMachineId: null } });
 }
@@ -202,7 +203,7 @@ vi.mock("@/storage/db", async () => {
         }, findMany: accessKeyFindManyMock },
         ephemeralRunnerActivation: { findFirst: ephemeralRunnerActivationFindFirstMock },
         session: { findUnique: sessionFindUniqueMock, findFirst: sessionFindFirstMock, findMany: sessionFindManyMock },
-        sessionShare: { findUnique: sessionShareFindUniqueMock },
+        sessionGrant: { findUnique: sessionShareFindUniqueMock },
         accountApiToken: { findUnique: apiTokenFindUniqueMock, findFirst: apiTokenFindUniqueMock, updateMany: vi.fn(async () => ({ count: 1 })) },
         simpleCache: { findUnique: vi.fn(async () => ({ value: `srv_${'a'.repeat(32)}` })) },
     };
@@ -1268,6 +1269,40 @@ describe("registerSocketRpcHandlers", () => {
         expect(effect).toHaveBeenCalledOnce();
     });
 
+    it('refuses another Account at Voice reverse-RPC admission without executing the registered continuation', async () => {
+        machineFindFirstMock.mockResolvedValue({ revokedAt: null, replacedByMachineId: null,
+            installationId: 'installed-machine-1' });
+        const { io, createRoomAwareSocket } = createRoomAwareIo();
+        const method = `machine-1:${voiceRunActionClientRpcMethod('voice-run')}`;
+        const effects: unknown[] = [];
+        const ui = createRoomAwareSocket({ id: 'voice-ui', data: { userId: 'user-1', clientType: 'user-scoped' },
+            timeout: () => ({ emitWithAck: async (_event: string, request: unknown) => {
+                effects.push(request);
+                return 'encrypted-voice-result';
+            } }) });
+        await ui.join(ui.id); // Socket.IO automatically joins each real socket to its own id.
+        registerSocketRpcHandlers({ userId: 'user-1', socket: ui as unknown as Socket, io });
+        await triggerSocketHandler(ui, SOCKET_RPC_EVENTS.REGISTER, { method }, vi.fn());
+        for (const userId of ['user-2', 'user-1']) {
+            // Hold Machine identity constant: the negative must distinguish Account
+            // admission, rather than pass merely because another Machine was used.
+            const caller = createRoomAwareSocket({ id: `daemon-${userId}`, data: { userId,
+                clientType: 'machine-scoped', machineId: 'machine-1',
+                verifiedMachineInstallationId: 'installed-machine-1' } });
+            await caller.join(getMachineSocketRoom(userId, 'machine-1'));
+            registerSocketRpcHandlers({ userId, socket: caller as unknown as Socket, io });
+            const ack = vi.fn();
+            await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method, params: 'encrypted-voice-action' }, ack);
+            if (userId === 'user-2') {
+                expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
+                expect(effects).toEqual([]);
+            } else {
+                expect(ack).toHaveBeenCalledWith({ ok: true, result: 'encrypted-voice-result' });
+                expect(effects).toHaveLength(1);
+            }
+        }
+    });
+
     it('routes a versioned answering-client continuation through the existing authenticated Machine owner', async () => {
         machineFindFirstMock.mockResolvedValue({ revokedAt: null, replacedByMachineId: null, installationId: 'installed-machine-1' });
         const method = `machine-1:${RPC_METHODS.UI_ACTION_EXECUTE}`;
@@ -1481,7 +1516,7 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
 
     it("preserves ordinary Machine transfers for shared readers without Send", async () => {
         sessionFindUniqueMock.mockResolvedValue({ ...createOwnedSessionAccessRow(), accountId: "other-owner",
-            shares: [{ id: "share", sharedWithUserId: "user-1", accessLevel: "view", canApprovePermissions: false }] });
+            grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  id: "share", accountId: "user-1", accessLevel: "view", canApprovePermissions: false  }] });
         const socket = createFakeSocket({ data: { clientType: "user-scoped" } });
         const method = `machine-1:${RPC_METHODS.DAEMON_TRANSFER_UPLOAD_INIT}`;
         const result = { success: true, uploadId: "upload" };
@@ -1528,8 +1563,8 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
             });
 
         it("stamps separately authorized Session access without changing Machine routing", async () => {
-            sessionShareFindUniqueMock.mockResolvedValue({ id: "share-1", sharedWithUserId: "user-1",
-                accessLevel: "view", canApprovePermissions: false });
+            sessionShareFindUniqueMock.mockResolvedValue(sessionDirectGrantProjectionFixture({ id: "share-1", accountId: "user-1",
+                accessLevel: "view", canApprovePermissions: false }));
             const { method, socket, effect, ownerEffect, fetchSockets } = createScmSessionProofFixture();
             const ack = vi.fn();
             await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, {
@@ -1569,16 +1604,16 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
         it.each([RPC_METHODS.SCM_CHANGE_DISCARD, RPC_METHODS.SCM_DIFF_SUMMARY_GENERATE, RPC_METHODS.SCM_DIFF_SUMMARY_REFINE,
             RPC_METHODS.SCM_DIFF_SUMMARY_DISCUSS, RPC_METHODS.SCM_DIFF_SUMMARY_ADD_OUTPUTS,
         ])("requires Session input authority for %s", async (rpcMethod) => {
-            sessionShareFindUniqueMock.mockResolvedValue({ id: "share-1", sharedWithUserId: "user-1",
-                accessLevel: "view", canApprovePermissions: false });
+            sessionShareFindUniqueMock.mockResolvedValue(sessionDirectGrantProjectionFixture({ id: "share-1", accountId: "user-1",
+                accessLevel: "view", canApprovePermissions: false }));
             const { method, socket, effect } = createScmSessionProofFixture(rpcMethod);
             const request = { method, params: "sealed-scm-input", authorization: { kind: "session.write", sessionId: "private-session" } };
             const denied = vi.fn();
             await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, request, denied);
             expect(denied).toHaveBeenCalledWith(expect.objectContaining({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN }));
             expect(effect).not.toHaveBeenCalled();
-            sessionShareFindUniqueMock.mockResolvedValue({ id: "share-1", sharedWithUserId: "user-1",
-                accessLevel: "edit", canApprovePermissions: false });
+            sessionShareFindUniqueMock.mockResolvedValue(sessionDirectGrantProjectionFixture({ id: "share-1", accountId: "user-1",
+                accessLevel: "edit", canApprovePermissions: false }));
             const accepted = vi.fn();
             await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, request, accepted);
             expect(accepted).toHaveBeenCalledWith({ ok: true, result: "sealed-result" });
@@ -1586,8 +1621,8 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
 
         it("retains optional Session admission and refuses withdrawn proof on the next request", async () => {
             const permitted = { ...createOwnedSessionAccessRow("private-session"), accountId: "session-owner",
-                shares: [{ id: "share-1", sharedWithUserId: "user-1", accessLevel: "view", canApprovePermissions: false }] };
-            sessionFindUniqueMock.mockResolvedValueOnce(permitted).mockResolvedValue({ ...permitted, shares: [] });
+                grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  id: "share-1", accountId: "user-1", accessLevel: "view", canApprovePermissions: false  }] };
+            sessionFindUniqueMock.mockResolvedValueOnce(permitted).mockResolvedValue({ ...permitted, grants: [] });
             const { method, socket, effect } = createScmSessionProofFixture();
             const ack = vi.fn();
             await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, {
@@ -1762,7 +1797,7 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
             [`rpc:session-owner:${method}`]: [target], [`rpc:user-1:${method}`]: [target],
             [`rpc:session-owner:${permissionMethod}`]: [target], [target.id]: [target],
         });
-        sessionShareFindUniqueMock.mockResolvedValue({ sharedWithUserId: "user-1", accessLevel: "view", canApprovePermissions: true });
+        sessionShareFindUniqueMock.mockResolvedValue(sessionDirectGrantProjectionFixture({ id: 'direct-grant', ...{ accountId: "user-1", accessLevel: "view", canApprovePermissions: true } }));
         const socket = createFakeSocket({ data: { clientType: "user-scoped", authAuthority: "account_automation" } });
         registerSocketRpcHandlers({ userId: "user-1", socket: socket as unknown as Socket, io });
         for (const deniedMethod of [method, permissionMethod]) {
@@ -1805,9 +1840,9 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
                 materializationPublicationId: null,
                 materializedThroughSourceAt: null,
                 publishedThroughServerSeq: null,
-                shares: share ? [share] : [],
-                teamGrants: [],
-                groupGrants: [],
+                grants: share ? [share] : [],
+                
+                
             };
         });
         sessionFindFirstMock.mockReset();
@@ -1815,12 +1850,12 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
         sessionFindManyMock.mockReset();
         sessionFindManyMock.mockResolvedValue([]);
         sessionShareFindUniqueMock.mockReset();
-        sessionShareFindUniqueMock.mockResolvedValue({
+        sessionShareFindUniqueMock.mockResolvedValue(sessionDirectGrantProjectionFixture({
             id: "share-1",
-            sharedWithUserId: "user-1",
+            accountId: "user-1",
             accessLevel: "edit",
             canApprovePermissions: false,
-        });
+        }));
         authorizeSessionFollowSourceKeyPreparationMock.mockReset();
         authorizeSessionFollowSourceKeyPreparerMock.mockReset();
         authorizeSessionFollowSourceKeyPreparerMock.mockResolvedValue({
@@ -2315,12 +2350,12 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
         sessionFindUniqueMock.mockResolvedValue({
             ...createOwnedSessionAccessRow(principal.sessionId),
             accountId: principal.accountId,
-            shares: [{
+            grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null, 
                 id: "share-1",
-                sharedWithUserId: "collaborator",
+                accountId: "collaborator",
                 accessLevel: "edit",
                 canApprovePermissions: false,
-            }],
+             }],
         });
         const method = `${principal.machineId}:${RPC_METHODS.READ_FILE}`;
         const emitWithAck = vi.fn().mockResolvedValue("opaque-encrypted-file-result");
@@ -2866,12 +2901,12 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
         CURRENT_SESSION_PRESENTATION_ACK_RPC_METHOD,
     ])("refuses view-only collaborators before presentation custody reaches the daemon: %s", async (rpcMethod) => {
         const method = `sess_1:${rpcMethod}`;
-        sessionShareFindUniqueMock.mockResolvedValue({
+        sessionShareFindUniqueMock.mockResolvedValue(sessionDirectGrantProjectionFixture({
             id: "share-1",
-            sharedWithUserId: "user-1",
+            accountId: "user-1",
             accessLevel: "view",
             canApprovePermissions: false,
-        });
+        }));
         const targetEmitWithAck = vi.fn().mockResolvedValue({ status: "accepted" });
         const target = { id: "session-target", timeout: vi.fn(() => ({ emitWithAck: targetEmitWithAck })) };
         const { io } = createIo({ targetsByRoom: { [`rpc:session-owner:${method}`]: [target] } });
@@ -3002,12 +3037,12 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
     it("rejects presentation binding before forwarding when the caller is not the Session owner", async () => {
         const method = `sess_1:${CURRENT_SESSION_PRESENTATION_BIND_RPC_METHOD}`;
         sessionShareFindUniqueMock
-            .mockResolvedValueOnce({
+            .mockResolvedValueOnce(sessionDirectGrantProjectionFixture({
                 id: "share-1",
-                sharedWithUserId: "user-1",
+                accountId: "user-1",
                 accessLevel: "view",
                 canApprovePermissions: false,
-            })
+            }))
             .mockResolvedValue(null);
         const targetEmitWithAck = vi.fn().mockResolvedValue({ status: "accepted" });
         const target = {
@@ -3392,12 +3427,12 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
 
     it.each([RPC_METHODS.SESSION_PERMISSION_RESPOND, RPC_METHODS.SESSION_USER_ACTION_ANSWER,
         SESSION_RPC_METHODS.SESSION_STRUCTURED_QUESTION_RESPOND_V1, 'approval.request.decide'])("forwards only the server-stamped actor for %s", async (decisionMethod) => {
-        sessionShareFindUniqueMock.mockResolvedValue({
+        sessionShareFindUniqueMock.mockResolvedValue(sessionDirectGrantProjectionFixture({
             id: "share-1",
-            sharedWithUserId: "shared-user",
+            accountId: "shared-user",
             accessLevel: "edit",
             canApprovePermissions: decisionMethod === RPC_METHODS.SESSION_PERMISSION_RESPOND,
-        });
+        }));
         const targetEmitWithAck = vi.fn().mockResolvedValue({ ok: true });
         const target = {
             id: "target-socket",
@@ -3412,7 +3447,7 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
                 return query?.where?.id === 'sess_1' ? null : { revokedAt: null, replacedByMachineId: null, accountId: 'session-owner' };
             });
             sessionFindUniqueMock.mockImplementation(async () => ({ ...createOwnedSessionAccessRow(), accountId: 'session-owner',
-                shares: [await sessionShareFindUniqueMock()] }));
+                grants: [await sessionShareFindUniqueMock()] }));
             accessKeyFindUniqueMock.mockResolvedValue({ machineId: 'machine-1', session: { accountId: 'session-owner' },
                 machine: { revokedAt: null, replacedByMachineId: null } });
         }
@@ -3486,18 +3521,18 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
             homeId,
             installationId: 'installation-1',
         };
-        sessionShareFindUniqueMock.mockResolvedValue({
+        sessionShareFindUniqueMock.mockResolvedValue(sessionDirectGrantProjectionFixture({
             id: 'share-1',
-            sharedWithUserId: 'shared-user',
+            accountId: 'shared-user',
             accessLevel: 'edit',
             canApprovePermissions: false,
-        });
+        }));
         sessionFindUniqueMock.mockResolvedValue({
             ...createOwnedSessionAccessRow(),
             active: false,
             archivedAt: null,
             runtimeMachineTarget: retainedTarget,
-            shares: [await sessionShareFindUniqueMock()],
+            grants: [await sessionShareFindUniqueMock()],
         });
         machineFindFirstMock.mockImplementation(async args => {
             const query = args as Readonly<{ where?: Readonly<{ id?: string }> }> | undefined;
@@ -3573,8 +3608,8 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
             const query = args as Readonly<{ where?: Readonly<{ id?: string }> }> | undefined;
             return query?.where?.id === 'sess_1' ? null : { revokedAt: null, replacedByMachineId: null };
         });
-        sessionShareFindUniqueMock.mockResolvedValue({ id: 'share-1', sharedWithUserId: 'shared-user',
-            accessLevel: scenario === 'viewer' ? 'view' : 'edit', canApprovePermissions: true });
+        sessionShareFindUniqueMock.mockResolvedValue(sessionDirectGrantProjectionFixture({ id: 'share-1', accountId: 'shared-user',
+            accessLevel: scenario === 'viewer' ? 'view' : 'edit', canApprovePermissions: true }));
         const targetEmitWithAck = vi.fn().mockResolvedValue({ ok: true });
         const target = { id: 'target', timeout: vi.fn(() => ({ emitWithAck: targetEmitWithAck })) };
         const method = 'sess_1:approval.request.decide';

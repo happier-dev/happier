@@ -139,8 +139,8 @@ describe('Doc proposal decision preparation (real SQLite)', () => {
     it('settles concurrent Accept and Decline once and every retry returns that deciding person', async () => {
         const { owner, id, proposalRef } = await fixture();
         const other = await db.account.create({ data: { encryptionMode: 'plain' } });
-        await db.artifactAccountGrant.create({ data: { artifactId: id, accountId: other.id, accessLevel: 'edit', createdByAccountId: owner.id } });
-        await db.discussionAccountGrant.create({ data: { discussionId: proposalRef.discussion.discussionId, accountId: other.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: id, accountId: other.id, accessLevel: 'edit', createdByAccountId: owner.id } });
+        await db.discussionGrant.create({ data: { principalKind: 'account', discussionId: proposalRef.discussion.discussionId, accountId: other.id, accessLevel: 'view', createdByAccountId: owner.id } });
         const results = await Promise.all([
             inTx(tx => decideArtifactEditProposalInTx(tx, { actorAccountId: owner.id, authentication, proposalRef,
                 decision: 'accept', expectedRevision: { headerVersion: 1, bodyVersion: 1 } })),
@@ -159,22 +159,22 @@ describe('Doc proposal decision preparation (real SQLite)', () => {
     it('readmits Doc edit and thread/credential authority even for an already settled proposal', async () => {
         const { owner, id, proposalRef } = await fixture();
         const editor = await db.account.create({ data: { encryptionMode: 'plain' } });
-        await db.artifactAccountGrant.create({ data: { artifactId: id, accountId: editor.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: id, accountId: editor.id, accessLevel: 'view', createdByAccountId: owner.id } });
         const input = { actorAccountId: editor.id, authentication, proposalRef, decision: 'decline' as const };
         expect(await inTx(tx => decideArtifactEditProposalInTx(tx, input))).toMatchObject({ ok: false, error: 'discussion_not_found' });
-        await db.discussionAccountGrant.create({ data: { discussionId: proposalRef.discussion.discussionId, accountId: editor.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.discussionGrant.create({ data: { principalKind: 'account', discussionId: proposalRef.discussion.discussionId, accountId: editor.id, accessLevel: 'view', createdByAccountId: owner.id } });
         expect(await inTx(tx => decideArtifactEditProposalInTx(tx, input))).toMatchObject({ ok: false, error: 'doc_edit_proposal_edit_access_required' });
-        await db.artifactAccountGrant.update({ where: { artifactId_accountId: { artifactId: id, accountId: editor.id } }, data: { accessLevel: 'edit' } });
+        await db.artifactGrant.update({ where: { principalKind: 'account', artifactId_accountId: { artifactId: id, accountId: editor.id } }, data: { accessLevel: 'edit' } });
         expect(await inTx(tx => decideArtifactEditProposalInTx(tx, input))).toMatchObject({ ok: true });
-        await db.artifactAccountGrant.update({ where: { artifactId_accountId: { artifactId: id, accountId: editor.id } }, data: { accessLevel: 'view' } });
+        await db.artifactGrant.update({ where: { principalKind: 'account', artifactId_accountId: { artifactId: id, accountId: editor.id } }, data: { accessLevel: 'view' } });
         expect(await inTx(tx => decideArtifactEditProposalInTx(tx, input))).toMatchObject({ ok: false, error: 'doc_edit_proposal_edit_access_required' });
-        await db.artifactAccountGrant.update({ where: { artifactId_accountId: { artifactId: id, accountId: editor.id } }, data: { accessLevel: 'edit' } });
+        await db.artifactGrant.update({ where: { principalKind: 'account', artifactId_accountId: { artifactId: id, accountId: editor.id } }, data: { accessLevel: 'edit' } });
         expect(await inTx(tx => decideArtifactEditProposalInTx(tx, { ...input, authentication: { ...authentication, tokenEpoch: editor.tokenEpoch + 1 } })))
             .toMatchObject({ ok: false, error: 'discussion_not_found' });
-        await db.artifactAccountGrant.delete({ where: { artifactId_accountId: { artifactId: id, accountId: editor.id } } });
+        await db.artifactGrant.delete({ where: { principalKind: 'account', artifactId_accountId: { artifactId: id, accountId: editor.id } } });
         expect(await inTx(tx => decideArtifactEditProposalInTx(tx, input))).toMatchObject({ ok: false });
-        await db.artifactAccountGrant.create({ data: { artifactId: id, accountId: editor.id, accessLevel: 'edit', createdByAccountId: owner.id } });
-        await db.discussionAccountGrant.delete({ where: { discussionId_accountId: { discussionId: proposalRef.discussion.discussionId, accountId: editor.id } } });
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: id, accountId: editor.id, accessLevel: 'edit', createdByAccountId: owner.id } });
+        await db.discussionGrant.delete({ where: { principalKind: 'account', discussionId_accountId: { discussionId: proposalRef.discussion.discussionId, accountId: editor.id } } });
         expect(await inTx(tx => decideArtifactEditProposalInTx(tx, input))).toMatchObject({ ok: false, error: 'discussion_not_found' });
         expect(await db.artifact.findUniqueOrThrow({ where: { id } })).toMatchObject({ bodyVersion: 1 });
     });

@@ -111,10 +111,10 @@ describe("Home remote alert submission (SQLite)", () => {
         const follower = await db.account.create({ data: { publicKey: randomUUID() } });
         const reader = await db.account.create({ data: { publicKey: randomUUID() } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: "{}" } });
-        await db.sessionShare.createMany({
-            data: [follower, reader].map((account) => ({
-                sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: account.id, accessLevel: "view" as const,
-            })),
+        await db.sessionGrant.createMany({
+            data: ([follower, reader].map((account) => ({
+                sessionId: session.id, createdByAccountId: owner.id, accountId: account.id, accessLevel: "view" as const,
+            }))).map(data => ({ ...data, principalKind: 'account' })),
         });
         // Channel/transport tests select Everything explicitly; Important's
         // deliberately quiet completion is exercised by its own contract below.
@@ -128,8 +128,8 @@ describe("Home remote alert submission (SQLite)", () => {
     it('applies HTTP receiver mute and Undo to personal eligibility and remote alerts without changing Follow', async () => {
         const { owner, follower, session } = await fixture();
         const other = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}' } });
-        await db.sessionShare.create({ data: { sessionId: other.id, sharedByUserId: owner.id,
-            sharedWithUserId: follower.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: other.id, createdByAccountId: owner.id,
+            accountId: follower.id, accessLevel: 'view' } });
         await db.accountSessionFollow.create({ data: { accountId: follower.id, sessionId: other.id,
             following: true, followPolicy: JSON.stringify({ preset: 'everything' }) } });
         const ownerToken = await enrollRemoteAlerts(owner.id, accountSettingsWithRemoteAlerts());
@@ -204,7 +204,7 @@ describe("Home remote alert submission (SQLite)", () => {
         // The real occurrence writer admits Account encryption currentness.
         await db.account.update({ where: { id: owner.id }, data: { encryptionMode: 'plain' } });
         await db.session.update({ where: { id: session.id }, data: { encryptionMode: 'plain' } });
-        await db.sessionShare.update({ where: { sessionId_sharedWithUserId: { sessionId: session.id, sharedWithUserId: follower.id } },
+        await db.sessionGrant.update({ where: { principalKind: 'account', sessionId_accountId: { sessionId: session.id, accountId: follower.id } },
             data: { accessLevel: 'edit', canApprovePermissions: true } });
         const token = await enrollRemoteAlerts(follower.id, accountSettingsWithRemoteAlerts());
         let expectedVersion = session.agentStateVersion;

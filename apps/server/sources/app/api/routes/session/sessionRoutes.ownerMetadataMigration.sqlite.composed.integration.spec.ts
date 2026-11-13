@@ -58,7 +58,7 @@ describe("session owner metadata migration route (SQLite integration)", () => {
         vi.restoreAllMocks();
         harness.resetEnv();
         await harness.resetDbTables([
-            () => db.sessionShare.deleteMany(),
+            () => db.sessionGrant.deleteMany({ where: { principalKind: 'account' } }),
             () => db.accountChange.deleteMany(),
             () => db.session.deleteMany(),
             () => db.account.deleteMany(),

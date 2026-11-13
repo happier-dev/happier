@@ -50,9 +50,10 @@ function beforeArtifactAccountLock(artifactId: string, peer: () => Promise<void>
             return callback(new Proxy(tx, { get(inner, property, innerReceiver) {
                 if (property === "artifact") return new Proxy(inner.artifact, { get(delegate, method, delegateReceiver) {
                     const operation = Reflect.get(delegate, method, delegateReceiver);
-                    if (method !== "findFirst") return operation;
+                    if (method !== "findFirst" && method !== "findUnique" && method !== "findMany") return operation;
                     return (...queryArgs: Parameters<typeof tx.artifact.findFirst>) => {
-                        if (queryArgs[0]?.where?.id === artifactId) addressed = true;
+                        const id = queryArgs[0]?.where?.id;
+                        if (id === artifactId || (typeof id === "object" && Array.isArray(id?.in) && id.in.includes(artifactId))) addressed = true;
                         return Reflect.apply(operation, delegate, queryArgs);
                     };
                 } });
@@ -145,7 +146,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
                 : await updateArtifact({ actorUserId: owner.id, artifactId: content.id, mutationGuard,
                     body: { bytes: bytes({ body: '{"prepared":true}' }), expectedVersion: 1 } });
             expect(written).toMatchObject({ ok: true });
-            expect(await db.artifactTeamGrant.findUnique({ where: { artifactId_teamId: {
+            expect(await db.artifactGrant.findUnique({ where: { principalKind: 'team', artifactId_teamId: {
                 artifactId: content.id, teamId: team.id,
             } } })).toMatchObject({ accessLevel: 'view' });
             expect(await readArtifactForCaller({ actorAccountId: reader.id, artifactId: content.id }))
@@ -167,7 +168,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         const team = await db.team.create({ data: { name: randomUUID() } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: 'owner' } });
         const artifact = await plainArtifact(owner.id);
-        await db.artifactTeamGrant.create({ data: { artifactId: artifact.id, teamId: team.id,
+        await db.artifactGrant.create({ data: { principalKind: 'team', artifactId: artifact.id, teamId: team.id,
             createdByAccountId: owner.id, accessLevel: 'view' } });
         const transaction = db.$transaction;
         let advanced = false;
@@ -236,7 +237,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         const owner = await db.account.create({ data: { encryptionMode: "plain" } });
         const recipient = await db.account.create({ data: { encryptionMode: "plain" } });
         const artifact = await plainArtifact(owner.id);
-        await db.artifactAccountGrant.create({ data: { artifactId: artifact.id, accountId: recipient.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: artifact.id, accountId: recipient.id,
             accessLevel: "view", createdByAccountId: owner.id } });
         const previousRetries = process.env.HAPPIER_DB_TX_MAX_RETRIES;
         process.env.HAPPIER_DB_TX_MAX_RETRIES = "0";
@@ -501,7 +502,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         const owner = await db.account.create({ data: { encryptionMode: "plain" } });
         const recipient = await db.account.create({ data: { encryptionMode: "plain" } });
         const artifact = await plainArtifact(owner.id);
-        await db.artifactAccountGrant.create({ data: { artifactId: artifact.id, accountId: recipient.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: artifact.id, accountId: recipient.id,
             accessLevel: "view", createdByAccountId: owner.id } });
         vi.stubEnv("HAPPIER_ARTIFACT_ACCOUNT_LIMIT_BYTES", "100000");
         vi.stubEnv("HAPPIER_DB_TX_MAX_RETRIES", "0");
@@ -543,7 +544,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
             const outcomes = await Promise.all([grant, update]);
             expect(outcomes).toMatchObject([{ value: { ok: true } }, { value: { ok: true } }]);
             expect((await db.artifact.findUniqueOrThrow({ where: { id: artifact.id } })).bodyVersion).toBe(2);
-            expect((await db.artifactAccountGrant.findUniqueOrThrow({ where: { artifactId_accountId: {
+            expect((await db.artifactGrant.findUniqueOrThrow({ where: { principalKind: 'account', artifactId_accountId: {
                 artifactId: artifact.id, accountId: recipient.id } } })).accessLevel).toBe("edit");
         } finally {
             releaseGrant();
@@ -684,7 +685,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         const owner = await db.account.create({ data: { encryptionMode: "plain" } });
         const editor = await db.account.create({ data: { encryptionMode: "plain" } });
         const artifact = await plainArtifact(owner.id);
-        await db.artifactAccountGrant.create({ data: { artifactId: artifact.id, accountId: editor.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: artifact.id, accountId: editor.id,
             accessLevel: "edit", createdByAccountId: owner.id } });
         const restore = beforeArtifactAccountLock(artifact.id, async () => {
             expect((await inTx(tx => setArtifactAccessGrantInTx(tx, { artifactId: artifact.id, actorAccountId: owner.id,
@@ -736,7 +737,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         const artifactId = randomUUID();
         expect(await createArtifact({ actorUserId: owner.id, artifactId, header: bytes({ title: "Doc" }),
             body: bytes({ body: "Hello" }), dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) })).toMatchObject({ ok: true });
-        await db.artifactAccountGrant.create({ data: { artifactId, accountId: author.id, accessLevel: "edit", createdByAccountId: owner.id } });
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId, accountId: author.id, accessLevel: "edit", createdByAccountId: owner.id } });
         const authentication = createPresentUserSessionAccessAuthentication();
         const ref = { kind: "doc" as const, artifactId, serverId: "home" };
         const revision = { headerVersion: 1, bodyVersion: 1 };
@@ -750,7 +751,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
                 replyTarget: { kind: "doc_passage", doc: { ref, revision } } } });
         const discussion = await createDiscussion({ actorAccountId: author.id, authentication, request });
         if (!discussion.ok) throw new Error(discussion.error);
-        await db.discussionAccountGrant.create({ data: { discussionId: discussion.value.discussion.id, accountId: viewer.id,
+        await db.discussionGrant.create({ data: { principalKind: 'account', discussionId: discussion.value.discussion.id, accountId: viewer.id,
             accessLevel: "view", createdByAccountId: author.id } });
         const proposalRef = createDiscussionMessageRefV1({ serverId: "home", discussionId: discussion.value.discussion.id }, discussion.value.firstMessage);
         const admitted = new Set<string>();

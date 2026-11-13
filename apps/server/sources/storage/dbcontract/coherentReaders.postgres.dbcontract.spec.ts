@@ -121,12 +121,12 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("s
         const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
         const viewer = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain" } });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id,
-            sharedWithUserId: viewer.id, accessLevel: "view" } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id,
+            accountId: viewer.id, accessLevel: "view" } });
         try {
             const result = await acrossCommit("SessionShare", async tx => {
                 await tx.account.update({ where: { id: viewer.id }, data: { status: "suspended" } });
-                await tx.sessionShare.deleteMany({ where: { sessionId: session.id } });
+                await tx.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session.id } });
             }, () => loadSessionViewerProjection({ accountId: viewer.id, sessionId: session.id,
                 authentication: { env: process.env, authority: "present_user", authenticationEvidence: [] } }));
             expect(result.before).not.toBeNull();
@@ -162,12 +162,12 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("s
         const recipient = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: "{}",
             encryptionMode: "plain", currentStorageState: "hosted" } });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id,
-            sharedWithUserId: recipient.id, accessLevel: "view" } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id,
+            accountId: recipient.id, accessLevel: "view" } });
         try {
             const result = await acrossCommit("SessionShare", async tx => {
                 await tx.session.update({ where: { id: session.id }, data: { currentStorageState: "direct" } });
-                await tx.sessionShare.deleteMany({ where: { sessionId: session.id } });
+                await tx.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session.id } });
             }, () => resolveCurrentSessionRecipientAccountIds({ sessionId: session.id }));
             expect(result.before).toEqual([owner.id, recipient.id].sort());
             expect(result.after).toEqual([owner.id]);
@@ -183,12 +183,12 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("s
         const recipient = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: "{}",
             encryptionMode: "plain", currentStorageState: "hosted" } });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id,
-            sharedWithUserId: recipient.id, accessLevel: "view" } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id,
+            accountId: recipient.id, accessLevel: "view" } });
         try {
             const result = await acrossCommit("SessionShare", async tx => {
                 await tx.session.update({ where: { id: session.id }, data: { currentStorageState: "direct" } });
-                await tx.sessionShare.deleteMany({ where: { sessionId: session.id } });
+                await tx.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session.id } });
             }, () => readCurrentSessionAccessForOperation({ accountId: recipient.id, sessionId: session.id,
                 authentication: { env: process.env, authority: "present_user", authenticationEvidence: [] }, capability: "readTranscript" }));
             expect(result.before).toMatchObject({ status: "allowed", access: { level: "view" } });

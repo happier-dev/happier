@@ -306,8 +306,8 @@ describe("accountRoutes v2 usage", () => {
             db.account.create({ data: { publicKey: `pk-usage-shared-${role}`, encryptionMode: "plain" }, select: { id: true } })));
         const session = await db.session.create({ data: { accountId: owner.id, tag: "usage-shared",
             encryptionMode: "plain", metadata: "{}" }, select: { id: true } });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id,
-            sharedWithUserId: reader.id, accessLevel: "view", canApprovePermissions: false } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id,
+            accountId: reader.id, accessLevel: "view", canApprovePermissions: false } });
         await db.usageEvent.create({ data: { accountId: owner.id, sessionId: session.id, observedAt: new Date(1000),
             agentId: "claude", source: "runtime", scope: "turn_delta", inputTokens: 10, totalTokens: 10 } });
         await db.sessionMessage.create({ data: { sessionId: session.id, seq: 1, content: { t: "plain", v: {} } } });
@@ -326,7 +326,7 @@ describe("accountRoutes v2 usage", () => {
             expect(legacy.statusCode).toBe(200);
             expect(legacy.json().usage).toEqual([]);
             expect((await query(outsider.id)).statusCode).toBe(404);
-            await db.sessionShare.deleteMany({ where: { sessionId: session.id } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session.id } });
             expect((await query(reader.id)).statusCode).toBe(404);
         });
     });

@@ -36,7 +36,7 @@ export async function exerciseProjectDefaultsStorage(mode: 'plain' | 'e2ee', ser
         header: await seal({ kind: 'project-deployment-defaults.v1', title: 'Private defaults' }),
         body: await seal({ body: JSON.stringify(payload) }),
         dataEncryptionKey: mode === 'plain' ? privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) : wrap(keys[0].publicKey) } });
-    await db.artifactTeamGrant.create({ data: { artifactId: artifact.id, teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id } });
+    await db.artifactGrant.create({ data: { principalKind: 'team', artifactId: artifact.id, teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id } });
     if (mode === 'e2ee') await db.artifactKeyEnvelope.create({ data: { artifactId: artifact.id, recipientAccountId: member.id,
         encryptedDataKey: wrap(keys[1].publicKey), recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(keys[1].publicKey) } });
     const input = { serverId, projectSourceId: source.source.id, expectedSourceRevision: source.source.revision, expectedRevision: 0,

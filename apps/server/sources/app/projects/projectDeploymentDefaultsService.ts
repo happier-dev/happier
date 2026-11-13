@@ -120,7 +120,7 @@ export async function readProjectDeploymentDefaultsContentInTx(tx: Tx, actorAcco
         const admitted = await admitContentInTx(tx, actorAccountId, projectSourceId, content, null, 'read');
         if (!admitted.ok) return admitted;
         // A member's direct grant cannot replace the future Team's durable write grant.
-        if (prospectiveOwner?.kind === 'team' && !await tx.artifactTeamGrant.findFirst({ where: {
+        if (prospectiveOwner?.kind === 'team' && !await tx.artifactGrant.findFirst({ where: { principalKind: 'team',
             artifactId: content.contentArtifactId, teamId: prospectiveOwner.teamId,
             accessLevel: { in: projectSourceContentTeamCustodyLevels(PROJECT_DEPLOYMENT_DEFAULTS_ARTIFACT_STORED_KIND_V1) },
             team: { archivedAt: null },

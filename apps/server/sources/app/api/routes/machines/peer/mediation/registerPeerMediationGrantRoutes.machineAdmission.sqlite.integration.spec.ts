@@ -33,10 +33,10 @@ describe('Peer grant current Machine admission (real SQLite)', () => {
         const team = await db.team.create({ data: { name: 'Export users' } });
         const member = await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: 'member' } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: guest.id, role: 'guest' } });
-        if (sharing === 'team') await db.machineTeamGrant.createMany({ data: machines.map(machine => ({
+        if (sharing === 'team') await db.machineGrant.createMany({ data: machines.map(machine => ({ principalKind: 'team',
             machineId: machine.id, teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id,
         })) });
-        else await db.machineAccountGrant.createMany({ data: machines.map(machine => ({
+        else await db.machineGrant.createMany({ data: machines.map(machine => ({ principalKind: 'account',
             machineId: machine.id, accountId: actor.id, accessLevel: 'view', createdByAccountId: owner.id,
         })) });
         const key = tweetnacl.sign.keyPair();
@@ -58,25 +58,25 @@ describe('Peer grant current Machine admission (real SQLite)', () => {
         expect(await issue(outsider.id)).toMatchObject({ ok: false, reasonCode: 'access_denied' });
         // docs/teams.md Guest: only direct Account or explicit Group grants authorize a guest.
         expect(await issue(guest.id)).toMatchObject({ ok: false, reasonCode: 'access_denied' });
-        await db.machineAccountGrant.createMany({ data: machines.map(machine => ({
+        await db.machineGrant.createMany({ data: machines.map(machine => ({ principalKind: 'account',
             machineId: machine.id, accountId: guest.id, accessLevel: 'view', createdByAccountId: owner.id,
         })) });
         expect(await issue(guest.id)).toMatchObject({ ok: true, grant: { payload: { accountId: guest.id } } });
         // Access to A alone cannot authorize a target B export.
         if (sharing === 'team') {
-            await db.machineTeamGrant.deleteMany({ where: { machineId: target.id, teamId: team.id } });
+            await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: target.id, teamId: team.id } });
             expect(await issue(actor.id)).toMatchObject({ ok: false, reasonCode: 'access_denied' });
-            await db.machineTeamGrant.create({ data: { machineId: target.id, teamId: team.id,
+            await db.machineGrant.create({ data: { principalKind: 'team', machineId: target.id, teamId: team.id,
                 accessLevel: 'view', createdByAccountId: owner.id } });
         } else {
-            await db.machineAccountGrant.deleteMany({ where: { machineId: target.id, accountId: actor.id } });
+            await db.machineGrant.deleteMany({ where: { principalKind: 'account', machineId: target.id, accountId: actor.id } });
             expect(await issue(actor.id)).toMatchObject({ ok: false, reasonCode: 'access_denied' });
-            await db.machineAccountGrant.create({ data: { machineId: target.id, accountId: actor.id,
+            await db.machineGrant.create({ data: { principalKind: 'account', machineId: target.id, accountId: actor.id,
                 accessLevel: 'view', createdByAccountId: owner.id } });
         }
         expect(await issue(actor.id)).toMatchObject({ ok: true, grant: { payload: { accountId: actor.id } } });
         if (sharing === 'team') await db.teamMembership.delete({ where: { id: member.id } });
-        else await db.machineAccountGrant.deleteMany({ where: { machineId: source.id, accountId: actor.id } });
+        else await db.machineGrant.deleteMany({ where: { principalKind: 'account', machineId: source.id, accountId: actor.id } });
         expect(await issue(actor.id)).toMatchObject({ ok: false, reasonCode: 'access_denied' });
         expect(await db.machine.findUnique({ where: { id: target.id } })).toEqual(target);
         const { serviceExport: _export, ...genericScope } = body.scope;
@@ -94,7 +94,7 @@ describe('Peer grant current Machine admission (real SQLite)', () => {
             dataEncryptionKey: new Uint8Array(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')),
             active: true, installationId: randomUUID(),
         } });
-        await db.machineAccountGrant.create({ data: {
+        await db.machineGrant.create({ data: { principalKind: 'account',
             machineId: machine.id, accountId: actor.id, accessLevel: 'view', createdByAccountId: owner.id,
         } });
         const key = tweetnacl.sign.keyPair();
@@ -117,7 +117,7 @@ describe('Peer grant current Machine admission (real SQLite)', () => {
         };
         expect((await route.invoke(request)).response).toMatchObject({ ok: false,
             reasonCode: flowKind === 'machine_rpc' ? 'machine_rpc_method_server_required' : 'route_unavailable' });
-        await db.machineAccountGrant.deleteMany({ where: { machineId: machine.id, accountId: actor.id } });
+        await db.machineGrant.deleteMany({ where: { principalKind: 'account', machineId: machine.id, accountId: actor.id } });
         expect((await route.invoke(request)).response).toMatchObject({ ok: false, reasonCode: 'access_denied' });
     });
 });

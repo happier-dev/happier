@@ -241,8 +241,8 @@ describe('Usage compact work-facts evidence', () => {
     it('uses actor scope for shared Sessions and fails closed for forbidden, malformed or wrong-mode records', async () => {
         const [owner, actor, stranger] = await Promise.all([account(), account(), account()]);
         const [shared, missing, malformed, mismatch, denied] = await Promise.all(Array.from({ length: 5 }, () => session(owner.id)));
-        await Promise.all([shared, missing, malformed, mismatch].map(subject => db.sessionShare.create({ data: {
-            sessionId: subject.id, sharedWithUserId: actor.id, accessLevel: 'view', sharedByUserId: owner.id,
+        await Promise.all([shared, missing, malformed, mismatch].map(subject => db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: subject.id, accountId: actor.id, accessLevel: 'view', createdByAccountId: owner.id,
         } })));
         await record(owner.id, shared.id, { t: 'encrypted', c: 'owner-secret' });
         await record(actor.id, shared.id, { t: 'encrypted', c: 'actor-facts' });

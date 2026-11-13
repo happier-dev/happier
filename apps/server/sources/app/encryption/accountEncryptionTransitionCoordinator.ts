@@ -367,9 +367,7 @@ async function readAccountEncryptionTransitionAudienceInTx(tx: Tx, accountId: st
     for (const discussion of discussions) {
         for (const recipient of await resolveDiscussionAudienceInTx(tx, discussion.id)) accountIds.add(recipient);
     }
-    const tasks = await tx.userKVStore.findMany({ where: { accountId, ...taskRowsWhere, OR: [
-        { accountGrants: { some: {} } }, { teamGrants: { some: {} } }, { groupGrants: { some: {} } },
-    ] }, select: { id: true } });
+    const tasks = await tx.userKVStore.findMany({ where: { accountId, ...taskRowsWhere, grants: { some: {} } }, select: { id: true } });
     for (const task of tasks) {
         for (const recipient of await resolveTaskAudienceInTx(tx, task.id)) accountIds.add(recipient);
     }
@@ -1119,7 +1117,7 @@ async function inventoryItemsFromStages(tx: Tx, accountId: string,
 ): Promise<readonly AccountEncryptionMigrateCollectionInventoryItem[] | null> {
     const managed = await tx.pluginCollectionRow.findMany({ where: { accountId, deletedAt: null,
         OR: stages.map(stage => ({ pluginId: stage.pluginId, collectionId: stage.collectionId, rowId: stage.rowId })),
-        AND: [{ OR: [{ accountGrants: { some: {} } }, { teamGrants: { some: {} } }, { groupGrants: { some: {} } }, { keyEnvelopes: { some: {} } }] }] },
+        AND: [{ OR: [{ grants: { some: {} } }, { keyEnvelopes: { some: {} } }] }] },
         select: { pluginId: true, collectionId: true, rowId: true } });
     const managedIds = new Set(managed.map(stageIdentityKey));
     const items: AccountEncryptionMigrateCollectionInventoryItem[] = [];

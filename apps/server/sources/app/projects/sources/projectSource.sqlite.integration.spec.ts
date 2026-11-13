@@ -355,7 +355,7 @@ describe('Source catalog real SQLite owner', () => {
                 dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER), headerVersion: 1, bodyVersion: 1 } });
         }
         const [a, b, wrong] = await Promise.all([artifact(), artifact(), artifact('workflow-definition.v1')]);
-        await db.artifactAccountGrant.create({ data: { artifactId: b.id, accountId: recipient.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: b.id, accountId: recipient.id, accessLevel: 'view', createdByAccountId: owner.id } });
         const attach = (id: string, expectedRevision: number) => inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId, sourceId: row.id, expectedRevision, patch: { attachment: { kind: 'attach', attachment: { purpose: 'dashboard', ref: { kind: 'doc', artifactId: id } } } } }));
         const foreignAttachment = { purpose: 'dashboard', ref: { kind: 'doc', artifactId: wrong.id, serverId: 'foreign-home' } };
         const foreign = await inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId, sourceId: row.id, expectedRevision: row.revision,
@@ -381,10 +381,10 @@ describe('Source catalog real SQLite owner', () => {
             patch: { attachment: { kind: 'detach', purpose: 'dashboard', ref: foreignSameId.ref } } }));
         expect(foreignDetached).toMatchObject({ ok: true, source: { attachments: [foreignAttachment, { purpose: 'dashboard', ref: { kind: 'doc', artifactId: b.id } }] } });
         if (!foreignDetached.ok) return;
-        expect(await db.artifactAccountGrant.count({ where: { artifactId: a.id } })).toBe(0);
+        expect(await db.artifactGrant.count({ where: { principalKind: 'account', artifactId: a.id } })).toBe(0);
         expect(await inTx(tx => deleteProjectSourceInTx(tx, owner.id, { serverId, sourceId: row.id, expectedRevision: foreignDetached.source.revision }))).toMatchObject({ ok: true });
         expect((await db.artifact.findUniqueOrThrow({ where: { id: b.id } })).body).toEqual(b.body);
-        expect(await db.artifactAccountGrant.count({ where: { artifactId: b.id } })).toBe(1);
+        expect(await db.artifactGrant.count({ where: { principalKind: 'account', artifactId: b.id } })).toBe(1);
     });
     it('reads stored nested extras canonically and drops them on write; malformed required fields refuse', async () => {
         const owner = await account(); const row = await source(owner.id);
@@ -413,7 +413,7 @@ describe('Source catalog real SQLite owner', () => {
             body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ value: 'dashboard' })),
             dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER), headerVersion: 1, bodyVersion: 1 } });
         const dashboard = { purpose: 'dashboard', ref: { kind: 'doc', artifactId: dashboardDocument.id } };
-        await db.artifactAccountGrant.create({ data: { artifactId: dashboardDocument.id, accountId: recipient.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: dashboardDocument.id, accountId: recipient.id, accessLevel: 'view', createdByAccountId: owner.id } });
         expect(await inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId, sourceId: row.id, expectedRevision: row.revision,
             patch: { attachment: { kind: 'attach', attachment: { purpose: 'context', entry } } } }))).toEqual({ ok: false, error: 'source_invalid' });
         await db.projectSource.update({ where: { id: row.id }, data: {
@@ -450,7 +450,7 @@ describe('Source catalog real SQLite owner', () => {
         expect(added.source.attachments).toEqual([{ purpose: 'context', entry: entryTwo }, dashboard, { purpose: 'context', entry: { ...entryTwo, id: 'context-three' } }]);
         expect((await db.artifact.findUniqueOrThrow({ where: { id: document.id } })).body).toEqual(document.body);
         expect((await db.artifact.findUniqueOrThrow({ where: { id: dashboardDocument.id } })).body).toEqual(dashboardDocument.body);
-        expect(await db.artifactAccountGrant.count({ where: { artifactId: dashboardDocument.id, accountId: recipient.id, accessLevel: 'view' } })).toBe(1);
+        expect(await db.artifactGrant.count({ where: { principalKind: 'account', artifactId: dashboardDocument.id, accountId: recipient.id, accessLevel: 'view' } })).toBe(1);
         const unreadable = await db.artifact.create({ data: { id: crypto.randomUUID(), accountId: (await account()).id,
             header: document.header, body: document.body, dataEncryptionKey: document.dataEncryptionKey } });
         expect(await inTx(tx => updateProjectSourceInTx(tx, owner.id, { serverId, sourceId: row.id, expectedRevision: added.source.revision,

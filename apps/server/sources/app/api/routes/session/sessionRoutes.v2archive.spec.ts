@@ -34,14 +34,14 @@ describe("sessionRoutes v2 archive", () => {
         }]);
         txSessionShareFindMany.mockResolvedValue([{
             sessionId: "s1",
-            sharedWithUserId: "u1",
+            accountId: "u1",
         }]);
     });
 
     it("archives an inactive session when actor is admin", async () => {
         const now = new Date(1234);
-        sessionFindUnique.mockResolvedValue({ ...createSessionAccessProjectionRelations(), id: "s1", accountId: "owner", currentStorageState: "hosted", shares: [{ id: "share-u1", sharedWithUserId: "u1", accessLevel: "admin", canApprovePermissions: false }], teamGrants: [], groupGrants: [] });
-        txSessionFindUnique.mockResolvedValue({ ...createSessionAccessProjectionRelations(), id: "s1", accountId: "owner", currentStorageState: "hosted", shares: [{ id: "share-u1", sharedWithUserId: "u1", accessLevel: "admin", canApprovePermissions: false }], teamGrants: [], groupGrants: [], active: false, archivedAt: null });
+        sessionFindUnique.mockResolvedValue({ ...createSessionAccessProjectionRelations(), id: "s1", accountId: "owner", currentStorageState: "hosted", grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  id: "share-u1", accountId: "u1", accessLevel: "admin", canApprovePermissions: false  }],   });
+        txSessionFindUnique.mockResolvedValue({ ...createSessionAccessProjectionRelations(), id: "s1", accountId: "owner", currentStorageState: "hosted", grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  id: "share-u1", accountId: "u1", accessLevel: "admin", canApprovePermissions: false  }],   active: false, archivedAt: null });
         txSessionUpdate.mockResolvedValue({ id: "s1", archivedAt: now });
         clearSessionRuntimeActivityProjectionInTx.mockResolvedValue({
             ok: true,
@@ -59,9 +59,9 @@ describe("sessionRoutes v2 archive", () => {
             ...createSessionAccessProjectionRelations(),
             id: "s1",
             accountId: "owner",
-            shares: [{ id: "share-u1", sharedWithUserId: "u1", accessLevel: "admin", canApprovePermissions: false }],
-            teamGrants: [],
-            groupGrants: [],
+            grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  id: "share-u1", accountId: "u1", accessLevel: "admin", canApprovePermissions: false  }],
+            
+            
             currentStorageState: "snapshot_complete",
             acceptedThroughServerSeq: 4,
             materializationPublicationId: "archive-publication-v1",
@@ -116,8 +116,8 @@ describe("sessionRoutes v2 archive", () => {
     });
 
     it("returns 409 when attempting to archive an active session", async () => {
-        sessionFindUnique.mockResolvedValue({ ...createSessionAccessProjectionRelations(), id: "s1", accountId: "owner", currentStorageState: "hosted", shares: [{ id: "share-u1", sharedWithUserId: "u1", accessLevel: "admin", canApprovePermissions: false }], teamGrants: [], groupGrants: [] });
-        txSessionFindUnique.mockResolvedValue({ ...createSessionAccessProjectionRelations(), id: "s1", accountId: "owner", currentStorageState: "hosted", shares: [{ id: "share-u1", sharedWithUserId: "u1", accessLevel: "admin", canApprovePermissions: false }], teamGrants: [], groupGrants: [], active: true, archivedAt: null });
+        sessionFindUnique.mockResolvedValue({ ...createSessionAccessProjectionRelations(), id: "s1", accountId: "owner", currentStorageState: "hosted", grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  id: "share-u1", accountId: "u1", accessLevel: "admin", canApprovePermissions: false  }],   });
+        txSessionFindUnique.mockResolvedValue({ ...createSessionAccessProjectionRelations(), id: "s1", accountId: "owner", currentStorageState: "hosted", grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  id: "share-u1", accountId: "u1", accessLevel: "admin", canApprovePermissions: false  }],   active: true, archivedAt: null });
 
         const route = await createSessionRouteTestBuilder("POST", "/v2/sessions/:sessionId/archive");
         const { reply, response: res } = await route.invoke({ params: { sessionId: "s1" } });
@@ -128,7 +128,7 @@ describe("sessionRoutes v2 archive", () => {
     });
 
     it("returns 403 when actor is not admin", async () => {
-        sessionFindUnique.mockResolvedValue({ ...createSessionAccessProjectionRelations(), id: "s1", accountId: "owner", currentStorageState: "hosted", shares: [{ id: "share-u1", sharedWithUserId: "u1", accessLevel: "edit", canApprovePermissions: false }], teamGrants: [], groupGrants: [] });
+        sessionFindUnique.mockResolvedValue({ ...createSessionAccessProjectionRelations(), id: "s1", accountId: "owner", currentStorageState: "hosted", grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  id: "share-u1", accountId: "u1", accessLevel: "edit", canApprovePermissions: false  }],   });
 
         const route = await createSessionRouteTestBuilder("POST", "/v2/sessions/:sessionId/archive");
         const { reply, response: res } = await route.invoke({ params: { sessionId: "s1" } });
@@ -138,8 +138,8 @@ describe("sessionRoutes v2 archive", () => {
     });
 
     it("unarchives an archived session when actor is admin", async () => {
-        sessionFindUnique.mockResolvedValue({ ...createSessionAccessProjectionRelations(), id: "s1", accountId: "owner", currentStorageState: "hosted", shares: [{ id: "share-u1", sharedWithUserId: "u1", accessLevel: "admin", canApprovePermissions: false }], teamGrants: [], groupGrants: [] });
-        txSessionFindUnique.mockResolvedValue({ ...createSessionAccessProjectionRelations(), id: "s1", accountId: "owner", currentStorageState: "hosted", shares: [{ id: "share-u1", sharedWithUserId: "u1", accessLevel: "admin", canApprovePermissions: false }], teamGrants: [], groupGrants: [], active: false, archivedAt: new Date(1) });
+        sessionFindUnique.mockResolvedValue({ ...createSessionAccessProjectionRelations(), id: "s1", accountId: "owner", currentStorageState: "hosted", grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  id: "share-u1", accountId: "u1", accessLevel: "admin", canApprovePermissions: false  }],   });
+        txSessionFindUnique.mockResolvedValue({ ...createSessionAccessProjectionRelations(), id: "s1", accountId: "owner", currentStorageState: "hosted", grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  id: "share-u1", accountId: "u1", accessLevel: "admin", canApprovePermissions: false  }],   active: false, archivedAt: new Date(1) });
         txSessionUpdate.mockResolvedValue({ id: "s1", archivedAt: null });
 
         const route = await createSessionRouteTestBuilder("POST", "/v2/sessions/:sessionId/unarchive");

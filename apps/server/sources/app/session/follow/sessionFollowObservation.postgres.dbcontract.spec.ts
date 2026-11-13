@@ -97,10 +97,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('F
                 await client.team.create({ data: { id: teamId, name: teamId,
                     authenticationPolicy: { v: 1, mode: 'restricted', accepted: [{ kind: 'home_method', methodId: 'key_challenge' }] } } });
                 await client.teamMembership.create({ data: { teamId, accountId, role: 'member', sessionAccessStartsAt: null } });
-                await client.sessionTeamGrant.createMany({ data: sourceIds.map(sessionId => ({ sessionId, teamId, effectiveAt: new Date(1) })) });
+                await client.sessionGrant.createMany({ data: (sourceIds.map(sessionId => ({ sessionId, teamId, effectiveAt: new Date(1) }))).map(data => ({ ...data, principalKind: 'team' })) });
                 // Direct read remains an independent admitted arm even without Team evidence.
-                await client.sessionShare.createMany({ data: sourceIds.map(sessionId => ({ sessionId,
-                    sharedByUserId: sourceAccountId, sharedWithUserId: accountId, accessLevel: 'view' })) });
+                await client.sessionGrant.createMany({ data: (sourceIds.map(sessionId => ({ sessionId,
+                    createdByAccountId: sourceAccountId, accountId: accountId, accessLevel: 'view' }))).map(data => ({ ...data, principalKind: 'account' })) });
             }
             await client.accessKey.create({ data: { accountId, machineId, sessionId: destinationSessionId, data: MACHINE_PLAIN_DATA_KEY_MARKER } });
             await client.session.update({ where: { id: destinationSessionId }, data: { runtimeMachineTarget: {

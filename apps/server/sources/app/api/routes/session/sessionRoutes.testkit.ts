@@ -128,7 +128,7 @@ const sessionDbMocks = createDbMocks({
     sessionOrganizationOrderEntry: ["findMany"],
     sessionOrganizationLabel: ["findMany"],
     sessionOrganizationCheckpoint: ["findUnique"],
-    sessionShare: ["findMany"],
+    sessionGrant: ["findMany"],
     sessionMessage: ["findMany", "findFirst", "findUnique"],
     sessionPendingMessage: ["count"],
     sessionTurn: ["findFirst", "findMany"],
@@ -145,8 +145,8 @@ const txDbMocks = createDbMocks({
     homeGovernancePolicy: ["findUnique"],
     identityProviderInstance: ["findMany"],
     teamMembership: ["findMany"],
-    sessionTeamGrant: ["findMany"],
-    sessionGroupGrant: ["findMany"],
+    
+    
     sessionTeamCredentialBinding: ["findMany"],
     userKVStore: ["findMany"],
     accountSessionFollow: ["findMany", "updateMany"],
@@ -158,7 +158,7 @@ const txDbMocks = createDbMocks({
     session: ["create", "findFirst", "findMany", "findUnique", "update", "updateMany"],
     sessionMessage: ["findMany", "findFirst"],
     sessionPendingMessage: ["findUnique"],
-    sessionShare: ["findMany"],
+    sessionGrant: ["findMany"],
     sessionTurn: ["findFirst", "findMany", "findUnique", "updateMany"],
     sessionPin: ["count", "deleteMany", "findMany", "findUnique", "updateMany", "upsert"],
     sessionFolderAssignment: ["deleteMany", "findMany", "updateMany", "upsert"],
@@ -382,7 +382,7 @@ export const sessionMessageFindFirst = sessionDbMocks.db.sessionMessage.findFirs
 export const sessionMessageFindUnique = sessionDbMocks.db.sessionMessage.findUnique;
 export const sessionPendingMessageCount = sessionDbMocks.db.sessionPendingMessage.count;
 export const sessionTurnFindMany = sessionDbMocks.db.sessionTurn.findMany;
-export const sessionShareFindMany = sessionDbMocks.db.sessionShare.findMany;
+export const sessionShareFindMany = sessionDbMocks.db.sessionGrant.findMany;
 export const discussionAggregate = sessionDbMocks.db.discussion.aggregate;
 export const discussionFindMany = sessionDbMocks.db.discussion.findMany;
 export const discussionMessageFindMany = sessionDbMocks.db.discussionMessage.findMany;
@@ -400,7 +400,7 @@ export const txSessionUpdate = txDbMocks.db.session.update;
 export const txSessionUpdateMany = txDbMocks.db.session.updateMany;
 export const txSessionMessageFindMany = txDbMocks.db.sessionMessage.findMany;
 export const txSessionMessageFindFirst = txDbMocks.db.sessionMessage.findFirst;
-export const txSessionShareFindMany = txDbMocks.db.sessionShare.findMany;
+export const txSessionShareFindMany = txDbMocks.db.sessionGrant.findMany;
 export const txSessionTurnFindFirst = txDbMocks.db.sessionTurn.findFirst;
 export const txSessionTurnFindMany = txSessionTurnFindManyDelegate;
 export const txSessionPinCount = txDbMocks.db.sessionPin.count;
@@ -499,10 +499,10 @@ export function configureMaterializedRunnerCurrentnessFixture(
  */
 export function createSessionAccessProjectionRelations(): Pick<
     SessionAccessProjectionRow,
-    "account" | "shares" | "teamGrants" | "groupGrants" | "teamCredentialBindings"
+    "account" | "grants" | "teamCredentialBindings"
 > {
     // Owner-Account currentness is read from the same fresh row as access (readmission).
-    return { account: { ...TEST_E2EE_ACCOUNT_CURRENTNESS_ROW }, shares: [], teamGrants: [], groupGrants: [], teamCredentialBindings: [] };
+    return { account: { ...TEST_E2EE_ACCOUNT_CURRENTNESS_ROW }, grants: [],   teamCredentialBindings: [] };
 }
 
 /**
@@ -761,8 +761,8 @@ export function resetSessionRouteMocks(): void {
         acceptedThroughServerSeq: null,
         publishedThroughServerSeq: null,
     });
-    txDbMocks.db.sessionTeamGrant.findMany.mockResolvedValue([]);
-    txDbMocks.db.sessionGroupGrant.findMany.mockResolvedValue([]);
+    txDbMocks.db.sessionGrant.findMany.mockResolvedValue([]);
+    txDbMocks.db.sessionGrant.findMany.mockResolvedValue([]);
     txDbMocks.db.sessionTeamCredentialBinding.findMany.mockResolvedValue([]);
     txDbMocks.db.userKVStore.findMany.mockResolvedValue([]);
     txDbMocks.db.accountSessionFollow.updateMany.mockResolvedValue({ count: 0 });

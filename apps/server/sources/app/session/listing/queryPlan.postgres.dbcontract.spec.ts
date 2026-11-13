@@ -165,14 +165,14 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
                 sessionId, turnId: "turn", status: "completed", startedAt: 1, updatedAt: 2,
                 rollbackState: "eligible", transcriptAnchorsJson: '{"startUserMessageSeq":3}',
             })) });
-            await client.sessionTeamGrant.createMany({ data: sessionIds.slice(0, 4).map(sessionId => ({
+            await client.sessionGrant.createMany({ data: (sessionIds.slice(0, 4).map(sessionId => ({
                 sessionId, teamId: teamIds[0], effectiveAt: new Date(1),
-            })) });
-            await client.sessionGroupGrant.createMany({ data: sessionIds.slice(0, 4).map(sessionId => ({
+            }))).map(data => ({ ...data, principalKind: 'team' })) });
+            await client.sessionGrant.createMany({ data: (sessionIds.slice(0, 4).map(sessionId => ({
                 sessionId, teamGroupId: `${prefix}-group`, effectiveAt: new Date(1),
-            })) });
-            await client.sessionTeamGrant.deleteMany({ where: { sessionId: { in: sessionIds } } });
-            await client.sessionGroupGrant.deleteMany({ where: { sessionId: { in: sessionIds } } });
+            }))).map(data => ({ ...data, principalKind: 'group' })) });
+            await client.sessionGrant.deleteMany({ where: { principalKind: 'team', sessionId: { in: sessionIds } } });
+            await client.sessionGrant.deleteMany({ where: { principalKind: 'group', sessionId: { in: sessionIds } } });
             // Fresh sparse grant tables have reltuples=-1 until analyzed. This
             // is the observed hot database topology, not a planner override.
             await client.$executeRawUnsafe('ANALYZE "Session", "Team", "TeamMembership", "Account", "SessionTurn"');
@@ -256,11 +256,11 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
                 teamId: teamIds[0], teamGroupId: `${prefix}-group`, teamMembershipId: membership.id,
                 nativeContribution: true, sessionAccessStartsAt: null,
             } });
-            await client.sessionTeamGrant.createMany({ data: [
-                { sessionId: sharedId, teamId: teamIds[0], effectiveAt: new Date(1), accessLevel: "view" },
-                { sessionId: sharedId, teamId: teamIds[1], effectiveAt: new Date(1), accessLevel: "admin" },
+            await client.sessionGrant.createMany({ data: [
+                { principalKind: 'team', sessionId: sharedId, teamId: teamIds[0], effectiveAt: new Date(1), accessLevel: "view" },
+                { principalKind: 'team', sessionId: sharedId, teamId: teamIds[1], effectiveAt: new Date(1), accessLevel: "admin" },
             ] });
-            await client.sessionGroupGrant.create({ data: {
+            await client.sessionGrant.create({ data: { principalKind: 'group',
                 sessionId: sharedId, teamGroupId: `${prefix}-group`, effectiveAt: new Date(1), accessLevel: "edit",
             } });
             const readShared = async () => await client.$transaction(async reader => {

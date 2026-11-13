@@ -66,9 +66,9 @@ describe("tracked Session badge-refresh push fanout (SQLite)", () => {
             encryptionMode: "plain",
             seq: 4,
         } });
-        await db.sessionTeamGrant.createMany({ data: [restrictedTeam, inheritTeam].map(team => ({
+        await db.sessionGrant.createMany({ data: ([restrictedTeam, inheritTeam].map(team => ({
             sessionId: session.id, teamId: team.id, accessLevel: "view" as const, effectiveAt: new Date(0),
-        })) });
+        }))).map(data => ({ ...data, principalKind: 'team' })) });
         await db.accountSessionFollow.createMany({ data: [restrictedFollower, inheritFollower].map(account => ({
             sessionId: session.id, accountId: account.id, following: true, followPolicy: JSON.stringify({ preset: "important" }),
         })) });

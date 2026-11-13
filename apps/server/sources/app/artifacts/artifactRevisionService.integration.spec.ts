@@ -31,7 +31,7 @@ describe("Artifact revision restore through HTTP and SQLite", () => {
         await db.artifact.create({ data: { id, accountId: owner.id,
             header: Buffer.from(header, "base64"), body: Buffer.from(originalBody, "base64"),
             dataEncryptionKey: Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, "base64"), headerVersion: 1, bodyVersion: 1 } });
-        await db.artifactAccountGrant.create({ data: { artifactId: id, accountId: recipient.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: id, accountId: recipient.id,
             accessLevel: "view", createdByAccountId: owner.id } });
 
         await withAuthenticatedTestApp(artifactsRoutes, async app => {

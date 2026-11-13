@@ -147,8 +147,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         const owner = await db.account.create({ data: { encryptionMode: "plain" } });
         const editor = await db.account.create({ data: { encryptionMode: "plain" } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain" } });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id,
-            sharedWithUserId: editor.id, accessLevel: "edit" } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id,
+            accountId: editor.id, accessLevel: "edit" } });
         const captured = deferred(), release = deferred();
         const transaction = db.$transaction;
         let paused = false;
@@ -398,8 +398,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
                 ? await db.session.create({ data: { accountId: draftOwner.id, tag: randomUUID(), metadata: "{}",
                     encryptionMode: "plain", active: false, seq: 10, archivedAt: operation === "unarchive" ? new Date(123) : null } })
                 : null;
-            if ((operation === "draft-session-shared-revoked" || sharedMute) && session) await db.sessionShare.create({ data: {
-                sessionId: session.id, sharedWithUserId: account.id, sharedByUserId: draftOwner.id, accessLevel: sharedMute ? "edit" : "view",
+            if ((operation === "draft-session-shared-revoked" || sharedMute) && session) await db.sessionGrant.create({ data: { principalKind: 'account',
+                sessionId: session.id, accountId: account.id, createdByAccountId: draftOwner.id, accessLevel: sharedMute ? "edit" : "view",
             } });
             const lead = relationOperation ? await db.session.create({ data: { accountId: account.id,
                 tag: randomUUID(), metadata: "{}", encryptionMode: "plain", active: false } }) : null;
@@ -488,13 +488,13 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
                                 await peerTx.session.update({ where: { id: session.id }, data: { encryptionMode: "e2ee" } });
                             }
                             if (operation === "draft-session-shared-revoked" && session) {
-                                await peerTx.sessionShare.deleteMany({ where: { sessionId: session.id, sharedWithUserId: account.id } });
+                                await peerTx.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session.id, accountId: account.id } });
                             }
                             if (sharedMute && session) {
                                 if (operation === "delivery-mute-session-shared-revoked") {
-                                    await peerTx.sessionShare.deleteMany({ where: { sessionId: session.id, sharedWithUserId: account.id } });
+                                    await peerTx.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session.id, accountId: account.id } });
                                 } else {
-                                    await peerTx.sessionShare.updateMany({ where: { sessionId: session.id, sharedWithUserId: account.id }, data: { accessLevel: "view" } });
+                                    await peerTx.sessionGrant.updateMany({ where: { principalKind: 'account', sessionId: session.id, accountId: account.id }, data: { accessLevel: "view" } });
                                 }
                             }
                             locked.resolve();

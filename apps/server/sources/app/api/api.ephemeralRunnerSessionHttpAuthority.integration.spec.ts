@@ -57,7 +57,7 @@ describe("ephemeral Runner Session HTTP authority (integration)", () => {
         await db.ephemeralRunnerActivation.deleteMany();
         await db.accessKey.deleteMany();
         await db.usageEvent.deleteMany();
-        await db.sessionShare.deleteMany();
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account' } });
         await db.sessionMessage.deleteMany();
         await db.sessionPin.deleteMany();
         await db.sessionAttentionStanding.deleteMany();
@@ -262,6 +262,15 @@ describe("ephemeral Runner Session HTTP authority (integration)", () => {
                 metadataLayoutVersion: 1,
                 sharedMetadata: { version: 1 },
             });
+
+            const externalIdentityClaim = await app.inject({
+                method: "PATCH",
+                url: `/v2/sessions/${fixture.sessionId}`,
+                headers: { ...compatibilityHeaders, ...authorization },
+                payload: { externalIdentityTag: `direct:v1:${"e".repeat(64)}` },
+            });
+            expect(externalIdentityClaim.statusCode, externalIdentityClaim.body).toBe(200);
+            expect(externalIdentityClaim.json()).toEqual({ externalIdentity: "claimed" });
 
             const deniedRequests = [
                 {

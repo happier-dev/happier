@@ -647,7 +647,7 @@ describe("authenticated human presence over real memory-adapter sockets", () => 
         await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: "member" } });
         const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Guests", nameKey: "guests" } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id } });
-        await db.sessionGroupGrant.create({ data: { sessionId: session.id, teamGroupId: group.id, accessLevel: "edit", effectiveAt: new Date() } });
+        await db.sessionGrant.create({ data: { principalKind: 'group', sessionId: session.id, teamGroupId: group.id, accessLevel: "edit", effectiveAt: new Date() } });
         expect(await setDiscussionGrant({ actorAccountId: owner.id, discussionId: discussion.id, authentication: ownerAuthentication(),
             request: { principal: { kind: "group", groupId: group.id, teamId: team.id }, accessLevel: "edit" },
         })).toMatchObject({ ok: true });

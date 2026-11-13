@@ -63,7 +63,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         if (relationship === 'shared') {
             expect(await call()).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
             expect(effect).not.toHaveBeenCalled();
-            await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: actor.id,
+            await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id, accountId: actor.id,
                 accessLevel: 'view', createdByAccountId: owner.id } });
         }
 
@@ -72,11 +72,12 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         let reads = 0;
         let transactions = 0;
         // Count the genuine Prisma/PostgreSQL boundary without replacing internal admission.
-        db.machine = new Proxy(machineDelegate, { get(target, key, receiver) {
+        // Prisma types client delegates readonly; the db proxy's set trap swaps the live boundary delegate.
+        Reflect.set(db, 'machine', new Proxy(machineDelegate, { get(target, key, receiver) {
             const value = Reflect.get(target, key, receiver);
             return key === 'findUnique' || key === 'findFirst' || key === 'findMany'
                 ? (...args: unknown[]) => { reads++; return Reflect.apply(value, target, args); } : value;
-        } });
+        } }));
         db.$transaction = new Proxy(transaction, { apply(target, receiver, args) {
             transactions++;
             return Reflect.apply(target, receiver, args);
@@ -92,14 +93,14 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
             if (relationship === 'owner') {
                 await db.machine.update({ where: { id: machine.id }, data: { revokedAt: new Date() } });
             } else {
-                await db.machineAccountGrant.delete({ where: {
+                await db.machineGrant.delete({ where: { principalKind: 'account',
                     machineId_accountId: { machineId: machine.id, accountId: actor.id },
                 } });
             }
             expect(await call()).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
             expect(effect).toHaveBeenCalledTimes(16);
         } finally {
-            db.machine = machineDelegate;
+            Reflect.set(db, 'machine', machineDelegate);
             db.$transaction = transaction;
         }
     });

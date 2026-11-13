@@ -26,8 +26,8 @@ describe('Home broker consumer retirement wakes', () => {
             accountId: owner.id, tag: crypto.randomUUID(), metadata: '{}', encryptionMode: 'plain', active: false,
         } });
         await db.accessKey.create({ data: { accountId: owner.id, machineId: machine.id, sessionId: session.id, data: 'opaque' } });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id,
-            sharedWithUserId: stranger.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id,
+            accountId: stranger.id, accessLevel: 'view' } });
         for (const [deliveryMode, account] of [['brokered', custodian], ['direct', directCustodian]] as const) {
             const resource = await db.teamCredentialResource.create({ data: {
                 teamId: team.id, custodianAccountId: account.id, displayName: deliveryMode,

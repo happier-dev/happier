@@ -204,10 +204,10 @@ describe('Doc decision host codec → C3 transaction → Artifact writer', () =>
         const recipientContentPublicKeyFingerprint = computeContentPublicKeyFingerprint(editorKeys.publicKey);
         const envelope = (dataKey: Uint8Array) => sealEncryptedDataKeyEnvelopeV1({ dataKey,
             recipientPublicKey: editorKeys.publicKey, randomBytes: tweetnacl.randomBytes });
-        await db.artifactAccountGrant.create({ data: { artifactId: f.doc.ref.artifactId, accountId: editor.id, accessLevel: 'edit', createdByAccountId: f.owner.id } });
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: f.doc.ref.artifactId, accountId: editor.id, accessLevel: 'edit', createdByAccountId: f.owner.id } });
         await db.artifactKeyEnvelope.create({ data: { artifactId: f.doc.ref.artifactId, recipientAccountId: editor.id,
             recipientContentPublicKeyFingerprint, encryptedDataKey: envelope(f.docKey) } });
-        await db.discussionAccountGrant.create({ data: { discussionId: f.proposalRef.discussion.discussionId, accountId: editor.id,
+        await db.discussionGrant.create({ data: { principalKind: 'account', discussionId: f.proposalRef.discussion.discussionId, accountId: editor.id,
             accessLevel: 'view', createdByAccountId: f.owner.id } });
         await db.discussionKeyEnvelope.create({ data: { discussionId: f.proposalRef.discussion.discussionId, recipientAccountId: editor.id,
             recipientContentPublicKeyFingerprint, encryptedDataKey: envelope(f.discussionKey) } });

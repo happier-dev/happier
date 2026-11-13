@@ -61,8 +61,8 @@ describe('Live stream current Machine admission (real SQLite)', () => {
             if (teamBrowser) await db.account.update({ where: { id: actor.id }, data: { encryptionMode: 'e2ee', publicKey: randomUUID() } });
             const session = sessionBrowser ? await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}',
                 encryptionMode: encryptedSessionBrowser ? 'e2ee' : 'plain' } }) : null;
-            if (session && path !== 'unshared-session-browser') await db.sessionShare.create({ data: {
-                sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: actor.id,
+            if (session && path !== 'unshared-session-browser') await db.sessionGrant.create({ data: { principalKind: 'account',
+                sessionId: session.id, createdByAccountId: owner.id, accountId: actor.id,
                 accessLevel: path === 'shared-edit-browser' || path === 'downgraded-session-browser' ? 'edit' : 'view',
             } });
             const installation = tweetnacl.sign.keyPair();
@@ -191,8 +191,8 @@ describe('Live stream current Machine admission (real SQLite)', () => {
                 const send = getSocketHandler(source, MACHINE_LIVE_STREAM_SOCKET_EVENT);
                 if (path === 'withdrawn-session-browser' || path === 'downgraded-session-browser') {
                     // A signed grant is replayable until expiry; opening a stream is a new admission.
-                    if (path === 'withdrawn-session-browser') await db.sessionShare.deleteMany({ where: { sessionId: session!.id } });
-                    else await db.sessionShare.updateMany({ where: { sessionId: session!.id }, data: { accessLevel: 'view' } });
+                    if (path === 'withdrawn-session-browser') await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session!.id } });
+                    else await db.sessionGrant.updateMany({ where: { principalKind: 'account', sessionId: session!.id }, data: { accessLevel: 'view' } });
                     notifySessionHumanPresenceAccessChanged({ sessionId: session!.id });
                 }
                 if (teamBrowser) {
@@ -202,8 +202,8 @@ describe('Live stream current Machine admission (real SQLite)', () => {
                         v: 1, mode: 'restricted', accepted: [{ kind: 'home_method', methodId: 'key_challenge' }],
                     } } });
                     await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: 'member' } });
-                    await db.sessionTeamGrant.create({ data: { sessionId: session!.id, teamId: team.id, accessLevel: 'view', effectiveAt: new Date() } });
-                    await db.sessionShare.deleteMany({ where: { sessionId: session!.id } });
+                    await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session!.id, teamId: team.id, accessLevel: 'view', effectiveAt: new Date() } });
+                    await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session!.id } });
                     notifySessionHumanPresenceAccessChanged({ sessionId: session!.id });
                 }
                 await send({ ...envelope, message: { kind: 'start', startRequest } });
@@ -266,10 +266,10 @@ describe('Live stream current Machine admission (real SQLite)', () => {
                     try {
                         // The real committed access-change seam retires open-ended access.
                         // A downgrade must close the old input-bearing admission too.
-                        if (path === 'shared-edit-browser') await db.sessionShare.updateMany({
-                            where: { sessionId: session!.id }, data: { accessLevel: 'view' },
+                        if (path === 'shared-edit-browser') await db.sessionGrant.updateMany({
+                            where: { principalKind: 'account', sessionId: session!.id }, data: { accessLevel: 'view' },
                         });
-                        else await db.sessionShare.deleteMany({ where: { sessionId: session!.id } });
+                        else await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session!.id } });
                         notifySessionHumanPresenceAccessChanged({ sessionId: session!.id });
                         await new Promise(resolve => setTimeout(resolve, 100));
                         expect(delivered).toContainEqual(expect.objectContaining({ message: {

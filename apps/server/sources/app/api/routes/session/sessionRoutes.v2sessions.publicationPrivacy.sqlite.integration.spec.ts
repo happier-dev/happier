@@ -38,7 +38,7 @@ describe("v2 session list publication privacy (SQLite integration)", () => {
     afterEach(async () => {
         harness.resetEnv();
         await harness.resetDbTables([
-            () => db.sessionShare.deleteMany(),
+            () => db.sessionGrant.deleteMany({ where: { principalKind: 'account' } }),
             () => db.accountChange.deleteMany(),
             () => db.session.deleteMany(),
             () => db.account.deleteMany(),
@@ -156,18 +156,18 @@ describe("v2 session list publication privacy (SQLite integration)", () => {
                 select: { id: true },
             }),
         ]);
-        await db.sessionShare.createMany({
+        await db.sessionGrant.createMany({
             data: [
-                {
+                { principalKind: 'account',
                     sessionId: hosted.id,
-                    sharedByUserId: owner.id,
-                    sharedWithUserId: collaborator.id,
+                    createdByAccountId: owner.id,
+                    accountId: collaborator.id,
                     accessLevel: "view",
                 },
-                {
+                { principalKind: 'account',
                     sessionId: snapshot.id,
-                    sharedByUserId: owner.id,
-                    sharedWithUserId: collaborator.id,
+                    createdByAccountId: owner.id,
+                    accountId: collaborator.id,
                     accessLevel: "view",
                 },
             ],

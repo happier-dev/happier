@@ -30,22 +30,22 @@ describe("dbMocks", () => {
     it("creates nested Prisma-like delegates and resets their state", async () => {
         const mocks = createDbMocks({
             account: ["findUnique"],
-            sessionShare: ["findFirst", "update"],
+            sessionGrant: ["findFirst", "update"],
             nested: {
                 machine: ["findFirst"],
             },
         } as const);
 
         mocks.db.account.findUnique.mockResolvedValue({ id: "account-1" });
-        mocks.db.sessionShare.findFirst.mockResolvedValue({ id: "share-1" });
+        mocks.db.sessionGrant.findFirst.mockResolvedValue({ id: "share-1" });
 
         await expect(mocks.db.account.findUnique({ where: { id: "account-1" } })).resolves.toEqual({ id: "account-1" });
-        await expect(mocks.db.sessionShare.findFirst({ where: { id: "share-1" } })).resolves.toEqual({ id: "share-1" });
+        await expect(mocks.db.sessionGrant.findFirst({ where: { principalKind: 'account', id: "share-1" } })).resolves.toEqual({ id: "share-1" });
 
         mocks.reset();
 
         expect(mocks.db.account.findUnique).not.toHaveBeenCalled();
-        expect(mocks.db.sessionShare.findFirst).not.toHaveBeenCalled();
+        expect(mocks.db.sessionGrant.findFirst).not.toHaveBeenCalled();
         expect(mocks.db.account.findUnique.getMockImplementation()).toBeUndefined();
         expect(mocks.db.nested.machine.findFirst.getMockImplementation()).toBeUndefined();
     });

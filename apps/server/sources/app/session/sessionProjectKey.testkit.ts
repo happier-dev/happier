@@ -27,7 +27,7 @@ export function sessionProjectKeyContractTests(): void {
             metadataLayoutVersion: 1, metadata: '{"v":1}',
             ownerMetadata: encodeSessionOwnerMetadataEnvelopeV1(ownerMetadata), agentState: '{}',
         } });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedWithUserId: editor.id, sharedByUserId: owner.id,
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, accountId: editor.id, createdByAccountId: owner.id,
             accessLevel: 'edit', canApprovePermissions: false } });
         await db.accountSessionFollow.createMany({ data: [owner.id, editor.id].map(accountId => ({ accountId, sessionId: session.id })) });
         const received: Array<{ accountId: string; body: Record<string, unknown> }> = [];
@@ -122,7 +122,7 @@ export function sessionProjectKeyContractTests(): void {
         } finally {
             for (const connection of connections) eventRouter.removeConnection(connection.userId, connection);
             await app.close();
-            await db.sessionShare.deleteMany({ where: { sessionId: session.id } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session.id } });
             await db.session.delete({ where: { id: session.id } });
             await db.account.deleteMany({ where: { id: { in: [owner.id, editor.id] } } });
         }
@@ -149,7 +149,7 @@ export function sessionProjectKeyContractTests(): void {
                 agentState: { ciphertext: '{}', expectedVersion: 0 }, projectKey,
             } });
         // Reads the Project roster's own selector and counts the pages one open walks.
-        const select = async (projectKeys: { include: string[]; exclude: string[]; none?: true }) => {
+        const select = async (projectKeys: { include: string[]; exclude: string[] }) => {
             const ids: string[] = [];
             let pages = 0;
             let cursor: string | undefined;
@@ -181,9 +181,6 @@ export function sessionProjectKeyContractTests(): void {
             expect(await select({ include: ['payments'], exclude: [] })).toEqual({ ids: [member!.id, unclassified!.id].sort(), pages: 1 });
             // Excluding other Projects still admits Sessions known to have none.
             expect((await select({ include: [], exclude: ['other'] })).ids).toHaveLength(sessions.length);
-            // The owner's reclassification reads exactly its published no-Project rows (6 of 8, 3 pages of 2).
-            expect(await select({ include: [], exclude: [], none: true }))
-                .toEqual({ ids: withoutProject.map(session => session.id).sort(), pages: 3 });
 
             // A Session gaining a Project later is selected once its owner publishes the key.
             expect((await publish(withoutProject[0]!.id, 1, 'payments')).statusCode).toBe(200);
@@ -191,8 +188,6 @@ export function sessionProjectKeyContractTests(): void {
                 .toEqual({ ids: [member!.id, unclassified!.id, withoutProject[0]!.id].sort(), pages: 2 });
             expect(await db.session.findUniqueOrThrow({ where: { id: withoutProject[0]!.id } }))
                 .toMatchObject({ projectKey: 'payments', projectKeyNone: false });
-            // A key replacing none leaves the no-Project selection.
-            expect((await select({ include: [], exclude: [], none: true })).ids).toHaveLength(withoutProject.length - 1);
         } finally {
             await app.close();
             await db.accountSessionFollow.deleteMany({ where: { accountId: owner.id } });

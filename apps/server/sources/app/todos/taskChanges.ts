@@ -27,7 +27,7 @@ async function readTaskKvMutationPublicationRowsInTx(tx: Tx, ownerAccountId: str
     const rows: TaskPublicationRow[] = [];
     for (const chunk of portableQueryChunks({ values: taskKeys, bindingsPerValue: 1, fixedBindings: 2 })) {
         rows.push(...await tx.userKVStore.findMany({ where: { accountId: ownerAccountId, key: { in: [...chunk] },
-            OR: [{ accountGrants: { some: {} } }, { teamGrants: { some: {} } }, { groupGrants: { some: {} } }] },
+            grants: { some: {} } },
             select: { ...taskAccessFactsSelect(), id: true, key: true } }));
     }
     return rows;

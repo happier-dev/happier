@@ -1,3 +1,5 @@
+import { iterateResourceGrantPrincipalAccountIdsFromFacts, projectResourceGrantRows } from '@/app/teams/resourceGrantAccess';
+import type { TeamRoleV1 } from '@happier-dev/protocol/teams';
 import { inReadSnapshot, type Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { TEAM_PRINCIPAL_ROLES_V1 } from '@happier-dev/protocol/teams';
@@ -50,7 +52,7 @@ async function resolveCurrentSessionRecipientsInTx(
   for (const sessionIdChunk of portableQueryChunks({
     values: sessionIds,
     bindingsPerValue: 1,
-    fixedBindings: 4,
+    fixedBindings: 5,
   })) {
     const sessions = await tx.session.findMany({
       where: { id: { in: [...sessionIdChunk] } },
@@ -77,44 +79,20 @@ async function resolveCurrentSessionRecipientsInTx(
     }
 
     if (shareableSessionIds.length > 0) {
-      const shares = await tx.sessionShare.findMany({
-        where: {
-          sessionId: { in: shareableSessionIds },
-          ...(params.includeInactiveAccounts
-            ? {}
-            : { sharedWithUser: { status: 'active' as const } }),
-        },
-        select: { sessionId: true, sharedWithUserId: true },
+      const grants = await tx.sessionGrant.findMany({
+        where: { sessionId: { in: shareableSessionIds }, OR: [
+          { principalKind: 'account', ...(params.includeInactiveAccounts ? {} : { account: { status: 'active' as const } }) },
+          ...(isSessionCollaborationEnabled() ? [
+            { principalKind: 'team', team: { archivedAt: null } },
+            { principalKind: 'group', teamGroup: { archivedAt: null, team: { archivedAt: null } } },
+          ] : []),
+        ] },
+        select: { sessionId: true, principalKind: true, accountId: true, teamId: true, teamGroupId: true, effectiveAt: true },
       });
-      for (const share of shares) {
-        recipientsBySessionId.get(share.sessionId)?.add(share.sharedWithUserId);
-      }
-    }
-
-    if (shareableSessionIds.length > 0 && isSessionCollaborationEnabled()) {
-      teamGrants.push(...await tx.sessionTeamGrant.findMany({
-        where: {
-          sessionId: { in: shareableSessionIds },
-          team: { archivedAt: null },
-        },
-        select: {
-          sessionId: true,
-          effectiveAt: true,
-          teamId: true,
-        },
-      }));
-
-      groupGrants.push(...await tx.sessionGroupGrant.findMany({
-        where: {
-          sessionId: { in: shareableSessionIds },
-          teamGroup: { archivedAt: null, team: { archivedAt: null } },
-        },
-        select: {
-          sessionId: true,
-          effectiveAt: true,
-          teamGroupId: true,
-        },
-      }));
+      const projected = projectResourceGrantRows(grants);
+      for (const grant of projected.accountGrants) recipientsBySessionId.get(grant.sessionId)?.add(grant.accountId);
+      teamGrants.push(...projected.teamGrants.map(grant => ({ sessionId: grant.sessionId, teamId: grant.teamId, effectiveAt: grant.effectiveAt! })));
+      groupGrants.push(...projected.groupGrants.map(grant => ({ sessionId: grant.sessionId, teamGroupId: grant.teamGroupId, effectiveAt: grant.effectiveAt! })));
     }
   }
 
@@ -125,13 +103,13 @@ async function resolveCurrentSessionRecipientsInTx(
   };
   // The same Team/Group can grant many Sessions. Fetch its current membership
   // once across all Session chunks, then apply each grant's individual horizon.
-  const teamMemberships = new Map<string, Array<{ accountId: string; sessionAccessStartsAt: Date | null }>>();
+  const teamMemberships = new Map<string, Array<{ accountId: string; role: TeamRoleV1; sessionAccessStartsAt: Date | null }>>();
   // Membership status, Account status and Prisma OFFSET accompany the role bindings.
   for (const teamIds of portableQueryChunks({ values: [...new Set(teamGrants.map(grant => grant.teamId))],
     bindingsPerValue: 1, fixedBindings: 3 + TEAM_PRINCIPAL_ROLES_V1.length })) {
     const memberships = await tx.teamMembership.findMany({
       where: { teamId: { in: [...teamIds] }, ...membershipWhere(false) },
-      select: { teamId: true, accountId: true, sessionAccessStartsAt: true },
+      select: { teamId: true, accountId: true, role: true, sessionAccessStartsAt: true },
     });
     for (const membership of memberships) {
       const members = teamMemberships.get(membership.teamId) ?? [];
@@ -141,11 +119,11 @@ async function resolveCurrentSessionRecipientsInTx(
   }
   for (const grant of teamGrants) {
     const recipients = recipientsBySessionId.get(grant.sessionId);
-    for (const membership of teamMemberships.get(grant.teamId) ?? []) {
-      if (isGrantAfterMembershipHorizon(grant.effectiveAt, membership.sessionAccessStartsAt)) {
-        recipients?.add(membership.accountId);
-      }
-    }
+    const principal = { kind: 'team' as const, memberships: (teamMemberships.get(grant.teamId) ?? []).map(member => ({
+      accountId: member.accountId, role: member.role,
+      effective: isGrantAfterMembershipHorizon(grant.effectiveAt, member.sessionAccessStartsAt),
+    })) };
+    for (const accountId of iterateResourceGrantPrincipalAccountIdsFromFacts(principal)) recipients?.add(accountId);
   }
 
   const groupMemberships = new Map<string, Array<{ sessionAccessStartsAt: Date | null; teamMembership: { accountId: string } }>>();
@@ -163,11 +141,11 @@ async function resolveCurrentSessionRecipientsInTx(
   }
   for (const grant of groupGrants) {
     const recipients = recipientsBySessionId.get(grant.sessionId);
-    for (const membership of groupMemberships.get(grant.teamGroupId) ?? []) {
-      if (isGrantAfterMembershipHorizon(grant.effectiveAt, membership.sessionAccessStartsAt)) {
-        recipients?.add(membership.teamMembership.accountId);
-      }
-    }
+    const principal = { kind: 'group' as const, memberships: (groupMemberships.get(grant.teamGroupId) ?? []).map(member => ({
+      accountId: member.teamMembership.accountId,
+      effective: isGrantAfterMembershipHorizon(grant.effectiveAt, member.sessionAccessStartsAt),
+    })) };
+    for (const accountId of iterateResourceGrantPrincipalAccountIdsFromFacts(principal)) recipients?.add(accountId);
   }
 
   const result = new Map<string, readonly string[]>();

@@ -51,7 +51,7 @@ it('refuses a Use grantee Workflow Software Apply step at daemon ingress for mis
         metadata: encodePlainMachineStoredContent({ host: 'shared-setup', platform: 'linux', happyCliVersion: 'test',
             homeDir: '/home/setup', happyHomeDir: '/home/setup/.happier' }),
         dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64') } });
-    await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: actor.id,
+    await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id, accountId: actor.id,
         accessLevel: 'view', createdByAccountId: owner.id } });
     const admission = await resolveMachineAdmission({ actorAccountId: actor.id, machineId: machine.id, requiredRole: 'use' });
     expect(admission).toMatchObject({ kind: 'admitted', role: 'use' });
@@ -98,7 +98,7 @@ it('refuses a Use grantee Workflow Software Apply step at daemon ingress for mis
             expect(decisions).toContainEqual(expect.objectContaining({ ok: false, admissionPredicate: 'machine_currentness' }));
             expect(await verify({ context, method })).toBe(false);
             // The same signer, Account and method work once Manage is granted.
-            await db.machineAccountGrant.update({ where: { machineId_accountId: { machineId: machine.id, accountId: actor.id } },
+            await db.machineGrant.update({ where: { principalKind: 'account', machineId_accountId: { machineId: machine.id, accountId: actor.id } },
                 data: { accessLevel: 'admin' } });
             expect(await verify({ context: { ...context, role: 'manage' }, method })).toBe(true);
         } finally { restore(); }

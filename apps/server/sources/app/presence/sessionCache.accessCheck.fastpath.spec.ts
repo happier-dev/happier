@@ -11,7 +11,7 @@ vi.mock("@/app/monitoring/metrics/index", () => ({
 
 const dbMocks = createDbMocks({
     session: ["findUnique"],
-    sessionShare: ["findUnique"],
+    sessionGrant: ["findUnique"],
 } as const);
 
 installDbModuleMock({ db: dbMocks.db });
@@ -26,7 +26,7 @@ describe("ActivityCache session validation fast path", () => {
             id: "s1",
             accountId: "u1",
             currentStorageState: "hosted",
-            shares: [{ id: "share-1", accessLevel: "admin", canApprovePermissions: true }],
+            grants: [{ principalKind: 'account', accountId: null, teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  id: "share-1", accessLevel: "admin", canApprovePermissions: true  }],
             active: true,
             lastActiveAt: new Date("2026-01-01T00:00:00.000Z"),
         } as any);
@@ -58,7 +58,7 @@ describe("ActivityCache session validation fast path", () => {
 
     it("does not admit a shared admin as an owner publisher", async () => {
         ({ activityCache } = await import("./sessionCache"));
-        dbMocks.db.sessionShare.findUnique.mockResolvedValue({
+        dbMocks.db.sessionGrant.findUnique.mockResolvedValue({
             accessLevel: "admin",
             canApprovePermissions: true,
         });

@@ -96,7 +96,7 @@ it("filters trigger history before paging and binds continuation to that trigger
         header: new Uint8Array(privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: "workflow-definition.v1" }))),
         body: new Uint8Array(privacyKit.decodeBase64(encodePlainArtifactStoredContent({}))),
         dataEncryptionKey: new Uint8Array(privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER)) } });
-    await db.artifactTeamGrant.create({ data: { artifactId: artifact.id, teamId: team.id,
+    await db.artifactGrant.create({ data: { principalKind: 'team', artifactId: artifact.id, teamId: team.id,
         accessLevel: "view", createdByAccountId: owner.id } });
     const automation = await db.automation.create({ data: { accountId: owner.id, name: "Trigger history",
         targetType: null, templateCiphertext: "{}" } });
@@ -140,7 +140,7 @@ it("filters trigger history before paging and binds continuation to that trigger
         const teamResponse = await read({ triggerId }, viewer.id);
         expect(teamResponse.statusCode, teamResponse.body).toBe(200);
         expect(teamResponse.json().runs.map((run: { id: string }) => run.id)).toEqual([runIds[2]]);
-        await db.artifactTeamGrant.deleteMany({ where: { artifactId: artifact.id, teamId: team.id } });
+        await db.artifactGrant.deleteMany({ where: { principalKind: 'team', artifactId: artifact.id, teamId: team.id } });
         expect((await read({ triggerId }, viewer.id)).json()).toMatchObject({ runs: [] });
         expect((await read({})).json().runs.map((run: { id: string }) => run.id)).toEqual([...runIds].reverse());
         expect((await read({ triggerId: siblingTriggerId, cursor: first.nextCursor })).statusCode).toBe(422);
@@ -401,7 +401,7 @@ it.each(["membership", "automation-status"] as const)("retains admitted Team %s 
         header: new Uint8Array(privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: "workflow-definition.v1" }))),
         body: new Uint8Array(privacyKit.decodeBase64(encodePlainArtifactStoredContent({}))),
         dataEncryptionKey: new Uint8Array(privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER)) } });
-    await db.artifactTeamGrant.create({ data: { artifactId: artifact.id, teamId: team.id, accessLevel: "view", createdByAccountId: owner.id } });
+    await db.artifactGrant.create({ data: { principalKind: 'team', artifactId: artifact.id, teamId: team.id, accessLevel: "view", createdByAccountId: owner.id } });
     const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id, metadata: "test" } });
     const runId = crypto.randomUUID();
     const automation = await db.automation.create({ data: { accountId: owner.id, name: "Team status", targetType: null, templateCiphertext: "{}" } });
@@ -422,7 +422,7 @@ it.each(["membership", "automation-status"] as const)("retains admitted Team %s 
     let revoked = false;
     nativeTransactions.afterCommit = async () => {
         revoked = true;
-        await db.artifactTeamGrant.deleteMany({ where: { artifactId: artifact.id, teamId: team.id } });
+        await db.artifactGrant.deleteMany({ where: { principalKind: 'team', artifactId: artifact.id, teamId: team.id } });
     };
     try {
         const read = () => projection === "membership"
@@ -449,7 +449,7 @@ it.each(["plain", "e2ee"] as const)("serves access-only %s membership through th
     })) });
     const artifact = await db.artifact.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
         header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array() } });
-    await db.artifactTeamGrant.create({ data: { artifactId: artifact.id, teamId: team.id,
+    await db.artifactGrant.create({ data: { principalKind: 'team', artifactId: artifact.id, teamId: team.id,
         accessLevel: "view", createdByAccountId: owner.id } });
     const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id, metadata: "test" } });
     const runId = crypto.randomUUID();
@@ -497,10 +497,10 @@ it.each(["plain", "e2ee"] as const)("serves access-only %s membership through th
         expect(await read()).toMatchObject({ runs: [] });
         await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId: viewer.id } }, data: { status: "active" } });
         expect(await read()).toMatchObject({ runs: [{ id: runId }] });
-        await db.artifactTeamGrant.deleteMany({ where: { artifactId: artifact.id, teamId: team.id } });
+        await db.artifactGrant.deleteMany({ where: { principalKind: 'team', artifactId: artifact.id, teamId: team.id } });
         expect(await read()).toMatchObject({ runs: [] });
         expect(await read(owner.id)).toMatchObject({ runs: [{ id: runId }] });
-        await db.artifactTeamGrant.create({ data: { artifactId: artifact.id, teamId: team.id,
+        await db.artifactGrant.create({ data: { principalKind: 'team', artifactId: artifact.id, teamId: team.id,
             accessLevel: "view", createdByAccountId: owner.id } });
         expect(await read()).toMatchObject({ runs: [{ id: runId }] });
         expect(privateReads).toEqual([]);
@@ -619,7 +619,7 @@ it.each(['grant', 'mode'] as const)('retains one admitted authority across inter
         header: new Uint8Array(privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'workflow-definition.v1' }))),
         body: new Uint8Array(privacyKit.decodeBase64(encodePlainArtifactStoredContent({}))),
         dataEncryptionKey: new Uint8Array(privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER)) } });
-    await db.artifactTeamGrant.create({ data: { artifactId: artifact.id, teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id } });
+    await db.artifactGrant.create({ data: { principalKind: 'team', artifactId: artifact.id, teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id } });
     const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id, metadata: 'test' } });
     // Existing continuation coverage establishes 129 Runs crosses the owner's
     // 128-row database transport page without imposing a result limit.
@@ -633,12 +633,12 @@ it.each(['grant', 'mode'] as const)('retains one admitted authority across inter
     let changed = false;
     const laterAuthorityReads: string[] = [];
     const stop = observeSqliteRequests({ before: request => {
-        if (changed && request.model && ['TeamMembership', 'ArtifactTeamGrant', 'Account'].includes(request.model)) {
+        if (changed && request.model && ['TeamMembership', 'ArtifactGrant', 'Account'].includes(request.model)) {
             laterAuthorityReads.push(`${request.model}.${request.action}`);
         }
     } });
     nativeTransactions.afterCommit = async () => {
-        if (change === 'grant') await db.artifactTeamGrant.deleteMany({ where: { artifactId: artifact.id } });
+        if (change === 'grant') await db.artifactGrant.deleteMany({ where: { principalKind: 'team', artifactId: artifact.id } });
         else await db.account.update({ where: { id: owner.id }, data: { encryptionMode: 'e2ee' } });
         changed = true;
     };

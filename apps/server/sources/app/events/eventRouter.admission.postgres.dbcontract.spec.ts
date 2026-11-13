@@ -260,7 +260,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
             v: 1, mode: "restricted", accepted: [{ kind: "team_connection", connectionId: connection.id }],
         } } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: "member" } });
-        await db.sessionTeamGrant.create({ data: { sessionId: f.session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date() } });
+        await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: f.session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date() } });
         const credential = { userId: member.id, clientType: "user-scoped", authAuthority: "present_user",
             authTokenAuthenticationEvidence: [{ kind: "provider", providerId: provider.id, identityId: identity.id,
                 runtimeFingerprint: descriptor!.reference.runtimeFingerprint, teamConnectionId: connection.id }] };

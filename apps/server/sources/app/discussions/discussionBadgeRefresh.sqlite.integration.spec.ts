@@ -66,8 +66,8 @@ describe("Discussion grants control Account badge facts (SQLite)", () => {
             metadata: JSON.stringify({ t: "plain", v: {} }),
         } });
         for (const reader of [follower, browser]) {
-            await db.sessionShare.create({ data: {
-                sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: reader.id, accessLevel: "edit",
+            await db.sessionGrant.create({ data: { principalKind: 'account',
+                sessionId: session.id, createdByAccountId: owner.id, accountId: reader.id, accessLevel: "edit",
             } });
             await db.accountPushToken.create({ data: {
                 accountId: reader.id, token: `ExponentPushToken[${reader.id}]`,

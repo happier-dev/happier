@@ -16,17 +16,15 @@ type CapturedEnvelope = Omit<Envelope, 'encryptedDataKey' | 'encryptedProvenance
 /** Request-private SQL facts; never a transport DTO or an independent access decision. */
 export type ArtifactPageReadCapture = Omit<ArtifactPageReadRow, 'sourceReaderAccounts' | 'header' | 'body'
     | 'dataEncryptionKey' | 'provenance' | 'provenanceDataEncryptionKey' | 'createdAt' | 'updatedAt' | 'keyEnvelopes'
-    | 'teamGrants' | 'groupGrants'> & {
+    | 'grants'> & {
     header: string; body: string; dataEncryptionKey: string; provenance: string | null;
-    provenanceDataEncryptionKey: string | null; createdAt: number; updatedAt: number;
+    provenanceDataEncryptionKey: string | null; createdAt: string; updatedAt: string;
     keyEnvelopes: CapturedEnvelope[];
-    teamGrants: Array<Omit<ArtifactPageReadRow['teamGrants'][number], 'team'> & {
-        team: Omit<ArtifactPageReadRow['teamGrants'][number]['team'], 'archivedAt'> & { archivedAt: string | null };
-    }>;
-    groupGrants: Array<Omit<ArtifactPageReadRow['groupGrants'][number], 'teamGroup'> & {
-        teamGroup: Omit<ArtifactPageReadRow['groupGrants'][number]['teamGroup'], 'archivedAt' | 'team'> & {
+    grants: Array<Omit<ArtifactPageReadRow['grants'][number], 'team' | 'teamGroup'> & {
+        team: (Omit<NonNullable<ArtifactPageReadRow['grants'][number]['team']>, 'archivedAt'> & { archivedAt: string | null }) | null;
+        teamGroup: (Omit<NonNullable<ArtifactPageReadRow['grants'][number]['teamGroup']>, 'archivedAt' | 'team'> & {
             archivedAt: string | null; team: { archivedAt: string | null };
-        };
+        }) | null;
     }>;
     publication: { expiresAt: number | null } | null;
 };
@@ -49,26 +47,27 @@ export function artifactPageReadCaptureSql(input: Readonly<{ actorAccountId: str
         'signedInLink', (SELECT jsonb_build_object('artifactId', link."artifactId") FROM "ArtifactSignedInLink" link WHERE link."artifactId" = a."id"),
         'publication', (SELECT jsonb_build_object('expiresAt', EXTRACT(EPOCH FROM publication."expiresAt") * 1000)
             FROM "PublicSessionShare" publication WHERE publication."artifactId" = a."id"),
-        'accountGrants', COALESCE((SELECT jsonb_agg(jsonb_build_object(
-            'accountId', g."accountId", 'accessLevel', g."accessLevel", 'account', jsonb_build_object('status', recipient."status")))
-            FROM "ArtifactAccountGrant" g JOIN "Account" recipient ON recipient."id" = g."accountId"
-            WHERE g."artifactId" = a."id"), '[]'::jsonb),
-        'teamGrants', COALESCE((SELECT jsonb_agg(jsonb_build_object('teamId', g."teamId", 'accessLevel', g."accessLevel",
-            'team', jsonb_build_object('archivedAt', t."archivedAt", 'memberships', COALESCE((
-                SELECT jsonb_agg(jsonb_build_object('accountId', m."accountId", 'status', m."status", 'role', m."role",
+        'grants', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+            'id', g."id", 'principalKind', g."principalKind", 'accountId', g."accountId", 'teamId', g."teamId",
+            'teamGroupId', g."teamGroupId", 'accessLevel', g."accessLevel",
+            'account', CASE WHEN g."accountId" IS NULL THEN NULL ELSE jsonb_build_object('status', recipient."status") END,
+            'team', CASE WHEN g."teamId" IS NULL THEN NULL ELSE jsonb_build_object('archivedAt', t."archivedAt",
+                'memberships', COALESCE((SELECT jsonb_agg(jsonb_build_object(
+                    'accountId', m."accountId", 'status', m."status", 'role', m."role",
                     'account', jsonb_build_object('status', member."status")))
-                FROM "TeamMembership" m JOIN "Account" member ON member."id" = m."accountId"
-                WHERE m."teamId" = t."id" AND m."accountId" = ${actor}), '[]'::jsonb))))
-            FROM "ArtifactTeamGrant" g JOIN "Team" t ON t."id" = g."teamId" WHERE g."artifactId" = a."id"), '[]'::jsonb),
-        'groupGrants', COALESCE((SELECT jsonb_agg(jsonb_build_object('teamGroupId', g."teamGroupId", 'accessLevel', g."accessLevel",
-            'teamGroup', jsonb_build_object('archivedAt', grp."archivedAt", 'team', jsonb_build_object('archivedAt', t."archivedAt"),
+                    FROM "TeamMembership" m JOIN "Account" member ON member."id" = m."accountId"
+                    WHERE m."teamId" = t."id" AND m."accountId" = ${actor}), '[]'::jsonb)) END,
+            'teamGroup', CASE WHEN g."teamGroupId" IS NULL THEN NULL ELSE jsonb_build_object(
+                'archivedAt', grp."archivedAt", 'team', jsonb_build_object('archivedAt', gt."archivedAt"),
                 'memberships', COALESCE((SELECT jsonb_agg(jsonb_build_object('teamMembership', jsonb_build_object(
                     'accountId', m."accountId", 'status', m."status", 'account', jsonb_build_object('status', member."status"))))
                     FROM "TeamGroupMembership" gm JOIN "TeamMembership" m ON m."id" = gm."teamMembershipId"
                     JOIN "Account" member ON member."id" = m."accountId"
-                    WHERE gm."teamGroupId" = grp."id" AND m."accountId" = ${actor}), '[]'::jsonb))))
-            FROM "ArtifactGroupGrant" g JOIN "TeamGroup" grp ON grp."id" = g."teamGroupId"
-            JOIN "Team" t ON t."id" = grp."teamId" WHERE g."artifactId" = a."id"), '[]'::jsonb),
+                    WHERE gm."teamGroupId" = grp."id" AND m."accountId" = ${actor}), '[]'::jsonb)) END))
+            FROM "ArtifactGrant" g LEFT JOIN "Account" recipient ON recipient."id" = g."accountId"
+            LEFT JOIN "Team" t ON t."id" = g."teamId" LEFT JOIN "TeamGroup" grp ON grp."id" = g."teamGroupId"
+            LEFT JOIN "Team" gt ON gt."id" = grp."teamId"
+            WHERE g."artifactId" = a."id" AND (g."accountId" = ${actor} OR g."teamId" IS NOT NULL OR g."teamGroupId" IS NOT NULL)), '[]'::jsonb),
         'keyEnvelopes', COALESCE((SELECT jsonb_agg(jsonb_build_object(
             'recipientAccountId', e."recipientAccountId", 'encryptedDataKey', encode(e."encryptedDataKey", 'base64'),
             'encryptedProvenanceDataKey', encode(e."encryptedProvenanceDataKey", 'base64'),
@@ -95,11 +94,11 @@ export function materializeArtifactPageRead(capture: ArtifactPageReadCapture | n
         provenance: nullableBytes(capture.provenance), provenanceDataEncryptionKey: nullableBytes(capture.provenanceDataEncryptionKey),
         createdAt: new Date(capture.createdAt), updatedAt: new Date(capture.updatedAt),
         sourceReaderAccounts: input.sourceReaderAccounts,
-        teamGrants: capture.teamGrants.map(grant => ({ ...grant,
-            team: { ...grant.team, archivedAt: nullableDate(grant.team.archivedAt) } })),
-        groupGrants: capture.groupGrants.map(grant => ({ ...grant,
-            teamGroup: { ...grant.teamGroup, archivedAt: nullableDate(grant.teamGroup.archivedAt),
-                team: { archivedAt: nullableDate(grant.teamGroup.team.archivedAt) } } })),
+        grants: capture.grants.map(grant => ({ ...grant,
+            team: grant.team ? { ...grant.team, archivedAt: nullableDate(grant.team.archivedAt) } : null,
+            teamGroup: grant.teamGroup ? { ...grant.teamGroup, archivedAt: nullableDate(grant.teamGroup.archivedAt),
+                team: { archivedAt: nullableDate(grant.teamGroup.team.archivedAt) } } : null,
+        })),
         keyEnvelopes: capture.keyEnvelopes.map(envelope => ({ ...envelope,
             encryptedDataKey: bytes(envelope.encryptedDataKey), encryptedProvenanceDataKey: nullableBytes(envelope.encryptedProvenanceDataKey),
             recipient: { ...envelope.recipient, contentPublicKey: nullableBytes(envelope.recipient.contentPublicKey),

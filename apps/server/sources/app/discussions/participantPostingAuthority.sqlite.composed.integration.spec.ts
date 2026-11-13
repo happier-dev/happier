@@ -55,7 +55,7 @@ describe('Doc thread executable invitations through authenticated HTTP', () => {
                 : decodeBase64(encodePlainArtifactStoredContent({ body: 'Shared passage' })),
             dataEncryptionKey: ownerKeys ? envelope(ownerKeys.publicKey) : decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
         if (!artifact.ok) throw new Error(artifact.error);
-        await db.artifactTeamGrant.create({ data: { artifactId: artifact.artifact.id, teamId: team.id,
+        await db.artifactGrant.create({ data: { principalKind: 'team', artifactId: artifact.artifact.id, teamId: team.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         if (writerKeys) await db.artifactKeyEnvelope.create({ data: { artifactId: artifact.artifact.id, recipientAccountId: writer.id,
             encryptedDataKey: envelope(writerKeys.publicKey), recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(writerKeys.publicKey) } });
@@ -83,7 +83,7 @@ describe('Doc thread executable invitations through authenticated HTTP', () => {
             expect(created.statusCode, created.body).toBe(200);
             const discussionId = DiscussionCreateResponseV1Schema.parse(created.json()).discussion.id;
             // Creation discloses to the Doc audience; exercise Team-only posting authority.
-            await db.discussionAccountGrant.deleteMany({ where: { discussionId, accountId: writer.id } });
+            await db.discussionGrant.deleteMany({ where: { principalKind: 'account', discussionId, accountId: writer.id } });
             const grant = await app.inject({ method: 'PUT', url: `/v1/discussions/${discussionId}/access/grants`,
                 headers: headers(owner.id), payload: { principal: { kind: 'team', teamId: team.id }, accessLevel: 'edit' } });
             expect(grant.statusCode, grant.body).toBe(200);
@@ -130,14 +130,14 @@ describe('Doc thread executable invitations through authenticated HTTP', () => {
                 .toMatchObject({ modelParticipant: { sessionId: bound.sessionId } });
             expect((await app.inject({ method: 'POST', url: '/v1/sessions', headers: headers(owner.id), payload: birthBody })).statusCode).toBe(403);
             expect((await invite(owner.id, { kind: 'session', sessionId: foreign.id })).statusCode).toBe(200);
-            await db.discussionTeamGrant.update({ where: { discussionId_teamId: { discussionId, teamId: team.id } }, data: { accessLevel: 'view' } });
+            await db.discussionGrant.update({ where: { principalKind: 'team', discussionId_teamId: { discussionId, teamId: team.id } }, data: { accessLevel: 'view' } });
             const readOnly = await invite(writer.id, { kind: 'session', sessionId: own.id });
             expect(readOnly.statusCode, readOnly.body).toBe(403);
             expect(readOnly.json()).toMatchObject({ error: 'discussion_access_forbidden' });
             expect((await invite(writer.id, { ...model, participantSlotId: randomUUID() })).statusCode).toBe(403);
             expect((await app.inject({ method: 'POST', url: '/v1/sessions', headers: headers(writer.id), payload: birthBody })).statusCode).toBe(403);
             if (writerKeys) {
-                await db.discussionTeamGrant.update({ where: { discussionId_teamId: { discussionId, teamId: team.id } }, data: { accessLevel: 'edit' } });
+                await db.discussionGrant.update({ where: { principalKind: 'team', discussionId_teamId: { discussionId, teamId: team.id } }, data: { accessLevel: 'edit' } });
                 await db.discussionKeyEnvelope.delete({ where: { discussionId_recipientAccountId: { discussionId, recipientAccountId: writer.id } } });
                 const locked = await invite(writer.id, { kind: 'session', sessionId: own.id });
                 expect(locked.statusCode, locked.body).toBe(409);

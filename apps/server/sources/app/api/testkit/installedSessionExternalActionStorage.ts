@@ -13,7 +13,11 @@ import type { ResourceGrantAccessFacts } from '../../teams/resourceGrantAccess';
 /** Database I/O boundary for the real Home issuer and installed-Session MCP journey. */
 export function createInstalledSessionExternalActionStorage() {
     const publicKey: Uint8Array = new Uint8Array();
-    const accountGrants: MachineAdmissionFacts['accountGrants'] = [];
+    const accountGrants: Array<{
+        accountId: string;
+        accessLevel: MachineAdmissionFacts['grants'][number]['accessLevel'];
+        account: NonNullable<MachineAdmissionFacts['grants'][number]['account']>;
+    }> = [];
     const state = {
         accountId: 'account', machineId: 'machine', sessionId: 'session', installationId: 'installation',
         homeId: 'srv_proposal_admission', bound: true, publisherBound: true,
@@ -56,7 +60,10 @@ export function createInstalledSessionExternalActionStorage() {
         metadata: state.metadata, daemonState: null, dataEncryptionKey: state.dataEncryptionKey,
         operationProtocolCapabilities: state.operationProtocolCapabilities,
         operationProtocolCapabilitiesRevision: state.operationProtocolCapabilitiesRevision,
-        account, accountGrants: state.accountGrants, teamGrants: [], groupGrants: [] });
+        account, grants: state.accountGrants.map(grant => ({ ...grant,
+            id: 'fixture-' + grant.accountId, principalKind: 'account', teamId: null, teamGroupId: null,
+            team: null, teamGroup: null,
+        })) });
     type MachineWhere = { id?: string; accountId?: string; installationId?: string; revokedAt?: null; replacedByMachineId?: null };
     const readMachine = async ({ where }: { where: MachineWhere }) => {
         const row = machine();

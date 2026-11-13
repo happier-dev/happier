@@ -46,8 +46,8 @@ describe("Session mutations current transaction authority", () => {
         const session = await db.session.create({ data: {
             accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: "plain", metadata: "{}", currentStorageState: "hosted", active: false,
         } });
-        const share = await db.sessionShare.create({ data: {
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: admin.id, accessLevel: "admin",
+        const share = await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: session.id, createdByAccountId: owner.id, accountId: admin.id, accessLevel: "admin",
         } });
         return { owner, admin, session, share };
     }
@@ -56,7 +56,7 @@ describe("Session mutations current transaction authority", () => {
         const f = await fixture();
         const archivedAt = operation === "unarchive" ? new Date(1000) : null;
         await db.session.update({ where: { id: f.session.id }, data: { archivedAt } });
-        beforeTransaction(async () => { await db.sessionShare.delete({ where: { id: f.share.id } }); });
+        beforeTransaction(async () => { await db.sessionGrant.delete({ where: { principalKind: 'account', id: f.share.id } }); });
         await withAuthenticatedTestApp(registerSessionArchiveRoutes, async (app) => {
             const response = await app.inject({ method: "POST", url: `/v2/sessions/${f.session.id}/${operation}`, headers: { "x-test-user-id": f.admin.id } });
             expect(response.statusCode).toBe(403);
@@ -74,7 +74,7 @@ describe("Session mutations current transaction authority", () => {
             position: 1,
             status: "queued",
         } });
-        beforeTransaction(async () => { await db.sessionShare.delete({ where: { id: f.share.id } }); });
+        beforeTransaction(async () => { await db.sessionGrant.delete({ where: { principalKind: 'account', id: f.share.id } }); });
         expect(await discardPendingMessage({ actorUserId: f.admin.id, sessionId: f.session.id, localId: "pending-race", authentication })).toEqual({ ok: false, error: "session-not-found" });
         expect((await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: f.session.id, localId: "pending-race" } } })).status).toBe("queued");
     });

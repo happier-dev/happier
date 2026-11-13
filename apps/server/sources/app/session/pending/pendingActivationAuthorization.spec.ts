@@ -39,7 +39,7 @@ const reconcilePendingActivationAuthorizationForRemovedRequestInTx = (params: Pa
 function createTx(session: Record<string, unknown>, row?: Record<string, unknown>) {
     const publication = () => ({
         id: 's1', accountId: 'owner', seq: 0, currentStorageState: 'hosted',
-        account: { status: 'active' }, teamGrants: [], groupGrants: [],
+        account: { status: 'active' }, grants: [], 
         acceptedThroughServerSeq: null, materializationPublicationId: null,
         materializedThroughSourceAt: null, publishedThroughServerSeq: null,
         ...session,
@@ -72,9 +72,9 @@ function createTx(session: Record<string, unknown>, row?: Record<string, unknown
             return queryAccount(query, ...values);
         }),
         sessionFollowEdge: createEmptySessionFollowEdgeTransactionModel(),
-        sessionShare: { findMany: vi.fn(async () => []) },
-        sessionTeamGrant: { findMany: vi.fn(async () => []) },
-        sessionGroupGrant: { findMany: vi.fn(async () => []) },
+        sessionGrant: { findMany: vi.fn(async () => []) },
+        
+        
         managedMachine: { findUnique: vi.fn(async () => null) },
         sessionPendingMessage: {
             findUnique: vi.fn(async () => row ?? {
@@ -97,6 +97,13 @@ function createTx(session: Record<string, unknown>, row?: Record<string, unknown
 }
 
 describe('pending activation authorization owner', () => {
+    it('preserves queueing, conditional steering, reset ownership, and explicit activation cancellation', () => {
+        for (const kind of ['enqueue', 'steer_if_active']) {
+            expect(owner.shouldArmPendingActivationAuthorization({ requestedAction: { kind } })).toBe(false);
+        }
+        expect(owner.shouldArmPendingActivationAuthorization({ requestedAction: { kind: 'reset_start' }, resumeWhenAvailable: true })).toBe(false);
+        expect(owner.shouldArmPendingActivationAuthorization({ requestedAction: { kind: 'steer_now' }, resumeWhenAvailable: false })).toBe(false);
+    });
     it('fits every admitted diagnostic in the existing MySQL VARCHAR(191) field', async () => {
         const longest = (values: readonly string[]) => values.reduce((a, b) => a.length >= b.length ? a : b);
         const session = { lastActiveAt: new Date(100), pendingActivationRequestId: 'p1',
@@ -124,7 +131,7 @@ describe('pending activation authorization owner', () => {
             .toEqual({ reason: 'spawn-rejected', spawnErrorCode: 'SPAWN_VALIDATION_FAILED' });
         expect(mapPendingActivationAuthorization({ ...session, pendingActivationFailureCode: 'unknown_future_failure' })).toBeUndefined();
     });
-    it('arms an eligible Account-authored send_now beyond the publisher fence', async () => {
+    it.each(['send_now', 'steer_now'] as const)('arms an eligible Account-authored %s beyond the publisher fence', async (kind) => {
         const session = {
             accountId: 'owner',
             lastActiveAt: new Date(100),
@@ -134,7 +141,12 @@ describe('pending activation authorization owner', () => {
             pendingActivationFailureCode: null,
         };
         const result = await armPendingActivationAuthorizationInTx({
-            tx: createTx(session),
+            tx: createTx(session, {
+                localId: 'p1', messageRole: 'user', status: 'queued', deliveryState: null,
+                providerAction: null, requestedAction: { v: 1, kind }, authorAccountId: 'owner',
+                inputAdmissionReceipt: { v: 1, issuer: 'authenticatedAccount',
+                    actorAccountId: 'owner', sessionRelationship: 'owner' },
+            }),
             currentAccess: { accountId: 'owner', sessionId: 's1', level: 'owner' },
             sessionId: 's1',
             requestId: 'p1',

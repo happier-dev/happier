@@ -536,8 +536,8 @@ describe("Layout-1 Session constructor (SQLite integration)", () => {
         const privateSession = await inTx(tx => createOrRejoinLayout1SessionByTagInTx(tx, prepared({ ...encryptionFields, accountId: owner.id, tag: "private-non-team" })));
         if (privateSession.kind !== "created") throw new Error("Private Session fixture failed");
         expect(await inTx(tx => resolveEffectiveSessionAccess(tx, { accountId: recipient.id, sessionId: privateSession.session.id, authentication: TEST_AUTHENTICATION }))).toBeNull();
-        const stored = await db.sessionTeamGrant.findUniqueOrThrow({
-            where: { sessionId_teamId: { sessionId: created.session.id, teamId: team.id } },
+        const stored = await db.sessionGrant.findUniqueOrThrow({
+            where: { principalKind: 'team', sessionId_teamId: { sessionId: created.session.id, teamId: team.id } },
         });
 
         const rejoined = await inTx((tx) => createOrRejoinLayout1SessionByTagInTx(tx, prepared({
@@ -552,7 +552,7 @@ describe("Layout-1 Session constructor (SQLite integration)", () => {
         })));
 
         expect(rejoined.kind).toBe("rejoined");
-        await expect(db.sessionTeamGrant.findMany({ where: { sessionId: created.session.id } }))
+        await expect(db.sessionGrant.findMany({ where: { principalKind: 'team', sessionId: created.session.id } }))
             .resolves.toEqual([stored]);
     });
 

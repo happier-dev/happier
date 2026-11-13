@@ -37,9 +37,9 @@ export async function verifySessionSpaceMembershipListing() {
             accountId: viewer.id, sessionId,
             folderId: index === 0 ? smartFolder.id : index === 2 ? excludedFolder.id : manualFolder.id,
         })) });
-        await db.sessionTeamGrant.createMany({ data: ids.filter((_, index) => index !== 5 && index !== 7).map(sessionId => ({
+        await db.sessionGrant.createMany({ data: (ids.filter((_, index) => index !== 5 && index !== 7).map(sessionId => ({
             sessionId, teamId: team.id, effectiveAt: new Date(1), accessLevel: 'view',
-        })) });
+        }))).map(data => ({ ...data, principalKind: 'team' })) });
         await db.sessionTagAssignment.createMany({ data: [
             ...ids.map(sessionId => ({ accountId: viewer.id, sessionId, tagId: ordinaryTag.id })),
             ...ids.filter((_, index) => index !== 0 && index !== 3 && index !== 6).map(sessionId => ({

@@ -51,8 +51,8 @@ describe('shared-editor Action confirmation → cold viewer → Next (SQLite)', 
         if (crypto.mode === 'e2ee') await db.sessionDataKeyEnvelope.create({ data: { sessionId: session.id, recipientAccountId: owner.id,
             encryptedDataKey: sealEncryptedDataKeyEnvelopeV1({ dataKey: crypto.ctx.encryptionKey,
                 recipientPublicKey: new Uint8Array(owner.contentPublicKey!), randomBytes }) } });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id,
-            sharedWithUserId: editor.id, accessLevel: 'edit', canApprovePermissions: false } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id,
+            accountId: editor.id, accessLevel: 'edit', canApprovePermissions: false } });
         await db.accountSessionFollow.create({ data: { accountId: editor.id, sessionId: session.id } });
         const authentication = createPresentUserSessionAccessAuthentication();
         const readViewer = (accountId = owner.id) => loadSessionViewerProjection({ accountId, sessionId: session.id, authentication });

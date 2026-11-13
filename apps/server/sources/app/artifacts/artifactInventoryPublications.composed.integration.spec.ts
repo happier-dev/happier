@@ -36,7 +36,7 @@ describe('Artifact inventory publications through SQLite, HTTP and UI Sync', () 
             header: privacyKit.decodeBase64(encodePlainArtifactStoredContent(buildApprovalRequestArtifactHeaderV1(approval))),
             body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(approval) })),
             dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER), headerVersion: 1, bodyVersion: 1 } });
-        await db.artifactAccountGrant.create({ data: { artifactId: artifact.id, accountId: viewer.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: artifact.id, accountId: viewer.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         // The app boot prepares device persistence before restoring Sync. This
         // composed transport fixture starts below that boot entry point.
@@ -163,7 +163,7 @@ describe('Artifact inventory publications through SQLite, HTTP and UI Sync', () 
                 expect(storage.getState().artifacts[artifact.id]).toMatchObject({ bodyVersion: 2, body: JSON.stringify(revised) });
                 // A changed head withdraws the previous body before the independent exact read completes.
                 expect(publications - beforeRevision).toBe(2);
-                await db.artifactAccountGrant.deleteMany({ where: { artifactId: artifact.id, accountId: viewer.id } });
+                await db.artifactGrant.deleteMany({ where: { principalKind: 'account', artifactId: artifact.id, accountId: viewer.id } });
                 const beforeRevocation = publications;
                 await refresh();
                 expect(storage.getState().artifacts[artifact.id]).toBeUndefined();

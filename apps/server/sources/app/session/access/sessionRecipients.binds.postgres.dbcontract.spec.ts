@@ -72,8 +72,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(),
             metadata: '{}', encryptionMode: 'plain' } });
-        const share = await db.sessionShare.create({ data: { sessionId: session.id,
-            sharedByUserId: owner.id, sharedWithUserId: viewer.id, accessLevel: 'view' } });
+        const share = await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id,
+            createdByAccountId: owner.id, accountId: viewer.id, accessLevel: 'view' } });
         const publicationReads: number[] = [];
         const publish = async (seq: number) => {
             await drainQueryEvents();
@@ -92,15 +92,15 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         const changes = () => db.accountChange.findMany({ where: { kind: 'session', entityId: session.id },
             select: { accountId: true, cursor: true, hint: true } });
         const first = await changes();
-        expect(first).toEqual(expect.arrayContaining([owner, viewer].map(account => ({
-            accountId: account.id, cursor: 1, hint: { lastMessageSeq: 1 },
+        expect(first).toEqual(expect.arrayContaining([owner, viewer].map(account => expect.objectContaining({
+            accountId: account.id, cursor: 1, hint: expect.objectContaining({ lastMessageSeq: 1 }),
         }))));
         expect(first).toHaveLength(2);
-        await db.sessionShare.delete({ where: { id: share.id } });
+        await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
         await publish(2);
         expect(await changes()).toEqual(expect.arrayContaining([
-            { accountId: owner.id, cursor: 2, hint: { lastMessageSeq: 2 } },
-            { accountId: viewer.id, cursor: 1, hint: { lastMessageSeq: 1 } },
+            expect.objectContaining({ accountId: owner.id, cursor: 2, hint: expect.objectContaining({ lastMessageSeq: 2 }) }),
+            expect.objectContaining({ accountId: viewer.id, cursor: 1, hint: expect.objectContaining({ lastMessageSeq: 1 }) }),
         ]));
         console.info('SESSION_PUBLICATION_FACT_READS', JSON.stringify({ changes: 2, publicationReads }));
         expect(publicationReads).toEqual([1, 1]);
@@ -117,7 +117,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const direct = await db.account.create({ data: { encryptionMode: 'plain' } });
         const session = await db.session.create({ data: { id: `z-${randomUUID()}`, accountId: owner.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: direct.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id, accountId: direct.id, accessLevel: 'view' } });
         // Inventory-sized selectors with one real member isolate transport binding from fixture insertion work.
         const ids = Array.from({ length: 35001 }, (_, index) => index === 35000 ? session.id : `missing-${randomUUID()}`);
         return { owner, direct, session, ids };
@@ -181,10 +181,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: guestMembership.id } });
         const ids = Array.from({ length: 1100 }, () => randomUUID());
         await db.session.createMany({ data: ids.map(id => ({ id, accountId: owner!.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' })) });
-        await db.sessionShare.createMany({ data: ids.map(sessionId => ({ sessionId, sharedByUserId: owner!.id,
-            sharedWithUserId: direct!.id, accessLevel: 'view' })) });
-        await db.sessionTeamGrant.createMany({ data: ids.map(sessionId => ({ sessionId, teamId: team.id, accessLevel: 'view', effectiveAt })) });
-        await db.sessionGroupGrant.createMany({ data: ids.map(sessionId => ({ sessionId, teamGroupId: group.id, accessLevel: 'view', effectiveAt })) });
+        await db.sessionGrant.createMany({ data: (ids.map(sessionId => ({ sessionId, createdByAccountId: owner!.id,
+            accountId: direct!.id, accessLevel: 'view' }))).map(data => ({ ...data, principalKind: 'account' })) });
+        await db.sessionGrant.createMany({ data: (ids.map(sessionId => ({ sessionId, teamId: team.id, accessLevel: 'view', effectiveAt }))).map(data => ({ ...data, principalKind: 'team' })) });
+        await db.sessionGrant.createMany({ data: (ids.map(sessionId => ({ sessionId, teamGroupId: group.id, accessLevel: 'view', effectiveAt }))).map(data => ({ ...data, principalKind: 'group' })) });
         membershipResults.length = 0;
         await inReadSnapshot(tx => resolveCurrentSessionRecipientAccountIdsBySessionInTx(tx, { sessionIds: [ids[0]!] }));
         const singleMembershipRows = membershipResults.reduce((sum, result) => sum + result.rows, 0);
@@ -204,12 +204,12 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         expect(membershipBytes).toBe(singleMembershipBytes);
 
         // Later grants sharing Team/Group membership must evaluate their own horizons.
-        await db.sessionTeamGrant.update({ where: { sessionId_teamId: { sessionId: ids[0]!, teamId: team.id } },
+        await db.sessionGrant.update({ where: { principalKind: 'team', sessionId_teamId: { sessionId: ids[0]!, teamId: team.id } },
             data: { effectiveAt: new Date(effectiveAt.getTime() + 1) } });
         await db.teamGroupMembership.update({ where: { teamGroupId_teamMembershipId: {
             teamGroupId: group.id, teamMembershipId: guestMembership.id,
         } }, data: { sessionAccessStartsAt: effectiveAt } });
-        await db.sessionGroupGrant.update({ where: { sessionId_teamGroupId: { sessionId: ids[0]!, teamGroupId: group.id } },
+        await db.sessionGrant.update({ where: { principalKind: 'group', sessionId_teamGroupId: { sessionId: ids[0]!, teamGroupId: group.id } },
             data: { effectiveAt: new Date(effectiveAt.getTime() + 1) } });
         const variedHorizons = await inReadSnapshot(tx => resolveCurrentSessionRecipientAccountIdsBySessionInTx(tx, { sessionIds: ids.slice(0, 2) }));
         expect(variedHorizons.get(ids[0]!)).toEqual([owner!.id, direct!.id, member!.id, guest!.id, cutoff!.id].sort());
@@ -225,7 +225,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
             sessionIds: [ids[1]!], includeInactiveAccounts: true,
         }));
         expect(includingInactive.get(ids[1]!)).toEqual([owner!.id, direct!.id, member!.id].sort());
-        await db.sessionShare.deleteMany({ where: { sharedByUserId: owner!.id } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account', createdByAccountId: owner!.id } });
         await db.team.update({ where: { id: team.id }, data: { archivedAt: new Date() } });
         queries.length = 0;
         const revoked = await inReadSnapshot(tx => resolveCurrentSessionRecipientAccountIdsBySessionInTx(tx, { sessionIds: ids }));

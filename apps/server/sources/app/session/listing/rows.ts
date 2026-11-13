@@ -158,10 +158,15 @@ export const SESSION_LIST_PROJECTION_FALLBACK_COLUMNS: readonly string[] =
 
 const SESSION_LIST_PROJECTION_FALLBACK_COLUMN_SET = new Set(SESSION_LIST_PROJECTION_FALLBACK_COLUMNS);
 
-export function omitSessionListProjectionFallbackColumns(select: Prisma.SessionSelect): Prisma.SessionSelect {
+type SessionListProjectionFallbackColumn = Exclude<
+    keyof typeof V2_SESSION_LIST_ROW_BASE_SELECT,
+    keyof typeof V2_SESSION_LIST_ROW_LEGACY_SELECT
+>;
+
+export function omitSessionListProjectionFallbackColumns<T extends Prisma.SessionSelect>(select: T): Omit<T, SessionListProjectionFallbackColumn> {
     return Object.fromEntries(
         Object.entries(select).filter(([column]) => !SESSION_LIST_PROJECTION_FALLBACK_COLUMN_SET.has(column)),
-    );
+    ) as Omit<T, SessionListProjectionFallbackColumn>;
 }
 
 export type V2SessionListRow = Prisma.SessionGetPayload<{
@@ -212,11 +217,7 @@ export function createV2SessionCompactListRowSelect(params: Readonly<{ userId: s
 }
 
 export function createV2SessionListLegacyRowSelect(params: Readonly<{ userId: string }> & SessionAccessProjectionContext) {
-    const { responsibleAccountId: _responsibility, ...personalSelect } = createSessionPersonalListProjectionSelect(params.userId, params);
-    return {
-        ...V2_SESSION_LIST_ROW_LEGACY_SELECT,
-        ...personalSelect,
-    } as const satisfies Prisma.SessionSelect;
+    return omitSessionListProjectionFallbackColumns(createV2SessionListRowSelect(params));
 }
 
 export function createV2SessionOwnerRowSelect(accountId: string) {
@@ -384,7 +385,7 @@ function mapV2SessionRow<TProjection>(params: SessionRowMappingParams,
     const encryptionMode: 'plain' | 'e2ee' = row.encryptionMode === 'plain' ? 'plain' : 'e2ee';
     const ownerAccountMode = params.ownerAccountModes?.get(row.accountId)
         ?? params.ownerAccountMode;
-    const viewerShare = "shares" in row ? row.shares[0] ?? null : null;
+    const viewerShare = "grants" in row ? row.grants.find(grant => grant.principalKind === 'account') ?? null : null;
     const isOwner = row.accountId === userId;
     const receivesOwnerMetadata = isOwner
         && (params.effectiveAccess === undefined || params.effectiveAccess.level === "owner");

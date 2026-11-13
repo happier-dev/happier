@@ -248,10 +248,10 @@ describe('managed guest grants and controller Manage', () => {
             machineIds: [first.id, second.id], principal: { kind: 'team', teamId: team.id },
         }))).get(second.id);
         expect(await teamRole()).toBeNull();
-        await db.machineTeamGrant.create({ data: { machineId: first.id, teamId: team.id,
+        await db.machineGrant.create({ data: { principalKind: 'team', machineId: first.id, teamId: team.id,
             createdByAccountId: custodian.id, accessLevel: 'view' } });
         expect(await teamRole()).toBeNull();
-        await db.machineTeamGrant.update({ where: { machineId_teamId: { machineId: first.id, teamId: team.id } },
+        await db.machineGrant.update({ where: { principalKind: 'team', machineId_teamId: { machineId: first.id, teamId: team.id } },
             data: { accessLevel: 'admin' } });
         expect(await teamRole()).toBe('manage');
         await db.team.update({ where: { id: team.id }, data: { archivedAt: new Date() } });

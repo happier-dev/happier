@@ -72,8 +72,8 @@ describe('Account changes under a Team authentication policy (SQLite)', () => {
         metadata: '{}',
       },
     });
-    await db.sessionTeamGrant.create({
-      data: {
+    await db.sessionGrant.create({
+      data: { principalKind: 'team',
         sessionId: teamSession.id,
         teamId: team.id,
         accessLevel: 'view',

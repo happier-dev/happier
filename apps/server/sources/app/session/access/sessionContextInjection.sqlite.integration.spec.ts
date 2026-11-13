@@ -39,10 +39,10 @@ async function createSession(accountId: string) {
 }
 
 async function grant(session: { id: string; accountId: string }, accountId: string, accessLevel: "view" | "edit") {
-    await db.sessionShare.create({ data: {
+    await db.sessionGrant.create({ data: { principalKind: 'account',
         sessionId: session.id,
-        sharedByUserId: session.accountId,
-        sharedWithUserId: accountId,
+        createdByAccountId: session.accountId,
+        accountId: accountId,
         accessLevel,
     } });
 }
@@ -56,7 +56,7 @@ describe("ordinary authenticated Follow context admission", () => {
     }, 180_000);
     afterEach(async () => {
         if (!harness) return;
-        await db.sessionShare.deleteMany();
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account' } });
         await db.ephemeralRunnerActivation.deleteMany();
         await db.accessKey.deleteMany();
         await db.machine.deleteMany();
@@ -89,7 +89,7 @@ describe("ordinary authenticated Follow context admission", () => {
             query: { messageId: message.id } })).toMatchObject({ status: 200 });
         await grant(source, reader.id, 'view');
         expect(await read()).toMatchObject({ status: 200 });
-        await db.sessionShare.deleteMany({ where: { sessionId: source.id, sharedWithUserId: reader.id } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: source.id, accountId: reader.id } });
         expect(await read()).toMatchObject({ status: 404 });
     });
 
@@ -172,7 +172,7 @@ describe("ordinary authenticated Follow context admission", () => {
             authentication,
         }))).toEqual({ ok: true, destinationRuntimeAccountId: runtime.id });
 
-        await db.sessionShare.deleteMany({ where: { sharedWithUserId: author.id } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account', accountId: author.id } });
         expect(await inTx(tx => contextInjection.mayInjectSessionContextInTx(tx, {
             configuringAccountId: author.id, sourceSessionId: source.id, destinationSessionId: destination.id,
             authentication,
@@ -216,7 +216,7 @@ describe("ordinary authenticated Follow context admission", () => {
         const input = { authenticatedAccountId: runtime.id, sourceSessionId: source.id, destinationSessionId: destination.id };
 
         expect(await inTx(tx => admitRuntime(tx, input))).toEqual({ ok: true, destinationRuntimeAccountId: runtime.id });
-        await db.sessionShare.deleteMany({ where: { sessionId: source.id, sharedWithUserId: runtime.id } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: source.id, accountId: runtime.id } });
         expect(await inTx(tx => admitRuntime(tx, input))).toEqual({ ok: false, reason: "destination_runtime_not_allowed" });
         await grant(source, runtime.id, "view");
         expect(await inTx(tx => admitRuntime(tx, input))).toEqual({ ok: true, destinationRuntimeAccountId: runtime.id });
@@ -261,9 +261,9 @@ describe("ordinary authenticated Follow context admission", () => {
         } });
         const grantAudience = async (sessionId: string, effectiveAt: Date) => {
             if (group) {
-                await db.sessionGroupGrant.create({ data: { sessionId, teamGroupId: group.id, accessLevel: "view", effectiveAt } });
+                await db.sessionGrant.create({ data: { principalKind: 'group', sessionId, teamGroupId: group.id, accessLevel: "view", effectiveAt } });
             } else {
-                await db.sessionTeamGrant.create({ data: { sessionId, teamId: team.id, accessLevel: "view", effectiveAt } });
+                await db.sessionGrant.create({ data: { principalKind: 'team', sessionId, teamId: team.id, accessLevel: "view", effectiveAt } });
             }
         };
         expect(await inTx(tx => admitRuntime(tx, input))).toEqual({ ok: true, destinationRuntimeAccountId: runtime.id });

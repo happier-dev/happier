@@ -133,8 +133,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         // Three newest foreign rows are shared with the viewer; one more is only
         // followed (no access) and must stay out.
         const sharedIds = foreignIds.slice(-3);
-        await db.sessionShare.createMany({ data: sharedIds.map(sessionId => ({ sessionId, sharedByUserId: foreign.id,
-            sharedWithUserId: owner.id, accessLevel: 'view' as const })) });
+        await db.sessionGrant.createMany({ data: (sharedIds.map(sessionId => ({ sessionId, createdByAccountId: foreign.id,
+            accountId: owner.id, accessLevel: 'view' as const }))).map(data => ({ ...data, principalKind: 'account' })) });
         await db.accountSessionFollow.create({ data: { accountId: owner.id, sessionId: foreignIds.at(-4)!,
             following: true, hasPersistentFollow: true } });
         // A heavy author: the viewer wrote every prompt of its own Sessions
@@ -207,7 +207,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         };
         try {
             // The viewer's own rows plus the exact relation candidates (three
-            // shares and one Follow); never the foreign corpus.
+            // grants and one Follow); never the foreign corpus.
             const scannedBound = sessionCount + sharedIds.length + 1;
             const expectServed = (result: Awaited<ReturnType<typeof measure>>) => {
                 expect(result.status).toBe(200);
@@ -231,7 +231,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         } finally {
             await app.close();
             await db.sessionMessage.deleteMany({ where: { authorAccountId: owner.id } });
-            await db.sessionShare.deleteMany({ where: { sharedWithUserId: owner.id } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', accountId: owner.id } });
             await db.accountSessionFollow.deleteMany({ where: { accountId: owner.id } });
             await db.sessionMessage.deleteMany({ where: { authorAccountId: bystander.id } });
             await db.session.deleteMany({ where: { accountId: { in: [owner.id, foreign.id, bystander.id] } } });

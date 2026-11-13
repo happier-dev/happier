@@ -1,3 +1,4 @@
+import { createTeamDirectActionMaterialFixture } from './directActionMaterial.testkit';
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
     TEAM_CREDENTIAL_MANUAL_CONNECTED_ACCOUNT_DIRECT_CONTRACT_V1,
@@ -91,6 +92,7 @@ describe("Team credential recipient material", () => {
     beforeAll(async () => {
         harness = await createLightSqliteHarness({
             tempDirPrefix: "team-credential-recipient-material-",
+            initEncrypt: true,
             env: {
                 HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED: "1",
             },
@@ -108,6 +110,34 @@ describe("Team credential recipient material", () => {
         if (originalTransaction) db.$transaction = originalTransaction;
         await queryClient?.$disconnect();
         await harness?.close();
+    });
+
+    it('admits another Account’s declared finite Action once and applies direct grant withdrawal at the next admission', async () => {
+        const fixture = await createTeamDirectActionMaterialFixture();
+        const { consumer, input, purpose, recipient, resource, readCurrent } = fixture;
+        const admitted = await readCurrent();
+        expect(admitted).toMatchObject({ ok: true, stored: fixture.stored });
+        expect(await readCurrent({ consumer: { ...consumer, actionId: 'example.cloud/actions/undeclared' } }))
+            .toEqual({ ok: false, outcome: 'unavailable', reason: 'access_removed' });
+        const wrongPurpose = { ...purpose, purpose: 'undeclared' };
+        expect(await readCurrent({ consumer: { ...consumer, purpose: wrongPurpose },
+            slot: { kind: 'connected_service_purpose', purpose: wrongPurpose } }))
+            .toEqual({ ok: false, outcome: 'unavailable', reason: 'access_removed' });
+        expect(await readCurrent({ actionAdmission: { ...input.actionAdmission, rootActionId: 'machines.read' } }))
+            .toEqual({ ok: false, outcome: 'unavailable', reason: 'access_removed' });
+        await fixture.setDeclaredService('other-service');
+        await expect(readCurrent()).resolves.toEqual({ ok: false, outcome: 'unavailable', reason: 'access_removed' });
+        await fixture.setDeclaredService('cloud');
+        expect(await db.teamCredentialActivityEvent.findMany({ where: { resourceId: resource.id, kind: 'direct_delivered' },
+            select: { actorAccountId: true } })).toEqual([{ actorAccountId: recipient.id }]);
+        await db.teamCredentialResource.update({ where: { id: resource.id }, data: { memberGrants: { deleteMany: {} } } });
+        await expect(readCurrent()).resolves.toEqual({ ok: false, outcome: 'unavailable', reason: 'access_removed' });
+        if (!admitted.ok) throw new Error('Expected requester material admission');
+        expect(materializeTeamCredentialDirectMaterialV1({ stored: admitted.stored, recipientMode: 'plain', expected: {
+            homeServerIdentityId: fixture.payload.homeServerIdentityId, teamId: fixture.team.id, resourceId: resource.id,
+            resourceRevision: resource.revision, recipientAccountId: recipient.id,
+            sourceMemberKey: fixture.sourceMemberKey, sourceVersion: fixture.sourceVersion,
+        } })).toEqual(fixture.payload);
     });
 
     it('withdraws only the source owner’s exact publication and preserves other members and newer replacements', async () => {
@@ -232,7 +262,7 @@ describe("Team credential recipient material", () => {
             resourceId: resource.id,
             resourceRevision: resource.revision,
         } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id,
             teamId: team.id,
             accessLevel: "edit",
@@ -322,10 +352,10 @@ describe("Team credential recipient material", () => {
 
         // Removing visibility preserves the durable selection intent but denies
         // the very next material open through the current Session-use owner.
-        await db.sessionTeamGrant.delete({ where: { sessionId_teamId: { sessionId: session.id, teamId: team.id } } });
+        await db.sessionGrant.delete({ where: { principalKind: 'team', sessionId_teamId: { sessionId: session.id, teamId: team.id } } });
         await expect(readCurrent()).resolves.toEqual({ ok: false, outcome: "unavailable", reason: "access_removed" });
         await expect(db.sessionTeamCredentialBinding.count({ where: { sessionId: session.id } })).resolves.toBe(1);
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id, teamId: team.id, accessLevel: "edit",
             canApprovePermissions: false, effectiveAt: new Date(),
         } });

@@ -1,3 +1,4 @@
+import { sessionDirectGrantProjectionFixture } from '@/app/session/access/sessionAccess.testkit';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
     signAccountContentKeyBindingV1,
@@ -35,7 +36,7 @@ type SessionWriteTxMock = {
         update: MockFunction;
         updateMany: MockFunction;
     };
-    sessionShare: {
+    sessionGrant: {
         findUnique: MockFunction;
         findMany: MockFunction;
     };
@@ -70,6 +71,7 @@ type SessionWriteTxMock = {
         create: MockFunction;
         update: MockFunction;
     };
+    usageEvent: { groupBy: MockFunction };
     sessionTeamCredentialBinding: {
         findUnique: MockFunction;
         findMany: MockFunction;
@@ -81,12 +83,7 @@ type SessionWriteTxMock = {
     teamMembership: {
         findMany: MockFunction;
     };
-    sessionTeamGrant: {
-        findMany: MockFunction;
-    };
-    sessionGroupGrant: {
-        findMany: MockFunction;
-    };
+
     automationTrigger: {
         findMany: MockFunction;
     };
@@ -104,7 +101,7 @@ let transactionQueue: SessionWriteTxMock[] = [];
 
 type SessionFixtureRow = Record<string, unknown> & {
     accountId?: string;
-    shares?: Array<{ id?: string; sharedWithUserId: string; accessLevel?: "view" | "edit" | "admin"; canApprovePermissions?: boolean }>;
+    grants?: Array<Partial<ReturnType<typeof sessionDirectGrantProjectionFixture>> & { accountId: string }>;
 };
 
 const originalSessionQueries = new WeakMap<SessionWriteTxMock, MockFunction>();
@@ -144,7 +141,7 @@ function withSessionProjectionQueries(tx: SessionWriteTxMock): SessionWriteTxMoc
     });
     const sessionQuery = originalSessionQueries.get(tx) ?? tx.session.findUnique;
     const sessionListQuery = originalSessionListQueries.get(tx) ?? tx.session.findMany;
-    const sessionShareListQuery = originalSessionShareListQueries.get(tx) ?? tx.sessionShare.findMany;
+    const sessionShareListQuery = originalSessionShareListQueries.get(tx) ?? tx.sessionGrant.findMany;
     const accountQuery = originalAccountQueries.get(tx) ?? tx.account.findMany;
     originalSessionQueries.set(tx, sessionQuery);
     originalSessionListQueries.set(tx, sessionListQuery);
@@ -158,8 +155,8 @@ function withSessionProjectionQueries(tx: SessionWriteTxMock): SessionWriteTxMoc
         async apply(target, thisArg, args) {
             const query = args[0] as { where: { id: string }; select?: Record<string, unknown> };
             const select = query.select ?? {};
-            const accessProjection = "teamGrants" in select && "shares" in select;
-            const audienceProjection = "teamGrants" in select && !("shares" in select);
+            const accessProjection = "grants" in select;
+            const audienceProjection = false;
             const ownerProjection = Object.keys(select).length === 1 && select.accountId === true;
             // The mutation context reads its domain row, and an owner context its access projection in the same read.
             const contextRead = "tag" in select && "encryptionMode" in select;
@@ -183,26 +180,24 @@ function withSessionProjectionQueries(tx: SessionWriteTxMock): SessionWriteTxMoc
                 id: query.where.id,
                 currentStorageState: "hosted",
                 account: { status: "active" },
-                teamGrants: [],
-                groupGrants: [],
+                
+                
                 ...storedRow,
-                shares: (storedRow.shares ?? []).map(share => ({
-                    id: `share-${share.sharedWithUserId}`,
-                    accessLevel: "view",
-                    canApprovePermissions: false,
-                    ...share,
+                grants: (storedRow.grants ?? []).map(share => sessionDirectGrantProjectionFixture({
+                    id: share.id ?? `share-${share.accountId}`, accountId: share.accountId,
+                    accessLevel: share.accessLevel, canApprovePermissions: share.canApprovePermissions,
                 })),
             };
             if (accessProjection && mutationContextRead) {
-                const shares = select.shares as { where: { sharedWithUserId: { in: string[] } } };
-                for (const accountId of shares.where.sharedWithUserId.in) {
+                const grants = select.grants as { where: { OR: readonly { accountId?: { in: readonly string[] } }[] } };
+                for (const accountId of grants.where.OR.flatMap(branch => branch.accountId?.in ?? [])) {
                     if (accountId === row.accountId) continue;
-                    const grant = await tx.sessionShare.findUnique({
-                        where: { sessionId_sharedWithUserId: { sessionId: query.where.id, sharedWithUserId: accountId } },
+                    const grant = await tx.sessionGrant.findUnique({
+                        where: { principalKind: 'account', sessionId_accountId: { sessionId: query.where.id, accountId: accountId } },
                     }) as { accessLevel: "view" | "edit" | "admin"; canApprovePermissions?: boolean } | null | undefined;
                     if (grant !== undefined) {
-                        row.shares = row.shares.filter(share => share.sharedWithUserId !== accountId);
-                        if (grant) row.shares.push({ id: `share-${accountId}`, sharedWithUserId: accountId, accessLevel: grant.accessLevel, canApprovePermissions: grant.canApprovePermissions ?? false });
+                        row.grants = row.grants.filter(share => share.accountId !== accountId);
+                        if (grant) row.grants.push(sessionDirectGrantProjectionFixture({ id: `share-${accountId}`, accountId: accountId, accessLevel: grant.accessLevel, canApprovePermissions: grant.canApprovePermissions ?? false }));
                     }
                 }
             }
@@ -214,7 +209,7 @@ function withSessionProjectionQueries(tx: SessionWriteTxMock): SessionWriteTxMoc
             const configured = await Reflect.apply(target, thisArg, args);
             if (configured !== undefined) return configured;
             // Existing domain fixtures carry their owner/direct Account census.
-            return storedRow ? [...new Set([storedRow.accountId, ...(storedRow.shares ?? []).map(share => share.sharedWithUserId)])]
+            return storedRow ? [...new Set([storedRow.accountId, ...(storedRow.grants ?? []).map(share => share.accountId)])]
                 .filter((id): id is string => typeof id === "string").map(id => ({ id })) : [];
         },
     });
@@ -257,20 +252,20 @@ function withSessionProjectionQueries(tx: SessionWriteTxMock): SessionWriteTxMoc
             }));
         },
     });
-    tx.sessionShare.findMany = new Proxy(sessionShareListQuery, {
+    tx.sessionGrant.findMany = new Proxy(sessionShareListQuery, {
         async apply(target, thisArg, args) {
             const query = args[0] as { where?: { sessionId?: { in?: string[] } }; select?: Record<string, unknown> };
             const recipientProjection = Array.isArray(query.where?.sessionId?.in)
                 && query.select?.sessionId === true
-                && query.select?.sharedWithUserId === true;
+                && query.select?.principalKind === true;
             if (!recipientProjection || storedRow === undefined) {
                 return await Reflect.apply(target, thisArg, args);
             }
             if (!storedRow) return [];
             const sessionId = query.where!.sessionId!.in![0]!;
-            return (storedRow.shares ?? []).map((share) => ({
+            return (storedRow.grants ?? []).map((share) => ({
                 sessionId,
-                sharedWithUserId: share.sharedWithUserId,
+                principalKind: 'account', accountId: share.accountId, teamId: null, teamGroupId: null, effectiveAt: null,
             }));
         },
     });
@@ -342,7 +337,7 @@ const dbMocks = createDbMocks({
     homeSettings: ["findUnique"],
     homeGovernancePolicy: ["findUnique"],
     session: ["findUnique"],
-    sessionShare: ["findUnique"],
+    sessionGrant: ["findUnique"],
     sessionMessage: ["findUnique", "findMany"],
 } as const);
 const transactionBoundary = createDbTransactionMock(() => withSessionProjectionQueries(transactionQueue.shift() ?? currentTx));
@@ -439,7 +434,7 @@ describe("sessionWriteService", () => {
                 update: vi.fn(),
                 updateMany: vi.fn(),
             },
-            sessionShare: {
+            sessionGrant: {
                 findUnique: vi.fn(),
                 findMany: vi.fn(),
             },
@@ -474,6 +469,7 @@ describe("sessionWriteService", () => {
                 create: vi.fn(),
                 update: vi.fn(),
             },
+            usageEvent: { groupBy: vi.fn().mockResolvedValue([]) },
             sessionTeamCredentialBinding: {
                 findUnique: vi.fn().mockResolvedValue(null),
                 // These Session fixtures have no native credential policy bindings.
@@ -489,12 +485,8 @@ describe("sessionWriteService", () => {
             teamMembership: {
                 findMany: vi.fn().mockResolvedValue([]),
             },
-            sessionTeamGrant: {
-                findMany: vi.fn().mockResolvedValue([]),
-            },
-            sessionGroupGrant: {
-                findMany: vi.fn().mockResolvedValue([]),
-            },
+            
+            
             // No lifecycle Automations add review/wake recipients to these Sessions.
             automationTrigger: {
                 findMany: vi.fn().mockResolvedValue([]),
@@ -511,7 +503,7 @@ describe("sessionWriteService", () => {
         const owner = {
             accountId: "u1",
             encryptionMode: "plain",
-            shares: [{ sharedWithUserId: "u2" }],
+            grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
             seq: 10,
             pendingCount: 0,
             pendingBlockedCount: 0,
@@ -739,7 +731,7 @@ describe("sessionWriteService", () => {
                 .mockResolvedValueOnce({
                     accountId: "u1",
                     encryptionMode: "plain",
-                    shares: [],
+                    grants: [],
                     seq: 0,
                     lastViewedSessionSeq: 0,
                     pendingCount: 0,
@@ -809,7 +801,7 @@ describe("sessionWriteService", () => {
                 runtimeActivityRevision: BigInt(1) };
             currentTx.session.findUnique
                 .mockResolvedValueOnce(fencedSession)
-                .mockResolvedValueOnce({ accountId: "u1", encryptionMode: "e2ee", shares: [], seq: 0, lastViewedSessionSeq: 0,
+                .mockResolvedValueOnce({ accountId: "u1", encryptionMode: "e2ee", grants: [], seq: 0, lastViewedSessionSeq: 0,
                     pendingCount: 0, pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0, active: true, archivedAt: null })
                 .mockResolvedValue(fencedSession);
             currentTx.sessionMessage.findUnique.mockResolvedValue(null);
@@ -884,7 +876,7 @@ describe("sessionWriteService", () => {
                 .mockResolvedValueOnce({
                     accountId: "u1",
                     encryptionMode: "plain",
-                    shares: [],
+                    grants: [],
                     seq: 0,
                     lastViewedSessionSeq: 0,
                     pendingCount: 0,
@@ -939,7 +931,7 @@ describe("sessionWriteService", () => {
             const accessRows = () => {
                 currentTx.session.findUnique
                     .mockResolvedValueOnce({ accountId: "u1", active: true, archivedAt: null, lastActiveAt: committedFence, runtimeActivityRevision: BigInt(1) })
-                    .mockResolvedValueOnce({ accountId: "u1", encryptionMode: "plain", shares: [], active: true, archivedAt: null });
+                    .mockResolvedValueOnce({ accountId: "u1", encryptionMode: "plain", grants: [], active: true, archivedAt: null });
                 currentTx.session.updateMany.mockResolvedValueOnce({ count: 1 });
             };
             const existing = {
@@ -1011,7 +1003,7 @@ describe("sessionWriteService", () => {
                 .mockResolvedValueOnce({
                     accountId: "u1",
                     encryptionMode: "plain",
-                    shares: [],
+                    grants: [],
                     active: true,
                     archivedAt: null,
                 });
@@ -1068,7 +1060,7 @@ describe("sessionWriteService", () => {
                 .mockResolvedValueOnce({
                     accountId: "u1",
                     encryptionMode: "plain",
-                    shares: [],
+                    grants: [],
                     active: true,
                     archivedAt: null,
                 });
@@ -1113,7 +1105,7 @@ describe("sessionWriteService", () => {
                     updatedAt: committedFence,
                     accountId: "u1",
                     encryptionMode: "e2ee",
-                    shares: [{ sharedWithUserId: "u2" }],
+                    grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
                     currentStorageState: "snapshot_complete",
                 });
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
@@ -1166,7 +1158,7 @@ describe("sessionWriteService", () => {
                 .mockResolvedValueOnce({
                     accountId: "u1",
                     encryptionMode: "plain",
-                    shares: [],
+                    grants: [],
                     active: true,
                     archivedAt: null,
                 });
@@ -1234,7 +1226,7 @@ describe("sessionWriteService", () => {
                 const accessRow = {
                     accountId: "u1",
                     encryptionMode: "plain",
-                    shares: [],
+                    grants: [],
                     active: true,
                     archivedAt: null,
                 };
@@ -1339,7 +1331,7 @@ describe("sessionWriteService", () => {
                 tag: "session",
                 encryptionMode: "plain",
                 currentStorageState: "hosted",
-                shares: [],
+                grants: [],
                 active: true,
                 archivedAt: null,
                 lastActiveAt: committedFence,
@@ -1414,7 +1406,7 @@ describe("sessionWriteService", () => {
                 tag: "session",
                 encryptionMode: "plain",
                 currentStorageState: "hosted",
-                shares: [],
+                grants: [],
                 active: true,
                 archivedAt: null,
                 lastActiveAt: committedFence,
@@ -1488,7 +1480,7 @@ describe("sessionWriteService", () => {
                     accountId: "u1",
                     encryptionMode: "e2ee",
                     currentStorageState: "hosted",
-                    shares: [],
+                    grants: [],
                     active: true,
                     archivedAt: null,
                 });
@@ -1542,7 +1534,7 @@ describe("sessionWriteService", () => {
                     accountId: "u1",
                     encryptionMode: "e2ee",
                     currentStorageState: "hosted",
-                    shares: [],
+                    grants: [],
                     active: true,
                     archivedAt: null,
                 })
@@ -1579,12 +1571,12 @@ describe("sessionWriteService", () => {
 
         it("returns existing message for (sessionId, localId) without writing or marking changes", async () => {
             currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockRejectedValue({ code: "P2002" });
 
             dbMocks.db.session.findUnique.mockResolvedValue({ accountId: "u1" });
-            dbMocks.db.sessionShare.findUnique.mockResolvedValue(null);
+            dbMocks.db.sessionGrant.findUnique.mockResolvedValue(null);
             dbMocks.db.sessionMessage.findUnique.mockResolvedValue({
                 id: "m1",
                 seq: 4,
@@ -1648,7 +1640,7 @@ describe("sessionWriteService", () => {
                 accountId: "owner",
                 encryptionMode: "e2ee",
                 currentStorageState: "hosted",
-                shares: [{ sharedWithUserId: "editor" }],
+                grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "editor"  }],
                 active: true,
                 archivedAt: null,
             };
@@ -1667,7 +1659,7 @@ describe("sessionWriteService", () => {
             };
 
             currentTx.session.findUnique.mockResolvedValue(session);
-            currentTx.sessionShare.findUnique
+            currentTx.sessionGrant.findUnique
                 .mockResolvedValueOnce({ accessLevel: "edit" })
                 .mockResolvedValueOnce(null);
             currentTx.session.update.mockResolvedValue({ seq: 5, currentStorageState: "hosted" });
@@ -1679,7 +1671,7 @@ describe("sessionWriteService", () => {
             accountCursorRows.mockResolvedValueOnce([{ cursor: 101 }]).mockResolvedValueOnce([{ cursor: 102 }]);
 
             dbMocks.db.session.findUnique.mockResolvedValue(session);
-            dbMocks.db.sessionShare.findUnique.mockResolvedValue({ accessLevel: "edit" });
+            dbMocks.db.sessionGrant.findUnique.mockResolvedValue({ accessLevel: "edit" });
             dbMocks.db.sessionMessage.findUnique.mockResolvedValue(staleWinner);
 
             await expect(createSessionMessage({ authentication, inputAdmission: "authenticatedAccount",
@@ -1699,7 +1691,7 @@ describe("sessionWriteService", () => {
                 accountId: "u1",
                 encryptionMode: "e2ee",
                 currentStorageState: "hosted",
-                shares: [],
+                grants: [],
                 active: true,
                 archivedAt: null,
             };
@@ -1748,7 +1740,7 @@ describe("sessionWriteService", () => {
                 accountId: "u1",
                 encryptionMode: "e2ee",
                 currentStorageState: "hosted",
-                shares: [],
+                grants: [],
                 active: true,
                 archivedAt: null,
             };
@@ -1794,12 +1786,12 @@ describe("sessionWriteService", () => {
 
         it("rejects (sessionId, localId) reuse across sidechains", async () => {
             currentTx.session.findUnique.mockResolvedValue({ accountId: "u1" });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockRejectedValue({ code: "P2002" });
 
             dbMocks.db.session.findUnique.mockResolvedValue({ accountId: "u1" });
-            dbMocks.db.sessionShare.findUnique.mockResolvedValue(null);
+            dbMocks.db.sessionGrant.findUnique.mockResolvedValue(null);
             dbMocks.db.sessionMessage.findUnique.mockResolvedValue({
                 id: "m1",
                 seq: 4,
@@ -1842,7 +1834,7 @@ describe("sessionWriteService", () => {
                 tag: VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG,
                 encryptionMode: "e2ee",
                 currentStorageState: "hosted",
-                shares: [],
+                grants: [],
             };
 
             currentTx.session.findUnique.mockResolvedValue(voiceHistorySession);
@@ -1919,6 +1911,7 @@ describe("sessionWriteService", () => {
                 where: { id: "m-voice-history", rowRevision: BigInt(0) },
                 data: {
                     content: { t: "encrypted", c: "corrected" },
+                    contentBytes: null,
                     surfaceItemReference: prismaRuntime.DbNull,
                     usageTimingV1: prismaRuntime.DbNull,
                     sidechainId: null,
@@ -1935,18 +1928,18 @@ describe("sessionWriteService", () => {
             currentTx.session.findUnique.mockResolvedValue({
                 accountId: "u1",
                 currentStorageState: "hosted",
-                shares: [{ sharedWithUserId: "u2" }],
+                grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
             });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockRejectedValue({ code: "P2002" });
 
             dbMocks.db.session.findUnique.mockResolvedValue({
                 accountId: "u1",
                 currentStorageState: "hosted",
-                shares: [{ sharedWithUserId: "u2" }],
+                grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
             });
-            dbMocks.db.sessionShare.findUnique.mockResolvedValue(null);
+            dbMocks.db.sessionGrant.findUnique.mockResolvedValue(null);
             dbMocks.db.sessionMessage.findUnique.mockResolvedValue({
                 id: "m1",
                 seq: 4,
@@ -2017,7 +2010,8 @@ describe("sessionWriteService", () => {
                 expect.objectContaining({
                     where: { id: "m1", rowRevision: BigInt(0) },
                     data: {
-                        content: { t: "encrypted", c: "next" },
+                        content: prismaRuntime.JsonNull,
+                        contentBytes: new Uint8Array(Buffer.from("next", "base64")),
                         surfaceItemReference: prismaRuntime.DbNull,
                         usageTimingV1: prismaRuntime.DbNull,
                         sidechainId: null,
@@ -2046,9 +2040,9 @@ describe("sessionWriteService", () => {
             currentTx.session.findUnique.mockResolvedValue({
                 accountId: "u1",
                 currentStorageState: "hosted",
-                shares: [{ sharedWithUserId: "u2" }],
+                grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
             });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockRejectedValue({
                 code: "P2002",
@@ -2058,9 +2052,9 @@ describe("sessionWriteService", () => {
             dbMocks.db.session.findUnique.mockResolvedValue({
                 accountId: "u1",
                 currentStorageState: "hosted",
-                shares: [{ sharedWithUserId: "u2" }],
+                grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
             });
-            dbMocks.db.sessionShare.findUnique.mockResolvedValue(null);
+            dbMocks.db.sessionGrant.findUnique.mockResolvedValue(null);
             dbMocks.db.sessionMessage.findUnique.mockResolvedValue(winner);
 
             const result = await createSessionMessage({ authentication, inputAdmission: "authenticatedAccount",
@@ -2112,9 +2106,9 @@ describe("sessionWriteService", () => {
             currentTx.session.findUnique.mockResolvedValue({
                 accountId: "u1",
                 currentStorageState: "hosted",
-                shares: [{ sharedWithUserId: "u2" }],
+                grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
             });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockRejectedValue({
                 code: "P2002",
@@ -2129,9 +2123,9 @@ describe("sessionWriteService", () => {
             dbMocks.db.session.findUnique.mockResolvedValue({
                 accountId: "u1",
                 currentStorageState: "hosted",
-                shares: [{ sharedWithUserId: "u2" }],
+                grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
             });
-            dbMocks.db.sessionShare.findUnique.mockResolvedValue(null);
+            dbMocks.db.sessionGrant.findUnique.mockResolvedValue(null);
             dbMocks.db.sessionMessage.findUnique.mockResolvedValue(winner);
             currentTx.account.findMany.mockResolvedValue(["u1", "u2"].map(id => ({ id })));
             accountCursorRows.mockResolvedValueOnce([{ cursor: 101 }]).mockResolvedValueOnce([{ cursor: 102 }]);
@@ -2167,7 +2161,7 @@ describe("sessionWriteService", () => {
                 tag: "session",
                 encryptionMode: "e2ee",
                 currentStorageState: "hosted",
-                shares: [],
+                grants: [],
                 active: true,
                 archivedAt: null,
             };
@@ -2243,7 +2237,7 @@ describe("sessionWriteService", () => {
             const initialHostedSession = {
                 accountId: "u1",
                 encryptionMode: "plain",
-                shares: [],
+                grants: [],
                 active: true,
                 archivedAt: null,
             };
@@ -2318,7 +2312,7 @@ describe("sessionWriteService", () => {
                 accountId: "u1",
                 encryptionMode: "e2ee",
                 currentStorageState: "hosted",
-                shares: [],
+                grants: [],
                 active: true,
                 archivedAt: null,
             };
@@ -2338,10 +2332,10 @@ describe("sessionWriteService", () => {
             };
 
             currentTx.session.findUnique.mockResolvedValue(session);
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             dbMocks.db.session.findUnique.mockResolvedValue(session);
-            dbMocks.db.sessionShare.findUnique.mockResolvedValue(null);
+            dbMocks.db.sessionGrant.findUnique.mockResolvedValue(null);
             dbMocks.db.sessionMessage.findUnique.mockResolvedValue(existing);
             currentTx.sessionMessage.findUnique.mockResolvedValue(existing);
             currentTx.sessionMessage.create.mockRejectedValue({
@@ -2375,7 +2369,7 @@ describe("sessionWriteService", () => {
         it("rejects message creation if actor has no edit access", async () => {
             currentTx.sessionMessage.findUnique.mockResolvedValue(null);
             currentTx.session.findUnique.mockResolvedValue({ accountId: "owner" });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
 
             const res = await createSessionMessage({ authentication, inputAdmission: "authenticatedAccount",
                 actorUserId: "u2",
@@ -2398,7 +2392,7 @@ describe("sessionWriteService", () => {
                 // pre-write badge contribution is derived from THIS row.
                 .mockResolvedValueOnce({
                     accountId: "u1",
-                    shares: [{ sharedWithUserId: "u2" }],
+                    grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
                     currentStorageState: "hosted",
                     seq: 9,
                     lastViewedSessionSeq: 9,
@@ -2471,7 +2465,7 @@ describe("sessionWriteService", () => {
 
             currentTx.session.findUnique.mockResolvedValueOnce({
                 accountId: "u1",
-                shares: [],
+                grants: [],
                 seq: 9,
                 lastViewedSessionSeq: 9,
                 pendingCount: 0,
@@ -2537,7 +2531,7 @@ describe("sessionWriteService", () => {
                 accountId: "u1",
                 tag: "system:voice-transcript-history:v1",
                 encryptionMode: "e2ee",
-                shares: [],
+                grants: [],
                 seq: 9,
                 lastViewedSessionSeq: null,
                 pendingCount: 0,
@@ -2597,7 +2591,7 @@ describe("sessionWriteService", () => {
                 ? { t: 'encrypted', c: 'opaque' }
                 : { t: 'plain', v: { role: 'agent', content: { type: 'event', id: localId,
                     data: { type: 'context-compaction', phase: 'completed', trigger: 'idle', lifecycleId: 'native-compact' } } } };
-            currentTx.session.findUnique.mockResolvedValueOnce({ accountId: 'u1', encryptionMode: mode, shares: [],
+            currentTx.session.findUnique.mockResolvedValueOnce({ accountId: 'u1', encryptionMode: mode, grants: [],
                 seq: 9, lastViewedSessionSeq: 9, pendingCount: 0, pendingPermissionRequestCount: 0,
                 pendingUserActionRequestCount: 0, latestTurnStatus: null, lastRuntimeIssue: null, active: true, archivedAt: null });
             currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
@@ -2623,7 +2617,7 @@ describe("sessionWriteService", () => {
             currentTx.session.findUnique.mockResolvedValueOnce({
                 accountId: "u1",
                 encryptionMode: "e2ee",
-                shares: [],
+                grants: [],
                 seq: 9,
                 lastViewedSessionSeq: 9,
                 pendingCount: 0,
@@ -2697,7 +2691,7 @@ describe("sessionWriteService", () => {
             currentTx.session.findUnique.mockResolvedValueOnce({
                 accountId: "u1",
                 encryptionMode: "plain",
-                shares: [],
+                grants: [],
                 seq: 9,
                 lastViewedSessionSeq: 9,
                 pendingCount: 0,
@@ -2755,7 +2749,7 @@ describe("sessionWriteService", () => {
             currentTx.session.findUnique.mockResolvedValueOnce({
                 accountId: "u1",
                 encryptionMode: "e2ee",
-                shares: [{ sharedWithUserId: "u2" }],
+                grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
                 seq: 9,
                 lastViewedSessionSeq: 9,
                 pendingCount: 0,
@@ -2766,7 +2760,7 @@ describe("sessionWriteService", () => {
                 active: true,
                 archivedAt: null,
             });
-            currentTx.sessionShare.findUnique.mockResolvedValue({ accessLevel: "edit" });
+            currentTx.sessionGrant.findUnique.mockResolvedValue({ accessLevel: "edit" });
             currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             currentTx.sessionMessage.create.mockResolvedValue({
@@ -2804,7 +2798,7 @@ describe("sessionWriteService", () => {
             currentTx.session.findUnique.mockResolvedValueOnce({
                 accountId: "u1",
                 encryptionMode: "plain",
-                shares: [],
+                grants: [],
                 seq: 9,
                 lastViewedSessionSeq: 7,
                 pendingCount: 0,
@@ -2879,7 +2873,7 @@ describe("sessionWriteService", () => {
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
                     accountId: "u1",
-                    shares: [],
+                    grants: [],
                     seq: 9,
                     lastViewedSessionSeq: 9,
                     pendingCount: 0,
@@ -2940,7 +2934,7 @@ describe("sessionWriteService", () => {
 
             currentTx.session.findUnique.mockResolvedValueOnce({
                 accountId: "u1",
-                shares: [],
+                grants: [],
             });
             currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
@@ -3004,7 +2998,7 @@ describe("sessionWriteService", () => {
 
             currentTx.session.findUnique.mockResolvedValueOnce({
                 accountId: "u1",
-                shares: [],
+                grants: [],
             });
             currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             // The ready projection's own guard decides; meaningful activity rides the sequence write.
@@ -3061,7 +3055,7 @@ describe("sessionWriteService", () => {
 
             currentTx.session.findUnique.mockResolvedValueOnce({
                 accountId: "u1",
-                shares: [],
+                grants: [],
             });
             currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.session.updateMany.mockResolvedValueOnce({ count: 0 });
@@ -3130,7 +3124,7 @@ describe("sessionWriteService", () => {
                 .mockResolvedValueOnce({
                     accountId: "u1",
                     encryptionMode: "plain",
-                    shares: [],
+                    grants: [],
                     seq: 9,
                     lastViewedSessionSeq: 9,
                     pendingCount: 0,
@@ -3209,7 +3203,7 @@ describe("sessionWriteService", () => {
                 .mockResolvedValueOnce({
                     accountId: "owner-1",
                     encryptionMode: "e2ee",
-                    shares: [],
+                    grants: [],
                     seq: 9,
                     lastViewedSessionSeq: 9,
                     pendingCount: 0,
@@ -3231,7 +3225,7 @@ describe("sessionWriteService", () => {
                     latestTurnStatus: null,
                     lastRuntimeIssue: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue({ accessLevel: "edit" });
+            currentTx.sessionGrant.findUnique.mockResolvedValue({ accessLevel: "edit" });
             currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             currentTx.sessionMessage.create.mockResolvedValue({
@@ -3287,7 +3281,7 @@ describe("sessionWriteService", () => {
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
                     accountId: "u1",
-                    shares: [],
+                    grants: [],
                     seq: 9,
                     lastViewedSessionSeq: 9,
                     pendingCount: 0,
@@ -3352,7 +3346,7 @@ describe("sessionWriteService", () => {
             currentTx.session.findUnique.mockResolvedValue({
                 accountId: "u1",
                 encryptionMode: "e2ee",
-                shares: [],
+                grants: [],
                 seq: 9,
                 lastViewedSessionSeq: 9,
                 pendingCount: 0,
@@ -3439,7 +3433,7 @@ describe("sessionWriteService", () => {
             currentTx.session.findUnique.mockResolvedValue({
                 accountId: "u1",
                 encryptionMode: "e2ee",
-                shares: [],
+                grants: [],
                 seq: 9,
                 lastViewedSessionSeq: 9,
                 pendingCount: 0,
@@ -3458,7 +3452,7 @@ describe("sessionWriteService", () => {
             dbMocks.db.session.findUnique.mockResolvedValue({
                 accountId: "u1",
                 encryptionMode: "e2ee",
-                shares: [],
+                grants: [],
                 seq: 9,
                 lastViewedSessionSeq: 9,
                 pendingCount: 0,
@@ -3467,7 +3461,7 @@ describe("sessionWriteService", () => {
                 active: true,
                 archivedAt: null,
             });
-            dbMocks.db.sessionShare.findUnique.mockResolvedValue(null);
+            dbMocks.db.sessionGrant.findUnique.mockResolvedValue(null);
             dbMocks.db.sessionMessage.findUnique.mockResolvedValue({
                 id: "m1",
                 seq: 4,
@@ -3523,7 +3517,7 @@ describe("sessionWriteService", () => {
             storagePolicyEnv.set("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
             currentTx.sessionMessage.findUnique.mockResolvedValue(null);
             currentTx.session.findUnique.mockResolvedValue({ accountId: "u1", encryptionMode: "plain" });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.update.mockResolvedValue({ seq: 1, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockResolvedValue({
                 id: "m1",
@@ -3554,7 +3548,7 @@ describe("sessionWriteService", () => {
 
             currentTx.sessionMessage.findUnique.mockResolvedValue(null);
             currentTx.session.findUnique.mockResolvedValue({ accountId: "u1", encryptionMode: "plain" });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.update.mockResolvedValue({ seq: 1, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockResolvedValue({
                 id: "m1",
@@ -3590,7 +3584,7 @@ describe("sessionWriteService", () => {
 
             currentTx.sessionMessage.findUnique.mockResolvedValue(null);
             currentTx.session.findUnique.mockResolvedValue({ accountId: "u1", encryptionMode: "plain" });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.update.mockResolvedValue({ seq: 1, currentStorageState: "hosted" });
             currentTx.sessionMessage.create.mockResolvedValue({
                 id: "m1",
@@ -3631,7 +3625,7 @@ describe("sessionWriteService", () => {
                 .mockResolvedValueOnce({
                     accountId: "u1",
                     encryptionMode: "e2ee",
-                    shares: [{ sharedWithUserId: "u2" }],
+                    grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
                 })
                 .mockResolvedValueOnce({
                     metadataLayoutVersion: 0,
@@ -3649,7 +3643,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce({ accessLevel: "edit" });
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce({ accessLevel: "edit" });
             currentTx.session.updateMany.mockResolvedValueOnce({ count: 1 });
             accountCursorRows.mockResolvedValueOnce([{ cursor: 10 }]).mockResolvedValueOnce([{ cursor: 11 }]);
 
@@ -3671,9 +3665,9 @@ describe("sessionWriteService", () => {
             currentTx.session.findUnique.mockResolvedValueOnce({
                 accountId: "u1",
                 encryptionMode: "e2ee",
-                shares: [{ sharedWithUserId: "u2" }],
+                grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
             });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce({ accessLevel: "view" });
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce({ accessLevel: "view" });
 
             const res = await updateSessionMetadata({ authentication,
                 actorUserId: "u2",
@@ -3711,7 +3705,7 @@ describe("sessionWriteService", () => {
                     metadataVersion: 6,
                     metadata: "shared-safe",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValue({ count: 0 });
 
             const res = await updateSessionMetadata({ authentication,
@@ -3749,7 +3743,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce(null);
 
             const res = await updateSessionMetadata({ authentication,
                 actorUserId: "u1",
@@ -3773,7 +3767,7 @@ describe("sessionWriteService", () => {
                 id: "s1", ...hostedTranscriptPublication(),
                 metadataLayoutVersion: 0, ownerMetadata: null, metadataVersion: 5,
                 metadata: '{"a":1,"b":2}', encryptionMode: "plain", seq: 9,
-                account: { status: "active" }, shares: [], teamGrants: [], groupGrants: [],
+                account: { status: "active" }, grants: [],  
                 latestReadyEventSeq: null, latestTurnStatus: null,
             };
             const privateReadState = {
@@ -3810,7 +3804,7 @@ describe("sessionWriteService", () => {
                     accountId: "u1",
                     encryptionMode: "plain",
                     tag: "session-tag",
-                    shares: [],
+                    grants: [],
                     seq: 0,
                     pendingCount: 0,
                     pendingBlockedCount: 0,
@@ -3881,7 +3875,7 @@ describe("sessionWriteService", () => {
                     accountId: "u1",
                     encryptionMode: "plain",
                     tag: "session-tag",
-                    shares: [],
+                    grants: [],
                     seq: 0,
                     pendingCount: 0,
                     pendingBlockedCount: 0,
@@ -3947,7 +3941,7 @@ describe("sessionWriteService", () => {
                     accountId: "u1",
                     encryptionMode: "plain",
                     tag: "session-tag",
-                    shares: [],
+                    grants: [],
                     seq: 0,
                     pendingCount: 0,
                     pendingBlockedCount: 0,
@@ -4014,7 +4008,7 @@ describe("sessionWriteService", () => {
                 .mockResolvedValueOnce({
                     accountId: "u1",
                     encryptionMode: "e2ee",
-                    shares: [{ sharedWithUserId: "u2" }],
+                    grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
                 })
                 .mockResolvedValueOnce({
                     metadataLayoutVersion: 0,
@@ -4033,7 +4027,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce({ accessLevel: "admin" });
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce({ accessLevel: "admin" });
             currentTx.session.updateMany.mockResolvedValueOnce({ count: 1 });
             accountCursorRows.mockResolvedValueOnce([{ cursor: 10 }]).mockResolvedValueOnce([{ cursor: 11 }]);
 
@@ -4055,9 +4049,9 @@ describe("sessionWriteService", () => {
             currentTx.session.findUnique.mockResolvedValueOnce({
                 accountId: "u1",
                 encryptionMode: "e2ee",
-                shares: [],
+                grants: [],
             });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce(null);
 
             const res = await updateSessionAgentState({
                 actorUserId: "u2",
@@ -4095,7 +4089,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 2,
                     agentState: "private-state",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValue({ count: 0 });
 
             const res = await updateSessionAgentState({
@@ -4126,7 +4120,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             currentTx.account.findMany.mockResolvedValue(["u1"].map(id => ({ id })));
             accountCursorRows.mockResolvedValueOnce([{ cursor: 200 }]);
@@ -4156,7 +4150,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             currentTx.account.findMany.mockResolvedValue(["u1"].map(id => ({ id })));
             accountCursorRows.mockResolvedValueOnce([{ cursor: 200 }]);
@@ -4192,7 +4186,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             currentTx.account.findMany.mockResolvedValue(["u1"].map(id => ({ id })));
             accountCursorRows.mockResolvedValueOnce([{ cursor: 200 }]);
@@ -4230,7 +4224,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             currentTx.account.findMany.mockResolvedValue(["u1"].map(id => ({ id })));
             accountCursorRows.mockResolvedValueOnce([{ cursor: 200 }]);
@@ -4266,7 +4260,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             currentTx.account.findMany.mockResolvedValue(["u1"].map(id => ({ id })));
             accountCursorRows.mockResolvedValueOnce([{ cursor: 200 }]);
@@ -4315,7 +4309,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             currentTx.sessionTurn.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
@@ -4392,7 +4386,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             currentTx.account.findMany.mockResolvedValue(["u1"].map(id => ({ id })));
             accountCursorRows.mockResolvedValueOnce([{ cursor: 200 }]);
@@ -4419,7 +4413,7 @@ describe("sessionWriteService", () => {
                 .mockResolvedValueOnce({ accountId: "u1" })
                 .mockResolvedValueOnce({ agentStateVersion: 4, agentState: "aOld" })
                 .mockResolvedValueOnce({ agentStateVersion: 5, agentState: "aFresh" });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValue({ count: 0 });
 
             const res = await updateSessionAgentState({
@@ -4438,7 +4432,7 @@ describe("sessionWriteService", () => {
                 .mockResolvedValueOnce({ accountId: "u1" })
                 .mockResolvedValueOnce({ agentStateVersion: 4, agentState: "aOld" })
                 .mockResolvedValueOnce(null);
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValue({ count: 0 });
 
             const res = await updateSessionAgentState({
@@ -4534,7 +4528,7 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssueJson: null,
                     active: true,
                     archivedAt: null,
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     latestTurnId: null,
@@ -4549,7 +4543,7 @@ describe("sessionWriteService", () => {
                     archivedAt: null,
                 })
                 .mockResolvedValueOnce(hostedTranscriptPublication());
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.create.mockResolvedValue({
@@ -4677,7 +4671,7 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssueJson: null,
                     active: true,
                     archivedAt: null,
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     latestTurnId: null,
@@ -4692,7 +4686,7 @@ describe("sessionWriteService", () => {
                     archivedAt: null,
                 })
                 .mockResolvedValueOnce(hostedTranscriptPublication());
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.create.mockResolvedValue({
@@ -4752,7 +4746,7 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssue: null,
                     active: true,
                     archivedAt: null,
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     latestTurnId: "turn-1",
@@ -4767,7 +4761,7 @@ describe("sessionWriteService", () => {
                     archivedAt: null,
                 })
                 .mockResolvedValueOnce(hostedTranscriptPublication());
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.findUnique.mockResolvedValue({
                 ...completedTurnRow,
@@ -4884,7 +4878,7 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssue: null,
                     active: true,
                     archivedAt: null,
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     latestTurnId: "turn-1",
@@ -4898,7 +4892,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.findUnique.mockResolvedValue({
                 ...completedTurnRow,
@@ -4989,7 +4983,7 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssue: null,
                     active: true,
                     archivedAt: null,
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     latestTurnId: "turn-1",
@@ -5003,7 +4997,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.findUnique.mockResolvedValue({
                 ...completedTurnRow,
@@ -5074,7 +5068,7 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssue: null,
                     active: true,
                     archivedAt: null,
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     latestTurnId: "turn-1",
@@ -5084,7 +5078,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.findUnique.mockResolvedValue({
                 ...completedTurnRow,
@@ -5147,7 +5141,7 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssueJson: null,
                     active: true,
                     archivedAt: null,
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     latestTurnId: "turn-1",
@@ -5155,7 +5149,7 @@ describe("sessionWriteService", () => {
                     latestTurnStatusObservedAt: BigInt(200),
                     lastRuntimeIssue: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue({ id: "receipt-1" });
 
             const res = await applySessionTurnMutation({ authentication,
@@ -5202,7 +5196,7 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssueJson: null,
                     active: true,
                     archivedAt: null,
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     latestTurnId: "turn-later",
@@ -5210,7 +5204,7 @@ describe("sessionWriteService", () => {
                     latestTurnStatusObservedAt: BigInt(900),
                     lastRuntimeIssue: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue({
                 id: "receipt-1",
                 sessionId: "s1",
@@ -5274,7 +5268,7 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssue: null,
                     active: true,
                     archivedAt: null,
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     latestTurnId: "turn-1",
@@ -5282,7 +5276,7 @@ describe("sessionWriteService", () => {
                     latestTurnStatusObservedAt: BigInt(200),
                     lastRuntimeIssue: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.findUnique.mockResolvedValue({
                 id: "row-turn-1",
@@ -5389,7 +5383,7 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssue: null,
                     active: true,
                     archivedAt: null,
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     latestTurnId: "turn-1",
@@ -5397,7 +5391,7 @@ describe("sessionWriteService", () => {
                     latestTurnStatusObservedAt: BigInt(200),
                     lastRuntimeIssue: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.findUnique.mockResolvedValue(completedTurnRow);
 
@@ -5449,7 +5443,7 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssue: null,
                     active: true,
                     archivedAt: null,
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     seq: 5,
@@ -5465,14 +5459,14 @@ describe("sessionWriteService", () => {
                     archivedAt: null,
                 })
                 .mockResolvedValueOnce(hostedTranscriptPublication());
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.findMany.mockResolvedValue([{
                 id: "s1",
                 accountId: "u1",
                 currentStorageState: "hosted",
                 account: { status: "active" },
             }]);
-            currentTx.sessionShare.findMany.mockResolvedValue([]);
+            currentTx.sessionGrant.findMany.mockResolvedValue([]);
             accountCursorRows.mockResolvedValue([{ cursor: 101 }]);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.findUnique.mockResolvedValue({
@@ -5561,7 +5555,7 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssue: null,
                     active: true,
                     archivedAt: null,
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     latestTurnId: "turn-1",
@@ -5571,7 +5565,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.findUnique.mockResolvedValue({
                 ...completedTurnRow,
@@ -5634,7 +5628,7 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssue: null,
                     active: true,
                     archivedAt: null,
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     latestTurnId: "turn-1",
@@ -5644,7 +5638,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.findUnique.mockResolvedValue({
                 ...completedTurnRow,
@@ -5693,7 +5687,7 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssue: null,
                     active: true,
                     archivedAt: null,
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     latestTurnId: "turn-2",
@@ -5703,7 +5697,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.findUnique.mockImplementation(async ({ where }: { where: { sessionId_turnId: { turnId: string } } }) => {
                 if (where.sessionId_turnId.turnId === "turn-1") {
@@ -5782,7 +5776,7 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssue: null,
                     active: true,
                     archivedAt: null,
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     seq: 5,
@@ -5797,7 +5791,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.findUnique.mockResolvedValue({
                 ...completedTurnRow,
@@ -5872,7 +5866,7 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssue: null,
                     active: true,
                     archivedAt: null,
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     seq: 12,
@@ -5887,7 +5881,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.findUnique.mockResolvedValue({
                 ...completedTurnRow,
@@ -5923,7 +5917,7 @@ describe("sessionWriteService", () => {
                     pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 0,
                     latestTurnId: "turn-1", latestTurnStatus: "in_progress",
                     latestTurnStatusObservedAt: BigInt(100), lastRuntimeIssue: null,
-                    active: true, archivedAt: null, shares: [],
+                    active: true, archivedAt: null, grants: [],
                 })
                 .mockResolvedValueOnce({
                     seq: 12, pendingCount: 0, lastViewedSessionSeq: 12,
@@ -5997,7 +5991,7 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssue: null,
                     active: true,
                     archivedAt: null,
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     seq: 5,
@@ -6018,7 +6012,7 @@ describe("sessionWriteService", () => {
                     latestTurnStatusObservedAt: BigInt(200),
                     lastRuntimeIssue: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.findUnique.mockResolvedValue(completedTurnRow);
             currentTx.sessionTurnMutationReceipt.create.mockRejectedValue(Object.assign(new Error("duplicate"), { code: "P2002" }));
@@ -6067,7 +6061,7 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssue: null,
                     active: true,
                     archivedAt: null,
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     latestTurnId: null,
@@ -6075,7 +6069,7 @@ describe("sessionWriteService", () => {
                     latestTurnStatusObservedAt: null,
                     lastRuntimeIssue: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
 
             const res = await applySessionTurnMutation({ authentication,
@@ -6137,7 +6131,7 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssue: null,
                     active: true,
                     archivedAt: null,
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     seq: 5,
@@ -6171,7 +6165,7 @@ describe("sessionWriteService", () => {
                     latestTurnStatusObservedAt: BigInt(100),
                     lastRuntimeIssue: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.create.mockRejectedValue(Object.assign(new Error("duplicate turn"), { code: "P2002" }));
@@ -6227,7 +6221,7 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssueJson: null,
                     active: true,
                     archivedAt: null,
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     latestTurnId: "turn-1",
@@ -6241,7 +6235,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.create.mockResolvedValue({
@@ -6306,7 +6300,7 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssue: null,
                     active: true,
                     archivedAt: null,
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     latestTurnId: "turn-1",
@@ -6320,7 +6314,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
             currentTx.sessionTurn.findUnique.mockResolvedValue({
                 ...completedTurnRow,
@@ -6388,7 +6382,7 @@ describe("sessionWriteService", () => {
                         lastRuntimeIssue: null,
                         active: true,
                         archivedAt: null,
-                        shares: [],
+                        grants: [],
                     })
                     .mockResolvedValueOnce({
                         latestTurnId: "turn-1",
@@ -6398,7 +6392,7 @@ describe("sessionWriteService", () => {
                         active: true,
                         archivedAt: null,
                     });
-                currentTx.sessionShare.findUnique.mockResolvedValue(null);
+                currentTx.sessionGrant.findUnique.mockResolvedValue(null);
                 currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
                 currentTx.sessionTurn.findUnique.mockResolvedValue({
                     ...completedTurnRow,
@@ -6472,7 +6466,7 @@ describe("sessionWriteService", () => {
                     lastRuntimeIssue: null,
                     active: true,
                     archivedAt: null,
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     latestTurnId: "turn-2",
@@ -6486,7 +6480,7 @@ describe("sessionWriteService", () => {
                     active: true,
                     archivedAt: null,
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.sessionTurnMutationReceipt.findUnique.mockResolvedValue(null);
             // The replacement runner's turn began at 500 — AFTER the daemon observed the dead
             // runner's exit at 400. The queued settlement must not cancel it.
@@ -6546,7 +6540,7 @@ describe("sessionWriteService", () => {
             const row = {
                 id: "s1", ...hostedTranscriptPublication(params.owner ?? "u1"),
                 seq: params.seq ?? 8, latestReadyEventSeq: null, latestTurnStatus: "in_progress",
-                account: { status: "active" }, shares: [], teamGrants: [], groupGrants: [], ...params.publication,
+                account: { status: "active" }, grants: [],   ...params.publication,
             };
             const tx = {
                 ...currentTx,
@@ -6724,7 +6718,7 @@ describe("sessionWriteService", () => {
                 .mockResolvedValueOnce({
                     accountId: "u1",
                     encryptionMode: "e2ee",
-                    shares: [{ sharedWithUserId: "u2" }],
+                    grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
                 })
                 .mockResolvedValueOnce({
                     metadataLayoutVersion: 0,
@@ -6734,7 +6728,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 9,
                     agentState: "legacy-agent-state",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce({ accessLevel: "edit" });
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce({ accessLevel: "edit" });
             currentTx.session.updateMany.mockResolvedValueOnce({ count: 1 });
             accountCursorRows.mockResolvedValueOnce([{ cursor: 10 }]).mockResolvedValueOnce([{ cursor: 11 }]);
 
@@ -6757,7 +6751,7 @@ describe("sessionWriteService", () => {
                 .mockResolvedValueOnce({
                     accountId: "u1",
                     encryptionMode: "e2ee",
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValue({
                     active: false,
@@ -6769,7 +6763,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 9,
                     agentState: "legacy-agent-state",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce(null);
             currentTx.session.updateMany.mockResolvedValueOnce({ count: 1 });
             accountCursorRows.mockResolvedValueOnce([{ cursor: 10 }]);
 
@@ -6814,7 +6808,7 @@ describe("sessionWriteService", () => {
                 .mockResolvedValueOnce({
                     accountId: "u1",
                     encryptionMode: "e2ee",
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValue({
                     active: true,
@@ -6826,7 +6820,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 9,
                     agentState: "legacy-agent-state",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce(null);
 
             const res = await patchSession({ authentication,
                 actorUserId: "u1",
@@ -6853,7 +6847,7 @@ describe("sessionWriteService", () => {
                 .mockResolvedValueOnce({
                     accountId: "u1",
                     encryptionMode: "e2ee",
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     active: false,
@@ -6885,7 +6879,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 9,
                     agentState: "legacy-agent-state",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce(null);
             currentTx.session.updateMany.mockResolvedValueOnce({ count: 0 });
 
             const res = await patchSession({ authentication,
@@ -6926,7 +6920,7 @@ describe("sessionWriteService", () => {
                 .mockResolvedValueOnce({
                     accountId: "u1",
                     encryptionMode: "e2ee",
-                    shares: [],
+                    grants: [],
                 })
                 .mockResolvedValueOnce({
                     active: true,
@@ -6949,7 +6943,7 @@ describe("sessionWriteService", () => {
                     agentState: "legacy-agent-state",
                 })
                 .mockResolvedValue({ ...hostedTranscriptPublication(), accountId: "u1" });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce(null);
             currentTx.session.updateMany.mockResolvedValueOnce({ count: 1 });
             currentTx.account.findMany.mockResolvedValueOnce(["u1"].map(id => ({ id })));
             accountCursorRows.mockResolvedValueOnce([{ cursor: 10 }]);
@@ -6990,9 +6984,9 @@ describe("sessionWriteService", () => {
             currentTx.session.findUnique.mockResolvedValueOnce({
                 accountId: "u1",
                 encryptionMode: "e2ee",
-                shares: [{ sharedWithUserId: "u2" }],
+                grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
             });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce({ accessLevel: "view" });
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce({ accessLevel: "view" });
 
             const res = await patchSession({ authentication,
                 actorUserId: "u2",
@@ -7015,7 +7009,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 9,
                     agentState: "owner-full-state",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce(null);
 
             const res = await patchSession({ authentication,
                 actorUserId: "u1",
@@ -7041,7 +7035,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 9,
                     agentState: "aCurrent",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce(null);
 
             const res = await patchSession({ authentication,
                 actorUserId: "u1",
@@ -7058,7 +7052,7 @@ describe("sessionWriteService", () => {
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
                     accountId: "u1",
-                    shares: [{ sharedWithUserId: "u2" }],
+                    grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
                 })
                 .mockResolvedValue({
                     metadataVersion: 1,
@@ -7066,7 +7060,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 2,
                     agentState: "a2",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             currentTx.account.findMany.mockResolvedValue(["u1", "u2"].map(id => ({ id })));
             accountCursorRows.mockResolvedValueOnce([{ cursor: 10 }]).mockResolvedValueOnce([{ cursor: 11 }]);
@@ -7101,7 +7095,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 3,
                     agentState: "future-state",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValue({ count: 0 });
 
             const res = await patchSession({ authentication,
@@ -7131,7 +7125,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 2,
                     agentState: "same-state",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce(null);
 
             const res = await patchSession({ authentication,
                 actorUserId: "u1",
@@ -7167,7 +7161,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 2,
                     agentState: "before",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValueOnce({ count: 1 });
 
             const res = await patchSession({ authentication,
@@ -7263,7 +7257,7 @@ describe("sessionWriteService", () => {
             if (account) {
                 currentTx.account.findUnique.mockResolvedValue(account);
             }
-            currentTx.session.findUnique.mockResolvedValue({ accountId: "u1", encryptionMode: accountMode, shares: [] });
+            currentTx.session.findUnique.mockResolvedValue({ accountId: "u1", encryptionMode: accountMode, grants: [] });
 
             const res = await updateSessionMetadataEnvelopeTuple({
                 mode: "owner",
@@ -7307,7 +7301,7 @@ describe("sessionWriteService", () => {
             currentTx.session.findUnique
                 .mockImplementationOnce(async () => {
                     callLog.push("session:access");
-                    return { accountId: "u1", shares: [] };
+                    return { accountId: "u1", grants: [] };
                 })
                 .mockImplementationOnce(async () => {
                     callLog.push("session:tuple");
@@ -7347,7 +7341,7 @@ describe("sessionWriteService", () => {
 
         it("atomically records a conditioned owner tuple only while inactive", async () => {
             currentTx.session.findUnique
-                .mockResolvedValueOnce({ accountId: "u1", shares: [] })
+                .mockResolvedValueOnce({ accountId: "u1", grants: [] })
                 .mockResolvedValueOnce({
                     displayProjectionV1: null,
                     active: false,
@@ -7358,7 +7352,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 8,
                     agentState: "agent-old",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce(null);
             currentTx.session.updateMany.mockResolvedValueOnce({ count: 1 });
             currentTx.account.findMany.mockResolvedValueOnce(["u1"].map(id => ({ id })));
             accountCursorRows.mockResolvedValueOnce([{ cursor: 10 }]);
@@ -7421,7 +7415,7 @@ describe("sessionWriteService", () => {
 
         it("rejects a conditioned owner tuple when the initial row is active", async () => {
             currentTx.session.findUnique
-                .mockResolvedValueOnce({ accountId: "u1", shares: [] })
+                .mockResolvedValueOnce({ accountId: "u1", grants: [] })
                 .mockResolvedValueOnce({
                     displayProjectionV1: null,
                     active: true,
@@ -7432,7 +7426,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 8,
                     agentState: "agent-old",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce(null);
 
             const res = await updateSessionMetadataEnvelopeTuple({
                 mode: "owner_inactive_model_intent",
@@ -7464,7 +7458,7 @@ describe("sessionWriteService", () => {
 
         it("preserves an exact conditioned lost-ack result after the Session activates", async () => {
             currentTx.session.findUnique
-                .mockResolvedValueOnce({ accountId: "u1", shares: [] })
+                .mockResolvedValueOnce({ accountId: "u1", grants: [] })
                 .mockResolvedValueOnce({
                     displayProjectionV1: null,
                     active: true,
@@ -7475,7 +7469,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 9,
                     agentState: "agent-new",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce(null);
 
             const res = await updateSessionMetadataEnvelopeTuple({
                 mode: "owner_inactive_model_intent",
@@ -7514,7 +7508,7 @@ describe("sessionWriteService", () => {
 
         it("rejects a conditioned owner tuple when a claim wins its CAS race", async () => {
             currentTx.session.findUnique
-                .mockResolvedValueOnce({ accountId: "u1", shares: [] })
+                .mockResolvedValueOnce({ accountId: "u1", grants: [] })
                 .mockResolvedValueOnce({
                     displayProjectionV1: null,
                     active: false,
@@ -7535,7 +7529,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 8,
                     agentState: "agent-old",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce(null);
             currentTx.session.updateMany.mockResolvedValueOnce({ count: 0 });
 
             const res = await updateSessionMetadataEnvelopeTuple({
@@ -7587,7 +7581,7 @@ describe("sessionWriteService", () => {
 
         it("preserves an exact conditioned lost-ack result found after a zero-count CAS reread", async () => {
             currentTx.session.findUnique
-                .mockResolvedValueOnce({ accountId: "u1", shares: [] })
+                .mockResolvedValueOnce({ accountId: "u1", grants: [] })
                 .mockResolvedValueOnce({
                     displayProjectionV1: null,
                     active: false,
@@ -7608,7 +7602,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 9,
                     agentState: "agent-new",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce(null);
             currentTx.session.updateMany.mockResolvedValueOnce({ count: 0 });
 
             const res = await updateSessionMetadataEnvelopeTuple({
@@ -7648,7 +7642,7 @@ describe("sessionWriteService", () => {
 
         it("keeps an ordinary owner tuple CAS unfenced by active state", async () => {
             currentTx.session.findUnique
-                .mockResolvedValueOnce({ accountId: "u1", shares: [] })
+                .mockResolvedValueOnce({ accountId: "u1", grants: [] })
                 .mockResolvedValueOnce({
                     displayProjectionV1: null,
                     active: true,
@@ -7659,7 +7653,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 8,
                     agentState: "agent-old",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce(null);
             currentTx.session.updateMany.mockResolvedValueOnce({ count: 1 });
             currentTx.account.findMany.mockResolvedValueOnce(["u1"].map(id => ({ id })));
             accountCursorRows.mockResolvedValueOnce([{ cursor: 10 }]);
@@ -7720,7 +7714,7 @@ describe("sessionWriteService", () => {
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
                     accountId: "u1",
-                    shares: [{ sharedWithUserId: "u2" }],
+                    grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
                 })
                 .mockResolvedValueOnce({
                     displayProjectionV1: null,
@@ -7731,7 +7725,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 9,
                     agentState: "owner-full-state",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce({
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce({
                 accessLevel: "edit",
             });
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
@@ -7757,9 +7751,9 @@ describe("sessionWriteService", () => {
         it("requires authenticated ownership even when a share grants edit access", async () => {
             currentTx.session.findUnique.mockResolvedValueOnce({
                 accountId: "u1",
-                shares: [{ sharedWithUserId: "u2" }],
+                grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
             });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce({ accessLevel: "edit" });
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce({ accessLevel: "edit" });
 
             const res = await updateSessionMetadataEnvelopeTuple({
                 mode: "owner",
@@ -7780,7 +7774,7 @@ describe("sessionWriteService", () => {
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
                     accountId: "u1",
-                    shares: [{ sharedWithUserId: "u2" }],
+                    grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
                 })
                 .mockResolvedValueOnce({
                     displayProjectionV1: null,
@@ -7791,7 +7785,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 8,
                     agentState: "owner-full-state",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
 
             const res = await updateSessionMetadataEnvelopeTuple({
                 mode: "owner",
@@ -7814,7 +7808,7 @@ describe("sessionWriteService", () => {
 
         it("treats a lost acknowledgement retry of the exact resulting tuple as idempotent", async () => {
             currentTx.session.findUnique
-                .mockResolvedValueOnce({ accountId: "u1", shares: [] })
+                .mockResolvedValueOnce({ accountId: "u1", grants: [] })
                 .mockResolvedValueOnce({
                     displayProjectionV1: null,
                     metadataLayoutVersion: 1,
@@ -7824,7 +7818,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 9,
                     agentState: "owner-full-state",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
 
             const res = await updateSessionMetadataEnvelopeTuple({
                 mode: "owner",
@@ -7854,7 +7848,7 @@ describe("sessionWriteService", () => {
 
         it("rejects a stale pre-reseal owner ciphertext even when shared and Agent versions are current", async () => {
             currentTx.session.findUnique
-                .mockResolvedValueOnce({ accountId: "u1", shares: [] })
+                .mockResolvedValueOnce({ accountId: "u1", grants: [] })
                 .mockResolvedValueOnce({
                     displayProjectionV1: null,
                     metadataLayoutVersion: 1,
@@ -7864,7 +7858,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 9,
                     agentState: "agent-current",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValueOnce({ count: 1 });
 
             const res = await updateSessionMetadataEnvelopeTuple({
@@ -7908,7 +7902,7 @@ describe("sessionWriteService", () => {
 
         it("keeps the case-exact expected owner ciphertext in the atomic Session-row CAS", async () => {
             currentTx.session.findUnique
-                .mockResolvedValueOnce({ accountId: "u1", shares: [] })
+                .mockResolvedValueOnce({ accountId: "u1", grants: [] })
                 .mockResolvedValueOnce({
                     displayProjectionV1: null,
                     metadataLayoutVersion: 1,
@@ -7928,7 +7922,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 9,
                     agentState: "agent-current",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
             currentTx.session.updateMany.mockResolvedValueOnce({ count: 0 });
 
             const res = await updateSessionMetadataEnvelopeTuple({
@@ -7993,7 +7987,7 @@ describe("sessionWriteService", () => {
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
                     accountId: "u1",
-                    shares: [{ sharedWithUserId: "u2" }],
+                    grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
                 })
                 .mockResolvedValueOnce({
                     displayProjectionV1: null,
@@ -8004,7 +7998,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 9,
                     agentState: "owner-full-state",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce({ accessLevel: "edit" });
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce({ accessLevel: "edit" });
             currentTx.session.updateMany.mockResolvedValue({ count: 1 });
             currentTx.account.findMany.mockResolvedValue(["u1", "u2"].map(id => ({ id })));
             accountCursorRows.mockResolvedValueOnce([{ cursor: 10 }]).mockResolvedValueOnce([{ cursor: 11 }]);
@@ -8056,9 +8050,9 @@ describe("sessionWriteService", () => {
         it("requires renameSession, not generic edit, for a rename-intent shared envelope write", async () => {
             currentTx.session.findUnique.mockResolvedValueOnce({
                 accountId: "u1",
-                shares: [{ sharedWithUserId: "u2" }],
+                grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
             });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce({ accessLevel: "edit" });
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce({ accessLevel: "edit" });
 
             const res = await updateSessionMetadataEnvelopeTuple({ authentication,
                 mode: "shared_editor",
@@ -8077,7 +8071,7 @@ describe("sessionWriteService", () => {
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
                     accountId: "u1",
-                    shares: [{ sharedWithUserId: "u2" }],
+                    grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
                 })
                 .mockResolvedValueOnce({
                     displayProjectionV1: null,
@@ -8097,7 +8091,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 9,
                     agentState: "owner-full-state",
                 });
-            currentTx.sessionShare.findUnique
+            currentTx.sessionGrant.findUnique
                 .mockResolvedValueOnce({ accessLevel: "admin" })
                 .mockResolvedValueOnce({ accessLevel: "edit" });
             currentTx.session.updateMany.mockResolvedValueOnce({ count: 0 });
@@ -8123,7 +8117,7 @@ describe("sessionWriteService", () => {
             expect(res).toMatchObject({ ok: false, error: "version-mismatch", current: {
                 metadataLayoutVersion: 1, sharedMetadata: { version: 6, value: "concurrent-shared" },
             } });
-            expect(currentTx.sessionShare.findUnique).toHaveBeenCalledTimes(1);
+            expect(currentTx.sessionGrant.findUnique).toHaveBeenCalledTimes(1);
             expect(accountCursorRows).not.toHaveBeenCalled();
         });
 
@@ -8131,7 +8125,7 @@ describe("sessionWriteService", () => {
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
                     accountId: "u1",
-                    shares: [{ sharedWithUserId: "u2" }],
+                    grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
                 })
                 .mockResolvedValueOnce({
                     displayProjectionV1: null,
@@ -8151,7 +8145,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 9,
                     agentState: "owner-full-state",
                 });
-            currentTx.sessionShare.findUnique
+            currentTx.sessionGrant.findUnique
                 .mockResolvedValueOnce({ accessLevel: "edit" })
                 .mockResolvedValueOnce({ accessLevel: "view" });
             currentTx.session.updateMany.mockResolvedValueOnce({ count: 0 });
@@ -8181,7 +8175,7 @@ describe("sessionWriteService", () => {
             expect(res).toMatchObject({ ok: false, error: "version-mismatch", current: {
                 metadataLayoutVersion: 1, sharedMetadata: { version: 6, value: "concurrent-shared" },
             } });
-            expect(currentTx.sessionShare.findUnique).toHaveBeenCalledTimes(1);
+            expect(currentTx.sessionGrant.findUnique).toHaveBeenCalledTimes(1);
             expect(accountCursorRows).not.toHaveBeenCalled();
         });
 
@@ -8189,7 +8183,7 @@ describe("sessionWriteService", () => {
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
                     accountId: "u1",
-                    shares: [{ sharedWithUserId: "u2" }],
+                    grants: [{ id: 'account-grant', principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  accountId: "u2"  }],
                 })
                 .mockResolvedValueOnce({
                     displayProjectionV1: null,
@@ -8200,7 +8194,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 9,
                     agentState: "owner-full-state",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValueOnce({ accessLevel: "edit" });
+            currentTx.sessionGrant.findUnique.mockResolvedValueOnce({ accessLevel: "edit" });
 
             const res = await updateSessionMetadataEnvelopeTuple({ authentication,
                 mode: "shared_editor",
@@ -8219,7 +8213,7 @@ describe("sessionWriteService", () => {
 
         it("does not let a stale owner tuple overwrite a newer shared-editor envelope", async () => {
             currentTx.session.findUnique
-                .mockResolvedValueOnce({ accountId: "u1", shares: [] })
+                .mockResolvedValueOnce({ accountId: "u1", grants: [] })
                 .mockResolvedValueOnce({
                     displayProjectionV1: null,
                     metadataLayoutVersion: 1,
@@ -8229,7 +8223,7 @@ describe("sessionWriteService", () => {
                     agentStateVersion: 9,
                     agentState: "owner-full-state",
                 });
-            currentTx.sessionShare.findUnique.mockResolvedValue(null);
+            currentTx.sessionGrant.findUnique.mockResolvedValue(null);
 
             const res = await updateSessionMetadataEnvelopeTuple({
                 mode: "owner",

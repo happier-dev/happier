@@ -72,6 +72,12 @@ vi.mock('./sessionRecordResponse', async importOriginal => {
             responseAdmissions.detail++;
             return original.parseProjectedSessionBatchDetail(detail);
         },
+        // A whole-response parse would count here. The record producer is the one validation
+        // point (`assembleProjectedSessionRecord`), so a current reader's body is parsed zero times.
+        parseProjectedSessionByIdResponse: (body: Parameters<typeof original.parseProjectedSessionByIdResponse>[0]) => {
+            responseAdmissions.detail++;
+            return original.parseProjectedSessionByIdResponse(body);
+        },
     };
 });
 
@@ -191,7 +197,26 @@ describe('Session id-batched reads (SQLite integration)', () => {
         }
     });
 
-    it('FLOWBUDGET read-batch validates each Session response once and still refuses another Account', async () => {
+    it('FLOWBUDGET exact Session read emits the producer record without a response re-parse', async () => {
+        const owner = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
+        const id = crypto.randomUUID();
+        await db.session.create({ data: { id, accountId: owner.id, tag: id, metadata: '{}', encryptionMode: 'plain' } });
+        try {
+            await withAuthenticatedTestApp(registerSessionListingRoutes, async app => {
+                responseAdmissions.detail = 0;
+                const response = await app.inject({ method: 'GET', url: `/v2/sessions/${id}`,
+                    headers: { 'x-test-user-id': owner.id, ...currentAccountStoredContentCompatibilityHeaders } });
+                expect(response.statusCode, response.body).toBe(200);
+                expect(V2SessionByIdResponseSchema.parse(response.json()).session.id).toBe(id);
+                expect(responseAdmissions.detail).toBe(0);
+            });
+        } finally {
+            await db.session.deleteMany({ where: { id } });
+            await db.account.deleteMany({ where: { id: owner.id } });
+        }
+    });
+
+    it('FLOWBUDGET read-batch emits producer records without a response re-parse and still refuses another Account', async () => {
         const owner = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
         const stranger = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
         const ids = [crypto.randomUUID(), crypto.randomUUID()];
@@ -204,7 +229,7 @@ describe('Session id-batched reads (SQLite integration)', () => {
                     payload: { sessionIds: ids, includeSnapshot: true, includeTurns: false } });
                 expect(owned.statusCode).toBe(200);
                 expect(SessionReadBatchResponseV1Schema.parse(owned.json()).results.map(row => row.detail?.status)).toEqual([200, 200]);
-                expect(responseAdmissions.detail).toBe(ids.length);
+                expect(responseAdmissions.detail).toBe(0);
 
                 const refused = await app.inject({ method: 'POST', url: '/v2/sessions/read-batch',
                     headers: { 'x-test-user-id': stranger.id, ...currentAccountStoredContentCompatibilityHeaders },
@@ -231,7 +256,7 @@ describe('Session id-batched reads (SQLite integration)', () => {
         const session = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(),
             encryptionMode: 'plain', metadataLayoutVersion: 1, metadata, agentState: agentState(128),
             ownerMetadata: JSON.stringify({ t: 'plain', v: ownerValue(128) }) } });
-        await withAuthenticatedTestApp(app => {
+        await withAuthenticatedTestApp((app: Fastify) => {
             registerSessionReadRoutes(app);
             for (const usageProjection of [false, true]) app.get(`/__usage-detail/${usageProjection ? 'usage' : 'full'}`, {
                 preHandler: app.authenticate,
@@ -303,7 +328,7 @@ describe('Session id-batched reads (SQLite integration)', () => {
         const encrypted = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding(content.publicKey) } });
         const ownerEnvelope = sealSessionOwnerMetadataEnvelopeV1({ ownerMetadata: { v: 1,
             workspace: { path: '/encrypted/workspace' }, cursors: { externalSessionAttentionV1: { v: 1, observedProgressToken: 'opaque' } } },
-            material: { type: 'dataKey', machineKey: content.secretKey, publicKey: content.publicKey }, randomBytes });
+            material: { type: 'dataKey', machineKey: content.secretKey }, randomBytes });
         const sealed = encodeSessionOwnerMetadataEnvelopeV1(ownerEnvelope);
         const rows = await Promise.all([
             db.session.create({ data: { accountId: encrypted.id, tag: crypto.randomUUID(), encryptionMode: 'plain',
@@ -483,8 +508,8 @@ describe('Session id-batched reads (SQLite integration)', () => {
             shared: shared.envelope, owner: privateDisplay.envelope };
         const ownerToken = await auth.createToken(owner.id, undefined, { kind: 'account', authority: 'present_user' });
         const editor = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
-        await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id,
-            sharedWithUserId: editor.id, accessLevel: 'edit' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id,
+            accountId: editor.id, accessLevel: 'edit' } });
         const editorToken = await auth.createToken(editor.id, undefined, { kind: 'account', authority: 'present_user' });
         await withAuthenticatedTestApp(app => { registerSessionReadRoutes(app); registerSessionPatchRoute(app); }, async app => {
             const headers = { authorization: `Bearer ${ownerToken}`, 'x-happier-account-stored-content-protocol': '4' };
@@ -985,7 +1010,7 @@ describe('Session id-batched reads (SQLite integration)', () => {
         const protectedSession = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(),
             encryptionMode: 'plain', metadataLayoutVersion: 1, metadata: JSON.stringify({ v: 1 }),
             ownerMetadata: JSON.stringify({ t: 'plain', v: { v: 1 } }), currentStorageState: 'hosted' } });
-        await db.sessionTeamGrant.create({ data: { sessionId: protectedSession.id, teamId: team.id, accessLevel: 'view', effectiveAt: new Date() } });
+        await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: protectedSession.id, teamId: team.id, accessLevel: 'view', effectiveAt: new Date() } });
         const own = await db.session.create({ data: { accountId: reader.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
         await withAuthenticatedTestApp(registerSessionReadRoutes, async app => {
             const read = async (qualified = false) => {

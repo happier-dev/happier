@@ -63,7 +63,7 @@ it('proves a native cancelled partial by its exact admitted Run, sidechain, turn
     vi.stubEnv('HAPPIER_DB_PROVIDER', 'sqlite');
     const account = { status: 'active', encryptionMode: 'plain' };
     const session = { id: 'session', accountId: 'account', account, active: true, archivedAt: null, lastActiveAt: new Date(1),
-        shares: [], teamGrants: [], groupGrants: [], currentStorageState: 'hosted' };
+        grants: [],   currentStorageState: 'hosted' };
     const machine = { id: 'machine', kind: 'persistent', accountId: 'account', account, active: true,
         revokedAt: null, replacedByMachineId: null, installationId: 'installation', metadata: encodePlainMachineStoredContent({}), daemonState: null,
         dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER), accountGrants: [], teamGrants: [], groupGrants: [] };

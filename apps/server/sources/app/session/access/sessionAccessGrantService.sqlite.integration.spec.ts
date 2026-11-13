@@ -96,9 +96,9 @@ describe("Session access grant service (SQLite integration)", () => {
             () => db.publicSessionShare.deleteMany(),
             () => db.accountChange.deleteMany(),
             () => db.userKVStore.deleteMany(),
-            () => db.sessionGroupGrant.deleteMany(),
-            () => db.sessionTeamGrant.deleteMany(),
-            () => db.sessionShare.deleteMany(),
+            () => db.sessionGrant.deleteMany({ where: { principalKind: 'group' } }),
+            () => db.sessionGrant.deleteMany({ where: { principalKind: 'team' } }),
+            () => db.sessionGrant.deleteMany({ where: { principalKind: 'account' } }),
             () => db.teamGroupMembership.deleteMany(),
             () => db.teamGroup.deleteMany(),
             () => db.teamMembership.deleteMany(),
@@ -178,8 +178,8 @@ describe("Session access grant service (SQLite integration)", () => {
                 },
             },
         });
-        await db.sessionTeamGrant.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'team',
                 sessionId: fixture.session.id,
                 teamId: fixture.team.id,
                 accessLevel: "admin",
@@ -201,7 +201,7 @@ describe("Session access grant service (SQLite integration)", () => {
                 authenticationEvidence: [],
             },
         }))).toEqual({ ok: false, error: "session_access_authentication_required" });
-        expect(await db.sessionShare.count({ where: { sessionId: fixture.session.id } })).toBe(0);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId: fixture.session.id } })).toBe(0);
 
         expect(await inTx((tx) => putSessionAccessGrantInTx(tx, {
             ...input,
@@ -235,9 +235,9 @@ describe("Session access grant service (SQLite integration)", () => {
         });
         const admittedSessionId = await create(true);
         expect(admissions).toBe(1);
-        expect(await db.sessionTeamGrant.count({ where: { sessionId: admittedSessionId } })).toBe(0);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'team', sessionId: admittedSessionId } })).toBe(0);
         const nextSessionId = await create(false);
-        expect(await db.sessionTeamGrant.findUnique({ where: { sessionId_teamId: {
+        expect(await db.sessionGrant.findUnique({ where: { principalKind: 'team', sessionId_teamId: {
             sessionId: nextSessionId, teamId: fixture.team.id,
         } }, select: { requiredByTeamPolicy: true, accessLevel: true } }))
             .toEqual({ requiredByTeamPolicy: true, accessLevel: "edit" });
@@ -271,13 +271,13 @@ describe("Session access grant service (SQLite integration)", () => {
         expect(result).toMatchObject({ ok: true, effects: {
             grantedAccountIds: [fixture.collaborator.id], changedAccountIds: [fixture.collaborator.id], revokedAccountIds: [],
         } });
-        expect(await db.sessionShare.findMany({ where: { sessionId } })).toMatchObject([
-            { sharedWithUserId: fixture.collaborator.id, accessLevel: "edit", canApprovePermissions: false },
+        expect(await db.sessionGrant.findMany({ where: { principalKind: 'account', sessionId } })).toMatchObject([
+            { accountId: fixture.collaborator.id, accessLevel: "edit", canApprovePermissions: false },
         ]);
-        expect(await db.sessionTeamGrant.findMany({ where: { sessionId } })).toMatchObject([
+        expect(await db.sessionGrant.findMany({ where: { principalKind: 'team', sessionId } })).toMatchObject([
             { teamId: fixture.team.id, accessLevel: "view", requiredByTeamPolicy: false },
         ]);
-        expect(await db.sessionGroupGrant.findMany({ where: { sessionId } })).toMatchObject([
+        expect(await db.sessionGrant.findMany({ where: { principalKind: 'group', sessionId } })).toMatchObject([
             { teamGroupId: group.id, accessLevel: "admin", canApprovePermissions: true },
         ]);
         expect(await db.sessionDataKeyEnvelope.count({ where: { sessionId } })).toBe(0);
@@ -369,12 +369,12 @@ describe("Session access grant service (SQLite integration)", () => {
                 ] },
             });
             expect(result).toEqual({ ok: false, error: "session_access_subject_ineligible" });
-            expect(await tx.sessionShare.count({ where: { sessionId } })).toBe(0);
+            expect(await tx.sessionGrant.count({ where: { principalKind: 'account', sessionId } })).toBe(0);
             expect(await tx.accountChange.count({ where: { entityId: sessionId } })).toBe(0);
             throw abort;
         })).rejects.toBe(abort);
         expect(await db.session.findUnique({ where: { id: sessionId } })).toBeNull();
-        expect(await db.sessionShare.count({ where: { sessionId } })).toBe(0);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId } })).toBe(0);
         expect(await db.accountChange.count({ where: { entityId: sessionId } })).toBe(0);
     });
 
@@ -393,11 +393,11 @@ describe("Session access grant service (SQLite integration)", () => {
                     { subject: { kind: "account", accountId: fixture.collaborator.id }, accessLevel: "edit", canApprovePermissions: false },
                 ] },
             })).toMatchObject({ ok: true });
-            expect(await tx.sessionShare.count({ where: { sessionId } })).toBe(1);
+            expect(await tx.sessionGrant.count({ where: { principalKind: 'account', sessionId } })).toBe(1);
             throw abort;
         })).rejects.toBe(abort);
         expect(await db.session.findUnique({ where: { id: sessionId } })).toBeNull();
-        expect(await db.sessionShare.count({ where: { sessionId } })).toBe(0);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId } })).toBe(0);
         expect(await db.accountChange.count({ where: { entityId: sessionId } })).toBe(0);
         expect(await db.accountSessionFollow.count({ where: { sessionId } })).toBe(0);
     });
@@ -427,7 +427,7 @@ describe("Session access grant service (SQLite integration)", () => {
             });
             expect(result).toMatchObject({ ok: true });
         });
-        const grants = await db.sessionTeamGrant.findMany({ where: { sessionId } });
+        const grants = await db.sessionGrant.findMany({ where: { principalKind: 'team', sessionId } });
         if (!hasGrant) {
             expect(grants).toEqual([]);
         } else {
@@ -438,7 +438,7 @@ describe("Session access grant service (SQLite integration)", () => {
                 expect(grants).toMatchObject([{ accessLevel: "edit", canApprovePermissions: false }]);
             }
         }
-        expect(await db.sessionShare.count({ where: { sessionId } })).toBe(0);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId } })).toBe(0);
     });
 
     it("raises an explicit primary-Team View draft to the required Edit minimum", async () => {
@@ -469,8 +469,8 @@ describe("Session access grant service (SQLite integration)", () => {
             })).toMatchObject({ ok: true });
         });
 
-        await expect(db.sessionTeamGrant.findUniqueOrThrow({
-            where: { sessionId_teamId: { sessionId, teamId: fixture.team.id } },
+        await expect(db.sessionGrant.findUniqueOrThrow({
+            where: { principalKind: 'team', sessionId_teamId: { sessionId, teamId: fixture.team.id } },
             select: { accessLevel: true, canApprovePermissions: true, requiredByTeamPolicy: true },
         })).resolves.toEqual({
             accessLevel: "edit",
@@ -487,8 +487,8 @@ describe("Session access grant service (SQLite integration)", () => {
         expect(await inTx((tx) => applyInitialSessionAccessInTx(tx, {
             creatorAccountId: fixture.owner.id, sessionId: fixture.session.id, initialAccess: { grants: [] },
         }))).toMatchObject({ ok: true, effects: { changedAccountIds: [], grantedAccountIds: [], revokedAccountIds: [] } });
-        expect(await db.sessionShare.count({ where: { sessionId: fixture.session.id } })).toBe(0);
-        expect(await db.sessionTeamGrant.count({ where: { sessionId: fixture.session.id } })).toBe(0);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId: fixture.session.id } })).toBe(0);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'team', sessionId: fixture.session.id } })).toBe(0);
         expect(await db.accountChange.count({ where: { entityId: fixture.session.id } })).toBe(0);
     });
 
@@ -508,7 +508,7 @@ describe("Session access grant service (SQLite integration)", () => {
             ok: false,
             error: "data_key_not_required",
         });
-        expect(await db.sessionShare.count({ where: { sessionId: fixture.session.id } })).toBe(0);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId: fixture.session.id } })).toBe(0);
         expect(await db.sessionDataKeyEnvelope.count({ where: { sessionId: fixture.session.id } })).toBe(0);
     });
 
@@ -576,7 +576,7 @@ describe("Session access grant service (SQLite integration)", () => {
         expect(await inTx(tx => putSessionAccessGrantInTx(tx, fixture.input))).toEqual({
             ok: false, error: "recipient_envelope_required",
         });
-        expect(await db.sessionShare.count({ where: { sessionId: fixture.session.id } })).toBe(0);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId: fixture.session.id } })).toBe(0);
         expect(await db.accountChange.count({ where: { entityId: fixture.session.id } })).toBe(0);
 
         const supplied = { ...fixture.input, accountEnvelopeInput: {
@@ -610,7 +610,7 @@ describe("Session access grant service (SQLite integration)", () => {
         expect(await inTx(tx => deleteSessionAccessGrantInTx(tx, fixture.input))).toMatchObject({
             ok: true, changed: true,
         });
-        expect(await db.sessionShare.count({ where: { sessionId: fixture.session.id } })).toBe(0);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId: fixture.session.id } })).toBe(0);
         expect((await db.sessionDataKeyEnvelope.findUniqueOrThrow({ where: tupleWhere })).encryptedDataKey)
             .toEqual(tuple.encryptedDataKey);
         expect(await inTx(tx => putSessionAccessGrantInTx(tx, fixture.input))).toMatchObject({
@@ -669,7 +669,7 @@ describe("Session access grant service (SQLite integration)", () => {
         }));
 
         expect(result).toEqual({ ok: false, error: "data_key_not_required" });
-        expect(await db.sessionShare.count({ where: { sessionId: fixture.session.id } })).toBe(0);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId: fixture.session.id } })).toBe(0);
         expect(await db.sessionDataKeyEnvelope.count({ where: { sessionId: fixture.session.id } })).toBe(0);
     });
 
@@ -687,16 +687,16 @@ describe("Session access grant service (SQLite integration)", () => {
                 encryptedDataKey: encodeBase64(new Uint8Array(fixture.envelope)),
             },
         }))).toEqual({ ok: false, error: "invalid_request" });
-        expect(await db.sessionShare.count({ where: { sessionId: fixture.session.id } })).toBe(0);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId: fixture.session.id } })).toBe(0);
         expect(await db.sessionDataKeyEnvelope.count({ where: { sessionId: fixture.session.id } })).toBe(0);
         expect(await db.accountChange.count({ where: { entityId: fixture.session.id } })).toBe(0);
     });
 
     it("current envelope admission rejects malformed material before changes and repairs an invalid stored tuple", async () => {
         const fixture = await createEncryptedFixture();
-        await db.sessionShare.create({ data: {
-            sessionId: fixture.session.id, sharedByUserId: fixture.owner.id,
-            sharedWithUserId: fixture.collaborator.id, accessLevel: "view",
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: fixture.session.id, createdByAccountId: fixture.owner.id,
+            accountId: fixture.collaborator.id, accessLevel: "view",
         } });
         const tupleWhere = { sessionId_recipientAccountId: {
             sessionId: fixture.session.id, recipientAccountId: fixture.collaborator.id,
@@ -713,7 +713,7 @@ describe("Session access grant service (SQLite integration)", () => {
             accountEnvelopeInput: { v: 1 as const, encryptedDataKey: encodeBase64(malformed) },
         };
         expect(await inTx(tx => putSessionAccessGrantInTx(tx, invalid))).toEqual({ ok: false, error: "invalid_request" });
-        expect(await db.sessionShare.findMany({ where: { sessionId: fixture.session.id } })).toMatchObject([
+        expect(await db.sessionGrant.findMany({ where: { principalKind: 'account', sessionId: fixture.session.id } })).toMatchObject([
             { accessLevel: "view", canApprovePermissions: false },
         ]);
         expect(await db.accountChange.count({ where: { entityId: fixture.session.id } })).toBe(0);
@@ -747,7 +747,7 @@ describe("Session access grant service (SQLite integration)", () => {
             } });
             return await putSessionAccessGrantInTx(tx, supplied);
         })).toEqual({ ok: false, error: "recipient_key_unavailable" });
-        expect(await db.sessionShare.count({ where: { sessionId: fixture.session.id } })).toBe(0);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId: fixture.session.id } })).toBe(0);
         expect(await db.sessionDataKeyEnvelope.count({ where: { sessionId: fixture.session.id } })).toBe(0);
         expect(await inTx(tx => putSessionAccessGrantInTx(tx, fixture.input))).toMatchObject({ ok: true, changed: true });
         expect(await db.sessionDataKeyEnvelope.count({ where: { sessionId: fixture.session.id } })).toBe(0);
@@ -779,9 +779,9 @@ describe("Session access grant service (SQLite integration)", () => {
             });
         });
         expect(result).toEqual({ ok: false, error: "session_access_subject_ineligible" });
-        expect(await db.sessionShare.count({ where: {
+        expect(await db.sessionGrant.count({ where: { principalKind: 'account',
             sessionId: fixture.session.id,
-            sharedWithUserId: recipient.id,
+            accountId: recipient.id,
         } })).toBe(0);
     });
 
@@ -1127,11 +1127,11 @@ describe("Session access grant service (SQLite integration)", () => {
         await db.teamMembership.create({
             data: { teamId: fixture.team.id, accountId: manager.id, role: "member" },
         });
-        await db.sessionShare.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'account',
                 sessionId: fixture.session.id,
-                sharedByUserId: fixture.owner.id,
-                sharedWithUserId: manager.id,
+                createdByAccountId: fixture.owner.id,
+                accountId: manager.id,
                 accessLevel: "admin",
                 canApprovePermissions: false,
             },
@@ -1152,15 +1152,15 @@ describe("Session access grant service (SQLite integration)", () => {
             "admin->delegated edit", "admin->delegated admin",
         ]);
         const subject = { kind: "account" as const, accountId: fixture.collaborator.id };
-        const identity = { sessionId: fixture.session.id, sharedWithUserId: fixture.collaborator.id };
+        const identity = { sessionId: fixture.session.id, accountId: fixture.collaborator.id };
 
         for (const [previousName, previous] of states) {
             for (const [nextName, next] of nextStates) {
-                await db.sessionShare.deleteMany({ where: identity });
+                await db.sessionGrant.deleteMany({ where: { principalKind: 'account', ...identity } });
                 if (previous !== null) {
-                    await db.sessionShare.create({ data: {
+                    await db.sessionGrant.create({ data: { principalKind: 'account',
                         ...identity,
-                        sharedByUserId: fixture.owner.id,
+                        createdByAccountId: fixture.owner.id,
                         accessLevel: previous.accessLevel,
                         canApprovePermissions: previous.canApprovePermissions,
                     } });
@@ -1188,8 +1188,8 @@ describe("Session access grant service (SQLite integration)", () => {
             }
         }
 
-        await db.sessionShare.update({
-            where: { sessionId_sharedWithUserId: identity },
+        await db.sessionGrant.update({
+            where: { principalKind: 'account', sessionId_accountId: identity },
             data: { accessLevel: "admin", canApprovePermissions: true },
         });
         const removed = await inTx((tx) => deleteSessionAccessGrantInTx(tx, {
@@ -1217,18 +1217,18 @@ describe("Session access grant service (SQLite integration)", () => {
         await db.teamMembership.create({
             data: { teamId: fixture.team.id, accountId: manager.id, role: "member" },
         });
-        await db.sessionShare.createMany({ data: [
-            {
+        await db.sessionGrant.createMany({ data: [
+            { principalKind: 'account',
                 sessionId: fixture.session.id,
-                sharedByUserId: fixture.owner.id,
-                sharedWithUserId: manager.id,
+                createdByAccountId: fixture.owner.id,
+                accountId: manager.id,
                 accessLevel: "admin",
                 canApprovePermissions: true,
             },
-            {
+            { principalKind: 'account',
                 sessionId: fixture.session.id,
-                sharedByUserId: fixture.owner.id,
-                sharedWithUserId: fixture.collaborator.id,
+                createdByAccountId: fixture.owner.id,
+                accountId: fixture.collaborator.id,
                 accessLevel: "edit",
                 canApprovePermissions: false,
             },
@@ -1243,10 +1243,10 @@ describe("Session access grant service (SQLite integration)", () => {
             ...input,
             actorAccountId: manager.id,
         }))).resolves.toMatchObject({ ok: true, changed: true });
-        await db.sessionShare.update({
-            where: { sessionId_sharedWithUserId: {
+        await db.sessionGrant.update({
+            where: { principalKind: 'account', sessionId_accountId: {
                 sessionId: fixture.session.id,
-                sharedWithUserId: fixture.collaborator.id,
+                accountId: fixture.collaborator.id,
             } },
             data: { accessLevel: "edit", canApprovePermissions: false },
         });
@@ -1259,21 +1259,21 @@ describe("Session access grant service (SQLite integration)", () => {
     it("invalidates the roster for all current managers outside the changed grant subject", async () => {
         const fixture = await createFixture();
         const otherManager = await createAccount("other-roster-manager");
-        await db.sessionShare.create({ data: {
-            sessionId: fixture.session.id, sharedByUserId: fixture.owner.id,
-            sharedWithUserId: otherManager.id, accessLevel: "admin", canApprovePermissions: false,
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: fixture.session.id, createdByAccountId: fixture.owner.id,
+            accountId: otherManager.id, accessLevel: "admin", canApprovePermissions: false,
         } });
         const teamManager = await createAccount("team-roster-manager");
         const groupManager = await createAccount("group-roster-manager");
         const reader = await createAccount("roster-reader");
         const otherTeam = await db.team.create({ data: { name: "Roster managers" } });
         await db.teamMembership.create({ data: { teamId: otherTeam.id, accountId: teamManager.id, role: "member" } });
-        await db.sessionTeamGrant.create({ data: { sessionId: fixture.session.id, teamId: otherTeam.id, accessLevel: "admin", effectiveAt: new Date() } });
+        await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: fixture.session.id, teamId: otherTeam.id, accessLevel: "admin", effectiveAt: new Date() } });
         const groupMembership = await db.teamMembership.create({ data: { teamId: fixture.team.id, accountId: groupManager.id, role: "member" } });
         const group = await db.teamGroup.create({ data: { teamId: fixture.team.id, name: "Managers", nameKey: "managers" } });
         await db.teamGroupMembership.create({ data: { teamId: fixture.team.id, teamGroupId: group.id, teamMembershipId: groupMembership.id } });
-        await db.sessionGroupGrant.create({ data: { sessionId: fixture.session.id, teamGroupId: group.id, accessLevel: "admin", effectiveAt: new Date() } });
-        await db.sessionShare.create({ data: { sessionId: fixture.session.id, sharedByUserId: fixture.owner.id, sharedWithUserId: reader.id, accessLevel: "view" } });
+        await db.sessionGrant.create({ data: { principalKind: 'group', sessionId: fixture.session.id, teamGroupId: group.id, accessLevel: "admin", effectiveAt: new Date() } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: fixture.session.id, createdByAccountId: fixture.owner.id, accountId: reader.id, accessLevel: "view" } });
         const input = {
             actorAccountId: fixture.owner.id, sessionId: fixture.session.id,
             subject: { kind: "account" as const, accountId: fixture.collaborator.id },
@@ -1305,8 +1305,8 @@ describe("Session access grant service (SQLite integration)", () => {
             subject: { kind: "team", teamId: fixture.team.id },
             grant: { accessLevel: "view", canApprovePermissions: false },
         }));
-        const minted = await db.sessionTeamGrant.findUniqueOrThrow({
-            where: { sessionId_teamId: { sessionId: fixture.session.id, teamId: fixture.team.id } },
+        const minted = await db.sessionGrant.findUniqueOrThrow({
+            where: { principalKind: 'team', sessionId_teamId: { sessionId: fixture.session.id, teamId: fixture.team.id } },
             select: { effectiveAt: true },
         });
 
@@ -1317,8 +1317,8 @@ describe("Session access grant service (SQLite integration)", () => {
             grant: { accessLevel: "admin", canApprovePermissions: false },
         }));
 
-        await expect(db.sessionTeamGrant.findUniqueOrThrow({
-            where: { sessionId_teamId: { sessionId: fixture.session.id, teamId: fixture.team.id } },
+        await expect(db.sessionGrant.findUniqueOrThrow({
+            where: { principalKind: 'team', sessionId_teamId: { sessionId: fixture.session.id, teamId: fixture.team.id } },
             select: { effectiveAt: true, accessLevel: true },
         })).resolves.toEqual({ effectiveAt: minted.effectiveAt, accessLevel: "admin" });
     });
@@ -1331,8 +1331,8 @@ describe("Session access grant service (SQLite integration)", () => {
             subject: { kind: "team", teamId: fixture.team.id },
             grant: { accessLevel: "view", canApprovePermissions: false },
         }));
-        const grant = await db.sessionTeamGrant.findUniqueOrThrow({
-            where: { sessionId_teamId: { sessionId: fixture.session.id, teamId: fixture.team.id } },
+        const grant = await db.sessionGrant.findUniqueOrThrow({
+            where: { principalKind: 'team', sessionId_teamId: { sessionId: fixture.session.id, teamId: fixture.team.id } },
             select: { effectiveAt: true },
         });
 
@@ -1408,8 +1408,8 @@ describe("Session access grant service (SQLite integration)", () => {
                 nameKey: `grant-removal-${crypto.randomUUID()}`,
             },
         });
-        await db.sessionGroupGrant.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'group',
                 sessionId: fixture.session.id,
                 teamGroupId: group.id,
                 accessLevel: "view",
@@ -1424,8 +1424,8 @@ describe("Session access grant service (SQLite integration)", () => {
         }));
 
         expect(result).toEqual({ ok: false, error: "session_access_subject_not_found" });
-        expect(await db.sessionGroupGrant.count({
-            where: { sessionId: fixture.session.id, teamGroupId: group.id },
+        expect(await db.sessionGrant.count({
+            where: { principalKind: 'group', sessionId: fixture.session.id, teamGroupId: group.id },
         })).toBe(1);
     });
 
@@ -1439,8 +1439,8 @@ describe("Session access grant service (SQLite integration)", () => {
                 archivedAt: new Date(),
             },
         });
-        await db.sessionGroupGrant.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'group',
                 sessionId: fixture.session.id,
                 teamGroupId: group.id,
                 accessLevel: "view",
@@ -1455,8 +1455,8 @@ describe("Session access grant service (SQLite integration)", () => {
         }));
 
         expect(result.ok && result.changed).toBe(true);
-        expect(await db.sessionGroupGrant.count({
-            where: { sessionId: fixture.session.id, teamGroupId: group.id },
+        expect(await db.sessionGrant.count({
+            where: { principalKind: 'group', sessionId: fixture.session.id, teamGroupId: group.id },
         })).toBe(0);
     });
 
@@ -1484,11 +1484,11 @@ describe("Session access grant service (SQLite integration)", () => {
     it("rejects both the implicit owner and the acting collaborator as direct-grant subjects", async () => {
         const fixture = await createFixture();
         const manager = await createAccount("grant-self-manager");
-        await db.sessionShare.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'account',
                 sessionId: fixture.session.id,
-                sharedByUserId: fixture.owner.id,
-                sharedWithUserId: manager.id,
+                createdByAccountId: fixture.owner.id,
+                accountId: manager.id,
                 accessLevel: "admin",
                 canApprovePermissions: false,
             },
@@ -1511,11 +1511,11 @@ describe("Session access grant service (SQLite integration)", () => {
             sessionId: fixture.session.id,
             subject: { kind: "account", accountId: manager.id },
         }))).toEqual({ ok: false, error: "session_access_self_grant_invalid" });
-        expect(await db.sessionShare.count({
-            where: { sessionId: fixture.session.id, sharedWithUserId: fixture.owner.id },
+        expect(await db.sessionGrant.count({
+            where: { principalKind: 'account', sessionId: fixture.session.id, accountId: fixture.owner.id },
         })).toBe(0);
-        expect(await db.sessionShare.count({
-            where: { sessionId: fixture.session.id, sharedWithUserId: manager.id },
+        expect(await db.sessionGrant.count({
+            where: { principalKind: 'account', sessionId: fixture.session.id, accountId: manager.id },
         })).toBe(1);
     });
 
@@ -1525,8 +1525,8 @@ describe("Session access grant service (SQLite integration)", () => {
             where: { id: fixture.team.id },
             data: { sessionCreationPolicy: "team_required" },
         });
-        await db.sessionTeamGrant.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'team',
                 sessionId: fixture.session.id,
                 teamId: fixture.team.id,
                 accessLevel: "edit",
@@ -1580,8 +1580,8 @@ describe("Session access grant service (SQLite integration)", () => {
             error: "session_access_external_sharing_disabled",
         });
 
-        await db.sessionTeamGrant.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'team',
                 sessionId: fixture.session.id,
                 teamId: externalTeam.id,
                 accessLevel: "edit",
@@ -1607,11 +1607,11 @@ describe("Session access grant service (SQLite integration)", () => {
             where: { id: fixture.team.id },
             data: { externalSharingPolicy: "disabled" },
         });
-        await db.sessionShare.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'account',
                 sessionId: fixture.session.id,
-                sharedByUserId: fixture.owner.id,
-                sharedWithUserId: member.id,
+                createdByAccountId: fixture.owner.id,
+                accountId: member.id,
                 accessLevel: "view",
             },
         });
@@ -1624,10 +1624,10 @@ describe("Session access grant service (SQLite integration)", () => {
 
         // The same active Team relationship is internal while the Team is live.
         expect(await increase()).toMatchObject({ ok: true, changed: true });
-        await db.sessionShare.update({
-            where: { sessionId_sharedWithUserId: {
+        await db.sessionGrant.update({
+            where: { principalKind: 'account', sessionId_accountId: {
                 sessionId: fixture.session.id,
-                sharedWithUserId: member.id,
+                accountId: member.id,
             } },
             data: { accessLevel: "view" },
         });
@@ -1671,7 +1671,7 @@ describe("Session access grant service (SQLite integration)", () => {
             });
         });
         expect(result).toEqual({ ok: false, error: "session_access_external_sharing_disabled" });
-        expect(await db.sessionTeamGrant.count({ where: { sessionId } })).toBe(0);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'team', sessionId } })).toBe(0);
     });
 
     it("requires primary-Team managePolicy and a credential qualified for that Team for an external increase under team_admins_only", async () => {
@@ -1682,10 +1682,10 @@ describe("Session access grant service (SQLite integration)", () => {
             { teamId: fixture.team.id, accountId: manager.id, role: "admin" },
             { teamId: externalTeam.id, accountId: manager.id, role: "member" },
         ] });
-        await db.sessionShare.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'account',
             sessionId: fixture.session.id,
-            sharedByUserId: fixture.owner.id,
-            sharedWithUserId: manager.id,
+            createdByAccountId: fixture.owner.id,
+            accountId: manager.id,
             accessLevel: "admin",
             canApprovePermissions: false,
         } });
@@ -1713,7 +1713,7 @@ describe("Session access grant service (SQLite integration)", () => {
                 authenticationEvidence: [],
             },
         }))).toEqual({ ok: false, error: "session_access_authentication_unavailable" });
-        expect(await db.sessionTeamGrant.count({ where: { sessionId: fixture.session.id } })).toBe(0);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'team', sessionId: fixture.session.id } })).toBe(0);
 
         expect(await inTx((tx) => putSessionAccessGrantInTx(tx, {
             actorAccountId: manager.id,
@@ -1726,7 +1726,7 @@ describe("Session access grant service (SQLite integration)", () => {
                 authenticationEvidence: [],
             },
         }))).toEqual({ ok: false, error: "session_access_authentication_required" });
-        expect(await db.sessionTeamGrant.count({ where: { sessionId: fixture.session.id } })).toBe(0);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'team', sessionId: fixture.session.id } })).toBe(0);
 
         expect(await inTx((tx) => putSessionAccessGrantInTx(tx, {
             actorAccountId: manager.id,
@@ -1770,7 +1770,7 @@ describe("Session access grant service (SQLite integration)", () => {
             { teamId: externalTeam.id, accountId: fixture.owner.id, role: "member" },
             { teamId: externalTeam.id, accountId: externalMember.id, role: "member" },
         ] });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: fixture.session.id,
             teamId: externalTeam.id,
             accessLevel: "view",
@@ -1795,7 +1795,7 @@ describe("Session access grant service (SQLite integration)", () => {
         await db.teamMembership.create({
             data: { teamId: overlappingTeam.id, accountId: fixture.owner.id, role: "member" },
         });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: fixture.session.id,
             teamId: overlappingTeam.id,
             accessLevel: "view",
@@ -1821,7 +1821,7 @@ describe("Session access grant service (SQLite integration)", () => {
             data: { sessionCreationPolicy: "team_required" },
         });
         if (existing === "view") {
-            await db.sessionTeamGrant.create({ data: {
+            await db.sessionGrant.create({ data: { principalKind: 'team',
                 sessionId: fixture.session.id,
                 teamId: fixture.team.id,
                 accessLevel: "view",
@@ -1839,8 +1839,8 @@ describe("Session access grant service (SQLite integration)", () => {
             where: { id: fixture.session.id },
             select: { primaryTeamId: true },
         })).resolves.toEqual({ primaryTeamId: fixture.team.id });
-        await expect(db.sessionTeamGrant.findUniqueOrThrow({
-            where: { sessionId_teamId: { sessionId: fixture.session.id, teamId: fixture.team.id } },
+        await expect(db.sessionGrant.findUniqueOrThrow({
+            where: { principalKind: 'team', sessionId_teamId: { sessionId: fixture.session.id, teamId: fixture.team.id } },
             select: { accessLevel: true, canApprovePermissions: true, requiredByTeamPolicy: true },
         })).resolves.toEqual({ accessLevel: "edit", canApprovePermissions: false, requiredByTeamPolicy: true });
 
@@ -1869,8 +1869,8 @@ describe("Session access grant service (SQLite integration)", () => {
             where: { id: fixture.session.id },
             select: { primaryTeamId: true },
         })).resolves.toEqual({ primaryTeamId: fixture.team.id });
-        await expect(db.sessionTeamGrant.findUniqueOrThrow({
-            where: { sessionId_teamId: { sessionId: fixture.session.id, teamId: fixture.team.id } },
+        await expect(db.sessionGrant.findUniqueOrThrow({
+            where: { principalKind: 'team', sessionId_teamId: { sessionId: fixture.session.id, teamId: fixture.team.id } },
             select: { accessLevel: true, canApprovePermissions: true, requiredByTeamPolicy: true },
         })).resolves.toEqual({ accessLevel: "edit", canApprovePermissions: false, requiredByTeamPolicy: true });
     });
@@ -1896,8 +1896,8 @@ describe("Session access grant service (SQLite integration)", () => {
             sessionId: fixture.session.id,
             primaryTeamId: null,
         }))).resolves.toEqual({ ok: true, changed: true, primaryTeamId: null });
-        await expect(db.sessionTeamGrant.findUniqueOrThrow({
-            where: { sessionId_teamId: { sessionId: fixture.session.id, teamId: fixture.team.id } },
+        await expect(db.sessionGrant.findUniqueOrThrow({
+            where: { principalKind: 'team', sessionId_teamId: { sessionId: fixture.session.id, teamId: fixture.team.id } },
             select: { accessLevel: true, canApprovePermissions: true, requiredByTeamPolicy: true },
         })).resolves.toEqual({ accessLevel: "edit", canApprovePermissions: false, requiredByTeamPolicy: false });
     });
@@ -1936,8 +1936,8 @@ describe("Session access grant service (SQLite integration)", () => {
             sessionId: fixture.session.id,
             primaryTeamId: replacement.id,
         }))).resolves.toEqual({ ok: true, changed: true, primaryTeamId: replacement.id });
-        await expect(db.sessionTeamGrant.findUniqueOrThrow({
-            where: { sessionId_teamId: { sessionId: fixture.session.id, teamId: fixture.team.id } },
+        await expect(db.sessionGrant.findUniqueOrThrow({
+            where: { principalKind: 'team', sessionId_teamId: { sessionId: fixture.session.id, teamId: fixture.team.id } },
             select: { accessLevel: true, canApprovePermissions: true, requiredByTeamPolicy: true },
         })).resolves.toEqual({ accessLevel: "edit", canApprovePermissions: false, requiredByTeamPolicy: false });
     });
@@ -1981,7 +1981,7 @@ describe("Session access grant service (SQLite integration)", () => {
             where: { id: fixture.team.id },
             data: { sessionCreationPolicy: "team_required" },
         });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: fixture.session.id,
             teamId: fixture.team.id,
             accessLevel: "admin",
@@ -1994,8 +1994,8 @@ describe("Session access grant service (SQLite integration)", () => {
             sessionId: fixture.session.id,
             primaryTeamId: fixture.team.id,
         }))).toMatchObject({ ok: true, changed: true });
-        await expect(db.sessionTeamGrant.findUniqueOrThrow({
-            where: { sessionId_teamId: { sessionId: fixture.session.id, teamId: fixture.team.id } },
+        await expect(db.sessionGrant.findUniqueOrThrow({
+            where: { principalKind: 'team', sessionId_teamId: { sessionId: fixture.session.id, teamId: fixture.team.id } },
             select: { accessLevel: true, canApprovePermissions: true, requiredByTeamPolicy: true },
         })).resolves.toEqual({ accessLevel: "admin", canApprovePermissions: true, requiredByTeamPolicy: true });
     });
@@ -2013,14 +2013,14 @@ describe("Session access grant service (SQLite integration)", () => {
                 archivedAt: new Date(),
             },
         });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: fixture.session.id,
             teamId: externalTeam.id,
             accessLevel: "view",
             canApprovePermissions: false,
             effectiveAt: new Date(),
         } });
-        await db.sessionGroupGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'group',
             sessionId: fixture.session.id,
             teamGroupId: externalGroup.id,
             accessLevel: "view",
@@ -2077,9 +2077,9 @@ describe("Session access grant service (SQLite integration)", () => {
             data: { teamId: externalTeam.id, accountId: fixture.owner.id, role: "member" },
         });
         await db.session.update({ where: { id: fixture.session.id }, data: { primaryTeamId: fixture.team.id } });
-        await db.sessionTeamGrant.createMany({ data: [
-            { sessionId: fixture.session.id, teamId: externalTeam.id, accessLevel: "edit", canApprovePermissions: false, effectiveAt: new Date() },
-            { sessionId: fixture.session.id, teamId: fixture.team.id, accessLevel: "edit", canApprovePermissions: false, effectiveAt: new Date() },
+        await db.sessionGrant.createMany({ data: [
+            { principalKind: 'team', sessionId: fixture.session.id, teamId: externalTeam.id, accessLevel: "edit", canApprovePermissions: false, effectiveAt: new Date() },
+            { principalKind: 'team', sessionId: fixture.session.id, teamId: fixture.team.id, accessLevel: "edit", canApprovePermissions: false, effectiveAt: new Date() },
         ] });
         await db.team.update({ where: { id: fixture.team.id }, data: { externalSharingPolicy: "disabled" } });
 
@@ -2115,14 +2115,14 @@ describe("Session access grant service (SQLite integration)", () => {
                 archivedAt: new Date(),
             },
         });
-        await db.sessionGroupGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'group',
             sessionId: fixture.session.id,
             teamGroupId: archivedGroup.id,
             accessLevel: "edit",
             canApprovePermissions: false,
             effectiveAt: new Date(),
         } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: fixture.session.id,
             teamId: fixture.team.id,
             accessLevel: "edit",
@@ -2156,8 +2156,8 @@ describe("Session access grant service (SQLite integration)", () => {
             sessionId: fixture.session.id,
             subject: { kind: "group", teamId: fixture.team.id, groupId: archivedGroup.id },
         }))).toMatchObject({ ok: true, changed: true });
-        expect(await db.sessionGroupGrant.count({
-            where: { sessionId: fixture.session.id, teamGroupId: archivedGroup.id },
+        expect(await db.sessionGrant.count({
+            where: { principalKind: 'group', sessionId: fixture.session.id, teamGroupId: archivedGroup.id },
         })).toBe(0);
         expect(await inTx((tx) => deleteSessionAccessGrantInTx(tx, {
             actorAccountId: fixture.owner.id,

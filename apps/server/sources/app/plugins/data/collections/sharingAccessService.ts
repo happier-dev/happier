@@ -11,7 +11,7 @@ import { acquireAccountChangePublicationLocksInTx } from '@/app/changes/markAcco
 import { readPluginsFeatureEnv } from '@/app/features/catalog/readFeatureEnv';
 import { RECIPIENT_READINESS_SELECT } from '@/app/session/encryption/sessionDataKeyRecipientProjection';
 import { deriveAccountRecipientEnvelopeReadinessFromRow } from '@/app/encryption/accountRecipientEnvelopeReadiness';
-import { mayManageResourceGrants, validateResourceGrantPrincipalInTx, readResourceGrantPrincipalAudienceInTx,
+import { mayManageResourceGrants, projectResourceGrantRows, validateResourceGrantPrincipalInTx, readResourceGrantPrincipalAudienceInTx,
     projectResourceRecipientCensus, projectResourceRecipientCensusRow, projectResourceRecipientEnvelope,
     validateResourceRecipientEnvelopeCommit, validateResourceRecipientKeyEnvelopes, applyResourceRecipientKeyEnvelopesInTx } from '@/app/teams/resourceGrantAccess';
 import { collectionRecipientEnvelopeStorageAdapter, resolveCollectionAudienceInTx, publishCollectionSharingChangedInTx } from './sharingStorage';
@@ -20,9 +20,9 @@ import { mutatePluginCollectionInTx } from './mutation';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 
 async function readPrincipalGrant(tx: Tx, rowDbId: string, principal: PrincipalRefV1) {
-    return principal.kind === 'account' ? tx.pluginCollectionAccountGrant.findUnique({ where: { rowDbId_accountId: { rowDbId, accountId: principal.accountId } } })
-        : principal.kind === 'team' ? tx.pluginCollectionTeamGrant.findUnique({ where: { rowDbId_teamId: { rowDbId, teamId: principal.teamId } } })
-            : tx.pluginCollectionGroupGrant.findUnique({ where: { rowDbId_teamGroupId: { rowDbId, teamGroupId: principal.groupId } } });
+    return principal.kind === 'account' ? tx.pluginCollectionGrant.findUnique({ where: { rowDbId_accountId: { rowDbId, accountId: principal.accountId } } })
+        : principal.kind === 'team' ? tx.pluginCollectionGrant.findUnique({ where: { rowDbId_teamId: { rowDbId, teamId: principal.teamId } } })
+            : tx.pluginCollectionGrant.findUnique({ where: { rowDbId_teamGroupId: { rowDbId, teamGroupId: principal.groupId } } });
 }
 async function lockMutation(tx: Tx, input: CollectionActorInput, principal?: PrincipalRefV1) {
     const row = await tx.pluginCollectionRow.findFirst({ where: collectionIdentityWhere(input), select: { id: true } });
@@ -43,11 +43,10 @@ function address(input: PluginCollectionSharingAddressV1) {
 export function listCollectionGrants(actorAccountId: string, input: PluginCollectionSharingAddressV1): Promise<PluginCollectionSharingGrantsResponseV1> {
     return inReadSnapshot(async tx => {
         const { row, access } = await resolveCollectionSharingContextInTx(tx, { ...input, actorAccountId });
-        const [accounts, teams, groups] = await Promise.all([
-            tx.pluginCollectionAccountGrant.findMany({ where: { rowDbId: row.id } }),
-            tx.pluginCollectionTeamGrant.findMany({ where: { rowDbId: row.id }, include: { team: { select: { name: true } } } }),
-            tx.pluginCollectionGroupGrant.findMany({ where: { rowDbId: row.id }, include: { teamGroup: { select: { name: true, teamId: true } } } }),
-        ]);
+        const grants = await tx.pluginCollectionGrant.findMany({ where: { rowDbId: row.id }, include: {
+            team: { select: { name: true } }, teamGroup: { select: { name: true, teamId: true } },
+        } });
+        const { accountGrants: accounts, teamGrants: teams, groupGrants: groups } = projectResourceGrantRows(grants);
         return { ...address(input), access: access.level, grants: [
             ...accounts.map(grant => ({ principal: { kind: 'account' as const, accountId: grant.accountId }, accessLevel: grant.accessLevel,
                 createdByAccountId: grant.createdByAccountId, createdAt: grant.createdAt.getTime(), display: { name: null } })),
@@ -110,12 +109,12 @@ export async function readCollectionResourceRecipientCensusInTx(tx: Tx, input: C
 async function writeGrant(tx: Tx, input: PluginCollectionSharingSetGrantRequestV1, rowDbId: string, actorAccountId: string) {
     const { principal } = input;
     const data = { accessLevel: input.accessLevel, createdByAccountId: actorAccountId };
-    if (principal.kind === 'account') await tx.pluginCollectionAccountGrant.upsert({ where: { rowDbId_accountId: { rowDbId, accountId: principal.accountId } },
-        create: { rowDbId, accountId: principal.accountId, ...data }, update: data });
-    else if (principal.kind === 'team') await tx.pluginCollectionTeamGrant.upsert({ where: { rowDbId_teamId: { rowDbId, teamId: principal.teamId } },
-        create: { rowDbId, teamId: principal.teamId, ...data }, update: data });
-    else await tx.pluginCollectionGroupGrant.upsert({ where: { rowDbId_teamGroupId: { rowDbId, teamGroupId: principal.groupId } },
-        create: { rowDbId, teamGroupId: principal.groupId, ...data }, update: data });
+    if (principal.kind === 'account') await tx.pluginCollectionGrant.upsert({ where: { rowDbId_accountId: { rowDbId, accountId: principal.accountId } },
+        create: { rowDbId, principalKind: 'account', accountId: principal.accountId, ...data }, update: data });
+    else if (principal.kind === 'team') await tx.pluginCollectionGrant.upsert({ where: { rowDbId_teamId: { rowDbId, teamId: principal.teamId } },
+        create: { rowDbId, principalKind: 'team', teamId: principal.teamId, ...data }, update: data });
+    else await tx.pluginCollectionGrant.upsert({ where: { rowDbId_teamGroupId: { rowDbId, teamGroupId: principal.groupId } },
+        create: { rowDbId, principalKind: 'group', teamGroupId: principal.groupId, ...data }, update: data });
 }
 function validEnvelopes(envelopes: readonly ResourceRecipientKeyEnvelopeInputV1[]) {
     if (!validateResourceRecipientKeyEnvelopes(envelopes)) throw new CollectionSharingError('collection_invalid_recipient_envelope');
@@ -176,9 +175,9 @@ export function revokeCollectionGrant(actorAccountId: string, input: PluginColle
         const audience = await resolveCollectionAudienceInTx(tx, rowDbId);
         const principal = input.principal;
         const removed = principal.kind === 'account'
-            ? await tx.pluginCollectionAccountGrant.deleteMany({ where: { rowDbId, accountId: principal.accountId } })
-            : principal.kind === 'team' ? await tx.pluginCollectionTeamGrant.deleteMany({ where: { rowDbId, teamId: principal.teamId } })
-                : await tx.pluginCollectionGroupGrant.deleteMany({ where: { rowDbId, teamGroupId: principal.groupId } });
+            ? await tx.pluginCollectionGrant.deleteMany({ where: { rowDbId, accountId: principal.accountId } })
+            : principal.kind === 'team' ? await tx.pluginCollectionGrant.deleteMany({ where: { rowDbId, teamId: principal.teamId } })
+                : await tx.pluginCollectionGrant.deleteMany({ where: { rowDbId, teamGroupId: principal.groupId } });
         if (removed.count) await publishCollectionSharingChangedInTx(tx, rowDbId, audience);
         return { changed: removed.count > 0 };
     });

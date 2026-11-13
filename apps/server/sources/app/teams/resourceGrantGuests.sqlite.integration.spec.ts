@@ -5,7 +5,7 @@ import {
     ARTIFACT_PLAIN_DATA_KEY_MARKER, CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
     computeContentPublicKeyFingerprint, encodePlainArtifactStoredContent, sealEncryptedDataKeyEnvelopeV1, sealSessionDataKeyBundleV0,
 } from '@happier-dev/protocol';
-import { DiscussionCreateRequestV1Schema } from '@happier-dev/protocol/discussions/api';
+import { DISCUSSION_HTTP_PATHS_V1, DiscussionCreateRequestV1Schema } from '@happier-dev/protocol/discussions/api';
 import { db } from '@/storage/db';
 import { auth } from '@/app/auth/auth';
 import type { Fastify } from '@/app/api/types';
@@ -25,7 +25,7 @@ describe('Team guests at real resource routes (SQLite, real bearer authenticatio
     }, 180_000);
     afterAll(async () => { await harness?.close(); });
 
-    async function fixture(app: Fastify, kind: ResourceKind, encrypted: boolean) {
+    async function fixture(app: Fastify, kind: ResourceKind, encrypted: boolean, seedGrants = true) {
         const account = async () => {
             const row = await db.account.create({ data: encrypted
                 ? { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() }
@@ -78,17 +78,17 @@ describe('Team guests at real resource routes (SQLite, real bearer authenticatio
             }) });
         expect(create.statusCode).toBe(200);
         const id: string = kind === 'artifact' ? artifactId : create.json().discussion.id;
-        if (kind === 'artifact') {
-            await db.artifactTeamGrant.create({ data: { artifactId: id, teamId: team.id, accessLevel: 'edit', createdByAccountId: owner.id } });
-            await db.artifactGroupGrant.create({ data: { artifactId: id, teamGroupId: group.id, accessLevel: 'edit', createdByAccountId: owner.id } });
-            await db.artifactAccountGrant.create({ data: { artifactId: id, accountId: directGuest.id, accessLevel: 'edit', createdByAccountId: owner.id } });
-        } else {
-            await db.discussionTeamGrant.create({ data: { discussionId: id, teamId: team.id, accessLevel: 'edit', createdByAccountId: owner.id } });
-            await db.discussionGroupGrant.create({ data: { discussionId: id, teamGroupId: group.id, accessLevel: 'edit', createdByAccountId: owner.id } });
-            await db.discussionAccountGrant.create({ data: { discussionId: id, accountId: directGuest.id, accessLevel: 'edit', createdByAccountId: owner.id } });
+        if (seedGrants && kind === 'artifact') {
+            await db.artifactGrant.create({ data: { principalKind: 'team', artifactId: id, teamId: team.id, accessLevel: 'edit', createdByAccountId: owner.id } });
+            await db.artifactGrant.create({ data: { principalKind: 'group', artifactId: id, teamGroupId: group.id, accessLevel: 'edit', createdByAccountId: owner.id } });
+            await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: id, accountId: directGuest.id, accessLevel: 'edit', createdByAccountId: owner.id } });
+        } else if (seedGrants) {
+            await db.discussionGrant.create({ data: { principalKind: 'team', discussionId: id, teamId: team.id, accessLevel: 'edit', createdByAccountId: owner.id } });
+            await db.discussionGrant.create({ data: { principalKind: 'group', discussionId: id, teamGroupId: group.id, accessLevel: 'edit', createdByAccountId: owner.id } });
+            await db.discussionGrant.create({ data: { principalKind: 'account', discussionId: id, accountId: directGuest.id, accessLevel: 'edit', createdByAccountId: owner.id } });
         }
         const resourceUrl = kind === 'artifact' ? `/v1/artifacts/${id}` : `/v1/discussions/${id}`;
-        return { id, owner, teamGuest, groupGuest, member, directGuest, ownerEnvelope, wrap, resourceUrl,
+        return { id, owner, teamGuest, groupGuest, member, directGuest, team, group, dataKey, ownerEnvelope, wrap, resourceUrl,
             censusUrl: resourceUrl + (kind === 'artifact' ? '/access/recipients' : '/data-key/recipients'),
             envelopesUrl: resourceUrl + (kind === 'artifact' ? '/access/key-envelopes' : '/data-key/envelopes') };
     }
@@ -125,6 +125,67 @@ describe('Team guests at real resource routes (SQLite, real bearer authenticatio
                 expect(list.statusCode).toBe(200);
                 const rows: { id: string }[] = kind === 'artifact' ? list.json() : list.json().discussions;
                 expect.soft(rows.map(row => row.id)).not.toContain(f.id);
+            }, { authentication: 'real' });
+        });
+
+        it.each([false, true])('creates, changes and revokes explicit guest grants through HTTP (encrypted: %s)', async encrypted => {
+            await withAuthenticatedTestApp(register, async (app: Fastify) => {
+                const f = await fixture(app, kind, encrypted, false);
+                const grantsUrl = kind === 'artifact' ? `${f.resourceUrl}/access/grants`
+                    : DISCUSSION_HTTP_PATHS_V1.grants.replace(':discussionId', f.id);
+                const grant = (principal: { kind: 'account'; accountId: string } | { kind: 'team'; teamId: string }
+                    | { kind: 'group'; teamId: string; groupId: string }, accessLevel?: 'view' | 'edit') => app.inject({
+                    method: accessLevel ? 'PUT' : 'DELETE', url: grantsUrl, headers: f.owner.headers,
+                    payload: { ...(kind === 'artifact' ? { artifactId: f.id } : {}), principal,
+                        ...(accessLevel ? { accessLevel } : {}) },
+                });
+                expect((await grant({ kind: 'team', teamId: f.team.id }, 'edit')).statusCode).toBe(200);
+                expect((await app.inject({ method: 'GET', url: f.resourceUrl, headers: f.teamGuest.headers })).statusCode).toBe(404);
+                const principals = [
+                    { kind: 'group' as const, teamId: f.team.id, groupId: f.group.id },
+                    { kind: 'account' as const, accountId: f.directGuest.id },
+                ];
+                for (const principal of principals) expect((await grant(principal, 'view')).statusCode).toBe(200);
+                if (encrypted) {
+                    const commit = await app.inject({ method: kind === 'artifact' ? 'POST' : 'PUT', url: f.envelopesUrl,
+                        headers: f.owner.headers, payload: { ...(kind === 'artifact' ? { artifactId: f.id } : {}),
+                            expectedDataEncryptionKey: f.ownerEnvelope,
+                            recipientKeyEnvelopes: [f.groupGuest, f.directGuest].map(actor => ({ recipientAccountId: actor.id,
+                                encryptedDataKey: f.wrap(actor), recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(actor.contentPublicKey!) })),
+                        } });
+                    expect(commit.statusCode).toBe(200);
+                }
+                const envelopes = () => kind === 'artifact'
+                    ? db.artifactKeyEnvelope.findMany({ where: { artifactId: f.id }, orderBy: { recipientAccountId: 'asc' } })
+                    : db.discussionKeyEnvelope.findMany({ where: { discussionId: f.id }, orderBy: { recipientAccountId: 'asc' } });
+                const before = await envelopes();
+                let bodyVersion = 1;
+                const edit = async (headers: typeof f.owner.headers) => app.inject({
+                    method: 'POST', url: kind === 'artifact' ? f.resourceUrl : `${f.resourceUrl}/messages`, headers,
+                    payload: kind === 'artifact' ? { body: encrypted
+                        ? privacyKit.encodeBase64(await sealSessionDataKeyBundleV0({ value: 'Guest edit' }, f.dataKey))
+                        : encodePlainArtifactStoredContent({ value: 'Guest edit' }), expectedBodyVersion: bodyVersion }
+                        : { localId: crypto.randomUUID(), content: encrypted ? { t: 'encrypted', c: 'opaque-guest-edit' }
+                            : { t: 'plain', v: { v: 1, parts: [{ t: 'text', text: 'Guest edit' }] } },
+                            ...(encrypted ? { requestEqualityEvidenceV1: { kind: 'e2eeTag', tag: 'C'.repeat(43) } } : {}), mentionedAccountIds: [] },
+                });
+                for (const actor of [f.groupGuest, f.directGuest]) {
+                    expect((await app.inject({ method: 'GET', url: f.resourceUrl, headers: actor.headers })).statusCode).toBe(200);
+                    expect((await edit(actor.headers)).statusCode).not.toBe(200);
+                }
+                for (const principal of principals) expect((await grant(principal, 'edit')).statusCode).toBe(200);
+                for (const actor of [f.groupGuest, f.directGuest]) {
+                    expect((await edit(actor.headers)).statusCode).toBe(200);
+                    bodyVersion++;
+                }
+                expect(await envelopes()).toEqual(before);
+                for (const principal of principals) expect((await grant(principal)).statusCode).toBe(200);
+                for (const actor of [f.teamGuest, f.groupGuest, f.directGuest]) {
+                    expect((await app.inject({ method: 'GET', url: f.resourceUrl, headers: actor.headers })).statusCode).toBe(404);
+                    expect((await edit(actor.headers)).statusCode).not.toBe(200);
+                }
+                // Artifact revoke removes recipient wraps; Discussion keeps its inert wraps for rejoin.
+                expect(await envelopes()).toEqual(kind === 'artifact' ? [] : before);
             }, { authentication: 'real' });
         });
 

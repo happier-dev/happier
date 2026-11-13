@@ -1,3 +1,4 @@
+import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { afterAll, beforeAll, describe, expect, it, onTestFinished } from 'vitest';
 import nacl from 'tweetnacl';
@@ -76,8 +77,7 @@ describe('protected deployment pending storage', () => {
                 : new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey: machineContentKey,
                     recipientPublicKey: accountKey.publicKey, randomBytes: nacl.randomBytes })), installationId,
             installationPublicKey: new Uint8Array(installationKey.publicKey) } });
-        if (team) await db.machineTeamGrant.create({ data: { machineId, teamId: team.id,
-            accessLevel: 'view', createdByAccountId: owner.id } });
+        if (team) await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id }), machineId } });
         if (replayActor) {
             const ownerEnvelope = machine.dataEncryptionKey;
             if (!ownerEnvelope) throw new Error('Expected encrypted Machine owner envelope');
@@ -105,8 +105,7 @@ describe('protected deployment pending storage', () => {
                     body: new Uint8Array(await sealSessionDataKeyBundleV0({ body: JSON.stringify(body) }, contentKey)),
                     dataEncryptionKey: new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey: contentKey,
                         recipientPublicKey: accountKey.publicKey, randomBytes: nacl.randomBytes })) } });
-                if (team) await db.artifactTeamGrant.create({ data: { artifactId: artifact.id, teamId: team.id,
-                    accessLevel: 'admin', createdByAccountId: owner.id } });
+                if (team) await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: owner.id }), artifactId: artifact.id } });
                 if (replayActor) await db.artifactKeyEnvelope.create({ data: { artifactId: artifact.id,
                     recipientAccountId: replayActor.id, recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(replayKey.publicKey),
                     encryptedDataKey: new Uint8Array(sealEncryptedDataKeyEnvelopeV1({ dataKey: contentKey,
@@ -118,8 +117,7 @@ describe('protected deployment pending storage', () => {
                 body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(body) })),
                 dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
             if (!created.ok) throw new Error(created.error);
-            if (team) await db.artifactTeamGrant.create({ data: { artifactId: created.artifact.id, teamId: team.id,
-                accessLevel: 'admin', createdByAccountId: receiptOwner.id } });
+            if (team) await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: receiptOwner.id }), artifactId: created.artifact.id } });
             return { contentArtifactId: created.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
         };
         const environment = createDeploymentEnvironmentV1();
@@ -410,8 +408,7 @@ describe('protected deployment pending storage', () => {
             const replacementController = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id,
                 metadata: machine.metadata, dataEncryptionKey: machine.dataEncryptionKey,
                 installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(nacl.sign.keyPair().publicKey) } });
-            if (team) await db.machineTeamGrant.create({ data: { machineId: replacementController.id, teamId: team.id,
-                accessLevel: 'view', createdByAccountId: owner.id } });
+            if (team) await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id }), machineId: replacementController.id } });
             const transferred = await app.inject({ method: 'POST', url: `${base}/controller`, headers, payload: {
                 serverId, environmentId, expectedRevision: replaced.json().revision, controllerMachineId: replacementController.id,
             } });

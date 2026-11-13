@@ -230,21 +230,21 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("f
 
     it("keeps a surviving Session's authored grants and removes only the erased recipient's grant", async () => {
         const f = await fixture("e2ee");
-        const authored = await db.sessionShare.create({ data: { sessionId: f.session.id,
-            sharedByUserId: f.target.id, sharedWithUserId: f.foreign.id, accessLevel: "edit" } });
-        const received = await db.sessionShare.create({ data: { sessionId: f.session.id,
-            sharedByUserId: f.actor.id, sharedWithUserId: f.target.id, accessLevel: "view" } });
+        const authored = await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: f.session.id,
+            createdByAccountId: f.target.id, accountId: f.foreign.id, accessLevel: "edit" } });
+        const received = await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: f.session.id,
+            createdByAccountId: f.actor.id, accountId: f.target.id, accessLevel: "view" } });
         await withAuthenticatedTestApp(homeGovernanceRoutes, async app => {
             const result = await app.inject({ method: "POST", url: "/v1/home/accounts/delete",
                 headers: { "x-test-user-id": f.actor.id }, payload: { accountId: f.target.id } });
             expect(result.statusCode, result.body).toBe(200);
             expect(HomeAccountDeleteResultV1Schema.parse(result.json())).toEqual({ status: "deleted" });
         });
-        expect(await db.sessionShare.findUnique({ where: { id: authored.id } })).toMatchObject({
-            sessionId: f.session.id, sharedWithUserId: f.foreign.id,
-            sharedByUserId: f.actor.id, accessLevel: "edit",
+        expect(await db.sessionGrant.findUnique({ where: { principalKind: 'account', id: authored.id } })).toMatchObject({
+            sessionId: f.session.id, accountId: f.foreign.id,
+            createdByAccountId: f.actor.id, accessLevel: "edit",
         });
-        expect(await db.sessionShare.findUnique({ where: { id: received.id } })).toBeNull();
+        expect(await db.sessionGrant.findUnique({ where: { principalKind: 'account', id: received.id } })).toBeNull();
         expect(await db.account.findUnique({ where: { id: f.target.id } })).toBeNull();
     });
 
@@ -305,30 +305,30 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("f
     it.each(["creator", "recipient"] as const)("finishes after a foreign Session's share %s is erased while its owner removes that share", async erasedRole => {
         const f = await fixture();
         // A retained grant may outlive its creator's own access to the Session.
-        const share = await db.sessionShare.create({ data: { sessionId: f.session.id,
-            sharedByUserId: erasedRole === "creator" ? f.target.id : f.actor.id,
-            sharedWithUserId: erasedRole === "creator" ? f.foreign.id : f.target.id, accessLevel: "view" } });
+        const share = await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: f.session.id,
+            createdByAccountId: erasedRole === "creator" ? f.target.id : f.actor.id,
+            accountId: erasedRole === "creator" ? f.foreign.id : f.target.id, accessLevel: "view" } });
         const transaction = db.$transaction.bind(db);
         let removed = false;
         db.$transaction = new Proxy(transaction, { apply(owner, receiver, args: unknown[]) {
             const callback = args[0];
             if (typeof callback !== "function") return Reflect.apply(owner, receiver, args);
             return Reflect.apply(owner, receiver, [async (tx: Tx) => {
-                const shares = new Proxy(tx.sessionShare, { get(owner, property, delegateReceiver) {
+                const grants = new Proxy(tx.sessionGrant, { get(owner, property, delegateReceiver) {
                     const operation = Reflect.get(owner, property, delegateReceiver);
                     if (property !== "findMany") return operation;
-                    return async (query: Parameters<typeof tx.sessionShare.findMany>[0]) => {
+                    return async (query: Parameters<typeof tx.sessionGrant.findMany>[0]) => {
                         const rows = await owner.findMany(query);
                         if (!removed && rows.some(row => row.id === share.id)
-                            && query?.where?.session && query?.select?.session) {
+                            && query?.select?.session) {
                             removed = true;
-                            await db.sessionShare.delete({ where: { id: share.id } });
+                            await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
                         }
                         return rows;
                     };
                 } });
                 return callback(new Proxy(tx, { get(owner, property, proxyReceiver) {
-                    return property === "sessionShare" ? shares : Reflect.get(owner, property, proxyReceiver);
+                    return property === "sessionGrant" ? grants : Reflect.get(owner, property, proxyReceiver);
                 } }));
             }, ...args.slice(1)]);
         } });

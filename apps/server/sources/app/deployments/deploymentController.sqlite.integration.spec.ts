@@ -1,3 +1,4 @@
+import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
@@ -182,8 +183,7 @@ describe('storage-only Environment controller assignment', () => {
         const environment = await db.deploymentEnvironment.create({ data: { projectSourceId: source.source.id,
             createdByAccountId: owner.id, protection: 'production', purpose: 'standard', deployerMode: 'managers',
             controllerMachineId: first.id, contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 } });
-        await db.machineTeamGrant.create({ data: { machineId: first.id, teamId: team.id,
-            accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id }), machineId: first.id } });
         await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
             const url = `/v1/deployments/environments/${environment.id}/controller`;
             const headers = { 'x-test-user-id': owner.id };
@@ -193,11 +193,10 @@ describe('storage-only Environment controller assignment', () => {
             expect(unavailable.json()).toMatchObject({ ok: false, error: 'machine_unavailable', effectAttempted: false,
                 diagnostic: { reason: 'source_machine_access_missing', requiredFact: 'source_machine_use',
                     remedy: 'share_machine_with_source_owner' } });
-            await db.machineTeamGrant.create({ data: { machineId: next.id, teamId: team.id,
-                accessLevel: 'view', createdByAccountId: owner.id } });
+            await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id }), machineId: next.id } });
             expect((await app.inject({ method: 'POST', url, headers, payload: input })).json())
                 .toEqual({ ok: true, environmentId: environment.id, revision: 2 });
-            await db.machineTeamGrant.deleteMany({ where: { machineId: next.id, teamId: team.id } });
+            await db.machineGrant.deleteMany({ where: { principalKind: 'team', machineId: next.id, teamId: team.id } });
             const retainedPlacement = await app.inject({ method: 'POST', url, headers, payload: { ...input, expectedRevision: 2 } });
             expect(retainedPlacement.statusCode).toBe(503);
             expect(retainedPlacement.json()).toMatchObject({ ok: false, error: 'machine_unavailable',

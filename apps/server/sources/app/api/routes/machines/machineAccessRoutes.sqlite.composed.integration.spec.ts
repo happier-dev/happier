@@ -288,7 +288,7 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
 
     it('keeps fresh shared-content refusal and access withdrawal in the host-facts projection', async () => {
         const { owner, recipient, machine } = await fixture();
-        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: recipient.id,
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id, accountId: recipient.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         await withAuthenticatedTestApp(machinesRoutes, async app => {
             const read = (compact: boolean) => app.inject({ method: 'GET', url: `/v1/machines/${machine.id}`,
@@ -306,9 +306,9 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
                 expect(refused.statusCode, refused.body).toBe(200);
                 expect(refused.json()).toMatchObject({ machine: { access: { accessState: 'key_pending' } } });
             }
-            await db.machineAccountGrant.deleteMany({ where: { machineId: machine.id, accountId: recipient.id } });
+            await db.machineGrant.deleteMany({ where: { principalKind: 'account', machineId: machine.id, accountId: recipient.id } });
             expect((await read(true)).statusCode).toBe(404);
-            await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: recipient.id,
+            await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id, accountId: recipient.id,
                 accessLevel: 'view', createdByAccountId: owner.id } });
             await db.machine.update({ where: { id: machine.id }, data: { metadata: machine.metadata } });
             expect((await read(true)).json()).toMatchObject({ machine: { access: { accessState: 'ready' } } });
@@ -386,7 +386,7 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
         const { owner, recipient, machine } = await fixture();
         const offline = await db.machine.create({ data: { ...machine, id: `machine-${randomUUID()}` } });
         await db.machine.update({ where: { id: machine.id }, data: { revokedAt: new Date(), active: false } });
-        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: recipient.id,
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id, accountId: recipient.id,
             accessLevel: 'view', createdByAccountId: owner.id } });
         await withAuthenticatedTestApp(machinesRoutes, async app => {
             const list = await app.inject({ method: 'GET', url: '/v1/machines', headers: headers(owner.id) });
@@ -431,7 +431,7 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
                 expect(response.statusCode, response.body).toBe(200);
                 expect(MachineAccessMutationResultV1Schema.parse(response.json()), response.body)
                     .toMatchObject({ kind: 'saved', grant: { machineId: machine.id, principal, level }, readiness: 'ready' });
-                expect(await db.machineAccountGrant.findUniqueOrThrow({ where: { machineId_accountId: {
+                expect(await db.machineGrant.findUniqueOrThrow({ where: { principalKind: 'account', machineId_accountId: {
                     machineId: machine.id, accountId: recipient.id,
                 } } })).toMatchObject({ accessLevel: level });
             }
@@ -597,7 +597,7 @@ describe('Machine accessible discovery and access HTTP (SQLite)', () => {
             const stream = Reflect.get(logger, symbols.streamSym) as DestinationStream;
             const sink = vi.spyOn(stream, 'write').mockImplementation(chunk => { records.push(JSON.parse(String(chunk))); });
             try {
-                await db.$executeRawUnsafe(`CREATE TRIGGER qb106_reject_downgrade BEFORE UPDATE ON MachineAccountGrant
+                await db.$executeRawUnsafe(`CREATE TRIGGER qb106_reject_downgrade BEFORE UPDATE ON MachineGrant
                     WHEN NEW.accessLevel = 'view' BEGIN SELECT RAISE(ABORT, 'private-fixture-failure'); END`);
                 const failed = await revert();
                 expect(failed.statusCode).toBe(500);

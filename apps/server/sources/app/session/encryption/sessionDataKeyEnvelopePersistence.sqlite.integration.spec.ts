@@ -72,7 +72,7 @@ describe("Session data-key envelope persistence (SQLite integration)", () => {
         await harness.resetDbTables([
             () => db.accountChange.deleteMany(),
             () => db.sessionDataKeyEnvelope.deleteMany(),
-            () => db.sessionShare.deleteMany(),
+            () => db.sessionGrant.deleteMany({ where: { principalKind: 'account' } }),
             () => db.session.deleteMany(),
             () => db.userRelationship.deleteMany(),
             () => db.account.deleteMany(),
@@ -280,7 +280,7 @@ describe("Session data-key envelope persistence (SQLite integration)", () => {
 
         // No half-applied state: the recipient must not end up authorized with a
         // key they can never open.
-        expect(await db.sessionShare.count()).toBe(0);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'account' } })).toBe(0);
         expect(await db.sessionDataKeyEnvelope.count({ where: { recipientAccountId: recipient.id } })).toBe(0);
     });
 

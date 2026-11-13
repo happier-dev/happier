@@ -160,7 +160,7 @@ describe('Second opinion source admission (SQLite)', () => {
         const admittedPreview = DiscussionSecondOpinionPreviewResponseV1Schema.parse({ ok: true, value: preview.result.preview });
         if (!admittedPreview.ok) throw new Error('Expected admitted preview facts');
         expect(resolveDiscussionSecondOpinionSourceGrantsV1(admittedPreview.value)).toEqual({ ok: true, accountIds: [reader.id] });
-        expect(await db.sessionShare.count({ where: { sessionId: source.id } })).toBe(0);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId: source.id } })).toBe(0);
         expect(await inTx(tx => readCommittedSessionMessageInTx(tx, { accountId: reader.id, authentication,
             sessionId: source.id, messageId: answer.id }))).toMatchObject({ row: null });
         const ask = { ...request, intent: 'ask', confirmedPreview: preview.result.preview };
@@ -169,7 +169,7 @@ describe('Second opinion source admission (SQLite)', () => {
             await db.userRelationship.deleteMany({ where: { fromUserId: owner.id, toUserId: reader.id, status: 'friend' } });
             expect(await executor.execute('discussion.second_opinion.start', ask, context))
                 .toMatchObject({ ok: true, result: { status: 'pending', stage: 'grant', errorCode: 'discussion_subject_ineligible', grantedAccountIds: [] } });
-            expect(await db.sessionShare.count({ where: { sessionId: source.id } })).toBe(0);
+            expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId: source.id } })).toBe(0);
             expect(await db.discussion.count({ where: { creationLocalId: request.retry.creationLocalId } })).toBe(0);
             await db.userRelationship.create({ data: { fromUserId: owner.id, toUserId: reader.id, status: 'friend' } });
         }
@@ -179,7 +179,7 @@ describe('Second opinion source admission (SQLite)', () => {
         expect(await inTx(tx => readCommittedSessionMessageInTx(tx, { accountId: reader.id, authentication,
             sessionId: source.id, messageId: answer.id }))).toMatchObject({ row: { id: answer.id, content: { t: 'plain', v: { text: 'Private answer' } } } });
         expect(await executor.execute('discussion.second_opinion.start', ask, context)).toMatchObject({ ok: true, result: { status: 'asked' } });
-        expect(await db.sessionShare.count({ where: { sessionId: source.id, sharedWithUserId: reader.id } })).toBe(1);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId: source.id, accountId: reader.id } })).toBe(1);
         expect(await db.discussionMessage.count({ where: { discussion: { creationLocalId: request.retry.creationLocalId } } })).toBe(2);
     });
     it('opens the E2EE source as the previewed person only after the explicit canonical grant stores their sealed key', async () => {
@@ -203,7 +203,7 @@ describe('Second opinion source admission (SQLite)', () => {
             missingDiscussionSourceAccountIds: [reader.id] } });
         if (!preview.ok) throw new Error(preview.error);
         expect(resolveDiscussionSecondOpinionSourceGrantsV1(preview.value)).toEqual({ ok: true, accountIds: [reader.id] });
-        expect(await db.sessionShare.count({ where: { sessionId: source.id } })).toBe(0);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId: source.id } })).toBe(0);
         expect(await inTx(tx => readCommittedSessionMessageInTx(tx, { accountId: reader.id, authentication,
             sessionId: source.id, messageId: answer.id }))).toMatchObject({ row: null });
         const grant = await inTx(tx => putSessionAccessGrantInTx(tx, { actorAccountId: owner.id, authentication,
@@ -237,8 +237,8 @@ describe('Second opinion source admission (SQLite)', () => {
         const { owner, reader, source, answer } = await fixture();
         const person = await db.account.create({ data: { encryptionMode: 'plain' } });
         await db.userRelationship.create({ data: { fromUserId: reader.id, toUserId: person.id, status: 'friend' } });
-        await db.sessionShare.create({ data: { sessionId: source.id, sharedByUserId: owner.id,
-            sharedWithUserId: reader.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: source.id, createdByAccountId: owner.id,
+            accountId: reader.id, accessLevel: 'view' } });
         const reviewer = await db.session.create({ data: { accountId: reader.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
         const preview = await previewDiscussionSecondOpinion({ authentication, actorAccountId: reader.id, request: {
             source: { kind: 'session', message: { kind: 'session', session: { serverId: 'home', sessionId: source.id }, messageId: answer.id } },
@@ -249,7 +249,7 @@ describe('Second opinion source admission (SQLite)', () => {
             missingDiscussionSourceAccountIds: [person.id] } });
         if (!preview.ok) throw new Error(preview.error);
         expect(resolveDiscussionSecondOpinionSourceGrantsV1(preview.value)).toEqual({ ok: false, errorCode: 'discussion_access_forbidden' });
-        expect(await db.sessionShare.count({ where: { sessionId: source.id, sharedWithUserId: person.id } })).toBe(0);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId: source.id, accountId: person.id } })).toBe(0);
     });
 
     it('does not promise a repairable source grant when the reviewer has a public audience', async () => {
@@ -273,7 +273,7 @@ describe('Second opinion source admission (SQLite)', () => {
         if (!preview.ok) throw new Error(preview.error);
         expect(resolveDiscussionSecondOpinionSourceGrantsV1(preview.value)).toEqual({ ok: false, errorCode: 'discussion_access_forbidden' });
         expect(preview.value.reviewers[0]?.disclosure).toEqual({ ok: false, reason: 'destination_public' });
-        expect(await db.sessionShare.count({ where: { sessionId: source.id } })).toBe(0);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId: source.id } })).toBe(0);
     });
 
     it('previews the actual reviewer audience even for quote-only without grants, content or allocation', async () => {
@@ -281,12 +281,12 @@ describe('Second opinion source admission (SQLite)', () => {
         // The reviewer audience must stay a person the owner cannot newly share the source with.
         await db.userRelationship.deleteMany({ where: { fromUserId: owner.id, toUserId: reader.id } });
         const reviewer = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
-        await db.sessionShare.create({ data: { sessionId: reviewer.id, sharedByUserId: owner.id, sharedWithUserId: reader.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: reviewer.id, createdByAccountId: owner.id, accountId: reader.id, accessLevel: 'view' } });
         const sourceRef = { kind: 'session' as const, message: { kind: 'session' as const,
             session: { serverId: 'home', sessionId: source.id }, messageId: answer.id } };
         const request = { source: sourceRef, publisherSessionId: reviewer.id, reviewers: [{ selection: { kind: 'session' as const,
             session: { serverId: 'home', sessionId: reviewer.id } }, sourceAccess: 'quote_only' as const }] };
-        const counts = await Promise.all([db.session.count(), db.discussion.count(), db.sessionShare.count()]);
+        const counts = await Promise.all([db.session.count(), db.discussion.count(), db.sessionGrant.count({ where: { principalKind: 'account' } })]);
         const preview = await previewDiscussionSecondOpinion({ authentication, actorAccountId: owner.id, request });
         expect(DiscussionSecondOpinionPreviewResponseV1Schema.safeParse(preview).success).toBe(true);
         expect(preview).toMatchObject({ ok: true, value: { sourceContentReady: true,
@@ -296,8 +296,8 @@ describe('Second opinion source admission (SQLite)', () => {
             missingSourceAccountIds: [reader.id], canGrantSource: false, sourceAccess: 'quote_only',
             disclosure: { ok: false, reason: 'destination_audience_broader' } }] } });
         expect(JSON.stringify(preview)).not.toContain('Private answer');
-        expect(await Promise.all([db.session.count(), db.discussion.count(), db.sessionShare.count()])).toEqual(counts);
-        await db.sessionShare.create({ data: { sessionId: source.id, sharedByUserId: owner.id, sharedWithUserId: reader.id, accessLevel: 'view' } });
+        expect(await Promise.all([db.session.count(), db.discussion.count(), db.sessionGrant.count({ where: { principalKind: 'account' } })])).toEqual(counts);
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: source.id, createdByAccountId: owner.id, accountId: reader.id, accessLevel: 'view' } });
         expect(await previewDiscussionSecondOpinion({ authentication, actorAccountId: owner.id, request }))
             .toMatchObject({ ok: true, value: { publisher: { sessionId: reviewer.id, disclosure: { ok: true } },
                 reviewers: [{ missingSourceAccountIds: [], canGrantSource: true, disclosure: { ok: true } }] } });
@@ -313,7 +313,7 @@ describe('Second opinion source admission (SQLite)', () => {
     });
     it('lets a source-reading Discussion editor ask an invited reviewer without acquiring control of its Session', async () => {
         const { owner, reader, source, request } = await fixture();
-        await db.sessionShare.create({ data: { sessionId: source.id, sharedByUserId: owner.id, sharedWithUserId: reader.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: source.id, createdByAccountId: owner.id, accountId: reader.id, accessLevel: 'view' } });
         const created = await createDiscussion({ authentication, actorAccountId: owner.id, request });
         if (!created.ok) throw new Error(created.error);
         const discussionId = created.value.discussion.id;
@@ -379,8 +379,8 @@ describe('Second opinion source admission (SQLite)', () => {
         expect(await db.sessionDataKeyEnvelope.count({ where: { sessionId: source.id } })).toBe(0);
         expect(await previewDiscussionSecondOpinion({ authentication, actorAccountId: owner.id, request }))
             .toMatchObject({ ok: true, value: { sourceContentReady: true } });
-        await db.sessionShare.create({ data: { sessionId: source.id, sharedByUserId: owner.id,
-            sharedWithUserId: reader.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: source.id, createdByAccountId: owner.id,
+            accountId: reader.id, accessLevel: 'view' } });
         expect(await previewDiscussionSecondOpinion({ authentication, actorAccountId: reader.id, request }))
             .toMatchObject({ ok: true, value: { sourceContentReady: false } });
         await db.sessionDataKeyEnvelope.create({ data: { sessionId: source.id, recipientAccountId: owner.id,
@@ -409,7 +409,7 @@ describe('Second opinion source admission (SQLite)', () => {
     });
     it.each([false, true])('addresses only selected reviewers for an Agent question about its own quote (explicit self mention: %s)', async explicitSelfMention => {
         const { owner, reader, source, request } = await fixture();
-        await db.sessionShare.create({ data: { sessionId: source.id, sharedByUserId: owner.id, sharedWithUserId: reader.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: source.id, createdByAccountId: owner.id, accountId: reader.id, accessLevel: 'view' } });
         const producer = { v: 1 as const, kind: 'agent' as const, sessionId: source.id };
         const created = await createDiscussion({ authentication, actorAccountId: owner.id, request, producer });
         if (!created.ok) throw new Error(created.error);
@@ -430,7 +430,7 @@ describe('Second opinion source admission (SQLite)', () => {
     });
     it.each([false, true])('refuses a reviewer share added after admission (new reader has source access: %s)', async sourceAccess => {
         const { owner, reader, source, answer, request } = await fixture();
-        await db.sessionShare.create({ data: { sessionId: source.id, sharedByUserId: owner.id, sharedWithUserId: reader.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: source.id, createdByAccountId: owner.id, accountId: reader.id, accessLevel: 'view' } });
         const created = await createDiscussion({ authentication, actorAccountId: owner.id, request });
         if (!created.ok) throw new Error(created.error);
         const discussionId = created.value.discussion.id;
@@ -438,8 +438,8 @@ describe('Second opinion source admission (SQLite)', () => {
         expect(await inviteDiscussionParticipant({ authentication, actorAccountId: owner.id, discussionId,
             request: { participant: { kind: 'session', sessionId: reviewer.id } } })).toMatchObject({ ok: true });
         const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
-        if (sourceAccess) await db.sessionShare.create({ data: { sessionId: source.id, sharedByUserId: owner.id,
-            sharedWithUserId: outsider.id, accessLevel: 'view' } });
+        if (sourceAccess) await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: source.id, createdByAccountId: owner.id,
+            accountId: outsider.id, accessLevel: 'view' } });
         const preview = await previewDiscussionSecondOpinion({ authentication, actorAccountId: owner.id, request: {
             source: { kind: 'session', message: { kind: 'session', session: { serverId: 'home', sessionId: source.id }, messageId: answer.id } },
             participants: [{ kind: 'account', accountId: reader.id }],
@@ -448,8 +448,8 @@ describe('Second opinion source admission (SQLite)', () => {
         expect(preview).toMatchObject({ ok: true, value: { discussionDisclosure: { ok: true },
             missingDiscussionSourceAccountIds: [], reviewers: [{ disclosure: { ok: true }, missingSourceAccountIds: [] }] } });
         // The post must re-admit the actual Session audience, not rely on this successful preview or invite.
-        await db.sessionShare.create({ data: { sessionId: reviewer.id, sharedByUserId: owner.id,
-            sharedWithUserId: outsider.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: reviewer.id, createdByAccountId: owner.id,
+            accountId: outsider.id, accessLevel: 'view' } });
         const content = { v: 1 as const, parts: [{ t: 'mention' as const, participant: { kind: 'session' as const, sessionId: reviewer.id } },
             { t: 'text' as const, text: 'Check this answer' }] };
         const post = buildDiscussionMutationRequestBodyV1({ kind: 'post', localId: crypto.randomUUID(),
@@ -464,14 +464,14 @@ describe('Second opinion source admission (SQLite)', () => {
     });
     it('rechecks source disclosure on invite and addressed post, withholding the deleted source quote while retaining independent chat', async () => {
         const { owner, reader, source, request } = await fixture();
-        const share = await db.sessionShare.create({ data: { sessionId: source.id, sharedByUserId: owner.id, sharedWithUserId: reader.id, accessLevel: 'view' } });
+        const share = await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: source.id, createdByAccountId: owner.id, accountId: reader.id, accessLevel: 'view' } });
         const created = await createDiscussion({ authentication, actorAccountId: owner.id, request });
         if (!created.ok) throw new Error(created.error);
         const discussionId = created.value.discussion.id;
         const reviewer = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
         expect(await inviteDiscussionParticipant({ authentication, actorAccountId: owner.id, discussionId,
             request: { participant: { kind: 'session', sessionId: reviewer.id } } })).toMatchObject({ ok: true });
-        await db.sessionShare.delete({ where: { id: share.id } });
+        await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
         const content = { v: 1 as const, parts: [{ t: 'mention' as const, participant: { kind: 'session' as const, sessionId: reviewer.id } },
             { t: 'text' as const, text: 'Check this answer' }] };
         const post = buildDiscussionMutationRequestBodyV1({ kind: 'post', localId: crypto.randomUUID(),
@@ -496,12 +496,12 @@ describe('Second opinion source admission (SQLite)', () => {
     });
     it.each(['session', 'message'] as const)('invites into the retained Discussion after its source %s is deleted without granting source access', async deleted => {
         const { owner, reader, source, answer, request } = await fixture();
-        const share = await db.sessionShare.create({ data: { sessionId: source.id, sharedByUserId: owner.id, sharedWithUserId: reader.id, accessLevel: 'view' } });
+        const share = await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: source.id, createdByAccountId: owner.id, accountId: reader.id, accessLevel: 'view' } });
         const created = await createDiscussion({ authentication, actorAccountId: owner.id, request });
         if (!created.ok) throw new Error(created.error);
         const discussionId = created.value.discussion.id;
         const reviewer = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
-        await db.sessionShare.create({ data: { sessionId: reviewer.id, sharedByUserId: owner.id, sharedWithUserId: reader.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: reviewer.id, createdByAccountId: owner.id, accountId: reader.id, accessLevel: 'view' } });
         const invite = () => inviteDiscussionParticipant({ authentication, actorAccountId: owner.id, discussionId,
             request: { participant: { kind: 'session', sessionId: reviewer.id } } });
         const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
@@ -509,7 +509,7 @@ describe('Second opinion source admission (SQLite)', () => {
         const grant = () => inviteDiscussionParticipant({ authentication, actorAccountId: owner.id, discussionId,
             request: { participant: { kind: 'account', accountId: outsider.id } } });
         // A live private source still requires explicit access for the new audience.
-        await db.sessionShare.delete({ where: { id: share.id } });
+        await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
         expect(await invite()).toEqual({ ok: false, error: 'discussion_access_forbidden' });
         expect(await grant()).toEqual({ ok: false, error: 'discussion_access_forbidden' });
         expect(await setDiscussionGrant({ authentication, actorAccountId: owner.id, discussionId,
@@ -534,7 +534,7 @@ describe('Second opinion source admission (SQLite)', () => {
         expect(await db.discussionParticipant.count({ where: { discussionId, sessionId: reviewer.id } })).toBe(1);
         expect(await db.sessionFollowEdge.findFirst({ where: { sourceDiscussionId: discussionId, destinationSessionId: reviewer.id } }))
             .toMatchObject({ sourceSessionId: null, deliveredTranscriptSeq: 1 });
-        expect(await db.sessionShare.count({ where: { sessionId: source.id } })).toBe(0);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId: source.id } })).toBe(0);
         expect(await db.discussionMessage.count({ where: { discussionId } })).toBe(1);
         expect(await createDiscussion({ authentication, actorAccountId: owner.id, request }))
             .toEqual({ ok: false, error: 'discussion_content_unavailable' });

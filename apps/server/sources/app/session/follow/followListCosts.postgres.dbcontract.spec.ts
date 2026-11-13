@@ -205,36 +205,43 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Follow list dem
         expect(exact.value.follows).toHaveLength(1);
         expect(exact.value.follows[0]).toMatchObject({ source: f.runSource });
     });
-    it('excludes access revoked after capture, retaining a continuation across an emptied page', async () => {
+    it('finishes an admitted list after access withdrawal and excludes rows on the next request', async () => {
         const f = await fixture();
         const viewer = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         accounts.push(viewer.id);
-        await db.sessionShare.create({ data: { sessionId: f.selected, sharedByUserId: f.accountId, sharedWithUserId: viewer.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: f.selected, createdByAccountId: f.accountId, accountId: viewer.id, accessLevel: 'view' } });
         await db.accountSessionFollow.create({ data: { accountId: viewer.id, sessionId: f.selected, following: true } });
         await db.accountSessionFollow.create({ data: { accountId: viewer.id, sourceKey: sourceKeyForSessionFollowSourceV1(f.runSource),
             sourceExecutionRunSessionId: f.selected, sourceExecutionRunId: f.runSource.runId, followPolicy: '{"preset":"important"}' } });
         const input = { accountId: viewer.id, authentication, source: { kind: 'session' as const, sessionId: f.selected }, limit: 1 };
         const measured = await measure(() => listAccountSessionFollows(input), async () => {
-            await db.sessionShare.deleteMany({ where: { sessionId: f.selected, sharedWithUserId: viewer.id } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: f.selected, accountId: viewer.id } });
         });
-        expect(measured.result).toMatchObject({ ok: true, value: { follows: [], continuation: expect.any(String) } });
-        await db.sessionShare.createMany({ data: [f.selected, f.destinationSessionId].map(sessionId => ({ sessionId,
-            sharedByUserId: f.accountId, sharedWithUserId: viewer.id, accessLevel: 'view' })) });
+        expect(measured.result).toMatchObject({ ok: true, value: { follows: [expect.objectContaining({
+            source: f.runSource,
+        })], continuation: expect.any(String) } });
+        expect(await listAccountSessionFollows(input)).toMatchObject({ ok: true, value: { follows: [] } });
+        await db.sessionGrant.createMany({ data: ([f.selected, f.destinationSessionId].map(sessionId => ({ sessionId,
+            createdByAccountId: f.accountId, accountId: viewer.id, accessLevel: 'view' }))).map(data => ({ ...data, principalKind: 'account' })) });
         await db.sessionFollowEdge.create({ data: { sourceKey: sourceKeyForSessionFollowSourceV1(f.runSource),
             sourceExecutionRunSessionId: f.selected, sourceExecutionRunId: f.runSource.runId,
             destinationSessionId: f.destinationSessionId, policyJson: '{"preset":"important"}' } });
         const sources = await measure(() => listSessionFollowSources({ ...input, destinationSessionId: f.destinationSessionId }), async () => {
-            await db.sessionShare.deleteMany({ where: { sessionId: f.selected, sharedWithUserId: viewer.id } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: f.selected, accountId: viewer.id } });
         });
-        expect(sources.result).toMatchObject({ ok: true, value: { sources: [], continuation: expect.any(String) } });
+        expect(sources.result).toMatchObject({ ok: true, value: { sources: [expect.objectContaining({
+            source: f.runSource,
+        })], continuation: expect.any(String) } });
+        expect(await listSessionFollowSources({ ...input, destinationSessionId: f.destinationSessionId }))
+            .toMatchObject({ ok: true, value: { sources: [] } });
     });
     it('does not disclose an unadmitted source identity through the candidate continuation', async () => {
         const f = await fixture();
         const viewer = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         accounts.push(viewer.id);
         const firstSourceId = [f.selected, f.another].sort()[0]!;
-        await db.sessionShare.create({ data: { sessionId: f.destinationSessionId,
-            sharedByUserId: f.accountId, sharedWithUserId: viewer.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: f.destinationSessionId,
+            createdByAccountId: f.accountId, accountId: viewer.id, accessLevel: 'view' } });
         const page = await listSessionFollowSources({ accountId: viewer.id, authentication,
             destinationSessionId: f.destinationSessionId, limit: 1 });
         expect(page).toMatchObject({ ok: true, value: { sources: [], continuation: expect.any(String) } });

@@ -190,8 +190,8 @@ describe("Session listing predicate composition (SQLite)", () => {
         } });
         const shared = await create(randomUUID());
         const foreign = await create(randomUUID());
-        await db.sessionShare.create({ data: {
-            sessionId: shared.id, sharedByUserId: owner.id, sharedWithUserId: viewer.id, accessLevel: "view",
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: shared.id, createdByAccountId: owner.id, accountId: viewer.id, accessLevel: "view",
         } });
         return { viewer, owner, shared, foreign };
     }
@@ -217,10 +217,10 @@ describe("Session listing predicate composition (SQLite)", () => {
         const response = findV2SessionListRows(input);
         try {
             expect(await Promise.race([reached.then(() => 'barrier'), response.then(() => 'response')])).toBe('barrier');
-            await db.sessionShare.delete({ where: { sessionId_sharedWithUserId: { sessionId: shared.id, sharedWithUserId: viewer.id } } });
+            await db.sessionGrant.delete({ where: { principalKind: 'account', sessionId_accountId: { sessionId: shared.id, accountId: viewer.id } } });
             // A concurrently admitted row must not replace or broaden the captured page.
             const replacement = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
-            await db.sessionShare.create({ data: { sessionId: replacement.id, sharedByUserId: owner.id, sharedWithUserId: viewer.id, accessLevel: 'view' } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: replacement.id, createdByAccountId: owner.id, accountId: viewer.id, accessLevel: 'view' } });
             resume();
             const result = await response;
             expect((await findV2SessionListRows(input)).map(row => row.id)).toEqual([replacement.id]);
@@ -292,7 +292,7 @@ describe("Session listing predicate composition (SQLite)", () => {
             metadataLayoutVersion: 1, ownerMetadata: '{"t":"plain","v":{"v":1}}',
             meaningfulActivityAt: new Date(2_000),
         } });
-        await db.sessionTeamGrant.create({ data: { sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date() } });
+        await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date() } });
 
         const rows = await findV2SessionListRows({
             userId: viewer.id,
@@ -426,8 +426,8 @@ describe("Session listing predicate composition (SQLite)", () => {
         await db.teamMembership.create({
             data: { teamId: team.id, accountId: viewer.id, role: "member" },
         });
-        await db.sessionTeamGrant.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'team',
                 sessionId: shared.id,
                 teamId: team.id,
                 accessLevel: "view",
@@ -474,12 +474,10 @@ describe("Session listing predicate composition (SQLite)", () => {
             "sessionAttentionStanding",
             "discussion",
             "discussionMessage",
-            "sessionGroupGrant",
             "sessionMessage",
             "sessionPin",
-            "sessionShare",
+            "sessionGrant",
             "sessionTagAssignment",
-            "sessionTeamGrant",
             "teamGroupMembership",
             "teamMembership",
         ] as const;
@@ -527,7 +525,7 @@ describe("Session listing predicate composition (SQLite)", () => {
                 "account.findUnique",
                 "session.findMany",
                 "discussion.findMany",
-                "sessionShare.findMany",
+                "sessionGrant.findMany",
                 "teamMembership.findMany",
             ]));
         } finally {
@@ -603,16 +601,16 @@ describe("Session listing predicate composition (SQLite)", () => {
                     meaningfulActivityAt,
                 },
             });
-            await db.sessionShare.create({
-                data: {
+            await db.sessionGrant.create({
+                data: { principalKind: 'account',
                     sessionId: session.id,
-                    sharedByUserId: owner.id,
-                    sharedWithUserId: viewer.id,
+                    createdByAccountId: owner.id,
+                    accountId: viewer.id,
                     accessLevel: "view",
                 },
             });
-            await db.sessionTeamGrant.create({
-                data: {
+            await db.sessionGrant.create({
+                data: { principalKind: 'team',
                     sessionId: session.id,
                     teamId: team.id,
                     accessLevel: "view",
@@ -632,7 +630,7 @@ describe("Session listing predicate composition (SQLite)", () => {
         const sparseMatch = await createMatch(new Date(1_000));
         const continuationMatch = await createMatch(new Date(500));
         const outsideAudience = await createMatch(new Date(1_500));
-        await db.sessionTeamGrant.deleteMany({ where: { sessionId: outsideAudience.id } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'team', sessionId: outsideAudience.id } });
         await db.session.createMany({
             data: Array.from({ length: 205 }, (_, index) => ({
                 accountId: viewer.id,
@@ -728,7 +726,7 @@ describe("Session listing predicate composition (SQLite)", () => {
             sessionId: session.id,
             lastViewedSessionSeq: 4,
         } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id,
             teamId: team.id,
             accessLevel: "view",
@@ -883,8 +881,8 @@ describe("Session listing predicate composition (SQLite)", () => {
 
     it("keeps Session attention tracked and counts unread Discussions independently without duplicating counted anchors", async () => {
         const { viewer, owner, shared, foreign } = await fixture();
-        await db.sessionShare.create({ data: {
-            sessionId: foreign.id, sharedByUserId: owner.id, sharedWithUserId: viewer.id, accessLevel: "view",
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: foreign.id, createdByAccountId: owner.id, accountId: viewer.id, accessLevel: "view",
         } });
         // Only `shared` contributes Session attention. Each granted Discussion
         // has its own private unread state, independently of Session Follow.
@@ -940,7 +938,7 @@ describe("Session listing predicate composition (SQLite)", () => {
         // Losing Session access removes its attention row, while both granted
         // Discussions remain unread. Follow and private cursors survive so a
         // later Session re-share can restore its attention without losing state.
-        await db.sessionShare.deleteMany({ where: { sessionId: shared.id, sharedWithUserId: viewer.id } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: shared.id, accountId: viewer.id } });
         expect((await createV2SessionAttentionPage({ authentication,  userId: viewer.id, where, candidateLimit: 50 })).rows).toEqual([]);
         expect((await computeAccountActivityBadgeCounts([viewer.id])).get(viewer.id)).toBe(2);
         expect(await loadSessionViewerProjection({ authentication,  accountId: viewer.id, sessionId: shared.id })).toBeNull();
@@ -950,8 +948,8 @@ describe("Session listing predicate composition (SQLite)", () => {
         expect(await db.discussionReadState.count({
             where: { accountId: viewer.id, discussionId: tracked.id },
         })).toBe(1);
-        await db.sessionShare.create({ data: {
-            sessionId: shared.id, sharedByUserId: owner.id, sharedWithUserId: viewer.id, accessLevel: "edit",
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: shared.id, createdByAccountId: owner.id, accountId: viewer.id, accessLevel: "edit",
         } });
         expect((await computeAccountActivityBadgeCounts([viewer.id])).get(viewer.id)).toBe(2);
 
@@ -990,7 +988,7 @@ describe("Session listing predicate composition (SQLite)", () => {
             sessionIds.push(session.id);
             if (value.expected) expected.push(session.id);
             if (value.expectedBadge ?? value.expected) expectedBadge.push(session.id);
-            await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: viewer.id, accessLevel: "view" } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id, accountId: viewer.id, accessLevel: "view" } });
             await db.accountSessionFollow.create({ data: { sessionId: session.id, accountId: viewer.id, following: value.follows !== false, followPolicy: JSON.stringify({ preset: "important" }) } });
             await db.accountSessionReadState.create({ data: { sessionId: session.id, accountId: viewer.id, lastViewedSessionSeq: value.cursor ?? 0 } });
             if (value.standing) await db.sessionAttentionStanding.create({ data: { sessionId: session.id, accountId: viewer.id, standing: true } });
@@ -1143,18 +1141,18 @@ describe("Session listing predicate composition (SQLite)", () => {
                 metadataLayoutVersion: 1, ownerMetadata: '{"t":"plain","v":{"v":1}}',
                 meaningfulActivityAt: new Date(10_000 + index),
             } });
-            await db.sessionShare.create({ data: {
-                sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: viewer.id, accessLevel: "view",
+            await db.sessionGrant.create({ data: { principalKind: 'account',
+                sessionId: session.id, createdByAccountId: owner.id, accountId: viewer.id, accessLevel: "view",
             } });
             sessionIds.push(session.id);
         }
         const effectiveAt = new Date("2026-09-01T12:00:00.000Z");
-        await db.sessionTeamGrant.createMany({ data: sessionIds
+        await db.sessionGrant.createMany({ data: (sessionIds
             .filter((_, index) => index % 2 === 0)
-            .map((sessionId) => ({ sessionId, teamId: team.id, accessLevel: "view", effectiveAt })) });
-        await db.sessionGroupGrant.createMany({ data: sessionIds
+            .map((sessionId) => ({ sessionId, teamId: team.id, accessLevel: "view", effectiveAt }))).map(data => ({ ...data, principalKind: 'team' })) });
+        await db.sessionGrant.createMany({ data: (sessionIds
             .filter((_, index) => index % 2 === 1)
-            .map((sessionId) => ({ sessionId, teamGroupId: group.id, accessLevel: "view", effectiveAt })) });
+            .map((sessionId) => ({ sessionId, teamGroupId: group.id, accessLevel: "view", effectiveAt }))).map(data => ({ ...data, principalKind: 'group' })) });
 
         const measurePage = async (limit: number) => {
             const counts = new Map<string, number>();
@@ -1200,9 +1198,7 @@ describe("Session listing predicate composition (SQLite)", () => {
         // reads into one query per Session (or even one per distinct owner).
         expect(twoHundred.counts.get("account.findMany") ?? 0).toBeLessThan(owners.length);
         expect(twoHundred.counts.get("discussionMessage.findMany") ?? 0).toBeLessThan(owners.length);
-        expect(twoHundred.counts.get("sessionShare.findMany")).toBe(1);
-        expect(twoHundred.counts.get("sessionTeamGrant.findMany")).toBe(1);
-        expect(twoHundred.counts.get("sessionGroupGrant.findMany")).toBe(1);
+        expect(twoHundred.counts.get("sessionGrant.findMany")).toBe(1);
         // Awareness is transcript-free: no preview read and no message decrypt.
         expect([...twoHundred.counts.keys()].filter((key) => key.startsWith("sessionMessage."))).toEqual([]);
 
@@ -1220,8 +1216,8 @@ describe("Session listing predicate composition (SQLite)", () => {
     it("applies the same base before ordinary, pin and attention limits", async () => {
         const { viewer, owner, shared, foreign } = await fixture();
         // Both rows are readable; only one belongs to this base selection.
-        await db.sessionShare.create({ data: {
-            sessionId: foreign.id, sharedByUserId: owner.id, sharedWithUserId: viewer.id, accessLevel: "view",
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: foreign.id, createdByAccountId: owner.id, accountId: viewer.id, accessLevel: "view",
         } });
         await db.session.updateMany({ where: { id: { in: [shared.id, foreign.id] } }, data: {
             pendingPermissionRequestCount: 1,

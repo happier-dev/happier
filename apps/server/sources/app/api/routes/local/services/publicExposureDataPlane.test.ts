@@ -31,7 +31,7 @@ vi.mock("@/storage/db", async () => {
             metadata: encodePlainMachineStoredContent({}), daemonState: null,
             dataEncryptionKey: Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64'),
             installationId: 'installation_1', active: true, revokedAt: null, replacedByMachineId: null,
-            accountGrants: [], teamGrants: [], groupGrants: [],
+            grants: [],  
         }] : []
     ));
     storage.db.session.findUnique.mockImplementation(async (query: { where: { id: string } }) => ({

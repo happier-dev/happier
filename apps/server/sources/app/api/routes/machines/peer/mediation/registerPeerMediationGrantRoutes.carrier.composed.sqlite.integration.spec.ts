@@ -52,7 +52,7 @@ describe('Home route issuance consumed by the production workspace carrier', () 
         } })));
         const source = machines[0]!;
         const target = machines[1]!;
-        if (sharedTarget) await db.machineAccountGrant.create({ data: {
+        if (sharedTarget) await db.machineGrant.create({ data: { principalKind: 'account',
             machineId: target.id, accountId: account.id, accessLevel: 'admin', createdByAccountId: targetCustodian.id,
         } });
         const home = Fastify().withTypeProvider<ZodTypeProvider>();
@@ -120,10 +120,10 @@ describe('Home route issuance consumed by the production workspace carrier', () 
                 if (sharedTarget) {
                     // Transport-only issuance still needs the requester's current
                     // Machine admission; a withdrawn share mints nothing.
-                    await db.machineAccountGrant.deleteMany({ where: { machineId: target.id, accountId: account.id } });
+                    await db.machineGrant.deleteMany({ where: { principalKind: 'account', machineId: target.id, accountId: account.id } });
                     await expect(api.mintPeerMediationRouteGrant(mintedRequests.at(-1))).rejects.toMatchObject({
                         code: 'peer_unavailable', reasonCode: expect.any(String) });
-                    await db.machineAccountGrant.create({ data: {
+                    await db.machineGrant.create({ data: { principalKind: 'account',
                         machineId: target.id, accountId: account.id, accessLevel: 'admin', createdByAccountId: targetCustodian.id,
                     } });
                 }

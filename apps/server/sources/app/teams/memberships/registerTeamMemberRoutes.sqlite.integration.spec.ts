@@ -176,8 +176,8 @@ describe("Team member and Group routes (SQLite integration)", () => {
         })).statusCode).toBe(200);
         const session = await db.session.create({ data: {
             accountId: ownerAccountId, tag: crypto.randomUUID(), encryptionMode: "plain", metadata: "{}",
-            teamGrants: { create: { teamId, accessLevel: "view", effectiveAt: new Date(0) } },
-            groupGrants: { create: { teamGroupId: group.json().id, accessLevel: "view", effectiveAt: new Date(0) } },
+            grants: { create: [{ principalKind: 'team',  teamId, accessLevel: "view", effectiveAt: new Date(0)  }, { principalKind: 'group',  teamGroupId: group.json().id, accessLevel: "view", effectiveAt: new Date(0)  }] },
+            
         } });
         const access = () => resolveEffectiveSessionAccess(db, {
             sessionId: session.id, accountId: person.id,
@@ -568,7 +568,7 @@ describe("Team member and Group routes (SQLite integration)", () => {
             metadata: JSON.stringify({ t: "encrypted", c: "" }),
             seq: 1,
         } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: teamSession.id,
             teamId: team.id,
             accessLevel: "view",
@@ -581,7 +581,7 @@ describe("Team member and Group routes (SQLite integration)", () => {
             metadata: JSON.stringify({ t: "encrypted", c: "" }),
             seq: 1,
         } });
-        await db.sessionGroupGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'group',
             sessionId: groupSession.id,
             teamGroupId: group.id,
             accessLevel: "view",

@@ -65,7 +65,7 @@ describe("personal event recipients", () => {
                     publication: mutation.effects.accountCursors.get(reader.id),
                     event: projectReleasedDirectShareEvent({ recipientAccountId: reader.id, effects: mutation.effects,
                         directShare: mutation.directShare, directShareRemoved: false }),
-                    sharedByUser: null,
+                    createdBy: null,
                 });
                 throw new Error("rollback-personal-event");
             })).rejects.toThrow("rollback-personal-event");
@@ -112,7 +112,7 @@ describe("personal event recipients", () => {
         } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: reader.id, role: "member" } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain" } });
-        await db.sessionTeamGrant.create({ data: { sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date(0) } });
+        await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date(0) } });
         expect(await inTx(tx => resolveSessionAccessForOperation(tx, {
             accountId: reader.id, sessionId: session.id,
             authentication: { env: process.env, authority: "present_user", authenticationEvidence: [{ kind: "home_method", methodId: "key_challenge" }] },
@@ -232,9 +232,9 @@ describe("personal event recipients", () => {
         const reader = await db.account.create({ data: { publicKey: randomUUID() } });
         const follower = await db.account.create({ data: { publicKey: randomUUID() } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: "{}" } });
-        await db.sessionShare.createMany({ data: [reader, follower].map(account => ({
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: account.id, accessLevel: "view" as const,
-        })) });
+        await db.sessionGrant.createMany({ data: ([reader, follower].map(account => ({
+            sessionId: session.id, createdByAccountId: owner.id, accountId: account.id, accessLevel: "view" as const,
+        }))).map(data => ({ ...data, principalKind: 'account' })) });
         await db.accountSessionFollow.create({ data: { sessionId: session.id, accountId: follower.id, following: true, followPolicy: JSON.stringify({ preset: "important" }) } });
         expect((await listSessionPersonalEventRecipients({ sessionId: session.id, event: "ready" })).map(row => row.accountId).sort())
             .toEqual([owner.id, follower.id].sort());
@@ -255,7 +255,7 @@ describe("personal event recipients", () => {
         for (const candidate of contentFreeCandidates) expect(candidate.follow).toEqual({
             event: { kind: 'finished' }, policies: [{ preset: 'important' }],
         });
-        await db.sessionShare.deleteMany({ where: { sessionId: session.id, sharedWithUserId: follower.id } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session.id, accountId: follower.id } });
         expect((await listSessionPersonalEventRecipients({ sessionId: session.id, event: "ready" })).map(row => row.accountId))
             .toEqual([owner.id]);
         await db.account.update({ where: { id: owner.id }, data: { status: "suspended" } });
@@ -266,8 +266,8 @@ describe("personal event recipients", () => {
         const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         const [muted, other] = await Promise.all([0, 1].map(() => db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } })));
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
-        await db.sessionShare.createMany({ data: [muted, other].map(account => ({ sessionId: session.id,
-            sharedByUserId: owner.id, sharedWithUserId: account.id, accessLevel: 'view' as const })) });
+        await db.sessionGrant.createMany({ data: ([muted, other].map(account => ({ sessionId: session.id,
+            createdByAccountId: owner.id, accountId: account.id, accessLevel: 'view' as const }))).map(data => ({ ...data, principalKind: 'account' })) });
         await db.accountSessionFollow.createMany({ data: [muted, other].map(account => ({ sessionId: session.id,
             accountId: account.id, following: true, followPolicy: JSON.stringify({ preset: "important" }) })) });
         const before = await listSessionPersonalEventRecipients({ sessionId: session.id, event: 'ready' });
@@ -304,11 +304,11 @@ describe("personal event recipients", () => {
             { teamId: inheritTeam.id, accountId: inheritFollower.id, role: "member" as const },
         ] });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: "{}" } });
-        await db.sessionTeamGrant.createMany({ data: [restrictedTeam, inheritTeam].map(team => ({
+        await db.sessionGrant.createMany({ data: ([restrictedTeam, inheritTeam].map(team => ({
             sessionId: session.id, teamId: team.id, accessLevel: "view" as const, effectiveAt: new Date(0),
-        })) });
-        await db.sessionShare.create({ data: {
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: directFollower.id, accessLevel: "view",
+        }))).map(data => ({ ...data, principalKind: 'team' })) });
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: session.id, createdByAccountId: owner.id, accountId: directFollower.id, accessLevel: "view",
         } });
         await db.accountSessionFollow.createMany({ data: [restrictedFollower, inheritFollower, directFollower].map(account => ({
             sessionId: session.id, accountId: account.id, following: true, followPolicy: JSON.stringify({ preset: "important" }),
@@ -349,11 +349,11 @@ describe("personal event recipients", () => {
             { teamId: restrictedTeam.id, accountId: restrictedFollower.id, role: "member" as const },
         ] });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: "{}" } });
-        await db.sessionTeamGrant.createMany({ data: [inheritTeam, restrictedTeam].map(team => ({
+        await db.sessionGrant.createMany({ data: ([inheritTeam, restrictedTeam].map(team => ({
             sessionId: session.id, teamId: team.id, accessLevel: "view" as const, effectiveAt: new Date(0),
-        })) });
-        await db.sessionShare.create({ data: {
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: directFollower.id, accessLevel: "view",
+        }))).map(data => ({ ...data, principalKind: 'team' })) });
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: session.id, createdByAccountId: owner.id, accountId: directFollower.id, accessLevel: "view",
         } });
 
         let sessionRowReads = 0;

@@ -73,7 +73,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('H
         })) });
         const team = await db.team.create({ data: { name: 'Scoped search contract' } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: viewer.id, role: 'member' } });
-        await db.sessionTeamGrant.create({ data: { sessionId: selected.id, teamId: team.id,
+        await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: selected.id, teamId: team.id,
             accessLevel: 'view', effectiveAt: new Date() } });
         const authentication = createPresentUserSessionAccessAuthentication();
         const originalTransaction = db.$transaction;

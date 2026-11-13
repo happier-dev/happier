@@ -31,9 +31,9 @@ async function contentAuthorityFailure(tx: Tx, artifact: AdmittedArtifact, owner
     // still require the incumbent owning Account's Artifact.
     const ownsContent = owner.kind === 'account' ? artifact.ownerAccountId === owner.accountId
         || expectedStoredKind === DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1
-            && (ownerControlsContent ?? await tx.artifactAccountGrant.findFirst({ where: { artifactId: artifact.id,
+            && (ownerControlsContent ?? await tx.artifactGrant.findFirst({ where: { principalKind: 'account', artifactId: artifact.id,
                 accountId: owner.accountId, accessLevel: 'admin' }, select: { artifactId: true } }) !== null)
-        : ownerControlsContent ?? await tx.artifactTeamGrant.findFirst({ where: { artifactId: artifact.id, teamId: owner.teamId,
+        : ownerControlsContent ?? await tx.artifactGrant.findFirst({ where: { principalKind: 'team', artifactId: artifact.id, teamId: owner.teamId,
             accessLevel: 'admin', team: { archivedAt: null } }, select: { artifactId: true } }) !== null;
     return projectDeploymentStoredContentAuthority(artifact, owner, expectedStoredKind, access, ownsContent);
 }
@@ -79,8 +79,8 @@ export async function admitDeploymentStoredContentsInTx(tx: Tx, actorAccountId: 
         .map(item => [item.artifactId, item.read]));
     const ownerControlled = new Set<string>();
     if (owner.kind === 'team') {
-        for (const artifactIds of portableQueryChunks({ values: ids, bindingsPerValue: 1, fixedBindings: 3 })) {
-            const grants = await tx.artifactTeamGrant.findMany({ where: { artifactId: { in: [...artifactIds] },
+        for (const artifactIds of portableQueryChunks({ values: ids, bindingsPerValue: 1, fixedBindings: 4 })) {
+            const grants = await tx.artifactGrant.findMany({ where: { principalKind: 'team', artifactId: { in: [...artifactIds] },
                 teamId: owner.teamId, accessLevel: 'admin', team: { archivedAt: null } }, select: { artifactId: true } });
             for (const grant of grants) ownerControlled.add(grant.artifactId);
         }
@@ -90,8 +90,8 @@ export async function admitDeploymentStoredContentsInTx(tx: Tx, actorAccountId: 
             return input.expectedStoredKind === DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1
                 && read?.ok && read.artifact.ownerAccountId !== owner.accountId;
         }).map(input => input.reference.contentArtifactId))];
-        for (const artifactIds of portableQueryChunks({ values: receiptIds, bindingsPerValue: 1, fixedBindings: 2 })) {
-            const grants = await tx.artifactAccountGrant.findMany({ where: { artifactId: { in: [...artifactIds] },
+        for (const artifactIds of portableQueryChunks({ values: receiptIds, bindingsPerValue: 1, fixedBindings: 3 })) {
+            const grants = await tx.artifactGrant.findMany({ where: { principalKind: 'account', artifactId: { in: [...artifactIds] },
                 accountId: owner.accountId, accessLevel: 'admin' }, select: { artifactId: true } });
             for (const grant of grants) ownerControlled.add(grant.artifactId);
         }

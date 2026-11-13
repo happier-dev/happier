@@ -71,7 +71,7 @@ describe("authRoutes (Account erasure) (integration)", () => {
             () => db.sessionShareAccessLog.deleteMany(),
             () => db.publicShareAccessLog.deleteMany(),
             () => db.sessionDataKeyEnvelope.deleteMany(),
-            () => db.sessionShare.deleteMany(),
+            () => db.sessionGrant.deleteMany({ where: { principalKind: 'account' } }),
             () => db.publicSessionShare.deleteMany(),
             () => db.session.deleteMany(),
             () => db.teamMembership.deleteMany(),
@@ -121,19 +121,19 @@ describe("authRoutes (Account erasure) (integration)", () => {
             { sessionId: surviving.id, recipientAccountId: author.id, encryptedDataKey: Buffer.from(sealFor(author.contentPublicKey, survivingDataKey)) },
             { sessionId: owned.id, recipientAccountId: recipient.id, encryptedDataKey: Buffer.from(sealFor(recipient.contentPublicKey, tweetnacl.randomBytes(32))) },
         ] });
-        const authored = await db.sessionShare.create({ data: {
-            sessionId: surviving.id, sharedByUserId: author.id, sharedWithUserId: recipient.id,
+        const authored = await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: surviving.id, createdByAccountId: author.id, accountId: recipient.id,
             accessLevel: "edit", canApprovePermissions: true,
         } });
-        await db.sessionShare.create({ data: {
-            sessionId: surviving.id, sharedByUserId: owner.id, sharedWithUserId: author.id, accessLevel: "admin",
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: surviving.id, createdByAccountId: owner.id, accountId: author.id, accessLevel: "admin",
         } });
         const team = await db.team.create({ data: { name: "Erased Session recipients" } });
         await db.teamMembership.createMany({ data: [
             { teamId: team.id, accountId: recipient.id, role: "owner" },
             { teamId: team.id, accountId: author.id, role: "member" },
         ] });
-        await db.sessionTeamGrant.create({ data: { sessionId: owned.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date() } });
+        await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: owned.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date() } });
         const retainedLog = await db.sessionShareAccessLog.create({ data: { sessionShareId: authored.id, userId: recipient.id } });
         await db.sessionShareAccessLog.create({ data: { sessionShareId: authored.id, userId: author.id } });
         const publicShare = await db.publicSessionShare.create({ data: {
@@ -174,8 +174,8 @@ describe("authRoutes (Account erasure) (integration)", () => {
         } });
 
         await expect(deleteAccountForErasure({ accountId: author.id })).resolves.toEqual({ status: "deleted" });
-        await expect.soft(db.sessionShare.findUnique({ where: { id: authored.id } })).resolves.toMatchObject({
-            sharedByUserId: owner.id, sharedWithUserId: recipient.id, accessLevel: "edit",
+        await expect.soft(db.sessionGrant.findUnique({ where: { principalKind: 'account', id: authored.id } })).resolves.toMatchObject({
+            createdByAccountId: owner.id, accountId: recipient.id, accessLevel: "edit",
             canApprovePermissions: true, createdAt: authored.createdAt,
         });
         const preservedEnvelope = await db.sessionDataKeyEnvelope.findUnique({
@@ -185,7 +185,7 @@ describe("authRoutes (Account erasure) (integration)", () => {
         expect.soft(preservedEnvelope && Uint8Array.from(preservedEnvelope.encryptedDataKey)).toEqual(Uint8Array.from(recipientEnvelope));
         await expect.soft(db.sessionDataKeyEnvelope.count({ where: { recipientAccountId: author.id } })).resolves.toBe(0);
         await expect.soft(db.sessionDataKeyEnvelope.count({ where: { sessionId: owned.id } })).resolves.toBe(0);
-        await expect(db.sessionShare.count({ where: { sharedWithUserId: author.id } })).resolves.toBe(0);
+        await expect(db.sessionGrant.count({ where: { principalKind: 'account', accountId: author.id } })).resolves.toBe(0);
         await expect(db.session.findUnique({ where: { id: owned.id } })).resolves.toBeNull();
         await expect(db.account.findUnique({ where: { id: author.id } })).resolves.toBeNull();
         await expect(db.discussion.findUnique({ where: { id: retainedDiscussion.id } })).resolves.toMatchObject({
@@ -221,14 +221,14 @@ describe("authRoutes (Account erasure) (integration)", () => {
             accountId: owner.id, responsibleAccountId: assignee.id, tag: "assigned", metadata: "{}",
             encryptionMode: "plain", currentStorageState: "hosted",
         } });
-        await db.sessionTeamGrant.create({ data: { sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date() } });
+        await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date() } });
 
         await expect(deleteAccountForErasure({ accountId: assignee.id })).resolves.toEqual({ status: "deleted" });
         await expect(db.session.findUnique({ where: { id: session.id } })).resolves.toMatchObject({ responsibleAccountId: null });
         await expect(db.accountChange.findFirst({ where: { accountId: owner.id, kind: "session", entityId: session.id } })).resolves.toMatchObject({
             hint: { responsibleAccountId: null },
         });
-        await expect(db.sessionTeamGrant.count({ where: { sessionId: session.id } })).resolves.toBe(1);
+        await expect(db.sessionGrant.count({ where: { principalKind: 'team', sessionId: session.id } })).resolves.toBe(1);
     });
 
     it("requires present-user authority and exact confirmation, then deletes only that Account", async () => {

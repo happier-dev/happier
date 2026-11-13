@@ -150,7 +150,7 @@ describe("Membership session data-key envelope history (SQLite)", () => {
         options: Readonly<{ callerEnvelope?: "valid" | "invalid" | "absent" }> = {},
     ): Promise<Granted> {
         const session = await e2eeSession(manager.id);
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date(),
         } });
         const dataKey = tweetnacl.randomBytes(32);
@@ -264,7 +264,7 @@ describe("Membership session data-key envelope history (SQLite)", () => {
             sessionAccessStartsAt: null,
         } });
         const session = await e2eeSession(manager.id);
-        await db.sessionGroupGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'group',
             sessionId: session.id,
             teamGroupId: group.id,
             accessLevel: "view",
@@ -316,7 +316,7 @@ describe("Membership session data-key envelope history (SQLite)", () => {
         const { manager, team, subject } = await history();
         const stranger = await e2eeAccount();
         const hidden = await e2eeSession(stranger.id);
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: hidden.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date(),
         } });
         // The stranger's own tuple exists; the manager still learns nothing about it.
@@ -350,7 +350,7 @@ describe("Membership session data-key envelope history (SQLite)", () => {
             accountId: manager.id, tag: crypto.randomUUID(), encryptionMode: "plain",
             metadata: JSON.stringify({ t: "plain", v: {} }), seq: 1,
         } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: plain.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date(),
         } });
 
@@ -371,11 +371,11 @@ describe("Membership session data-key envelope history (SQLite)", () => {
         // envelope is structurally unusable: ordinary repair, not a legacy claim.
         const peer = await e2eeAccount();
         const repair = await e2eeSession(peer.id);
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: repair.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date(),
         } });
-        await db.sessionShare.create({ data: {
-            sessionId: repair.id, sharedByUserId: peer.id, sharedWithUserId: manager.id, accessLevel: "admin",
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: repair.id, createdByAccountId: peer.id, accountId: manager.id, accessLevel: "admin",
         } });
         await db.sessionDataKeyEnvelope.create({ data: {
             sessionId: repair.id, recipientAccountId: manager.id, encryptedDataKey: Buffer.from(malformedEnvelope()),
@@ -408,11 +408,11 @@ describe("Membership session data-key envelope history (SQLite)", () => {
 
         const peer = await e2eeAccount();
         const peerOwned = await e2eeSession(peer.id);
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: peerOwned.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date(),
         } });
-        await db.sessionShare.create({ data: {
-            sessionId: peerOwned.id, sharedByUserId: peer.id, sharedWithUserId: manager.id, accessLevel: "admin",
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: peerOwned.id, createdByAccountId: peer.id, accountId: manager.id, accessLevel: "admin",
         } });
         await db.sessionDataKeyEnvelope.createMany({ data: [
             {
@@ -532,7 +532,7 @@ describe("Membership session data-key envelope history (SQLite)", () => {
 
         // The membership must lose access entirely for the write to stop for that reason.
         await db.teamMembership.update({ where: { id: targetMembershipId }, data: { accountId: target.id } });
-        await db.sessionTeamGrant.deleteMany({ where: { sessionId: second.sessionId } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'team', sessionId: second.sessionId } });
         expect(await patch({ recipientAccountId: target.id, entries: [
             { sessionId: second.sessionId, encryptedDataKey: sealedFor(second.dataKey) },
         ] })).toEqual({ ok: false, error: "forbidden" });
@@ -644,7 +644,7 @@ describe("Membership session data-key envelope history (SQLite)", () => {
                 teamMembershipId: targetMembershipId,
                 sessionAccessStartsAt: null,
             } });
-            await db.sessionGroupGrant.create({ data: {
+            await db.sessionGrant.create({ data: { principalKind: 'group',
                 sessionId: granted.sessionId,
                 teamGroupId: group.id,
                 accessLevel: "view",

@@ -69,7 +69,7 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
             active: true, pluginMaterializationRevision: 1n, operationProtocolCapabilitiesRevision: 1,
             operationProtocolCapabilities: MachineOperationProtocolCapabilitiesV1Schema.parse({ externalActionExecutionAuthorization: { protocolVersions: [1] } }) } });
         // Controller Manage reaches its native resources; Use does not.
-        await db.machineAccountGrant.create({ data: { machineId: controller.machineId, accountId: viewer.id,
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: controller.machineId, accountId: viewer.id,
             createdByAccountId: account.id, accessLevel: 'admin' } });
         const manifest = await seedBundledManagedAvailability(account.id, homeId, controller);
         const definition = manifest.contributes?.machineProvisioners?.find(entry => entry.id === 'lima');
@@ -196,7 +196,8 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
             const wrongJob = { ...reportBody, requestId: randomUUID() };
             const mismatched = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/report', payload: wrongJob,
                 headers: reportHeaders(wrongJob) });
-            expect(mismatched.statusCode, mismatched.body).toBe(401);
+            expect(mismatched.statusCode, mismatched.body).toBe(409);
+            expect(mismatched.json()).toMatchObject({ code: 'request_conflict' });
             expect(await db.managedMachine.findUniqueOrThrow({ where: { id: admitted.machine.id } }))
                 .toMatchObject({ allocation: 'may-exist', resource: null });
             const before = await db.account.findMany({ where: { id: { in: [account.id, viewer.id] } }, select: { id: true, seq: true } });
@@ -234,9 +235,16 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
             let controlled = installed.machine;
             const controlActor = withdrawal === 'machine-grant'
                 ? await db.account.create({ data: { encryptionMode: 'plain' } }) : account;
-            for (const intent of ['stop', 'delete'] as const) {
+            await db.managedMachine.update({ where: { id: controlled.id }, data: {
+                observation: { observedAt: 1, availability: 'present', power: 'running' },
+            } });
+            // This real Lima declaration admits Start/Stop/Delete. Resume and
+            // Suspend are exercised by the controller fixture that supports them.
+            const intents = withdrawal === 'signed-credential'
+                ? ['start', 'stop', 'delete'] as const : ['stop', 'delete'] as const;
+            for (const intent of intents) {
                 const actionId = intent === 'delete' ? 'machines.managed.delete' : 'machines.managed.power.set';
-                if (withdrawal === 'machine-grant') await db.machineAccountGrant.create({ data: {
+                if (withdrawal === 'machine-grant') await db.machineGrant.create({ data: { principalKind: 'account',
                     machineId: controller.machineId, accountId: controlActor.id, createdByAccountId: account.id, accessLevel: 'admin',
                 } });
                 const controlApiToken = withdrawal === 'signed-credential' || withdrawal === 'machine-grant' ? undefined : await auth.createApiToken({
@@ -273,12 +281,12 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
                 };
                 const observation = intent === 'delete'
                     ? { observedAt: Date.now(), availability: 'absent' }
-                    : { observedAt: Date.now(), availability: 'present', power: 'stopped' };
+                    : { observedAt: Date.now(), availability: 'present', power: intent === 'start' ? 'running' : 'stopped' };
                 const controlReport = { ...correlation, result: { kind: 'confirmed' }, observation };
                 expect(await controlClient.post('/v1/machines/managed/controller/submit-intent', correlation,
                     ManagedControllerSubmitOutputV1Schema)).toMatchObject({ submitted: true });
-                if (withdrawal === 'machine-grant') await db.machineAccountGrant.deleteMany({
-                    where: { machineId: controller.machineId, accountId: controlActor.id },
+                if (withdrawal === 'machine-grant') await db.machineGrant.deleteMany({
+                    where: { principalKind: 'account', machineId: controller.machineId, accountId: controlActor.id },
                 });
                 else if (!controlApiToken) await auth.signOutEverywhere(account.id);
                 else if (withdrawal === 'api-token') await auth.revokeApiToken({ accountId: account.id, tokenId: controlApiToken.tokenId });
@@ -305,6 +313,15 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
                         id: controlled.id, submittedNativeEffect: { requestId: controlRequestId },
                     } });
                 }
+                // An independent Inspect can settle custody before the original
+                // native command reports its newer outcome. Both are facts of
+                // this admitted request, including after credential withdrawal.
+                const inspected = await signedPost({ ...controlReport, result: { kind: 'unknown' }, observation: {
+                    ...observation, observedAt: observation.observedAt - 1,
+                    ...(intent === 'delete' ? {} : { power: intent === 'stop' ? 'running' : 'stopped' }),
+                } });
+                expect(inspected.statusCode, inspected.body).toBe(200);
+                expect(ManagedControllerMachineOutputV1Schema.parse(inspected.json()).machine.submittedNativeEffect).toBeUndefined();
                 const settled = await signedPost(controlReport);
                 expect(settled.statusCode, settled.body).toBe(200);
                 controlled = ManagedControllerMachineOutputV1Schema.parse(settled.json()).machine;
@@ -312,6 +329,12 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
                 expect(controlled.submittedNativeEffect).toBeUndefined();
                 expect(await db.managedMachine.findUniqueOrThrow({ where: { id: controlled.id } }))
                     .toMatchObject({ allocation: intent === 'delete' ? 'confirmed-absent' : 'bound', observation });
+                const repeated = await signedPost(controlReport);
+                expect(repeated.statusCode, repeated.body).toBe(200);
+                expect(ManagedControllerMachineOutputV1Schema.parse(repeated.json()).machine).toMatchObject({ observation });
+                const stale = await signedPost({ ...controlReport, observation: { ...observation, observedAt: observation.observedAt - 2 } });
+                expect(stale.statusCode, stale.body).toBe(200);
+                expect(ManagedControllerMachineOutputV1Schema.parse(stale.json()).machine).toMatchObject({ observation });
             }
         } finally { restoreHttp(); await app.close(); }
     }, 120_000);

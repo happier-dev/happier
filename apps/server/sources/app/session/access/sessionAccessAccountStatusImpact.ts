@@ -42,7 +42,7 @@ export interface SessionAccessAccountStatusEffects {
 async function resolveAccountStatusAffectedSessionIdsInTx(tx: Tx, accountId: string): Promise<string[]> {
     const [owned, shares, memberships] = await Promise.all([
         tx.session.findMany({ where: { accountId }, select: { id: true } }),
-        tx.sessionShare.findMany({ where: { sharedWithUserId: accountId }, select: { sessionId: true } }),
+        tx.sessionGrant.findMany({ where: { principalKind: 'account', accountId: accountId }, select: { sessionId: true } }),
         tx.teamMembership.findMany({ where: { accountId }, select: { id: true, teamId: true } }),
     ]);
     const changes: SessionAccessMembershipChange[] = memberships.map(member => ({ kind: "teamRole", teamId: member.teamId }));

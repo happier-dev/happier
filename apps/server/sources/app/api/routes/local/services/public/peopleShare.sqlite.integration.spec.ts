@@ -191,7 +191,7 @@ describe('people Service preview share through real routes (SQLite)', () => {
 
         // B has no grant or admission on machine_a; Team membership is the whole decision.
         expect(
-          await db.machineAccountGrant.count({ where: { accountId: b.id } }),
+          await db.machineGrant.count({ where: { principalKind: 'account', accountId: b.id } }),
         ).toBe(0);
         const admitted = await admit(b.headers);
         expect(admitted.statusCode).toBe(200);

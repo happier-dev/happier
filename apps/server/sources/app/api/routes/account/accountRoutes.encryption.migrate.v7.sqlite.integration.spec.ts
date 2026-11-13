@@ -1781,11 +1781,11 @@ describe("account encryption migration .7 SQLite matrix", () => {
             select: { id: true },
         });
         await Promise.all(sessions.map((session) =>
-            db.sessionShare.create({
-                data: {
+            db.sessionGrant.create({
+                data: { principalKind: 'account',
                     sessionId: session.id,
-                    sharedByUserId: account.id,
-                    sharedWithUserId:
+                    createdByAccountId: account.id,
+                    accountId:
                         sharedRecipient.id,
                     accessLevel: "view",
                 },
@@ -2708,11 +2708,11 @@ describe("account encryption migration .7 SQLite matrix", () => {
             })
             : null;
         if (editor) {
-            await db.sessionShare.create({
-                data: {
+            await db.sessionGrant.create({
+                data: { principalKind: 'account',
                     sessionId: active.id,
-                    sharedByUserId: fixture.account.id,
-                    sharedWithUserId: editor.id,
+                    createdByAccountId: fixture.account.id,
+                    accountId: editor.id,
                     accessLevel: "edit",
                 },
             });

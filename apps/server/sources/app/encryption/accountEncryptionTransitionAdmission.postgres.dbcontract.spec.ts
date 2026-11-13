@@ -123,9 +123,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         const sessions = await Promise.all(accounts.map(account => db.session.create({ data: {
             accountId: account.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain",
         }, select: { id: true } })));
-        for (let index = 0; index < accounts.length; index++) await db.sessionShare.create({ data: {
-            sessionId: sessions[index].id, sharedByUserId: accounts[index].id,
-            sharedWithUserId: accounts[1 - index].id,
+        for (let index = 0; index < accounts.length; index++) await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: sessions[index].id, createdByAccountId: accounts[index].id,
+            accountId: accounts[1 - index].id,
         } });
         const firstEntered = deferred();
         const secondStarted = deferred();
@@ -169,7 +169,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("A
         } finally {
             releaseFirst.resolve();
             const outcomes = [...await first, ...await second];
-            await db.sessionShare.deleteMany({ where: { sessionId: { in: sessions.map(session => session.id) } } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: { in: sessions.map(session => session.id) } } });
             await db.accountChange.deleteMany({ where: { accountId: { in: accounts.map(account => account.id) } } });
             await db.session.deleteMany({ where: { id: { in: sessions.map(session => session.id) } } });
             await db.account.deleteMany({ where: { id: { in: accounts.map(account => account.id) } } });

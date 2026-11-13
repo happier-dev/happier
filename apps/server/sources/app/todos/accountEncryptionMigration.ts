@@ -19,14 +19,14 @@ export interface TaskAccountEncryptionMigrationRow {
 export async function readTaskAccountEncryptionMigrationRowsInTx(tx: Tx, accountId: string): Promise<readonly TaskAccountEncryptionMigrationRow[]> {
     const rows = await tx.userKVStore.findMany({ where: { accountId, key: { startsWith: 'todo.' }, value: { not: null } },
         orderBy: { key: 'asc' }, select: { id: true, key: true, value: true, version: true,
-            _count: { select: { accountGrants: true, teamGrants: true, groupGrants: true, keyEnvelopes: true } } } });
+            _count: { select: { grants: true, keyEnvelopes: true } } } });
     return rows.flatMap(row => {
         if (row.value === null) return [];
         const classification = classifyAccountJsonKvStoredContent({ key: row.key, value: row.value });
         if (classification.domain !== 'todo') return [];
         return [{ id: row.id, key: row.key, value: row.value, version: row.version,
             managed: classification.representation === 'current_resource_encrypted'
-                || row._count.accountGrants + row._count.teamGrants + row._count.groupGrants + row._count.keyEnvelopes > 0 }];
+                || row._count.grants + row._count.keyEnvelopes > 0 }];
     });
 }
 

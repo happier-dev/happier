@@ -147,8 +147,8 @@ describe("canonical transcript sequence writer on SQLite", () => {
             metadata: STORED_SHARED_METADATA, metadataLayoutVersion: 1,
             ownerMetadata: STORED_PLAIN_OWNER_METADATA_ENVELOPE,
         } });
-        const share = await db.sessionShare.create({ data: {
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: editor.id, accessLevel: "edit",
+        const share = await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: session.id, createdByAccountId: owner.id, accountId: editor.id, accessLevel: "edit",
         } });
         const input = {
             actorUserId: editor.id, sessionId: session.id, localId: randomUUID(),
@@ -166,7 +166,7 @@ describe("canonical transcript sequence writer on SQLite", () => {
             orderBy: { accountId: "asc" },
             select: { accountId: true, cursor: true },
         }));
-        await db.sessionShare.update({ where: { id: share.id }, data: { accessLevel: "admin" } });
+        await db.sessionGrant.update({ where: { principalKind: 'account', id: share.id }, data: { accessLevel: "admin" } });
         expect(await createSessionMessage(input)).toMatchObject({ ok: true, didWrite: false, message: {
             authorAccountId: editor.id, inputAdmissionReceipt: { sessionRelationship: "sharedEditor" },
         } });
@@ -285,14 +285,14 @@ describe("canonical transcript sequence writer on SQLite", () => {
                 updatedAt: new Date(publicationAtForIndex(index)),
             })),
         });
-        await db.sessionShare.createMany({
-            data: sessionIds.map((sessionId, index) => ({
+        await db.sessionGrant.createMany({
+            data: (sessionIds.map((sessionId, index) => ({
                 id: `c1-recency-share-${randomUUID()}-${index}`,
                 sessionId,
-                sharedByUserId: owner.id,
-                sharedWithUserId: viewer.id,
+                createdByAccountId: owner.id,
+                accountId: viewer.id,
                 accessLevel: "view",
-            })),
+            }))).map(data => ({ ...data, principalKind: 'account' })),
         });
 
         const publicToken = `c1-recency-public-${randomUUID()}`;
@@ -1051,9 +1051,9 @@ describe("canonical transcript sequence writer on SQLite", () => {
         await seedUsageEvidence(account.id, session.id);
         const follower = await db.account.create({ data: { publicKey: randomUUID() } });
         const directReader = await db.account.create({ data: { publicKey: randomUUID() } });
-        await db.sessionShare.createMany({ data: [follower, directReader].map(viewer => ({
-            sessionId: session.id, sharedByUserId: account.id, sharedWithUserId: viewer.id, accessLevel: "view" as const,
-        })) });
+        await db.sessionGrant.createMany({ data: ([follower, directReader].map(viewer => ({
+            sessionId: session.id, createdByAccountId: account.id, accountId: viewer.id, accessLevel: "view" as const,
+        }))).map(data => ({ ...data, principalKind: 'account' })) });
         await db.accountSessionFollow.create({ data: {
             sessionId: session.id, accountId: follower.id, following: true, followPolicy: JSON.stringify({ preset: "custom", events: {} }),
         } });
@@ -1639,11 +1639,11 @@ describe("canonical transcript sequence writer on SQLite", () => {
             if (initialFinalized.kind !== "finalized") {
                 throw new Error("Expected initial historical import to finalize.");
             }
-            await db.sessionShare.create({
-                data: {
+            await db.sessionGrant.create({
+                data: { principalKind: 'account',
                     sessionId: session.id,
-                    sharedByUserId: owner.id,
-                    sharedWithUserId: viewer.id,
+                    createdByAccountId: owner.id,
+                    accountId: viewer.id,
                     accessLevel: "view",
                 },
             });
@@ -2636,11 +2636,11 @@ describe("canonical transcript sequence writer on SQLite", () => {
                 content: { t: "plain", v: { role: "agent", text: "must remain unpublished" } },
             },
         });
-        await db.sessionShare.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'account',
                 sessionId: session.id,
-                sharedByUserId: owner.id,
-                sharedWithUserId: viewer.id,
+                createdByAccountId: owner.id,
+                accountId: viewer.id,
                 accessLevel: "view",
             },
         });

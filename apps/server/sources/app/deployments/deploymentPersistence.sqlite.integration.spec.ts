@@ -1,3 +1,4 @@
+import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
 import { db } from '@/storage/db';
@@ -353,16 +354,14 @@ describe('deployment storage real SQLite boundary', () => {
         const keys = nacl.sign.keyPair();
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id, ...plainMachineContent,
             installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(keys.publicKey) } });
-        await db.machineTeamGrant.create({ data: { machineId: machine.id, teamId: team.id,
-            accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id }), machineId: machine.id } });
         const artifactFor = async (kind: string, body: unknown = {}) => {
             const artifact = await createArtifact({ actorUserId: custodian.id, artifactId: crypto.randomUUID(),
                 header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind, title: 'Domain custody' })),
                 body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(body) })),
                 dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
             if (!artifact.ok) throw new Error(artifact.error);
-            await db.artifactTeamGrant.create({ data: { artifactId: artifact.artifact.id, teamId: team.id,
-                accessLevel: 'admin', createdByAccountId: custodian.id } });
+            await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: custodian.id }), artifactId: artifact.artifact.id } });
             return { contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
         };
         const environmentRef = await artifactFor('deployment-environment.v1');
@@ -396,7 +395,7 @@ describe('deployment storage real SQLite boundary', () => {
                 listener: 'privateOrigin', dockerEngineId: 'engine', content: domainRef,
                 ...(targetLinkId === predecessor.id ? {} : {
                     environmentContent: historicalEnvironmentRef, targetLinkContent: historicalLinkRef }),
-                installationPublicKey: privacyKit.encodeBase64(keys.publicKey, 'base64url'),
+                installationPublicKey: privacyKit.encodeBase64(new Uint8Array(keys.publicKey), 'base64url'),
                 placement: { serverId, accountId: owner.id, environmentId, targetLinkId, domainId: id,
                     machineId: machine.id, installationId: machine.installationId!, nativeServer: 'private',
                     actionOperationId: crypto.randomUUID(), requestId: crypto.randomUUID() } }] } });
@@ -487,7 +486,7 @@ describe('deployment storage real SQLite boundary', () => {
                     placement: { actionOperationId: input.actionOperationId,
                         requestId: binding.requestId } }] });
             const job = { environmentId: environment.id, domainId, expectedDomainRevision: header.revision,
-                actionOperationId: input.actionOperationId, capture: header.placements[0]! };
+                actionOperationId: input.actionOperationId, capture: header.placements![0]! };
             expect(await inTx(tx => readAcceptedDeploymentDomainInTx(tx, binding, job))).not.toBeNull();
             expect(await inTx(tx => readAcceptedDeploymentDomainInTx(tx, binding,
                 { ...job, actionOperationId: crypto.randomUUID() }))).toBeNull();
@@ -1042,8 +1041,7 @@ describe('deployment storage real SQLite boundary', () => {
             body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({})),
             dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
         if (!artifact.ok) throw new Error(artifact.error);
-        await db.artifactTeamGrant.create({ data: { artifactId: artifact.artifact.id, teamId: team.id,
-            accessLevel: 'admin', createdByAccountId: creator.id } });
+        await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: creator.id }), artifactId: artifact.artifact.id } });
         const environment = await db.deploymentEnvironment.create({ data: {
             projectSourceId: source.source.id, createdByAccountId: creator.id, protection: 'nonProduction', purpose: 'standard',
             deployerMode: 'managers', controllerMachineId: machine.id,
@@ -1283,7 +1281,7 @@ describe('deployment storage real SQLite boundary', () => {
         expect(source.ok).toBe(true);
         if (!source.ok) throw new Error(source.error);
         await db.machine.create({ data: { id: 'runtime', accountId: custodian.id, installationId: 'installation', ...plainMachineContent } });
-        await db.machineAccountGrant.create({ data: { machineId: 'runtime', accountId: owner.id,
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: 'runtime', accountId: owner.id,
             accessLevel: 'view', createdByAccountId: custodian.id } });
         const content = await createArtifact({ actorUserId: owner.id, artifactId: 'environment-content',
             header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'Environment' })),
@@ -1306,7 +1304,7 @@ describe('deployment storage real SQLite boundary', () => {
             expect(refused.statusCode, refused.body).toBe(403);
             expect(refused.json()).toEqual({ ok: false, error: 'deployment_access_denied' });
             expect(await db.deploymentEnvironment.count({ where: { projectSourceId: source.source.id } })).toBe(0);
-            await db.machineAccountGrant.updateMany({ where: { machineId: 'runtime', accountId: owner.id },
+            await db.machineGrant.updateMany({ where: { principalKind: 'account', machineId: 'runtime', accountId: owner.id },
                 data: { accessLevel: 'admin' } });
             const response = await create();
             expect(response.statusCode, response.body).toBe(200);

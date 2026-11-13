@@ -21,10 +21,8 @@ export function createSessionPublicationDbFixture(params: SessionPublicationDbPa
                 session = row && { id: params.sessionId, account: { status: 'active' }, ...row };
                 return session ? [session] : [];
             } },
-            sessionShare: { findMany: async () => Array.isArray(session?.shares)
-                ? session.shares.map(value => ({ sessionId: params.sessionId, ...record(value) })) : [] },
-            sessionTeamGrant: { findMany: async () => [] },
-            sessionGroupGrant: { findMany: async () => [] },
+            sessionGrant: { findMany: async () => Array.isArray(session?.grants)
+                ? session.grants.map(value => ({ sessionId: params.sessionId, ...record(value) })) : [] },
         };
     };
     const transaction = createDbTransactionMock(tables);

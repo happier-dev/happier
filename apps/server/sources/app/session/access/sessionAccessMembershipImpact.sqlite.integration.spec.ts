@@ -35,8 +35,8 @@ describe("Membership Session access effects (SQLite integration)", () => {
         const session = await db.session.create({ data: {
             accountId: owner.id, tag: crypto.randomUUID(), metadata: "{}", encryptionMode: "plain", currentStorageState: "hosted",
             responsibleAccountId: member.id,
-            teamGrants: { create: { teamId: team.id, accessLevel: "edit", effectiveAt: new Date() } },
-            groupGrants: { create: { teamGroupId: group.id, accessLevel: "view", effectiveAt: new Date() } },
+            grants: { create: [{ principalKind: 'team',  teamId: team.id, accessLevel: "edit", effectiveAt: new Date()  }, { principalKind: 'group',  teamGroupId: group.id, accessLevel: "view", effectiveAt: new Date()  }] },
+            
         } });
         const key = sessionDraftPhysicalKey({ kind: "session", sessionId: session.id });
         if (!key) throw new Error("expected Session draft key");
@@ -61,7 +61,7 @@ describe("Membership Session access effects (SQLite integration)", () => {
         const session = await db.session.create({ data: {
             accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: "e2ee", metadata: JSON.stringify({ t: "encrypted", c: "" }), seq: 1,
             metadataLayoutVersion: 1, currentStorageState: "hosted",
-            teamGrants: { create: { teamId: team.id, accessLevel: "view", effectiveAt: new Date(Date.now() - 60_000) } },
+            grants: { create: [{ principalKind: 'team',  teamId: team.id, accessLevel: "view", effectiveAt: new Date(Date.now() - 60_000)  }] },
         } });
         await db.sessionDataKeyEnvelope.create({ data: { sessionId: session.id, recipientAccountId: owner.id, encryptedDataKey: Buffer.from(sealFor(owner.contentPublicKey)) } });
         const changeMembership = async (accountId: string, mutate: (tx: Parameters<Parameters<typeof inTx>[0]>[0]) => Promise<unknown>) => await inTx(async tx => {
@@ -126,7 +126,7 @@ describe("Membership Session access effects (SQLite integration)", () => {
 
     it("does not invalidate access after removal of a weaker overlapping membership", async () => {
         const f = await fixture();
-        await db.sessionShare.create({ data: { sessionId: f.session.id, sharedByUserId: f.owner.id, sharedWithUserId: f.member.id, accessLevel: "admin" } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: f.session.id, createdByAccountId: f.owner.id, accountId: f.member.id, accessLevel: "admin" } });
         await inTx(async tx => {
             const impacts = await captureSessionAccessMembershipImpactsInTx(tx, { accountIds: [f.member.id], changes: [{ kind: "teamMembership", teamId: f.team.id }] });
             await tx.teamMembership.delete({ where: { id: f.membership.id } });

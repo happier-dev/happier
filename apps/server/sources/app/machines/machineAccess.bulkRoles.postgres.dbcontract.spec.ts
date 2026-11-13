@@ -48,9 +48,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
         const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Actor projection group', nameKey: randomUUID() } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: 'member' } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, nativeContribution: true } });
-        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: actor.id, accessLevel: 'view', createdByAccountId: owner.id } });
-        await db.machineTeamGrant.create({ data: { machineId: machine.id, teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id } });
-        await db.machineGroupGrant.create({ data: { machineId: machine.id, teamGroupId: group.id, accessLevel: 'admin', createdByAccountId: owner.id } });
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id, accountId: actor.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.machineGrant.create({ data: { principalKind: 'team', machineId: machine.id, teamId: team.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        await db.machineGrant.create({ data: { principalKind: 'group', machineId: machine.id, teamGroupId: group.id, accessLevel: 'admin', createdByAccountId: owner.id } });
 
         const others: string[] = [];
         const growAudience = async (count: number) => {
@@ -58,7 +58,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
             await db.account.createMany({ data: added.map(person => ({ id: person.accountId, encryptionMode: 'plain' })) });
             await db.teamMembership.createMany({ data: added.map(person => ({ id: person.membershipId, teamId: team.id, accountId: person.accountId, role: 'member' })) });
             await db.teamGroupMembership.createMany({ data: added.map(person => ({ teamId: team.id, teamGroupId: group.id, teamMembershipId: person.membershipId, nativeContribution: true })) });
-            await db.machineAccountGrant.createMany({ data: added.map(person => ({ machineId: machine.id, accountId: person.accountId, accessLevel: 'view', createdByAccountId: owner.id })) });
+            await db.machineGrant.createMany({ data: added.map(person => ({ principalKind: 'account', machineId: machine.id, accountId: person.accountId, accessLevel: 'view', createdByAccountId: owner.id })) });
             others.push(...added.map(person => person.accountId));
         };
         await growAudience(2);
@@ -73,12 +73,13 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
             const result = await query(args);
             for (const value of Array.isArray(result) ? result : [result]) {
                 const row = record(value);
-                if (!row || !('accountGrants' in row)) continue;
+                if (!row || !('grants' in row)) continue;
+                const grants = array(row.grants);
                 projected.push({
-                    directGrants: array(row.accountGrants).length,
-                    teamMemberships: array(row.teamGrants).reduce<number>((sum, grant) =>
+                    directGrants: grants.filter(grant => record(grant)?.principalKind === 'account').length,
+                    teamMemberships: grants.filter(grant => record(grant)?.principalKind === 'team').reduce<number>((sum, grant) =>
                         sum + array(record(record(grant)?.team)?.memberships).length, 0),
-                    groupMemberships: array(row.groupGrants).reduce<number>((sum, grant) =>
+                    groupMemberships: grants.filter(grant => record(grant)?.principalKind === 'group').reduce<number>((sum, grant) =>
                         sum + array(record(record(grant)?.teamGroup)?.memberships).length, 0),
                 });
             }
@@ -152,7 +153,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
             await db.teamMembership.update({ where: { id: membership.id }, data: { status: 'suspended' } });
             expect(await inTx(tx => resolveMachineAdmissionInTx(tx, { actorAccountId: actor.id, machineId: machine.id })))
                 .toMatchObject({ kind: 'admitted', role: 'use' });
-            await db.machineAccountGrant.delete({ where: { machineId_accountId: { machineId: machine.id, accountId: actor.id } } });
+            await db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: { machineId: machine.id, accountId: actor.id } } });
             expect(await inTx(tx => resolveMachineAdmissionInTx(tx, { actorAccountId: actor.id, machineId: machine.id })))
                 .toEqual({ kind: 'denied', code: 'access_denied' });
             await db.teamMembership.update({ where: { id: membership.id }, data: { status: 'active' } });
@@ -183,15 +184,15 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
             id: randomUUID(), accountId: person.id, metadata: 'unneeded-owner-metadata'.repeat(1000),
             daemonState: 'unneeded-daemon-state'.repeat(1000), revokedAt: index === 2 ? new Date() : null,
         } })));
-        await db.machineAccountGrant.createMany({ data: machines.flatMap(machine => [
+        await db.machineGrant.createMany({ data: (machines.flatMap(machine => [
             { machineId: machine.id, accountId: direct!.id, accessLevel: 'view' as const, createdByAccountId: owner!.id },
             { machineId: machine.id, accountId: administrator!.id, accessLevel: 'admin' as const, createdByAccountId: owner!.id },
             { machineId: machine.id, accountId: inactive!.id, accessLevel: 'admin' as const, createdByAccountId: owner!.id },
-        ]) });
-        await db.machineTeamGrant.createMany({ data: machines.map(machine => ({
+        ])).map(grant => ({ ...grant, principalKind: 'account' as const })) });
+        await db.machineGrant.createMany({ data: machines.map(machine => ({ principalKind: 'team',
             machineId: machine.id, teamId: team.id, accessLevel: 'view', createdByAccountId: owner!.id,
         })) });
-        await db.machineGroupGrant.createMany({ data: machines.map(machine => ({
+        await db.machineGrant.createMany({ data: machines.map(machine => ({ principalKind: 'group',
             machineId: machine.id, teamGroupId: group.id, accessLevel: 'admin', createdByAccountId: owner!.id,
         })) });
         const missing = randomUUID();
@@ -237,7 +238,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
             expect.soft(many.selects.length).toBe(one.selects.length);
             expect.soft(selectedContentColumns).toEqual([]);
 
-            await db.machineAccountGrant.deleteMany({ where: { machineId: { in: machines.map(machine => machine.id) }, accountId: direct!.id } });
+            await db.machineGrant.deleteMany({ where: { principalKind: 'account', machineId: { in: machines.map(machine => machine.id) }, accountId: direct!.id } });
             await db.teamGroup.update({ where: { id: group.id }, data: { archivedAt: new Date() } });
             await db.teamMembership.update({ where: { id: memberships[0]!.id }, data: { status: 'suspended' } });
             const withdrawn = await measure(machineIds);

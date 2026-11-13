@@ -150,7 +150,13 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
             await writer;
             const before = await reader;
             await readerOutcome;
-            expect(before).toMatchObject({ HAPPIER_HOME_DISPLAY_NAME: "before", AUTH_ANONYMOUS_SIGNUP_ENABLED: "false" });
+            // A joined statement may capture before or after the writer's
+            // commit, but settings and policy must come from the same side.
+            expect([
+                { HAPPIER_HOME_DISPLAY_NAME: "before", AUTH_ANONYMOUS_SIGNUP_ENABLED: "false" },
+                { HAPPIER_HOME_DISPLAY_NAME: "after", AUTH_ANONYMOUS_SIGNUP_ENABLED: "true" },
+            ]).toContainEqual({ HAPPIER_HOME_DISPLAY_NAME: before.HAPPIER_HOME_DISPLAY_NAME,
+                AUTH_ANONYMOUS_SIGNUP_ENABLED: before.AUTH_ANONYMOUS_SIGNUP_ENABLED });
             expect(await readHomeConfigEnv({})).toMatchObject({ HAPPIER_HOME_DISPLAY_NAME: "after", AUTH_ANONYMOUS_SIGNUP_ENABLED: "true" });
             expect(locks).toBe(0);
         } finally {
@@ -171,7 +177,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
             body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ value: "private" })),
             dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER),
         } });
-        await db.artifactAccountGrant.create({ data: { artifactId: artifact.id, accountId: recipient.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: artifact.id, accountId: recipient.id,
             accessLevel: "view", createdByAccountId: owner.id } });
         const input = { artifactId: artifact.id, actorAccountId: recipient.id };
         let admissions = 0;
@@ -183,7 +189,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
                 },
                 materialize: async captured => {
                     expect(captured).toMatchObject({ ok: true, artifact: { access: "view" } });
-                    await db.artifactAccountGrant.deleteMany({ where: { artifactId: artifact.id, accountId: recipient.id } });
+                    await db.artifactGrant.deleteMany({ where: { principalKind: 'account', artifactId: artifact.id, accountId: recipient.id } });
                     return captured;
                 },
             });

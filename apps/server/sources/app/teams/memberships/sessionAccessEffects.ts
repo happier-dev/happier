@@ -39,13 +39,13 @@ async function readTeamMembershipEffectMachinesInTx(tx: Tx, change: SessionAcces
     if (accountIds.length === 0) return [];
     const machineIds = new Set<string>();
     if (change.kind !== "teamGroupMembership") {
-        const grants = await tx.machineTeamGrant.findMany({ where: { teamId: change.teamId }, select: { machineId: true } });
+        const grants = await tx.machineGrant.findMany({ where: { principalKind: 'team', teamId: change.teamId }, select: { machineId: true } });
         for (const grant of grants) machineIds.add(grant.machineId);
     }
     const groups = await tx.teamGroup.findMany({ where: { teamId: change.teamId,
         ...(change.kind === "teamGroupMembership" ? { id: { in: [...change.teamGroupIds] } } : {}) }, select: { id: true } });
     for (const ids of portableQueryChunks({ values: groups.map(group => group.id), bindingsPerValue: 1 })) {
-        const grants = await tx.machineGroupGrant.findMany({ where: { teamGroupId: { in: [...ids] } }, select: { machineId: true } });
+        const grants = await tx.machineGrant.findMany({ where: { principalKind: 'group', teamGroupId: { in: [...ids] } }, select: { machineId: true } });
         for (const grant of grants) machineIds.add(grant.machineId);
     }
     return [...machineIds].map(id => ({ id }));

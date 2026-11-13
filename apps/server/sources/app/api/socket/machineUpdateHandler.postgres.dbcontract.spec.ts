@@ -444,10 +444,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")(
             }
             const [direct, member, newcomer] = people;
             const team = await db.team.create({ data: { name: 'Machine publication recipients' } });
-            await db.machineAccountGrant.create({ data: { machineId: fixture.machineId, accountId: direct!.id,
+            await db.machineGrant.create({ data: { principalKind: 'account', machineId: fixture.machineId, accountId: direct!.id,
                 accessLevel: 'view', createdByAccountId: fixture.accountId } });
             await db.teamMembership.create({ data: { teamId: team.id, accountId: member!.id, role: 'member' } });
-            await db.machineTeamGrant.create({ data: { machineId: fixture.machineId, teamId: team.id,
+            await db.machineGrant.create({ data: { principalKind: 'team', machineId: fixture.machineId, teamId: team.id,
                 accessLevel: 'view', createdByAccountId: fixture.accountId } });
 
             const client = new PrismaClient({ log: [{ emit: 'event', level: 'query' }] });
@@ -460,7 +460,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")(
                 if (/INSERT INTO "(?:public"\.")?AccountChange"/.test(event.query)) publicationStatements++;
                 if (!/^SELECT\b/i.test(event.query)) return;
                 selects++;
-                if (/FROM "(?:public"\.")?(?:Machine|MachineAccountGrant|MachineTeamGrant|MachineGroupGrant|Team|TeamMembership|TeamGroup|TeamGroupMembership)"(?:\s|$)/.test(event.query)) graphReads++;
+                if (/FROM "(?:public"\.")?(?:Machine|MachineGrant|MachineGrant|Team|TeamMembership|TeamGroup|TeamGroupMembership)"(?:\s|$)/.test(event.query)) graphReads++;
             });
             await client.$connect();
             const transaction = db.$transaction;
@@ -488,7 +488,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")(
                 const small = await publish(0);
                 expect([...(await changes()).keys()].sort()).toEqual([fixture.accountId, direct!.id, member!.id].sort());
                 const added = people.slice(3);
-                await db.machineAccountGrant.createMany({ data: added.slice(0, 60).map(person => ({
+                await db.machineGrant.createMany({ data: added.slice(0, 60).map(person => ({ principalKind: 'account',
                     machineId: fixture.machineId, accountId: person.id, accessLevel: 'view', createdByAccountId: fixture.accountId,
                 })) });
                 await db.teamMembership.createMany({ data: added.slice(60).map(person => ({
@@ -498,8 +498,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")(
                 const beforeChange = await changes();
                 expect([...beforeChange.keys()].sort()).toEqual([fixture.accountId, direct!.id, member!.id, ...added.map(person => person.id)].sort());
 
-                await db.machineAccountGrant.delete({ where: { machineId_accountId: { machineId: fixture.machineId, accountId: direct!.id } } });
-                await db.machineAccountGrant.create({ data: { machineId: fixture.machineId, accountId: newcomer!.id,
+                await db.machineGrant.delete({ where: { principalKind: 'account', machineId_accountId: { machineId: fixture.machineId, accountId: direct!.id } } });
+                await db.machineGrant.create({ data: { principalKind: 'account', machineId: fixture.machineId, accountId: newcomer!.id,
                     accessLevel: 'view', createdByAccountId: fixture.accountId } });
                 const changed = await publish(2);
                 const afterChange = await changes();
@@ -696,7 +696,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")(
         it('publishes 18 genuinely changed concurrent daemon states with one publication statement per committed version', async () => {
             const fixture = await createMachineFixture();
             const viewers = await Promise.all(Array.from({ length: 17 }, () => db.account.create({ data: { encryptionMode: 'plain' } })));
-            await db.machineAccountGrant.createMany({ data: viewers.map(viewer => ({
+            await db.machineGrant.createMany({ data: viewers.map(viewer => ({ principalKind: 'account',
                 machineId: fixture.machineId, accountId: viewer.id, accessLevel: 'view', createdByAccountId: fixture.accountId,
             })) });
             const versions: number[] = [];

@@ -99,10 +99,10 @@ async function isLiveTeamMemberInTx(tx: Tx, teamId: string, accountId: string): 
 /** A Run's frozen Team remains an audience only while that exact source grant exists. */
 async function readGrantedTeamIdsInTx(tx: Tx, sourceArtifactId: string, candidateTeamIds: readonly string[]): Promise<string[]> {
     if (candidateTeamIds.length === 0) return [];
-    const grants = await tx.artifactTeamGrant.findMany({
-        where: { artifactId: sourceArtifactId, teamId: { in: [...candidateTeamIds] } }, select: { teamId: true },
+    const grants = await tx.artifactGrant.findMany({
+        where: { principalKind: 'team', artifactId: sourceArtifactId, teamId: { in: [...candidateTeamIds] } }, select: { teamId: true },
     });
-    return grants.map(grant => grant.teamId);
+    return grants.map(grant => grant.teamId!);
 }
 
 /** Collection adapters consume these same source grants and live memberships. */
@@ -118,14 +118,14 @@ export async function resolveWorkflowRunVisibilityScopesInTx(tx: Tx, input: Read
     const liveTeamIds = memberships.filter(membership => membership.effective).map(membership => membership.teamId);
     // Discover from live grants even when the caller filters by Run, trigger,
     // lifecycle or no source at all. A source filter narrows this same audience.
-    const grants = await tx.artifactTeamGrant.findMany({ where: {
+    const grants = await tx.artifactGrant.findMany({ where: { principalKind: 'team',
         teamId: { in: liveTeamIds },
         ...(input.sourceArtifactIds === undefined ? {} : { artifactId: { in: [...input.sourceArtifactIds] } }),
     }, select: { artifactId: true, teamId: true } });
     const teamsBySource = new Map<string, string[]>();
     for (const grant of grants) {
         const teams = teamsBySource.get(grant.artifactId) ?? [];
-        teams.push(grant.teamId);
+        teams.push(grant.teamId!);
         teamsBySource.set(grant.artifactId, teams);
     }
     const accessibleIds = await readAccessibleArtifactIdsInTx(tx, {
@@ -160,12 +160,12 @@ export async function resolveWorkflowRunAdmissionVisibilityInTx(tx: Tx, input: R
         throw new WorkflowRunAccessError("run_not_found");
     }
     const grants = input.sourceArtifactId
-        ? await tx.artifactTeamGrant.findMany({ where: { artifactId: input.sourceArtifactId }, select: { teamId: true } }) : [];
+        ? await tx.artifactGrant.findMany({ where: { principalKind: 'team', artifactId: input.sourceArtifactId }, select: { teamId: true } }) : [];
     const viewableTeamIds: string[] = [];
     for (const grant of grants) {
-        const result = await readTeamSummaryForActorInTx(tx, { teamId: grant.teamId, actorAccountId: input.actorAccountId,
+        const result = await readTeamSummaryForActorInTx(tx, { teamId: grant.teamId!, actorAccountId: input.actorAccountId,
             authentication: input.authentication });
-        if (result.ok) viewableTeamIds.push(grant.teamId);
+        if (result.ok) viewableTeamIds.push(grant.teamId!);
         else if (result.error !== "team_not_found") throw new WorkflowRunAccessError("run_access_denied");
     }
     const visibility = resolveWorkflowRunVisibleTeamV1(viewableTeamIds, input.visibleTeamId);

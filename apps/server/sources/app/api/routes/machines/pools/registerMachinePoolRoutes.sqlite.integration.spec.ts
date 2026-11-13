@@ -130,7 +130,7 @@ describe("Machine Pool HTTP routes (SQLite integration)", () => {
             await db.team.update({ where: { id: team.id }, data: { authenticationPolicy: { v: 1, mode: 'inherit' }, archivedAt: new Date() } });
             const archived = await app.inject({ method: 'POST', url: '/v1/machines/pools/get', headers: otherHeaders, payload: { poolId } });
             expect(archived.statusCode).toBe(404);
-            expect(await db.machineAccountGrant.count({ where: { machineId } })).toBe(0);
+            expect(await db.machineGrant.count({ where: { principalKind: 'account', machineId } })).toBe(0);
         }, presence === 'unavailable' ? { in: () => ({ fetchSockets: async () => { throw new Error('presence unavailable'); } }) }
             : presenceOf(presence === 'connected' ? [machineId] : []));
     });

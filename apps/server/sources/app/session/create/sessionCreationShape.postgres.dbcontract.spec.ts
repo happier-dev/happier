@@ -82,7 +82,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
                 runs.push({ inventory, elapsedMs: performance.now() - started, statements });
                 expect(result.kind).toBe("created");
                 if (result.kind !== "created") throw new Error("Expected Session birth");
-                expect(await db.sessionShare.count({ where: { sessionId: result.session.id, sharedWithUserId: member.id } })).toBe(1);
+                expect(await db.sessionGrant.count({ where: { principalKind: 'account', sessionId: result.session.id, accountId: member.id } })).toBe(1);
             }
             console.info("SESSION_CREATE_SHAPE", JSON.stringify(runs.map(run => ({
                 inventory: run.inventory, elapsedMs: run.elapsedMs,

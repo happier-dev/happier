@@ -63,7 +63,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Workflow live m
             header: new Uint8Array(decodeBase64(encodePlainArtifactStoredContent({ kind: 'workflow_definition.v1' }))),
             body: new Uint8Array(decodeBase64(encodePlainArtifactStoredContent({}))),
             dataEncryptionKey: new Uint8Array(decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER)) } });
-        await db.artifactTeamGrant.createMany({ data: [...teamIds, foreignTeamId].map(teamId => ({
+        await db.artifactGrant.createMany({ data: [...teamIds, foreignTeamId].map(teamId => ({ principalKind: 'team',
             teamId, artifactId: artifact.id, accessLevel: 'view' as const, createdByAccountId: owner.id,
         })) });
         const runIds = [randomUUID(), randomUUID()];
@@ -160,7 +160,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Workflow live m
             expect(await read()).toEqual([...f.runIds].sort());
             await db.teamMembership.update({ where: { teamId_accountId: { teamId: f.teamIds[0]!, accountId: f.actor.id } }, data: { status: 'suspended' } });
             expect(await read()).toEqual([f.runIds[1]]);
-            await db.artifactTeamGrant.deleteMany({ where: { artifactId: f.artifact.id, teamId: f.teamIds[1]! } });
+            await db.artifactGrant.deleteMany({ where: { principalKind: 'team', artifactId: f.artifact.id, teamId: f.teamIds[1]! } });
             expect(await read()).toEqual([]);
             expect(await read(f.owner.id)).toEqual([...f.runIds].sort());
         } finally { await app.close(); }

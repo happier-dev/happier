@@ -1,3 +1,4 @@
+import { sessionDirectGrantProjectionFixture } from '@/app/session/access/sessionAccess.testkit';
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { deriveSessionPermissionMediationRecordLocatorV1 } from "@happier-dev/protocol";
@@ -171,9 +172,9 @@ describe("sessionRoutes system records", () => {
             "x-happier-plugin-id": "acme.notes",
         };
         const accessRelations = createSessionAccessProjectionRelations();
-        const shares = [{ id: "view-share", sharedWithUserId: "u1", accessLevel: "view", canApprovePermissions: false }] as const;
-        sessionFindUnique.mockResolvedValue({ ...accessRelations, id: "s1", accountId: "session-owner", currentStorageState: "hosted", shares });
-        txSessionFindUnique.mockResolvedValue({ ...accessRelations, id: "s1", encryptionMode: "plain", accountId: "session-owner", currentStorageState: "hosted", shares });
+        const grants = [sessionDirectGrantProjectionFixture({ id: "view-share", accountId: "u1", accessLevel: "view", canApprovePermissions: false })] as const;
+        sessionFindUnique.mockResolvedValue({ ...accessRelations, id: "s1", accountId: "session-owner", currentStorageState: "hosted", grants });
+        txSessionFindUnique.mockResolvedValue({ ...accessRelations, id: "s1", encryptionMode: "plain", accountId: "session-owner", currentStorageState: "hosted", grants });
         txSessionSystemRecordFindMany.mockResolvedValue([]);
         const { reply, response } = await (
             await createSessionRouteTestBuilder("GET", "/v2/sessions/:sessionId/system-records")
@@ -383,7 +384,7 @@ describe("sessionRoutes system records", () => {
     });
 
     it("continues accepting genuine released legacy GET list and read shapes without a protocol header", async () => {
-        txSessionFindUnique.mockResolvedValue(recordSession({ id: "s1", encryptionMode: "plain", accountId: "u1", currentStorageState: "hosted", shares: [] }));
+        txSessionFindUnique.mockResolvedValue(recordSession({ id: "s1", encryptionMode: "plain", accountId: "u1", currentStorageState: "hosted", grants: [] }));
         txSessionSystemRecordFindMany.mockResolvedValue([]);
         txSessionSystemRecordFindFirst.mockResolvedValue(null);
 
@@ -471,7 +472,7 @@ describe("sessionRoutes system records", () => {
             namespace: address.namespace,
             localId: address.localId,
         });
-        txSessionFindUnique.mockResolvedValue(recordSession({ id: "s1", encryptionMode: "plain", accountId: "session-owner", currentStorageState: "hosted", shares: [{ id: "view-share", sharedWithUserId: "u1", accessLevel: "view", canApprovePermissions: false }] }));
+        txSessionFindUnique.mockResolvedValue(recordSession({ id: "s1", encryptionMode: "plain", accountId: "session-owner", currentStorageState: "hosted", grants: [{ principalKind: 'account', teamId: null, teamGroupId: null, effectiveAt: null, requiredByTeamPolicy: false, account: { status: 'active' }, team: null, teamGroup: null,  id: "view-share", accountId: "u1", accessLevel: "view", canApprovePermissions: false  }] }));
         txSessionSystemRecordFindFirst.mockResolvedValue(null);
         txSessionSystemRecordCreate.mockResolvedValue({
             id: "plugin-record-1",
@@ -604,7 +605,7 @@ describe("sessionRoutes system records", () => {
         const createdAt = new Date("2026-05-19T10:00:00.000Z");
         const paddedLocalId = "  memory:synopsis:v1:padded  ";
         const trimmedLocalId = paddedLocalId.trim();
-        txSessionFindUnique.mockResolvedValue(recordSession({ id: "s1", encryptionMode: "plain", accountId: "u1", currentStorageState: "hosted", shares: [] }));
+        txSessionFindUnique.mockResolvedValue(recordSession({ id: "s1", encryptionMode: "plain", accountId: "u1", currentStorageState: "hosted", grants: [] }));
         txSessionSystemRecordCreate.mockResolvedValue({
             id: "rec-padded",
             accountId: "u1",
@@ -806,7 +807,7 @@ describe("sessionRoutes system records", () => {
     it("decodes a canonical stored row whose local id predates the author-v1 bound", async () => {
         const createdAt = new Date("2026-05-19T10:00:00.000Z");
         const longLocalId = `legacy:${"x".repeat(300)}`;
-        txSessionFindUnique.mockResolvedValue(recordSession({ id: "s1", encryptionMode: "plain", accountId: "u1", currentStorageState: "hosted", shares: [] }));
+        txSessionFindUnique.mockResolvedValue(recordSession({ id: "s1", encryptionMode: "plain", accountId: "u1", currentStorageState: "hosted", grants: [] }));
         txSessionSystemRecordFindFirst.mockResolvedValueOnce({
             id: "rec-long",
             accountId: "u1",

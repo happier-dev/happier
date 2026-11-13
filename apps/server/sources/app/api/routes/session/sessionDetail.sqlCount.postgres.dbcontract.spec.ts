@@ -211,8 +211,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         const healthy = await db.session.create({ data: {
             accountId: viewer.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}',
         } });
-        await db.sessionShare.create({ data: {
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: viewer.id, accessLevel: 'view',
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: session.id, createdByAccountId: owner.id, accountId: viewer.id, accessLevel: 'view',
         } });
         const originalTransaction = db.$transaction;
         try {
@@ -272,8 +272,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
             metadataLayoutVersion: 1, metadata: '{"v":1}', ownerMetadata: '{"t":"plain","v":{"v":1}}' } });
         const effectiveAt = new Date();
         const grant = async () => {
-            if (mutation.startsWith('team')) await db.sessionTeamGrant.create({ data: { sessionId: session.id, teamId: team.id, effectiveAt } });
-            else await db.sessionGroupGrant.create({ data: { sessionId: session.id, teamGroupId: group.id, effectiveAt } });
+            if (mutation.startsWith('team')) await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: team.id, effectiveAt } });
+            else await db.sessionGrant.create({ data: { principalKind: 'group', sessionId: session.id, teamGroupId: group.id, effectiveAt } });
         };
         const originalTransaction = db.$transaction;
         try {
@@ -289,8 +289,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
                     const result: unknown = await Reflect.apply(target, receiver, args);
                     if (!changed) {
                         changed = true;
-                        if (mutation === 'team_grant') await db.sessionTeamGrant.deleteMany({ where: { sessionId: session.id } });
-                        if (mutation === 'group_grant') await db.sessionGroupGrant.deleteMany({ where: { sessionId: session.id } });
+                        if (mutation === 'team_grant') await db.sessionGrant.deleteMany({ where: { principalKind: 'team', sessionId: session.id } });
+                        if (mutation === 'group_grant') await db.sessionGrant.deleteMany({ where: { principalKind: 'group', sessionId: session.id } });
                         if (mutation === 'team_membership') await db.teamMembership.delete({ where: { id: membership.id } });
                         if (mutation === 'group_membership') await db.teamGroupMembership.deleteMany({ where: { teamMembershipId: membership.id } });
                         if (mutation === 'team_horizon') await db.teamMembership.update({ where: { id: membership.id }, data: { sessionAccessStartsAt: effectiveAt } });
@@ -326,7 +326,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         await db.teamMembership.create({ data: { teamId: team.id, accountId: viewer.id, role: 'member' } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: 'plain',
             metadataLayoutVersion: 1, metadata: '{"v":1}', ownerMetadata: '{"t":"plain","v":{"v":1}}' } });
-        await db.sessionTeamGrant.create({ data: { sessionId: session.id, teamId: team.id, effectiveAt: new Date() } });
+        await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: team.id, effectiveAt: new Date() } });
         const originalTransaction = db.$transaction;
         try {
             await withAuthenticatedTestApp(registerSessionReadBatchRoute, async app => {
@@ -372,8 +372,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
                 randomBytes, ownerMetadata: { v: 1 },
             })),
         } });
-        await db.sessionShare.create({ data: {
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: viewer.id, accessLevel: 'view',
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: session.id, createdByAccountId: owner.id, accountId: viewer.id, accessLevel: 'view',
         } });
         const key = { sessionId: session.id, recipientAccountId: viewer.id };
         await db.sessionDataKeyEnvelope.create({ data: { ...key, encryptedDataKey: Buffer.from('first-key') } });
@@ -410,7 +410,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
         const sessions = Array.from({ length: 2 }, () => ({ id: crypto.randomUUID() }));
         await db.session.createMany({ data: sessions.map(({ id }) => ({ id, accountId: viewer.id, tag: id, encryptionMode: 'plain', metadata: '{}' })) });
         const manager = await db.session.create({ data: { accountId: foreign.id, tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
-        await db.sessionShare.create({ data: { sessionId: manager.id, sharedByUserId: foreign.id, sharedWithUserId: viewer.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: manager.id, createdByAccountId: foreign.id, accountId: viewer.id, accessLevel: 'view' } });
         await db.sessionFollowEdge.create({ data: { sourceSessionId: sessions[0]!.id, destinationSessionId: manager.id,
             sourceKey: sourceKeyForSessionFollowSourceV1({ kind: 'session', sessionId: sessions[0]!.id }), relation: 'manager',
             managerSourceSessionId: sessions[0]!.id, policyJson: JSON.stringify({ preset: 'important' }) } });
@@ -426,7 +426,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
                     const result: unknown = await Reflect.apply(target, receiver, args);
                     if (!revoked) {
                         revoked = true;
-                        await db.sessionShare.deleteMany({ where: { sessionId: manager.id } });
+                        await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: manager.id } });
                     }
                     return result;
                 } });
@@ -480,8 +480,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
             metadataLayoutVersion: 1, metadata: JSON.stringify({ v: 1 }),
             ownerMetadata: JSON.stringify({ t: 'plain', v: { v: 1 } }), currentStorageState: 'hosted',
         } });
-        const share = await db.sessionShare.create({ data: {
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: viewer.id, accessLevel: 'view',
+        const share = await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: session.id, createdByAccountId: owner.id, accountId: viewer.id, accessLevel: 'view',
         } });
         const originalTransaction = db.$transaction;
         try {
@@ -508,7 +508,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
                     const result: unknown = await Reflect.apply(target, receiver, args);
                     if (!revoked) {
                         revoked = true;
-                        await db.sessionShare.delete({ where: { id: share.id } });
+                        await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
                     }
                     return result;
                 } });

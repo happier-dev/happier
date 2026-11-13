@@ -3,10 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
     createAccountCursorRawQueryTransactionModel,
     createEmptySessionFollowEdgeTransactionModel,
-    createInTxHarness,
+    createPrismaTransactionBoundary,
 } from '@/app/api/testkit/txHarness';
-import { flushAccountChangesInTx } from '@/app/changes/markAccountChanged';
-import type { Tx } from '@/storage/inTx';
+import { inTxPostgresControlStatementMock } from '@/app/api/testkit/dbMocks';
 
 import { deleteOwnedSession } from './deleteOwnedSession';
 
@@ -36,8 +35,8 @@ const findSession = vi.fn(async () => ({
     materializationPublicationId: null,
     materializedThroughSourceAt: null,
     publishedThroughServerSeq: null,
-    teamGrants: [],
-    groupGrants: [],
+    grants: [],
+    
     teamCredentialBindings: [],
 }));
 
@@ -53,9 +52,9 @@ const findRunnerActivation = vi.fn(async () => null);
 const findSessionDraft = vi.fn(async () => null);
 const findSessionDrafts = vi.fn(async () => []);
 
-vi.mock('@/storage/inTx', () => {
-        const { inTx: runTx, afterTx } = createInTxHarness(() => ({
-            transactionClass: 'session-delete',
+function createTx() {
+    return {
+            ...inTxPostgresControlStatementMock,
             session: {
                 findFirst,
                 findUnique: findSession,
@@ -64,8 +63,7 @@ vi.mock('@/storage/inTx', () => {
                 deleteMany: deleteSession,
             },
             account: { findMany: findAudienceAccounts, update: allocateAccountSeq },
-            accountChange: { upsert: upsertAccountChange },
-            $executeRawUnsafe: async () => 0,
+            accountChange: { findUnique: async () => null, upsert: upsertAccountChange },
             $queryRawUnsafe: async (query: string, ...values: unknown[]) => {
                 if (query === 'SELECT "id" FROM "Session" WHERE "id" = ANY($1::text[]) ORDER BY "id" FOR NO KEY UPDATE') {
                     const sessionIds = values[0];
@@ -82,28 +80,31 @@ vi.mock('@/storage/inTx', () => {
                     accountChange: { upsert: upsertAccountChange },
                 })(query, ...values);
             },
-            sessionShare: { findMany: async () => [] },
+            sessionGrant: { findMany: async () => [] },
             sessionTeamCredentialBinding: { findMany: async () => [] },
-            sessionTeamGrant: { findMany: async () => [] },
-            sessionGroupGrant: { findMany: async () => [] },
+            
+            
             sessionMessage: { deleteMany: deleteMessages },
             usageReport: { deleteMany: deleteReports },
+            usageEvent: { groupBy: async () => [] },
             accessKey: { deleteMany: deleteAccessKeys },
             ephemeralRunnerActivation: { findFirst: findRunnerActivation },
             sessionFollowEdge: createEmptySessionFollowEdgeTransactionModel(),
             automation: { findMany: async () => [] },
             automationTrigger: { findMany: async () => [] },
             userKVStore: { findMany: findSessionDrafts, findUnique: findSessionDraft },
-        }));
+    };
+}
 
-    const inTx = <T>(operation: (tx: Tx) => Promise<T>) => runTx(async tx => {
-        const result = await operation(tx as Tx);
-        await flushAccountChangesInTx(tx as Tx);
-        return result;
-    });
-    return { afterTx, inTx, getTransactionContext: (tx: object, options?: { optional: true }) =>
-        options?.optional ? undefined : tx };
-});
+// Substitute Prisma only, preserving real transaction context and after-commit publication.
+vi.mock('@/storage/db', () => ({
+    db: new Proxy({}, {
+        get(_target, property) {
+            if (property === '$transaction') return createPrismaTransactionBoundary(createTx);
+            return Reflect.get(createTx(), property);
+        },
+    }),
+}));
 
 function seedDeleteTarget(metadataLayoutVersion: 0 | 1, recipientAccountIds: string[]): void {
     findFirst.mockResolvedValueOnce({

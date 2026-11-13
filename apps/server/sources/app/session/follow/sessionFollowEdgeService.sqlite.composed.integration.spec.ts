@@ -96,11 +96,11 @@ async function grantAccess(
     accountId: string,
     accessLevel: 'view' | 'edit' | 'admin',
 ) {
-    await db.sessionShare.create({
-        data: {
+    await db.sessionGrant.create({
+        data: { principalKind: 'account',
             session: { connect: { id: session.id } },
-            sharedByUser: { connect: { id: session.accountId } },
-            sharedWithUser: { connect: { id: accountId } },
+            createdBy: { connect: { id: session.accountId } },
+            account: { connect: { id: accountId } },
             accessLevel,
         },
     });
@@ -149,7 +149,7 @@ describe('SessionFollowEdge service', () => {
         await db.accessKey.deleteMany();
         await db.ephemeralRunnerActivation.deleteMany();
         await db.machine.deleteMany();
-        await db.sessionShare.deleteMany();
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account' } });
         await db.sessionMessage.deleteMany();
         await db.session.deleteMany();
         await db.team.deleteMany();
@@ -473,7 +473,7 @@ describe('SessionFollowEdge service', () => {
             request: { v: 1, sourceSessionId: source.id, relation, afterTranscriptSeq: 0, observedTranscriptSeq: 0, limit: 1 },
         }));
         expect(await project()).not.toBeNull();
-        if (change === 'source grant') await db.sessionShare.deleteMany({ where: { sessionId: source.id, sharedWithUserId: owner.id } });
+        if (change === 'source grant') await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: source.id, accountId: owner.id } });
         else if (change === 'source mute') expect(await changeDeliveryMute({ accountId: owner.id, authentication,
             receiver: { kind: 'session', sessionId: destination.id },
             scope: { kind: 'source', source: { kind: 'session', sessionId: source.id } }, operation: 'set',
@@ -1364,7 +1364,7 @@ describe('SessionFollowEdge service', () => {
         await expect(authorizeSessionFollowSourceKeyPreparation({
             accountId: destinationOwner.id, sourceSessionId: source.id, destinationSessionId: destination.id, principal,
         })).resolves.toMatchObject({ ok: true, value: { destinationRuntimeAccountId: destinationOwner.id, machineId: runner.id } });
-        await db.sessionShare.deleteMany({ where: { sessionId: source.id, sharedWithUserId: destinationOwner.id } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: source.id, accountId: destinationOwner.id } });
         await expect(authorizeSessionFollowSourceKeyPreparation({
             accountId: destinationOwner.id, sourceSessionId: source.id, destinationSessionId: destination.id, principal,
         })).resolves.toEqual({ ok: false, error: 'session_follow_source_forbidden' });
@@ -1489,7 +1489,7 @@ describe('SessionFollowEdge service', () => {
             sourceSessionId: source.id,
         })).toMatchObject({ ok: true });
 
-        await db.sessionShare.deleteMany({ where: { sessionId: source.id, sharedWithUserId: destinationOwner.id } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: source.id, accountId: destinationOwner.id } });
         await db.sessionFollowEdge.deleteMany();
 
         expect(await setSessionFollowSource({ policy: { preset: 'everything' as const },
@@ -1530,7 +1530,7 @@ describe('SessionFollowEdge service', () => {
         expect(await setSessionFollowSource(input)).toEqual({ ok: false, error: 'session_follow_source_forbidden' });
         expect(await readEdge(destination.id, source.id)).toMatchObject({ deliveredTranscriptSeq: 5 });
 
-        await db.sessionShare.deleteMany({ where: { sessionId: destination.id, sharedWithUserId: reader.id } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: destination.id, accountId: reader.id } });
         expect(await setSessionFollowSource(input)).toMatchObject({ ok: true, value: { changed: false } });
         expect(await readEdge(destination.id, source.id)).toMatchObject({ deliveredTranscriptSeq: 5 });
     });
@@ -1542,12 +1542,12 @@ describe('SessionFollowEdge service', () => {
         const readers = Array.from({ length: 150 }, () => ({ id: `audience-${randomUUID()}`, publicKey: randomUUID(), encryptionMode: 'plain' as const }));
         const lastReader = { id: `zz-reader-${randomUUID()}`, publicKey: randomUUID(), encryptionMode: 'plain' as const };
         await db.account.createMany({ data: [...readers, lastReader] });
-        await db.sessionShare.createMany({ data: [
+        await db.sessionGrant.createMany({ data: ([
             ...readers.flatMap(({ id }) => [source, destination].map((session) => ({
-                sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: id, accessLevel: 'view' as const,
+                sessionId: session.id, createdByAccountId: owner.id, accountId: id, accessLevel: 'view' as const,
             }))),
-            { sessionId: destination.id, sharedByUserId: owner.id, sharedWithUserId: lastReader.id, accessLevel: 'view' as const },
-        ] });
+            { sessionId: destination.id, createdByAccountId: owner.id, accountId: lastReader.id, accessLevel: 'view' as const },
+        ]).map(data => ({ ...data, principalKind: 'account' })) });
         expect(await setSessionFollowSource({ policy: { preset: 'everything' as const },
             accountId: owner.id, destinationSessionId: destination.id, sourceSessionId: source.id,
         })).toEqual({ ok: false, error: 'session_follow_source_forbidden' });
@@ -1570,7 +1570,7 @@ describe('SessionFollowEdge service', () => {
             destinationSessionId: destination.id,
             sourceSessionId: source.id,
         })).toMatchObject({ ok: true, value: { changed: true } });
-        expect(await db.sessionShare.count()).toBe(3);
+        expect(await db.sessionGrant.count({ where: { principalKind: 'account' } })).toBe(3);
     });
 
     it('rejects a Team destination reader whose membership horizon excludes the source grant', async () => {
@@ -1583,10 +1583,10 @@ describe('SessionFollowEdge service', () => {
         await db.teamMembership.create({ data: {
             teamId: team.id, accountId: member.id, role: 'member', sessionAccessStartsAt: cutoff,
         } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: source.id, teamId: team.id, effectiveAt: cutoff, accessLevel: 'view',
         } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: destination.id, teamId: team.id, effectiveAt: new Date(cutoff.getTime() + 1), accessLevel: 'view',
         } });
         const input = {
@@ -1613,17 +1613,17 @@ describe('SessionFollowEdge service', () => {
             teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id,
             nativeContribution: true, sessionAccessStartsAt: null,
         } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: source.id, teamId: team.id, effectiveAt: new Date(cutoff.getTime() + 1), accessLevel: 'view',
         } });
-        await db.sessionGroupGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'group',
             sessionId: destination.id, teamGroupId: group.id, effectiveAt: cutoff, accessLevel: 'view',
         } });
         const input = {
             accountId: owner.id, destinationSessionId: destination.id, sourceSessionId: source.id,
         };
         expect(await setSessionFollowSource(input)).toEqual({ ok: false, error: 'session_follow_source_forbidden' });
-        await db.sessionGroupGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'group',
             sessionId: source.id, teamGroupId: group.id,
             effectiveAt: new Date(cutoff.getTime() - 1), accessLevel: 'view',
         } });
@@ -1753,7 +1753,7 @@ describe('SessionFollowEdge service', () => {
             });
         }
 
-        await db.sessionShare.deleteMany({ where: { sessionId: secret.id, sharedWithUserId: collaborator.id } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: secret.id, accountId: collaborator.id } });
 
         const collaboratorView = await listSessionFollowSources({
             accountId: collaborator.id,
@@ -2109,7 +2109,7 @@ describe('SessionFollowEdge service', () => {
             })).toMatchObject({ ok: true });
         }
 
-        await db.sessionShare.deleteMany({ where: { sessionId: source.id, sharedWithUserId: loser.id } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: source.id, accountId: loser.id } });
         expect(await inTx((tx: Tx) => removeUnsafeSessionFollowEdgesForAccessChangeInTx(tx, {
             sessionId: source.id,
         }))).toBe(1);

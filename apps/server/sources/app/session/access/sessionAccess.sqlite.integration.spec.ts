@@ -1,12 +1,13 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import * as privacyKit from "privacy-kit";
 import { db } from "@/storage/db";
+import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
 import { getActivePrismaRuntime } from "@/storage/prisma";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createPresentUserSessionAccessAuthentication } from "./sessionAccessAuthentication.testkit";
 import { createSessionMessage, updateSessionReadCursor } from "@/app/session/sessionWriteService";
 import { buildSessionAccessWhere, buildSessionReadableAccountWhereInTx, createApplicableAudienceWhere, buildMembershipHistorySessionAccessWhereInTx, resolveEffectiveSessionAccessWhere } from "./sessionAccessWhere";
-import { assertSessionCapabilityInTx, resolveEffectiveSessionAccess, resolveEffectiveSessionAccessForSessionsInTx, resolveStructuralSessionAccessForAccountsInTx, resolveSessionAccessForOperation, SESSION_CAPABILITY_RULES, type SessionCapability, listCurrentSessionAudienceAccountsInTx, assertSessionTeamReadableGrantInTx, buildSessionAccessProjectionSelect, projectEffectiveSessionAccess } from "./sessionAccess";
+import { resolveSessionAccessCapabilitiesForRowsInTx, assertSessionCapabilityInTx, resolveEffectiveSessionAccess, resolveEffectiveSessionAccessForSessionsInTx, resolveStructuralSessionAccessForAccountsInTx, resolveSessionAccessForOperation, SESSION_CAPABILITY_RULES, type SessionCapability, listCurrentSessionAudienceAccountsInTx, assertSessionTeamReadableGrantInTx, buildSessionAccessProjectionSelect, projectEffectiveSessionAccess } from "./sessionAccess";
 import { inTx, type Tx } from "@/storage/inTx";
 import { canApprovePermissions, canManagePermissionDelegation } from "@/app/session/access/sessionAccess";
 import {
@@ -37,8 +38,8 @@ describe("Session access owner/direct authority (SQLite)", () => {
             accountId: owner.id, tag: crypto.randomUUID(), encryptionMode: "plain",
             metadata: JSON.stringify({ t: "plain", v: {} }), seq: 4,
         } });
-        const share = await db.sessionShare.create({ data: {
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: actor.id,
+        const share = await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: session.id, createdByAccountId: owner.id, accountId: actor.id,
             accessLevel: level, canApprovePermissions: approval,
         } });
         return { owner, actor, session, share };
@@ -135,6 +136,22 @@ describe("Session access owner/direct authority (SQLite)", () => {
             select: { id: true },
         }));
 
+        const rows = await db.session.findMany({ where: { id: { in: [session.id, sibling.id] } },
+            select: buildSessionAccessProjectionSelect(account.id) });
+        let principalReads = 0;
+        const stop = observeSqliteRequests({ before: request => {
+            if (request.model === 'EphemeralRunnerActivation' && request.action === 'findFirst') principalReads++;
+        } });
+        try {
+            const decisions = await inTx(tx => resolveSessionAccessCapabilitiesForRowsInTx(tx,
+                { accountId: account.id, authentication: runnerAuthentication }, rows,
+                [{}, { capability: 'readTranscript' }, { capability: 'submitAgentInput' }]));
+            expect(principalReads).toBe(1);
+            for (const result of decisions) {
+                expect(result.get(session.id)?.status).toBe('allowed');
+                expect(result.get(sibling.id)).toEqual({ status: 'unavailable' });
+            }
+        } finally { stop(); }
         await expect(decide()).resolves.toMatchObject({ status: "allowed" });
         await expect(query()).resolves.toEqual({ id: session.id });
         expect([...(await batch()).keys()]).toEqual([session.id]);
@@ -183,7 +200,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
             })).map(row => row.id);
         });
         expect(await managers()).toEqual([owner.id]);
-        await db.sessionShare.update({ where: { id: share.id }, data: { accessLevel: "admin" } });
+        await db.sessionGrant.update({ where: { principalKind: 'account', id: share.id }, data: { accessLevel: "admin" } });
         expect(await managers()).toEqual([owner.id, actor.id].sort());
         await db.account.update({ where: { id: actor.id }, data: { status: "suspended" } });
         expect(await managers()).toEqual([owner.id]);
@@ -195,10 +212,10 @@ describe("Session access owner/direct authority (SQLite)", () => {
         const other = await db.team.create({ data: { name: crypto.randomUUID() } });
         const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Visibility", nameKey: "visibility" } });
         await db.session.update({ where: { id: session.id }, data: { primaryTeamId: team.id } });
-        await db.sessionGroupGrant.create({ data: { sessionId: session.id, teamGroupId: group.id, accessLevel: "admin", effectiveAt: new Date() } });
+        await db.sessionGrant.create({ data: { principalKind: 'group', sessionId: session.id, teamGroupId: group.id, accessLevel: "admin", effectiveAt: new Date() } });
         const visible = (teamId = team.id) => inTx(tx => assertSessionTeamReadableGrantInTx({ tx, sessionId: session.id, teamId }));
         expect((await visible()).ok).toBe(false);
-        const grant = await db.sessionTeamGrant.create({ data: { sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date() } });
+        const grant = await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date() } });
         expect((await resolveEffectiveSessionAccess(db, { sessionId: session.id, accountId: owner.id, authentication }))?.sources).toEqual([{ kind: "owner" }]);
         expect((await visible()).ok).toBe(true);
         expect((await visible(other.id)).ok).toBe(false);
@@ -222,7 +239,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
         } finally {
             harness.restoreEnv();
         }
-        await db.sessionTeamGrant.deleteMany({ where: { sessionId: session.id, teamId: team.id } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'team', sessionId: session.id, teamId: team.id } });
         expect((await visible()).ok).toBe(false);
     });
 
@@ -260,10 +277,10 @@ describe("Session access owner/direct authority (SQLite)", () => {
     it("requires admin and delegated approval on the same direct grant", async () => {
         const { actor, session, share } = await fixture("admin");
         expect(await canManagePermissionDelegation(actor.id, session.id, authentication)).toBe(false);
-        await db.sessionShare.update({ where: { id: share.id }, data: { accessLevel: "edit", canApprovePermissions: true } });
+        await db.sessionGrant.update({ where: { principalKind: 'account', id: share.id }, data: { accessLevel: "edit", canApprovePermissions: true } });
         expect(await canApprovePermissions(actor.id, session.id, authentication)).toBe(true);
         expect(await canManagePermissionDelegation(actor.id, session.id, authentication)).toBe(false);
-        await db.sessionShare.update({ where: { id: share.id }, data: { accessLevel: "admin" } });
+        await db.sessionGrant.update({ where: { principalKind: 'account', id: share.id }, data: { accessLevel: "admin" } });
         expect(await canManagePermissionDelegation(actor.id, session.id, authentication)).toBe(true);
     });
     it("keeps relational admission and effective capabilities identical for current owner/direct facts", async () => {
@@ -277,7 +294,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
                     expect(row !== null).toBe(access?.capabilities[capability] === true);
                 }
             }
-            await db.sessionShare.delete({ where: { id: share.id } });
+            await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
             expect(await resolveEffectiveSessionAccess(db, { accountId: actor.id, sessionId: session.id, authentication })).toBeNull();
             expect(await inTx(async tx => tx.session.findFirst({ where: { AND: [{ id: session.id }, await buildSessionAccessWhere({ tx,
                 accountId: actor.id, capability: "readTranscript", mode: "effective_access_v1", authentication,
@@ -304,8 +321,8 @@ describe("Session access owner/direct authority (SQLite)", () => {
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: "guest" } });
         const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Exact", nameKey: "exact" } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id } });
-        await db.sessionGroupGrant.create({ data: { sessionId: session.id, teamGroupId: group.id, accessLevel: "view", effectiveAt: new Date() } });
-        await db.sessionTeamGrant.create({ data: { sessionId: session.id, teamId: hidden.id, accessLevel: "view", effectiveAt: new Date() } });
+        await db.sessionGrant.create({ data: { principalKind: 'group', sessionId: session.id, teamGroupId: group.id, accessLevel: "view", effectiveAt: new Date() } });
+        await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: hidden.id, accessLevel: "view", effectiveAt: new Date() } });
         await db.session.update({ where: { id: session.id }, data: { primaryTeamId: hidden.id } });
         const count = (accountId: string, audiences: Parameters<typeof createApplicableAudienceWhere>[0]["audiences"]) => inTx(async tx => {
             const where = { AND: [{ id: session.id },
@@ -325,9 +342,9 @@ describe("Session access owner/direct authority (SQLite)", () => {
         await db.teamGroupMembership.deleteMany({ where: { teamGroupId: group.id } });
         expect(await count(actor.id, [{ kind: "outside_teams" }])).toBe(1);
         expect(await count(actor.id, [{ kind: "team", teamId: hidden.id }, { kind: "outside_teams" }])).toBe(1);
-        await db.sessionShare.update({ where: { id: share.id }, data: { accessLevel: "admin" } });
+        await db.sessionGrant.update({ where: { principalKind: 'account', id: share.id }, data: { accessLevel: "admin" } });
         expect(await count(actor.id, [{ kind: "team", teamId: hidden.id }])).toBe(1);
-        await db.sessionTeamGrant.deleteMany({ where: { sessionId: session.id } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'team', sessionId: session.id } });
         expect(await count(owner.id, [{ kind: "team", teamId: hidden.id }])).toBe(0);
     });
 
@@ -395,7 +412,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
         const membership = await db.teamMembership.create({ data: {
             teamId: team.id, accountId: actor.id, role: "member", sessionAccessStartsAt: cutoff,
         } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: cutoff,
         } });
         const visible = (actorAccountId = owner.id) => inTx(async tx => {
@@ -451,7 +468,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
         await db.teamGroupMembership.create({ data: {
             teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, sessionAccessStartsAt: cutoff,
         } });
-        await db.sessionGroupGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'group',
             sessionId: session.id, teamGroupId: group.id, accessLevel: "view", effectiveAt: cutoff,
         } });
         const visible = (teamId = team.id) => inTx(async tx => {
@@ -482,20 +499,20 @@ describe("Session access owner/direct authority (SQLite)", () => {
 
     it("uses the same independent membership horizons for point, batch and bounded audience decisions", async () => {
         const { actor, session, share } = await fixture("view");
-        await db.sessionShare.delete({ where: { id: share.id } });
+        await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
         const cutoff = new Date("2026-09-01T12:00:00.000Z");
         const team = await db.team.create({ data: { name: crypto.randomUUID() } });
         const membership = await db.teamMembership.create({ data: {
             teamId: team.id, accountId: actor.id, role: "member", sessionAccessStartsAt: cutoff,
         } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id, teamId: team.id, accessLevel: "admin", effectiveAt: cutoff,
         } });
         const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Developers", nameKey: "developers" } });
         await db.teamGroupMembership.create({ data: {
             teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id, sessionAccessStartsAt: null,
         } });
-        await db.sessionGroupGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'group',
             sessionId: session.id, teamGroupId: group.id, accessLevel: "edit", effectiveAt: cutoff,
             canApprovePermissions: true,
         } });
@@ -530,7 +547,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
         const { owner, actor, session } = await fixture("view");
         const team = await db.team.create({ data: { name: crypto.randomUUID() } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: "member" } });
-        await db.sessionTeamGrant.create({ data: { sessionId: session.id, teamId: team.id, accessLevel: "admin", effectiveAt: new Date() } });
+        await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: team.id, accessLevel: "admin", effectiveAt: new Date() } });
         const access = await resolveEffectiveSessionAccess(db, { sessionId: session.id, accountId: actor.id, authentication });
         expect(access?.sources).toEqual([{ kind: "team", teamId: team.id, requiredByTeamPolicy: false }]);
         expect((await loadSessionViewerProjection({ sessionId: session.id, accountId: actor.id, authentication }))?.relevance.reasons)
@@ -548,14 +565,14 @@ describe("Session access owner/direct authority (SQLite)", () => {
             authenticationPolicy: { v: 1, mode: "restricted", accepted: [{ kind: "team_connection", connectionId: "company-sso" }] },
         } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: "member" } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id, teamId: team.id, accessLevel: "admin", canApprovePermissions: true,
             effectiveAt: new Date("2026-09-01T12:00:00.000Z"),
         } });
         expect(await inTx(async tx => (await resolveStructuralSessionAccessForAccountsInTx(tx, {
             sessionId: session.id, accountIds: [actor.id],
         })).get(actor.id))).toMatchObject({ level: "admin", capabilities: { manageAccess: true, approveRuntimePermissions: true } });
-        await db.sessionShare.deleteMany({ where: { sessionId: session.id, sharedWithUserId: actor.id } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session.id, accountId: actor.id } });
         expect(await inTx(tx => resolveCurrentSessionRecipientAccountIdsInTx(tx, { sessionId: session.id })))
             .toContain(actor.id);
         await expect(inTx(tx => resolveSessionAccessForOperation(tx, {
@@ -583,10 +600,10 @@ describe("Session access owner/direct authority (SQLite)", () => {
         } });
 
         const direct = await createSession("direct");
-        await db.sessionShare.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'account',
             sessionId: direct.id,
-            sharedByUserId: viewer.id,
-            sharedWithUserId: collaborator.id,
+            createdByAccountId: viewer.id,
+            accountId: collaborator.id,
             accessLevel: "view",
         } });
 
@@ -599,7 +616,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
             sessionAccessStartsAt: new Date(effectiveAt.getTime() - 1),
         } });
         const teamSession = await createSession("team");
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: teamSession.id,
             teamId: team.id,
             accessLevel: "view",
@@ -624,7 +641,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
             teamMembershipId: guestMembership.id,
         } });
         const groupSession = await createSession("group");
-        await db.sessionGroupGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'group',
             sessionId: groupSession.id,
             teamGroupId: group.id,
             accessLevel: "view",
@@ -639,7 +656,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
             sessionAccessStartsAt: effectiveAt,
         } });
         const cutoffSession = await createSession("cutoff");
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: cutoffSession.id,
             teamId: cutoffTeam.id,
             accessLevel: "view",
@@ -647,17 +664,17 @@ describe("Session access owner/direct authority (SQLite)", () => {
         } });
 
         const unpublished = await createSession("unpublished", "machine_only");
-        await db.sessionShare.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'account',
             sessionId: unpublished.id,
-            sharedByUserId: viewer.id,
-            sharedWithUserId: collaborator.id,
+            createdByAccountId: viewer.id,
+            accountId: collaborator.id,
             accessLevel: "view",
         } });
         const suspendedDirect = await createSession("suspended");
-        await db.sessionShare.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'account',
             sessionId: suspendedDirect.id,
-            sharedByUserId: viewer.id,
-            sharedWithUserId: suspended.id,
+            createdByAccountId: viewer.id,
+            accountId: suspended.id,
             accessLevel: "view",
         } });
 
@@ -694,7 +711,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
     it("qualifies only the exact credential for restricted Team point, query, and mutation access", async () => {
         const { actor, session, share } = await fixture("view");
         await enableKeyChallengeForAccount(actor.id);
-        await db.sessionShare.delete({ where: { id: share.id } });
+        await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
         const policy = {
             v: 1 as const,
             mode: "restricted" as const,
@@ -702,7 +719,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
         };
         const team = await db.team.create({ data: { name: crypto.randomUUID(), authenticationPolicy: policy } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: "member" } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id,
             teamId: team.id,
             accessLevel: "admin",
@@ -779,14 +796,14 @@ describe("Session access owner/direct authority (SQLite)", () => {
             },
         } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: "member" } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id,
             teamId: team.id,
             accessLevel: "admin",
             effectiveAt: new Date(),
         } });
-        await db.sessionShare.update({
-            where: { id: share.id },
+        await db.sessionGrant.update({
+            where: { principalKind: 'account', id: share.id },
             data: { accessLevel: "edit", canApprovePermissions: false },
         });
         const enabled = {
@@ -835,8 +852,8 @@ describe("Session access owner/direct authority (SQLite)", () => {
                 },
             })).resolves.toMatchObject({ ok: true, access: { level: "admin" } });
 
-            await tx.sessionTeamGrant.update({
-                where: { sessionId_teamId: { sessionId: session.id, teamId: team.id } },
+            await tx.sessionGrant.update({
+                where: { principalKind: 'team', sessionId_teamId: { sessionId: session.id, teamId: team.id } },
                 data: { accessLevel: "view" },
             });
             await expect(resolveSessionAccessForOperation(tx, {
@@ -862,9 +879,9 @@ describe("Session access owner/direct authority (SQLite)", () => {
         for (const team of [qualifiedTeam, unqualifiedTeam]) {
             await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: "member" } });
         }
-        await db.sessionTeamGrant.createMany({ data: [
-            { sessionId: session.id, teamId: qualifiedTeam.id, accessLevel: "edit", effectiveAt: new Date() },
-            { sessionId: session.id, teamId: unqualifiedTeam.id, accessLevel: "admin", canApprovePermissions: true, effectiveAt: new Date() },
+        await db.sessionGrant.createMany({ data: [
+            { principalKind: 'team', sessionId: session.id, teamId: qualifiedTeam.id, accessLevel: "edit", effectiveAt: new Date() },
+            { principalKind: 'team', sessionId: session.id, teamId: unqualifiedTeam.id, accessLevel: "admin", canApprovePermissions: true, effectiveAt: new Date() },
         ] });
         const authentication = {
             env: {
@@ -908,7 +925,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
     it("delivers protected Session events only to the qualified credential for one Account", async () => {
         const { actor, session, share } = await fixture("view");
         await enableKeyChallengeForAccount(actor.id);
-        await db.sessionShare.delete({ where: { id: share.id } });
+        await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
         const team = await db.team.create({ data: {
             name: crypto.randomUUID(),
             authenticationPolicy: {
@@ -918,7 +935,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
             },
         } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: "member" } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id,
             teamId: team.id,
             accessLevel: "view",
@@ -1020,7 +1037,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
     it("qualifies organization mutations against the acting credential", async () => {
         const { actor, session, share } = await fixture("view");
         await enableKeyChallengeForAccount(actor.id);
-        await db.sessionShare.delete({ where: { id: share.id } });
+        await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
         const team = await db.team.create({ data: {
             name: crypto.randomUUID(),
             authenticationPolicy: {
@@ -1030,7 +1047,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
             },
         } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: "member" } });
-        await db.sessionTeamGrant.create({ data: { sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date() } });
+        await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date() } });
         const base = {
             env: { HAPPIER_FEATURE_AUTH_LOGIN__KEY_CHALLENGE_ENABLED: "1" },
             authority: "present_user" as const,
@@ -1060,7 +1077,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
             },
         } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: "member" } });
-        await db.sessionTeamGrant.create({ data: { sessionId: session.id, teamId: team.id, accessLevel: "admin", effectiveAt: new Date() } });
+        await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: team.id, accessLevel: "admin", effectiveAt: new Date() } });
 
         const independentTeam = await db.team.create({ data: { name: crypto.randomUUID() } });
         const independentMembership = await db.teamMembership.create({ data: {
@@ -1078,7 +1095,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
             teamGroupId: group.id,
             teamMembershipId: independentMembership.id,
         } });
-        await db.sessionGroupGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'group',
             sessionId: session.id,
             teamGroupId: group.id,
             accessLevel: "edit",
@@ -1095,7 +1112,7 @@ describe("Session access owner/direct authority (SQLite)", () => {
             },
         }))).resolves.toMatchObject({ status: "allowed", access: { level: "edit", sources: [{ kind: "direct" }] } });
 
-        await db.sessionShare.deleteMany({ where: { sessionId: session.id, sharedWithUserId: actor.id } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: session.id, accountId: actor.id } });
         await expect(inTx(tx => resolveSessionAccessForOperation(tx, {
             accountId: actor.id,
             sessionId: session.id,
@@ -1111,14 +1128,14 @@ describe("Session access owner/direct authority (SQLite)", () => {
         const { owner, actor, session, share } = await fixture("view");
         const team = await db.team.create({ data: { name: crypto.randomUUID() } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: actor.id, role: "member" } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id, teamId: team.id, accessLevel: "admin", effectiveAt: new Date(),
         } });
         harness.resetEnv({ HAPPIER_BUILD_FEATURES_DENY: "sharing.session" });
         try {
             expect(await resolveEffectiveSessionAccess(db, { sessionId: session.id, accountId: actor.id, authentication }))
                 .toMatchObject({ level: "view" });
-            await db.sessionShare.delete({ where: { id: share.id } });
+            await db.sessionGrant.delete({ where: { principalKind: 'account', id: share.id } });
             expect(await inTx(tx => resolveCurrentSessionRecipientAccountIdsInTx(tx, { sessionId: session.id })))
                 .toEqual([owner.id]);
         } finally {

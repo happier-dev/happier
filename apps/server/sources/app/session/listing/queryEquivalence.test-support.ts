@@ -79,8 +79,8 @@ export async function verifySessionQueryEquivalence(): Promise<void> {
             meaningfulActivityAt: index % 4 === 1 ? null : new Date(10_000 + Math.floor(index / 2)),
             active: index % 5 === 0, pendingPermissionRequestCount: index % 7 === 0 ? 1 : 0,
         })) });
-        await db.sessionShare.createMany({ data: ids.flatMap((sessionId, index) => index % 3 !== 0 && index % 5 !== 4
-            ? [{ sessionId, sharedByUserId: other.id, sharedWithUserId: viewer.id, accessLevel: 'edit' }] : []) });
+        await db.sessionGrant.createMany({ data: (ids.flatMap((sessionId, index) => index % 3 !== 0 && index % 5 !== 4
+            ? [{ sessionId, createdByAccountId: other.id, accountId: viewer.id, accessLevel: 'edit' }] : [])).map(data => ({ ...data, principalKind: 'account' })) });
         await db.accountSessionFollow.createMany({ data: ids.flatMap((sessionId, index) => index % 4 === 1
             ? [{ sessionId, accountId: viewer.id, following: true, hasPersistentFollow: true }] : []) });
         await db.sessionPin.createMany({ data: ids.flatMap((sessionId, index) => index % 4 === 2

@@ -202,7 +202,7 @@ describe("machineUpdateHandler (AccountChange integration)", () => {
             daemonState: "old-state", daemonStateVersion: 0, dataEncryptionKey: null,
             installationId: "installation-1", active: false, revokedAt: null, replacedByMachineId: null,
             account: { status: "active", encryptionMode: "e2ee" },
-            accountGrants: [], teamGrants: [], groupGrants: [],
+            grants: [],  
         });
         txDbMocks.db.machine.findFirst
             .mockResolvedValueOnce({

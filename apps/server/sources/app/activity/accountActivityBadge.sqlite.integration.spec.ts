@@ -35,8 +35,8 @@ describe("Account activity badge admission (SQLite)", () => {
                 accountId: owner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain",
             } });
             if (session && anchorKind === "tracked_anchor") {
-                await db.sessionShare.create({ data: {
-                    sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: reader.id, accessLevel: "view",
+                await db.sessionGrant.create({ data: { principalKind: 'account',
+                    sessionId: session.id, createdByAccountId: owner.id, accountId: reader.id, accessLevel: "view",
                 } });
                 await db.accountSessionFollow.create({ data: {
                     sessionId: session.id, accountId: reader.id, following: true, followPolicy: JSON.stringify({ preset: "important" }),
@@ -118,9 +118,9 @@ describe("Account activity badge admission (SQLite)", () => {
             seq: 4,
             pendingBlockedCount: 1,
         } });
-        await db.sessionTeamGrant.createMany({ data: [restrictedTeam, inheritTeam].map(team => ({
+        await db.sessionGrant.createMany({ data: ([restrictedTeam, inheritTeam].map(team => ({
             sessionId: session.id, teamId: team.id, accessLevel: "view" as const, effectiveAt: new Date(0),
-        })) });
+        }))).map(data => ({ ...data, principalKind: 'team' })) });
         await db.accountSessionFollow.createMany({ data: [restrictedFollower, inheritFollower].map(account => ({
             sessionId: session.id, accountId: account.id, following: true, followPolicy: JSON.stringify({ preset: "important" }),
         })) });
@@ -162,7 +162,7 @@ describe("Account activity badge admission (SQLite)", () => {
         const session = await db.session.create({ data: {
             accountId: owner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain", seq: 4,
         } });
-        await db.sessionTeamGrant.create({ data: {
+        await db.sessionGrant.create({ data: { principalKind: 'team',
             sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date(0),
         } });
         await db.accountSessionFollow.createMany({ data: followers.map(account => ({

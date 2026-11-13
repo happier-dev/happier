@@ -85,7 +85,7 @@ describe('Session Follow source routes', () => {
         await db.sessionFollowEdge.deleteMany();
         await db.accessKey.deleteMany();
         await db.machine.deleteMany();
-        await db.sessionShare.deleteMany();
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account' } });
         await db.session.deleteMany();
         await db.account.deleteMany();
     });
@@ -729,11 +729,11 @@ describe('Session Follow source routes', () => {
             expect((await otherApp.inject({ method: 'PUT', url: foreignPath, payload: { policy } })).statusCode).toBe(404);
             expect(reads).toBe(destination ? 3 : 2);
             if (destination) {
-                await db.sessionShare.create({ data: { sessionId: destination.id, sharedByUserId: owner.id,
-                    sharedWithUserId: foreign.id, accessLevel: 'view' } });
+                await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: destination.id, createdByAccountId: owner.id,
+                    accountId: foreign.id, accessLevel: 'view' } });
                 const shared = await app.inject({ method: 'PUT', url: path, payload: { policy } });
                 expect(shared.statusCode, shared.body).toBe(403);
-                await db.sessionShare.deleteMany({ where: { sessionId: destination.id } });
+                await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: destination.id } });
             }
             const readsBeforeRevoke = reads;
             await db.machine.update({ where: { id: machine.id }, data: { revokedAt: new Date() } });
@@ -904,8 +904,8 @@ describe('Session Follow source routes', () => {
                 url: `/v2/sessions/${destination.id}/follows/sessions/${source.id}`, payload: { policy: { preset: 'quiet' } } })).statusCode).toBe(200);
             expect(await setSessionManager({ accountId: owner.id, sessionId: source.id, managerSessionId: visible.id,
                 expectedManagerSessionId: null, authentication })).toMatchObject({ ok: true });
-            for (const session of [source, visible]) await db.sessionShare.create({ data: { sessionId: session.id,
-                sharedByUserId: owner.id, sharedWithUserId: viewer.id, accessLevel: 'view' } });
+            for (const session of [source, visible]) await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id,
+                createdByAccountId: owner.id, accountId: viewer.id, accessLevel: 'view' } });
             for (const account of [owner, viewer]) expect(await setAccountSessionFollow({ accountId: account.id,
                 sessionId: source.id, preferences: { policy: { preset: 'quiet' } }, authentication })).toMatchObject({ ok: true });
             const input = { direction: 'followers' as const, source: { kind: 'session' as const, sessionId: source.id } };
@@ -950,12 +950,12 @@ describe('Session Follow source routes', () => {
             await db.account.update({ where: { id: viewer.id }, data: { status: 'suspended' } });
             expect((await app.inject({ method: request.method, url: request.path })).json().peopleCount).toBe(1);
             await db.account.update({ where: { id: viewer.id }, data: { status: 'active' } });
-            await db.sessionShare.deleteMany({ where: { sessionId: visible.id, sharedWithUserId: viewer.id } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: visible.id, accountId: viewer.id } });
             expect(parseSessionFollowActionResponse('follow.list', input,
                 (await viewerApp.inject({ method: request.method, url: request.path })).json()).sources).toEqual([]);
             expect((await viewerApp.inject({ method: nextRequest.method, url: nextRequest.path })).json())
                 .toMatchObject({ sources: [], coverage: 'complete' });
-            await db.sessionShare.deleteMany({ where: { sessionId: source.id, sharedWithUserId: viewer.id } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: source.id, accountId: viewer.id } });
             expect((await viewerApp.inject({ method: request.method, url: request.path })).json()).toEqual({ error: 'session_not_found' });
             const ownerBody = (await app.inject({ method: request.method, url: request.path })).json();
             expect(ownerBody.peopleCount).toBe(1);
@@ -969,8 +969,8 @@ describe('Session Follow source routes', () => {
         const owner = await createAccount();
         const viewer = await createAccount();
         const source = await createSession(owner.id, { latestTurnId: 'once-turn', latestTurnStatus: 'in_progress' });
-        await db.sessionShare.create({ data: { sessionId: source.id, sharedByUserId: owner.id,
-            sharedWithUserId: viewer.id, accessLevel: 'view' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: source.id, createdByAccountId: owner.id,
+            accountId: viewer.id, accessLevel: 'view' } });
         const authentication = createPresentUserSessionAccessAuthentication({ env: {} });
         const personal = { accountId: viewer.id, sessionId: source.id, authentication };
         expect(await setAccountSessionFollow({ ...personal,
@@ -1022,10 +1022,10 @@ describe('Session Follow source routes', () => {
                 payload: { policy: { preset: 'everything' } } })).statusCode).toBe(200);
             expect(await setSessionManager({ accountId: owner.id, sessionId: source.id,
                 managerSessionId: destination.id, expectedManagerSessionId: null, authentication })).toMatchObject({ ok: true });
-            await db.sessionShare.create({ data: { sessionId: source.id, sharedByUserId: owner.id,
-                sharedWithUserId: other.id, accessLevel: 'view' } });
-            await db.sessionShare.create({ data: { sessionId: foreignDestination.id, sharedByUserId: other.id,
-                sharedWithUserId: owner.id, accessLevel: 'edit' } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: source.id, createdByAccountId: owner.id,
+                accountId: other.id, accessLevel: 'view' } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: foreignDestination.id, createdByAccountId: other.id,
+                accountId: owner.id, accessLevel: 'edit' } });
             expect((await foreignApp.inject({ method: 'PUT', url: `/v2/sessions/${foreignDestination.id}/follows/sessions/${source.id}`,
                 payload: { policy: { preset: 'important' } } })).statusCode).toBe(200);
             expect(await setAccountSessionFollow({ accountId: other.id, sessionId: source.id,
@@ -1095,11 +1095,11 @@ describe('Session Follow source routes', () => {
             expect((await app.inject({ method: 'POST', url, payload })).json()).toEqual({ ok: false, v: 1, error: 'forbidden' });
             await db.session.update({ where: { id: source.id }, data: { active: true } });
             await db.machine.update({ where: { id: machine.id }, data: { revokedAt: null } });
-            await db.sessionShare.deleteMany({ where: { sessionId: source.id, sharedWithUserId: other.id } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: source.id, accountId: other.id } });
             expect((await foreignApp.inject({ method: 'POST', url, payload: receiverPayload })).json())
                 .toEqual({ ok: false, v: 1, error: 'forbidden' });
-            await db.sessionShare.create({ data: { sessionId: source.id, sharedByUserId: owner.id,
-                sharedWithUserId: other.id, accessLevel: 'view' } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: source.id, createdByAccountId: owner.id,
+                accountId: other.id, accessLevel: 'view' } });
             const requests = { v: 1, sourcePublisher: publisher,
                 sourceRequests: { agentStateVersion: 2, requests: [{ requestId: 'question', createdAt: fence.getTime() }] } };
             const requestRoutes = (await app.inject({ method: 'POST', url, payload: requests })).json();
@@ -1129,7 +1129,7 @@ describe('Session Follow source routes', () => {
                 .toEqual({ ok: false, v: 1, error: 'invalid_request' });
             expect((await app.inject({ method: 'POST', url, payload, headers: { 'x-test-auth-token-kind': 'api_token' } })).statusCode).toBe(403);
             // A retained relation never replaces current caller or pairwise disclosure authority.
-            await db.sessionShare.deleteMany({ where: { sessionId: foreignDestination.id } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: foreignDestination.id } });
             const revoked = (await app.inject({ method: 'POST', url, payload })).json();
             expect(revoked.routes).toHaveLength(2);
             expect(revoked.routes.every((route: { destinationSessionId: string }) => route.destinationSessionId === destination.id)).toBe(true);
@@ -1208,8 +1208,8 @@ describe('Session Follow source routes', () => {
             // A destination audience change is re-admitted on each read; the
             // retained edge does not authorize disclosing a private source.
             const viewer = await createAccount();
-            await db.sessionShare.create({ data: { sessionId: destination.id, sharedByUserId: owner.id,
-                sharedWithUserId: viewer.id, accessLevel: 'admin' } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: destination.id, createdByAccountId: owner.id,
+                accountId: viewer.id, accessLevel: 'admin' } });
             const deniedSources = await app.inject({ method: 'POST', url, payload });
             expect(deniedSources.json()).toMatchObject({ ok: true, currentSourceSessionIds: [], observations: [] });
             expect((await app.inject({ method: 'POST', url: '/v2/follows/pending-receivers', payload })).json())
@@ -1220,7 +1220,7 @@ describe('Session Follow source routes', () => {
                 expect((await sharedAdminApp.inject({ method: 'POST', url: '/v2/follows/pending-receivers', payload })).json())
                     .toEqual({ ok: true, v: 1, sessionIds: [] });
             } finally { await sharedAdminApp.close(); }
-            await db.sessionShare.deleteMany({ where: { sessionId: destination.id } });
+            await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: destination.id } });
             // Retained placement cannot borrow an uncommitted key tuple, nor
             // follow the same Machine id onto its replacement installation.
             await db.session.update({ where: { id: destination.id }, data: { runtimeMachineTarget: null } });
@@ -1321,19 +1321,19 @@ describe('Session Follow source routes', () => {
         const stranger = await createAccount();
         const source = await createSession(owner.id);
         const destination = await createSession(owner.id);
-        await db.sessionShare.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'account',
                 session: { connect: { id: destination.id } },
-                sharedByUser: { connect: { id: owner.id } },
-                sharedWithUser: { connect: { id: viewer.id } },
+                createdBy: { connect: { id: owner.id } },
+                account: { connect: { id: viewer.id } },
                 accessLevel: 'view',
             },
         });
-        await db.sessionShare.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'account',
                 session: { connect: { id: source.id } },
-                sharedByUser: { connect: { id: owner.id } },
-                sharedWithUser: { connect: { id: viewer.id } },
+                createdBy: { connect: { id: owner.id } },
+                account: { connect: { id: viewer.id } },
                 accessLevel: 'view',
             },
         });

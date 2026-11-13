@@ -1,14 +1,17 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { Tx } from "@/storage/inTx";
+import { inTx, type Tx } from "@/storage/inTx";
 import { applyPendingSessionStateChange } from "./applyPendingSessionStateChange";
 import { createAccountCursorRawQueryTransactionModel, createEmptySessionFollowEdgeTransactionModel } from "@/app/api/testkit/txHarness";
 
-vi.mock("@/storage/inTx", async (importOriginal) => ({
-    ...await importOriginal<typeof import("@/storage/inTx")>(),
-    // This focused transaction-boundary fake calls the owner with an in-memory Tx.
-    afterTx: (_tx: Tx, callback: () => void) => callback(),
-}));
+const transaction = vi.hoisted(() => vi.fn());
+// Only the persistent transaction transport is substituted; publication stays real.
+vi.mock("@/storage/db", () => ({ db: { $transaction: transaction } }));
+
+async function applyPendingInTransaction(params: Parameters<typeof applyPendingSessionStateChange>[0]) {
+    transaction.mockImplementationOnce(async (operation: (tx: Tx) => Promise<unknown>) => operation(params.tx));
+    return inTx(tx => applyPendingSessionStateChange({ ...params, tx }));
+}
 
 type SessionState = {
     pendingCount: number;
@@ -115,12 +118,12 @@ function createConcurrentDecrementTx() {
             }),
             findUnique: vi.fn(async () => ({
                 accountId: "owner",
-                shares: [],
+                grants: [],
             })),
         },
-        sessionShare: { findMany: vi.fn(async () => []) },
-        sessionTeamGrant: { findMany: vi.fn(async () => []) },
-        sessionGroupGrant: { findMany: vi.fn(async () => []) },
+        sessionGrant: { findMany: vi.fn(async () => []) },
+        
+        
         sessionFollowEdge: { findMany: vi.fn(async () => []) },
         account: {
             update: vi.fn(async () => {
@@ -129,6 +132,7 @@ function createConcurrentDecrementTx() {
             }),
         },
         accountChange: {
+            findUnique: vi.fn(async () => null),
             upsert: vi.fn(async () => ({})),
         },
     };
@@ -218,12 +222,12 @@ function createConcurrentEnqueueAfterFailedDecrementTx() {
             }),
             findUnique: vi.fn(async () => ({
                 accountId: "owner",
-                shares: [],
+                grants: [],
             })),
         },
-        sessionShare: { findMany: vi.fn(async () => []) },
-        sessionTeamGrant: { findMany: vi.fn(async () => []) },
-        sessionGroupGrant: { findMany: vi.fn(async () => []) },
+        sessionGrant: { findMany: vi.fn(async () => []) },
+        
+        
         sessionFollowEdge: { findMany: vi.fn(async () => []) },
         account: {
             update: vi.fn(async () => {
@@ -232,6 +236,7 @@ function createConcurrentEnqueueAfterFailedDecrementTx() {
             }),
         },
         accountChange: {
+            findUnique: vi.fn(async () => null),
             upsert: accountChangeUpsert,
         },
     };
@@ -252,11 +257,13 @@ function createConcurrentEnqueueAfterFailedDecrementTx() {
 }
 
 describe("applyPendingSessionStateChange", () => {
+    beforeEach(() => vi.stubEnv("HAPPIER_DB_PROVIDER", "sqlite"));
+    afterEach(() => vi.unstubAllEnvs());
     it("includes exact meaningful activity in pending change hints", async () => {
         const { tx, accountChangeUpsert } = createConcurrentEnqueueAfterFailedDecrementTx();
         const meaningfulActivityAt = new Date(1_234);
 
-        const result = await applyPendingSessionStateChange({
+        const result = await applyPendingInTransaction({
             tx,
             sessionId: "s1",
             pendingCountDelta: 1,
@@ -279,10 +286,11 @@ describe("applyPendingSessionStateChange", () => {
     it("uses an atomic decrement so concurrent stale reads cannot drive pendingCount below 0", async () => {
         const { tx, readState } = createConcurrentDecrementTx();
 
-        const [first, second] = await Promise.all([
-            applyPendingSessionStateChange({ tx, sessionId: "s1", pendingCountDelta: -1 }),
-            applyPendingSessionStateChange({ tx, sessionId: "s1", pendingCountDelta: -1 }),
-        ]);
+        transaction.mockImplementationOnce(async (operation: (tx: Tx) => Promise<unknown>) => operation(tx));
+        const [first, second] = await inTx(transactionTx => Promise.all([
+            applyPendingSessionStateChange({ tx: transactionTx, sessionId: "s1", pendingCountDelta: -1 }),
+            applyPendingSessionStateChange({ tx: transactionTx, sessionId: "s1", pendingCountDelta: -1 }),
+        ]));
 
         expect(first.pendingCount).toBeGreaterThanOrEqual(0);
         expect(second.pendingCount).toBeGreaterThanOrEqual(0);
@@ -292,7 +300,7 @@ describe("applyPendingSessionStateChange", () => {
     it("does not clobber a concurrent enqueue after a failed decrement", async () => {
         const { tx, readState } = createConcurrentEnqueueAfterFailedDecrementTx();
 
-        const result = await applyPendingSessionStateChange({ tx, sessionId: "s1", pendingCountDelta: -1 });
+        const result = await applyPendingInTransaction({ tx, sessionId: "s1", pendingCountDelta: -1 });
 
         expect(result.pendingCount).toBe(1);
         expect(result.pendingVersion).toBe(7);

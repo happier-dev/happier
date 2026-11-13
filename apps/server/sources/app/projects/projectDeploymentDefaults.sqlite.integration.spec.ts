@@ -50,7 +50,7 @@ describe('shared Project deployment defaults real storage', () => {
                 body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(opened) })),
                 dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
             if (!artifact.ok) throw new Error(artifact.error);
-            await db.artifactAccountGrant.create({ data: { artifactId: artifact.artifact.id, accountId: member.id, accessLevel: 'view', createdByAccountId: owner.id } });
+            await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: artifact.artifact.id, accountId: member.id, accessLevel: 'view', createdByAccountId: owner.id } });
             const content = { contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
             const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: '{}', installationId: randomUUID() } });
             const configured = await db.deploymentEnvironment.create({ data: { projectSourceId: source.id, createdByAccountId: owner.id,

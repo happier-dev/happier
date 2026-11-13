@@ -47,7 +47,7 @@ describe('Account Session Follow HTTP resource', () => {
     }, 180_000);
     afterEach(async () => {
         harness.restoreEnv();
-        await db.sessionShare.deleteMany();
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account' } });
         await db.session.deleteMany();
         await db.account.deleteMany();
     });
@@ -414,8 +414,8 @@ describe('Account Session Follow HTTP resource', () => {
         const session = await db.session.create({ data: {
             accountId: owner.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain', seq: 8,
         } });
-        await db.sessionShare.create({ data: {
-            sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: viewer.id, accessLevel: 'view',
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId: session.id, createdByAccountId: owner.id, accountId: viewer.id, accessLevel: 'view',
         } });
         const app = await buildApp(viewer.id);
         try {

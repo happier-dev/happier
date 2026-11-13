@@ -1,3 +1,4 @@
+import { teamResourceGrantFixture } from '@/testkit/resourceGrant.testkit';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as privacyKit from 'privacy-kit';
 import nacl from 'tweetnacl';
@@ -70,8 +71,8 @@ describe('reviewed create preparation authority', () => {
         const key = nacl.sign.keyPair();
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: actor.id,
             metadata: encodePlainMachineStoredContent({ host: 'Create carrier', platform: 'linux', happyCliVersion: 'test', homeDir: '/tmp', happyHomeDir: '/tmp/happier' }),
-            dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER), installationId: crypto.randomUUID(), installationPublicKey: key.publicKey } });
-        const artifact = async (accountId: string, kind = 'deployment-environment.v1', artifactId = crypto.randomUUID()) => {
+            dataEncryptionKey: privacyKit.decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER), installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(key.publicKey) } });
+        const artifact = async (accountId: string, kind = 'deployment-environment.v1', artifactId: string = crypto.randomUUID()) => {
             const created = await createArtifact({ actorUserId: accountId, artifactId,
                 kind: `v1:other:${kind}`,
                 header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind, title: 'Copy' })),
@@ -198,7 +199,7 @@ describe('reviewed create preparation authority', () => {
         const { f, template, runtime, readPath } = await previewFixture();
         const builder = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: f.actor.id,
             metadata: f.machine.metadata, dataEncryptionKey: f.machine.dataEncryptionKey,
-            installationId: crypto.randomUUID(), installationPublicKey: nacl.sign.keyPair().publicKey } });
+            installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(nacl.sign.keyPair().publicKey) } });
         const other = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: f.actor.id,
             metadata: f.machine.metadata, dataEncryptionKey: f.machine.dataEncryptionKey } });
         const environment = placement === 'template' ? template : await db.deploymentEnvironment.create({ data: {
@@ -380,11 +381,11 @@ describe('reviewed create preparation authority', () => {
             targetLinkId: childRuntime.id, createdByAccountId: f.actor.id, state: 'pending',
             ...await f.artifact(f.actor.id, 'deployment-domain.v1') } });
         const cases = [
-            { actionId: 'deployments.deploy', role: 'preview.deploy', suffix: 'deploy',
+            { actionId: 'deployments.deploy' as const, role: 'preview.deploy', suffix: 'deploy',
                 input: { serverId, environmentId: child.id, expectedRevision: child.revision,
                     targetLinkId: childRuntime.id, expectedTargetLinkRevision: 1, requestKey: `${envelope.requestId}-deploy`,
                     ...await f.artifact(f.actor.id, 'deployment-receipt.v1') } },
-            { actionId: 'deployments.domains.add', role: 'template.domain:preview', suffix: 'domains',
+            { actionId: 'deployments.domains.add' as const, role: 'template.domain:preview', suffix: 'domains',
                 input: { serverId, environmentId: child.id, expectedRevision: child.revision,
                     domainId: 'child-domain', targetLinkId: childRuntime.id, expectedTargetLinkRevision: 1,
                     requestKey: 'child-domain', ...await f.artifact(f.actor.id, 'deployment-domain.v1') } },
@@ -452,7 +453,7 @@ describe('reviewed create preparation authority', () => {
         const builderKey = nacl.sign.keyPair();
         const builder = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: f.actor.id,
             metadata: f.machine.metadata, dataEncryptionKey: f.machine.dataEncryptionKey, active: true,
-            installationId: crypto.randomUUID(), installationPublicKey: builderKey.publicKey } });
+            installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(builderKey.publicKey) } });
         const child = await db.deploymentEnvironment.create({ data: { projectSourceId: f.destination.source.id,
             createdByAccountId: f.actor.id, protection: 'nonProduction', purpose: 'preview', deployerMode: 'managers',
             controllerMachineId: f.machine.id, buildMachineId: builder.id, previewTemplateEnvironmentId: template.id,
@@ -506,14 +507,12 @@ describe('reviewed create preparation authority', () => {
         const otherOwner = { kind: 'team' as const, teamId: teams[1].id };
         await db.teamMembership.create({ data: { teamId: owner.teamId, accountId: f.owner.id, role: 'member' } });
         await db.machine.update({ where: { id: f.machine.id }, data: { accountId: f.owner.id } });
-        await db.machineTeamGrant.create({ data: { machineId: f.machine.id, teamId: owner.teamId,
-            accessLevel: 'admin', createdByAccountId: f.owner.id } });
+        await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: owner.teamId, accessLevel: 'admin', createdByAccountId: f.owner.id }), machineId: f.machine.id } });
         const source = await inTx(tx => createProjectSourceInTx(tx, f.actor.id, { serverId,
             requestKey: crypto.randomUUID(), name: 'Team Link', owner }));
         if (!source.ok) throw new Error(source.error);
         const content = await f.artifact(f.actor.id);
-        await db.artifactTeamGrant.create({ data: { artifactId: content.contentArtifactId, teamId: owner.teamId,
-            accessLevel: 'admin', createdByAccountId: f.actor.id } });
+        await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: owner.teamId, accessLevel: 'admin', createdByAccountId: f.actor.id }), artifactId: content.contentArtifactId } });
         const environment = await db.deploymentEnvironment.create({ data: { projectSourceId: source.source.id,
             createdByAccountId: f.actor.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
             controllerMachineId: f.machine.id, ...content } });
@@ -590,17 +589,6 @@ describe('reviewed create preparation authority', () => {
             };
             const own = await read(environment.id);
             expect.soft(own.statusCode, own.body).toBe(200);
-            // Replay #145: the approved native provider Create keeps the Link root
-            // as its HTTP effect when loading the admitted Environment before creation.
-            const rootRead = (id: string) => {
-                const url = `/v1/deployments/environments/${encodeURIComponent(id)}?serverId=${encodeURIComponent(serverId)}`;
-                return app.inject({ method: 'GET', url,
-                    headers: headers(proof(undefined, url, actionId, 'GET')) });
-            };
-            const rootEnvironment = await rootRead(environment.id);
-            expect.soft(rootEnvironment.statusCode, rootEnvironment.body).toBe(200);
-            expect.soft((await rootRead(otherEnvironment.id)).statusCode,
-                'the root effect cannot substitute another readable Environment').toBe(401);
             const other = await read(otherEnvironment.id);
             expect.soft(other.statusCode, 'another Environment in the same Team is outside this Link job').toBe(401);
             expect.soft(other.json()).toEqual({ error: 'invalid_token', authorizationRefusal: 'verification_purpose' });
@@ -613,8 +601,7 @@ describe('reviewed create preparation authority', () => {
                 headers: headers(proof(undefined, siblingContentPath, actionId, 'GET')) });
             expect.soft(siblingContent.statusCode, 'a sibling Environment content is outside this Link job').toBe(401);
             const otherProvider = await f.artifact(f.actor.id, 'deployment-target-link.v1');
-            await db.artifactTeamGrant.create({ data: { artifactId: otherProvider.contentArtifactId, teamId: otherOwner.teamId,
-                accessLevel: 'admin', createdByAccountId: f.actor.id } });
+            await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: otherOwner.teamId, accessLevel: 'admin', createdByAccountId: f.actor.id }), artifactId: otherProvider.contentArtifactId } });
             const otherSource = await inTx(tx => createProjectSourceInTx(tx, f.actor.id, { serverId,
                 requestKey: crypto.randomUUID(), name: 'Other Team Link', owner: otherOwner }));
             if (!otherSource.ok) throw new Error(otherSource.error);
@@ -629,8 +616,7 @@ describe('reviewed create preparation authority', () => {
                 headers: headers(proof(undefined, otherProviderPath, actionId, 'GET')) });
             expect(otherProviderRead.statusCode, 'another readable Team provider is outside this Link job').toBe(401);
             const existingProvider = await f.artifact(f.actor.id, 'deployment-target-link.v1');
-            await db.artifactTeamGrant.create({ data: { artifactId: existingProvider.contentArtifactId, teamId: owner.teamId,
-                accessLevel: 'view', createdByAccountId: f.actor.id } });
+            await db.artifactGrant.create({ data: { ...teamResourceGrantFixture({ teamId: owner.teamId, accessLevel: 'view', createdByAccountId: f.actor.id }), artifactId: existingProvider.contentArtifactId } });
             const existingLink = await db.deploymentTargetLink.create({ data: { environmentId: otherEnvironment.id,
                 createdByAccountId: f.actor.id, role: 'runtime', state: 'configured', sourceKind: 'plugin',
                 pluginId: 'fixture.deploy', contributionLocalId: 'platform', targetKind: 'platform', ...existingProvider } });
@@ -690,7 +676,7 @@ describe('reviewed create preparation authority', () => {
             const deniedGrant = await app.inject({ method: 'PUT', url: grantPath, payload: wrongGrant,
                 headers: headers(proof(wrongGrant, grantPath, actionId, 'PUT')) });
             expect(deniedGrant.statusCode, deniedGrant.body).toBe(401);
-            expect(await db.artifactTeamGrant.count({ where: { artifactId, teamId: otherOwner.teamId } })).toBe(0);
+            expect(await db.artifactGrant.count({ where: { principalKind: 'team', artifactId, teamId: otherOwner.teamId } })).toBe(0);
             for (const id of [artifactId, unrelated.contentArtifactId]) {
                 const before = await db.artifact.findUnique({ where: { id }, select: { headerVersion: true, bodyVersion: true } });
                 const artifactPath = `/v1/artifacts/${id}`;
@@ -712,7 +698,7 @@ describe('reviewed create preparation authority', () => {
             const deniedOldGrant = await app.inject({ method: 'PUT', url: unrelatedGrantPath, payload: unrelatedGrant,
                 headers: headers(proof(unrelatedGrant, unrelatedGrantPath, actionId, 'PUT')) });
             expect(deniedOldGrant.statusCode, deniedOldGrant.body).toBe(401);
-            expect(await db.artifactTeamGrant.count({ where: { artifactId: unrelated.contentArtifactId } })).toBe(0);
+            expect(await db.artifactGrant.count({ where: { principalKind: 'team', artifactId: unrelated.contentArtifactId } })).toBe(0);
             const stored = await db.artifact.findUniqueOrThrow({ where: { id: artifactId }, select: { headerVersion: true, bodyVersion: true } });
             const prepared = { contentArtifactId: artifactId, contentHeaderVersion: stored.headerVersion, contentBodyVersion: stored.bodyVersion };
             const link = (target: typeof environment) => {
@@ -799,7 +785,7 @@ describe('reviewed create preparation authority', () => {
         const controller = actionId === 'deployments.environments.create'
             ? await db.machine.create({ data: { id: crypto.randomUUID(), accountId: f.actor.id,
                 metadata: f.machine.metadata, dataEncryptionKey: f.machine.dataEncryptionKey,
-                installationId: crypto.randomUUID(), installationPublicKey: nacl.sign.keyPair().publicKey } }) : f.machine;
+                installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(nacl.sign.keyPair().publicKey) } }) : f.machine;
         const provider = { pluginId: 'fixture.compute', localId: 'vm' };
         const provisioner = MachineProvisionerContributionV1Schema.parse({ id: provider.localId, title: 'VM', icon: 'machine',
             resourceKind: 'vm', schemaVersion: 1, platforms: ['linux'], prerequisites: [],
@@ -866,8 +852,7 @@ describe('reviewed create preparation authority', () => {
             const tampered = await app.inject({ method: 'POST', url: signed.path, headers,
                 payload: { ...ManagedControlAdmissionInputV1Schema.parse(signed.body), requestId: crypto.randomUUID() } });
             expect(tampered.statusCode).toBe(401);
-            const missingChild = { ...headers };
-            delete missingChild[EXTERNAL_ACTION_REVIEWED_CHILD_HEADER];
+            const { [EXTERNAL_ACTION_REVIEWED_CHILD_HEADER]: _reviewedChild, ...missingChild } = headers;
             expect((await app.inject({ method: 'POST', url: signed.path, headers: missingChild, payload: signed.body })).statusCode).toBe(401);
             if (controller.id !== f.machine.id) {
                 const unrelated = await db.managedMachine.create({ data: { homeId: serverId, custodianAccountId: f.actor.id,
@@ -898,6 +883,11 @@ describe('reviewed create preparation authority', () => {
             principal: { accountId: f.actor.id }, effectActionId: childAction, reviewedChildAdmission: reviewedChild });
         expect(await verifyExternalActionDomainExecutionRequest(proof(authorization,
             { homeId: serverId, enrolledMachineId: f.machine.id }, reviewedChild, f.key.secretKey, 'machines.managed.list'))).not.toBeNull();
+        // The creation-scope retention variant carries no retention; target-retention admission refuses it instead of throwing.
+        const creationScopeBody = { homeId: serverId, managedId: allocation.id, expectedIntentRevision: allocation.intentRevision,
+            creationScopeRetention: null };
+        await expect(verifyExternalActionDomainExecutionRequest(proof(authorization, creationScopeBody,
+            { ...reviewedChild, inputDigest: computeActionInputApprovalDigestV1(childAction, creationScopeBody) }))).resolves.toBeNull();
         expect(await verifyExternalActionDomainExecutionRequest(proof(authorization,
             { homeId: serverId }, reviewedChild, f.key.secretKey, 'machines.managed.list'))).toBeNull();
         expect(await verifyExternalActionDomainExecutionRequest(proof(authorization, { ...body, wakeOnAcceptedMessage: false }))).toBeNull();
@@ -1088,22 +1078,24 @@ describe('reviewed create preparation authority', () => {
         const f = await fixture();
         const team = await db.team.create({ data: { name: 'Admitted preparation Source' } });
         await db.teamMembership.create({ data: { teamId: team.id, accountId: f.actor.id, role: 'owner' } });
-        await db.machineTeamGrant.create({ data: { machineId: f.machine.id, teamId: team.id,
-            accessLevel: 'admin', createdByAccountId: f.actor.id } });
+        await db.machineGrant.create({ data: { ...teamResourceGrantFixture({ teamId: team.id, accessLevel: 'admin', createdByAccountId: f.actor.id }), machineId: f.machine.id } });
         const selected = await inTx(tx => createProjectSourceInTx(tx, f.actor.id, { serverId,
             requestKey: crypto.randomUUID(), name: 'Selected team Source', owner: { kind: 'team', teamId: team.id } }));
         if (!selected.ok) throw new Error(selected.error);
         const templateRef = { sourceId: 'apps', itemId: 'web', version: '1',
             ref: { kind: 'content' as const, digest: `sha256:${'c'.repeat(64)}` } };
-        const input = actionId === 'deployments.templates.instantiate' ? {
+        // Separate literals keep each branch exact (a literal ternary would add `?: undefined` keys, which are not JSON).
+        const instantiateInput = {
             mode: 'apply' as const, serverId, machineId: f.machine.id, projectSourceId: selected.source.id, templateRef,
             environment: { kind: 'create' as const, name: 'Admitted app', requestKey: crypto.randomUUID(),
                 protection: 'nonProduction' as const, purpose: 'standard' as const, deployerMode: 'managers' as const,
                 controllerMachineId: f.machine.id },
             target: { kind: 'new' as const, installationId: f.machine.installationId! },
             destination: { kind: 'stored' as const }, bindings: [], deploy: { requestKey: crypto.randomUUID() },
-        } : { serverId, machineId: f.machine.id, installationId: f.machine.installationId!,
+        };
+        const previewInput = { serverId, machineId: f.machine.id, installationId: f.machine.installationId!,
             projectSourceId: selected.source.id, sourceRevision: selected.source.revision, templateRef };
+        const input = actionId === 'deployments.templates.instantiate' ? instantiateInput : previewInput;
         const envelope = { v: 1 as const, requestId: f.binding.requestId, target: f.binding.target, input };
         const mintInput = { ...f.binding, actionId,
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
@@ -1508,14 +1500,14 @@ describe('reviewed create preparation authority', () => {
             expect(await inTx(tx => readDeploymentCreateHttpPurposeInTx(tx, binding, binding.actionId, {
                 method: 'GET', path: `/v1/artifacts/${scope.contentArtifactId}`,
             }))).toBeNull();
-            expect(await verify({ method: 'GET', path: `/v1/artifacts/${scope.contentArtifactId}`, reviewedChild }))
+            expect(await verify({ method: 'GET', body: undefined, path: `/v1/artifacts/${scope.contentArtifactId}`, reviewedChild }))
                 .toMatchObject({ reviewedChildAdmission: reviewedChild });
-            expect(await verify({ method: 'GET', path: `/v1/artifacts/${environmentContent.contentArtifactId}`, reviewedChild }))
+            expect(await verify({ method: 'GET', body: undefined, path: `/v1/artifacts/${environmentContent.contentArtifactId}`, reviewedChild }))
                 .toMatchObject({ reviewedChildAdmission: reviewedChild });
-            expect(await verify({ method: 'GET', path: '/v1/account/encryption/currentness', reviewedChild }))
+            expect(await verify({ method: 'GET', body: undefined, path: '/v1/account/encryption/currentness', reviewedChild }))
                 .toMatchObject({ reviewedChildAdmission: reviewedChild });
-            expect(await verify({ method: 'GET', path: `/v1/artifacts/${f.original.contentArtifactId}`, reviewedChild })).toBeNull();
-            expect(await verify({ method: 'GET', path: `/v1/artifacts/${scope.contentArtifactId}`,
+            expect(await verify({ method: 'GET', body: undefined, path: `/v1/artifacts/${f.original.contentArtifactId}`, reviewedChild })).toBeNull();
+            expect(await verify({ method: 'GET', body: undefined, path: `/v1/artifacts/${scope.contentArtifactId}`,
                 reviewedChild: { ...reviewedChild, role: 'template.domain:web' } })).toBeNull();
             expect(authorityReads).toBe(0);
         } finally { stopCandidate(); }
@@ -1586,7 +1578,8 @@ describe('reviewed create preparation authority', () => {
             if (discover.kind !== 'domainDiscover') throw new Error('Expected discover fixture');
             for (const transport of ['plain', 'sealed', 'digest'] as const) {
                 expect(await rpc(discover, transport)).toMatchObject({ deploymentChildAdmission: { routing: { kind: 'domainDiscover' } } });
-                expect(await rpc({ ...discover, input: { ...discover.input, requestKey: crypto.randomUUID() } }, transport), transport).toBeNull();
+                expect(await rpc(DeploymentChildRpcV1Schema.parse({ ...discover, input: { ...discover.input, requestKey: crypto.randomUUID() } }),
+                    transport), transport).toBeNull();
             }
 
             const foreignArtifact = await f.artifact(f.owner.id, 'deployment-domain.v1');

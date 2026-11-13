@@ -103,7 +103,7 @@ describe("Team accepted-authentication policy (SQLite integration)", () => {
         await db.teamMembership.create({ data: { teamId, accountId: member.id, role: "member" } });
         const custodian = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: custodian.id, metadata: "{}" } });
-        await db.machineAccountGrant.create({ data: { machineId: machine.id, accountId: owner.id,
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: machine.id, accountId: owner.id,
             accessLevel: "view", createdByAccountId: custodian.id } });
         const group = await db.teamGroup.create({ data: { teamId, name: "Engineering", nameKey: "engineering" } });
         const membership = await db.teamMembership.findUniqueOrThrow({ where: { teamId_accountId: { teamId, accountId: member.id } } });
@@ -112,7 +112,7 @@ describe("Team accepted-authentication policy (SQLite integration)", () => {
         const defaults = { team: layer === "team" ? values : {}, groups: layer === "group" ? { [group.id]: values } : {} };
         expect(await inTx(tx => setTeamPolicyInTx(tx, { actorAccountId: owner.id, teamId, managedDefaults: defaults })))
             .toEqual({ ok: false, error: "managed_default_machine_not_member_usable" });
-        await db.machineTeamGrant.create({ data: { machineId: machine.id, teamId, accessLevel: "view", createdByAccountId: owner.id } });
+        await db.machineGrant.create({ data: { principalKind: 'team', machineId: machine.id, teamId, accessLevel: "view", createdByAccountId: owner.id } });
         expect((await inTx(tx => setTeamPolicyInTx(tx, { actorAccountId: owner.id, teamId, managedDefaults: defaults }))).ok).toBe(true);
     });
 
@@ -124,7 +124,7 @@ describe("Team accepted-authentication policy (SQLite integration)", () => {
         const guestMembership = await db.teamMembership.create({ data: { teamId, accountId: guest.id, role: "guest" } });
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id, metadata: "{}" } });
         // Team grants give the member Use access, but intentionally exclude guests.
-        await db.machineTeamGrant.create({ data: { machineId: machine.id, teamId, accessLevel: "view", createdByAccountId: owner.id } });
+        await db.machineGrant.create({ data: { principalKind: 'team', machineId: machine.id, teamId, accessLevel: "view", createdByAccountId: owner.id } });
         const group = await db.teamGroup.create({ data: { teamId, name: "Default audience", nameKey: "default-audience" } });
         for (const teamMembershipId of [membership.id, guestMembership.id]) {
             await db.teamGroupMembership.create({ data: {

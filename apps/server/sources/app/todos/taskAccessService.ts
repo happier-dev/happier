@@ -15,7 +15,7 @@ import { ACCOUNT_DISPLAY_PROFILE_SELECT, projectAccountDisplayProfileV1, resolve
 import { applyResourceRecipientKeyEnvelopesInTx, mayManageResourceGrants, projectResourceRecipientCensus,
     projectResourceRecipientCensusRow, projectResourceRecipientEnvelope, readResourceGrantPrincipalAudienceInTx,
     validateResourceGrantPrincipalInTx, validateResourceRecipientEnvelopeCommit,
-    resourceGrantRelationsSelect, resolveResourceGrantAudienceFromFacts,
+    resourceGrantRelationsSelect, projectResourceGrantRows, resolveResourceGrantAudienceFromFacts,
     type ResourceGrantAccessFacts, type ResourceRecipientEnvelopeStorageAdapter } from '@/app/teams/resourceGrantAccess';
 import { resolveTaskAudienceInTx, taskGrantStorageAdapter } from './taskGrantStorageAdapter';
 import { lockTaskMutationInTx, projectTaskContent, resolveTaskContextInTx, type TaskActorInput, type TaskContext, type TaskResult } from './taskResourceService';
@@ -37,10 +37,10 @@ export const taskRecipientEnvelopeStorageAdapter: ResourceRecipientEnvelopeStora
 
 async function readPrincipalGrantInTx(tx: Tx, taskId: string, principal: PrincipalRefV1) {
     return principal.kind === 'account'
-        ? tx.taskAccountGrant.findUnique({ where: { taskId_accountId: { taskId, accountId: principal.accountId } } })
+        ? tx.taskGrant.findUnique({ where: { taskId_accountId: { taskId, accountId: principal.accountId } } })
         : principal.kind === 'team'
-            ? tx.taskTeamGrant.findUnique({ where: { taskId_teamId: { taskId, teamId: principal.teamId } } })
-            : tx.taskGroupGrant.findUnique({ where: { taskId_teamGroupId: { taskId, teamGroupId: principal.groupId } } });
+            ? tx.taskGrant.findUnique({ where: { taskId_teamId: { taskId, teamId: principal.teamId } } })
+            : tx.taskGrant.findUnique({ where: { taskId_teamGroupId: { taskId, teamGroupId: principal.groupId } } });
 }
 
 /** Census and roster share one captured readiness derivation and envelope load. */
@@ -58,17 +58,13 @@ export async function listTaskGrantsInTx(tx: Tx, input: TaskActorInput): Promise
     if (!context) return { ok: false, error: 'task_not_found' };
     const taskId = context.row.id;
     const relations = resourceGrantRelationsSelect();
-    const [accounts, teams, groups] = await Promise.all([
-        tx.taskAccountGrant.findMany({ where: { taskId }, select: { ...relations.accountGrants.select,
-            createdByAccountId: true, createdAt: true,
-            account: { select: { ...relations.accountGrants.select.account.select, ...ACCOUNT_DISPLAY_PROFILE_SELECT } } } }),
-        tx.taskTeamGrant.findMany({ where: { taskId }, select: { ...relations.teamGrants.select,
-            teamId: true, createdByAccountId: true, createdAt: true,
-            team: { select: { ...relations.teamGrants.select.team.select, name: true } } } }),
-        tx.taskGroupGrant.findMany({ where: { taskId }, select: { ...relations.groupGrants.select,
-            teamGroupId: true, createdByAccountId: true, createdAt: true,
-            teamGroup: { select: { ...relations.groupGrants.select.teamGroup.select, name: true, teamId: true } } } }),
-    ]);
+    const storedGrants = await tx.taskGrant.findMany({ where: { taskId }, select: {
+        ...relations.grants.select, createdByAccountId: true, createdAt: true,
+        account: { select: { ...relations.grants.select.account.select, ...ACCOUNT_DISPLAY_PROFILE_SELECT } },
+        team: { select: { ...relations.grants.select.team.select, name: true } },
+        teamGroup: { select: { ...relations.grants.select.teamGroup.select, name: true, teamId: true } },
+    } });
+    const { accountGrants: accounts, teamGrants: teams, groupGrants: groups } = projectResourceGrantRows(storedGrants);
     const audienceFor = (facts: Partial<Pick<ResourceGrantAccessFacts, 'accountGrants' | 'teamGrants' | 'groupGrants'>>) =>
         resolveResourceGrantAudienceFromFacts({ ownerAccountId: context.access.ownerAccountId,
             encryptionMode: context.access.encryptionMode, accountGrants: [], teamGrants: [], groupGrants: [], ...facts })
@@ -194,12 +190,12 @@ export async function setTaskGrantInTx(tx: Tx, input: TaskActorInput & Readonly<
     const data = { accessLevel, createdByAccountId: input.actorAccountId };
     const changed = previous?.accessLevel !== accessLevel;
     if (changed) {
-        if (principal.kind === 'account') await tx.taskAccountGrant.upsert({ where: { taskId_accountId: { taskId: row.id, accountId: principal.accountId } },
-            create: { taskId: row.id, accountId: principal.accountId, ...data }, update: data });
-        else if (principal.kind === 'team') await tx.taskTeamGrant.upsert({ where: { taskId_teamId: { taskId: row.id, teamId: principal.teamId } },
-            create: { taskId: row.id, teamId: principal.teamId, ...data }, update: data });
-        else await tx.taskGroupGrant.upsert({ where: { taskId_teamGroupId: { taskId: row.id, teamGroupId: principal.groupId } },
-            create: { taskId: row.id, teamGroupId: principal.groupId, ...data }, update: data });
+        if (principal.kind === 'account') await tx.taskGrant.upsert({ where: { taskId_accountId: { taskId: row.id, accountId: principal.accountId } },
+            create: { taskId: row.id, principalKind: principal.kind, accountId: principal.accountId, ...data }, update: data });
+        else if (principal.kind === 'team') await tx.taskGrant.upsert({ where: { taskId_teamId: { taskId: row.id, teamId: principal.teamId } },
+            create: { taskId: row.id, principalKind: principal.kind, teamId: principal.teamId, ...data }, update: data });
+        else await tx.taskGrant.upsert({ where: { taskId_teamGroupId: { taskId: row.id, teamGroupId: principal.groupId } },
+            create: { taskId: row.id, principalKind: principal.kind, teamGroupId: principal.groupId, ...data }, update: data });
     }
     if (promotion) {
         await taskRecipientEnvelopeStorageAdapter.writeRecipientEnvelopeInTx(tx, row.id, promotion.ownerKeyEnvelope);
@@ -227,9 +223,9 @@ export async function removeTaskGrantInTx(tx: Tx, input: TaskActorInput & Readon
     }
     const taskId = context.row.id;
     const previousAudience = await resolveTaskAudienceInTx(tx, taskId);
-    const removed = principal.kind === 'account' ? await tx.taskAccountGrant.deleteMany({ where: { taskId, accountId: principal.accountId } })
-        : principal.kind === 'team' ? await tx.taskTeamGrant.deleteMany({ where: { taskId, teamId: principal.teamId } })
-            : await tx.taskGroupGrant.deleteMany({ where: { taskId, teamGroupId: principal.groupId } });
+    const removed = principal.kind === 'account' ? await tx.taskGrant.deleteMany({ where: { taskId, accountId: principal.accountId } })
+        : principal.kind === 'team' ? await tx.taskGrant.deleteMany({ where: { taskId, teamId: principal.teamId } })
+            : await tx.taskGrant.deleteMany({ where: { taskId, teamGroupId: principal.groupId } });
     if (removed.count) await publishTaskChangedInTx(tx, taskId, previousAudience);
     return { ok: true, value: { changed: removed.count > 0 } };
 }

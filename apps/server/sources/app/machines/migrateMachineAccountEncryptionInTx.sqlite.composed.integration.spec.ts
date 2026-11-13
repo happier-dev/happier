@@ -96,7 +96,7 @@ describe("migrateMachineAccountEncryptionInTx (SQLite integration)", () => {
             dataEncryptionKey: new Uint8Array(Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, "base64")),
         } })));
         const recipient = await db.account.create({ data: { encryptionMode: "plain" } });
-        await db.machineAccountGrant.create({ data: {
+        await db.machineGrant.create({ data: { principalKind: 'account',
             machineId: machines[0].id, accountId: recipient.id, accessLevel: "view", createdByAccountId: account.id,
         } });
         const recipientCursor = recipient.seq;

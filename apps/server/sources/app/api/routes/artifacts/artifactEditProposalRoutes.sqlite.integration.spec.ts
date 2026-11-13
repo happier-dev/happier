@@ -118,12 +118,12 @@ describe('Doc proposal HTTP decisions with verified credentials and SQLite', () 
         const f = await fixture();
         const reader = await db.account.create({ data: { encryptionMode: 'plain' } });
         const token = await auth.createToken(reader.id, undefined, { kind: 'account', authority: 'present_user' });
-        await db.artifactAccountGrant.create({ data: { artifactId: f.artifactId, accountId: reader.id, accessLevel: 'view', createdByAccountId: f.owner.id } });
-        await db.discussionAccountGrant.create({ data: { discussionId: f.proposalRef.discussion.discussionId, accountId: reader.id,
+        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: f.artifactId, accountId: reader.id, accessLevel: 'view', createdByAccountId: f.owner.id } });
+        await db.discussionGrant.create({ data: { principalKind: 'account', discussionId: f.proposalRef.discussion.discussionId, accountId: reader.id,
             accessLevel: 'view', createdByAccountId: f.owner.id } });
         try {
             expect((await f.post('accept', f.accept, token)).statusCode).toBe(403);
-            await db.artifactAccountGrant.delete({ where: { artifactId_accountId: { artifactId: f.artifactId, accountId: reader.id } } });
+            await db.artifactGrant.delete({ where: { principalKind: 'account', artifactId_accountId: { artifactId: f.artifactId, accountId: reader.id } } });
             const revoked = await f.post('decline', { proposalRef: f.proposalRef }, token);
             expect(revoked.statusCode, revoked.body).toBe(409);
             expect(revoked.json()).toEqual({ error: 'discussion_content_unavailable' });

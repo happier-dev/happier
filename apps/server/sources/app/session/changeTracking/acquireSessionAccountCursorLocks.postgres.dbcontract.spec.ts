@@ -40,7 +40,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
         try {
             await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: "owner" } });
             const member = await db.teamMembership.create({ data: { teamId: team.id, accountId: reader.id, role: "member" } });
-            await db.sessionTeamGrant.create({ data: { sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date() } });
+            await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date() } });
             let attempts = 0;
             await inTx(async tx => {
                 attempts++;
@@ -79,7 +79,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
         try {
             await db.teamMembership.create({ data: { teamId: team.id, accountId: owner.id, role: "owner" } });
             const member = await db.teamMembership.create({ data: { teamId: team.id, accountId: reader.id, role: "member" } });
-            await db.sessionTeamGrant.create({ data: { sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date() } });
+            await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: team.id, accessLevel: "view", effectiveAt: new Date() } });
             const write = (localId: string) => createSessionMessage({ actorUserId: owner.id, sessionId: session.id,
                 inputAdmission: "authenticatedAccount", authentication: createPresentUserSessionAccessAuthentication(),
                 localId, messageRole: "user", content: { t: "plain", v: { text: localId } } });
@@ -226,8 +226,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
             await inTx(async tx => {
                 attempts += 1;
                 await acquireSessionAccountCursorLocksInTx(tx, [session.id]);
-                if (attempts === 1) await db.sessionShare.create({ data: {
-                    sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: recipient.id,
+                if (attempts === 1) await db.sessionGrant.create({ data: { principalKind: 'account',
+                    sessionId: session.id, createdByAccountId: owner.id, accountId: recipient.id,
                 } });
                 const recipients = await acquireSessionAccountCursorLocksInTx(tx, [session.id]);
                 await tx.session.update({ where: { id: session.id }, data: { seq: { increment: 1 } } });
@@ -288,8 +288,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
             const outcome = await createOrRejoinLayout1SessionByTag(prepared.prepared, createPresentUserSessionAccessAuthentication());
             expect(outcome.kind).toBe("created");
             if (outcome.kind !== "created") throw new Error("Expected a new Session");
-            expect(await db.sessionShare.findUnique({ where: { sessionId_sharedWithUserId: {
-                sessionId: outcome.session.id, sharedWithUserId: recipient.id,
+            expect(await db.sessionGrant.findUnique({ where: { principalKind: 'account', sessionId_accountId: {
+                sessionId: outcome.session.id, accountId: recipient.id,
             } }, select: { accessLevel: true } })).toEqual({ accessLevel: "view" });
             const changes = await db.accountChange.findMany({ where: { kind: "session", entityId: outcome.session.id },
                 orderBy: { accountId: "asc" }, select: { accountId: true, cursor: true } });
@@ -318,8 +318,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
         const changed = () => db.accountChange.findMany({ where: { sessionId: session.id },
             orderBy: { accountId: "asc" }, select: { accountId: true } });
         try {
-            await write(() => db.sessionShare.create({ data: {
-                sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: recipient.id,
+            await write(() => db.sessionGrant.create({ data: { principalKind: 'account',
+                sessionId: session.id, createdByAccountId: owner.id, accountId: recipient.id,
             } }));
             // Accepted glitch (owner, 2026-10-31): the newcomer's client learns of
             // this write on its next change or open; reads are authorized at read time.
@@ -359,7 +359,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
             const session = await db.session.create({ data: {
                 accountId: owner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain", currentStorageState: "hosted",
             } });
-            await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: recipient.id } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id, accountId: recipient.id } });
             try {
                 statements.length = 0;
                 const written = await createSessionMessage({ actorUserId: owner.id, sessionId: session.id,
@@ -386,7 +386,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
             const session = await db.session.create({ data: {
                 accountId: owner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain", currentStorageState: "hosted",
             } });
-            await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: follower.id } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id, accountId: follower.id } });
             await db.accountSessionFollow.create({ data: { accountId: follower.id, sessionId: session.id } });
             await db.accountSessionReadState.create({ data: { accountId: follower.id, sessionId: session.id, lastViewedSessionSeq: 0 } });
             try {
@@ -426,7 +426,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
             const session = await db.session.create({ data: {
                 accountId: owner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain",
             } });
-            await db.sessionShare.create({ data: { sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: recipient.id } });
+            await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: session.id, createdByAccountId: owner.id, accountId: recipient.id } });
             try {
                 statements.length = 0;
                 await write(session.id, owner.id);
@@ -506,8 +506,8 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("P
                     if (preparations === 1) {
                         // A real committed grant between discovery and mutation
                         // must refresh the whole sorted fence, never extend it.
-                        await db.sessionShare.create({ data: {
-                            sessionId: follower.id, sharedByUserId: followerOwner.id, sharedWithUserId: recipient.id,
+                        await db.sessionGrant.create({ data: { principalKind: 'account',
+                            sessionId: follower.id, createdByAccountId: followerOwner.id, accountId: recipient.id,
                         } });
                     }
                     return fence;

@@ -60,7 +60,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Automation defi
                 header: Buffer.from(encodePlainArtifactStoredContent({ kind: 'workflow-definition.v1' }), 'base64'),
                 body: Buffer.from(encodePlainArtifactStoredContent({}), 'base64'),
                 dataEncryptionKey: Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64') } });
-            await db.artifactTeamGrant.create({ data: { artifactId: artifact.id, teamId: team.id, accessLevel: 'view', createdByAccountId: accountId } });
+            await db.artifactGrant.create({ data: { principalKind: 'team', artifactId: artifact.id, teamId: team.id, accessLevel: 'view', createdByAccountId: accountId } });
             const nextRunAt = new Date('2030-01-01T12:00:00Z');
             await db.automation.create({ data: { id: randomUUID(), accountId, name: 'Private schedule', enabled: true,
                 managedTargetIndexed: true,
@@ -93,7 +93,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== "postgres")("Automation defi
                 header: Buffer.from(encodePlainArtifactStoredContent({ kind: 'workflow-definition.v1' }), 'base64'),
                 body: Buffer.from(encodePlainArtifactStoredContent({}), 'base64'),
                 dataEncryptionKey: Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64') } });
-            await db.artifactTeamGrant.create({ data: { artifactId, teamId: team.id, accessLevel: 'edit', createdByAccountId: accountId } });
+            await db.artifactGrant.create({ data: { principalKind: 'team', artifactId, teamId: team.id, accessLevel: 'edit', createdByAccountId: accountId } });
             await db.machine.create({ data: { id: machineId, accountId, metadata: '{}' } });
             await db.automation.create({ data: { id: automationId, accountId, name: 'Retained Team schedule', enabled: true,
                 workflowDefinitionId: artifactId, templateVersion: 8, templateCiphertext: JSON.stringify(recipe(8, 'session')),

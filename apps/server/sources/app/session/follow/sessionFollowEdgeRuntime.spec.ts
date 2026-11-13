@@ -1,3 +1,4 @@
+import { sessionDirectGrantProjectionFixture } from '@/app/session/access/sessionAccess.testkit';
 import { describe, expect, it, vi } from "vitest";
 import {
     deriveSessionFollowWakeEventLocalIdV1,
@@ -20,14 +21,14 @@ function runtimeFixture(policy: FollowPolicyV1 = { preset: 'quiet' }, sourceCoun
         latestTurnId: null, latestTurnStatus: null, publicShare: null as { expiresAt: Date | null } | null,
         currentStorageState: "hosted", acceptedThroughServerSeq: null,
         materializationPublicationId: null, materializedThroughSourceAt: null, publishedThroughServerSeq: null,
-        shares: [] as { id: string; sharedWithUserId: string; accessLevel: string; canApprovePermissions: boolean }[],
-        teamGrants: [], groupGrants: [],
+        grants: [] as ReturnType<typeof sessionDirectGrantProjectionFixture>[],
+         
     });
     const source = row("source", "source-owner");
     const destination = row("destination", "runtime");
-    source.shares.push({ id: "source-read", sharedWithUserId: "runtime", accessLevel: "view", canApprovePermissions: false });
+    source.grants.push(sessionDirectGrantProjectionFixture({ id: "source-read", accountId: "runtime", accessLevel: "view", canApprovePermissions: false }));
     const sources = Array.from({ length: sourceCount }, (_, index) => index === 0 ? source
-        : { ...source, id: `source-${index}`, shares: [...source.shares] });
+        : { ...source, id: `source-${index}`, grants: [...source.grants] });
     const audience = [{ id: "runtime" }];
     const edge = {
         sourceSessionId: source.id, destinationSessionId: destination.id,
@@ -56,12 +57,12 @@ function runtimeFixture(policy: FollowPolicyV1 = { preset: 'quiet' }, sourceCoun
             findMany: vi.fn(async ({ where }: { where: { id: { in: readonly string[] } } }) =>
                 [...sources, destination].filter(row => where.id.in.includes(row.id))),
         },
-        sessionShare: {
+        sessionGrant: {
             findMany: vi.fn(async () => audience.filter(account => account.id !== destination.accountId)
-                .map(account => ({ sessionId: destination.id, sharedWithUserId: account.id }))),
+                .map(account => ({ sessionId: destination.id, principalKind: 'account', accountId: account.id, teamId: null, teamGroupId: null, effectiveAt: null }))),
         },
-        sessionTeamGrant: { findMany: vi.fn(async () => []) },
-        sessionGroupGrant: { findMany: vi.fn(async () => []) },
+        
+        
         sessionMessage: {
             findUnique: vi.fn(async ({ where }: { where: { sessionId_localId: { sessionId: string; localId: string } } }) =>
                 where.sessionId_localId.sessionId === destination.id && where.sessionId_localId.localId === "input-1"
@@ -139,7 +140,7 @@ describe("ordinary Account Follow runtime admission", () => {
 
     it('keeps admitted originals reachable for mute settlement and reads the next request policy fresh', async () => {
         const f = runtimeFixture({ preset: 'everything' }, 128);
-        f.sources[1]!.shares = [];
+        f.sources[1]!.grants = [];
         const observe = () => observePendingSessionFollowForDestinationInTx(f.tx, f.observeInput);
         expect((await observe()).observations).toHaveLength(127);
         f.destination.deliveryMutes = JSON.stringify([
@@ -161,7 +162,7 @@ describe("ordinary Account Follow runtime admission", () => {
 
     it('does not read mute settings without an admitted source candidate', async () => {
         const f = runtimeFixture();
-        f.source.shares = [];
+        f.source.grants = [];
         expect((await observePendingSessionFollowForDestinationInTx(f.tx, f.observeInput)).observations).toEqual([]);
         expect(f.storage.session.findUnique.mock.calls.filter(([input]) =>
             input.select && Object.keys(input.select).join() === 'deliveryMutes')).toEqual([]);
@@ -186,7 +187,7 @@ describe("ordinary Account Follow runtime admission", () => {
         expect(await acknowledgeSessionFollowFrontierInTx(f.tx, { ...f.ackInput, relation: 'manager', attachedAt: 100 }))
             .toEqual({ ok: false, rejection: 'stale_expected_frontier' });
         expect(f.storage.sessionFollowEdge.updateMany).not.toHaveBeenCalled();
-        f.source.shares = [];
+        f.source.grants = [];
         expect(await observePendingSessionFollowForDestinationInTx(f.tx, { ...f.observeInput, includeManager: true }))
             .toEqual({ currentSourceSessionIds: [], observations: [] });
     });
@@ -199,7 +200,7 @@ describe("ordinary Account Follow runtime admission", () => {
             observations: [],
         });
 
-        f.source.shares = [];
+        f.source.grants = [];
         expect(await observePendingSessionFollowForDestinationInTx(f.tx, f.observeInput)).toEqual({
             currentSourceSessionIds: [],
             observations: [],
@@ -366,7 +367,7 @@ describe("ordinary Account Follow runtime admission", () => {
 
     it("rechecks source authority before settling an already-committed wake event", async () => {
         const f = runtimeFixture({ preset: 'everything' });
-        f.source.shares = [];
+        f.source.grants = [];
 
         expect(await acknowledgeSessionFollowFrontierInTx(f.tx, {
             ...f.ackInput,
@@ -399,7 +400,7 @@ describe("ordinary Account Follow runtime admission", () => {
         "rechecks %s after observation without acknowledging undisclosed progress", async (change) => {
             const f = runtimeFixture();
             expect((await observePendingSessionFollowForDestinationInTx(f.tx, f.observeInput)).observations).toHaveLength(1);
-            if (change === "revoked source") f.source.shares = [];
+            if (change === "revoked source") f.source.grants = [];
             if (change === "broader audience") f.audience.push({ id: "new-reader" });
             if (change === "public destination") f.destination.publicShare = { expiresAt: null };
             if (change === "transferred custody") f.destination.accountId = "new-runtime";

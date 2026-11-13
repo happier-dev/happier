@@ -1,5 +1,6 @@
-import { DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol';
 import type { ResourceAccessLevelV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
+import { projectResourceGrantRows } from '@/app/teams/resourceGrantAccess';
+import { DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol';
 import type { AccountStatus } from '@/storage/enums.generated';
 import type { Tx } from '@/storage/inTx';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
@@ -10,10 +11,7 @@ import { artifactGrantFacts, type StoredArtifactAccessFacts } from './artifactGr
 import type { ProjectSourceOwnerV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { ProjectSourceContentReference } from '@/app/projects/sources/projectSourceContentReferences';
 
-type ArtifactIdentity = StoredArtifactAccessFacts & Readonly<{
-    teamGrants: readonly Readonly<{ teamId: string; accessLevel: ResourceAccessLevelV1;
-        team: Readonly<{ archivedAt: Date | null }> }>[];
-}>;
+type ArtifactIdentity = StoredArtifactAccessFacts;
 
 export interface ArtifactSourceReader {
     readonly accountId: string;
@@ -23,9 +21,9 @@ export interface ArtifactSourceReader {
 /** Actual Source content references confer read access only while their owning custody holds. */
 export function projectArtifactSourceReadersFromFacts<T extends Readonly<{ accountId: string }>>(input: Readonly<{
     artifact: Pick<StoredArtifactAccessFacts, 'id' | 'kind' | 'accountId'> & Readonly<{
-        accountGrants: readonly Readonly<{ accountId: string; accessLevel: ResourceAccessLevelV1 }>[];
-        teamGrants: readonly Readonly<{ teamId: string; accessLevel: ResourceAccessLevelV1;
-            team: Readonly<{ archivedAt: unknown }> }>[];
+        grants: readonly Readonly<{ principalKind: string; accountId: string | null; teamId: string | null;
+            teamGroupId: string | null; accessLevel: ResourceAccessLevelV1;
+            team?: Readonly<{ archivedAt: unknown }> | null }>[];
     }>;
     reference: Pick<ProjectSourceContentReference, 'projectSourceId' | 'contentArtifactId' | 'expectedStoredKind'>;
     admittedSource: Readonly<{ source: Readonly<{ id: string }>; owner: ProjectSourceOwnerV1 }>;
@@ -34,11 +32,12 @@ export function projectArtifactSourceReadersFromFacts<T extends Readonly<{ accou
     const { artifact, reference, admittedSource: { source, owner } } = input;
     if (source.id !== reference.projectSourceId || artifact.id !== reference.contentArtifactId
         || artifact.kind !== reference.expectedStoredKind || !isProjectSourceContentStoredKind(artifact.kind)) return [];
-    const controls = owner.kind === 'team' ? artifact.teamGrants.some(grant => grant.teamId === owner.teamId
+    const grants = projectResourceGrantRows(artifact.grants);
+    const controls = owner.kind === 'team' ? grants.teamGrants.some(grant => grant.teamId === owner.teamId
         && projectSourceContentTeamCustodyLevels(reference.expectedStoredKind).includes(grant.accessLevel)
         && grant.team.archivedAt === null)
         : owner.accountId === artifact.accountId || reference.expectedStoredKind === DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1
-            && artifact.accountGrants.some(grant => grant.accountId === owner.accountId && grant.accessLevel === 'admin');
+            && grants.accountGrants.some(grant => grant.accountId === owner.accountId && grant.accessLevel === 'admin');
     return controls ? input.readers : [];
 }
 
@@ -70,12 +69,12 @@ export async function withArtifactSourceReadersInTx<T extends ArtifactIdentity>(
             return source?.owner.kind === 'account' && reference.expectedStoredKind === DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1
                 && source.owner.accountId !== byId.get(reference.contentArtifactId)!.accountId;
         }).map(reference => reference.contentArtifactId))];
-        for (const ids of portableQueryChunks({ values: controlledIds, bindingsPerValue: 1, fixedBindings: 2 })) {
-            const accountGrants = await tx.artifactAccountGrant.findMany({ where: { artifactId: { in: [...ids] }, accessLevel: 'admin' },
+        for (const ids of portableQueryChunks({ values: controlledIds, bindingsPerValue: 1, fixedBindings: 3 })) {
+            const accountGrants = await tx.artifactGrant.findMany({ where: { principalKind: 'account', artifactId: { in: [...ids] }, accessLevel: 'admin' },
                 select: { artifactId: true, accountId: true } });
             for (const grant of accountGrants) {
                 const accounts = accountControlled.get(grant.artifactId) ?? new Set<string>();
-                accounts.add(grant.accountId);
+                accounts.add(grant.accountId!);
                 accountControlled.set(grant.artifactId, accounts);
             }
         }
@@ -85,8 +84,8 @@ export async function withArtifactSourceReadersInTx<T extends ArtifactIdentity>(
             if (!source) continue;
             const artifact = byId.get(reference.contentArtifactId)!;
             const readers = projectArtifactSourceReadersFromFacts({
-                artifact: { ...artifact, accountGrants: [...artifact.accountGrants,
-                    ...[...(accountControlled.get(artifact.id) ?? [])].map(accountId => ({ accountId,
+                artifact: { ...artifact, grants: [...artifact.grants,
+                    ...[...(accountControlled.get(artifact.id) ?? [])].map(accountId => ({ principalKind: 'account', accountId, teamId: null, teamGroupId: null,
                         accessLevel: 'admin' as const }))] },
                 reference, admittedSource: source,
                 readers: (audienceBySource.get(source.source.id) ?? []).map(accountId => ({ accountId })),

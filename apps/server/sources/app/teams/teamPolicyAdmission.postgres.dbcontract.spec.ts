@@ -51,7 +51,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('T
         const session = await db.session.create({ data: {
             accountId: reader.id, tag: randomUUID(), encryptionMode: 'plain', metadata: '{}',
         } });
-        await db.sessionTeamGrant.create({ data: { sessionId: session.id, teamId: team.id, accessLevel: 'view', effectiveAt: new Date() } });
+        await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: team.id, accessLevel: 'view', effectiveAt: new Date() } });
         const admitted = deferred();
         const release = deferred();
         let holderPid = 0;

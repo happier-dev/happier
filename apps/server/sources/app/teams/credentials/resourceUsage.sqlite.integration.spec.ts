@@ -98,8 +98,8 @@ describe('Team credential resource usage query', () => {
         materializedThroughSourceAt: BigInt(observedAt.getTime()), publishedThroughServerSeq: 1,
       } });
       sessions.push(session);
-      if (accountId !== manager.id) await db.sessionShare.create({ data: {
-        sessionId: session.id, sharedByUserId: owner.id, sharedWithUserId: manager.id, accessLevel: 'view',
+      if (accountId !== manager.id) await db.sessionGrant.create({ data: { principalKind: 'account',
+        sessionId: session.id, createdByAccountId: owner.id, accountId: manager.id, accessLevel: 'view',
       } });
       await db.usageEvent.create({ data: {
         accountId: manager.id, sessionId: session.id, observedAt, agentId: 'codex', source: 'codex_app_server',

@@ -65,7 +65,7 @@ describe.skipIf(provider !== "postgres" && provider !== "mysql")("Scheduled Work
             body: new Uint8Array(privacyKit.decodeBase64(encodePlainArtifactStoredContent({ definition }))),
             dataEncryptionKey: new Uint8Array(privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER)),
         } });
-        await db.artifactTeamGrant.create({ data: { artifactId: artifact.id, teamId: team.id,
+        await db.artifactGrant.create({ data: { principalKind: 'team', artifactId: artifact.id, teamId: team.id,
             accessLevel: "view", createdByAccountId: owner.id } });
         const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, metadata: "{}" } });
         const automation = await db.automation.create({ data: { accountId: owner.id, name: "Scheduled Team workflow",
@@ -103,7 +103,7 @@ describe.skipIf(provider !== "postgres" && provider !== "mysql")("Scheduled Work
 
     it.each(["explicit", "omitted", "private"] as const)("resolves and publishes a scheduled snapshot with %s Team choice", async choice => {
         const f = await fixture();
-        if (choice === "private") await db.artifactTeamGrant.delete({ where: {
+        if (choice === "private") await db.artifactGrant.delete({ where: { principalKind: 'team',
             artifactId_teamId: { artifactId: f.artifact.id, teamId: f.team.id },
         } });
         // No Session share, wake or retained Run already admits this recipient.
@@ -124,7 +124,7 @@ describe.skipIf(provider !== "postgres" && provider !== "mysql")("Scheduled Work
             const otherTeam = await db.team.create({ data: { name: "Another viewable Team" } });
             teamIds.push(otherTeam.id);
             await db.teamMembership.create({ data: { teamId: otherTeam.id, accountId: f.owner.id, role: "member" } });
-            await db.artifactTeamGrant.create({ data: { artifactId: f.artifact.id, teamId: otherTeam.id,
+            await db.artifactGrant.create({ data: { principalKind: 'team', artifactId: f.artifact.id, teamId: otherTeam.id,
                 accessLevel: "view", createdByAccountId: f.owner.id } });
             // A lost-response rejoin keeps its frozen Team even if current
             // grants would now require an explicit choice for a new Run.
@@ -170,7 +170,7 @@ describe.skipIf(provider !== "postgres" && provider !== "mysql")("Scheduled Work
 
     it("refuses a revoked prospective Team grant without freezing or publishing the snapshot", async () => {
         const f = await fixture();
-        await db.artifactTeamGrant.delete({ where: { artifactId_teamId: { artifactId: f.artifact.id, teamId: f.team.id } } });
+        await db.artifactGrant.delete({ where: { principalKind: 'team', artifactId_teamId: { artifactId: f.artifact.id, teamId: f.team.id } } });
         await expect(resolveAutomationWorkflowAcceptedSnapshot({ ...f.request, visibleTeamId: f.team.id }))
             .rejects.toMatchObject({ code: "visible_team_not_granted" });
         expect(await db.automationRun.findUniqueOrThrow({ where: { id: f.request.runId } }))

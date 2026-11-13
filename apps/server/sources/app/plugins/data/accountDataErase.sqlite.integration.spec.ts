@@ -396,13 +396,13 @@ describe("plugin Account data erasure", () => {
         await db.teamMembership.create({ data: {
             teamId: grantedTeam.id, accountId: recipientIds[1]!, role: 'owner',
         } });
-        await db.machineAccountGrant.create({ data: {
+        await db.machineGrant.create({ data: { principalKind: 'account',
             machineId: machine.id, accountId: recipientIds[0]!, accessLevel: 'view', createdByAccountId: custodianId,
         } });
-        await db.machineTeamGrant.create({ data: {
+        await db.machineGrant.create({ data: { principalKind: 'team',
             machineId: machine.id, teamId: grantedTeam.id, accessLevel: 'view', createdByAccountId: custodianId,
         } });
-        await db.machineGroupGrant.create({ data: {
+        await db.machineGrant.create({ data: { principalKind: 'group',
             machineId: machine.id, teamGroupId: group.id, accessLevel: 'view', createdByAccountId: custodianId,
         } });
         await db.machine.createMany({ data: Array.from({ length: 100 }, (_, index) => ({
@@ -415,9 +415,9 @@ describe("plugin Account data erasure", () => {
         const emit = vi.spyOn(eventRouter, 'emitUpdate'); // Observe the real publisher; no domain logic is replaced.
         expect(await deleteAccountForErasure({ accountId: custodianId })).toEqual({ status: 'deleted' });
         expect(await db.machine.findUnique({ where: { id: machine.id } })).toBeNull();
-        expect(await db.machineAccountGrant.count({ where: { machineId: machine.id } })).toBe(0);
-        expect(await db.machineTeamGrant.count({ where: { machineId: machine.id } })).toBe(0);
-        expect(await db.machineGroupGrant.count({ where: { machineId: machine.id } })).toBe(0);
+        expect(await db.machineGrant.count({ where: { principalKind: 'account', machineId: machine.id } })).toBe(0);
+        expect(await db.machineGrant.count({ where: { principalKind: 'team', machineId: machine.id } })).toBe(0);
+        expect(await db.machineGrant.count({ where: { principalKind: 'group', machineId: machine.id } })).toBe(0);
         for (const accountId of recipientIds) expect(await admission(accountId)).toEqual({ kind: 'denied', code: 'access_denied' });
         expect(await db.machine.count({ where: { accountId: outsiderId } })).toBe(100);
         expect(await db.accountChange.findMany({ where: { kind: 'machineRecipientAccess' },
@@ -439,13 +439,13 @@ describe("plugin Account data erasure", () => {
         const machine = await db.machine.create({ data: {
             id: 'retained-foreign-machine', accountId: 'grant-custodian', metadata: '{}',
         } });
-        await db.machineAccountGrant.createMany({ data: [
-            { machineId: machine.id, accountId: 'grant-creator', accessLevel: 'admin', createdByAccountId: 'grant-custodian' },
-            { machineId: machine.id, accountId: 'grant-recipient', accessLevel: 'view', createdByAccountId: 'grant-creator' },
+        await db.machineGrant.createMany({ data: [
+            { principalKind: 'account', machineId: machine.id, accountId: 'grant-creator', accessLevel: 'admin', createdByAccountId: 'grant-custodian' },
+            { principalKind: 'account', machineId: machine.id, accountId: 'grant-recipient', accessLevel: 'view', createdByAccountId: 'grant-creator' },
         ] });
         expect(await deleteAccountForErasure({ accountId: 'grant-creator' })).toEqual({ status: 'deleted' });
         expect(await db.machine.findUnique({ where: { id: machine.id } })).not.toBeNull();
-        expect(await db.machineAccountGrant.count({ where: { machineId: machine.id } })).toBe(0);
+        expect(await db.machineGrant.count({ where: { principalKind: 'account', machineId: machine.id } })).toBe(0);
         expect(await db.accountChange.findMany({ where: { kind: 'machineRecipientAccess', entityId: machine.id },
             select: { accountId: true }, orderBy: { accountId: 'asc' } }))
             .toEqual([{ accountId: 'grant-custodian' }, { accountId: 'grant-recipient' }]);

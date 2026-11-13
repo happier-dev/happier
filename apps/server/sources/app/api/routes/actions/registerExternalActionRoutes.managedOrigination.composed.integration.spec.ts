@@ -204,14 +204,7 @@ describe('composed CLI managed Action origination', () => {
         if (qb56) {
             await seedBundledManagedAvailability(account.id, homeId, controller);
             const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
-            // Native instance identity now comes from the managed allocation;
-            // replay the captured user choices through the current launch contract.
-            const { instance: _legacyInstance, ...choices } = managedQb56Input.selection.launch.choices;
-            const launch = { ...managedQb56Input.selection.launch, choices };
-            const input = ManagedAcquireInputV1Schema.parse({ ...managedQb56Input,
-                selection: { ...managedQb56Input.selection, launch },
-                reviewedFacts: { ...managedQb56Input.reviewedFacts, launch } });
-            return { account, controller, keys, token, input, requestId: managedQb56RequestId };
+            return { account, controller, keys, token, input: managedQb56Input, requestId: managedQb56RequestId };
         }
         const manifest = nativeControls ? fixtureManifests.native : fixtureManifests.daemon;
         const declaration = createReleaseLessDeclarationV1(manifest);
@@ -714,7 +707,7 @@ describe('composed CLI managed Action origination', () => {
         }
     });
 
-    it.each(['valid', 'invalid-envelope', 'qb56'] as const)('invokes managed Create through CLI and Home with %s Settings', async policy => {
+    it.each(['valid', 'invalid', 'qb56'] as const)('invokes managed Create through CLI, Home and the real approval executor with %s refreshed policy', async policy => {
         const selected = await fixture(true, 'plain', policy === 'qb56');
         const credentials = { token: selected.token, credentialProvenance: 'stored_session' as const, encryption: null };
         const storedSettings = { actionsSettingsV1: { v: 1, actions: {
@@ -723,6 +716,7 @@ describe('composed CLI managed Action origination', () => {
         setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse(storedSettings),
             rawSettings: storedSettings, settingsVersion: 1, loadedAtMs: Date.now(), settingsSecretsReadKeys: [],
             scopeKey: resolveAccountSettingsScopeKey(credentials) });
+        const approvals: unknown[] = [];
         const phases: Array<{ phase: string; elapsedMs: number; status?: number }> = [];
         let effects = 0;
         const receiver = createCliActionExecutor({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
@@ -751,12 +745,6 @@ describe('composed CLI managed Action origination', () => {
                         ownCredentials: credentials, isCurrent: async () => true, createExecutor: () => receiver }),
                     resolveTarget: createDaemonExternalActionTargetResolver({ credentials }),
                 });
-                if (policy === 'invalid-envelope') {
-                    // A malformed Settings response prevents requester custody
-                    // admission, before the approval executor can refresh policy.
-                    expect(result).toMatchObject({ kind: 'invalid_request', errorCode: 'invalid_envelope' });
-                    return { ok: true, result };
-                }
                 if (result.kind !== 'response') throw new Error(`Daemon rejected managed ingress: ${result.kind} (${result.errorCode}): ${JSON.stringify(result.failureCause)}`);
                 return { ok: true, result: createExternalActionDaemonDispatchResponseV1(result.prepared) };
             } catch (error) { deliveryFailure = error; throw error; }
@@ -764,8 +752,18 @@ describe('composed CLI managed Action origination', () => {
             registerAccountProfileRoute(http);
             registerAccountEncryptionRoutes(http);
             http.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: storedSettings },
-                version: policy === 'invalid-envelope' ? 'invalid' : 2 }));
-            artifactsRoutes(http);
+                version: policy === 'invalid' ? 'invalid' : 2 }));
+            http.post('/v1/artifacts', async request => {
+                const raw = request.body;
+                if (!raw || typeof raw !== 'object' || !('id' in raw) || typeof raw.id !== 'string'
+                    || !('body' in raw) || typeof raw.body !== 'string') throw new Error('Invalid Artifact request');
+                const stored = decodePlainArtifactStoredContent(raw.body);
+                if (!stored || typeof stored !== 'object' || !('body' in stored) || typeof stored.body !== 'string') {
+                    throw new Error('Invalid approval Artifact body');
+                }
+                approvals.push(ApprovalRequestV2Schema.parse(JSON.parse(stored.body)));
+                return { id: raw.id, headerVersion: 1, bodyVersion: 1 };
+            });
         }, phases);
         const restoreHttp = installAxiosFastifyAdapter({ app: instance, origin: 'http://managed-seam.test' });
         const sockets = await createRequesterCurrentnessSocketHarness();
@@ -788,13 +786,10 @@ describe('composed CLI managed Action origination', () => {
             });
             if (deliveryFailure) throw deliveryFailure;
             phases.push({ phase: 'cli-create-to-ask', elapsedMs: performance.now() - began });
-            expect(JSON.parse(output), output).toMatchObject(policy === 'invalid-envelope'
-                ? { ok: false, kind: 'actions_invoke', error: { code: 'invalid_envelope' } }
+            expect(JSON.parse(output), output).toMatchObject(policy === 'invalid'
+                ? { ok: false, kind: 'actions_invoke', error: { code: 'ACCOUNT_SETTINGS_CONTENT_INVALID' } }
                 : { ok: true, kind: 'actions_invoke', data: { kind: 'approval_request_created', actionId: 'machines.managed.acquire' } });
-            const approvals = await runWithServerHttpBaseUrl('http://managed-seam.test', () =>
-                createCliApprovalsArtifactStore({ credentials, serverId: homeId,
-                    serverHttpBaseUrl: 'http://managed-seam.test' }).approvalsList({ serverId: homeId, status: 'open' }));
-            expect(approvals.items).toHaveLength(policy === 'invalid-envelope' ? 0 : 1);
+            expect(approvals).toHaveLength(policy === 'invalid' ? 0 : 1);
             expect(effects).toBe(0);
             // Home admission precedes controller policy preparation. A refused
             // refresh cannot roll back that already committed request.
@@ -833,7 +828,7 @@ describe('composed CLI managed Action origination', () => {
             { teamId: team.id, accountId: selected.account.id, role: 'owner' },
             { teamId: team.id, accountId: requester.account.id, role: 'member' },
         ] });
-        if (!delegated) await db.machineAccountGrant.create({ data: { machineId: selected.controller.machineId,
+        if (!delegated) await db.machineGrant.create({ data: { principalKind: 'account', machineId: selected.controller.machineId,
             accountId: requester.account.id, accessLevel: 'admin', createdByAccountId: selected.account.id } });
         const presetId = crypto.randomUUID();
         expect(await createMachinePreset({ accountId: selected.account.id,
@@ -995,7 +990,7 @@ describe('composed CLI managed Action origination', () => {
             allocation: 'bound', resource: { contributionRef: selected.input.selection.launch.provider,
                 schemaVersion: 1, value: { id: 'creator-native-resource' } },
         } });
-        if (manage) await db.machineAccountGrant.create({ data: { machineId: selected.controller.machineId,
+        if (manage) await db.machineGrant.create({ data: { principalKind: 'account', machineId: selected.controller.machineId,
             accountId: requester.account.id, accessLevel: 'admin', createdByAccountId: selected.account.id } });
         const input = actionId === 'machines.managed.cancel'
             ? { homeId, managedId: admitted.machine.id, expectedIntentRevision: 0 }
@@ -1093,7 +1088,7 @@ describe('composed CLI managed Action origination', () => {
                             binding: { ...rootAuthorization.binding, managedAdmission: { ...rootAuthorization.binding.managedAdmission!, authority: undefined } } } } });
                 expect(alteredBinding.statusCode, alteredBinding.body).toBe(403);
                 expect(alteredBinding.json()).toMatchObject({ error: 'credential_scope_denied' });
-                await db.machineAccountGrant.create({ data: { machineId: selected.controller.machineId,
+                await db.machineGrant.create({ data: { principalKind: 'account', machineId: selected.controller.machineId,
                     accountId: stranger.account.id, accessLevel: 'admin', createdByAccountId: selected.account.id } });
                 const replayedByManager = await instance.inject({ method: 'POST', url: `/v1/actions/${actionId}`,
                     headers: { authorization: `Bearer ${stranger.token}` }, payload: { v: 1, machineId: target.machineId,

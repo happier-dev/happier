@@ -30,9 +30,9 @@ describe("Account-status Session access effects (SQLite integration)", () => {
             () => db.userKVStore.deleteMany(),
             () => db.sessionFollowEdge.deleteMany(),
             () => db.accountSessionFollow.deleteMany(),
-            () => db.sessionGroupGrant.deleteMany(),
-            () => db.sessionTeamGrant.deleteMany(),
-            () => db.sessionShare.deleteMany(),
+            () => db.sessionGrant.deleteMany({ where: { principalKind: 'group' } }),
+            () => db.sessionGrant.deleteMany({ where: { principalKind: 'team' } }),
+            () => db.sessionGrant.deleteMany({ where: { principalKind: 'account' } }),
             () => db.teamGroupMembership.deleteMany(),
             () => db.teamGroup.deleteMany(),
             () => db.teamMembership.deleteMany(),
@@ -76,24 +76,24 @@ describe("Account-status Session access effects (SQLite integration)", () => {
         const teamDerived = await createSession(owner.id);
         const groupDerived = await createSession(owner.id);
         const unrelated = await createSession(unrelatedAccount.id, false);
-        await db.sessionShare.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'account',
                 sessionId: direct.id,
-                sharedByUserId: owner.id,
-                sharedWithUserId: target.id,
+                createdByAccountId: owner.id,
+                accountId: target.id,
                 accessLevel: "view",
             },
         });
-        await db.sessionTeamGrant.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'team',
                 sessionId: teamDerived.id,
                 teamId: team.id,
                 accessLevel: "edit",
                 effectiveAt: new Date(),
             },
         });
-        await db.sessionGroupGrant.create({
-            data: {
+        await db.sessionGrant.create({
+            data: { principalKind: 'group',
                 sessionId: groupDerived.id,
                 teamGroupId: group.id,
                 accessLevel: "view",

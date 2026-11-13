@@ -44,8 +44,8 @@ describe("personal relevance producers and list scopes (SQLite)", () => {
         return await db.session.create({ data: { accountId: ownerId, tag: randomUUID(), metadata: "{}" } });
     }
     async function share(sessionId: string, ownerId: string, accountId: string) {
-        await db.sessionShare.create({ data: {
-            sessionId, sharedByUserId: ownerId, sharedWithUserId: accountId, accessLevel: "edit",
+        await db.sessionGrant.create({ data: { principalKind: 'account',
+            sessionId, createdByAccountId: ownerId, accountId: accountId, accessLevel: "edit",
         } });
     }
 
@@ -70,15 +70,15 @@ describe("personal relevance producers and list scopes (SQLite)", () => {
         const owner = await db.account.create({ data: { publicKey: randomUUID() } });
         const viewer = await db.account.create({ data: { publicKey: randomUUID() } });
         const shared = await session(owner.id);
-        await db.sessionShare.create({ data: { sessionId: shared.id, sharedByUserId: owner.id,
-            sharedWithUserId: viewer.id, accessLevel: 'admin' } });
+        await db.sessionGrant.create({ data: { principalKind: 'account', sessionId: shared.id, createdByAccountId: owner.id,
+            accountId: viewer.id, accessLevel: 'admin' } });
         await db.session.update({ where: { id: shared.id }, data: { responsibleAccountId: viewer.id } });
         const team = await db.team.create({ data: { name: randomUUID() } });
         const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: viewer.id, role: 'member' } });
         const group = await db.teamGroup.create({ data: { teamId: team.id, name: 'Readers', nameKey: 'readers' } });
         await db.teamGroupMembership.create({ data: { teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id } });
-        await db.sessionTeamGrant.create({ data: { sessionId: shared.id, teamId: team.id, accessLevel: 'view', effectiveAt: new Date() } });
-        await db.sessionGroupGrant.create({ data: { sessionId: shared.id, teamGroupId: group.id, accessLevel: 'view', effectiveAt: new Date() } });
+        await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: shared.id, teamId: team.id, accessLevel: 'view', effectiveAt: new Date() } });
+        await db.sessionGrant.create({ data: { principalKind: 'group', sessionId: shared.id, teamGroupId: group.id, accessLevel: 'view', effectiveAt: new Date() } });
         const access = await inTx(tx => resolveEffectiveSessionAccess(tx, { accountId: viewer.id, sessionId: shared.id, authentication }));
         expect(access?.sources.map(source => source.kind)).toEqual(['direct']);
         expect((await loadSessionViewerProjection({ accountId: viewer.id, sessionId: shared.id, authentication }))?.follow.defaultRelationships)
@@ -209,9 +209,9 @@ describe("personal relevance producers and list scopes (SQLite)", () => {
         expect((await loadSessionViewerProjection({ accountId: agentRuntime.id, sessionId: discussed.id, authentication }))?.relevance.reasons)
             .toEqual(["shared_directly_with_me"]);
 
-        // Drop the direct shares so the personal scope arms are exercised on
+        // Drop the direct grants so the personal scope arms are exercised on
         // their own, exactly as the collective-reader case below does.
-        await db.sessionShare.deleteMany({ where: { sessionId: discussed.id } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: discussed.id } });
         const select = async (accountId: string, scope: "my_work" | "involving_me") => (await db.session.findMany({
             where: { AND: [{ id: discussed.id }, await createSessionListScopeWhere({ accountId, scope })] },
             select: { id: true },
@@ -248,7 +248,7 @@ describe("personal relevance producers and list scopes (SQLite)", () => {
         // Access alone still never admits a row to either scope.
         const quiet = await session(owner.id);
         await share(quiet.id, owner.id, viewer.id);
-        await db.sessionShare.deleteMany({ where: { sessionId: quiet.id } });
+        await db.sessionGrant.deleteMany({ where: { principalKind: 'account', sessionId: quiet.id } });
         expect(await scopedSessionIds(viewer.id, "my_work")).not.toContain(quiet.id);
     });
 
