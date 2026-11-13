@@ -20,10 +20,11 @@ import { t } from '@/text';
 import { createDeferred, flushHookEffects, invokeTestInstanceHandler, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createWorkflowDefinitionFixture, createWorkflowInvocationIndexFixture, createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
-import { clearMachineRequestReachabilityForTest, withdrawMachinePresenceForScope, captureMachinePresenceObservation } from '@/sync/domains/machines/reachability/machineReachability';
+import { clearMachineRequestReachabilityForTest, withdrawMachinePresenceForScope } from '@/sync/domains/machines/reachability/machineReachability';
 
 const http = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(http);
@@ -165,7 +166,7 @@ describe('opened habit History result', () => {
                 createdAt: 1, updatedAt: 1, triggerDefinitionEnvelope: null, schedule: { kind: 'once', scheduledAt: 1 } }] });
         const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="missed-once" set={set}
             draft={EMPTY_WORKFLOW_TRIGGER_DRAFT} onChangeDraft={() => {}} status="ready" onRetry={() => {}}
-            runsOn={null} stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
+            stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
         expect(screen.getTextContent()).toContain('common.done');
         await screen.pressByTestIdAsync('missed-once-trigger:saved:timer-more');
         await screen.pressByTestIdAsync('missed-once-trigger:saved:timer-history');
@@ -185,7 +186,7 @@ describe('opened habit History result', () => {
         const before = http.requests.length;
         const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="saved-workflow" set={set}
             draft={EMPTY_WORKFLOW_TRIGGER_DRAFT} onChangeDraft={() => {}} status="ready" onRetry={() => {}}
-            runsOn={null} stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
+            stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={[]} />);
         await flushHookEffects();
         expect(http.requests.slice(before).filter(request => request.path === route)).toHaveLength(0);
         expect(screen.findHostByTestId('workflow-run-row:habit-run')).toBeNull();
@@ -274,7 +275,7 @@ describe('opened habit History result', () => {
         const machine = createMachineFixture({ id: 'machine-1', active: !offline,
             activeAt: offline ? Date.now() - 120_000 : Date.now() });
         storage.setState({ machines: { [machine.id]: machine } });
-        captureMachinePresenceObservation({ serverId: home.id, accountId: 'account-1' })([machine.id]);
+        publishMachineActivityForTest([machine]);
         storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(createWorkflowRunSummaryFixture({
             id: 'habit-run', revision: 4, state, failureUnseen: false,
             attentionRequired: state === 'waiting_for_review', invocationAttentionRequired: state === 'waiting_for_review',
@@ -292,6 +293,7 @@ describe('opened habit History result', () => {
         const { home } = await initializeRun();
         const machine = createMachineFixture({ id: 'machine-1', active: true, activeAt: Date.now() });
         storage.setState({ machines: { [machine.id]: machine } });
+        publishMachineActivityForTest([machine]);
         storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(createWorkflowRunSummaryFixture({
             id: 'habit-run', revision: 4, state: 'cancelled', workflowCustodyState: 'pending', attentionRequired: true,
         }))]);
@@ -300,8 +302,9 @@ describe('opened habit History result', () => {
         expect(screen.getTextContent()).not.toContain('workflows.run.stopWhenMachineReconnects');
         expect(screen.getTextContent()).toContain('workflows.runState.cancelled');
         await act(async () => {
-            storage.setState({ machines: { [machine.id]: { ...machine, active: false, activeAt: Date.now() - 120_000 } } });
-            captureMachinePresenceObservation({ serverId: home.id, accountId: 'account-1' })([machine.id]);
+            const offlineMachine = { ...machine, active: false, activeAt: Date.now() - 120_000 };
+            storage.setState({ machines: { [machine.id]: offlineMachine } });
+            publishMachineActivityForTest([offlineMachine]);
         });
         expect(screen.getTextContent()).not.toContain('workflows.run.stopWhenMachineReconnects');
         expect(screen.getTextContent()).toContain('workflows.runState.cancelled');
@@ -312,6 +315,7 @@ describe('opened habit History result', () => {
         const machine = createMachineFixture({ id: 'machine-1', active: false, activeAt: Date.now() - 120_000,
             metadata: { ...createMachineFixture().metadata!, displayName: 'Build box' } });
         storage.setState({ machines: { [machine.id]: machine } });
+        publishMachineActivityForTest([machine]);
         const stopping = createWorkflowRunSummaryFixture({ id: 'habit-run', revision: 4,
             state: 'cancelled', workflowCustodyState: 'pending', attentionRequired: true });
         storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(stopping)]);
@@ -319,7 +323,11 @@ describe('opened habit History result', () => {
         expect(screen.getTextContent()).not.toContain('workflows.run.stopWhenMachineReconnects');
         expect(screen.getTextContent()).not.toContain('workflows.run.stopping');
         expect(screen.getTextContent()).toContain('workflows.runState.cancelled');
-        await act(async () => storage.setState({ machines: { [machine.id]: { ...machine, active: true, activeAt: Date.now() } } }));
+        await act(async () => {
+            const reconnectedMachine = { ...machine, active: true, activeAt: Date.now() };
+            storage.setState({ machines: { [machine.id]: reconnectedMachine } });
+            publishMachineActivityForTest([reconnectedMachine]);
+        });
         expect(screen.getTextContent()).not.toContain('workflows.run.stopping');
         expect(screen.getTextContent()).not.toContain('workflows.run.stopWhenMachineReconnects');
         expect(screen.getTextContent()).toContain('workflows.runState.cancelled');
@@ -331,6 +339,7 @@ describe('opened habit History result', () => {
         const machine = createMachineFixture({ id: 'machine-1', active: true, activeAt: Date.now(),
             metadata: { ...createMachineFixture().metadata!, displayName: 'Build box' } });
         storage.setState({ machines: { [machine.id]: machine } });
+        publishMachineActivityForTest([machine]);
         storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(createWorkflowRunSummaryFixture({
             id: 'habit-run', revision: 4, state: 'running' }))]);
         let commits = 0;
@@ -341,8 +350,12 @@ describe('opened habit History result', () => {
         const settled = commits;
         // A live Machine republishes its record on every heartbeat (activeAt, updatedAt, daemon state).
         for (let beat = 1; beat <= 3; beat += 1) {
-            await act(async () => storage.setState({ machines: { [machine.id]: { ...machine,
-                activeAt: (machine.activeAt ?? 0) + beat * 1000, updatedAt: (machine.updatedAt ?? 0) + beat } } }));
+            await act(async () => {
+                const heartbeatMachine = { ...machine, activeAt: (machine.activeAt ?? 0) + beat * 1000,
+                    updatedAt: (machine.updatedAt ?? 0) + beat };
+                storage.setState({ machines: { [machine.id]: heartbeatMachine } });
+                publishMachineActivityForTest([heartbeatMachine]);
+            });
         }
         expect(commits - settled).toBe(0);
         await act(async () => storage.setState({ machines: { [machine.id]: { ...machine,

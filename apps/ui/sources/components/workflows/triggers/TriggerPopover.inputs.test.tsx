@@ -11,7 +11,7 @@ import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionAc
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
@@ -149,7 +149,7 @@ describe('Run a workflow trigger inputs', () => {
         } });
         const runner = createMachineFixture({ id: 'agent-runner' });
         getStorage().setState({ machines: { [machine.id]: machine, [runner.id]: runner }, settingsVersion: 1 });
-        observeMachinePresenceForTest({ serverId, accountId: 'account-a' }, [machine.id]);
+        publishMachineActivityForTest([machine]);
         const screen = await renderScreen(<GuidedAutomationSetup anchorRef={React.createRef()} onRequestClose={vi.fn()}
             subjectName="Production" initialProject={{ machineId: runner.id, directory: '/repo' }} starter="deploymentFailed"
             {...(pageController ? { controllerMachineId: machine.id } : {})}
@@ -658,7 +658,7 @@ describe('Run a workflow trigger inputs', () => {
         const machine = createMachineFixture({ id: 'trigger-inputs-machine', activeAt: Date.now(), storageMode: 'plain',
             access: createPlainMachineRowFixture({ id: 'trigger-inputs-machine', accountId: 'account-a' }).access });
         getStorage().setState({ machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] } });
-        observeMachinePresenceForTest({ serverId, accountId: 'account-a' }, [machine.id]);
+        publishMachineActivityForTest([machine]);
         home.answer(serverId, `/v1/machines/${machine.id}`, { body: {
             machine: createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a' }),
         } });
