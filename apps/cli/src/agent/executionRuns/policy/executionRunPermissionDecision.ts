@@ -17,7 +17,7 @@ import { applyAllowedToolsToAllowlist } from '@/agent/permissions/applyPermissio
 import { isToolAllowedForSession } from '@/agent/permissions/permissionToolIdentifier';
 import type { AgentSessionConfigurationSnapshotV1 } from '@happier-dev/protocol/runtime/agentSessionV1';
 
-import { permissionMode } from '@/agent/executionRuns/policy/permissionMode';
+import { executionRunPermissionIntentV1 as permissionMode } from '@happier-dev/protocol/actions/executionRunActionPermissionMode';
 import { prepareMcpToolCatalog, resolveMcpToolIdentity, type McpToolPolicyContext } from '@/mcp/runtime/resolveMcpToolIdentity';
 import { parseAgentPermissionIntentV1Alias } from '@happier-dev/protocol/runtime/permissionIntentV1';
 import { SessionInputCausalPermissionAuthorityV1Schema, type SessionInputCausalPermissionAuthorityV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
@@ -98,7 +98,7 @@ function resolveExecutionRunImmediateDecision(args: Readonly<{
   causalPermissionAuthority?: AcpPermissionCausalAuthority;
   context?: AcpPermissionCallContext;
   getMcpToolContext?: () => McpToolPolicyContext | null;
-}>): { decision: 'approved' | 'approved_for_session' | 'denied' } | null {
+}>): PermissionResult | null {
   const rawLower = String(args.permissionMode ?? '').trim().toLowerCase();
   const normalizedMode = permissionMode(args.permissionMode);
   const hasContextCausalAuthority = Boolean(
@@ -147,9 +147,11 @@ function resolveExecutionRunImmediateDecision(args: Readonly<{
   if (shouldAlwaysApproveExecutionRunTool(args.toolName)) return { decision: 'approved' };
 
   if (mcpTool) {
-    if (mcpTool.decision.approval === 'deny') return { decision: 'denied' };
-    if (mcpTool.decision.approval === 'allow') return { decision: 'approved' };
-    return listed ? { decision: 'approved_for_session' } : null;
+    return resolveNativePermissionImmediateDecision(
+      mcpTool.decision.approval === 'deny' ? { decision: 'denied' }
+        : mcpTool.decision.approval === 'allow' ? { decision: 'approved' }
+          : listed ? { decision: 'approved_for_session' } : null,
+      args.context?.nativeChoices, mcpTool);
   }
 
   if (effectiveMode === 'read-only' || effectiveMode === 'plan') {

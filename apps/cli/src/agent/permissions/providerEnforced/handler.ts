@@ -274,8 +274,10 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
       return { decision: happierActionPermission.decision };
     }
     if (mcpTool) {
-      return mcpTool.decision.approval === 'deny' ? { decision: 'denied' }
-        : mcpTool.decision.approval === 'allow' ? { decision: 'approved' } : null;
+      return resolveNativePermissionImmediateDecision(
+        mcpTool.decision.approval === 'deny' ? { decision: 'denied' }
+          : mcpTool.decision.approval === 'allow' ? { decision: 'approved' } : null,
+        context?.nativeChoices, mcpTool);
     }
     if (deniesHostMediatedFsWrites(permissionMode)
       && this.isAllowedBySessionToolPolicy(toolName, input)
@@ -305,26 +307,27 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
     if (isHostOccurrenceQuestion(toolName, context)) return null;
     const immediate = this.getImmediateDecision(toolCallId, toolName, input, context);
     if (immediate) return immediate;
-    if (context?.nativeChoices) return null;
 
     const effective = resolveCausalPermissionMode({
       currentPermissionMode: this.currentPermissionMode,
       context,
     });
     if (!effective.ok) return null;
+    const nativeDecision = (decision: PermissionResult) => resolveNativePermissionImmediateDecision(
+      decision, context?.nativeChoices, this.resolveMcpTool(toolName, context, effective.effectiveMode));
     if (effective.sourceAuthority && this.isAllowedBySessionToolPolicy(toolName, input)) {
       // The immutable birth seed is preapproved independently of interactive
       // grants. The request's causal and workspace ceilings remain in force.
-      return { decision: 'approved' };
+      return nativeDecision({ decision: 'approved' });
     }
     if (!effective.sourceAuthority && this.isAllowedForSessionForOwner(toolName, input, owner)) {
-      return { decision: context?.source === NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE ? 'approved' : 'approved_for_session' };
+      return nativeDecision({ decision: context?.source === NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE ? 'approved' : 'approved_for_session' });
     }
     if (
       effective.sourceAuthority
       && this.isAllowedByRemoteMediationGrant(toolName, input, effective.sourceAuthority)
     ) {
-      return { decision: 'approved' };
+      return nativeDecision({ decision: 'approved' });
     }
     return null;
   }

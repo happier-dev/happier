@@ -3,6 +3,7 @@ import {
     NativePermissionChoicesV1Schema,
     type NativePermissionChoicesV1,
 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
+import type { ResolvedMcpToolIdentityV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import type { PermissionResult } from './BasePermissionHandler';
 import { deepEqual } from '@/utils/deterministicJson';
 
@@ -69,10 +70,16 @@ export function resolveMediatedNativePermissionChoice(
         : undefined;
 }
 
-/** Native approval requires a selection from its offer even when host policy allows the tool. */
-export function resolveNativePermissionImmediateDecision<T extends Readonly<{ decision: string }>>(
+/** MCP policy may select an exact offered grant; other native prompts still require a person. */
+export function resolveNativePermissionImmediateDecision<T extends PermissionResult>(
     decision: T | null,
     nativeChoices: NativePermissionChoicesV1 | undefined,
-): T | null {
-    return nativeChoices && decision?.decision !== 'denied' && decision?.decision !== 'abort' ? null : decision;
+    mcpTool?: ResolvedMcpToolIdentityV1 | null,
+): PermissionResult | null {
+    if (!nativeChoices || !decision || decision.decision === 'denied' || decision.decision === 'abort'
+        || decision.nativeChoice) return decision;
+    if (!mcpTool) return null;
+    const answer = resolveMediatedNativePermissionChoice(nativeChoices, 'allow',
+        decision.decision === 'approved_for_session' ? 'session' : 'request');
+    return answer ? resolveNativePermissionChoice(nativeChoices, answer)?.result ?? null : null;
 }
