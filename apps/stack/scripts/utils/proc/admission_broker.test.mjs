@@ -632,6 +632,45 @@ for (const resourceClass of ['focused-validation-ui', 'entry-loads']) {
   });
 }
 
+test('native compiler admission tags completion peaks with canonical projects', { ...linux, timeout: 10_000 }, async t => {
+  let child;
+  const { renderNativeCommandPolicy } = await import('../dev_targets/remote_commands.mjs');
+  const { root } = await fixture(t, {
+    readMemory: () => ({ availableMemoryKiB: 100 * 1024 * 1024, totalMemoryKiB: 100 * 1024 * 1024 }),
+    readProcesses: () => child ? new Map([[child.pid, { pid: child.pid, parentPid: 1, rssKiB: 41 }]]) : new Map(),
+  });
+  const repo = fileURLToPath(new URL('../../../../../', import.meta.url)).replace(/\/$/, '');
+  const launcher = join(root, 'launcher.sh');
+  // Substitute only the executable payload/reentry, keeping native policy,
+  // admission CLI, client, broker and history writer real.
+  await writeFile(launcher, '#!/bin/sh\nshift 2\nexec "$@"\n', { mode: 0o700 });
+  const client = new URL('./admission_client.mjs', import.meta.url).href;
+  const recorded = new Promise(resolve => {
+    const watcher = fs.watch(root, (_, name) => {
+      if (name === 'completed-slot-memory.jsonl') { watcher.close(); resolve(); }
+    });
+    t.after(() => watcher.close());
+  });
+  const script = `${renderNativeCommandPolicy()}
+repo_root=$1; invoked_cwd=$1; script_dir=$1/apps/stack/bin; launcher_path=$3
+. "$1/apps/stack/scripts/utils/proc/native_admission_client.sh"
+resolve_native_command_policy node scripts/workspaces/runTypeScriptCli.mjs -p packages/brand/tsconfig.json -p packages/agents/tsconfig.json
+run_heavyweight_admission "$2" compilation fixture "$4" --input-type=module -e "$5" "$2"
+`;
+  child = spawn('/bin/sh', ['-c', script, 'compiler-peak', repo, root, launcher, process.execPath,
+    // A sample request only reads status. A second admission observes the live
+    // compiler slot before its payload exits, making a completion peak real.
+    `import { requestAdmissionSample } from ${JSON.stringify(client)}; await requestAdmissionSample(process.argv[1], { kind: 'acquire', floorKiB: 1, pid: process.pid, className: 'compilation', repoDir: process.cwd() });`],
+  { env: { ...process.env, HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT: '', HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN: '' }, stdio: 'ignore' });
+  t.after(() => { if (child.exitCode === null) child.kill(); });
+  // Fixture capacity models a real host large enough for the canonical floor.
+  assert.equal(await new Promise(resolve => child.once('exit', resolve)), 0);
+  await recorded;
+  const rows = (await readFile(join(root, 'completed-slot-memory.jsonl'), 'utf8')).trim().split('\n').map(JSON.parse);
+  assert.equal(rows.length, 1);
+  assert.deepEqual(rows[0].projects, ['packages/brand/tsconfig.json', 'packages/agents/tsconfig.json']);
+});
+
 function captureRecoveryClock(t) {
   // Timer scheduling is the OS boundary; broker/socket/resource decisions stay real.
   const active = new Map();

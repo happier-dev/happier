@@ -110,7 +110,7 @@ async function runPayload({ command, args, env, signal }) {
  */
 export async function runAdmittedTask({ root, className, floorKiB, machine,
   locks = [], noWait = false, requireInherited = false, failureId, repoDir = process.cwd(),
-  exportMode, exportWorkers, requestedCpuCores,
+  exportMode, exportWorkers, requestedCpuCores, projects,
   cacheBaseDir = process.env.HAPPIER_STACK_PM_CACHE_BASE_DIR, env = process.env, signal } = {}, action) {
   if (typeof action !== 'function') throw new TypeError('Admission requires a task callback');
   const cancellation = new AbortController();
@@ -188,7 +188,7 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
       cpuCost: resolveAdmissionCpuCost(className),
       requestedCpuCores: requestedCpuCores ?? resolveRequestedAdmissionCpuCores({ env }),
       pid: process.pid, arrivedAt: Date.now(),
-      repoDir, cacheBaseDir, noWait, locks, ...(floorOptions ? { floorOptions } : {}) };
+      repoDir, cacheBaseDir, noWait, locks, projects, ...(floorOptions ? { floorOptions } : {}) };
     if (locks.length) {
       const { createWorkspaceBuildResourcePriorityScope } = await import('./workspace_build_admission.mjs');
       priorityScope = createWorkspaceBuildResourcePriorityScope({ locks, env, signal: cancellation.signal });
@@ -368,6 +368,7 @@ export async function runAdmissionClient(argv = process.argv.slice(2)) {
   if (!options.includes('--run') || delimiter < 0 || !argv[delimiter + 1]) throw new Error('admission requires a command');
   process.exitCode = await runAdmissionCommand({ root, className: value('class'),
     floorKiB: Number(value('floor-kib')), machine: value('machine'),
+    projects: value('projects')?.split('\n').filter(Boolean),
     exportMode: value('export-mode'), exportWorkers: Number(value('export-workers')),
     requestedCpuCores: value('cpu-cores') === undefined ? undefined
       : value('cpu-cores') === 'host' ? 'host' : Number(value('cpu-cores')),

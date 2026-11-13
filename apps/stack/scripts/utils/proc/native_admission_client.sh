@@ -136,6 +136,7 @@ run_heavyweight_admission() {
   fi
   exec node "$admission_client" --run "--root=$heavyweight_admission_root" "--class=$heavyweight_admission_class" \
     "--floor-kib=$heavyweight_floor" "--machine=$heavyweight_admission_machine" "--cpu-cores=$heavyweight_requested_cpu" \
+    "--projects=${policy_projectPaths:-${policy_component:-.}}" \
     "--failure-id=${heavyweight_failure_id-}" "--repo=$repo_root" "--workspace-locks=${heavyweight_workspace_locks:-[]}" "$@"
 }
 
