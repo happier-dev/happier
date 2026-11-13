@@ -98,6 +98,23 @@ export type OwnServerPreMigrationBackupOperandsForHost = Awaited<ReturnType<type
     destination: Pick<DeploymentRestoreDatabaseDestinationV1, 'environmentId' | 'service' | 'adapter' | 'database'>;
 }>;
 
+type OwnServerBackupOperandsForHost = OwnServerBackupRepositoryOperandsForHost | OwnServerBackupRunOperandsForHost
+    | OwnServerPreMigrationBackupOperandsForHost;
+/** Operands that also borrow database custody, which their holder disposes. */
+export function hasOwnServerBackupDataOperands(operands: OwnServerBackupOperandsForHost):
+    operands is OwnServerBackupRunOperandsForHost | OwnServerPreMigrationBackupOperandsForHost {
+    return 'data' in operands;
+}
+/** A configured backup run's operands, with each logical source's restore destination. */
+export function isOwnServerBackupRunOperands(operands: OwnServerBackupOperandsForHost): operands is OwnServerBackupRunOperandsForHost {
+    return 'destinations' in operands;
+}
+/** A pre-migration safety backup's operands, bound to the one database it protects. */
+export function isOwnServerPreMigrationBackupOperands(operands: OwnServerBackupOperandsForHost):
+    operands is OwnServerPreMigrationBackupOperandsForHost {
+    return 'destination' in operands;
+}
+
 type BackupDestinationPreparation = Readonly<{
     registry: DeploymentBackupDestinationRegistryForHost;
     configuration: DeploymentEnvironmentContentV1['backup'];

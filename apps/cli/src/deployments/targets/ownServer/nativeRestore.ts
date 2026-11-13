@@ -25,6 +25,10 @@ import type { AdmittedDeploymentRestoreUpload } from '@/transfers/targets/deploy
 import { createNativeSqliteRestore } from './nativeSqliteRestore';
 import { admitOwnServerRestoreUpload } from './restoreUpload';
 
+/** A receipt transition whose content is the own-server arm. */
+export type OwnServerReceiptContentTransition = Omit<Parameters<OwnServerDeploymentTargetHostInput['writeTransition']>[0], 'content'>
+    & Readonly<{ content: OwnServerDeploymentReceipt['content'] }>;
+
 /** Captured by the existing own-server host, inside its admitted native job.
  * readAccess belongs to the SAME P42 prepare closure, not attachment decoding.
  */
@@ -399,7 +403,8 @@ export async function runOwnServerNativePreMigrationBackup(input: OwnServerNativ
     destination: Pick<DeploymentRestoreDatabaseDestinationV1, 'environmentId' | 'service' | 'adapter' | 'database'>;
     backup: Omit<DeploymentBackupRunInputV1, 'access' | 'signal' | 'execute' | 'preMigrationBackup'>;
     context: ActionExecutorContext;
-    writeTransition: OwnServerDeploymentTargetHostInput['writeTransition'];
+    /** The capture only ever writes own-server receipt content. */
+    writeTransition(request: OwnServerReceiptContentTransition): ReturnType<OwnServerDeploymentTargetHostInput['writeTransition']>;
 }>): Promise<Readonly<{ receipt: OwnServerDeploymentReceipt; backup: DeploymentBackupRunResultV1 }>> {
     const ownServer = capture.receipt.content.ownServer;
     if (!ownServer) return unsupported();
@@ -500,8 +505,9 @@ export async function prepareOwnServerNativeRestore(input: OwnServerNativeRestor
     const operation = restoreOperation(capture);
     // A copy reads the source repository but protects an incumbent destination
     // through that destination's own backup credentials and native service.
-    if (capture.safetyBackup && destinationSafetyInput) return withNativeRestore(nativeInput, capture.destination,
-        native => withOwnServerNativeBackup(destinationSafetyInput, capture.safetyBackup.restoreTargets ?? [capture.destination],
+    const safetyBackup = capture.safetyBackup;
+    if (safetyBackup && destinationSafetyInput) return withNativeRestore(nativeInput, capture.destination,
+        native => withOwnServerNativeBackup(destinationSafetyInput, safetyBackup.restoreTargets ?? [capture.destination],
             safetyNative => prepareNativeRestore(capture, native, safetyNative, 'upload' in nativeInput ? nativeInput.upload : undefined)), 'restore');
     return withNativeRestore(nativeInput, capture.destination,
         native => prepareNativeRestore(capture, native, native, 'upload' in nativeInput ? nativeInput.upload : undefined), operation, capture.safetyBackup?.restoreTargets);
@@ -527,7 +533,7 @@ export async function executeOwnServerNativeRestore(factory: OwnServerNativeRest
     if (result.kind !== 'restored' || result.verified !== true) {
         throw new PluginError({ code: result.kind === 'outcome_unknown' ? 'outcome_unknown' : result.code ?? 'restore_failed',
             message: 'Native database recovery did not verify restoration',
-            details: { kind: result.kind, nextAction: result.nextAction, steps: result.steps,
+            details: { kind: result.kind, nextAction: result.nextAction, ...(result.steps ? { steps: result.steps } : {}),
                 ...(result.nativeFailure ? { nativeFailure: result.nativeFailure } : {}) } });
     }
     return result;

@@ -1,7 +1,7 @@
 import axios from 'axios';
 import nacl from 'tweetnacl';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -365,7 +365,7 @@ function createSettlementNoticeHttpBoundary(serverHttpBaseUrl: string) {
 }
 
 it.for(['ordered mixed-fleet compensation', 'mid-rollout bindings edit', 'retained rollback without build',
-    'activation failure diagnostic', 'activation failure diagnostic with cleanup', 'unverified incumbent joining'] as const)(
+    'activation failure diagnostic', 'activation failure diagnostic with cleanup', 'preactivation failure fleet', 'unverified incumbent joining'] as const)(
     'restores native members to U after %s', { timeout: 300_000 }, async (scenario, testContext) => {
     const root = await mkdtemp(join(tmpdir(), 'happier-own-server-rollout-'));
     const mounted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: configuration.happyHomeDir,
@@ -373,7 +373,8 @@ it.for(['ordered mixed-fleet compensation', 'mid-rollout bindings edit', 'retain
     const originalHome = Object.getOwnPropertyDescriptor(configuration, 'happyHomeDir')!;
     const activationFailure = scenario.startsWith('activation failure diagnostic');
     const unverified = scenario === 'unverified incumbent joining';
-    const machineIds = scenario === 'retained rollback without build' || unverified || activationFailure
+    const preactivationFailure = scenario === 'preactivation failure fleet';
+    const machineIds = preactivationFailure ? ['machine-a', 'machine-b'] : scenario === 'retained rollback without build' || unverified || activationFailure
         ? ['machine-a'] : ['machine-a', 'machine-b', 'machine-c'];
     let selectedMachine = machineIds[0];
     const tools = new Map<string, Awaited<ReturnType<typeof createOwnServerDockerBoundary>>>();
@@ -492,6 +493,15 @@ it.for(['ordered mixed-fleet compensation', 'mid-rollout bindings edit', 'retain
                 },
                 async dispatchMember(input) {
                     stages.push(`${input.phase}:${input.machineId}:start`);
+                    if (preactivationFailure && input.phase === 'activate') {
+                        // Fault only the admitted receiving hop, after fleet preflight/build.
+                        const releases = join(await environmentRoot(machineId), 'releases');
+                        const outside = join(root, 'outside');
+                        await mkdir(releases, { recursive: true });
+                        await mkdir(outside, { recursive: true });
+                        await rm(join(releases, input.request.receipt.deploymentId), { recursive: true, force: true });
+                        await symlink(outside, join(releases, input.request.receipt.deploymentId), 'dir');
+                    }
                     const result = await onMachine(input.machineId, () => targets.get(input.machineId)!.executeMember(input));
                     if (activationFailure && input.phase === 'activate' && !result.ok) activationFailures.push(result);
                     if (input.request.receipt.deploymentId === 'bindings-edited' && input.phase === 'activate'
@@ -546,6 +556,23 @@ it.for(['ordered mixed-fleet compensation', 'mid-rollout bindings edit', 'retain
             receipt.content.ownServer = { approvedInputBasis: review.inputBasis };
             return { receipt, request, image: images[0] };
         };
+        if (preactivationFailure) {
+            const failed = await candidate('unmaterialized', 'rollbackAll');
+            await onMachine('machine-a', () => targets.get('machine-a')!.execute(failed.request));
+            expect(stages, JSON.stringify({ failure: failed.receipt.content.failure, dispatchErrors })).toContain('activate:machine-a:start');
+            expect(failed.receipt.deployment.state).toBe('failed');
+            expect(failed.receipt.content.machineResults).toContainEqual(expect.objectContaining({
+                machineId: 'machine-a', activation: 'failed', steps: expect.arrayContaining([
+                    expect.objectContaining({ id: 'own-server-candidate-cleanup', state: 'succeeded' }),
+                ]),
+            }));
+            expect(stages).not.toContain('activate:machine-b:start');
+            expect(await tools.get('machine-a')!.readContainerIds()).toEqual([]);
+            expect(failed.receipt.content.failure).toMatchObject({ phase: 'activate' });
+            expect((await tools.get('machine-a')!.readInvocations()).some(command =>
+                command.args.includes('up') || command.args.includes('rm'))).toBe(false);
+            return;
+        }
         if (activationFailure) {
             const failed = await candidate('missing-entrypoint', 'rollbackAll');
             const outcome = await onMachine('machine-a', () => targets.get('machine-a')!.execute(failed.request));

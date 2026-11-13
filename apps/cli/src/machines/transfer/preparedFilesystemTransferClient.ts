@@ -20,6 +20,7 @@ import { encodeDirectPeerTransferPathKey } from './directPeerTransport/protocol'
 import { createFileTransferPayloadSource, resolveTransferPayloadManifestHash } from './transferPayloadSource';
 import { readJsonResponseWithBodyLimit } from './directPeerTransport/requestTransfer';
 import { resolveDirectPeerTransferOpenBodyMaxBytes } from './transferRuntimeConfig';
+import { carryActionFailureDiagnostic, withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 
 function readTransferFailureCode(error: unknown): string | undefined {
   if (!error || typeof error !== 'object') return undefined;
@@ -42,7 +43,8 @@ export function createPreparedFilesystemTransferClient(params: Readonly<{
   const invoke = async (actionId: FilesystemTransferActionId | 'daemon.filesystem.copy' | 'action.operations.get', input: unknown, targetMachineId: string, serverId?: string, signal?: AbortSignal) => {
     const result = await params.executeAction(actionId, input, { externalActionTarget: { kind: 'machine', machineId: targetMachineId },
       ...(serverId ? { serverId } : {}), ...(signal ? { signal } : {}) });
-    if (!result.ok) throw Object.assign(new Error(result.error), { errorCode: result.errorCode });
+    if (!result.ok) throw withActionFailureCauseDiagnostic(
+      Object.assign(new Error(result.error, { cause: result }), { errorCode: result.errorCode }), result, actionId);
     return result.result;
   };
   const client = {
@@ -105,8 +107,8 @@ export function createPreparedFilesystemTransferClient(params: Readonly<{
           try { abortConfirmed = ChunkSchema.parse(await postJson(preparedAbortEndpoint)).success; } catch { /* The admitted owner retains unconfirmed custody. */ }
         }
         if (error instanceof CredentialRequestRedirectError) throw error;
-        return failure(error instanceof Error ? error.message : 'Upload failed',
-          readTransferFailureCode(error));
+        return carryActionFailureDiagnostic(failure(error instanceof Error ? error.message : 'Upload failed',
+          readTransferFailureCode(error)), error);
       } finally { try { await file?.close(); } finally { await tunnel?.close(); } }
     },
     async download(input: Readonly<{ targetMachineId: string; serverId?: string; rootPath: string; path: string;
@@ -149,9 +151,9 @@ export function createPreparedFilesystemTransferClient(params: Readonly<{
           }, undefined, 'POST', candidate.authorizationToken).catch(() => undefined);
         }
         if (error instanceof CredentialRequestRedirectError) throw error;
-        return { success: false, status: destinationClosed ? 'unknown' : input.signal?.aborted ? 'cancelled' : 'failed',
+        return carryActionFailureDiagnostic({ success: false, status: destinationClosed ? 'unknown' : input.signal?.aborted ? 'cancelled' : 'failed',
           error: error instanceof Error ? error.message : 'Download failed',
-          ...(destinationClosed ? { errorCode: 'indeterminate' } : { errorCode: readTransferFailureCode(error) }) };
+          ...(destinationClosed ? { errorCode: 'indeterminate' } : { errorCode: readTransferFailureCode(error) }) }, error);
       } finally { await tunnel?.close(); }
     },
     async copy(input: (Omit<FilesystemPreparedCopyInput, 'kind'> | Omit<FilesystemTargetCopyInput, 'kind'>) & Readonly<{ signal?: AbortSignal;
@@ -181,9 +183,9 @@ export function createPreparedFilesystemTransferClient(params: Readonly<{
           ...(input.preparedAdmission ? { preparedAdmission: input.preparedAdmission } : {}), ...(input.signal ? { signal: input.signal } : {}) });
       } catch (error) {
         if (error instanceof CredentialRequestRedirectError) throw error;
-        return { success: false, status: input.preparedAdmission ? 'unknown' : input.signal?.aborted ? 'cancelled' : 'failed',
+        return carryActionFailureDiagnostic({ success: false, status: input.preparedAdmission ? 'unknown' : input.signal?.aborted ? 'cancelled' : 'failed',
           error: error instanceof Error ? error.message : 'Copy source is unavailable',
-          ...(input.preparedAdmission ? { errorCode: 'indeterminate' } : { errorCode: readTransferFailureCode(error) }) };
+          ...(input.preparedAdmission ? { errorCode: 'indeterminate' } : { errorCode: readTransferFailureCode(error) }) }, error);
       } finally { await rm(temporaryDirectory, { recursive: true, force: true }); }
     },
   };
@@ -261,11 +263,13 @@ export function createPreparedFilesystemTransferClient(params: Readonly<{
         machineId: input.destination.machineId, operationId: accepted.operationId, waitForTerminal: true }, input.destination.machineId, input.destination.serverId, input.signal));
       if (observed.kind === 'not_found' || observed.operation.state === 'running' || observed.operation.state === 'accepted') return { success: false, status: 'unknown', error: 'Copy native outcome is unconfirmed', errorCode: 'indeterminate' };
       if (observed.operation.state === 'succeeded') return FilesystemCopyOutputSchema.parse(observed.operation.result);
-      return { success: false, status: observed.operation.state === 'cancelled' ? 'cancelled' : 'failed', error: observed.operation.error?.error ?? 'Copy failed', errorCode: observed.operation.error?.errorCode ?? 'cancelled' };
+      return withActionFailureCauseDiagnostic({ success: false, status: observed.operation.state === 'cancelled' ? 'cancelled' : 'failed',
+        error: observed.operation.error?.error ?? 'Copy failed', errorCode: observed.operation.error?.errorCode ?? 'cancelled' },
+        observed.operation.error, 'daemon.filesystem.copy');
     } catch (error) {
       if (error instanceof CredentialRequestRedirectError) throw error;
-      return { success: false, status: retainImports ? 'unknown' : input.signal?.aborted ? 'cancelled' : 'failed', error: error instanceof Error ? error.message : 'Entry copy failed',
-        ...(retainImports ? { errorCode: 'indeterminate' } : { errorCode: readTransferFailureCode(error) }) };
+      return carryActionFailureDiagnostic({ success: false, status: retainImports ? 'unknown' : input.signal?.aborted ? 'cancelled' : 'failed', error: error instanceof Error ? error.message : 'Entry copy failed',
+        ...(retainImports ? { errorCode: 'indeterminate' } : { errorCode: readTransferFailureCode(error) }) }, error);
     } finally {
       try {
         if (sourceReceipt && !sourceClosed && sourceTunnel) {

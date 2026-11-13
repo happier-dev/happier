@@ -51,6 +51,7 @@ import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPol
 import { getActionSpec, resolveActionExecutionPlacementForInput, PublicActionIdSchema, SignedRootActionIdSchema, projectSessionSpawnNewApiRequest } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindCallerInput } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { ManagedMachineControllerError } from '@/machines/managed/controllerErrors';
 import { isPluginActionExecutionDispatchId, type PluginActionExecutionRequestOwner } from './createDaemonPluginActionExecutor';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
@@ -791,6 +792,7 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
   machineId?: string;
   readCredentials?: () => Promise<StoredCredentials | null>;
   resolveAutomationEventAdoptedDefinitionSet?: ResolveAutomationEventAdoptedDefinitionSetV1;
+  resolveAuthenticatedAccountId?: (signal?: AbortSignal) => Promise<string>;
   acquireAutomationEventObservationRegistry?: Parameters<typeof createCliActionExecutor>[0]['acquireAutomationEventObservationRegistry'];
   revalidatePluginActionCallerMaterialization?: RevalidatePluginActionCallerMaterialization;
   revalidatePluginActionCallerOccurrence?: RevalidatePluginActionCallerOccurrence;
@@ -1198,6 +1200,9 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
       ...(params.getCurrentTurnWorkDepth ? { getCurrentTurnWorkDepth: params.getCurrentTurnWorkDepth } : {}),
       ...(params.resolveAutomationEventAdoptedDefinitionSet
         ? { resolveAutomationEventAdoptedDefinitionSet: params.resolveAutomationEventAdoptedDefinitionSet }
+        : {}),
+      ...(params.resolveAuthenticatedAccountId
+        ? { resolveAuthenticatedAccountId: params.resolveAuthenticatedAccountId }
         : {}),
       ...(params.acquireAutomationEventObservationRegistry
         ? { acquireAutomationEventObservationRegistry: params.acquireAutomationEventObservationRegistry }
@@ -2420,7 +2425,7 @@ export function createCliActionExecutorFromCredentials(params: Parameters<typeof
         signal?.throwIfAborted();
         const outerCredentials = params.readCredentials ? await params.readCredentials() : params.credentials;
         if (!outerCredentials) return { failure: actionFailure('not_authenticated') };
-        const pat = shouldUsePatPublicActionTransport(outerCredentials, context);
+        const pat = !deploymentAdmission && shouldUsePatPublicActionTransport(outerCredentials, context);
         if (pat && parsed.kind === 'target_copy') {
           return { failure: actionFailure('filesystem_transfer_custody_required') };
         }
@@ -2484,7 +2489,7 @@ export function createCliActionExecutorFromCredentials(params: Parameters<typeof
                 ...(admittedContext.surface ? { surface: admittedContext.surface } : {}), ...(admittedContext.authority ? { authority: admittedContext.authority } : {}),
                 ...(admittedContext.actionRequestId ? { actionRequestId: admittedContext.actionRequestId } : {}) };
               let result: ActionExecuteResult;
-              if (shouldUsePatPublicActionTransport(home.credentials, endpointContext)) {
+              if (!deploymentAdmission && shouldUsePatPublicActionTransport(home.credentials, endpointContext)) {
                 const endpointExecutor = createCliActionExecutionCoreFromCredentials({ ...home, machineId,
                   readCredentials: currentCredentialsFor(home) });
                 result = await endpointExecutor.execute(id, value, endpointContext);
@@ -2557,8 +2562,10 @@ export function createCliActionExecutorFromCredentials(params: Parameters<typeof
               },
             });
             const result = await client.copy({ ...parsed, ...(preparedAdmission ? { preparedAdmission } : {}), ...(signal ? { signal } : {}) });
+            const failureCause = readActionOutputDiagnostic(result)?.failureCause;
             return 'kind' in result || result.success ? { ok: true, result }
-              : { ok: false, errorCode: result.errorCode ?? 'filesystem_transfer_failed', error: result.error, details: result };
+              : { ok: false, errorCode: result.errorCode ?? 'filesystem_transfer_failed', error: result.error, details: result,
+                  ...(failureCause ? { failureCause } : {}) };
           } catch (error) {
             if (preparedAdmission) return { ok: false, errorCode: 'indeterminate',
               error: 'The admitted copy could not confirm its terminal outcome',

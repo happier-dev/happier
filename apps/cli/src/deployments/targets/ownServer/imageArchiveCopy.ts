@@ -1,4 +1,4 @@
-import type { ActionExecutorContext } from '@happier-dev/protocol';
+import type { ActionExecuteFailure, ActionExecutorContext } from '@happier-dev/protocol';
 import type { OwnServerDeploymentImageArchiveV1 } from '@happier-dev/deployment-protocol';
 import { readNativeComposeArchiveTransportIdentity } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
@@ -19,7 +19,7 @@ export type DeploymentImageArchiveCopyRequest = Readonly<{
     signal: AbortSignal;
     assertCurrent(): Promise<void>;
 }>;
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (code: string, cause?: ActionExecuteFailure): never => { throw Object.assign(new Error(code, { cause }), { code }); };
 
 /** The receiving daemon mounts the existing credentialed target_copy byte driver.
  * Profile identity is a proved transport adapter; archive provenance stays Home-scoped. */
@@ -76,7 +76,10 @@ export function createDeploymentImageArchiveCopyForHost(host: Readonly<{
                 destination: { serverId: target.fixedServer.serverId, machineId: host.machineId,
                     rootPath: request.destination.rootPath, path: request.destination.path }, overwrite: false, recursive: false },
             context: { ...request.context, serverId: target.fixedServer.serverId, signal: request.signal }, assertCurrent, archiveOrigin });
-        if (!result.ok) return refuse(result.errorCode === 'machine_carrier_unavailable' ? 'image_transfer_unreachable' : result.errorCode ?? 'filesystem_transfer_custody_required');
+        if (!result.ok) {
+            const code = result.errorCode === 'machine_carrier_unavailable' ? 'image_transfer_unreachable' : result.errorCode;
+            return refuse(code, { ...result, errorCode: code });
+        }
         const output = result.result;
         if (!output || typeof output !== 'object' || !('success' in output) || output.success !== true
             || !('status' in output) || output.status !== 'completed' || !('path' in output)

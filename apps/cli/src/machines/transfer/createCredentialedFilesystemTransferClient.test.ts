@@ -19,7 +19,6 @@ import { createHostActionOperationRuntime } from '@/daemon/actionOperations/crea
 import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { IrohNativeOperationError } from '@happier-dev/iroh-native/node';
 import * as persistence from '@/persistence';
-import * as serverProfiles from '@/server/serverProfiles';
 import { createDirectTransferServerLifecycle } from './directTransferServerLifecycle';
 import { createPreparedFilesystemTransferActionExecutor, projectPreparedFilesystemActionResult } from './createPreparedFilesystemTransferActionExecutor';
 import { EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
@@ -30,6 +29,10 @@ import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requ
 // the transport contract's test deadline. No API owner is replaced.
 import '@/api/api';
 import { createCredentialedFilesystemTransferClient } from './createCredentialedFilesystemTransferClient';
+import { createDeploymentImageArchiveCopyForHost } from '@/deployments/targets/ownServer/imageArchiveCopy';
+import { resolveOwnServerDeploymentEnvironmentInstanceIdForHost } from '@/deployments/targets/ownServer/paths';
+import { readNativeComposeArchiveTransportIdentity } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
+import { projectDeploymentFailure, projectDeploymentReceiptFailure } from '@/deployments/deploymentFailure';
 
 // The addon is the native/OS boundary. Runtime ownership, grant/proof creation,
 // installed requester custody and HTTP signing remain real.
@@ -40,16 +43,16 @@ vi.mock('@happier-dev/iroh-native/node', async original => ({
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('credentialed deployment archive byte transport', () => {
-    it('retains the installed finite actor while using only exact root-scoped Machine and grant reads, then refuses withdrawal', async () => {
+    it.each(['stored_session', 'api_token'] as const)('retains the installed finite actor while using only exact root-scoped Machine and grant reads, then refuses withdrawal (%s)', async credentialProvenance => {
         const channel = await createRequesterCurrentnessSocketHarness();
         const fixture = await createDeploymentChildRequesterHarness();
         const directory = await mkdtemp(join(tmpdir(), 'happier-private-archive-copy-'));
-        const sourceRoot = join(directory, 'source');
+        const sourceRoot = join(directory, 'source', resolveOwnServerDeploymentEnvironmentInstanceIdForHost(fixture.homeIdentityId, fixture.job.input.environmentId), 'image-archives', 'deployment');
         const destinationRoot = join(directory, 'destination');
-        await Promise.all([mkdir(sourceRoot), mkdir(destinationRoot)]);
+        await Promise.all([mkdir(sourceRoot, { recursive: true }), mkdir(destinationRoot)]);
         const lifecycle = createDirectTransferServerLifecycle({ bindPort: 0, listenerClasses: ['loopback_http'] });
         const nativeEffect = createPreparedFilesystemTransferActionExecutor({ lifecycle, workingDirectory: directory,
-            accessPolicy: { kind: 'restrictedRoots', roots: [sourceRoot, destinationRoot] } });
+            accessPolicy: { kind: 'restrictedRoots', roots: [sourceRoot, destinationRoot, join(directory, 'receiver-deployments')] } });
         const issuer = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(81));
         const trustRoot = { keyId: 'archive-issuer', publicKey: Buffer.from(issuer.publicKey).toString('base64url') };
         const holderKey = new Uint8Array(32).fill(82);
@@ -71,6 +74,9 @@ describe('credentialed deployment archive byte transport', () => {
         const terminalReads: Array<() => Promise<unknown>> = [];
         const boundaryErrors: unknown[] = [];
         let current = true;
+        let refuseSource = false;
+        const sourceFailureCause = { phase: 'deployment.archive.source', errorClass: 'Error' as const,
+            errorCode: 'filesystem_transfer_custody_required', httpStatus: null };
         let sequence = 0;
         const operations = new Map(['holder', fixture.job.machineId].map(machineId => [machineId,
             createHostActionOperationRuntime({ serverId: fixture.homeIdentityId, machineId,
@@ -80,8 +86,12 @@ describe('credentialed deployment archive byte transport', () => {
         // Profile and credential files are OS boundaries. The same real resolver
         // captures them before the private target_copy invocation.
         vi.spyOn(persistence, 'readStoredCredentialsForServerId').mockResolvedValue(fixture.ann);
-        vi.spyOn(serverProfiles, 'getServerProfile').mockResolvedValue({ id: fixture.profileId, name: 'Home',
-            serverUrl: fixture.serverHttpBaseUrl, webappUrl: fixture.serverHttpBaseUrl, createdAt: 0, updatedAt: 0, lastUsedAt: 0 });
+        vi.spyOn(persistence, 'readSettings').mockResolvedValue({ schemaVersion: 6, onboardingCompleted: true,
+            activeServerId: fixture.profileId, servers: { [fixture.profileId]: { id: fixture.profileId, name: 'Home',
+            serverUrl: fixture.serverHttpBaseUrl, webappUrl: fixture.serverHttpBaseUrl, createdAt: 0, updatedAt: 0,
+            homeConnectionDescriptorAuthority: 'exact', homeConnectionDescriptor: { v: 1,
+                homeServerIdentityId: fixture.homeIdentityId, canonicalServerUrl: fixture.serverHttpBaseUrl, revision: 1,
+                endpoints: [{ kind: 'https', url: fixture.serverHttpBaseUrl }] } } } });
         const proof = (headers: Readonly<Record<string, unknown>>, method: string, path: string, body?: unknown) => {
             expect(headers.Authorization).toBeUndefined();
             expect(headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toBe(fixture.root.token);
@@ -203,7 +213,10 @@ describe('credentialed deployment archive byte transport', () => {
                             const actionId = machineId === 'holder' ? 'daemon.filesystem.download' as const : 'daemon.filesystem.copy' as const;
                             expect(request.target).toEqual({ kind: 'machine', machineId });
                             phases.push(actionId);
-                            const result = await runtime.observeExecution({ actionId, input: request.input, rpcContext,
+                            const result = refuseSource && machineId === 'holder'
+                                ? { ok: false as const, errorCode: 'filesystem_transfer_custody_required',
+                                    error: 'Source archive custody is unavailable', failureCause: sourceFailureCause }
+                                : await runtime.observeExecution({ actionId, input: request.input, rpcContext,
                                 execute: operation => nativeEffect({ actionId, input: request.input,
                                     context: { ...operation, serverId: fixture.profileId, runtimeAccountId: 'ann',
                                         externalActionTarget: { kind: 'machine', machineId } }, requesterAccountId: 'ann',
@@ -238,9 +251,35 @@ describe('credentialed deployment archive byte transport', () => {
                 input: { kind: 'target_copy', source: { serverId: fixture.profileId, machineId: 'holder', rootPath: sourceRoot, path: 'image.tar' },
                     destination: { serverId: fixture.profileId, machineId: fixture.job.machineId, rootPath: destinationRoot, path: name },
                     overwrite: false, recursive: false }, context: { ...context, signal }, archiveOrigin: origin, async assertCurrent() {} });
-            const copied = await copy('received.tar');
-            expect(copied, JSON.stringify({ copied, boundaryErrors, phases })).toMatchObject({ ok: true, result: { success: true, status: 'completed' } });
-            expect(await readFile(join(destinationRoot, 'received.tar'))).toEqual(bytes);
+            const transport = await readNativeComposeArchiveTransportIdentity(join(sourceRoot, 'image.tar'));
+            const archivePath = join(sourceRoot, `${transport.sha256}.tar`);
+            await writeFile(archivePath, bytes);
+            const receivingRoot = join(directory, 'receiver-deployments');
+            const receivingArchiveRoot = join(receivingRoot,
+                resolveOwnServerDeploymentEnvironmentInstanceIdForHost(fixture.homeIdentityId, fixture.job.input.environmentId),
+                'image-archives', fixture.job.deploymentId);
+            const receivingPath = join(receivingArchiveRoot, `${transport.sha256}.tar`);
+            const hostCopy = createDeploymentImageArchiveCopyForHost({ credentials: { ...fixture.ann, credentialProvenance },
+                credentialProfileId: fixture.profileId, serverId: fixture.homeIdentityId,
+                serverHttpBaseUrl: fixture.serverHttpBaseUrl, machineId: fixture.job.machineId,
+                installationId: fixture.installed.installationId, deploymentRoot: receivingRoot });
+            const archiveCopyRequest = { archive: { ...transport,
+                image: { service: 'app', platform: 'linux/amd64', configDigest: `sha256:${'a'.repeat(64)}`,
+                    manifestDigest: `sha256:${'b'.repeat(64)}` },
+                holder: { serverId: fixture.homeIdentityId, machineId: 'holder', installationId: 'holder-installation',
+                    rootPath: sourceRoot, path: archivePath } },
+                destination: { rootPath: receivingArchiveRoot, path: receivingPath }, context,
+                signal: context.signal, async assertCurrent() {} } satisfies Parameters<typeof hostCopy>[0];
+            const received = await hostCopy(archiveCopyRequest);
+            expect(received).toEqual({ path: receivingPath, ...transport });
+            expect(await readFile(receivingPath)).toEqual(bytes);
+            expect(boundaryErrors).toEqual([]);
+            const unadmitted = createCliActionExecutorFromCredentials({ credentials: { ...fixture.ann, credentialProvenance: 'api_token' } });
+            expect(await unadmitted.execute('daemon.filesystem.copy', { kind: 'target_copy',
+                source: { serverId: fixture.profileId, machineId: 'holder', rootPath: sourceRoot, path: archivePath },
+                destination: { serverId: fixture.profileId, machineId: fixture.job.machineId, rootPath: receivingArchiveRoot, path: receivingPath },
+                overwrite: false, recursive: false }, { surface: 'cli' })).toMatchObject({ ok: false, errorCode: 'filesystem_transfer_custody_required' });
+
             expect(accepted).toEqual([expect.objectContaining({ status: 'accepted', entryTree: expect.any(Object), prepared: expect.any(Object) }),
                 expect.objectContaining({ status: 'accepted', prepared: expect.objectContaining({ manifest: expect.any(Object) }) })]);
             expect(phases).toContain('action.operations.get');
@@ -248,6 +287,12 @@ describe('credentialed deployment archive byte transport', () => {
                 expect.objectContaining({ operation: expect.objectContaining({ actionId: 'daemon.filesystem.download', state: 'succeeded' }) }),
                 expect.objectContaining({ operation: expect.objectContaining({ actionId: 'daemon.filesystem.copy', state: 'succeeded' }) })]));
             expect(boundaryErrors).toEqual([]);
+            refuseSource = true;
+            let sourceFailure: unknown;
+            try { await hostCopy(archiveCopyRequest); } catch (error) { sourceFailure = error; }
+            expect(projectDeploymentReceiptFailure(projectDeploymentFailure('filesystem_transfer_custody_required', sourceFailure),
+                'activate')).toMatchObject({ code: 'filesystem_transfer_custody_required', failureCause: sourceFailureCause });
+            refuseSource = false;
             const phasesBeforeWrongOrigin = phases.length;
             expectedSignedOrigin = { ...archiveOrigin, holderInstallationId: 'replaced-holder-installation' };
             expect(await copy('wrong-origin.tar', expectedSignedOrigin)).toMatchObject({ ok: false, errorCode: 'machine_target_not_current' });
@@ -269,13 +314,17 @@ describe('credentialed deployment archive byte transport', () => {
             expect(cancelled).toMatchObject({ ok: false, details: { status: 'cancelled' } });
             expect(cancelled).not.toMatchObject({ errorCode: 'machine_carrier_unavailable' });
             await expect(readFile(join(destinationRoot, 'cancelled.tar'))).rejects.toMatchObject({ code: 'ENOENT' });
-            const readsBeforeWithdrawal = machineReads.length;
             const grantsBeforeWithdrawal = grantActors.length;
             current = false;
             fixture.setCurrent(false);
             expect(await copy('withdrawn.tar')).toMatchObject({ ok: false, errorCode: 'action_forbidden' });
-            await expect(client.openMachineTunnel({ targetMachineId: 'holder', serverId: fixture.profileId })).rejects.toMatchObject({ code: 'action_forbidden' });
-            expect(machineReads).toHaveLength(readsBeforeWithdrawal);
+            await expect(readFile(join(destinationRoot, 'withdrawn.tar'))).rejects.toMatchObject({ code: 'ENOENT' });
+            const readsBeforeCancellation = machineReads.length;
+            const stopped = new AbortController();
+            stopped.abort();
+            await expect(client.openMachineTunnel({ targetMachineId: 'holder', serverId: fixture.profileId, signal: stopped.signal }))
+                .rejects.toMatchObject({ name: 'AbortError' });
+            expect(machineReads).toHaveLength(readsBeforeCancellation);
             expect(grantActors).toHaveLength(grantsBeforeWithdrawal);
         } finally { await client?.close(); await lifecycle.stop(); await prepared?.dispose(); await channel.close();
             await rm(directory, { recursive: true, force: true }); }

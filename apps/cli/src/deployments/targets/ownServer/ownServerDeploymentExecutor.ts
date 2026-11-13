@@ -40,10 +40,12 @@ import { admitOwnServerMigration, executeOwnServerMigration, MIGRATION_STEP } fr
 import { isOwnServerPreviewDataEnvironment, readOwnServerPreviewCleanup } from './teardownVolumes';
 import { captureOwnServerDeploymentSource, createOwnServerSourceCustodyReader, replaceOwnServerDeploymentSource } from './sourceProvenance';
 import { executeOwnServerNativeRestore, observeOwnServerNativeRestoreDestination, observeOwnServerNativeVolumeRestoreDestination, prepareOwnServerNativeRestore,
-    confirmOwnServerNativeRestore, type OwnServerNativeRestoreInputFactory, type OwnServerNativeRestoreInput, type OwnServerNativeUploadRestoreInput } from './nativeRestore';
+    confirmOwnServerNativeRestore, type OwnServerNativeRestoreInputFactory, type OwnServerNativeRestoreInput, type OwnServerNativeUploadRestoreInput,
+    type OwnServerReceiptContentTransition } from './nativeRestore';
 import { executeOwnServerBackupForHost } from './backup';
 import { createOwnServerExpectedDownPublisher } from './expectedDown';
-import { createOwnServerDatabaseUsernameReaderForHost, resolveOwnServerDatabaseRestoreTargetForHost } from './backupDestination';
+import { createOwnServerDatabaseUsernameReaderForHost, hasOwnServerBackupDataOperands, isOwnServerBackupRunOperands,
+    isOwnServerPreMigrationBackupOperands, resolveOwnServerDatabaseRestoreTargetForHost } from './backupDestination';
 export { admitOwnServerDeploymentTargetLink } from './ownServerTargetAdmission';
 import { executeOwnServerRollout, recordOwnServerCandidateCleanup, projectOwnServerCandidateCleanupFailure, OWN_SERVER_CANDIDATE_CLEANUP_STEP_ID } from './ownServerRollout';
 import type { OwnServerDeploymentRequest, OwnServerDeploymentReviewRequest, OwnServerDeploymentRuntimeRequest, OwnServerDeploymentResult, OwnServerDeploymentReview,
@@ -521,9 +523,9 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 : await runtime.prepareBackupRepositoryOperands?.();
             if (!operands) refuse('unsupported_action');
             try { return await executeOwnServerBackupForHost(admitted, await createBackupInput(operands), operands, operationId); }
-            finally { if ('data' in operands) await operands.dispose(); }
+            finally { if (hasOwnServerBackupDataOperands(operands)) await operands.dispose(); }
         });
-        const check = request.actionId === DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 ? 'run'
+        const check: 'run' | 'verify' | 'prune' | null = request.actionId === DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 ? 'run'
             : request.actionId === DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_V1 ? 'verify'
             : request.actionId === DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1 ? 'prune' : null;
         if (!check) return execute();
@@ -607,16 +609,16 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                     ? await runtime.prepareBackupRunOperands?.() : await runtime.preparePreMigrationBackupOperands?.() : undefined;
                 try {
                     if (destination.hasMeaningfulData && !safety) refuse('backup_required');
-                    if (safety && destination.adapter === 'postgres-v1' && (!('destination' in safety)
+                    if (safety && destination.adapter === 'postgres-v1' && (!isOwnServerPreMigrationBackupOperands(safety)
                         || safety.destination.service !== destination.service || safety.destination.database !== destination.database
                         || safety.destination.environmentId !== destination.environmentId)) refuse('stale_input');
                     const prepared = await prepareOwnServerNativeRestore(await createUploadInput(upload, destination), { operationId, source,
                         destination, ...(safety ? { safetyBackup: { environmentId: destination.environmentId,
-                            configuration: safety.configuration, ...('data' in safety ? { data: safety.data, restoreTargets: 'destinations' in safety ? safety.destinations : [safety.destination] } : {}) } } : {}) }, safety ? await createBackupInput(safety) : undefined);
+                            configuration: safety.configuration, ...(hasOwnServerBackupDataOperands(safety) ? { data: safety.data, restoreTargets: isOwnServerBackupRunOperands(safety) ? safety.destinations : [safety.destination] } : {}) } } : {}) }, safety ? await createBackupInput(safety) : undefined);
                     if (prepared.source.kind !== 'upload' || prepared.repository) refuse('outcome_unknown');
                     await reviewSnapshot(prepared.destination);
                     return { kind: 'prepared', prepared: { ...prepared, source: prepared.source } };
-                } finally { if (safety && 'data' in safety) await safety.dispose(); }
+                } finally { if (safety && hasOwnServerBackupDataOperands(safety)) await safety.dispose(); }
             }
             if (!repositorySource) refuse('unsupported_action');
             // Manifest-only retained runs have no historical database/configuration.
@@ -660,7 +662,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                         safetyOperands = destination.adapter !== 'postgres-v1' ? await runtime.prepareBackupRunOperands?.()
                             : await runtime.preparePreMigrationBackupOperands?.();
                         if (!safetyOperands) refuse('backup_required');
-                        const safetyDestination = 'destination' in safetyOperands ? safetyOperands.destination : undefined;
+                        const safetyDestination = isOwnServerPreMigrationBackupOperands(safetyOperands) ? safetyOperands.destination : undefined;
                         if (destination.adapter === 'postgres-v1' && (!safetyDestination || safetyDestination.environmentId !== destination.environmentId
                             || safetyDestination.service !== destination.service
                             || safetyDestination.database !== destination.database)) refuse('stale_input');
@@ -670,7 +672,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                             // Copy reads the source repository and protects an existing
                             // destination through that Environment's own backup custody.
                             ...(copy || destination.adapter !== 'postgres-v1' ? safetyOperands ? { safetyBackup: { environmentId: destination.environmentId,
-                                configuration: safetyOperands.configuration, ...('data' in safetyOperands ? { data: safetyOperands.data, restoreTargets: 'destinations' in safetyOperands ? safetyOperands.destinations : [safetyOperands.destination] } : {}) } } : {}
+                                configuration: safetyOperands.configuration, ...(hasOwnServerBackupDataOperands(safetyOperands) ? { data: safetyOperands.data, restoreTargets: isOwnServerBackupRunOperands(safetyOperands) ? safetyOperands.destinations : [safetyOperands.destination] } : {}) } } : {}
                                 : { safetyBackup: { environmentId: destination.environmentId, configuration: capture.configuration,
                                 data: [{ engine: 'postgres' as const, service: destination.service, logicalBackup: { adapter: 'postgres-v1' as const } }] } }) },
                         safetyOperands ? await createBackupInput(safetyOperands) : undefined);
@@ -684,7 +686,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 return confirmOwnServerNativeRestore(await createInput(capture), { prepare: prepared, source: prepared.source,
                     sourceFormat: prepared.sourceFormat, destination });
             } finally {
-                try { if (safetyOperands && 'data' in safetyOperands) await safetyOperands.dispose(); }
+                try { if (safetyOperands && hasOwnServerBackupDataOperands(safetyOperands)) await safetyOperands.dispose(); }
                 finally { if (operands) await operands.dispose(); }
             }
         });
@@ -850,6 +852,13 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 if (input.selectedDeploymentId !== receipt.deployment.id || snapshot.link.activeDeploymentId
                     || receipt.content.onFailure !== 'rollbackAll' || !previous || previous.activation === 'outcome_unknown') refuse('target_mismatch');
                 if (previous.steps.some(step => step.id === OWN_SERVER_CANDIDATE_CLEANUP_STEP_ID && step.state === 'succeeded')) return stageMember(request, previous);
+                // Runtime source custody is published before entering native effects.
+                // A preparation refusal before that publication created no candidate.
+                if (!receipt.content.ownServer?.sources?.some(source => source.role === 'runtime'
+                    && source.machineId === host.machineId && source.installationId === input.installationId
+                    && source.deploymentId === receipt.deployment.id && !source.restorationForDeploymentId)) {
+                    return stageMember(request, recordOwnServerCandidateCleanup(previous, 'succeeded'));
+                }
                 const runtime = await host.runtime.acquire({ ...request, materialization: { kind: 'deployment', deploymentId: receipt.deployment.id } }, { ...snapshot,
                     readReferenceEnvironment: host.readEnvironment, readPreviewDomain: host.readPreviewDomain });
                 let stageOutput: StageOutput | undefined;
@@ -1194,7 +1203,7 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                                     onStopPending() { prepared.stageOutput?.appendRedacted('stderr', Buffer.from('Native backup stop is pending\n')); } },
                                     capture: { receipt, destination: operands.destination, context: request.context,
                                         backup: { environmentId: receipt.deployment.environmentId, configuration: operands.configuration, data: operands.data },
-                                        async writeTransition(capture: Parameters<OwnServerDeploymentTargetHostInput['writeTransition']>[0]) {
+                                        async writeTransition(capture: OwnServerReceiptContentTransition) {
                                             const written = await host.writeTransition(capture);
                                             if (written.ok) receipt = { ...receipt, content: capture.content,
                                                 deployment: { ...receipt.deployment, revision: written.deploymentRevision } };
