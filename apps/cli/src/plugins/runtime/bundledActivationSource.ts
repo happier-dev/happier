@@ -60,9 +60,7 @@ type ImportModule = (
 
 type PrepareSourceDevSharedDeps = (params: Readonly<{
     packageName: string;
-    signal?: AbortSignal;
     workspaceNames?: readonly string[];
-    admittedCopyOnly?: boolean;
 }>) => Promise<SourceDevSharedDepsPreflightResult> | SourceDevSharedDepsPreflightResult;
 
 type SourceDevSharedDepsPreflightCacheEntry = {
@@ -342,7 +340,6 @@ export function createBundledActivationSourceResolver(params: Readonly<{
 
     async function runSourceDevSharedDepsPreflightForPackage(
         packageName: string,
-        options?: Readonly<{ admittedCopyOnly?: boolean }>,
     ): Promise<SourceDevSharedDepsPreflightResult> {
         const existing = sourceDevSharedDepsPreflightByPackageName.get(packageName);
         if (existing?.result) {
@@ -354,12 +351,8 @@ export function createBundledActivationSourceResolver(params: Readonly<{
         const workspaceNames = resolveSourceDevWorkspaceNames(packageName);
         const preflightPromise = Promise.resolve().then(() => prepareSourceDevSharedDeps({
             packageName,
-            ...(params.signal ? { signal: params.signal } : {}),
             ...(workspaceNames.length > 0
                 ? { workspaceNames }
-                : {}),
-            ...(options?.admittedCopyOnly
-                ? { admittedCopyOnly: true }
                 : {}),
         }));
         const entry: SourceDevSharedDepsPreflightCacheEntry = {
@@ -484,10 +477,7 @@ export function createBundledActivationSourceResolver(params: Readonly<{
             ) {
                 // Authored source uses the registered workspace source loader,
                 // not dist. Only a retained flat copy needs copy admission here.
-                const preflight = await runSourceDevSharedDepsPreflightForPackage(
-                    daemonEntryPath,
-                    { admittedCopyOnly: true },
-                );
+                const preflight = await runSourceDevSharedDepsPreflightForPackage(daemonEntryPath);
                 params.signal?.throwIfAborted();
                 if (preflight.type === 'error') {
                     throw new Error(preflight.errorMessage);

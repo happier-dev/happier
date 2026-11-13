@@ -163,7 +163,6 @@ export async function routeSpawnModeAndWaitForWebhook(input: Readonly<{
     args,
     processEnv: params.processEnv,
     launchOptions: { preferWindowsPackagedBinary: true },
-    logDebug: params.logDebug,
     ...(sourceDevWorkspaceNames ? { workspaceNames: sourceDevWorkspaceNames } : {}),
   });
   if (sourceDevSharedDepsPreflight.type === 'error') {

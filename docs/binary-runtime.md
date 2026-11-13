@@ -1009,13 +1009,14 @@ starting an Agent child. Its spawn result retains `SPAWN_FAILED` and carries
 `launch_error.code: SOURCE_RUNTIME_RELOAD_REQUIRED` with the reload instruction.
 Existing child-exit diagnostics remain available for failures after launch.
 
-Checkout source-dev Agent launches prepare shared dependencies through
-`syncSharedDepsForDev.mjs`'s canonical publisher, sharing its publication lock
-with Stack preparation and bundled Plugin runtime loading. A stale checkout
-starts publication or waits for the publisher already running; a read-only
-inspection cannot leave the spawn waiting for an unscheduled producer.
-The preflight adds no default process, lock or package-build deadline ahead of
-that owner. Cancellation and explicit caller overrides remain available.
+Checkout source-dev Agent launches do not build or publish workspace `dist`.
+The source child resolves every first-party workspace import through the
+workspace source hook (`registerSourceRuntime.mjs`), which refuses `dist`
+targets, so a stale or uncompilable checkout dist is not part of its runtime.
+The daemon's launch preflight checks the installed runtime dependency identity
+above and, for a child running from an admitted flat copy, that copy's recorded
+outputs. Bundled Plugin loads from a retained flat copy use the same admission
+check. `syncSharedDepsForDev.mjs` remains the explicit developer command.
 
 Workspace package fingerprints consume their installed runtime dependency bytes,
 compiler installation and workspace/external type inputs through the existing

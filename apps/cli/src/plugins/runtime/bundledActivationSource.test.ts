@@ -30,7 +30,7 @@ const pluginModuleFixture: PluginDaemonModuleNamespace = {
 const syncedPreflight = {
   type: 'ready',
   checked: true,
-  reason: 'synced',
+  reason: 'source-imports',
 } satisfies SourceDevSharedDepsPreflightResult;
 
 const distOnlyPreflight = {
@@ -796,15 +796,10 @@ describe('createBundledActivationSourceResolver', () => {
     const prepareSourceDevSharedDeps = vi.fn((params: Readonly<{
       packageName: string;
       workspaceNames?: readonly string[];
-      admittedCopyOnly?: boolean;
     }>) =>
       prepareSourceDevSharedDepsForBundledPluginRuntimeLoad({
         ...params,
         cliProjectPath,
-        processEnv: {
-          VITEST: 'true',
-          NODE_ENV: 'test',
-        },
       }));
     const resolveActivationSource = createBundledActivationSourceResolver({
       bundledPackageNames: ['@happier-dev/plugins-scm-git'],
@@ -822,7 +817,6 @@ describe('createBundledActivationSourceResolver', () => {
     expect(prepareSourceDevSharedDeps).toHaveBeenCalledWith({
       packageName: '@happier-dev/plugins-scm-git',
       workspaceNames: ['plugins-scm-git'],
-      admittedCopyOnly: true,
     });
     expect(importModule).not.toHaveBeenCalled();
   });
@@ -839,15 +833,10 @@ describe('createBundledActivationSourceResolver', () => {
     const prepareSourceDevSharedDeps = vi.fn((params: Readonly<{
       packageName: string;
       workspaceNames?: readonly string[];
-      admittedCopyOnly?: boolean;
     }>) =>
       prepareSourceDevSharedDepsForBundledPluginRuntimeLoad({
         ...params,
         cliProjectPath,
-        processEnv: {
-          VITEST: 'true',
-          NODE_ENV: 'test',
-        },
       }));
     const resolveActivationSource = createBundledActivationSourceResolver({
       bundledPackageNames: ['@happier-dev/plugins-scm-git'],
@@ -865,7 +854,6 @@ describe('createBundledActivationSourceResolver', () => {
     expect(prepareSourceDevSharedDeps).toHaveBeenCalledWith({
       packageName: '@happier-dev/plugins-scm-git',
       workspaceNames: ['plugins-scm-git'],
-      admittedCopyOnly: true,
     });
     expect(importModule).toHaveBeenCalledTimes(1);
   });
@@ -875,21 +863,14 @@ describe('createBundledActivationSourceResolver', () => {
     tempDirs.push(tempDir);
     const cliProjectPath = join(tempDir, 'flat-cli-copy');
     await mkdir(cliProjectPath, { recursive: true });
-    const runSyncProcess = vi.fn();
     const importModule = vi.fn(async () => pluginModuleFixture);
     const prepareSourceDevSharedDeps = vi.fn((params: Readonly<{
       packageName: string;
       workspaceNames?: readonly string[];
-      admittedCopyOnly?: boolean;
     }>) =>
       prepareSourceDevSharedDepsForBundledPluginRuntimeLoad({
         ...params,
         cliProjectPath,
-        processEnv: {
-          VITEST: 'true',
-          NODE_ENV: 'test',
-        },
-        runSyncProcess,
       }));
     const resolveActivationSource = createBundledActivationSourceResolver({
       bundledPackageNames: ['@happier-dev/plugins-scm-git'],
@@ -907,10 +888,8 @@ describe('createBundledActivationSourceResolver', () => {
     expect(prepareSourceDevSharedDeps).toHaveBeenCalledWith({
       packageName: '@happier-dev/plugins-scm-git',
       workspaceNames: ['plugins-scm-git'],
-      admittedCopyOnly: true,
     });
     expect(importModule).toHaveBeenCalledTimes(1);
-    expect(runSyncProcess).not.toHaveBeenCalled();
   });
 
 });

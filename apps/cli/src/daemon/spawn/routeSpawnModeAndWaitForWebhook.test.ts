@@ -407,7 +407,6 @@ describe('routeSpawnModeAndWaitForWebhook', () => {
         'daemon',
       ]),
       launchOptions: { preferWindowsPackagedBinary: true },
-      logDebug: params.logDebug,
       processEnv: params.processEnv,
       workspaceNames: ['plugins-opencode'],
     });

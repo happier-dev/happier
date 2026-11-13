@@ -5,8 +5,6 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { HappyCliSubprocessInvocation } from '@/utils/spawnHappyCLI';
-import { waitForCondition } from '@/testkit/async/waitFor';
 
 import {
   prepareSourceDevSharedDepsForBundledPluginRuntimeLoad,
@@ -91,58 +89,13 @@ afterEach(async () => {
 });
 
 describe('prepareSourceDevSharedDepsForHappyCliSpawn', () => {
-  it('cancels a pending preparation process and settles before its startup budget expires', async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), 'happier-source-dev-preflight-cancel-'));
-    tempDirs.push(tempDir);
-    const cliProjectPath = join(tempDir, 'apps', 'cli');
-    const scriptsDir = join(cliProjectPath, 'scripts');
-    await mkdir(scriptsDir, { recursive: true });
-    await writeFile(join(scriptsDir, 'syncSharedDepsForDev.mjs'), [
-      "import { writeSync } from 'node:fs';",
-      "writeSync(1, '[happier-source-dev-shared-deps-progress] ' + JSON.stringify({ stage: 'preparation-pending', detail: String(process.pid) }) + '\\n');",
-      'setInterval(() => {}, 1000);',
-    ].join('\n'));
-    const spawnProcess = vi.mocked(spawn);
-    spawnProcess.mockClear();
-    const cancellation = new AbortController();
-    let preparationPid: number | undefined;
-    let result: Awaited<ReturnType<typeof prepareSourceDevSharedDepsForHappyCliSpawn>> | undefined;
-    const preparation = prepareSourceDevSharedDepsForHappyCliSpawn({
-      args: ['daemon', 'start-sync'],
-      cliProjectPath,
-      resolveInvocation: () => ({ runtime: 'node', argv: [join(cliProjectPath, 'src', 'index.ts')] }),
-      signal: cancellation.signal,
-      logDebug: (_message, payload) => {
-        if (payload && typeof payload === 'object' && 'stage' in payload
-          && payload.stage === 'preparation-pending' && 'detail' in payload) {
-          preparationPid = Number(payload.detail);
-        }
-      },
-    }).then(value => { result = value; return value; });
-    try {
-      await waitForCondition(() => preparationPid !== undefined, { timeoutMs: 5_000, label: 'preparation process admitted' });
-      expect(spawnProcess.mock.calls.find(([command]) => command === process.execPath)?.[2]?.windowsHide).toBe(true);
-      cancellation.abort();
-      await waitForCondition(() => result !== undefined, { timeoutMs: 5_000, label: 'cancelled preparation settled' });
-      expect(result).toMatchObject({ type: 'error', errorMessage: expect.stringMatching(/abort|cancel/i) });
-      expect(() => process.kill(preparationPid!, 0)).toThrow();
-    } finally {
-      if (preparationPid) { try { process.kill(preparationPid, 'SIGKILL'); } catch {} }
-      await preparation;
-      spawnProcess.mockClear();
-    }
-  });
-
-  it('skips shared-deps sync for non-source child launches', async () => {
-    const runSyncProcess = vi.fn();
-
+  it('skips source admission for non-source child launches', async () => {
     const result = await prepareSourceDevSharedDepsForHappyCliSpawn({
       args: ['opencode'],
       resolveInvocation: () => ({
         runtime: 'node',
         argv: ['--no-warnings', '/repo/apps/cli/dist/index.mjs', 'opencode'],
       }),
-      runSyncProcess,
     });
 
     expect(result).toEqual({
@@ -150,71 +103,41 @@ describe('prepareSourceDevSharedDepsForHappyCliSpawn', () => {
       checked: false,
       reason: 'not-source-entrypoint',
     });
-    expect(runSyncProcess).not.toHaveBeenCalled();
   });
 
-  it('publishes stale source-dev shared deps before source child launches', async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), 'happier-source-dev-publish-'));
+  it('launches a checkout source child without publishing workspace dists it never imports', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'happier-source-dev-source-imports-'));
     tempDirs.push(tempDir);
     const cliProjectPath = join(tempDir, 'apps', 'cli');
-    const publishedPath = join(tempDir, 'published');
+    const publicationsPath = join(tempDir, 'publications');
     await mkdir(join(cliProjectPath, 'scripts'), { recursive: true });
-    // The process boundary models the helper's real contract: check-only cannot
-    // publish stale output; its default invocation owns convergence and locking.
+    // The live publisher rebuilds every stale workspace dist in the target closure.
+    // A source child resolves first-party imports through the workspace source
+    // hook, which refuses dist targets, so each publication is work for nobody.
     await writeFile(join(cliProjectPath, 'scripts', 'syncSharedDepsForDev.mjs'), [
-      "import { writeFileSync } from 'node:fs';",
-      "if (process.argv.includes('--check')) throw new Error('shared dependencies are stale with no publisher');",
-      `writeFileSync(${JSON.stringify(publishedPath)}, 'current');`,
+      "import { appendFileSync } from 'node:fs';",
+      `appendFileSync(${JSON.stringify(publicationsPath)}, 'published\\n');`,
     ].join('\n'));
-    const result = await prepareSourceDevSharedDepsForHappyCliSpawn({
-      args: ['opencode'],
+    const spawnProcess = vi.mocked(spawn);
+    spawnProcess.mockClear();
+    const launch = () => prepareSourceDevSharedDepsForHappyCliSpawn({
+      args: ['claude'],
       cliProjectPath,
       resolveInvocation: () => ({
         runtime: 'node',
-        argv: [join(cliProjectPath, 'src', 'index.ts'), 'opencode'],
+        argv: ['--conditions=happier-source', join(cliProjectPath, 'src', 'index.ts'), 'claude'],
       }),
+      workspaceNames: ['plugins-claude'],
     });
 
-    expect(result).toEqual({
-      type: 'ready',
-      checked: true,
-      reason: 'current',
-    });
-    expect(await readFile(publishedPath, 'utf8')).toBe('current');
-  });
+    const results = [await launch(), await launch()];
 
-  it('waits for canonical publication without a shorter default preflight deadline', async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), 'happier-source-dev-publish-wait-'));
-    tempDirs.push(tempDir);
-    const cliProjectPath = join(tempDir, 'apps', 'cli');
-    const releasePath = join(tempDir, 'release');
-    await mkdir(join(cliProjectPath, 'scripts'), { recursive: true });
-    await writeFile(join(cliProjectPath, 'scripts', 'syncSharedDepsForDev.mjs'), [
-      "import { existsSync, watch, writeSync } from 'node:fs';",
-      `const releasePath = ${JSON.stringify(releasePath)};`,
-      `const watcher = watch(${JSON.stringify(tempDir)}, () => { if (existsSync(releasePath)) { watcher.close(); } });`,
-      "writeSync(1, '[happier-source-dev-shared-deps-progress] {\"stage\":\"publication-pending\"}\\n');",
-    ].join('\n'));
-    let started!: () => void;
-    const publicationStarted = new Promise<void>(resolve => { started = resolve; });
-    vi.useFakeTimers();
-    const preparation = prepareSourceDevSharedDepsForHappyCliSpawn({
-      args: ['opencode'],
-      cliProjectPath,
-      resolveInvocation: () => ({ runtime: 'node', argv: [join(cliProjectPath, 'src', 'index.ts')] }),
-      progressIntervalMs: 0,
-      logDebug: (_message, payload) => {
-        if (payload && typeof payload === 'object' && 'stage' in payload && payload.stage === 'publication-pending') started();
-      },
-    });
-    try {
-      await publicationStarted;
-      await vi.advanceTimersByTimeAsync(300_001);
-    } finally {
-      vi.useRealTimers();
-      await writeFile(releasePath, 'release');
-    }
-    await expect(preparation).resolves.toEqual({ type: 'ready', checked: true, reason: 'current' });
+    expect(results).toEqual([
+      { type: 'ready', checked: true, reason: 'source-imports' },
+      { type: 'ready', checked: true, reason: 'source-imports' },
+    ]);
+    expect(spawnProcess).toHaveBeenCalledTimes(0);
+    expect(await readFile(publicationsPath, 'utf8').catch(() => '')).toBe('');
   });
 
   it('keeps a valid admitted copy local after unrelated live dist and stamp publication', async () => {
@@ -238,7 +161,6 @@ describe('prepareSourceDevSharedDepsForHappyCliSpawn', () => {
       '{"version":3,"entries":{}}\n',
       'utf8',
     );
-    const runSyncProcess = vi.fn(async () => undefined);
 
     const result = await prepareSourceDevSharedDepsForHappyCliSpawn({
       args: ['opencode'],
@@ -248,7 +170,6 @@ describe('prepareSourceDevSharedDepsForHappyCliSpawn', () => {
         argv: [join(cliProjectPath, 'src', 'index.ts'), 'opencode'],
       }),
       workspaceNames: ['plugins-opencode'],
-      runSyncProcess,
     });
 
     expect(result).toEqual({
@@ -256,7 +177,6 @@ describe('prepareSourceDevSharedDepsForHappyCliSpawn', () => {
       checked: true,
       reason: 'admitted-copy',
     });
-    expect(runSyncProcess).not.toHaveBeenCalled();
   });
 
   it.each(['missing', 'corrupt'] as const)(
@@ -274,7 +194,6 @@ describe('prepareSourceDevSharedDepsForHappyCliSpawn', () => {
       } else {
         await writeFile(outputPath, 'corrupt copied output\n', 'utf8');
       }
-      const runSyncProcess = vi.fn(async () => undefined);
 
       const result = await prepareSourceDevSharedDepsForHappyCliSpawn({
         args: ['opencode'],
@@ -284,14 +203,12 @@ describe('prepareSourceDevSharedDepsForHappyCliSpawn', () => {
           argv: [join(cliProjectPath, 'src', 'index.ts'), 'opencode'],
         }),
         workspaceNames: ['plugins-opencode'],
-        runSyncProcess,
       });
 
       expect(result.type).toBe('error');
       if (result.type !== 'error') throw new Error('expected preflight error');
       expect(result.errorMessage).toContain('admitted source snapshot');
       expect(result.errorMessage).toContain('plugins-opencode');
-      expect(runSyncProcess).not.toHaveBeenCalled();
     },
   );
 
@@ -347,7 +264,6 @@ describe('prepareSourceDevSharedDepsForHappyCliSpawn', () => {
     };
     await writeFile(admissionPath, JSON.stringify(admission), 'utf8');
     await rm(protocolOutputPath, { force: true });
-    const runSyncProcess = vi.fn(async () => undefined);
 
     const result = await prepareSourceDevSharedDepsForHappyCliSpawn({
       args: ['opencode'],
@@ -357,13 +273,11 @@ describe('prepareSourceDevSharedDepsForHappyCliSpawn', () => {
         argv: [join(cliProjectPath, 'src', 'index.ts'), 'opencode'],
       }),
       workspaceNames: ['plugins-opencode'],
-      runSyncProcess,
     });
 
     expect(result.type).toBe('error');
     if (result.type !== 'error') throw new Error('expected preflight error');
     expect(result.errorMessage).toContain('protocol');
-    expect(runSyncProcess).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -401,7 +315,6 @@ describe('prepareSourceDevSharedDepsForHappyCliSpawn', () => {
         output.path = unsafeValue;
       }
       await writeFile(admissionPath, JSON.stringify(admission), 'utf8');
-      const runSyncProcess = vi.fn(async () => undefined);
 
       const result = await prepareSourceDevSharedDepsForHappyCliSpawn({
         args: ['opencode'],
@@ -411,309 +324,18 @@ describe('prepareSourceDevSharedDepsForHappyCliSpawn', () => {
           argv: [join(cliProjectPath, 'src', 'index.ts'), 'opencode'],
         }),
         workspaceNames: ['plugins-opencode'],
-        runSyncProcess,
       });
 
       expect(result.type).toBe('error');
-      expect(runSyncProcess).not.toHaveBeenCalled();
     },
   );
-
-  it('passes targeted workspace names through for source child launches', async () => {
-    const runSyncProcess = vi.fn(async () => undefined);
-
-    const result = await prepareSourceDevSharedDepsForHappyCliSpawn({
-      args: ['opencode'],
-      cliProjectPath: '/repo/apps/cli',
-      existsSync: () => true,
-      resolveInvocation: () => ({
-        runtime: 'node',
-        argv: ['--import', '/repo/node_modules/tsx/dist/esm/index.mjs', '/repo/apps/cli/src/index.ts', 'opencode'],
-      }),
-      runSyncProcess,
-      workspaceNames: ['plugins-opencode'],
-    });
-
-    expect(result).toEqual({
-      type: 'ready',
-      checked: true,
-      reason: 'current',
-    });
-    expect(runSyncProcess).toHaveBeenCalledWith(expect.objectContaining({
-      workspaceNames: ['plugins-opencode'],
-    }));
-  });
-
-  it('logs bounded progress diagnostics while source-dev shared-deps sync is pending', async () => {
-    vi.useFakeTimers();
-
-    let releaseSyncProcess!: () => void;
-    const logDebug = vi.fn();
-    const runSyncProcess = vi.fn(async (input: {
-      onProgress?: (progress: {
-        stage: string;
-        event?: string;
-        workspaceName?: string;
-        detail?: string;
-      }) => void;
-    }) => {
-      input.onProgress?.({
-        stage: 'workspace-build',
-        event: 'start',
-        workspaceName: 'plugins-copilot',
-        detail: 'Compiling source-dev workspace dist',
-      });
-      await new Promise<void>((resolve) => {
-        releaseSyncProcess = resolve;
-      });
-    });
-
-    const resultPromise = prepareSourceDevSharedDepsForHappyCliSpawn({
-      args: ['opencode'],
-      cliProjectPath: '/repo/apps/cli',
-      existsSync: () => true,
-      resolveInvocation: () => ({
-        runtime: 'node',
-        argv: ['/repo/apps/cli/src/index.ts', 'opencode'],
-      }),
-      runSyncProcess,
-      logDebug,
-      progressIntervalMs: 1_000,
-    });
-
-    await Promise.resolve();
-    expect(runSyncProcess).toHaveBeenCalledTimes(1);
-
-    await vi.advanceTimersByTimeAsync(1_000);
-
-    expect(logDebug).toHaveBeenCalledWith(
-      '[DAEMON RUN] Source-dev CLI shared deps preflight progress',
-      expect.objectContaining({
-        stage: 'workspace-build',
-        event: 'start',
-        workspaceName: 'plugins-copilot',
-      }),
-    );
-    expect(logDebug).toHaveBeenCalledWith(
-      '[DAEMON RUN] Source-dev CLI shared deps preflight still running',
-      expect.objectContaining({
-        elapsedMs: expect.any(Number),
-        timeoutMs: undefined,
-        lastProgress: expect.objectContaining({
-          stage: 'workspace-build',
-          workspaceName: 'plugins-copilot',
-        }),
-      }),
-    );
-
-    releaseSyncProcess();
-    await expect(resultPromise).resolves.toEqual({
-      type: 'ready',
-      checked: true,
-      reason: 'current',
-    });
-  });
-
-  it('adds last helper progress to source-dev shared-deps sync failures', async () => {
-    const sourceInvocation: HappyCliSubprocessInvocation = {
-      runtime: 'node',
-      argv: ['/repo/apps/cli/src/index.ts', 'opencode'],
-    };
-
-    const result = await prepareSourceDevSharedDepsForHappyCliSpawn({
-      args: ['opencode'],
-      cliProjectPath: '/repo/apps/cli',
-      existsSync: () => true,
-      resolveInvocation: () => sourceInvocation,
-      runSyncProcess: async (input: {
-        onProgress?: (progress: {
-          stage: string;
-          event?: string;
-          workspaceName?: string;
-        }) => void;
-      }) => {
-        input.onProgress?.({
-          stage: 'workspace-build',
-          event: 'start',
-          workspaceName: 'plugins-copilot',
-        });
-        throw new Error('timed out after 50ms');
-      },
-    });
-
-    expect(result.type).toBe('error');
-    if (result.type !== 'error') throw new Error('expected preflight error');
-    expect(result.errorMessage).toContain('timed out after 50ms');
-    expect(result.errorMessage).toContain('last progress: workspace-build start plugins-copilot');
-  });
-
-  it('times out with the last helper stage when the child never completes', async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), 'happier-source-dev-preflight-stage-timeout-'));
-    tempDirs.push(tempDir);
-
-    const cliProjectPath = join(tempDir, 'apps', 'cli');
-    const scriptsDir = join(cliProjectPath, 'scripts');
-    await mkdir(scriptsDir, { recursive: true });
-    await writeFile(
-      join(scriptsDir, 'syncSharedDepsForDev.mjs'),
-      [
-        "import { writeSync } from 'node:fs';",
-        "writeSync(2, '[happier-source-dev-shared-deps-progress] {\"stage\":\"workspace-build\",\"event\":\"start\",\"workspaceName\":\"plugins-copilot\"}\\n');",
-        'setInterval(() => undefined, 1_000);',
-      ].join('\n'),
-      'utf8',
-    );
-
-    const result = await prepareSourceDevSharedDepsForHappyCliSpawn({
-      args: ['opencode'],
-      cliProjectPath,
-      resolveInvocation: () => ({
-        runtime: 'node',
-        argv: [join(cliProjectPath, 'src', 'index.ts'), 'opencode'],
-      }),
-      timeoutMs: 1_000,
-      progressIntervalMs: 0,
-    });
-
-    expect(result.type).toBe('error');
-    if (result.type !== 'error') throw new Error('expected preflight error');
-    expect(result.errorMessage).toContain('timed out after 1000ms');
-    expect(result.errorMessage).toContain('last progress: workspace-build start plugins-copilot');
-  });
-
-  it('lets a silent synchronous projection stage run until the hard process timeout', async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), 'happier-source-dev-preflight-synchronous-stage-'));
-    tempDirs.push(tempDir);
-
-    const cliProjectPath = join(tempDir, 'apps', 'cli');
-    const scriptsDir = join(cliProjectPath, 'scripts');
-    await mkdir(scriptsDir, { recursive: true });
-    await writeFile(
-      join(scriptsDir, 'syncSharedDepsForDev.mjs'),
-      [
-        "import { writeSync } from 'node:fs';",
-        "writeSync(2, '[happier-source-dev-shared-deps-progress] {\"stage\":\"bundled-dist-sync\",\"event\":\"start\"}\\n');",
-        "setTimeout(() => { writeSync(2, '[happier-source-dev-shared-deps-progress] {\"stage\":\"bundled-dist-sync\",\"event\":\"done\"}\\n'); process.exit(0); }, 1_600);",
-      ].join('\n'),
-      'utf8',
-    );
-
-    const result = await prepareSourceDevSharedDepsForHappyCliSpawn({
-      args: ['opencode'],
-      cliProjectPath,
-      resolveInvocation: () => ({
-        runtime: 'node',
-        argv: [join(cliProjectPath, 'src', 'index.ts'), 'opencode'],
-      }),
-      timeoutMs: 10_000,
-      progressIntervalMs: 0,
-    });
-
-    expect(result).toEqual({ type: 'ready', checked: true, reason: 'current' });
-  });
-
-  it('lets workspace-lock waits fail with the helper lock diagnostic before the hard process timeout', async () => {
-    const tempDir = await mkdtemp(join(tmpdir(), 'happier-source-dev-preflight-lock-timeout-'));
-    tempDirs.push(tempDir);
-
-    const cliProjectPath = join(tempDir, 'apps', 'cli');
-    const scriptsDir = join(cliProjectPath, 'scripts');
-    await mkdir(scriptsDir, { recursive: true });
-    await writeFile(
-      join(scriptsDir, 'syncSharedDepsForDev.mjs'),
-      [
-        "import { writeSync } from 'node:fs';",
-        "writeSync(2, '[happier-source-dev-shared-deps-progress] {\"stage\":\"workspace-lock\",\"event\":\"waiting\",\"lockTimeoutMs\":500}\\n');",
-        "setTimeout(() => { console.error('Timed out waiting for workspace bundle lock: /tmp/lock (pid=1234, createdAtMs=5678)'); process.exit(1); }, 750);",
-      ].join('\n'),
-      'utf8',
-    );
-
-    const result = await prepareSourceDevSharedDepsForHappyCliSpawn({
-      args: ['opencode'],
-      cliProjectPath,
-      resolveInvocation: () => ({
-        runtime: 'node',
-        argv: [join(cliProjectPath, 'src', 'index.ts'), 'opencode'],
-      }),
-      timeoutMs: 10_000,
-      lockTimeoutMs: 500,
-      progressIntervalMs: 0,
-    });
-
-    expect(result.type).toBe('error');
-    if (result.type !== 'error') throw new Error('expected preflight error');
-    expect(result.errorMessage).toContain('Timed out waiting for workspace bundle lock');
-    expect(result.errorMessage).toContain('pid=1234');
-  });
-
-  it('keeps the daemon event loop responsive while source-dev shared-deps sync is pending', async () => {
-    let releaseSyncProcess!: () => void;
-    const runSyncProcess = vi.fn(async () => {
-      await new Promise<void>((resolve) => {
-        releaseSyncProcess = resolve;
-      });
-    });
-
-    type OptionsWithRunner = Parameters<typeof prepareSourceDevSharedDepsForHappyCliSpawn>[0] & {
-      runSyncProcess: typeof runSyncProcess;
-    };
-
-    const resultPromise = prepareSourceDevSharedDepsForHappyCliSpawn({
-      args: ['opencode'],
-      cliProjectPath: '/repo/apps/cli',
-      existsSync: () => true,
-      resolveInvocation: () => ({
-        runtime: 'node',
-        argv: ['/repo/apps/cli/src/index.ts', 'opencode'],
-      }),
-      runSyncProcess,
-    } satisfies OptionsWithRunner);
-
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    expect(runSyncProcess).toHaveBeenCalledTimes(1);
-
-    releaseSyncProcess();
-    await expect(resultPromise).resolves.toEqual({
-      type: 'ready',
-      checked: true,
-      reason: 'current',
-    });
-  });
-
-  it('returns an explicit diagnostic when source child shared-deps sync fails', async () => {
-    const sourceInvocation: HappyCliSubprocessInvocation = {
-      runtime: 'node',
-      argv: ['/repo/apps/cli/src/index.ts', 'opencode'],
-    };
-
-    const result = await prepareSourceDevSharedDepsForHappyCliSpawn({
-      args: ['opencode'],
-      cliProjectPath: '/repo/apps/cli',
-      existsSync: () => true,
-      resolveInvocation: () => sourceInvocation,
-      runSyncProcess: async () => {
-        throw new Error('workspace dist is stale');
-      },
-    });
-
-    expect(result.type).toBe('error');
-    if (result.type !== 'error') throw new Error('expected preflight error');
-    expect(result.errorMessage).toContain('Source-dev CLI shared dependency admission failed before spawn');
-    expect(result.errorMessage).toContain('workspace dist is stale');
-  });
 });
 
 describe('prepareSourceDevSharedDepsForBundledPluginRuntimeLoad', () => {
-  it('skips shared-deps sync during test processes', async () => {
-    const runSyncProcess = vi.fn();
-
+  it('leaves a bundled plugin load without an admitted copy to its source loader', async () => {
     const result = await prepareSourceDevSharedDepsForBundledPluginRuntimeLoad({
       packageName: '@happier-dev/plugins-scm-git',
       cliProjectPath: '/repo/apps/cli',
-      existsSync: () => true,
-      runSyncProcess,
-      processEnv: { VITEST: 'true' },
     });
 
     expect(result).toEqual({
@@ -721,30 +343,9 @@ describe('prepareSourceDevSharedDepsForBundledPluginRuntimeLoad', () => {
       checked: false,
       reason: 'not-source-dev',
     });
-    expect(runSyncProcess).not.toHaveBeenCalled();
   });
 
-  it('keeps a flat-copy admission-only probe from falling through to the live helper', async () => {
-    const runSyncProcess = vi.fn();
-
-    const result = await prepareSourceDevSharedDepsForBundledPluginRuntimeLoad({
-      packageName: '@happier-dev/plugins-scm-git',
-      admittedCopyOnly: true,
-      cliProjectPath: '/repo/apps/cli',
-      existsSync: () => true,
-      runSyncProcess,
-      processEnv: {},
-    });
-
-    expect(result).toEqual({
-      type: 'ready',
-      checked: false,
-      reason: 'not-source-dev',
-    });
-    expect(runSyncProcess).not.toHaveBeenCalled();
-  });
-
-  it('uses the admitted local copy before the test-process shortcut for bundled plugin runtime loads', async () => {
+  it('uses the admitted local copy for bundled plugin runtime loads', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-source-dev-admitted-plugin-'));
     tempDirs.push(tempDir);
     const cliProjectPath = join(tempDir, 'snapshot', 'apps', 'cli');
@@ -752,16 +353,10 @@ describe('prepareSourceDevSharedDepsForBundledPluginRuntimeLoad', () => {
       cliProjectPath,
       workspaceName: 'plugins-opencode',
     });
-    const runSyncProcess = vi.fn(async () => undefined);
 
     const result = await prepareSourceDevSharedDepsForBundledPluginRuntimeLoad({
       packageName: '@happier-dev/plugins-opencode',
       cliProjectPath,
-      processEnv: {
-        VITEST: 'true',
-        NODE_ENV: 'test',
-      },
-      runSyncProcess,
     });
 
     expect(result).toEqual({
@@ -769,10 +364,9 @@ describe('prepareSourceDevSharedDepsForBundledPluginRuntimeLoad', () => {
       checked: true,
       reason: 'admitted-copy',
     });
-    expect(runSyncProcess).not.toHaveBeenCalled();
   });
 
-  it('rejects a corrupt admitted local copy before the test-process shortcut', async () => {
+  it('rejects a corrupt admitted local copy before a bundled plugin load', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'happier-source-dev-corrupt-admitted-plugin-'));
     tempDirs.push(tempDir);
     const cliProjectPath = join(tempDir, 'snapshot', 'apps', 'cli');
@@ -781,65 +375,15 @@ describe('prepareSourceDevSharedDepsForBundledPluginRuntimeLoad', () => {
       workspaceName: 'plugins-opencode',
     });
     await writeFile(outputPath, 'export const admitted = false;\n', 'utf8');
-    const runSyncProcess = vi.fn(async () => undefined);
 
     const result = await prepareSourceDevSharedDepsForBundledPluginRuntimeLoad({
       packageName: '@happier-dev/plugins-opencode',
       cliProjectPath,
-      processEnv: {
-        VITEST: 'true',
-        NODE_ENV: 'test',
-      },
-      runSyncProcess,
     });
 
     expect(result.type).toBe('error');
     if (result.type !== 'error') throw new Error('expected preflight error');
     expect(result.errorMessage).toContain('admitted source snapshot');
-    expect(runSyncProcess).not.toHaveBeenCalled();
   });
 
-  it('runs source-dev shared-deps sync out-of-process for bundled plugin runtime loads', async () => {
-    const runSyncProcess = vi.fn(async () => undefined);
-
-    const result = await prepareSourceDevSharedDepsForBundledPluginRuntimeLoad({
-      packageName: '@happier-dev/plugins-scm-git',
-      cliProjectPath: '/repo/apps/cli',
-      existsSync: () => true,
-      runSyncProcess,
-      processEnv: {},
-    });
-
-    expect(result).toEqual({
-      type: 'ready',
-      checked: true,
-      reason: 'synced',
-    });
-    expect(runSyncProcess).toHaveBeenCalledWith({
-      scriptPath: '/repo/apps/cli/scripts/syncSharedDepsForDev.mjs',
-      timeoutMs: undefined,
-      lockTimeoutMs: undefined,
-      workspaceBuildTimeoutMs: undefined,
-      progressIntervalMs: 15_000,
-      workspaceNames: ['plugins-scm-git'],
-      processEnv: {},
-      onProgress: expect.any(Function),
-    });
-  });
-
-  it('targets only the requested bundled plugin workspace for source-dev runtime loads', async () => {
-    const runSyncProcess = vi.fn(async () => undefined);
-
-    await prepareSourceDevSharedDepsForBundledPluginRuntimeLoad({
-      packageName: '@happier-dev/plugins-opencode',
-      cliProjectPath: '/repo/apps/cli',
-      existsSync: () => true,
-      runSyncProcess,
-      processEnv: {},
-    });
-
-    expect(runSyncProcess).toHaveBeenCalledWith(expect.objectContaining({
-      workspaceNames: ['plugins-opencode'],
-    }));
-  });
 });

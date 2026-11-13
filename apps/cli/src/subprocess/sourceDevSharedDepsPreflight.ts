@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import {
   existsSync as nodeExistsSync,
   lstatSync,
@@ -17,7 +16,6 @@ import {
 
 import { projectPath } from '@/projectPath';
 import { assertSourceRuntimeDependenciesCurrent, SourceRuntimeReloadRequiredError } from '@happier-dev/cli-common/sourceRuntimeEntries';
-import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 import {
   buildHappyCliSubprocessInvocation,
   type HappyCliSubprocessInvocation,
@@ -30,40 +28,11 @@ type ResolveInvocation = (
 ) => HappyCliSubprocessInvocation;
 
 type SourceDevSharedDepsProcessEnv = Readonly<Record<string, string | undefined>>;
-type SourceDevSharedDepsProgress = Readonly<{
-  stage: string;
-  event?: string;
-  detail?: string;
-  workspaceName?: string;
-  tsconfigPath?: string;
-  elapsedMs?: number;
-  lockTimeoutMs?: number;
-}>;
-type RunSyncProcess = (input: Readonly<{
-  scriptPath: string;
-  signal?: AbortSignal;
-  timeoutMs?: number;
-  lockTimeoutMs?: number;
-  workspaceBuildTimeoutMs?: number;
-  progressIntervalMs: number;
-  workspaceNames?: readonly string[];
-  processEnv: SourceDevSharedDepsProcessEnv;
-  onProgress: (progress: SourceDevSharedDepsProgress) => void;
-}>) => Promise<void>;
-
-const SOURCE_DEV_PREFLIGHT_PROGRESS_INTERVAL_MS = 15_000;
-const MAX_SOURCE_DEV_PREFLIGHT_OUTPUT_CHARS = 4_000;
-const SOURCE_DEV_SHARED_DEPS_PROGRESS_ENV = 'HAPPIER_SOURCE_DEV_SHARED_DEPS_PROGRESS';
-const SOURCE_DEV_SHARED_DEPS_LOCK_TIMEOUT_ENV = 'HAPPIER_SOURCE_DEV_SHARED_DEPS_LOCK_TIMEOUT_MS';
-const SOURCE_DEV_SHARED_DEPS_WORKSPACE_BUILD_TIMEOUT_ENV = 'HAPPIER_SOURCE_DEV_SHARED_DEPS_WORKSPACE_BUILD_TIMEOUT_MS';
-const SOURCE_DEV_SHARED_DEPS_WORKSPACES_ENV = 'HAPPIER_SOURCE_DEV_SHARED_DEPS_WORKSPACES';
-const SOURCE_DEV_SHARED_DEPS_PROGRESS_VALUE = 'json-v1';
-const SOURCE_DEV_SHARED_DEPS_PROGRESS_PREFIX = '[happier-source-dev-shared-deps-progress] ';
 
 export type SourceDevSharedDepsPreflightResult =
   | { type: 'ready'; checked: false; reason: 'not-source-entrypoint' }
   | { type: 'ready'; checked: false; reason: 'not-source-dev' }
-  | { type: 'ready'; checked: true; reason: 'current' | 'synced' | 'admitted-copy' }
+  | { type: 'ready'; checked: true; reason: 'source-imports' | 'admitted-copy' }
   | { type: 'error'; errorMessage: string; code?: SourceRuntimeReloadRequiredError['code']; subtype?: SourceRuntimeReloadRequiredError['subtype'] };
 
 function normalizePathSeparators(pathLike: string): string {
@@ -81,300 +50,6 @@ export function isHappyCliSourceEntrypointInvocation(invocation: HappyCliSubproc
 
 function formatErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
-}
-
-function appendBoundedOutput(current: string, chunk: unknown): string {
-  const next = `${current}${String(chunk)}`;
-  if (next.length <= MAX_SOURCE_DEV_PREFLIGHT_OUTPUT_CHARS) {
-    return next;
-  }
-  return next.slice(next.length - MAX_SOURCE_DEV_PREFLIGHT_OUTPUT_CHARS);
-}
-
-function readProgressStringField(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim().length > 0 ? value : undefined;
-}
-
-function readProgressNumberField(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
-function parseSourceDevSharedDepsProgressLine(line: string): SourceDevSharedDepsProgress | null {
-  if (!line.startsWith(SOURCE_DEV_SHARED_DEPS_PROGRESS_PREFIX)) return null;
-
-  try {
-    const parsed = JSON.parse(line.slice(SOURCE_DEV_SHARED_DEPS_PROGRESS_PREFIX.length)) as Record<string, unknown>;
-    const stage = readProgressStringField(parsed.stage);
-    if (!stage) return null;
-    return {
-      stage,
-      event: readProgressStringField(parsed.event),
-      detail: readProgressStringField(parsed.detail),
-      workspaceName: readProgressStringField(parsed.workspaceName),
-      tsconfigPath: readProgressStringField(parsed.tsconfigPath),
-      elapsedMs: readProgressNumberField(parsed.elapsedMs),
-      lockTimeoutMs: readProgressNumberField(parsed.lockTimeoutMs),
-    };
-  } catch {
-    return null;
-  }
-}
-
-function formatSourceDevSharedDepsProgressSummary(progress: SourceDevSharedDepsProgress | null): string {
-  if (!progress) return 'none';
-  const parts = [
-    progress.stage,
-    progress.event,
-    progress.workspaceName,
-    progress.detail,
-  ].filter((part): part is string => typeof part === 'string' && part.trim().length > 0);
-  const suffix = progress.tsconfigPath ? ` (${progress.tsconfigPath})` : '';
-  return `${parts.join(' ')}${suffix}`;
-}
-
-function formatSourceDevSharedDepsLastProgress(progress: SourceDevSharedDepsProgress | null): string {
-  if (!progress) return '';
-  return `last progress: ${formatSourceDevSharedDepsProgressSummary(progress)}`;
-}
-
-function appendLastProgressToErrorMessage(message: string, progress: SourceDevSharedDepsProgress | null): string {
-  const lastProgress = formatSourceDevSharedDepsLastProgress(progress);
-  if (!lastProgress || message.includes('last progress:')) return message;
-  return `${message}; ${lastProgress}`;
-}
-
-function createProgressLineConsumer(onProgress: (progress: SourceDevSharedDepsProgress) => void): (chunk: unknown) => void {
-  let buffered = '';
-  return (chunk: unknown) => {
-    buffered += String(chunk);
-    if (buffered.length > MAX_SOURCE_DEV_PREFLIGHT_OUTPUT_CHARS) {
-      buffered = buffered.slice(buffered.length - MAX_SOURCE_DEV_PREFLIGHT_OUTPUT_CHARS);
-    }
-
-    while (true) {
-      const newlineIndex = buffered.indexOf('\n');
-      if (newlineIndex < 0) return;
-      const line = buffered.slice(0, newlineIndex).trimEnd();
-      buffered = buffered.slice(newlineIndex + 1);
-      const progress = parseSourceDevSharedDepsProgressLine(line);
-      if (progress) onProgress(progress);
-    }
-  };
-}
-
-function buildSourceDevSharedDepsProcessEnv(params: Readonly<{
-  processEnv: SourceDevSharedDepsProcessEnv;
-  lockTimeoutMs?: number;
-  workspaceBuildTimeoutMs?: number;
-  workspaceNames?: readonly string[];
-}>): NodeJS.ProcessEnv {
-  const workspaceNames = (params.workspaceNames ?? [])
-    .map((name) => String(name ?? '').trim())
-    .filter(Boolean);
-  return {
-    ...params.processEnv,
-    [SOURCE_DEV_SHARED_DEPS_PROGRESS_ENV]: SOURCE_DEV_SHARED_DEPS_PROGRESS_VALUE,
-    ...(params.lockTimeoutMs === undefined ? {} : {
-      [SOURCE_DEV_SHARED_DEPS_LOCK_TIMEOUT_ENV]: String(params.lockTimeoutMs),
-    }),
-    ...(params.workspaceBuildTimeoutMs === undefined ? {} : {
-      [SOURCE_DEV_SHARED_DEPS_WORKSPACE_BUILD_TIMEOUT_ENV]: String(params.workspaceBuildTimeoutMs),
-    }),
-    ...(workspaceNames.length > 0
-      ? { [SOURCE_DEV_SHARED_DEPS_WORKSPACES_ENV]: workspaceNames.join(',') }
-      : {}),
-  } as NodeJS.ProcessEnv;
-}
-
-function formatSourceDevPreflightProcessError(params: Readonly<{
-  scriptPath: string;
-  exitCode: number | null;
-  signal: NodeJS.Signals | null;
-  output: string;
-}>): Error {
-  const status = params.exitCode === null
-    ? `signal ${params.signal ?? 'unknown'}`
-    : `exit code ${params.exitCode}`;
-  const output = params.output.trim();
-  return new Error(
-    output
-      ? `source-dev shared-deps helper ${params.scriptPath} failed with ${status}: ${output}`
-      : `source-dev shared-deps helper ${params.scriptPath} failed with ${status}`,
-  );
-}
-
-async function runSourceDevSharedDepsSyncProcess(params: Readonly<{
-  scriptPath: string;
-  signal?: AbortSignal;
-  timeoutMs?: number;
-  lockTimeoutMs?: number;
-  workspaceBuildTimeoutMs?: number;
-  progressIntervalMs: number;
-  workspaceNames?: readonly string[];
-  processEnv: SourceDevSharedDepsProcessEnv;
-  onProgress: (progress: SourceDevSharedDepsProgress) => void;
-}>): Promise<void> {
-  params.signal?.throwIfAborted();
-  await new Promise<void>((resolve, reject) => {
-    const child = spawn(
-      process.execPath,
-      [params.scriptPath],
-      {
-        windowsHide: true,
-        env: buildSourceDevSharedDepsProcessEnv({
-          processEnv: params.processEnv,
-          lockTimeoutMs: params.lockTimeoutMs,
-          workspaceBuildTimeoutMs: params.workspaceBuildTimeoutMs,
-          workspaceNames: params.workspaceNames,
-        }),
-        stdio: ['ignore', 'pipe', 'pipe'],
-      },
-    );
-
-    let output = '';
-    let lastProgress: SourceDevSharedDepsProgress | null = null;
-    let timedOut = false;
-    let settled = false;
-    let termination: Promise<void> | null = null;
-    const killChild = () => {
-      termination ??= terminateProcessTree(child, {
-        graceMs: 5_000,
-      }).catch(error => { finish(() => reject(error)); });
-    };
-    const consumeProgressLines = createProgressLineConsumer((progress) => {
-      lastProgress = progress;
-      params.onProgress(progress);
-    });
-    const timeoutTimer = params.timeoutMs === undefined ? null : setTimeout(() => {
-      timedOut = true;
-      killChild();
-    }, params.timeoutMs);
-
-    const finish = (callback: () => void) => {
-      if (settled) return;
-      settled = true;
-      if (timeoutTimer) clearTimeout(timeoutTimer);
-      params.signal?.removeEventListener('abort', killChild);
-      callback();
-    };
-
-    const consumeChildOutput = (chunk: unknown) => {
-      output = appendBoundedOutput(output, chunk);
-      consumeProgressLines(chunk);
-    };
-    child.stdout?.on('data', consumeChildOutput);
-    child.stderr?.on('data', consumeChildOutput);
-    child.once('error', (error) => {
-      finish(() => reject(error));
-    });
-    child.once('close', async (exitCode, signal) => {
-      await termination;
-      finish(() => {
-        if (params.signal?.aborted) {
-          reject(params.signal.reason);
-          return;
-        }
-        if (timedOut) {
-          const outputTail = output.trim();
-          const lastProgressMessage = formatSourceDevSharedDepsLastProgress(lastProgress);
-          reject(new Error([
-            `source-dev shared-deps helper ${params.scriptPath} timed out after ${params.timeoutMs}ms`,
-            lastProgressMessage,
-            outputTail ? `output tail: ${outputTail}` : '',
-          ].filter(Boolean).join('; ')));
-          return;
-        }
-        if (exitCode === 0) {
-          resolve();
-          return;
-        }
-        reject(formatSourceDevPreflightProcessError({
-          scriptPath: params.scriptPath,
-          exitCode,
-          signal,
-          output,
-        }));
-      });
-    });
-    params.signal?.addEventListener('abort', killChild, { once: true });
-  });
-}
-
-async function runSourceDevSharedDepsSync(params: Readonly<{
-  scriptPath: string;
-  signal?: AbortSignal;
-  runSyncProcess: RunSyncProcess;
-  processEnv: SourceDevSharedDepsProcessEnv;
-  timeoutMs?: number;
-  lockTimeoutMs?: number;
-  workspaceBuildTimeoutMs?: number;
-  progressIntervalMs: number;
-  workspaceNames?: readonly string[];
-  logDebug?: (message: string, payload?: unknown) => void;
-  beforeLogMessage: string;
-  afterLogMessage: string;
-  errorPrefix: string;
-  readyReason?: 'current' | 'synced';
-}>): Promise<SourceDevSharedDepsPreflightResult> {
-  const startedAtMs = Date.now();
-  let lastProgress: SourceDevSharedDepsProgress | null = null;
-  const logProgress = (progress: SourceDevSharedDepsProgress) => {
-    lastProgress = progress;
-    params.logDebug?.('[DAEMON RUN] Source-dev CLI shared deps preflight progress', {
-      ...progress,
-      elapsedMs: Date.now() - startedAtMs,
-      timeoutMs: params.timeoutMs,
-      lockTimeoutMs: params.lockTimeoutMs,
-    });
-  };
-  const heartbeatTimer = params.progressIntervalMs > 0
-    ? setInterval(() => {
-      params.logDebug?.('[DAEMON RUN] Source-dev CLI shared deps preflight still running', {
-      elapsedMs: Date.now() - startedAtMs,
-      timeoutMs: params.timeoutMs,
-      lockTimeoutMs: params.lockTimeoutMs,
-      lastProgress,
-    });
-    }, params.progressIntervalMs)
-    : null;
-  heartbeatTimer?.unref();
-
-  try {
-    params.logDebug?.(params.beforeLogMessage);
-    await params.runSyncProcess({
-      scriptPath: params.scriptPath,
-      ...(params.signal ? { signal: params.signal } : {}),
-      timeoutMs: params.timeoutMs,
-      lockTimeoutMs: params.lockTimeoutMs,
-      workspaceBuildTimeoutMs: params.workspaceBuildTimeoutMs,
-      progressIntervalMs: params.progressIntervalMs,
-      ...(params.workspaceNames && params.workspaceNames.length > 0
-        ? { workspaceNames: params.workspaceNames }
-        : {}),
-      processEnv: params.processEnv,
-      onProgress: logProgress,
-    });
-    params.logDebug?.(params.afterLogMessage);
-    return {
-      type: 'ready',
-      checked: true,
-      reason: params.readyReason ?? 'synced',
-    };
-  } catch (error) {
-    const errorMessage = appendLastProgressToErrorMessage(formatErrorMessage(error), lastProgress);
-    return {
-      type: 'error',
-      errorMessage: `${params.errorPrefix}: ${errorMessage}`,
-    };
-  } finally {
-    if (heartbeatTimer) clearInterval(heartbeatTimer);
-  }
-}
-
-function isTestProcessEnv(env: SourceDevSharedDepsProcessEnv): boolean {
-  return env.VITEST !== undefined
-    || env.VITEST_WORKER_ID !== undefined
-    || env.NODE_ENV === 'test';
 }
 
 const SOURCE_SNAPSHOT_ADMISSION_FILE_NAME = '.cli-source-snapshot-admission.json';
@@ -681,20 +356,23 @@ export function normalizeBundledWorkspaceNameFromPackageName(packageName: string
   return raw.startsWith('plugins-') ? raw : null;
 }
 
+
+/**
+ * Admits a daemon-spawned CLI child before launch.
+ *
+ * A checkout source child resolves every first-party workspace import through
+ * the workspace source hook (`resolveCliSourceRuntimeFlags`), which refuses
+ * `dist` targets, so checkout workspace dists are not part of its runtime.
+ * Its admission is the installed runtime dependency identity, plus the
+ * integrity of an admitted flat copy when it runs from one.
+ */
 export async function prepareSourceDevSharedDepsForHappyCliSpawn(params: Readonly<{
   args: readonly string[];
   processEnv?: SourceDevSharedDepsProcessEnv;
   signal?: AbortSignal;
   launchOptions?: HappyCliSubprocessLaunchOptions;
-  logDebug?: (message: string, payload?: unknown) => void;
   cliProjectPath?: string;
-  existsSync?: (path: string) => boolean;
   resolveInvocation?: ResolveInvocation;
-  runSyncProcess?: RunSyncProcess;
-  timeoutMs?: number;
-  lockTimeoutMs?: number;
-  workspaceBuildTimeoutMs?: number;
-  progressIntervalMs?: number;
   workspaceNames?: readonly string[];
 }>): Promise<SourceDevSharedDepsPreflightResult> {
   try {
@@ -713,79 +391,37 @@ export async function prepareSourceDevSharedDepsForHappyCliSpawn(params: Readonl
     return { type: 'ready', checked: false, reason: 'not-source-entrypoint' };
   }
 
-  const cliProjectPath = params.cliProjectPath ?? projectPath();
-  const scriptPath = join(cliProjectPath, 'scripts', 'syncSharedDepsForDev.mjs');
-  const exists = params.existsSync ?? nodeExistsSync;
-  const runSyncProcess = params.runSyncProcess ?? runSourceDevSharedDepsSyncProcess;
-
-  try {
-    const admittedSnapshot = inspectAdmittedSourceSnapshot({
-      cliProjectPath,
-      ...(params.workspaceNames && params.workspaceNames.length > 0
-        ? { workspaceNames: params.workspaceNames }
-        : {}),
-    });
-    if (admittedSnapshot.type === 'error') {
-      throw new Error(admittedSnapshot.message);
-    }
-    if (admittedSnapshot.type === 'ready') {
-      return { type: 'ready', checked: true, reason: 'admitted-copy' };
-    }
-
-    if (!exists(scriptPath)) {
-      throw new Error('source-dev shared-deps helper is missing from apps/cli/scripts/syncSharedDepsForDev.mjs');
-    }
-
-    return await runSourceDevSharedDepsSync({
-      scriptPath,
-      ...(params.signal ? { signal: params.signal } : {}),
-      runSyncProcess,
-      processEnv: process.env,
-      timeoutMs: params.timeoutMs,
-      lockTimeoutMs: params.lockTimeoutMs,
-      workspaceBuildTimeoutMs: params.workspaceBuildTimeoutMs,
-      progressIntervalMs: params.progressIntervalMs ?? SOURCE_DEV_PREFLIGHT_PROGRESS_INTERVAL_MS,
-      ...(params.workspaceNames && params.workspaceNames.length > 0
-        ? { workspaceNames: params.workspaceNames }
-        : {}),
-      logDebug: params.logDebug,
-      beforeLogMessage: '[DAEMON RUN] Preparing source-dev CLI shared deps before source child spawn',
-      afterLogMessage: '[DAEMON RUN] Source-dev CLI shared deps admission completed',
-      errorPrefix: 'Source-dev CLI shared dependency admission failed before spawn',
-      readyReason: 'current',
-    });
-  } catch (error) {
-    return {
-      type: 'error',
-      errorMessage: `Source-dev CLI shared dependency admission failed before spawn: ${formatErrorMessage(error)}`,
-    };
-  }
-}
-
-export async function prepareSourceDevSharedDepsForBundledPluginRuntimeLoad(params: Readonly<{
-  packageName: string;
-  signal?: AbortSignal;
-  workspaceNames?: readonly string[];
-  admittedCopyOnly?: boolean;
-  logDebug?: (message: string, payload?: unknown) => void;
-  cliProjectPath?: string;
-  existsSync?: (path: string) => boolean;
-  runSyncProcess?: RunSyncProcess;
-  processEnv?: SourceDevSharedDepsProcessEnv;
-  timeoutMs?: number;
-  lockTimeoutMs?: number;
-  workspaceBuildTimeoutMs?: number;
-  progressIntervalMs?: number;
-}>): Promise<SourceDevSharedDepsPreflightResult> {
-  const cliProjectPath = params.cliProjectPath ?? projectPath();
-  const scriptPath = join(cliProjectPath, 'scripts', 'syncSharedDepsForDev.mjs');
-  const exists = params.existsSync ?? nodeExistsSync;
   const admittedSnapshot = inspectAdmittedSourceSnapshot({
-    cliProjectPath,
+    cliProjectPath: params.cliProjectPath ?? projectPath(),
     ...(params.workspaceNames && params.workspaceNames.length > 0
       ? { workspaceNames: params.workspaceNames }
-      : normalizeBundledWorkspaceNameFromPackageName(params.packageName)
-        ? { workspaceNames: [normalizeBundledWorkspaceNameFromPackageName(params.packageName) as string] }
+      : {}),
+  });
+  if (admittedSnapshot.type === 'error') {
+    return {
+      type: 'error',
+      errorMessage: `Source-dev CLI shared dependency admission failed before spawn: ${admittedSnapshot.message}`,
+    };
+  }
+  if (admittedSnapshot.type === 'ready') {
+    return { type: 'ready', checked: true, reason: 'admitted-copy' };
+  }
+  return { type: 'ready', checked: true, reason: 'source-imports' };
+}
+
+/** Bundled plugin loads from a retained flat copy verify that copy's admission. */
+export async function prepareSourceDevSharedDepsForBundledPluginRuntimeLoad(params: Readonly<{
+  packageName: string;
+  workspaceNames?: readonly string[];
+  cliProjectPath?: string;
+}>): Promise<SourceDevSharedDepsPreflightResult> {
+  const workspaceName = normalizeBundledWorkspaceNameFromPackageName(params.packageName);
+  const admittedSnapshot = inspectAdmittedSourceSnapshot({
+    cliProjectPath: params.cliProjectPath ?? projectPath(),
+    ...(params.workspaceNames && params.workspaceNames.length > 0
+      ? { workspaceNames: params.workspaceNames }
+      : workspaceName
+        ? { workspaceNames: [workspaceName] }
         : {}),
   });
   if (admittedSnapshot.type === 'error') {
@@ -797,30 +433,5 @@ export async function prepareSourceDevSharedDepsForBundledPluginRuntimeLoad(para
   if (admittedSnapshot.type === 'ready') {
     return { type: 'ready', checked: true, reason: 'admitted-copy' };
   }
-  if (params.admittedCopyOnly || isTestProcessEnv(params.processEnv ?? process.env)) {
-    return { type: 'ready', checked: false, reason: 'not-source-dev' };
-  }
-  if (!exists(scriptPath)) {
-    return { type: 'ready', checked: false, reason: 'not-source-dev' };
-  }
-
-  return await runSourceDevSharedDepsSync({
-    scriptPath,
-    ...(params.signal ? { signal: params.signal } : {}),
-    runSyncProcess: params.runSyncProcess ?? runSourceDevSharedDepsSyncProcess,
-    processEnv: params.processEnv ?? process.env,
-    timeoutMs: params.timeoutMs,
-    lockTimeoutMs: params.lockTimeoutMs,
-    workspaceBuildTimeoutMs: params.workspaceBuildTimeoutMs,
-    progressIntervalMs: params.progressIntervalMs ?? SOURCE_DEV_PREFLIGHT_PROGRESS_INTERVAL_MS,
-    ...(params.workspaceNames && params.workspaceNames.length > 0
-      ? { workspaceNames: params.workspaceNames }
-      : normalizeBundledWorkspaceNameFromPackageName(params.packageName)
-        ? { workspaceNames: [normalizeBundledWorkspaceNameFromPackageName(params.packageName) as string] }
-      : {}),
-    logDebug: params.logDebug,
-    beforeLogMessage: '[PLUGIN RUNTIME] Refreshing source-dev CLI shared deps before bundled plugin runtime load',
-    afterLogMessage: '[PLUGIN RUNTIME] Source-dev CLI shared deps preflight completed',
-    errorPrefix: `Source-dev CLI shared dependency preflight failed before loading bundled plugin ${params.packageName}`,
-  });
+  return { type: 'ready', checked: false, reason: 'not-source-dev' };
 }
