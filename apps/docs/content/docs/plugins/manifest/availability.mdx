@@ -20,9 +20,9 @@ not supported for ordinary author use; consult its unblock condition.
 This reference describes 0.3 development source. It does not establish released
 availability or verify a loaded runtime.
 
-At the time this page was generated: **67 of 67 contribution families**,
-**24 of 24 services**, **10 of 13 host-access capabilities**
-and **53 of 53 SDK entrypoints** are implemented.
+At the time this page was generated: **68 of 68 contribution families**,
+**25 of 25 services**, **10 of 13 host-access capabilities**
+and **54 of 54 SDK entrypoints** are implemented.
 
 ## Contribution families available in Developer Preview
 
@@ -58,6 +58,7 @@ and **53 of 53 SDK entrypoints** are implemented.
 | `languageServers` | `available` | `languageServers` | `.` | any |
 | `machineProvisioners` | `available` | `machineProvisioners` | `.` | any |
 | `machineRecipes` | `available` | `machineRecipes` | `.` | any |
+| `machineRoles` | `available` | `machineRoles` | `.` | any |
 | `machineSetupPresets` | `available` | `machineSetupPresets` | `.` | any |
 | `managedDependencies` | `available` | `managedDependencies` | `.` | any |
 | `mcp.discoverySources` | `available` | `mcp` | `.` | any |
@@ -112,6 +113,7 @@ Reached through `context.services` inside a plugin invocation.
 | `context.services.backgroundServices` | `available` | `BackgroundServicesService` | `./background-services` | invocation-scoped |
 | `context.services.composerContent` | `available` | `ComposerContentService` | `.` | invocation-scoped |
 | `context.services.connectedAccounts` | `available` | `ConnectedAccountsService` | `./connected-accounts` | invocation-scoped |
+| `context.services.deploymentExecEnv` | `preview` | `DeploymentExecEnvPortV1` | `./exec` | invocation-scoped |
 | `context.services.deploymentSource` | `preview` | `DeploymentSourceMaterializationPortV1` | `.` | invocation-scoped |
 | `context.services.events` | `available` | `EventsService` | `./events` | invocation-scoped |
 | `context.services.exec` | `available` | `ExecService` | `./exec` | invocation-scoped |
@@ -204,7 +206,8 @@ names suggest.
 | `./scm` | `available` | daemon |
 | `./scm/backend` | `available` | daemon |
 | `./scm/git` | `available` | daemon |
-| `./scm/hosting` | `available` | daemon |
+| `./scm/hosting` | `available` | any |
+| `./scm/hosting/runtime` | `available` | daemon |
 | `./secrets` | `available` | any |
 | `./sessions` | `available` | daemon |
 | `./sessions/external` | `available` | daemon |

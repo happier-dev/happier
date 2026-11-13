@@ -1458,7 +1458,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 **Admit Automation conversation occurrence** — Admit a conversation occurrence through the canonical Automation owner. Requires a mounted plugin caller. Use the host-mounted import; standalone CLI invocation and an explicit Machine do not supply plugin provenance.
 
-- Safety: `danger`; side effect: `write`.
+- Safety: `safe`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
@@ -1511,7 +1511,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 **Admit Automation Event occurrence** — Read or update Event Automation state through the canonical Automation owner. Requires a mounted plugin caller. Use the host-mounted import; standalone CLI invocation and an explicit Machine do not supply plugin provenance.
 
-- Safety: `danger`; side effect: `write`.
+- Safety: `safe`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
@@ -5104,6 +5104,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `query` (text): Filename query
 - `includeHidden` (boolean): Include Hidden
 - `limit` (integer): Limit
+- `resultType` (select): Result Type
+- `maxDepth` (integer): Max Depth
 - `budgetMs` (integer): Budget Ms
 
 ## `daemon.filesystem.listRoots`
@@ -5423,6 +5425,23 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `deploymentId` (text, required): Deployment receipt
 - `expectedReceiptRevision` (number, required): Receipt revision
 
+## `deployments.data.page`
+
+**List accessible data services** — No additional description is published.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `cli`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `serverId` (text, required): Home
+- `projectSourceId` (text): Project source
+- `cursor` (text): Next page cursor
+- `limit` (number): Page size
+
 ## `deployments.data.query`
 
 **Query database read-only** — No additional description is published.
@@ -5504,6 +5523,46 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `placements` (json): Placements
 - `provider` (json): Provider
 
+## `deployments.domains.dns.create`
+
+**Create required DNS records** — No additional description is published.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `cli`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `serverId` (text, required): Home
+- `environmentId` (text, required): Environment
+- `domainId` (text, required): Domain
+- `expectedRevision` (number, required): Environment revision
+- `expectedDomainRevision` (number, required): Domain revision
+- `dns` (json, required): DNS account, hosted zone, TTL and record Action
+- `requestKey` (text, required): Request key
+
+## `deployments.domains.dns.verify`
+
+**Verify required DNS record configuration** — No additional description is published.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `cli`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `serverId` (text, required): Home
+- `environmentId` (text, required): Environment
+- `domainId` (text, required): Domain
+- `expectedRevision` (number, required): Environment revision
+- `expectedDomainRevision` (number, required): Domain revision
+- `dns` (json, required): DNS account, hosted zone, TTL and record Action
+- `requestKey` (text, required): Request key
+
 ## `deployments.domains.get`
 
 **Read deployment domain** — No additional description is published.
@@ -5536,6 +5595,23 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `environmentId` (text, required): Environment
 - `cursor` (text): Cursor
 - `limit` (integer): Limit
+
+## `deployments.domains.page`
+
+**List accessible domains** — No additional description is published.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `cli`, `agent`, `mcp`, `api`.
+
+### Input guidance
+
+- `serverId` (text, required): Home
+- `projectSourceId` (text): Project source
+- `cursor` (text): Next page cursor
+- `limit` (number): Page size
 
 ## `deployments.domains.remove`
 
@@ -5570,10 +5646,14 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `serverId` (text, required): Home
 - `environmentId` (text, required): Environment
-- `domainId` (text, required): Domain Id
-- `expectedRevision` (integer, required): Expected Revision
-- `requestKey` (text, required): Request Key
-- `expectedDomainRevision` (integer, required): Expected Domain Revision
+- `domainId` (json): Domain Id
+- `expectedRevision` (json, required): Expected Revision
+- `requestKey` (json, required): Request Key
+- `expectedDomainRevision` (json): Expected Domain Revision
+- `mode` (json): Mode
+- `targetLinkId` (json): Target Link Id
+- `expectedTargetLinkRevision` (json): Expected Target Link Revision
+- `content` (json): Content
 
 ## `deployments.drift.read`
 
@@ -5878,6 +5958,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `target` (json): Target reference
 - `sessionRef` (json): Existing Session
 - `importFrom` (json): Import configuration references
+- `sessionDraft` (json): Session Draft
 
 ## `deployments.promote`
 
@@ -5926,6 +6007,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `templateRef` (json, required): Pinned catalog app
 - `explicit` (json): Your creation choices
 - `appMappingCorrection` (json): App Mapping Correction
+- `configure` (json): Configure
 
 ## `deployments.receipts.get`
 
@@ -5942,6 +6024,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `serverId` (text, required): Home
 - `environmentId` (text): Environment
 - `deploymentId` (text, required): Deployment receipt
+- `projection` (text): Projection
 
 ## `deployments.receipts.list`
 
@@ -7180,7 +7263,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - Approval: `optional` result; `deferred` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
-- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
 
 ### Input guidance
 
@@ -11017,6 +11100,44 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `serverId` (text): Home ID
 - `machineId` (text, required): Machine ID
 
+## `machines.scheduled.list`
+
+**Read Machine schedules** — Read a page of native schedules with independent source availability. Definitions remain on the Machine transport.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `none` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `cli`, `agent`, `mcp`, `rpc`, `api`.
+
+### Input guidance
+
+- `serverId` (text, required): Home ID
+- `machineId` (text, required): Machine ID
+- `pageSize` (number, required): Visible rows
+- `offset` (number): Page offset
+- `sinceRevision` (number): Observed revision
+- `refresh` (boolean): Refresh native sources
+
+## `machines.scheduled.watch`
+
+**Follow Machine schedules** — Read a page of native schedules with independent source availability. Definitions remain on the Machine transport.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `none` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `cli`, `agent`, `mcp`, `rpc`, `api`.
+
+### Input guidance
+
+- `serverId` (text, required): Home ID
+- `machineId` (text, required): Machine ID
+- `pageSize` (number, required): Visible rows
+- `offset` (number): Page offset
+- `sinceRevision` (number): Observed revision
+- `refresh` (boolean): Refresh native sources
+
 ## `machines.services.adopt`
 
 **Adopt a Compose project** — Review a watched Compose project and create its Environment without changing the running project.
@@ -11126,6 +11247,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `machineId` (text, required): Machine ID
 - `environmentId` (text): Environment Id
 - `composeService` (text): Compose Service
+- `preflight` (json): Preflight
 
 ## `machines.services.logs.read`
 
@@ -11288,6 +11410,23 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `machineId` (text, required): Machine id
 - `scope` (select, required): Updates
 - `plan` (json, required): Reviewed updates plan
+
+## `machines.setup.updates.rollout`
+
+**Update a fleet of Machines** — Update a fleet of Machines on the retained resource through its admitted operation; acceptance does not confirm a native effect.
+
+- Safety: `danger`; side effect: `danger`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `voice`, `agent`, `mcp`, `cli`, `rpc`, `api`.
+
+### Input guidance
+
+- `homeId` (text, required): Home
+- `machineId` (text, required): Workflow host Machine
+- `batches` (json, required): Reviewed update batches
+- `failurePolicy` (text, required): Workflow failure policy
 
 ## `machines.storage.category.list`
 
@@ -11792,6 +11931,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `serverId` (text): Home ID
 - `machineId` (text, required): Machine ID
+- `serviceId` (text): Service ID
 - `range` (select, required): History range
 
 ## `machines.vitals.summaries.list`
@@ -15024,11 +15164,10 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `modelId` (text): Model
 - `agentTargetKey` (text, required): Agent
-- `subject` (json): Team credential and reviewed source
+- `connectedAccountTarget` (json): Connected Account
 - `connectionId` (text): Provider connection
 - `machineId` (text): Computer
 - `action` (text, required): Action
-- `connectedAccountTarget` (json): Connected Account Target
 - `catalogSourceKey` (text): Catalog Source Key
 - `expectedConnectionRevision` (integer, required): Expected Connection Revision
 - `compatibilityFingerprint` (text, required): Compatibility Fingerprint
@@ -20563,6 +20702,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `maxUses` (integer): Max Uses
 - `isConsentRequired` (boolean): Is Consent Required
 - `networkOff` (boolean): Network Off
+- `clientId` (text): Client Id
 
 ## `session.public_link.get`
 
@@ -20949,6 +21089,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `executionTarget.serverId` (text, required): Server id
 - `executionTarget.machineId` (text, required): Machine id
 - `directory` (json, required): Directory intent
+- `managedTargetPlacement` (json): Managed target placement — Run the Agent inside one of your managed targets: &#123;managedId,workspaceRoot&#125;. The directory maps onto workspaceRoot inside the target. From an Agent this asks you first unless you allowed it in Action settings.
 - `machineSetupPlanInput` (json): Machine software setup — Install the selected software on this Machine before starting the Agent. This spawn approval includes setup.
 - `organizationPlacement` (json): Organization placement
 - `agentTarget` (json, required): Agent target — Copy the selected catalog row's complete agentTarget. A configured Agent uses &#123;kind:"agent",identity:&#123;pluginId,localId&#125;,definitionId&#125;; definitionId belongs beside identity.

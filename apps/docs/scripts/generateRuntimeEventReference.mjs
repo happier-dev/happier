@@ -58,8 +58,8 @@ const FAMILIES = [
   },
   {
     title: 'Session observations',
-    lede: 'The commands and configuration options the current Agent runtime advertises, and the connected-account identity observed in its native session. The host projects these observations into Session state rather than transcript output.',
-    kinds: ['available-commands', 'config-options', 'connected-account-identity-observed'],
+    lede: 'The commands and configuration options the current Agent runtime advertises, the connected-account identity observed in its native session, and changes to its native skills catalog. The host projects these observations into Session state rather than transcript output.',
+    kinds: ['available-commands', 'config-options', 'connected-account-identity-observed', 'catalog-changed'],
   },
 ];
 

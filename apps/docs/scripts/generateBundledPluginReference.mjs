@@ -102,7 +102,7 @@ const CATEGORIES = [
 const STANDALONE = {
   title: 'Everything else',
   blurb: 'Single-purpose plugins that do not belong to a family.',
-  ids: ['happier.app-context', 'happier.channels', 'happier.triage', 'happier.inspector', 'happier.posthog', 'happier.sentry', 'happier.linear', 'happier.jira'],
+  ids: ['happier.app-context', 'happier.channels', 'happier.triage', 'happier.inspector', 'happier.posthog', 'happier.sentry', 'happier.linear', 'happier.jira', 'happier.outbound-notify'],
 };
 
 export async function readBundledPluginRegistry() {

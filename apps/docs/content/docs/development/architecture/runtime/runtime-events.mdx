@@ -7,7 +7,7 @@ description: Every kind of live runtime event an agent emits, generated from the
 runs. Provider leaves map whatever their agent natively produces into these, so
 the host sees one shape regardless of which agent is running.
 
-There are **29 event kinds**, plus context compaction, which is one kind with
+There are **30 event kinds**, plus context compaction, which is one kind with
 6 phases.
 
 <Callout type="info">
@@ -82,13 +82,14 @@ A periodic snapshot of what the runtime is doing, rather than a discrete thing t
 
 ### Session observations
 
-The commands and configuration options the current Agent runtime advertises, and the connected-account identity observed in its native session. The host projects these observations into Session state rather than transcript output.
+The commands and configuration options the current Agent runtime advertises, the connected-account identity observed in its native session, and changes to its native skills catalog. The host projects these observations into Session state rather than transcript output.
 
 | Kind |
 | --- |
 | `available-commands` |
 | `config-options` |
 | `connected-account-identity-observed` |
+| `catalog-changed` |
 
 ## Context compaction
 
