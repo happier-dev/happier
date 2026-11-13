@@ -9579,6 +9579,15 @@ When a failure carries typed details, ElevenLabs receives the canonical failure
 envelope as JSON inside its SDK's required error string. Failures without details
 retain the existing error-code string.
 
+In 0.3 development, ElevenLabs SDK `onDisconnect` ends the provider conversation;
+LiveKit owns reconnection within a live conversation. The provider leaf forwards
+terminal disconnect/error callbacks as `voice_service_unavailable` with the
+existing typed `failureCause`, including the disconnect phase and numeric native
+code when available. The host ends that attempt and offers explicit recovery,
+including when no user turn arrived, rather than silently creating conversations
+in a reconnect loop. SDK-handled client-tool execution errors remain recoverable.
+Vendor messages, close reasons and payloads are excluded from diagnostics.
+
 ### Batch speech output (0.3 development)
 
 Protocol's `voice/speechText.ts` owns semantic sentence and clause boundaries for

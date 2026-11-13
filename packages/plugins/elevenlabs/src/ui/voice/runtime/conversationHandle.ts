@@ -25,7 +25,7 @@ type AgentResponseCorrectionPayload =
 
 export type ElevenLabsConversationHandleEvent =
     | Readonly<{ type: 'connect' }>
-    | Readonly<{ type: 'disconnect'; reason?: string }>
+    | Readonly<{ type: 'disconnect'; reason?: string; details?: Parameters<NonNullable<Callbacks['onDisconnect']>>[0] }>
     | Readonly<{ type: 'message'; data: MessagePayload }>
     | Readonly<{ type: 'agent_response_correction'; data: AgentResponseCorrectionPayload }>
     | Readonly<{ type: 'error'; error: Parameters<NonNullable<Callbacks['onError']>>[0]; context?: unknown }>
@@ -154,12 +154,12 @@ export function createElevenLabsConversationHandle(params: Readonly<{
             if (!isCurrentStartSequence(startSequence)) return;
             emit({ type: 'connect' });
         },
-        onDisconnect: () => {
+        onDisconnect: (details) => {
             if (!isCurrentStartSequence(startSequence)) return;
             latestStartSequence += 1;
             cancelPending();
             activeConversation = null;
-            emit({ type: 'disconnect' });
+            emit({ type: 'disconnect', ...(details ? { details } : {}) });
         },
         onMessage: (data) => {
             if (!isCurrentStartSequence(startSequence)) return;

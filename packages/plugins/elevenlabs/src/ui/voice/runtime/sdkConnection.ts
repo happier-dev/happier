@@ -34,6 +34,11 @@ function isRecoverableClientToolError(context: unknown): boolean {
     && record.clientToolName.trim() === record.clientToolName;
 }
 
+function readNumericNativeCode(value: unknown): string | undefined {
+  const number = typeof value === 'string' && /^\d+$/u.test(value) ? Number(value) : value;
+  return typeof number === 'number' && Number.isSafeInteger(number) ? String(number) : undefined;
+}
+
 export function createElevenLabsSdkConnection(input: Readonly<{
   createSdkHandleConnection: (input: Readonly<{ driver: Readonly<{
     open(input: Readonly<{
@@ -102,22 +107,38 @@ export function createElevenLabsSdkConnection(input: Readonly<{
 
   return input.createSdkHandleConnection({
     driver: {
-      async open({ signal, onControl, onTransport, onRemoteClose }): Promise<void> {
+      async open({ signal, onControl, onTransport }): Promise<void> {
         publishControl = onControl;
-        let remoteCloseSignalled = false;
-        const signalRemoteClose = (reason: string): void => {
-          if (remoteCloseSignalled) return;
-          remoteCloseSignalled = true;
-          onRemoteClose(reason);
+        let sessionFailure: Error | null = null;
+        const reportSessionFailure = (error: unknown, phase: string, nativeErrorCode?: string): void => {
+          if (sessionFailure) return;
+          const { errorClass, errorCode, httpStatus } = readUnexpectedActionErrorDiagnosticV1(error);
+          const failureCause = { errorClass, errorCode, httpStatus, phase,
+            ...(nativeErrorCode === undefined ? {} : { nativeErrorCode }) };
+          sessionFailure = Object.assign(new Error('voice_service_unavailable'), { code: 'voice_service_unavailable', failureCause });
+          onControl({ type: 'elevenlabs.session_error', failureCause });
         };
         const onEvent = (event: ElevenLabsConversationHandleEvent): void => {
           switch (event.type) {
             case 'connect':
               onControl({ type: 'elevenlabs.connect' });
               return;
-            case 'disconnect':
-              signalRemoteClose(event.reason ?? 'sdk_disconnected');
+            case 'disconnect': {
+              // SDK 1.18.0's onDisconnect ends the conversation, after LiveKit's
+              // own reconnection lifecycle. Reopening it as a transport drop
+              // creates an unbounded stream of new provider conversations.
+              const details = event.details;
+              const context = details && details.reason !== 'user' ? details.context : undefined;
+              const contextType = context?.type;
+              const phase = `elevenlabs.disconnect${details ? `.${details.reason}` : ''}${
+                contextType === 'close' || contextType === 'connection_state_changed'
+                  || contextType === 'end_call' || contextType === 'max_duration_exceeded'
+                  ? `.${contextType}` : ''}`;
+              reportSessionFailure(undefined, phase, readNumericNativeCode(
+                details && details.reason !== 'user' ? details.closeCode ?? context?.code ?? context?.reason : undefined,
+              ));
               return;
+            }
             case 'message':
               // SDK 1.18.0's user onMessage callback comes only from its
               // finished user_transcript handler, never sendUserMessage.
@@ -139,7 +160,7 @@ export function createElevenLabsSdkConnection(input: Readonly<{
               return;
             case 'error':
               if (isRecoverableClientToolError(event.context)) return;
-              signalRemoteClose('sdk_error');
+              reportSessionFailure(event.context, 'elevenlabs.sdk.error', readNumericNativeCode(readRecord(event.context).code));
               return;
             case 'status':
               onControl({ type: 'elevenlabs.status', status: event.data.status });
@@ -193,6 +214,7 @@ export function createElevenLabsSdkConnection(input: Readonly<{
           );
         }
         const sessionId = await handle.startSession(input.startConfig);
+        if (sessionFailure) throw sessionFailure;
         if (signal.aborted || closed) {
           await endActiveSession();
           // The generic connection owner observes its aborted lifecycle signal

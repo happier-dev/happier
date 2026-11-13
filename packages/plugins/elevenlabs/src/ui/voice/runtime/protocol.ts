@@ -138,7 +138,7 @@ export function createElevenLabsProtocolAdapter(input: Readonly<{
     },
     decodeControl: (event) => {
       const record = readObject(event);
-      if (record.type === 'elevenlabs.send_error') {
+      if (record.type === 'elevenlabs.send_error' || record.type === 'elevenlabs.session_error') {
         const cause = ActionFailureCauseV1Schema.safeParse(record.failureCause);
         return [{ type: 'provider_error', terminal: true,
           ...(cause.success ? { failureCause: cause.data } : {}),

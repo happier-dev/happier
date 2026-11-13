@@ -34,6 +34,8 @@ import {
   recordVoiceRuntimeFailure,
   readSafeVoiceRuntimeFailureCode,
   readSafeVoiceRuntimeFailureDiagnosticReason,
+  readSafeVoiceRuntimeFailureFacts,
+  type VoiceRuntimeFailureCause,
   type VoiceRuntimeFailureDiagnosticReason,
 } from '@/voice/runtime/voiceRuntimeFailureCode';
 
@@ -89,7 +91,7 @@ export type VoiceConversationControllerMachinePort = Readonly<{
     code: string;
     diagnosticReason?: VoiceRuntimeFailureDiagnosticReason;
     providerCode?: string;
-    failureCause?: Extract<VoiceRealtimeCanonicalEvent, { type: 'provider_error' }>['failureCause'];
+    failureCause?: VoiceRuntimeFailureCause;
   }>): void;
 }>;
 
@@ -487,7 +489,7 @@ export function createVoiceConversationController(
     attempt: Attempt,
     code: string,
     providerCode?: string,
-    failureCause?: Extract<VoiceRealtimeCanonicalEvent, { type: 'provider_error' }>['failureCause'],
+    failureCause?: VoiceRuntimeFailureCause,
   ): Promise<void> => {
     if (!owns(attempt) || attempt.terminalSettled) return;
     await closeAttempt(attempt, { code: 'error', detail: code });
@@ -673,9 +675,14 @@ export function createVoiceConversationController(
             connection: nextConnection,
             signal: attempt.abortController.signal,
           })));
-        } catch {
+        } catch (error) {
           await nextConnection.close({ code: 'error' }).catch(() => {});
           if (!owns(attempt)) return;
+          const { failureCause } = readSafeVoiceRuntimeFailureFacts(error);
+          if (failureCause) {
+            await settleReconnectFailure(attempt, readSafeVoiceRuntimeFailureCode(error) ?? 'voice_connection_failed', undefined, failureCause);
+            return;
+          }
           continue;
         }
         if (!owns(attempt)) {
@@ -1154,6 +1161,7 @@ export function createVoiceConversationController(
         return { status: 'aborted' };
       }
       if (current === attempt && !attempt.terminalSettled) {
+        const { failureCause } = readSafeVoiceRuntimeFailureFacts(error);
         attempt.terminalSettled = true;
         releaseTerminalOwnership(attempt);
         deps.machine.failed({
@@ -1161,6 +1169,7 @@ export function createVoiceConversationController(
           attemptId: attempt.id,
           code: failureCode,
           diagnosticReason: readSafeVoiceRuntimeFailureDiagnosticReason(error),
+          ...(failureCause ? { failureCause } : {}),
         });
       }
       return { status: 'failed', code: failureCode };

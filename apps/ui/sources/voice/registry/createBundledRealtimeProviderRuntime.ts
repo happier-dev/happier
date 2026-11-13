@@ -40,6 +40,7 @@ import {
   readSafeVoiceRuntimeFailureCode,
   recordVoiceRuntimeFailure,
   type VoiceRuntimeFailureDiagnosticReason,
+  type VoiceRuntimeFailureCause,
 } from '@/voice/runtime/voiceRuntimeFailureCode';
 import type { VoiceMachineErrorKind } from '@/voice/runtime/machine/voiceConversationRuntimeTypes';
 import { normalizeSessionAddress, type SessionAddress } from '@/sync/domains/session/sessionAddress';
@@ -841,7 +842,7 @@ export function createBundledRealtimeProviderRuntime(
         code: string;
         diagnosticReason?: VoiceRuntimeFailureDiagnosticReason;
         providerCode?: string;
-        failureCause?: import('@happier-dev/protocol/actions/actionExecutionResult').ActionFailureCauseV1;
+        failureCause?: VoiceRuntimeFailureCause;
       }>) => {
         clearHostedLeaseNotices();
         activeHostedLease = null;

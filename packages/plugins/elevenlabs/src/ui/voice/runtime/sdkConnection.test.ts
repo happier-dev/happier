@@ -133,7 +133,10 @@ describe('createElevenLabsSdkConnection', () => {
     expect(handle.endSession).not.toHaveBeenCalled();
     expect(handle.sendUserMessage).toHaveBeenCalledWith('continue');
     publish({ type: 'error', error: 'terminal failure', context: terminalContext });
-    await vi.waitFor(() => expect(connection.state()).toBe('closed'));
+    const controls = connection.controlEvents(new AbortController().signal)[Symbol.asyncIterator]();
+    await expect(controls.next()).resolves.toMatchObject({ value: { type: 'elevenlabs.session_error',
+      failureCause: { phase: 'elevenlabs.sdk.error' } } });
+    await connection.close({ code: 'error' });
     expect(handle.endSession).toHaveBeenCalledTimes(1);
   });
   it('owns the SDK lifecycle and projects callbacks through connection channels', async () => {
@@ -269,7 +272,7 @@ describe('createElevenLabsSdkConnection', () => {
     expect(setOutputVolume.mock.calls).toEqual([[0], [0.18], [1]]);
   });
 
-  it('translates canonical SDK commands and turns disconnects into remote close', async () => {
+  it('translates canonical SDK commands and publishes terminal disconnect cause for the host', async () => {
     let publish!: (event: ElevenLabsConversationHandleEvent) => void;
     const dispose = vi.fn();
     const handle = {
@@ -303,7 +306,10 @@ describe('createElevenLabsSdkConnection', () => {
     expect(handle.setMicMuted).toHaveBeenCalledWith(true);
 
     publish({ type: 'disconnect', reason: 'network_lost' });
-    await vi.waitFor(() => expect(connection.state()).toBe('closed'));
+    const controls = connection.controlEvents(new AbortController().signal)[Symbol.asyncIterator]();
+    await expect(controls.next()).resolves.toMatchObject({ value: { type: 'elevenlabs.session_error',
+      failureCause: { phase: 'elevenlabs.disconnect' } } });
+    await connection.close({ code: 'error' });
     expect(dispose).toHaveBeenCalledTimes(1);
     expect(handle.endSession).toHaveBeenCalledTimes(1);
     await vi.waitFor(() => expect(handle.dispose).toHaveBeenCalledTimes(1));
@@ -336,7 +342,8 @@ describe('createElevenLabsSdkConnection', () => {
       duckGain: 0.18,
     });
 
-    await expect(connection.connect(new AbortController().signal)).rejects.toMatchObject({ name: 'AbortError' });
+    await expect(connection.connect(new AbortController().signal)).rejects.toMatchObject({ code: 'voice_service_unavailable',
+      failureCause: { phase: 'elevenlabs.disconnect' } });
     await vi.waitFor(() => expect(handle.endSession).toHaveBeenCalled());
     expect(handle.endSession).toHaveBeenCalledTimes(1);
   });
