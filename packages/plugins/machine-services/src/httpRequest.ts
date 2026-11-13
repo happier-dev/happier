@@ -4,10 +4,14 @@ import { defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defin
     defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 
 const methods = ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'] as const satisfies readonly HttpMethod[];
+const [firstMethod, secondMethod, ...remainingMethods] = methods;
 
 export const httpRequestInput = defineProtocolObject({
     destination: defineProtocolString({ pattern: '^https?://' }),
-    method: defineProtocolUnion(methods.map(method => defineProtocolLiteral(method))),
+    method: defineProtocolUnion([
+        defineProtocolLiteral(firstMethod), defineProtocolLiteral(secondMethod),
+        ...remainingMethods.map(method => defineProtocolLiteral(method)),
+    ]),
     headers: defineProtocolArray(defineProtocolObject({ name: defineProtocolString({ minLength: 1 }),
         secret: SharedSavedSecretReferenceSelectionV1Schema }, { policy: 'closed' })).optional(),
     body: defineProtocolString().optional(),

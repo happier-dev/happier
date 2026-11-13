@@ -39,11 +39,11 @@ export const machineOutcomeEventActions = Object.fromEntries(eventIds.map(event 
         const read = await context.services.actions.execute('machines.resources.policy.get', {
             serverId: selected.serverId, machineId: selected.machineId,
         }, { signal: context.signal });
-        if (read.status !== 'ready') throw new PluginError({ code: 'target_unavailable', message: 'The Machine resource policy is unavailable.' });
+        if (!('status' in read) || read.status !== 'ready') throw new PluginError({ code: 'target_unavailable', message: 'The Machine resource policy is unavailable.' });
         const sourceConfig = sourceSchema.parse(selected);
         return { v: 1 as const, sourceInstanceId: 'machine-event:' + computeCanonicalDomainSeparatedDigest('happier.machine.event-source.v1',
-            [selected.serverId, selected.machineId, 'environmentId' in selected ? selected.environmentId : '', event]),
-            sourceContractVersion: 1, sourceConfig, displayLabel: 'environmentId' in selected ? selected.environmentId : selected.machineId };
+            [sourceConfig.serverId, sourceConfig.machineId, sourceConfig.environmentId ?? '', event]),
+            sourceContractVersion: 1, sourceConfig, displayLabel: sourceConfig.environmentId ?? sourceConfig.machineId };
     },
 }]));
 export const machineOutcomeEvents = Object.fromEntries(eventIds.map(event => {
