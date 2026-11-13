@@ -115,7 +115,9 @@ export function prepareDeploymentTemplateAdditionV1(input: DeploymentTemplateIns
         }])) } : {}),
         ...(template.loginFields ? { loginFields: { password: variable(template.loginFields.password),
             ...(template.loginFields.username ? { username: variable(template.loginFields.username) } : {}) } } : {}),
-    }, bindings: input.bindings.map(binding => binding.purpose === 'variable' ? { ...binding, name: variable(binding.name),
-        ...(binding.source.kind === 'generated' ? { source: { ...binding.source, key: variable(binding.source.key) } } : {}) } : binding),
+    }, bindings: input.bindings.map(binding => binding.purpose !== 'variable' ? binding
+        : binding.source.kind === 'generated'
+            ? { ...binding, name: variable(binding.name), source: { ...binding.source, key: variable(binding.source.key) } }
+            : { ...binding, name: variable(binding.name) }),
     ...(input.replace ? { replace: input.replace.map(variable) } : {}) };
 }

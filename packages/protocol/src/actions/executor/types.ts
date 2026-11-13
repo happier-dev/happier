@@ -1396,6 +1396,8 @@ export type HostReviewedChildrenPreparationV1 = HostReviewedChildrenPlanV1 & Rea
   prepareExecutionContext?: (context: ActionExecutorContext) => Promise<ActionExecutorContext>;
   executeAdmittedAction?: (request: ActionAdmittedExecutionV1) => Promise<ActionExecuteResult>;
 }>;
+/** A domain's own reviewed-child preparation: a plan, its admission refusal, or nothing demanded. */
+export type HostReviewedChildrenDomainPreparationV1 = HostReviewedChildrenPreparationV1 | ActionExecuteFailure | null;
 
 /** Invocation-local ordinary child execution during domain preparation. Never transported. */
 export type HostReviewedChildrenPreparationRequestV1 = Readonly<{
@@ -1412,10 +1414,14 @@ export type ActionApprovedOperationAdmissionV1 = WorkflowApprovedOperationV1 & R
 export type ActionExecutorDeps = Readonly<{
   /** Calling Session metadata reference, captured once before Action admission. */
   readActionApprovalProfileId?: (context: ActionExecutorContext) => Promise<string | null | undefined | ActionExecuteFailure>;
-  /** Host domain preparation only: no effects; null for parents with no demanded roles. */
+  /**
+   * Host domain preparation only: no effects; null for parents with no demanded roles.
+   * A result envelope settles the parent without children (an admission refusal the
+   * domain reports as its own result), exactly as the bot-template preparations do.
+   */
   prepareHostReviewedChildren?: (request: Readonly<{ actionId: ActionId; input: unknown;
     context: ActionExecutorContext; machineRuntimeDemand?: ActionMachineRuntimeDemandV1;
-  }>) => Promise<HostReviewedChildrenPreparationV1 | ActionExecuteFailure | null>;
+  }>) => Promise<HostReviewedChildrenPreparationV1 | ActionExecuteResult | null>;
   prepareBotTemplateInstantiation?: (request: HostReviewedChildrenPreparationRequestV1) =>
     Promise<HostReviewedChildrenPreparationV1 | ActionExecuteResult>;
   prepareBotTemplateRelease?: (request: Readonly<{ input: unknown; context: ActionExecutorContext }>) =>

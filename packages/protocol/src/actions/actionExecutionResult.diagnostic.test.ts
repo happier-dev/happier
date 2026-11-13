@@ -183,3 +183,12 @@ it('retains a producer-projected cause when a failure crosses an Action adapter'
   const failureCause = projectActionFailureCauseV1(Object.assign(new Error('private'), { code: 'EACCES' }), 'plugins.development.prepare');
   expect(projectActionFailureCauseV1({ failureCause }, 'dispatch')).toEqual(failureCause);
 });
+
+describe('Action failure discrimination', () => {
+  it('admits only the failure envelope, not a success row that reports an error code', () => {
+    expect(actionResults.isActionExecuteFailure({ ok: false, errorCode: 'deployment_conflict', error: 'deployment_conflict' })).toBe(true);
+    expect(actionResults.isActionExecuteFailure({ kind: 'setupIncomplete', errorCode: 'trusted_host_key_mismatch' })).toBe(false);
+    expect(actionResults.isActionExecuteFailure({ ok: false, error: 'deployment_unavailable' })).toBe(false);
+    expect(actionResults.isActionExecuteFailure({ ok: true, errorCode: 'x', error: 'x' })).toBe(false);
+  });
+});

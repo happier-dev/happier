@@ -262,6 +262,10 @@ const secretBindingInputSource = lazyZodSchema(() => z.union([
 export const EnvironmentBackupDestinationBindingInputV1Schema = lazyZodSchema(() => backupDestinationBindingSchema(secretBindingInputSource));
 export const EnvironmentSecretBindingInputV1Schema = lazyZodSchema(() => environmentSecretBindingSchema(secretBindingInputSource));
 export type EnvironmentSecretBindingInputV1 = z.infer<typeof EnvironmentSecretBindingInputV1Schema>;
+/** Effects consume settled rows only; a pending person choice is resolved by approval first. */
+export function isSettledEnvironmentSecretBindingV1(binding: EnvironmentSecretBindingInputV1): binding is EnvironmentSecretBindingV1 {
+    return !(binding.source.kind === 'secret' && binding.source.ref === 'person_selects');
+}
 
 /** Source revisions and registry access replace, rather than create, the same row. */
 export function environmentSecretBindingIdentityV1(binding: EnvironmentSecretBindingIdentityV1): string {

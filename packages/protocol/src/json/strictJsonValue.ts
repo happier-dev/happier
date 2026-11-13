@@ -23,6 +23,17 @@ export type JsonValue =
   | readonly JsonValue[]
   | { readonly [key: string]: JsonValue };
 
+/** A strict JSON object member of `JsonValue`. */
+export type JsonObject = { readonly [key: string]: JsonValue };
+
+/**
+ * Narrows a strict JSON value to its object member. `Array.isArray` alone does
+ * not narrow `readonly JsonValue[]` out of the union, so callers use this guard.
+ */
+export function isJsonObject(value: JsonValue | undefined): value is JsonObject {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
 export function normalizeStrictJsonValue(input: unknown): JsonValue {
   return cloneStrictPluginJsonValue(input, 'value') as JsonValue;
 }

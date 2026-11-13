@@ -109,11 +109,11 @@ export function normalizeSessionFollowFrontierV1(input: SessionFollowFrontierInp
 }
 
 export type SessionFollowSourceFrontierFactsV1 = Readonly<{
-  seq: number | null | undefined;
-  latestReadyEventSeq: number | null | undefined;
-  agentStateVersion: number | null | undefined;
-  latestTurnId: string | null | undefined;
-  latestTurnStatus: string | null | undefined;
+  seq?: number | null;
+  latestReadyEventSeq?: number | null;
+  agentStateVersion?: number | null;
+  latestTurnId?: string | null;
+  latestTurnStatus?: string | null;
   /** Canonical publisher presence for every Session Follow route. */
   active?: boolean | null;
 }>;

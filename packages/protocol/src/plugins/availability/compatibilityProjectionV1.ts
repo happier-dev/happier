@@ -33,6 +33,14 @@ const compatibilityProjectionSchema = lazyZodSchema(() => z.strictObject({
 }));
 export const PluginCompatibilityProjectionV1Schema: z.ZodMiniType<PluginCompatibilityProjectionV1> = compatibilityProjectionSchema;
 
+/**
+ * The projection grammar with the manifest left unparsed, for consumers that
+ * delegate manifest semantics to the canonical manifest ingestion owner.
+ */
+export const PluginCompatibilityProjectionEnvelopeV1Schema = lazyZodSchema(() => z.extend(compatibilityProjectionSchema, {
+  manifest: z.unknown(),
+}));
+
 export const PluginCompatibilityProjectionV1LoadSchema: z.ZodMiniType<PluginCompatibilityProjectionV1> = lazyZodSchema(() => (
   z.core.clone(compatibilityProjectionSchema, {
     ...compatibilityProjectionSchema._zod.def,

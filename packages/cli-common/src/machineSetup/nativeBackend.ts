@@ -231,7 +231,7 @@ export function createMachineSetupNativeBackend(options: Readonly<{
             return { stepId: step.id, status: safe ? 'drifted' : 'unavailable', ...(!safe ? { reason: 'foreign_effect_conflict' } : {}), facts: facts(state) };
         }
         const bytes = desiredBytes(step, state);
-        const equalContent = state.kind === 'file' && (state.digest === hash(bytes) || equivalentContent?.(state.bytes!, bytes) === true);
+        const equalContent = state.kind === 'file' && (state.digest === hash(bytes) || equivalentContent?.(state.bytes!, Buffer.from(bytes)) === true);
         const known = state.kind === 'absent' || equalContent || step.content?.kind === 'jsonMerge'
             || step.content?.kind === 'iniKeys' || state.digest === step.expectedContentDigest;
         if (!known) return { stepId: step.id, status: 'unavailable', reason: 'foreign_effect_conflict', facts: facts(state) };

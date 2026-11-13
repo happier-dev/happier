@@ -515,7 +515,6 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
         ...(providerSessionId ? { kind: 'resume' as const, checkpointId: providerSessionId } : { kind: 'create' as const }),
         runId: 'skills-run-1', cwd: root,
         profile: { pluginId: 'happier.agent.codex', localId: 'codex' },
-        input: { text: 'Use the review skill.' },
         launchEnvironment: configuredLaunchEnvironment,
         configuration: {
           mode: { value: null, updatedAtMs: 0 }, model: { value: 'fixture-model', updatedAtMs: 1 },

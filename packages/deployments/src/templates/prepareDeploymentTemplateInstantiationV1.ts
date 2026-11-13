@@ -9,7 +9,8 @@ export type DeploymentTemplateInstantiationPreparationInputV1 = Readonly<{
     source: Record<string, unknown>;
     current?: Readonly<{ content: DeploymentEnvironmentContentV1; source: Record<string, unknown>; publicFiles?: DeploymentTemplateV1['compose']['publicFiles'];
         baseline?: Readonly<{ templateRef: TemplateRef; source: Record<string, unknown> }> & Pick<DeploymentTemplateV1['compose'], 'publicFiles'> }>;
-    bindings: StoredAppPresetInputV1['bindings']; connectTo?: Readonly<{ service: string }>;
+    /** Preset selections, or a previous preparation's settled rows when re-preparing after Saved Secret creation. */
+    bindings: readonly (StoredAppPresetInputV1['bindings'][number] | EnvironmentVariableBindingV1)[]; connectTo?: Readonly<{ service: string }>;
     /** Bindings consumed alongside this Add reserve names without copying their custody. */
     reservedVariableNames?: readonly string[];
     replace?: readonly string[]; domainBindings?: Readonly<NonNullable<DeploymentTemplateInstantiateInputV1['domainBindings']>>;
