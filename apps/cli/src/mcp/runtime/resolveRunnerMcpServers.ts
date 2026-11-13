@@ -1,4 +1,5 @@
 import { isPluginError } from '@happier-dev/plugin-sdk';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { McpServerConfig } from '@/agent';
 import type { AgentLaunchSelectedMaterial } from '@/daemon/agentIsolation/agentLaunchFrame';
 import { SESSION_MCP_CONTEXT_RELATIVE_PATH } from '@/daemon/agentIsolation/agentLaunchMaterials';
@@ -290,7 +291,7 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
     phaseStartedAt = now;
   };
   recordStartupPhase('entered');
-  const env = params.env ?? process.env;
+  const env = params.env ?? sessionProcessEnvironment();
   const accountCredentials = Object.hasOwn(params, 'accountCredentials')
     ? params.accountCredentials ?? null
     : params.credentials;

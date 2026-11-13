@@ -1,4 +1,5 @@
 import type { StoredCredentials } from '@/persistence';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import type { AdmittedMcpStdioRuntime, PrepareMcpStdioTransport } from '@/mcp/runtime/supervisedStdioTransport';
 import { McpServerCatalogUnavailableError, readMcpServersSettingsFromAccountSettings } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
 import { listMcpServerCatalogSavedSecretRefsV1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
@@ -58,7 +59,7 @@ export async function resolveCustomHappierToolsContext(params: Readonly<{
   const materialized = await materializeMcpServerConfigRecord({
     resolved,
     savedSecretMaterializer,
-    processEnv: params.admittedStdio?.environment ?? params.processEnv ?? process.env,
+    processEnv: params.admittedStdio?.environment ?? params.processEnv ?? sessionProcessEnvironment(),
     tmpDir: null,
     signal: params.signal,
     agentLaunchTarget: params.admittedStdio?.target,

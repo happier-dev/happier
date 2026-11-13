@@ -1,5 +1,6 @@
 import { resolveAgentCliOverrideEnvKey } from '@happier-dev/cli-common/agents/resolution';
 import { isAbsolute } from 'node:path';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 import type {
   ExecSystemToolServiceV1,
@@ -78,7 +79,7 @@ export function createAgentCliHostResolutionEnvironment(params: Readonly<{
     happyHomeDir?: string;
 }> = {}): NodeJS.ProcessEnv {
     return {
-        ...(params.processEnv ?? process.env),
+        ...(params.processEnv ?? sessionProcessEnvironment()),
         ...(params.happyHomeDir ? { HAPPIER_HOME_DIR: params.happyHomeDir } : {}),
     };
 }

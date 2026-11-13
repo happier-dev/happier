@@ -6394,7 +6394,6 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 systemToolDefinitionsByPluginId.get(agentParams.pluginId) ?? Object.freeze([]),
             ),
             processEnv: createAgentCliHostResolutionEnvironment({
-                processEnv: process.env,
                 ...(params?.happyHomeDir ? { happyHomeDir: params.happyHomeDir } : {}),
             }),
             delegate: declaredAgent.catalogEntry?.agentCliSystemTool
@@ -7541,7 +7540,6 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 agentCliLaunch: agentParams.agentCliLaunch,
                 definitions: systemToolDefinitions,
                 processEnv: createAgentCliHostResolutionEnvironment({
-                    processEnv: process.env,
                     ...(params?.happyHomeDir ? { happyHomeDir: params.happyHomeDir } : {}),
                 }),
                 delegate: genericSystemTools,

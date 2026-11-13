@@ -1,4 +1,5 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PrepareMcpStdioTransport } from '@/mcp/runtime/supervisedStdioTransport';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
@@ -33,7 +34,7 @@ export async function callResolvedCustomHappierTool(params: Readonly<{
 
   try {
     if (!await params.operationContext.isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');
-    transport = await createCustomMcpClientTransport(config, params.processEnv ?? process.env,
+    transport = await createCustomMcpClientTransport(config, params.processEnv ?? sessionProcessEnvironment(),
       { signal: params.signal, prepareTransport: params.prepareTransport });
     await client.connect(transport, params.signal ? { signal: params.signal } : undefined);
     if (!await params.operationContext.isCurrent()) throw new McpServerCatalogUnavailableError('scope-retired');

@@ -1,4 +1,5 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { PrepareMcpStdioTransport } from '@/mcp/runtime/supervisedStdioTransport';
 
@@ -51,7 +52,7 @@ export async function listResolvedCustomHappierTools(params: Readonly<{
     if (serverName === 'happier') continue;
     params.signal?.throwIfAborted();
     try {
-      tools.push(...await listServerTools(serverName, config, params.processEnv ?? process.env, params.signal, params.prepareTransport));
+      tools.push(...await listServerTools(serverName, config, params.processEnv ?? sessionProcessEnvironment(), params.signal, params.prepareTransport));
     } catch (error) {
       params.signal?.throwIfAborted();
       if (error instanceof PluginError) throw error;

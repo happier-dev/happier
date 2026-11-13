@@ -4,6 +4,7 @@ import type { Readable, Stream } from 'node:stream';
 import type { McpToolAnnotationsV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 
 import type { McpServerConfig } from '@/agent';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { RemoteMcpAuthenticationFailureSchema } from '../bridges/remoteMcpAuthenticationFailure';
 import { withMcpTimeout } from '@/mcp/runtime/withMcpTimeout';
 import { appendBoundedStderrTail, sanitizeChildStderrTail } from '@/daemon/spawn/childStderrDiagnostic';
@@ -65,7 +66,7 @@ export async function probeMcpStdioServerTools(params: Readonly<{
     import('@modelcontextprotocol/sdk/shared/metadataUtils.js'),
   ]);
   params.signal?.throwIfAborted();
-  const baseEnv = params.baseEnv ?? process.env;
+  const baseEnv = params.baseEnv ?? sessionProcessEnvironment();
   const env = params.config.env ? { ...resolveEnvRecord(baseEnv), ...params.config.env } : resolveEnvRecord(baseEnv);
 
   let protocolVersion: string | undefined;
