@@ -3695,6 +3695,7 @@ const en = Shared_folderlessSessionTranslations.en;
 const ca: FolderlessSessionTranslations = {
     composer: {
         workspaceOnStart: 'El teu espai de treball es prepara quan comences',
+        chooseMachineFirst: 'Tria primer una màquina',
         addFolder: 'Afegeix una carpeta',
         noFolder: 'Sense carpeta',
         noFolderDescription: 'El Happier manté una carpeta privada per a aquest xat',
@@ -3847,6 +3848,32 @@ const Domain_homeFeatureTranslations = (() => {
 const en = Shared_homeFeatureTranslations.en;
 
 const ca: typeof en = {
+    artifacts: {
+        queryHints: {
+            title: "Descoberta d’artefactes",
+            description: "Troba artefactes per tipus i consulta a què tens accés.",
+        },
+    },
+    account: {
+        publicProfiles: {
+            title: "Perfils públics",
+            description: "Permet publicar el perfil i triar si es comparteix l’ús.",
+        },
+    },
+    deployments: {
+        title: "Desplegaments",
+        description: "Prepara i publica desplegaments de projectes.",
+    },
+    bots: {
+        title: "Bots",
+        description: "Crea bots i plantilles reutilitzables.",
+    },
+    usage: {
+        compactBatch: {
+            title: "Lots d’ús",
+            description: "Envia les actualitzacions d’ús amb les dades per calcular-ne el cost.",
+        },
+    },
     teams: {
         title: 'Equips',
         description: 'Grups amb sessions, màquines i accés compartits.',

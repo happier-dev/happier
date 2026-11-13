@@ -35,6 +35,7 @@ vi.mock('@react-navigation/native', async () => {
 });
 
 installSettingsViewCommonModuleMocks({
+    storage: 'real',
     router: async () => ({
         useRouter: () => ({ push: vi.fn(), back: vi.fn(), setParams: vi.fn() }),
         useNavigation: () => ({ setOptions: vi.fn() }),
@@ -46,6 +47,8 @@ installSettingsViewCommonModuleMocks({
 // schemas, the protocol's dependency edges and the page's row logic are the production ones.
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+// Collect the screen after installing its boundaries, so cold module loading is not part of a case's deadline.
+const { HomeAdministrationFeaturesScreen } = await import('./HomeAdministrationFeaturesScreen');
 const { resetServerFeaturesClientForTests } = await import("@/sync/api/capabilities/serverFeaturesClient");
 const { resetHomeSettingsEngineForTests } = await import('@/sync/engine/home/governance/homeSettingsEngine');
 const { resetHomeSettingsSnapshotsForTests } = await import('@/sync/store/home/governance/homeSettingsSnapshots');
@@ -62,16 +65,15 @@ function textUnder(node: RenderedNode | null): string {
 }
 
 /**
- * A Home where Automations is on and Workflows follows it; Voice is fixed by the deployment;
- * Search is left out of this build; Machine pools is off on this Home, so Ephemeral runners wait on
- * it; Session handoff and Session folders (the Advanced "sessions" family) are on, and Pet sync is
+ * A Home where Workflows is on; Voice is fixed by the deployment; Search is left out of this
+ * build; Machine pools is off on this Home and Ephemeral runners wait on Machines; Session
+ * handoff and Session folders (the Advanced "sessions" family) are on, and Pet sync is
  * the lone member of its family, so it is listed under "Other".
  */
 function featuresProjection(overrides?: Partial<HomeSettingsProjectionV1>): HomeSettingsProjectionV1 {
     return homeSettingsProjectionFixture({
         revision: 7,
         entries: [
-            homeFeatureSwitchEntryFixture('automations'),
             homeFeatureSwitchEntryFixture('workflows'),
             homeFeatureSwitchEntryFixture('voice', { source: 'deployment', fixed: true }),
             homeFeatureSwitchEntryFixture('search'),
@@ -82,7 +84,6 @@ function featuresProjection(overrides?: Partial<HomeSettingsProjectionV1>): Home
             homeFeatureSwitchEntryFixture('pets.sync'),
         ],
         featureDecisions: [
-            featureDecisionFixture('automations'),
             featureDecisionFixture('workflows'),
             featureDecisionFixture('voice'),
             featureDecisionFixture('search', { state: 'disabled', blockedBy: 'build_policy', blockerCode: 'build_disabled' }),
@@ -91,7 +92,7 @@ function featuresProjection(overrides?: Partial<HomeSettingsProjectionV1>): Home
                 state: 'disabled',
                 blockedBy: 'dependency',
                 blockerCode: 'dependency_disabled',
-                blockingDependencyId: 'machines.pools',
+                blockingDependencyId: 'machines',
             }),
             featureDecisionFixture('sessions.handoff'),
             featureDecisionFixture('sessions.folders'),
@@ -117,12 +118,11 @@ async function addHome(options?: Readonly<{ admin?: boolean }>): Promise<string>
 }
 
 async function renderFeatures(serverId: string) {
-    const { HomeAdministrationFeaturesScreen } = await import('./HomeAdministrationFeaturesScreen');
     const { resetHomeGovernanceEngineForTests } = await import('@/sync/engine/home/governance/homeGovernanceEngine');
     resetHomeGovernanceEngineForTests();
     const screen = await renderScreen(<HomeAdministrationFeaturesScreen serverId={serverId} />);
     await waitForHomeGovernance(() => {
-        expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-feature:automations');
+        expect(collectRenderedTestIds(screen.tree.toJSON())).toContain('home-feature:workflows');
     });
     return screen;
 }
@@ -148,10 +148,9 @@ describe('HomeAdministrationFeaturesScreen', () => {
         const screen = await renderFeatures(home);
         const ids = collectRenderedTestIds(screen.tree.toJSON());
 
-        // The Common ten come first, in the approved order, among what this Home projects.
+        // Common features come first, in the console's order, among what this Home projects.
         const common = ids.filter((id) => /^home-feature:[^.]+$|^home-feature:(sharing|machines|sessions|teams)\.[a-zA-Z]+$/.test(id));
-        expect(common.slice(0, 6)).toEqual([
-            'home-feature:automations',
+        expect(common).toEqual([
             'home-feature:workflows',
             'home-feature:search',
             'home-feature:voice',
@@ -161,7 +160,7 @@ describe('HomeAdministrationFeaturesScreen', () => {
 
         // A feature waiting on another names it from the typed blocker, and cannot be switched.
         const runner = textUnder(screen.findByTestId('home-feature:sessions.ephemeralRunner'));
-        expect(runner).toContain('homeGovernance.features.needs(feature=homeFeatures.machines.pools.title)');
+        expect(runner).toContain('homeGovernance.features.needs(feature=homeFeatures.machines.title)');
         expect(screen.findByTestId('home-feature:sessions.ephemeralRunner.switch')?.props.disabled).toBe(true);
 
         // A deployment-fixed key says so once and names its env key as a code chip, with no control.
@@ -190,18 +189,34 @@ describe('HomeAdministrationFeaturesScreen', () => {
 
     it('stages a parent off with its dependents named inline under the row, and writes nothing until Save', async () => {
         const home = await addHome();
-        harness.answer(home, SETTINGS_GET, { body: featuresProjection() });
+        harness.answer(home, SETTINGS_GET, { body: featuresProjection({
+            entries: [
+                homeFeatureSwitchEntryFixture('workflows'),
+                homeFeatureSwitchEntryFixture('teams'),
+                homeFeatureSwitchEntryFixture('teams.credentialResources'),
+            ],
+            featureDecisions: [
+                featureDecisionFixture('workflows'),
+                featureDecisionFixture('teams'),
+                featureDecisionFixture('teams.credentialResources'),
+            ],
+        }) });
         harness.answer(home, SETTINGS_SET, {
             body: featuresProjection({
                 revision: 8,
-                entries: [homeFeatureSwitchEntryFixture('automations', { value: false, source: 'home' })],
+                entries: [
+                    homeFeatureSwitchEntryFixture('workflows'),
+                    homeFeatureSwitchEntryFixture('teams', { value: false, source: 'home' }),
+                    homeFeatureSwitchEntryFixture('teams.credentialResources'),
+                ],
                 featureDecisions: [
-                    featureDecisionFixture('automations', { state: 'disabled', blockedBy: 'server', blockerCode: 'feature_disabled' }),
-                    featureDecisionFixture('workflows', {
+                    featureDecisionFixture('workflows'),
+                    featureDecisionFixture('teams', { state: 'disabled', blockedBy: 'server', blockerCode: 'feature_disabled' }),
+                    featureDecisionFixture('teams.credentialResources', {
                         state: 'disabled',
                         blockedBy: 'dependency',
                         blockerCode: 'dependency_disabled',
-                        blockingDependencyId: 'automations',
+                        blockingDependencyId: 'teams',
                     }),
                 ],
             }),
@@ -210,14 +225,14 @@ describe('HomeAdministrationFeaturesScreen', () => {
         const { Modal } = await import('@/modal');
 
         await act(async () => {
-            screen.findByTestId('home-feature:automations.switch')?.props.onValueChange(false);
+            screen.findByTestId('home-feature:teams.switch')?.props.onValueChange(false);
         });
 
         // The switch shows the staged value and the features that follow it are named under it.
-        expect(screen.findByTestId('home-feature:automations.switch')?.props.value).toBe(false);
-        const dependents = textUnder(screen.findByTestId('home-feature:automations.dependents'));
-        expect(dependents).toContain('homeGovernance.features.dependentsTitle_one(feature=homeFeatures.automations.title)');
-        expect(dependents).toContain('homeGovernance.features.dependentNeeds(feature=homeFeatures.workflows.title,parent=homeFeatures.automations.title)');
+        expect(screen.findByTestId('home-feature:teams.switch')?.props.value).toBe(false);
+        const dependents = textUnder(screen.findByTestId('home-feature:teams.dependents'));
+        expect(dependents).toContain('homeGovernance.features.dependentsTitle_one(feature=homeFeatures.teams.title)');
+        expect(dependents).toContain('homeGovernance.features.dependentNeeds(feature=homeFeatures.teams.credentialResources.title,parent=homeFeatures.teams.title)');
         expect(Modal.confirm).not.toHaveBeenCalled();
         expect(harness.requestsFor(SETTINGS_SET)).toHaveLength(0);
 
@@ -227,14 +242,14 @@ describe('HomeAdministrationFeaturesScreen', () => {
         await waitForHomeGovernance(() => expect(harness.requestsFor(SETTINGS_SET)).toHaveLength(1));
         expect(harness.requestsFor(SETTINGS_SET)[0]?.input).toEqual({
             expectedRevision: 7,
-            values: { [homeFeatureSwitchKey('automations')]: false },
+            values: { [homeFeatureSwitchKey('teams')]: false },
         });
-        // The Home's answer is adopted: Workflows now says what it needs, and nothing is staged.
+        // The Home's answer is adopted: Team credentials says what it needs, and nothing is staged.
         await waitForHomeGovernance(() => {
-            expect(textUnder(screen.findByTestId('home-feature:workflows')))
-                .toContain('homeGovernance.features.needs(feature=homeFeatures.automations.title)');
+            expect(textUnder(screen.findByTestId('home-feature:teams.credentialResources')))
+                .toContain('homeGovernance.features.needs(feature=homeFeatures.teams.title)');
         });
-        expect(screen.findByTestId('home-feature:automations.dependents')).toBeNull();
+        expect(screen.findByTestId('home-feature:teams.dependents')).toBeNull();
     });
 
     it('reverts every staged change on Discard without writing', async () => {
@@ -244,7 +259,7 @@ describe('HomeAdministrationFeaturesScreen', () => {
         expect(screen.findByTestId('home-features-save')).toBeNull();
 
         await act(async () => {
-            screen.findByTestId('home-feature:automations.switch')?.props.onValueChange(false);
+            screen.findByTestId('home-feature:workflows.switch')?.props.onValueChange(false);
         });
         await act(async () => {
             screen.pressByTestId('home-features-discard');
@@ -253,8 +268,8 @@ describe('HomeAdministrationFeaturesScreen', () => {
         expect(screen.findByTestId('home-features-save')).toBeNull();
         expect(screen.findByTestId('home-features-discard')).toBeNull();
 
-        expect(screen.findByTestId('home-feature:automations.switch')?.props.value).toBe(true);
-        expect(screen.findByTestId('home-feature:automations.dependents')).toBeNull();
+        expect(screen.findByTestId('home-feature:workflows.switch')?.props.value).toBe(true);
+        expect(screen.findByTestId('home-feature:workflows.dependents')).toBeNull();
         expect(harness.requestsFor(SETTINGS_SET)).toHaveLength(0);
     });
 
@@ -264,7 +279,7 @@ describe('HomeAdministrationFeaturesScreen', () => {
             body: homeSettingsProjectionFixture({
                 revision: 7,
                 entries: [
-                    homeFeatureSwitchEntryFixture('automations'),
+                    homeFeatureSwitchEntryFixture('workflows'),
                     // Saved off, still running on until the next start; the last start ignored a bad value.
                     homeFeatureSwitchEntryFixture('search', {
                         value: false,
@@ -273,7 +288,7 @@ describe('HomeAdministrationFeaturesScreen', () => {
                         applied: { value: true, pending: true, ignoredReason: 'invalid_type' },
                     }),
                 ],
-                featureDecisions: [featureDecisionFixture('automations'), featureDecisionFixture('search')],
+                featureDecisions: [featureDecisionFixture('workflows'), featureDecisionFixture('search')],
             }),
         });
 
@@ -339,6 +354,6 @@ describe('HomeAdministrationFeaturesScreen', () => {
 
         expect(ids).toContain('home-features-admin-read-only');
         expect(ids.filter((id) => id.endsWith('.switch'))).toEqual([]);
-        expect(textUnder(screen.findByTestId('home-feature:automations'))).toContain('common.on');
+        expect(textUnder(screen.findByTestId('home-feature:workflows'))).toContain('common.on');
     });
 });

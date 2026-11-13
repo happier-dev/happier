@@ -3693,6 +3693,7 @@ const en = Shared_folderlessSessionTranslations.en;
 const fr: FolderlessSessionTranslations = {
     composer: {
         workspaceOnStart: 'Ton espace de travail est préparé au démarrage',
+        chooseMachineFirst: 'Choisis d’abord une machine',
         addFolder: 'Ajouter un dossier',
         noFolder: 'Aucun dossier',
         noFolderDescription: 'Happier garde un dossier privé pour cette discussion',
@@ -3845,6 +3846,32 @@ const Domain_homeFeatureTranslations = (() => {
 const en = Shared_homeFeatureTranslations.en;
 
 const fr: typeof en = {
+    artifacts: {
+        queryHints: {
+            title: "Découverte des artefacts",
+            description: "Trouvez des artefacts par type et voyez ce qui vous est accessible.",
+        },
+    },
+    account: {
+        publicProfiles: {
+            title: "Profils publics",
+            description: "Permet de publier son profil et de choisir de partager son utilisation.",
+        },
+    },
+    deployments: {
+        title: "Déploiements",
+        description: "Préparez et publiez les déploiements de vos projets.",
+    },
+    bots: {
+        title: "Bots",
+        description: "Créez des bots et des modèles réutilisables.",
+    },
+    usage: {
+        compactBatch: {
+            title: "Lots d’utilisation",
+            description: "Transmet les mises à jour d’utilisation avec les données de calcul du coût.",
+        },
+    },
     teams: {
         title: 'Équipes',
         description: 'Des groupes qui partagent sessions, machines et accès.',

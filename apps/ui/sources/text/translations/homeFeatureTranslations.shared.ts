@@ -1,6 +1,32 @@
 
 
 export const en = {
+    artifacts: {
+        queryHints: {
+            title: "Artifact discovery",
+            description: "Find artifacts by kind and see what you can access.",
+        },
+    },
+    account: {
+        publicProfiles: {
+            title: "Public profiles",
+            description: "Let people publish their profile and choose whether to share usage.",
+        },
+    },
+    deployments: {
+        title: "Deployments",
+        description: "Prepare and publish project deployments.",
+    },
+    bots: {
+        title: "Bots",
+        description: "Create bots and reusable templates.",
+    },
+    usage: {
+        compactBatch: {
+            title: "Usage batches",
+            description: "Deliver usage updates together with the data used to calculate cost.",
+        },
+    },
     teams: {
         title: 'Teams',
         description: 'Groups with shared sessions, machines and access.',

@@ -3693,6 +3693,7 @@ const en = Shared_folderlessSessionTranslations.en;
 const ja: FolderlessSessionTranslations = {
     composer: {
         workspaceOnStart: '開始時にワークスペースが準備されます',
+        chooseMachineFirst: '先にマシンを選んでください',
         addFolder: 'フォルダを追加',
         noFolder: 'フォルダなし',
         noFolderDescription: 'Happier がこのチャット専用のフォルダを用意します',
@@ -3845,6 +3846,32 @@ const Domain_homeFeatureTranslations = (() => {
 const en = Shared_homeFeatureTranslations.en;
 
 const ja: typeof en = {
+    artifacts: {
+        queryHints: {
+            title: "アーティファクトの検索",
+            description: "種類別にアーティファクトを探し、アクセスできるものを確認できます。",
+        },
+    },
+    account: {
+        publicProfiles: {
+            title: "公開プロフィール",
+            description: "プロフィールを公開し、使用状況を共有するかどうかを選べます。",
+        },
+    },
+    deployments: {
+        title: "デプロイ",
+        description: "プロジェクトのデプロイを準備して公開します。",
+    },
+    bots: {
+        title: "ボット",
+        description: "ボットと再利用できるテンプレートを作成します。",
+    },
+    usage: {
+        compactBatch: {
+            title: "使用状況の一括配信",
+            description: "使用状況の更新と料金計算に使うデータをまとめて配信します。",
+        },
+    },
     teams: {
         title: 'チーム',
         description: 'セッション、マシン、アクセスを共有するグループ。',

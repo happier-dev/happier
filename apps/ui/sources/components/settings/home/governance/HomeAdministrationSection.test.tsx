@@ -56,6 +56,8 @@ installSettingsViewCommonModuleMocks({
 // engine, store and view state below them are the production ones.
 const harness = createHomeGovernanceHarness();
 installHomeGovernanceBoundaries(harness);
+// Keep the real screen import behind its installed boundaries and outside individual case deadlines.
+const { HomeAdministrationSection } = await import('./HomeAdministrationSection');
 
 const GOVERNANCE_PATH = '/v1/home/governance/get';
 
@@ -104,7 +106,6 @@ describe('HomeAdministrationSection', () => {
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         expect(await TokenStorage.getCredentialsForServerUrl('https://home-a.example')).not.toBeNull();
         harness.answer(home, GOVERNANCE_PATH, { body: projection() });
-        const { HomeAdministrationSection } = await import('./HomeAdministrationSection');
         // Imported here, not at the top of the file: `Item` reaches the shared
         // scoped-request transport through `@/modal`, and a static import would
         // evaluate that module before `installHomeGovernanceBoundaries` replaces

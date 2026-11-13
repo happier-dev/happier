@@ -3715,6 +3715,7 @@ const en = Shared_folderlessSessionTranslations.en;
 const ru: FolderlessSessionTranslations = {
     composer: {
         workspaceOnStart: 'Рабочее пространство будет настроено при запуске',
+        chooseMachineFirst: 'Сначала выберите машину',
         addFolder: 'Добавить папку',
         noFolder: 'Без папки',
         noFolderDescription: 'Happier ведёт для этого чата отдельную папку',
@@ -3867,6 +3868,32 @@ const Domain_homeFeatureTranslations = (() => {
 const en = Shared_homeFeatureTranslations.en;
 
 const ru: typeof en = {
+    artifacts: {
+        queryHints: {
+            title: "Поиск артефактов",
+            description: "Находите артефакты по типу и просматривайте доступные вам материалы.",
+        },
+    },
+    account: {
+        publicProfiles: {
+            title: "Публичные профили",
+            description: "Позволяет публиковать профиль и выбирать, делиться ли данными об использовании.",
+        },
+    },
+    deployments: {
+        title: "Развёртывания",
+        description: "Подготавливайте и публикуйте развёртывания проектов.",
+    },
+    bots: {
+        title: "Боты",
+        description: "Создавайте ботов и шаблоны для повторного использования.",
+    },
+    usage: {
+        compactBatch: {
+            title: "Пакеты данных об использовании",
+            description: "Передаёт обновления использования вместе с данными для расчёта стоимости.",
+        },
+    },
     teams: {
         title: 'Команды',
         description: 'Группы с общими сессиями, машинами и доступом.',

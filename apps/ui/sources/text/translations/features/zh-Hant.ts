@@ -3688,6 +3688,7 @@ const en = Shared_folderlessSessionTranslations.en;
 const zhHant: FolderlessSessionTranslations = {
     composer: {
         workspaceOnStart: '開始時會為你準備工作區',
+        chooseMachineFirst: '請先選擇機器',
         addFolder: '新增資料夾',
         noFolder: '不使用資料夾',
         noFolderDescription: 'Happier 會為此對話保留一個私人資料夾',
@@ -3840,6 +3841,32 @@ const Domain_homeFeatureTranslations = (() => {
 const en = Shared_homeFeatureTranslations.en;
 
 const zhHant: typeof en = {
+    artifacts: {
+        queryHints: {
+            title: "產物探索",
+            description: "依類型尋找產物，查看你可以存取的內容。",
+        },
+    },
+    account: {
+        publicProfiles: {
+            title: "公開個人資料",
+            description: "允許發佈個人資料，並選擇是否分享使用情況。",
+        },
+    },
+    deployments: {
+        title: "部署",
+        description: "準備並發佈專案部署。",
+    },
+    bots: {
+        title: "機器人",
+        description: "建立機器人與可重複使用的範本。",
+    },
+    usage: {
+        compactBatch: {
+            title: "用量批次",
+            description: "將用量更新與計算費用所需的資料一起傳送。",
+        },
+    },
     teams: {
         title: '團隊',
         description: '共享工作階段、機器和存取權限的群組。',

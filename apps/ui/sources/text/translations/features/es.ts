@@ -3695,6 +3695,7 @@ const en = Shared_folderlessSessionTranslations.en;
 const es: FolderlessSessionTranslations = {
     composer: {
         workspaceOnStart: 'Tu espacio de trabajo se prepara al empezar',
+        chooseMachineFirst: 'Elige primero una máquina',
         addFolder: 'Añadir carpeta',
         noFolder: 'Sin carpeta',
         noFolderDescription: 'Happier guarda una carpeta privada para este chat',
@@ -3847,6 +3848,32 @@ const Domain_homeFeatureTranslations = (() => {
 const en = Shared_homeFeatureTranslations.en;
 
 const es: typeof en = {
+    artifacts: {
+        queryHints: {
+            title: "Exploración de artefactos",
+            description: "Encuentra artefactos por tipo y consulta a qué tienes acceso.",
+        },
+    },
+    account: {
+        publicProfiles: {
+            title: "Perfiles públicos",
+            description: "Permite publicar el perfil y elegir si se comparte el uso.",
+        },
+    },
+    deployments: {
+        title: "Despliegues",
+        description: "Prepara y publica despliegues de proyectos.",
+    },
+    bots: {
+        title: "Bots",
+        description: "Crea bots y plantillas reutilizables.",
+    },
+    usage: {
+        compactBatch: {
+            title: "Lotes de uso",
+            description: "Entrega las actualizaciones de uso junto con los datos para calcular el coste.",
+        },
+    },
     teams: {
         title: 'Equipos',
         description: 'Grupos con sesiones, máquinas y acceso compartidos.',
