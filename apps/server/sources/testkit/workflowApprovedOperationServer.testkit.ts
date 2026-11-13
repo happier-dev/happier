@@ -3,6 +3,13 @@ import Fastify, { type FastifyRequest, type FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import tweetnacl from 'tweetnacl';
 import { Server } from 'socket.io';
+import { io } from 'socket.io-client';
+import type { UpdatePayload } from '@/app/events/eventRouter';
+import { getMachineSocketRoom } from '@/app/api/socketRooms';
+import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
+import { buildMachineScopedSocketAuth } from '@happier-dev/protocol/machines/ownership/daemonOwnership';
+import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION,
+    buildAccountStoredContentCompatibilitySocketAuthV1 } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { ExternalActionDaemonDispatchRequestSchema, type ExternalActionDaemonDispatchRequest } from '@happier-dev/protocol/actions/externalActionApi';
 import { createExternalActionDaemonDispatcher, type ExternalActionForwardRpcCall } from '@/app/api/socket/externalActionDispatcher';
 import { forwardRpcCall, type RpcForwardResult } from '@/app/api/socket/rpc/forwardRpcCall';
@@ -235,8 +242,42 @@ export async function startWorkflowApprovedOperationServer(input: Readonly<{
         };
         return {
             accountId: account.id, tokenEpoch: account.tokenEpoch, token, installedToken, homeId, baseUrl, currentness, machines,
+            createTerminalCredential: () => auth.createToken(account.id, undefined, { kind: 'terminal', authority: 'account_automation' }),
             setCostPhase: (phase: string) => { costPhase = phase; },
             readRequestCosts: () => requestCosts.map(cost => ({ ...cost })),
+            observeWorkflowWake: async (machineId: string, onUpdate?: (update: unknown) => void) => {
+                const updates: Array<{ runId: string; targetMachineId?: string; state: string }> = [];
+                const machine = machines.find(machine => machine.id === machineId);
+                const server = app.machineDaemonPresence;
+                if (!machine || !(server instanceof Server)) throw new Error('Workflow Machine socket unavailable');
+                const socket = io(baseUrl, { path: '/v1/updates', transports: ['websocket'], autoConnect: false, reconnection: false,
+                    auth: { ...buildAccountStoredContentCompatibilitySocketAuthV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION),
+                        ...buildMachineScopedSocketAuth({ token, machineId, installationId: machine.installationId,
+                            installationPublicKey: Buffer.from(machine.keys.publicKey).toString('base64url'),
+                            installationProof: signMachineInstallationProof({ privateKey: machine.keys.secretKey,
+                                payload: { version: 1, installationId: machine.installationId, machineId, accountId: account.id } }) }) } });
+                socket.on('update', (payload: UpdatePayload) => {
+                    if (payload.body.t === 'automation-run-updated') {
+                        updates.push({ runId: payload.body.runId, targetMachineId: payload.body.targetMachineId,
+                            state: payload.body.state });
+                        onUpdate?.(payload);
+                    }
+                });
+                const room = getMachineSocketRoom(account.id, machineId);
+                await new Promise<void>((resolve, reject) => {
+                    let connected = false;
+                    let joined = false;
+                    const cleanup = () => { server.sockets.adapter.off('join-room', onJoin); socket.off('connect_error', onError); };
+                    const complete = () => { if (connected && joined) { cleanup(); resolve(); } };
+                    const onJoin = (joinedRoom: string) => { if (joinedRoom === room) { joined = true; complete(); } };
+                    const onError = (error: Error) => { cleanup(); socket.disconnect(); reject(error); };
+                    server.sockets.adapter.on('join-room', onJoin);
+                    socket.once('connect_error', onError);
+                    socket.once('connect', () => { connected = true; complete(); });
+                    socket.connect();
+                });
+                return { updates, close: async () => { socket.disconnect(); } };
+            },
             waitForMachineRpc: async (machineId: string, method: string, signal?: AbortSignal) => {
                 const io = app.machineDaemonPresence;
                 if (!(io instanceof Server)) throw new Error('Workflow Home socket owner unavailable');

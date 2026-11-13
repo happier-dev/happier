@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -52,8 +52,8 @@ import { createCredentialedWorkflowMaterializationHostV1 } from '../../../../app
 import { createWorkflowAcceptedAuthorizationCurrentness } from '../../../../apps/cli/src/daemon/workflows/daemonRuntime';
 import { createWorkflowRunStorageClient } from '../../../../apps/cli/src/daemon/workflows/workflowRunStorageClient';
 import { createWorkflowInvocationRecoveryObserver, observeWorkflowInvocationRecoveryEvidence, resolveWorkflowSessionConversation } from '../../../../apps/cli/src/daemon/workflows/invocationRecoveryObserver';
-import { ACTION_OPERATION_RPC_METHODS_V2 } from '@happier-dev/protocol/actions/operations/v1';
-import { createWorkflowInvocationRecoveryFactWriter } from '../../../../apps/cli/src/daemon/workflows/recovery';
+import { ACTION_OPERATION_RPC_METHODS_V2, ActionOperationListV1ResponseSchema } from '@happier-dev/protocol/actions/operations/v1';
+import { createWorkflowInvocationRecoveryFactWriter, createWorkflowRunRecoveryReader } from '../../../../apps/cli/src/daemon/workflows/recovery';
 import { createWorkflowRunActionOwner } from '../../../../apps/cli/src/session/actions/workflowRunActions';
 import { createWorkflowActionExecutor } from '@happier-dev/protocol/actions/executor/workflowAccountActions';
 import { createWorkflowDefinitionActions } from '@happier-dev/protocol/actions/executor/workflowDefinitions';
@@ -62,7 +62,7 @@ import { createCliApprovalsArtifactStore } from '../../../../apps/cli/src/sessio
 import { createDaemonApprovalExecutionOriginCurrentness, createDaemonExternalActionTargetResolver } from '../../../../apps/cli/src/daemon/externalActions/daemonExternalActionTargetResolver';
 import { runWithServerHttpBaseUrl } from '../../../../apps/cli/src/api/client/serverHttpBaseUrl';
 import { readHttpStatus } from '../../../../apps/cli/src/api/client/httpStatusError';
-import { resolveAutomationWorkerAccountEncryption } from '../../../../apps/cli/src/daemon/automation/automationWorker';
+import { resolveAutomationWorkerAccountEncryption, startAutomationWorker } from '../../../../apps/cli/src/daemon/automation/automationWorker';
 import { prepareExternalActionRequesterAccountAuthorization, prepareExternalActionRequesterAccountAuthorizationWithEnvelope,
     dispatchOriginalAccountAction,
     projectExternalActionRequesterHttpAuthorization,
@@ -94,7 +94,6 @@ import { createCommittedContributedActionDefinitionLister, createCommittedContri
 import { createCredentialedTargetActionCurrentIntent } from '../../../../apps/cli/src/session/actions/approvals/credentialedTargetActionCurrentIntent';
 import { prepareSessionCreationTarget } from '../../../../apps/cli/src/session/creation/prepareSessionCreationTarget';
 import { createPublishProjectActionDeps, buildPublishWorkflow } from '../../../../apps/cli/src/workspaces/publishProject';
-import { createPreparedPublishTestFixture } from '../../../../apps/cli/src/workspaces/publishProject.testkit';
 import { buildMachineSetupWorkflow, buildMachineSetupTargetApplyInput, createCombinedMachineSetupActionDeps } from '../../../../apps/cli/src/machines/setup/composeMachineSetup';
 import { createHostActionOperationRuntime } from '../../../../apps/cli/src/daemon/actionOperations/createHostActionOperationRuntime';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
@@ -113,7 +112,7 @@ import * as setupAcceptedAppRuns from '../../../../apps/cli/src/machines/setup/a
 import * as deploymentDefinitionAdmission from '../../../../apps/cli/src/deployments/deploymentDefinitionAdmission';
 import * as externalActionAuthorization from '../../../../apps/cli/src/api/externalActionExecutionAuthorization';
 import { createApiSessionSocketStub } from '../../../../apps/cli/src/testkit/backends/apiSessionSocketHarness';
-import type { Machine as ApiMachine } from '../../../../apps/cli/src/api/types';
+import { UpdateSchema, type Machine as ApiMachine } from '../../../../apps/cli/src/api/types';
 import { configuration, reloadConfiguration } from '../../../../apps/cli/src/configuration';
 import { adoptServerProfileHomeConnectionDescriptor } from '../../../../apps/cli/src/server/serverProfiles';
 import { logger } from '../../../../apps/cli/src/ui/logger';
@@ -245,6 +244,7 @@ type DeploymentContentReference = Readonly<{ contentArtifactId: string; contentH
 type ServerBoundary = Readonly<{
     accountId: string; tokenEpoch: number; token: string; homeId: string; baseUrl: string;
     currentness: AutomationAccountCurrentnessWitnessV1; machines: readonly Machine[];
+    createTerminalCredential(): Promise<string>;
     createDeploymentArtifact(input: Readonly<{ header: Readonly<Record<string, unknown>>; body: string }>): Promise<DeploymentContentReference>;
     createDeploymentProject(): Promise<{ projectSourceId: string; audience: readonly unknown[];
         environmentContent: DeploymentContentReference; runtimeContent: DeploymentContentReference }>;
@@ -264,6 +264,8 @@ type ServerBoundary = Readonly<{
         transport?: Readonly<{ forward(): Promise<Readonly<{ ok: true; result: unknown }> | Readonly<{ ok: false }>> }>) => Promise<unknown>): void;
     setCostPhase(phase: string): void;
     readRequestCosts(): Array<{ phase: string; method: string; route: string; admissions: number; status: number | null }>;
+    observeWorkflowWake(machineId: string, onUpdate?: (update: unknown) => void): Promise<{
+        updates: Array<{ runId: string; targetMachineId?: string; state: string }>; close(): Promise<void> }>;
     close(): Promise<void>;
 }>;
 
@@ -271,7 +273,7 @@ type ServerBoundary = Readonly<{
 // implementation behind its owner-exported testkit rather than recursively
 // including server internals in the CLI-oriented shared TypeScript program.
 const serverTestkitPath = '../../../../apps/server/sources/testkit/workflowApprovedOperationServer.testkit';
-type ServerFixtureInput = Readonly<{ deploymentTeamOwned?: boolean; e2ee?: Readonly<{ contentPublicKey: Uint8Array;
+type ServerFixtureInput = Readonly<{ deploymentTeamOwned?: boolean; workflowSessions?: boolean; e2ee?: Readonly<{ contentPublicKey: Uint8Array;
     encodeMachine(key: Uint8Array, value: unknown): string;
     decodeMachine(key: Uint8Array, value: string): unknown }> }>;
 async function startServer(input: ServerFixtureInput = {}): Promise<ServerBoundary> {
@@ -502,6 +504,82 @@ async function createPersistedPublishEnvironment(server: ServerBoundary, roles: 
 }
 
 describe('explicit present-user Workflow parent approval replay', () => {
+    it('replays native consent with a DB-issued paired terminal through the registered Machine without fresh reviewer admission', async () => {
+        const server = await startServer();
+        cleanups.push(server.close);
+        const host = server.machines[0]!;
+        const directory = await mkdtemp(join(tmpdir(), 'workflow-terminal-approval-'));
+        cleanups.push(async () => { await removeTempDir(directory); });
+        const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_SERVER_URL']);
+        env.patch({ HAPPIER_HOME_DIR: directory, HAPPIER_ACTIVE_SERVER_ID: server.homeId, HAPPIER_SERVER_URL: server.baseUrl });
+        reloadConfiguration();
+        cleanups.push(async () => { env.restore(); reloadConfiguration(); });
+        await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: server.homeId, createIfMissing: true,
+            observation: 'exact', descriptor: { v: 1, homeServerIdentityId: server.homeId,
+                canonicalServerUrl: server.baseUrl, revision: 1, endpoints: [{ kind: 'https', url: server.baseUrl }] } });
+        const credentials: StoredCredentials = { token: server.token, encryption: null };
+        const terminalCredentials: StoredCredentials = { token: await server.createTerminalCredential(), encryption: null,
+            credentialProvenance: 'stored_session' };
+        const previousNativeBoundary = { ...nativeBoundary };
+        cleanups.push(async () => { Object.assign(nativeBoundary, previousNativeBoundary); });
+        nativeBoundary.credentials = credentials;
+        nativeBoundary.machineId = host.id;
+        nativeBoundary.identity = { version: 1, createdAt: 1, installationId: host.installationId,
+            publicKey: encodeBase64(host.keys.publicKey, 'base64url'), privateKey: encodeBase64(host.keys.secretKey, 'base64url') };
+        const client = await runWithServerHttpBaseUrl(server.baseUrl, async () => {
+            const api = await ApiClient.create(credentials);
+            const snapshot = await fetchServerFeaturesSnapshot({ serverUrl: server.baseUrl, token: credentials.token });
+            if (readServerIdentityIdFromFeaturesSnapshot(snapshot) !== server.homeId) throw new Error('approval_home_observation_missing');
+            api.setServerFeaturesSnapshotProvider(() => snapshot);
+            const machine = await api.getMachine(host.id);
+            if (!machine) throw new Error('approval_machine_missing');
+            return api.machineSyncClient(machine);
+        });
+        cleanups.push(async () => { await client.shutdown(); });
+        const native = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
+            serverId: server.homeId, serverIdentityId: server.homeId, serverApiUrl: server.baseUrl, machineId: host.id,
+            machineActionDirectTargetTransport: { machineId: host.id,
+                invoke: (method, request, options) => client.invokeLocalMachineAction(method, request, options) },
+            pluginActionExecutionOwner: 'current_process' });
+        const registration = client.setRPCHandlers({ spawnSession: async () => { throw new Error('no_session_spawn'); },
+            stopSession: async () => ({ status: 'not_found' }), requestShutdown() {} }, {
+            externalActionIngressOwner: { currentServerId: server.homeId, currentServerHttpBaseUrl: server.baseUrl,
+                executor: native, externalActionMachineRequestPrivateKey: host.keys.secretKey,
+                resolveTarget: createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: server.baseUrl }) },
+        });
+        cleanups.push(async () => { await registration.dispose(); });
+        const manager: unknown = Reflect.get(client, 'rpcHandlerManager');
+        if (!(manager instanceof RpcHandlerManager)) throw new Error('installed_approval_rpc_manager_required');
+        await runWithServerHttpBaseUrl(server.baseUrl, () => new Promise<void>((resolve, reject) => client.connect({
+            onConnect: resolve, onOwnershipConflict: () => reject(new Error('approval_machine_ownership_conflict')) })));
+        expect(await manager.waitForRegisteredHandlers([RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED], { timeoutMs: 20_000 }))
+            .toEqual({ status: 'ready' });
+        const target = { kind: 'machine' as const, machineId: host.id, project: { machineId: host.id, directory } };
+        const requested = await native.execute('approval.request.create', { actionId: 'machines.command.run',
+            actionArgs: { command: 'echo approved >> replay-effect.txt' }, summary: 'Run the reviewed command once', createdBy: { surface: 'cli' } }, {
+            surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' },
+            serverId: server.homeId, serverIdentityId: server.homeId, runtimeAccountId: server.accountId,
+            actionRequestId: randomUUID(), externalActionTarget: target,
+            defaultSessionMachineId: host.id });
+        expect(requested, JSON.stringify(requested)).toMatchObject({ ok: true, result: { artifactId: expect.any(String) } });
+        if (!requested.ok || !requested.result || typeof requested.result !== 'object'
+            || !('artifactId' in requested.result) || typeof requested.result.artifactId !== 'string') throw new Error('native_command_approval_missing');
+        const artifactId = requested.result.artifactId;
+        const paired = createCliActionExecutorFromCredentials({ credentials: terminalCredentials,
+            readCredentials: async () => terminalCredentials, externalActionClient: true,
+            serverId: server.homeId, serverIdentityId: server.homeId, serverApiUrl: server.baseUrl });
+        server.setCostPhase('paired-replay');
+        const result = await paired.execute('approval.request.decide', { artifactId, decision: 'approve' }, {
+            surface: 'cli', authority: 'present_user', actionRequestId: randomUUID() });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+        const replayCosts = server.readRequestCosts().filter(cost => cost.phase === 'paired-replay');
+        expect(replayCosts.filter(cost => cost.route.includes('execution-authorization'))).toEqual([]);
+        expect((await readFile(join(directory, 'replay-effect.txt'), 'utf8')).trim().split(/\r?\n/u)).toEqual(['approved']);
+        await paired.execute('approval.request.decide', { artifactId, decision: 'approve' }, {
+            surface: 'cli', authority: 'present_user', actionRequestId: randomUUID() });
+        expect((await readFile(join(directory, 'replay-effect.txt'), 'utf8')).trim().split(/\r?\n/u)).toEqual(['approved']);
+    });
+
     it.each(['exact', 'causal_ceiling'] as const)('creates the Action-only Run only within the retained host and permission ceiling (%s)', async control => {
         const server = await startServer();
         cleanups.push(server.close);
@@ -619,15 +697,17 @@ function reviewedSetupSources(presetRevision = 1): NonNullable<DeploymentPublish
         { kind: 'direct', setup: {} }];
 }
 
-async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_removed' | 'second_reply_lost'
+async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_removed' | 'second_reply_lost' | 'recoverable_reply_lost' | 'correspondence_write_lost'
     | 'retained_permission' | 'missing_permission' = 'exact',
     publishHostChoice?: PublishHostChoice, registeredPublish = false, registeredSetup = false, preparedApp = false,
     authoredSetup?: 'multi' | 'app_missing', deploymentAdmission?: 'owner' | 'non_deployer', catalogAccountMode?: 'plain' | 'e2ee', flow?: DeploymentFlowCostObserver) {
     nativeBoundary.installationScope ??= new AsyncLocalStorage();
     const mode = catalogAccountMode ?? 'plain';
     const catalog = catalogAccountMode !== undefined;
+    const custodyRecovery = control === 'recoverable_reply_lost' || control === 'correspondence_write_lost';
     const contentKeys = mode === 'e2ee' ? tweetnacl.box.keyPair() : null;
     const server = await startServer({ deploymentTeamOwned: deploymentAdmission !== undefined,
+        ...(custodyRecovery ? { workflowSessions: true } : {}),
         ...(contentKeys ? { e2ee: { contentPublicKey: contentKeys.publicKey,
             encodeMachine: (key: Uint8Array, value: unknown) => encodeBase64(encryptWithDataKey(value, key)),
             decodeMachine: (key: Uint8Array, value: string): unknown => decryptWithDataKey(decodeBase64(value), key) } } : {}) });
@@ -644,6 +724,7 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
     const profileId = registeredPublish || registeredSetup ? server.homeId : 'test-profile';
     const nativeLaunchIndex = nativeBoundary.launches.length;
     const receivingDiagnostics: Array<Readonly<Record<string, string | boolean>>> = [];
+    const receivingOperations = new Map<string, ReturnType<typeof createHostActionOperationRuntime>>();
     if (catalog) {
         const createReader = workflowApprovedOperationOwner.createWorkflowApprovedOperationReader;
         const readerObservation = vi.spyOn(workflowApprovedOperationOwner, 'createWorkflowApprovedOperationReader')
@@ -823,7 +904,7 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
     // Manual admission remains only for the focused policy/replay controls.
     const installedParent = catalog || preparedApp && control === 'exact' && registeredSetup;
     let installedDirectory: string | undefined;
-    if (registeredSetup || preparedApp || deploymentAdmission) {
+    if (registeredSetup || preparedApp || deploymentAdmission || custodyRecovery) {
         installedDirectory = await mkdtemp(join(tmpdir(), 'happier-combined-setup-installed-'));
         const directory = installedDirectory;
         cleanups.push(async function removeInstalledSetupDirectory() { await removeTempDir(directory); });
@@ -921,6 +1002,7 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
     }
     if (registeredSetup && !authoredSetup) runId = deriveWorkflowReplacementId(['machines.setup.apply', server.homeId, server.accountId, parentRequestId]);
     let publishFixture: Readonly<{ input: DeploymentPublishInputV1 }> | undefined;
+    if (registeredPublish && !nativeApp) throw new Error('Publish requires real candidate preparation');
     if (registeredPublish && nativeApp) {
         if (nativeApp.child.actionId !== 'deployments.deploy' || !nativeApp.environmentId || !nativeApp.definition)
             throw new Error('prepared_publish_deployment_required');
@@ -935,27 +1017,6 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
                 expectedRevision: nativeApp.child.input.expectedRevision },
             preparedChildren: { setup: steps.map(step => step.input), deploy: nativeApp.child.input } }) };
         runId = deriveWorkflowReplacementId(['deployments.publish', server.homeId, server.accountId, publishFixture.input.requestKey]);
-    } else if (registeredPublish) {
-        const [environment] = await createPersistedPublishEnvironment(server, { controller: host, builder: first, runtime: [first, second] });
-        if (!environment?.runtimeTargetLinkId) throw new Error('persisted_publish_environment_required');
-        const response = await fetch(`${server.baseUrl}/v1/deployments/environments/${environment.id}?serverId=${server.homeId}`,
-            { headers: { Authorization: `Bearer ${server.token}` } });
-        const loaded = DeploymentActionOutputSchemasV1['deployments.environments.get'].parse(await response.json());
-        if (!loaded.ok) throw new Error(loaded.error);
-        const runtime = loaded.targetLinks.find(link => link.id === environment.runtimeTargetLinkId);
-        if (!runtime) throw new Error('persisted_runtime_required');
-        const operands = { serverId: server.homeId, accountId: server.accountId, hostMachineId: host.id,
-            controllerMachineId: environment.controllerMachineId, buildMachineId: environment.buildMachineId,
-            projectSourceId: environment.projectSourceId, sourceRevision: 1,
-            environmentId: environment.id, environmentRevision: environment.revision,
-            targetLinkId: runtime.id, targetLinkRevision: runtime.revision,
-            machines: [first, second].map(machine => ({ machineId: machine.id, installationId: machine.installationId })),
-            setup: steps.map(step => step.input) };
-        const candidate = createPreparedPublishTestFixture(operands);
-        const artifact = await server.createDeploymentArtifact(candidate.artifact);
-        publishFixture = createPreparedPublishTestFixture({ ...operands, artifactId: artifact.contentArtifactId,
-            artifactHeaderVersion: artifact.contentHeaderVersion, artifactBodyVersion: artifact.contentBodyVersion });
-        runId = deriveWorkflowReplacementId(['deployments.publish', server.homeId, server.accountId, publishFixture.input.requestKey]);
     }
     const definition: WorkflowDefinitionV1 = authoredSetup ? { version: 1, defaults: {}, inputs: [], blocks: [{
         kind: 'action', id: 'authored-setup', actionId: 'machines.setup.apply',
@@ -968,6 +1029,22 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
     })) };
     const storage = createWorkflowRunStorageClient({ token: server.token, machineId: host.id, serverHttpBaseUrl: server.baseUrl,
         createPublisherHeader: async ({ path, body }) => server.publisherHeader({ machineId: host.id, path, body }) });
+    let correspondenceWriteLost = false;
+    if (control === 'correspondence_write_lost') {
+        // Lose the HTTP request before the server sees the Action's final
+        // correspondence CAS. Later failure and recovery writes stay real.
+        const interceptor = axios.interceptors.request.use(request => {
+            const body: unknown = request.data;
+            if (!correspondenceWriteLost && request.url === `${server.baseUrl}/v3/automations/runs/workflow-storage`
+                && body && typeof body === 'object' && Reflect.get(body, 'operation') === 'invocations.fact'
+                && Reflect.get(body, 'runId') === runId && Reflect.get(body, 'lifecycle') === 'admitting') {
+                correspondenceWriteLost = true;
+                throw new Error('correspondence_write_lost');
+            }
+            return request;
+        });
+        cleanups.push(async () => { axios.interceptors.request.eject(interceptor); });
+    }
     if (authoredSetup) {
         const previousCredentials = nativeBoundary.credentials;
         nativeBoundary.credentials = credentials;
@@ -1170,7 +1247,7 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
         externalActionMachineInstallationId: host.installationId, externalActionMachineRequestPrivateKey: host.keys.secretKey });
     let deploymentPreparationCalls = 0;
     let replayedPublishPermissionMode: ActionExecutorContext['callerPermissionMode'];
-    const publishDeps = createPublishProjectActionDeps({
+    const publishDeps = custodyRecovery ? {} : createPublishProjectActionDeps({
         ...(nativeApp ? { prepareDeploymentAction: async request => {
             deploymentPreparationCalls++;
             const preparationMachine = preparedApp ? host : nativeMachine;
@@ -1476,7 +1553,11 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
       const receivingReadDeps = createCliActionDeps({ token: server.token, credentials, sessionId: '', mode: 'plain', ctx: null,
         serverId: profileId, serverIdentityId: server.homeId, serverHttpBaseUrl: server.baseUrl,
         externalActionMachineInstallationId: machine.installationId, externalActionMachineRequestPrivateKey: machine.keys.secretKey });
+      const retainedOperations = control === 'recoverable_reply_lost' ? createHostActionOperationRuntime({ machineId: machine.id,
+          serverId: profileId, resolveAccountId: async () => server.accountId }) : undefined;
+      if (retainedOperations) receivingOperations.set(machine.id, retainedOperations);
       const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+        ...(retainedOperations ? { runActionOperation: retainedOperations.runActionOperation } : {}),
         ...(nativeApp && machine.id === first.id ? { ...nativeApp.dependencies,
             runActionOperation: createHostActionOperationRuntime({ machineId: machine.id, serverId: profileId,
                 custodyBinding: { serverId: profileId, installationId: machine.installationId },
@@ -1509,7 +1590,7 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
     };
     const delivered: Array<{ publisher: string; receiver: string; runId: string }> = [];
     let coordinatingRunId = runId;
-    let loseSecondReply = control === 'second_reply_lost';
+    let loseSecondReply = control === 'second_reply_lost' || control === 'recoverable_reply_lost';
     let installedHostExecutor: ExternalActionIngressOwner['executor'] | undefined;
     const installedReplayFailures: Array<Readonly<{ boundary: string; name: string; code: string; message: string; stack: string[] }>> = [];
     const catalogExecutionEvents: Array<Readonly<Record<string, string | boolean>>> = [];
@@ -2078,6 +2159,33 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
             expectedRevision: selectedClaim.revision, accountCurrentness: server.currentness, signal: receiverLifetime.signal })); }
         finally { coordinatingRunId = previousCoordinatingRunId; }
     };
+    const recoverRetainedInvocations = createWorkflowRunRecoveryReader({ accountId: server.accountId, machineId: host.id, storage,
+        resolveAccountEncryption: async () => {
+            const encryption = await runWithServerHttpBaseUrl(server.baseUrl,
+                () => resolveAutomationWorkerAccountEncryption({ token: server.token, credentials }));
+            if (encryption.kind !== 'available') throw new Error('account_encryption_unavailable');
+            return encryption;
+        },
+        reconcileInvocation: createWorkflowInvocationRecoveryObserver({ credentials, machineId: host.id, actionExecutor: parentExecutor,
+            // The in-process Machine transport reads the real operation owner's
+            // produced snapshots. No completion fact is manufactured by recovery.
+            nativeActionOperations: {
+                findAction: async execution => {
+                    for (const [machineId, operations] of receivingOperations) {
+                        const page = ActionOperationListV1ResponseSchema.parse(await operations.handlers.listV2({
+                            requestIdentity: { actionId: execution.actionId, requestId: execution.actionRequestId } }));
+                        const operation = page.items[0];
+                        if (operation) return { kind: 'found', operation, target: {
+                            key: 'native', serverId: profileId, machineId, operationId: operation.operationId } };
+                    }
+                    return { kind: 'absent' };
+                },
+                get: async target => receivingOperations.get(target.machineId)?.handlers.getV2({ operationId: target.operationId }),
+                wait: async target => receivingOperations.get(target.machineId)?.handlers.getV2({ operationId: target.operationId, waitForTerminal: true }),
+                cancel: async target => receivingOperations.get(target.machineId)?.handlers.cancel({ operationId: target.operationId }),
+            },
+        }),
+    });
     const reconcileInvocations = async () => {
         const stored = await storage.execute({ operation: 'get', runId });
         if (!stored || typeof stored !== 'object' || !('run' in stored)) throw new Error('missing_stored_run');
@@ -2167,8 +2275,9 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
     }, prompts, parentPrompts, host, first, second, storage, runId, delivered, readStoredSnapshot,
         selection, environments, environmentController, personChoice, agentMachine, publishFixture, nativeApp, nativeReceiptAdmissions,
         readDeploymentPreparationCalls: () => deploymentPreparationCalls, replayedPublishPermissionMode,
+        readCorrespondenceWriteLost: () => correspondenceWriteLost,
         readApprovalRequests: () => runWithServerHttpBaseUrl(server.baseUrl, () => approvals.approvalsList({ serverId: profileId })),
-        held, approvalCoordinator, receiverLifetime, approvalsGet, receiverRefusals, hostSetupFailures, reconcileInvocations,
+        held, approvalCoordinator, receiverLifetime, approvalsGet, receiverRefusals, hostSetupFailures, reconcileInvocations, recoverRetainedInvocations,
         readReceivingDiagnostics, readCatalogExecutionDiagnostics: () => ({ installedReplayFailures, catalogExecutionEvents }) };
 }
 
@@ -2862,27 +2971,6 @@ describe('server-stored combined Workflow approval across two receiving Action f
         expect(run.readDeploymentPreparationCalls()).toBe(preparationCalls);
         expect((await run.nativeApp.docker.readInvocations()).filter(call => call.args.includes('up'))).toEqual([]);
     });
-    it('runs one registered signed Publish parent through setup A+B before the deployment child authority boundary', async () => {
-        const run = await fixture('exact', undefined, true);
-        const accepted = await run.readStoredSnapshot();
-        expect(accepted.approvedOperation?.parent.actionId).toBe('deployments.publish');
-        expect(accepted.materializedLeaves.filter(leaf => leaf.kind === 'action').map(leaf => leaf.actionId))
-            .toEqual(['machines.setup.apply', 'machines.setup.apply', 'deployments.deploy']);
-        const outcome = await run.coordinate();
-        expect(run.effects).toEqual([{ machineId: run.first.id, presetRevision: 1 }, { machineId: run.second.id, presetRevision: 1 }]);
-        expect(run.parentPrompts).toHaveLength(1);
-        expect(run.prompts).toEqual([]);
-        // Native deployment is deliberately not simulated. This fixture must
-        // identify its actual first refusal before attributing it to an owner.
-        expect(outcome.state).not.toBe('succeeded');
-        const invocations = await run.reconcileInvocations();
-        expect(invocations).toMatchObject([
-            { index: { lifecycle: 'completed' }, progress: { execution: { actionId: 'machines.setup.apply' } } },
-            { index: { lifecycle: 'completed' }, progress: { execution: { actionId: 'machines.setup.apply' } } },
-            { progress: { invocationPath: { blockId: 'deploy' }, reason: { code: 'deployment_unavailable' } } },
-        ]);
-        expect(invocations[2]?.progress).not.toHaveProperty('execution');
-    });
     it('completes one registered signed Publish parent with a real native deployment receipt and no replay', async () => {
         const flow = createDeploymentFlowCostObserver();
         cleanups.push(async () => { console.info('FLOWBUDGET_COUNTS', JSON.stringify(await flow.result('publish'))); flow.dispose(); });
@@ -3071,6 +3159,63 @@ describe('server-stored combined Workflow approval across two receiving Action f
         expect(run.receiverRefusals).toEqual(['invalid_token']);
         expect(run.delivered).toEqual([]);
         expect(run.effects).toEqual([]);
+    });
+
+    it.each(['recoverable_reply_lost', 'correspondence_write_lost'] as const)(
+    'recovers terminal custody on Delete after approved execution (%s), then deletes without reexecution', async control => {
+        const run = await fixture(control);
+        let deliverToWorker: ((update: unknown) => void) | undefined;
+        const wake = await run.server.observeWorkflowWake(run.host.id, update => deliverToWorker?.(update));
+        cleanups.push(wake.close);
+        const peer = await run.server.observeWorkflowWake(run.first.id);
+        cleanups.push(peer.close);
+        // The real connect owner replays pending custody before Delete is tried.
+        // Consume that earlier wake before enabling the worker's recovery path.
+        await vi.waitFor(() => expect(wake.updates).toContainEqual({ runId: run.runId,
+            targetMachineId: run.host.id, state: 'running' }));
+        wake.updates.length = 0;
+        peer.updates.length = 0;
+        expect(run.parentPrompts).toHaveLength(1);
+        expect(await run.coordinateProduction()).toMatchObject({ state: 'outcome_uncertain' });
+        const expectedEffects = control === 'recoverable_reply_lost'
+            ? [{ machineId: run.first.id, presetRevision: 1 }, { machineId: run.second.id, presetRevision: 1 }] : [];
+        expect(run.effects).toEqual(expectedEffects);
+        expect(run.readCorrespondenceWriteLost()).toBe(control === 'correspondence_write_lost');
+        const stored = await run.storage.execute({ operation: 'get', runId: run.runId });
+        const before = WorkflowRunSummaryV1Schema.parse(Reflect.get(stored as object, 'run'));
+        expect(before).toMatchObject({ state: 'outcome_uncertain', workflowCustodyState: 'pending' });
+        let recovered: () => void = () => { throw new Error('custody_recovery_not_initialized'); };
+        let recoveryFailed: (error: unknown) => void = () => { throw new Error('custody_recovery_not_initialized'); };
+        const recovery = new Promise<void>((resolve, reject) => { recovered = resolve; recoveryFailed = reject; });
+        const worker = runWithServerHttpBaseUrl(run.server.baseUrl, () => startAutomationWorker({
+            token: run.server.token, credentials: { token: run.server.token, encryption: null }, machineId: run.host.id,
+            env: { ...process.env, HAPPIER_FEATURE_WORKFLOWS__ENABLED: '1', HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' },
+            recoverWorkflowRuns: async (runId, _requester, signal) => {
+                try { await run.recoverRetainedInvocations('control', signal, runId); recovered(); }
+                catch (error) { recoveryFailed(error); throw error; }
+            },
+        }));
+        cleanups.push(async () => { worker.stop(); });
+        deliverToWorker = update => worker.handleServerUpdate(UpdateSchema.parse(update));
+        await expect(run.storage.execute({ operation: 'delete', runId: run.runId, expectedRevision: before.revision }))
+            .rejects.toMatchObject({ response: { status: 422, data: { error: 'custody_pending' } } });
+        await vi.waitFor(() => expect(wake.updates).toEqual([{ runId: run.runId,
+            targetMachineId: run.host.id, state: 'outcome_uncertain' }]));
+        expect(peer.updates).toEqual([]);
+        // Socket delivery feeds the actual worker's terminal wake handler. Its
+        // production recovery callback settles custody without repeating input.
+        await recovery;
+        const settledBody = await run.storage.execute({ operation: 'get', runId: run.runId });
+        const settled = WorkflowRunSummaryV1Schema.parse(Reflect.get(settledBody as object, 'run'));
+        expect(settled).toMatchObject({ state: 'outcome_uncertain', workflowCustodyState: 'settled' });
+        await run.recoverRetainedInvocations('reconnect');
+        expect(run.effects).toEqual(expectedEffects);
+        expect(run.delivered).toHaveLength(expectedEffects.length);
+        expect(run.parentPrompts).toHaveLength(1);
+        expect(run.prompts).toEqual([]);
+        await expect(run.storage.execute({ operation: 'delete', runId: run.runId, expectedRevision: settled.revision }))
+            .resolves.toEqual({ deleted: true, runId: run.runId });
+        await expect(run.storage.execute({ operation: 'get', runId: run.runId })).rejects.toMatchObject({ response: { status: 404 } });
     });
 
     it('keeps A completed and B uncertain after B loses its reply, then reconciles and reloads without replay', async () => {
