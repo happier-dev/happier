@@ -325,7 +325,6 @@
   "plugins.gitlab.ui.files.deleted": "已删除",
   "plugins.gitlab.ui.files.added": "新增",
   "plugins.gitlab.ui.files.renamed": "从 {previous} 重命名",
-  "plugins.gitlab.ui.files.modified": "已修改",
   "plugins.gitlab.ui.discussion.comment": "评论",
   "plugins.gitlab.ui.discussion.thread": "讨论串",
   "plugins.gitlab.ui.discussion.showEarlier": "显示较早的 {count} 条回复",

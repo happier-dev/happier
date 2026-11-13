@@ -325,7 +325,6 @@
   "plugins.gitlab.ui.files.deleted": "Eliminato",
   "plugins.gitlab.ui.files.added": "Aggiunto",
   "plugins.gitlab.ui.files.renamed": "Rinominato da {previous}",
-  "plugins.gitlab.ui.files.modified": "Modificato",
   "plugins.gitlab.ui.discussion.comment": "commento",
   "plugins.gitlab.ui.discussion.thread": "discussione",
   "plugins.gitlab.ui.discussion.showEarlier": "Mostra {count} risposte precedenti",

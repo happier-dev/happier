@@ -96,7 +96,9 @@ export function githubReviewStateKey(state: string): string {
 
 /** Provider status words this build can present in the reader's language. */
 export const GITHUB_CHANGED_FILE_STATUS_LABELS_V1: Readonly<Record<string, string | undefined>> =
-  Object.freeze({ modified: 'Modified', renamed: 'Renamed' });
+  // Only the statuses worth a line: a plain modification says nothing. A rename with its old path reads
+  // `fileRenamedFrom` instead.
+  Object.freeze({ added: 'Added', removed: 'Deleted', renamed: 'Renamed' });
 export const GITHUB_CHECK_STATUS_LABELS_V1: Readonly<Record<string, string | undefined>> =
   Object.freeze({
     completed: 'Completed',

@@ -325,7 +325,6 @@
   "plugins.gitlab.ui.files.deleted": "削除",
   "plugins.gitlab.ui.files.added": "追加",
   "plugins.gitlab.ui.files.renamed": "{previous} から名前変更",
-  "plugins.gitlab.ui.files.modified": "変更",
   "plugins.gitlab.ui.discussion.comment": "コメント",
   "plugins.gitlab.ui.discussion.thread": "スレッド",
   "plugins.gitlab.ui.discussion.showEarlier": "以前の返信を {count} 件表示",

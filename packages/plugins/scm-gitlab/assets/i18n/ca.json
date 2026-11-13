@@ -325,7 +325,6 @@
   "plugins.gitlab.ui.files.deleted": "Suprimit",
   "plugins.gitlab.ui.files.added": "Afegit",
   "plugins.gitlab.ui.files.renamed": "Canviat el nom des de {previous}",
-  "plugins.gitlab.ui.files.modified": "Modificat",
   "plugins.gitlab.ui.discussion.comment": "comentari",
   "plugins.gitlab.ui.discussion.thread": "fil",
   "plugins.gitlab.ui.discussion.showEarlier": "Mostra {count} respostes anteriors",

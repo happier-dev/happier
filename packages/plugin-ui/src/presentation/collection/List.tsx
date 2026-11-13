@@ -954,7 +954,9 @@ export function HappierListItem({
                 : pageSection
                 ? { ...resolveHappierPageTextStyle('rowTitle', hostTypography), ...pageRowMetrics?.title, color: titleColor }
                 : textStyle(resolvedTheme, hostTypography, 'label', titleColor)}
-              {...(titleMiddle === null ? {} : { baseStyle: HAPPIER_MIDDLE_ELLIPSIS_STYLE.row })}
+              // The two runs are flex items, which a browser's accessible name joins with a space ("src /a.ts");
+              // the whole title names them as one word.
+              {...(titleMiddle === null ? {} : { baseStyle: HAPPIER_MIDDLE_ELLIPSIS_STYLE.row, accessibilityLabel: title })}
             >
               {titleMiddle === null ? titleContent ?? title : (
                 <>

@@ -12,6 +12,7 @@ import {
 import {
   describeTriageSourceFailureV1,
   TriageDetailSurfaceInputV1Schema,
+  TriageGetResultV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -27,14 +28,21 @@ import {
   GithubChangedFilesInputV1Schema,
   GithubChangedFilesResultV1Schema,
   GithubOverviewResultV1Schema,
+  GithubIssueOpeningDetailV1Schema,
+  GithubFeedbackInputV1Schema,
+  GithubFeedbackResultV1Schema,
 } from '../../triage/detail/contracts.js';
 import {
   GITHUB_FIXTURE_REPOSITORY_ID,
+  GITHUB_ISSUE_RESPONSE,
+  GITHUB_REPOSITORY_RESPONSE,
   GITHUB_PULL_REQUEST_RESPONSE,
   githubChangedFile,
 } from '../../triage/__fixtures__/githubResponses.js';
 import {
   createStubGithubTransport,
+  githubChecksBatchResponse,
+  readRecordedJsonBody,
   type StubHttpResponse,
 } from '../../triage/testkit/githubTriage.test-support.js';
 import { renderSurface } from '../renderSurface.js';
@@ -271,6 +279,188 @@ async function mountRegisteredFiles(
 }
 
 describe('registered GitHub detail read dispatch', () => {
+  it.each([
+    ['status', 'github_forbidden'],
+    ['transport', 'github_request_failed'],
+    ['invalidJson', 'github_api_response_invalid'],
+    ['invalidShape', 'github_graphql_response_invalid'],
+    ['graphqlError', 'github_forbidden'],
+    ['missingData', 'github_graphql_response_invalid'],
+    ['invalidFeedbackData', 'github_feedback_response_invalid'],
+    ['wrongRepository', 'route-body-mismatch'],
+  ] as const)('keeps the parent Feedback thread and shows the registered earlier-replies failure %s code and issued request ID', async (refusal, code) => {
+    const scope = createTriageEphemeralSharedScopeFixture();
+    const input = TriageDetailSurfaceInputV1Schema.parse({ ...launchInput(), panel: 'activity' });
+    let replyReadCount = 0;
+    const transport = createStubGithubTransport({ respond: request => {
+      const path = new URL(request.url).pathname;
+      if (path === '/graphql') {
+        // GitHub GraphQL is the genuine boundary; registered readers and projections stay real.
+        const { query } = readRecordedJsonBody(request) as { query: string };
+        if (query.includes('GithubFeedbackThreadReplies')) {
+          replyReadCount += 1;
+          if (replyReadCount === 1) return { status: 200, body: { data: { node: {
+            id: 'PRRT_retained', pullRequest: { number: 1284, repository: { databaseId: Number(GITHUB_FIXTURE_REPOSITORY_ID) } },
+            comments: { nodes: [{ id: 'PRRC_older', body: 'A previously loaded reply remains readable.', author: { login: 'reviewer' }, createdAt: '2026-08-11T13:00:00Z' }],
+              pageInfo: { hasPreviousPage: true, startCursor: 'earlier-again' } },
+          } } } };
+          if (refusal === 'transport') throw new Error('Network unavailable');
+          if (refusal === 'invalidJson') return { status: 200, rawBody: new TextEncoder().encode('{') };
+          if (refusal === 'invalidShape') return { status: 200, body: [] };
+          if (refusal === 'graphqlError') return { status: 200, body: { errors: [{ type: 'FORBIDDEN' }], data: null } };
+          if (refusal === 'missingData') return { status: 200, body: {} };
+          if (refusal === 'invalidFeedbackData') return { status: 200, body: { data: {} } };
+          if (refusal === 'wrongRepository') return { status: 200, body: { data: { node: {
+            id: 'PRRT_retained', pullRequest: { number: 1284, repository: { databaseId: 1 } },
+          } } } };
+          return { status: 403, body: {} };
+        }
+        const pageInfo = { hasPreviousPage: false, hasNextPage: false };
+        const empty = { nodes: [], pageInfo };
+        const pullRequest = query.includes('GithubFeedbackThreads') ? {
+          reviewThreads: { nodes: [{ id: 'PRRT_retained', isResolved: false, path: 'src/pump.ts', line: 42,
+            firstComment: { totalCount: 4, nodes: [{ id: 'PRRC_first', body: 'Keep the parent Feedback readable.', author: { login: 'reviewer' }, createdAt: '2026-08-09T13:00:00Z' }] },
+            comments: { nodes: [{ id: 'PRRC_latest', body: 'The latest reply remains readable.', author: { login: 'reviewer' }, createdAt: '2026-08-12T13:00:00Z' }],
+              pageInfo: { hasPreviousPage: true, startCursor: 'earlier-replies' } },
+          }], pageInfo },
+        } : query.includes('GithubFeedbackComments') ? { comments: empty }
+          : query.includes('GithubFeedbackReviews') ? { reviews: empty }
+            : query.includes('GithubFeedbackRequests') ? { reviewRequests: empty } : null;
+        return pullRequest === null ? githubChecksBatchResponse(request)
+          : { status: 200, body: { data: { repository: { databaseId: Number(GITHUB_FIXTURE_REPOSITORY_ID), pullRequest } } } };
+      }
+      if (path.endsWith('/pulls/1284')) return { status: 200, body: GITHUB_PULL_REQUEST_RESPONSE };
+      if (path.endsWith('/issues/1284')) return { status: 200, body: GITHUB_ISSUE_RESPONSE };
+      return undefined;
+    } });
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
+    } });
+    plugins.push(plugin);
+    const replies: Array<Readonly<{ result: unknown; requestId: string }>> = [];
+    let detail!: PluginUiTestkit;
+    await act(async () => {
+      detail = await createPluginUiTestkit({
+        identity: { instanceId: 'github-thread-failure', mountNonce: 'github-thread-failure-mount' },
+        authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
+        surface: defineUiSurface(context => {
+          const body = renderSurface({ ...context, launchInput: input });
+          if (body !== null && !React.isValidElement(body)) throw new Error('Expected a native GitHub surface');
+          return <SourcePanelActionsFixture scope={scope}>{body}</SourcePanelActionsFixture>;
+        }),
+        launchInput: input,
+        surfaceContext: createSurfaceContextFixture(),
+        adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+        handlers: { executeAction: async ({ action, input: actionInput, requestId, signal }) => {
+          const localId = typeof action === 'string' ? action : action.localId;
+          if (localId.startsWith('ui/') && actionInput !== undefined)
+            return await invokeSourcePanelFixtureAction(scope, localId, actionInput, detail.context, signal);
+          const result = await plugin.invokeAction(localId, actionInput, { surface: 'ui', requestId, signal });
+          if (localId === GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readFeedback
+            && GithubFeedbackInputV1Schema.parse(actionInput).connection === 'threadReplies') replies.push({ result, requestId });
+          return result;
+        } },
+      });
+    });
+    mounted.push(detail);
+    await vi.waitFor(async () => expect(await detail.getByText('The latest reply remains readable.')).toBeDefined());
+    await vi.waitFor(async () => expect(await detail.getByText('A previously loaded reply remains readable.')).toBeDefined());
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Load earlier replies' })); });
+    await vi.waitFor(() => expect(replies).toHaveLength(2));
+    expect(GithubFeedbackResultV1Schema.parse(replies[1]!.result)).toMatchObject({
+      kind: 'unavailable', failure: { code, requestId: replies[1]!.requestId },
+    });
+    await expect(detail.getByText('The latest reply remains readable.')).resolves.toBeDefined();
+    await expect(detail.getByText('A previously loaded reply remains readable.')).resolves.toBeDefined();
+    const notices = await detail.getAllByRole('button', { name: 'Details' });
+    for (let index = 0; index < notices.length; index += 1) {
+      await act(async () => { await detail.press((await detail.getAllByRole('button', { name: 'Details' }))[index]!); });
+      if (await detail.queryByText(replies[1]!.requestId) !== undefined) break;
+      await act(async () => { await detail.press((await detail.getAllByRole('button', { name: 'Details' }))[index]!); });
+    }
+    await expect(detail.getByText(code)).resolves.toBeDefined();
+    await expect(detail.getByText(replies[1]!.requestId)).resolves.toBeDefined();
+  });
+
+  it.each([
+    ['transport', 'github_request_failed'],
+    ['invalidJson', 'github_api_response_invalid'],
+    ['invalidShape', 'route-body-mismatch'],
+    ['undeclaredKind', 'github_kind_undeclared'],
+  ] as const)('retains the ordinary get request identity after a provider %s failure', async (refusal, code) => {
+    const requestId = 'd5f4ff53-e307-4e2c-97f8-0b79bca51915';
+    const transport = createStubGithubTransport({ respond: request => {
+      if (!new URL(request.url).pathname.endsWith('/issues/7')) return undefined;
+      if (refusal === 'transport') throw new Error('Network unavailable');
+      return refusal === 'invalidJson'
+        ? { status: 200, rawBody: new TextEncoder().encode('{') }
+        : { status: 200, body: {} };
+    } });
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
+    } });
+    plugins.push(plugin);
+    const result = TriageGetResultV1Schema.parse(await plugin.invokeAction(GITHUB_TRIAGE_ACTION_IDS_V1.get, {
+      v: 1, instance: launchInput().instance,
+      localRef: { kindId: refusal === 'undeclaredKind' ? 'unknown-kind' : 'issue', collisionScope: `github:${GITHUB_FIXTURE_REPOSITORY_ID}`, entryId: '7' },
+      lastKnownLocator: { v: 1, routingToken: 'octo-org/example-app' },
+    }, { surface: 'ui', requestId }));
+    expect(result).toMatchObject({ kind: 'unresolved', failure: { code, requestId } });
+  });
+  it.each([['status', 'github_forbidden'], ['transport', 'github_request_failed']] as const)(
+    'retains the cold get request identity through a partial repository capability %s failure and native strict parsing', async (refusal, code) => {
+    const requestId = '79edcd0f-6e82-4b1a-9f31-130ac82375e0';
+    const transport = createStubGithubTransport({ respond: request => {
+      const path = new URL(request.url).pathname;
+      if (path === '/repos/octo-org/example-app') {
+        if (refusal === 'transport') throw new Error('Network unavailable');
+        return { status: 403, body: {} };
+      }
+      if (path.endsWith('/issues/7')) return { status: 200, body: { ...GITHUB_ISSUE_RESPONSE,
+        repository: GITHUB_REPOSITORY_RESPONSE,
+        url: 'https://api.github.com/repos/octo-org/example-app/issues/7',
+        repository_url: 'https://api.github.com/repos/octo-org/example-app',
+        html_url: 'https://github.com/octo-org/example-app/issues/7' } };
+      if (path.endsWith('/parent')) return { status: 404, body: {} };
+      if (path.endsWith('/sub_issues') || path.endsWith('/blocked_by')) return { status: 200, body: [] };
+      return undefined;
+    } });
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
+    } });
+    plugins.push(plugin);
+    const opening = launchInput();
+    const result = TriageGetResultV1Schema.parse(await plugin.invokeAction(GITHUB_TRIAGE_ACTION_IDS_V1.get, {
+      v: 1, instance: opening.instance, localRef: { kindId: 'issue', collisionScope: `github:${GITHUB_FIXTURE_REPOSITORY_ID}`, entryId: '7' },
+      lastKnownLocator: { v: 1, routingToken: 'octo-org/example-app' },
+    }, { surface: 'ui', requestId }));
+    expect(result, JSON.stringify(result)).toMatchObject({ kind: 'present' });
+    if (result.kind !== 'present') return;
+    const native = GithubIssueOpeningDetailV1Schema.parse(result.detailData);
+    expect(native.capabilities).toMatchObject({ kind: 'unavailable', failure: { code, requestId } });
+    const input = TriageDetailSurfaceInputV1Schema.parse({ ...opening, panel: 'overview', detailData: result.detailData,
+      observation: { entryRef: { source: opening.observation.entryRef.source, ...result.localRef },
+        observedAtMs: opening.observation.observedAtMs, locator: result.locator, snapshot: result.snapshot, viewer: result.viewer } });
+    let detail!: PluginUiTestkit;
+    const scope = createTriageEphemeralSharedScopeFixture();
+    await act(async () => {
+      detail = await createPluginUiTestkit({ identity: { instanceId: 'cold-issue-failure', mountNonce: 'cold-issue-failure' },
+        authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' }, launchInput: input,
+        surface: defineUiSurface(context => <SourcePanelActionsFixture scope={scope}>
+          {renderSurface({ ...context, launchInput: input }) as React.ReactNode}
+        </SourcePanelActionsFixture>), surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+        handlers: { executeAction: async ({ action, input: actionInput, signal }) => {
+          if (typeof action === 'string' || actionInput === undefined) throw new Error('Unexpected cold issue Action');
+          return plugin.invokeAction(action.localId, actionInput, { surface: 'ui', signal });
+        } },
+      });
+    });
+    mounted.push(detail);
+    const details = await detail.getByRole('button', { name: 'Details' });
+    await act(async () => { await detail.press(details); });
+    await expect(detail.getByText(requestId)).resolves.toBeDefined();
+    expect(document.body.textContent).toContain('The client reconnects in a loop after resume.');
+  });
   it('settles current after the second Unassign through the native completion owner', async () => {
     let assigned = false;
     let writes = 0;
@@ -332,7 +522,7 @@ describe('registered GitHub detail read dispatch', () => {
           nativeReads++;
           const input = TriageReobserveEntryInputV1Schema.parse(request.input);
           const result = await reobserveTriageEntry({ ...input, lastKnownLocator: opening.observation.locator }, {
-            readConfiguredInstance: async () => instance, readAdmittedSources: async () => admitted,
+            readConfiguredInstance: async () => instance, readSourceSnapshot: async () => ({ contributions: admitted }),
             executeGet: async (_operation, getInput, options) => plugin.invokeAction(GITHUB_TRIAGE_ACTION_IDS_V1.get, getInput,
               { surface: 'ui', signal: options?.signal }), nowMs: () => Date.now(), signal: request.signal,
           });
@@ -1128,11 +1318,12 @@ describe('registered GitHub detail read dispatch', () => {
     for (const name of ['open', 'second', 'third']) expect(document.body.textContent).toContain(`src/${name}.ts`);
     expect(document.body.textContent).not.toContain('+open-line');
     await act(async () => {
-      await detail.press(await detail.getByRole('button', { name: 'Open src/open.ts' }));
+      // The Files List row discloses its own diff (QB-72); there is no separate Open control.
+      await detail.press((await detail.queryAllByRole('button')).find(button => button.name?.startsWith('src/open.ts'))!);
     });
     await vi.waitFor(async () => {
       await act(async () => {});
-      expect(document.querySelector('[data-testid="changed-file-diff:src/open.ts"]')?.textContent).toContain('+open-line');
+      expect(document.body.textContent).toContain('open-line');
     });
     expect(filesReads(), 'one file asked for is one read').toBe(listed + 1);
   });

@@ -41,6 +41,11 @@ export type TriageDetailPrimaryWriteV1 = Readonly<{
   alternatives?: readonly TriageDetailPrimaryWriteV1[];
   /** Lazy provider policy explanation, called only when its disclosure opens. */
   readRequirements?: () => Promise<void>;
+  /**
+   * The source's existing re-read, offered while `disabledReason` says the write waits on a failed read. The header
+   * draws it as Retry beside that reason; it is the same refresh, never a second read path.
+   */
+  retry?: () => unknown;
   /** Source-rendered settled feedback, through the incumbent write presenter. */
   feedback?: React.ReactNode;
   /** Automation entry or navigation-only offer. UI Actions use controllerFor through a host-owned control. */

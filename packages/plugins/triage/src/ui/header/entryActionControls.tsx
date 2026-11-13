@@ -370,6 +370,7 @@ export function TriageEntryActionControls(
   const sourceCannotPrepare = reviewPreparation === 'unsupported';
   const blockedInRow = sourceCannotPrepare && (isBlocked(primary) || isBlocked(beside));
   const preparationReasonLabel = text('plugins.triage.surface.session.preparationUnsupported', NO_PREPARATION_COPY);
+  const retryLabel = text('plugins.triage.surface.actions.retry', 'Retry');
   const preparationReason = (
     <Status
       tone="muted"
@@ -464,6 +465,10 @@ export function TriageEntryActionControls(
       ...(writeBlocked ? { disabled: true } : {}),
       ...(write.disabledReason == null ? {} : { subtitle: write.disabledReason }),
     }]),
+    // The source's re-read stays with its write: the row right under it, never a line under the band.
+    ...(!writeShown || write?.retry === undefined || write.disabledReason == null ? [] : [{
+      id: `${SOURCE_WRITE_ITEM_PREFIX}retry`, label: retryLabel,
+    }]),
     ...(props.taskDraft !== undefined ? [{
       id: MAKE_TASK_ITEM_ID, label: makeTask.label, ...(makeTask.busy ? { disabled: true } : {}),
     }] : []),
@@ -498,6 +503,7 @@ export function TriageEntryActionControls(
   const selectMenuItem = (id: string) => {
     setMoreOpen(false);
     if (id === MAKE_TASK_ITEM_ID) { void makeTask.run(); return; }
+    if (id === `${SOURCE_WRITE_ITEM_PREFIX}retry`) { void write?.retry?.(); return; }
     if (write !== undefined && id.startsWith(SOURCE_WRITE_ITEM_PREFIX)) {
       const method = id.startsWith(`${SOURCE_WRITE_ITEM_PREFIX}method:`) ? id.slice(`${SOURCE_WRITE_ITEM_PREFIX}method:`.length)
         : write.methods?.length === 1 ? write.methods[0]!.id : undefined;
@@ -578,8 +584,15 @@ export function TriageEntryActionControls(
       {/* Why the source's write cannot run, said quietly beside the disabled control's row, never a dead button. The
           readiness line that explains it elsewhere lives behind this row's ⋯ here, so only a native state line (a
           queue, auto-merge, which replaces the button) already says it. */}
-      {props.sourceWrite?.disabledReason == null || props.sourceWrite.reading === true || triageSourceWriteReplacedByNativeStateV1(props.sourceWrite) ? null : (
-        <Status tone="muted" label={props.sourceWrite.disabledReason} />
+      {/* On a phone the write is a row of ⋯, which carries this reason (and its re-read) itself. */}
+      {props.sourceWrite?.disabledReason == null || props.sourceWrite.reading === true || writeShown
+        || triageSourceWriteReplacedByNativeStateV1(props.sourceWrite) ? null : (
+        <Row gap="small" align="center" wrap>
+          <Status tone="muted" label={props.sourceWrite.disabledReason} />
+          {props.sourceWrite.retry === undefined ? null : (
+            <Button title={retryLabel} variant="plain" size="small" onPress={() => { void props.sourceWrite?.retry?.(); }} />
+          )}
+        </Row>
       )}
       {props.sourceWrite?.feedback == null ? null : props.sourceWrite.feedback}
       {/* On a phone the band stays one row: the detail places the open section in its story, not in the band. */}

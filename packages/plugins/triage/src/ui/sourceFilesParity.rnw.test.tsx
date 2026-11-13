@@ -65,18 +65,18 @@ async function mountFiles(source: 'github' | 'bitbucket') {
 }
 
 describe('public mounted source Files intents', () => {
-  it('opens a GitHub file in the shared review through the agent Action and the same UI intent', async () => {
+  it('opens and closes a GitHub file in the Files List through the agent Action and the same UI intent', async () => {
     const { page, invoke, reads, diffs } = await mountFiles('github');
     expect(reads()).toBe(1);
     expect(diffs()).toBe(0);
     await act(async () => { expect(await invoke({ kind: 'setSourceItemExpanded', list: 'files', itemId: 'src/one.ts', expanded: true })).toEqual({ status: 'applied' }); });
     await vi.waitFor(() => expect(document.body.textContent).toContain('+new'));
     expect(diffs()).toBe(1);
-    // Folding belongs to the shared review: an agent's close is refused rather than claimed.
-    expect(await invoke({ kind: 'setSourceItemExpanded', list: 'files', itemId: 'src/one.ts', expanded: false })).toEqual({ status: 'unavailable' });
+    // The List row's one disclosure is the same fact for agent and reader, so an agent's close is applied too.
+    await act(async () => { expect(await invoke({ kind: 'setSourceItemExpanded', list: 'files', itemId: 'src/one.ts', expanded: false })).toEqual({ status: 'applied' }); });
     expect(await invoke({ kind: 'setSourceItemExpanded', list: 'other', itemId: 'src/one.ts', expanded: true })).toEqual({ status: 'unavailable' });
     expect(await invoke({ kind: 'setSourceItemExpanded', list: 'files', itemId: 'not-loaded.ts', expanded: true })).toEqual({ status: 'unavailable' });
-    await act(async () => { await page.press(await page.getByRole('button', { name: 'Open src/one.ts' })); });
+    await act(async () => { await page.press((await page.queryAllByRole('button')).find(button => button.name?.startsWith('src/one.ts'))!); });
     await vi.waitFor(() => expect(diffs()).toBe(2));
     expect(document.body.textContent).toContain('+new');
   });
@@ -93,7 +93,7 @@ describe('public mounted source Files intents', () => {
     await act(async () => { await page.dispose(); });
     expect(await invoke({ kind: 'loadMoreSourceItems', list: 'files' })).toEqual({ status: 'unavailable' });
     const ui = await mountFiles(source);
-    await act(async () => { await ui.page.press(await ui.page.getByRole('button', { name: source === 'github' ? 'Load more files' : 'Show more changed files' })); });
+    await act(async () => { await ui.page.press(await ui.page.getByRole('button', { name: source === 'github' ? 'Show more files' : 'Show more changed files' })); });
     expect(ui.reads()).toBe(2);
     expect(document.body.textContent).toContain('two.ts');
   });
