@@ -312,7 +312,8 @@ export async function beginViewerReadTrackingOnFollowEntryInTx(params: Readonly<
  */
 export async function advanceCaughtUpViewerReadCursorsInTx(
     tx: ReadStateClient & SessionReader,
-    params: Readonly<{ sessionId: string; previousVisibleSeq: number; nextVisibleSeq: number; ownerAccountId?: string }>,
+    params: Readonly<{ sessionId: string; previousVisibleSeq: number; nextVisibleSeq: number; ownerAccountId?: string;
+        activelyFollowingAccountIds?: readonly string[] }>,
 ): Promise<number> {
     const previous = normalizeReadSeq(params.previousVisibleSeq) ?? 0;
     const next = normalizeReadSeq(params.nextVisibleSeq) ?? 0;
@@ -336,7 +337,8 @@ export async function advanceCaughtUpViewerReadCursorsInTx(
  */
 export async function stampViewerUnreadEntryInTx(
     tx: ReadStateClient & SessionReader,
-    params: Readonly<{ sessionId: string; visibleSessionSeq: number; at: Date; ownerAccountId?: string }>,
+    params: Readonly<{ sessionId: string; visibleSessionSeq: number; at: Date; ownerAccountId?: string;
+        activelyFollowingAccountIds?: readonly string[] }>,
 ): Promise<number> {
     const visible = normalizeReadSeq(params.visibleSessionSeq) ?? 0;
     if (visible <= 0) return 0;
@@ -361,15 +363,17 @@ export async function stampViewerUnreadEntryInTx(
  */
 export async function listRelevantAccountIdsForSessionBadgeRefreshInTx(
     tx: SessionReader,
-    params: Readonly<{ sessionId: string; ownerAccountId?: string }>,
+    params: Readonly<{ sessionId: string; ownerAccountId?: string; activelyFollowingAccountIds?: readonly string[] }>,
 ): Promise<readonly string[]> {
-    // A writer that already holds the Session row passes its owner; only other callers read it.
+    // A writer that already holds the Session row passes its owner (and, when it already read them,
+    // its active followers); only other callers read them.
     const ownerAccountId = params.ownerAccountId ?? (await tx.session.findUnique({
         where: { id: params.sessionId },
         select: { accountId: true },
     }))?.accountId;
     if (!ownerAccountId) return [];
-    const following = await listActivelyFollowingAccountIdsInTx(tx, { sessionId: params.sessionId });
+    const following = params.activelyFollowingAccountIds
+        ?? await listActivelyFollowingAccountIdsInTx(tx, { sessionId: params.sessionId });
     return [...new Set([ownerAccountId, ...following])];
 }
 

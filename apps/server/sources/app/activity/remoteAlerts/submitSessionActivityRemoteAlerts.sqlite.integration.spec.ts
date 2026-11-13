@@ -16,6 +16,7 @@ import { parsePersistedPersonalFollowOnceV1 } from '@happier-dev/protocol/sessio
 import { registerSessionFollowRoutes } from '@/app/api/routes/session/registerSessionFollowRoutes';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { listSessionPersonalEventRecipients } from '@/app/session/personal/eventEligibility';
+import { observeSqliteRequests } from "@/testkit/observeSqliteRequests";
 
 const sendPushNotificationsAsyncSpy = vi.hoisted(() => vi.fn(async (messages: unknown[]) => messages.map(() => ({ status: "ok" }))));
 
@@ -269,6 +270,34 @@ describe("Home remote alert submission (SQLite)", () => {
         sendPushNotificationsAsyncSpy.mockClear();
         expect(await submitSessionActivityRemoteAlerts(event)).toEqual([]);
         expect(submittedAlertPayloads()).toEqual([]);
+    });
+
+    it("stops at the device read when no candidate of a transcript message has a push device", async () => {
+        const { owner, follower, session } = await fixture();
+        const requests: string[] = [];
+        const stop = observeSqliteRequests({ before: request => { requests.push(`${request.model ?? "raw"}.${request.action}`); } });
+        try {
+            expect(await submitSessionActivityRemoteAlerts({
+                sessionId: session.id, event: "message",
+                committedMessage: { domain: "session_transcript", seq: 3 },
+            })).toEqual([]);
+        } finally { stop(); }
+        console.info("REMOTE_ALERT_NO_DEVICE_REQUESTS", JSON.stringify(requests));
+        // Recipient policy, mute and access are read only for Accounts that
+        // have a device the alert could reach.
+        expect(requests.filter(request => request.startsWith("Account."))).toEqual([]);
+        expect(requests.filter(request => request.startsWith("AccountPushToken."))).toHaveLength(1);
+        // Every transcript line submits this; with nobody to reach, only the eligibility owner reads the Session.
+        expect(requests.filter(request => request.startsWith("Session."))).toHaveLength(1);
+        expect(sendPushNotificationsAsyncSpy).not.toHaveBeenCalled();
+        // A candidate with a device still reaches its device, unchanged.
+        const followerToken = await enrollRemoteAlerts(follower.id, accountSettingsWithRemoteAlerts());
+        await submitSessionActivityRemoteAlerts({
+            sessionId: session.id, event: "message",
+            committedMessage: { domain: "session_transcript", seq: 4 },
+            sourceAccountId: owner.id,
+        });
+        expect(submittedTokens()).toEqual([followerToken]);
     });
 
     it("submits nothing while the sole Session Follow feature is disabled", async () => {

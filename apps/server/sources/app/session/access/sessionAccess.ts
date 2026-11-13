@@ -557,6 +557,8 @@ export async function assertSessionCapabilityInTx(input: {
 /** Execution-custody operations stay owner-only independently of human capability names. */
 export async function assertSessionOwnerInTx(input: {
     tx: SessionAccessReader; accountId: string; sessionId: string;
+    /** This Session's row from the same transaction, read with `buildSessionAccessProjectionSelect(accountId)`. */
+    row?: SessionAccessProjectionRow;
 }): Promise<SessionCapabilityAssertion> {
     const access = await resolveStructuralSessionAccess(input.tx, input);
     return access?.level === "owner" ? { ok: true, access } : { ok: false, reason: "unavailable" };

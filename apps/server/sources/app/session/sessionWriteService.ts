@@ -7,7 +7,7 @@ import { projectSessionInputRepliesFromTurnInTx } from './messages/sessionMessag
 import * as z from 'zod/mini';
 import { buildSessionInputAdmissionReceipt, isSameSessionInputAdmissionIssuer } from "./messages/sessionInputAdmission";
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
-import { assertSessionCapabilityInTx, assertSessionOwnerInTx, resolveSessionAccessForOperation, type EffectiveSessionAccess, type SessionCapability } from "@/app/session/access/sessionAccess";
+import { assertSessionCapabilityInTx, assertSessionOwnerInTx, buildSessionAccessProjectionSelect, resolveSessionAccessForOperation, type SessionCapabilityAssertion, type EffectiveSessionAccess, type SessionCapability } from "@/app/session/access/sessionAccess";
 import { buildSessionAccessWhere } from "@/app/session/access/sessionAccessWhere";
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import { resolveCurrentSessionRecipientAccountIdsInTx } from "@/app/session/access/sessionRecipients";
@@ -30,7 +30,8 @@ import { log, warn } from "@/utils/logging/log";
 import type { Prisma } from "@prisma/client";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { scheduleSessionPersonalEvent } from "@/app/session/personal/publishPersonalEvent";
-import { acceptSessionPersonalEventOnceInTx } from '@/app/session/personal/eventEligibility';
+import { acceptSessionPersonalEventOnceInTx, canSessionFollowEventSelectAnyCandidate } from '@/app/session/personal/eventEligibility';
+import { readSessionFollowCandidatesInTx } from '@/app/session/personal/followFacts';
 import { SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT, agentEventLocalIdAttentionImpact, buildAgentEventLocalId, type SessionMessageAttentionImpact } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
 import { AccountEncryptionMigrateSessionsDirectiveSchema, type AccountEncryptionMigrateSessionsDirective } from '@happier-dev/protocol/account/encryptionMigrate';
 import { VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG } from '@happier-dev/protocol/sessions/control/contract';
@@ -607,18 +608,10 @@ export async function updateSessionMessageActivityProjection(
         sessionId: string;
         created: Pick<SessionMessageWriteRow, "seq" | "createdAt" | "localId">;
         trustedSessionEventType?: "ready";
-        affectsMeaningfulActivity?: boolean;
     }>,
 ): Promise<SessionReadyProjectionUpdate | undefined> {
-    if (params.affectsMeaningfulActivity !== false) {
-        await tx.session.updateMany({
-            where: { id: params.sessionId, seq: params.created.seq },
-            data: {
-                meaningfulActivityAt: params.created.createdAt,
-            },
-        });
-    }
-
+    // Meaningful activity is written by the transcript writer's sequence update
+    // (`writeSessionTranscriptMessageInTx` `recordsMeaningfulActivity`), not here.
     if (params.trustedSessionEventType !== "ready") return undefined;
 
     const readyProjection: SessionReadyProjectionUpdate = {
@@ -685,6 +678,15 @@ function resolveSessionOwnedAttentionImpact(sessionTag: string): SessionMessageA
         : null;
 }
 
+
+/** The fields one select names, from a row read with a wider select. */
+function pickSelectedFields<Row extends object, Select extends Readonly<Record<string, true>>>(
+    row: Row,
+    select: Select,
+): Pick<Row, Extract<keyof Select, keyof Row>> {
+    return Object.fromEntries(Object.keys(select).filter(key => key in row)
+        .map(key => [key, (row as Record<string, unknown>)[key]])) as Pick<Row, Extract<keyof Select, keyof Row>>;
+}
 
 function selectSessionActivityBadgeInputs() {
     return {
@@ -817,7 +819,9 @@ async function loadSessionMutationContextInTx(
     tx: Tx,
     params: SessionMutationContextInput,
 ): Promise<SessionMutationContextResult | SessionMutationContextTypedResult> {
-    await acquireSessionAccountCursorLocksInTx(tx, [params.sessionId]);
+    // Loading the context adds no audience: an exact scope this attempt already
+    // admitted (for example by the publisher fence) is not censused again.
+    await acquireSessionAccountCursorLocksInTx(tx, [params.sessionId], [], { reuseHeldAudience: true });
     return readSessionMutationContextInTx(tx, params);
 }
 
@@ -833,17 +837,26 @@ async function readSessionMutationContextInTx(
     tx: Tx,
     params: SessionMutationContextInput,
 ): Promise<SessionMutationContextResult | SessionMutationContextTypedResult> {
-    const session = await tx.session.findUnique({
-        where: { id: params.sessionId },
-        select: { tag: true, encryptionMode: true, ...selectSessionActivityBadgeInputs() },
-    });
-    if (!session) return { ok: false, error: "session-not-found" };
+    const contextSelect = { tag: true, encryptionMode: true, ...selectSessionActivityBadgeInputs() } as const;
     const input = { tx, accountId: params.actorUserId, sessionId: params.sessionId };
-    const admitted = params.kind === "owner"
-        ? params.admittedAccess
-            ? { ok: true as const, access: params.admittedAccess }
-            : await assertSessionOwnerInTx(input)
-        : await assertSessionCapabilityInTx({ ...input, capability: params.capability, authentication: params.authentication });
+    const readContext = () => tx.session.findUnique({ where: { id: params.sessionId }, select: contextSelect });
+    let session: NonNullable<Awaited<ReturnType<typeof readContext>>>;
+    let admitted: SessionCapabilityAssertion;
+    if (params.kind === "owner" && !params.admittedAccess) {
+        // The owner assertion projects access from this same Session read instead of reading the row again.
+        const row = await tx.session.findUnique({ where: { id: params.sessionId },
+            select: { ...buildSessionAccessProjectionSelect(params.actorUserId), ...contextSelect } });
+        if (!row) return { ok: false, error: "session-not-found" };
+        session = pickSelectedFields(row, contextSelect);
+        admitted = await assertSessionOwnerInTx({ ...input, row });
+    } else {
+        const row = await readContext();
+        if (!row) return { ok: false, error: "session-not-found" };
+        session = row;
+        admitted = params.kind === "capability"
+            ? await assertSessionCapabilityInTx({ ...input, capability: params.capability, authentication: params.authentication })
+            : params.admittedAccess ? { ok: true as const, access: params.admittedAccess } : { ok: false, reason: "unavailable" };
+    }
     if (!admitted.ok) return { ok: false, error: mapSessionMutationContextFailure(params, admitted.reason) };
     return {
         ok: true,
@@ -1458,9 +1471,14 @@ async function createSessionMessageAttempt(
             }
 
             const persistStartedAt = Date.now();
+            // One Follow read serves the writer's read-state stamping and the alert decision below.
+            const followCandidates = await readSessionFollowCandidatesInTx(tx, { sessionId, ownerAccountId: access.sessionOwnerId });
             const persisted = await writeSessionTranscriptMessageInTx(tx, {
                 usageTimingV1: params.usageTimingV1,
                 sessionId,
+                activelyFollowingAccountIds: followCandidates.activelyFollowingAccountIds,
+                // The sequence write records meaningful activity in the same Session row write.
+                recordsMeaningfulActivity: attentionImpact.affectsMeaningfulActivity,
                 writeAuthority: "hosted",
                 sessionEncryptionMode: access.sessionEncryptionMode,
                 storagePolicy: encryptionPolicy.storagePolicy,
@@ -1522,7 +1540,6 @@ async function createSessionMessageAttempt(
                     readPlainRecord,
                     requestedSessionEventType: params.trustedSessionEventType,
                 }),
-                affectsMeaningfulActivity: attentionImpact.affectsMeaningfulActivity,
             });
             if (
                 !(params.inputAdmission === "authenticatedAccount" && resolvedRole === "user")
@@ -1539,7 +1556,9 @@ async function createSessionMessageAttempt(
                         ...(originalFollowEvent ? { followEvent: originalFollowEvent } : {}),
                     });
                 }
-                afterTx(tx, () => scheduleSessionActivityRemoteAlerts({
+                // Most streamed lines can reach nobody (no candidate's Follow selects them): no alert work.
+                if (canSessionFollowEventSelectAnyCandidate({ event: "message", candidates: followCandidates,
+                    ...(originalFollowEvent ? { followEvent: originalFollowEvent } : {}) })) afterTx(tx, () => scheduleSessionActivityRemoteAlerts({
                     sessionId,
                     event: "message",
                     committedMessage: { domain: "session_transcript", seq: created.seq },

@@ -93,6 +93,13 @@ type SessionWriteTxMock = {
 };
 
 let currentTx: SessionWriteTxMock;
+
+/** The transcript writer's sequence write records meaningful activity at the message's own createdAt. */
+function expectMeaningfulActivityInSequenceWrite(): void {
+    const createdAt = currentTx.sessionMessage.create.mock.calls[0]?.[0]?.data?.createdAt;
+    expect(createdAt).toBeInstanceOf(Date);
+    expect(currentTx.session.update.mock.calls[0]?.[0]?.data).toEqual({ seq: { increment: 1 }, meaningfulActivityAt: createdAt });
+}
 let transactionQueue: SessionWriteTxMock[] = [];
 
 type SessionFixtureRow = Record<string, unknown> & {
@@ -154,8 +161,10 @@ function withSessionProjectionQueries(tx: SessionWriteTxMock): SessionWriteTxMoc
             const accessProjection = "teamGrants" in select && "shares" in select;
             const audienceProjection = "teamGrants" in select && !("shares" in select);
             const ownerProjection = Object.keys(select).length === 1 && select.accountId === true;
+            // The mutation context reads its domain row, and an owner context its access projection in the same read.
+            const contextRead = "tag" in select && "encryptionMode" in select;
             if (ownerProjection && storedRow !== undefined) return storedRow ? { accountId: storedRow.accountId } : null;
-            if (!accessProjection && !audienceProjection || storedRow === undefined) {
+            if (!accessProjection && !audienceProjection || contextRead || storedRow === undefined) {
                 const row = "pendingDomainRow" in projectionState
                     ? projectionState.pendingDomainRow
                     : await Reflect.apply(target, thisArg, args) as SessionFixtureRow | null | undefined;
@@ -166,7 +175,7 @@ function withSessionProjectionQueries(tx: SessionWriteTxMock): SessionWriteTxMoc
                     storedRow = { ...storedRow, ...row };
                 }
                 projectionState.row = storedRow;
-                mutationContextRead = "tag" in select && "encryptionMode" in select;
+                mutationContextRead = contextRead;
                 if (!accessProjection && !audienceProjection) return storedRow ?? null;
             }
             if (!storedRow) return null;
@@ -825,9 +834,10 @@ describe("sessionWriteService", () => {
             // One transaction, one publisher-authority decision: the fence.
             // Admitted work carries no second access read (6c42cf6285); the publisher CAS is the one decision.
             expect(hasCurrentSessionScopedMachineAccessInTx).not.toHaveBeenCalled();
+            // PostgreSQL: the audience cursor locks hold the Session row, so the fence read is the
+            // decision and no guarded fence update is written.
             const fenceWrites = currentTx.session.updateMany.mock.calls.filter(([args]) => args.where?.lastActiveAt !== undefined);
-            expect(fenceWrites).toHaveLength(1);
-            expect(fenceWrites[0]?.[0].where).toMatchObject({ id: "s1", lastActiveAt: committedFence });
+            expect(fenceWrites).toHaveLength(0);
         });
 
         it("rejects trusted chronology after the publisher fence is superseded", async () => {
@@ -860,6 +870,8 @@ describe("sessionWriteService", () => {
 
         it("rejects trusted chronology when publisher replacement wins after validation but before persistence", async () => {
             storagePolicyEnv.set("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
+            // SQLite has no row lock: its guarded fence update is where a replacement can still win.
+            storagePolicyEnv.set("HAPPIER_DB_PROVIDER", "sqlite");
             const committedFence = new Date("2026-07-20T10:00:00.000Z");
             currentTx.session.findUnique
                 .mockResolvedValueOnce({
@@ -1394,6 +1406,8 @@ describe("sessionWriteService", () => {
 
         it("revalidates publisher authority before retrying a lost trusted row-revision CAS", async () => {
             storagePolicyEnv.set("HAPPIER_FEATURE_ENCRYPTION__STORAGE_POLICY", "optional");
+            // SQLite has no row lock: its guarded fence update is where a replacement can still win.
+            storagePolicyEnv.set("HAPPIER_DB_PROVIDER", "sqlite");
             const committedFence = new Date(10);
             const session = {
                 accountId: "u1",
@@ -2448,13 +2462,8 @@ describe("sessionWriteService", () => {
             })));
             expect(currentTx.session.findUnique).toHaveBeenCalledTimes(1);
             expect(currentTx.sessionMessage.findUnique).not.toHaveBeenCalled();
-            expect(currentTx.session.updateMany).toHaveBeenCalledTimes(1);
-            expect(currentTx.session.updateMany).toHaveBeenCalledWith({
-                where: { id: "s1", seq: 10 },
-                data: {
-                    meaningfulActivityAt: createdAt,
-                },
-            });
+            expect(currentTx.session.updateMany).not.toHaveBeenCalled();
+            expectMeaningfulActivityInSequenceWrite();
         });
 
         it("does not make a non-unread system message create unread activity when the session was already read", async () => {
@@ -2784,11 +2793,8 @@ describe("sessionWriteService", () => {
 
             expect(res.ok).toBe(true);
             if (!res.ok) return;
-            expect(currentTx.session.updateMany).toHaveBeenCalledTimes(1);
-            expect(currentTx.session.updateMany).toHaveBeenCalledWith({
-                where: { id: "s1", seq: 10 },
-                data: { meaningfulActivityAt: createdAt },
-            });
+            expect(currentTx.session.updateMany).not.toHaveBeenCalled();
+            expectMeaningfulActivityInSequenceWrite();
         });
 
         it("does not let a non-unread system message clear pre-existing unread activity", async () => {
@@ -2974,15 +2980,11 @@ describe("sessionWriteService", () => {
                 select: expect.objectContaining({ seq: true, tag: true, currentStorageState: true }),
                 data: {
                     seq: { increment: 1 },
+                    meaningfulActivityAt: expect.any(Date),
                 },
             });
+            expectMeaningfulActivityInSequenceWrite();
             expect(currentTx.session.updateMany).toHaveBeenNthCalledWith(1, {
-                where: { id: "s1", seq: 10 },
-                data: {
-                    meaningfulActivityAt: createdAt,
-                },
-            });
-            expect(currentTx.session.updateMany).toHaveBeenNthCalledWith(2, {
                 where: {
                     id: "s1",
                     OR: [
@@ -3005,9 +3007,8 @@ describe("sessionWriteService", () => {
                 shares: [],
             });
             currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
-            currentTx.session.updateMany
-                .mockResolvedValueOnce({ count: 0 })
-                .mockResolvedValueOnce({ count: 1 });
+            // The ready projection's own guard decides; meaningful activity rides the sequence write.
+            currentTx.session.updateMany.mockResolvedValueOnce({ count: 1 });
             currentTx.sessionMessage.create.mockResolvedValue({
                 id: "m_ready",
                 seq: 10,
@@ -3039,13 +3040,8 @@ describe("sessionWriteService", () => {
                     latestReadyEventAt: createdAt.getTime(),
                 },
             });
+            expectMeaningfulActivityInSequenceWrite();
             expect(currentTx.session.updateMany).toHaveBeenNthCalledWith(1, {
-                where: { id: "s1", seq: 10 },
-                data: {
-                    meaningfulActivityAt: createdAt,
-                },
-            });
-            expect(currentTx.session.updateMany).toHaveBeenNthCalledWith(2, {
                 where: {
                     id: "s1",
                     OR: [
@@ -3068,9 +3064,7 @@ describe("sessionWriteService", () => {
                 shares: [],
             });
             currentTx.session.update.mockResolvedValue({ seq: 10, currentStorageState: "hosted" });
-            currentTx.session.updateMany
-                .mockResolvedValueOnce({ count: 1 })
-                .mockResolvedValueOnce({ count: 0 });
+            currentTx.session.updateMany.mockResolvedValueOnce({ count: 0 });
             currentTx.sessionMessage.create.mockResolvedValue({
                 id: "m_ready",
                 seq: 10,
@@ -3096,7 +3090,7 @@ describe("sessionWriteService", () => {
 
             expect(res.ok).toBe(true);
             if (!res.ok) return;
-            expect(currentTx.session.updateMany).toHaveBeenNthCalledWith(2, {
+            expect(currentTx.session.updateMany).toHaveBeenNthCalledWith(1, {
                 where: {
                     id: "s1",
                     OR: [
@@ -3182,13 +3176,8 @@ describe("sessionWriteService", () => {
 
             expect(res.ok).toBe(true);
             if (!res.ok) return;
+            expectMeaningfulActivityInSequenceWrite();
             expect(currentTx.session.updateMany).toHaveBeenNthCalledWith(1, {
-                where: { id: "s1", seq: 10 },
-                data: {
-                    meaningfulActivityAt: createdAt,
-                },
-            });
-            expect(currentTx.session.updateMany).toHaveBeenNthCalledWith(2, {
                 where: {
                     id: "s1",
                     OR: [
@@ -3270,13 +3259,8 @@ describe("sessionWriteService", () => {
 
             expect(res.ok).toBe(true);
             if (!res.ok) return;
-            expect(currentTx.session.updateMany).toHaveBeenCalledTimes(1);
-            expect(currentTx.session.updateMany).toHaveBeenCalledWith({
-                where: { id: "s1", seq: 10 },
-                data: {
-                    meaningfulActivityAt: createdAt,
-                },
-            });
+            expect(currentTx.session.updateMany).not.toHaveBeenCalled();
+            expectMeaningfulActivityInSequenceWrite();
             expect(res).toMatchObject({
                 ok: true,
                 didWrite: true,
@@ -3422,6 +3406,7 @@ describe("sessionWriteService", () => {
                 select: expect.objectContaining({ seq: true, tag: true, currentStorageState: true }),
                 data: {
                     seq: { increment: 1 },
+                    meaningfulActivityAt: expect.any(Date),
                 },
             });
             expect(messageCreateCall).toEqual(expect.objectContaining({
@@ -3429,12 +3414,8 @@ describe("sessionWriteService", () => {
                     createdAt: expect.any(Date),
                 }),
             }));
-            expect(sessionProjectionUpdateCall).toEqual({
-                where: { id: "s1", seq: 10 },
-                data: {
-                    meaningfulActivityAt: createdAt,
-                },
-            });
+            expect(sessionProjectionUpdateCall).toBeUndefined();
+            expectMeaningfulActivityInSequenceWrite();
             expect(currentTx.sessionMessage.create).toHaveBeenCalledTimes(1);
             expect(observeCreateSessionMessageStage).toHaveBeenCalledWith(
                 expect.objectContaining({ stage: "access", result: "ok" }),

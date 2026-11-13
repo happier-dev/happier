@@ -35,16 +35,46 @@ export async function resolveSessionFollowFactsInTx(
     return projectSessionFollowFacts(row);
 }
 
+/** An active Follow: a persistent Follow or an armed one-shot. `isActiveFollowRow` is the same rule per row. */
+const ACTIVE_FOLLOW_WHERE = [{ following: true, hasPersistentFollow: true }, { notifyOnce: { not: null } }];
+function isActiveFollowRow(row: Readonly<{ following: boolean; hasPersistentFollow: boolean; notifyOnce: string | null }>): boolean {
+    return row.following && row.hasPersistentFollow || row.notifyOnce !== null;
+}
+
 /** Accounts holding an active Follow on one Session, for exact recipient scheduling. */
 export async function listActivelyFollowingAccountIdsInTx(
     tx: Pick<Tx, "accountSessionFollow">,
     params: Readonly<{ sessionId: string }>,
 ): Promise<readonly string[]> {
     const rows = await tx.accountSessionFollow.findMany({
-        where: { sessionId: params.sessionId, OR: [{ following: true, hasPersistentFollow: true }, { notifyOnce: { not: null } }] },
+        where: { sessionId: params.sessionId, OR: ACTIVE_FOLLOW_WHERE },
         select: { accountId: true },
     });
     return rows.map(row => row.accountId);
+}
+
+export type SessionFollowCandidates = Readonly<{
+    ownerAccountId: string;
+    /** Exactly `listActivelyFollowingAccountIdsInTx`. */
+    activelyFollowingAccountIds: readonly string[];
+    /** Facts of the owner and every active follower; absent rows are the canonical non-Follow facts. */
+    factsByAccountId: ReadonlyMap<string, SessionFollowFactsV1>;
+}>;
+
+/** The owner and the active followers of one Session, with their Follow facts, in one read. */
+export async function readSessionFollowCandidatesInTx(
+    tx: Pick<Tx, "accountSessionFollow">,
+    params: Readonly<{ sessionId: string; ownerAccountId: string }>,
+): Promise<SessionFollowCandidates> {
+    const rows = await tx.accountSessionFollow.findMany({
+        where: { sessionId: params.sessionId, OR: [...ACTIVE_FOLLOW_WHERE, { accountId: params.ownerAccountId }] },
+        select: { accountId: true, following: true, followPolicy: true, notifyOnce: true, hasPersistentFollow: true },
+    });
+    return {
+        ownerAccountId: params.ownerAccountId,
+        activelyFollowingAccountIds: rows.filter(isActiveFollowRow).map(row => row.accountId),
+        factsByAccountId: new Map(rows.map(row => [row.accountId, projectSessionFollowFacts(row)])),
+    };
 }
 
 /** One query for the complete candidate set; absent rows project to the canonical non-Follow facts. */

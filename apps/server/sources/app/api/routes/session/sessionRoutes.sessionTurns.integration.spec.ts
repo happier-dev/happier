@@ -2,6 +2,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 
 import { UpdateBodySchema } from "@happier-dev/protocol";
 import { eventRouter } from "@/app/events/eventRouter";
+import { publishSessionAfterCommit } from "@/app/session/publishSessionAfterCommit";
 import { createPresentUserSessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication.testkit";
 import { applySessionTurnMutation } from "@/app/session/sessionWriteService";
 import { db } from "@/storage/db";
@@ -155,6 +156,45 @@ describe("sessionRoutes session turns (integration)", () => {
         });
     });
 
+    it("acknowledges an HTTP turn mutation on commit, before its client fan-out", async () => {
+        const account = await db.account.create({ data: { publicKey: "pk-session-turn-ack", encryptionMode: "plain" }, select: { id: true } });
+        const session = await db.session.create({
+            data: { tag: "session-turn-ack", accountId: account.id, encryptionMode: "plain",
+                metadata: JSON.stringify({ t: "plain", v: {} }), agentState: null },
+            select: { id: true },
+        });
+        let releaseFanOut!: () => void;
+        const fanOutHeld = new Promise<void>(resolve => { releaseFanOut = resolve; });
+        const emitted: string[] = [];
+        // Socket delivery is the network boundary: hold it to observe what the HTTP response waits for.
+        const emit = vi.spyOn(eventRouter, "emitUpdate").mockImplementation(async (params) => {
+            await fanOutHeld;
+            emitted.push(params.userId);
+        });
+        try {
+            await withAuthenticatedTestApp((app) => sessionRoutes(app as any), async (app) => {
+                const response = await app.inject({
+                    method: "POST",
+                    url: `/v1/sessions/${session.id}/turns/mutations`,
+                    headers: { "content-type": "application/json", "x-test-user-id": account.id },
+                    payload: { v: 1, sessionId: session.id, mutationId: "begin-ack", turnId: "turn-ack", action: "begin",
+                        provider: "codex", observedAt: 100 },
+                });
+                expect(response.statusCode).toBe(200);
+                expect(response.json()).toMatchObject({ success: true, applied: true });
+                // Committed and acknowledged; the fan-out is still held and then still delivered.
+                expect(await db.sessionTurn.count({ where: { sessionId: session.id, turnId: "turn-ack" } })).toBe(1);
+                expect(emitted).toEqual([]);
+                releaseFanOut();
+                await vi.waitFor(() => expect(emitted.length).toBeGreaterThan(0));
+                expect(new Set(emitted)).toEqual(new Set([account.id]));
+            });
+        } finally {
+            releaseFanOut();
+            emit.mockRestore();
+        }
+    });
+
     it("preserves request-owned pending counts through the terminal HTTP mutation", async () => {
         const account = await db.account.create({
             data: { publicKey: "pk-session-turn-pending-clear", encryptionMode: "plain" },
@@ -271,6 +311,8 @@ describe("sessionRoutes session turns (integration)", () => {
                 expect(response.statusCode).toBe(200);
                 expect(response.json()).toMatchObject({ success: true, applied: !newerTurn || settledNewerTurn });
                 await expect(readPending()).resolves.toEqual(pending);
+                // The response follows the commit; the Session's fan-out follows in commit order.
+                await publishSessionAfterCommit(session.id, "test barrier", async () => {});
                 const terminalUpdates = updates.mock.calls.filter(([update]) =>
                     update.payload.body.t === "update-session" && update.payload.body.latestTurnStatus === "cancelled",
                 );

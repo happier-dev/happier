@@ -1,7 +1,10 @@
 import { hasCurrentSessionScopedMachineAccessInTx } from "@/app/api/socket/sessionScopedBinding";
 import type { CurrentSessionPublisherAuthority } from "@/app/presence/sessionPublisherPresence";
 import type { Tx } from "@/storage/inTx";
-import { acquireSessionAccountCursorLocksInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
+import {
+    acquireSessionAccountCursorLocksInTx,
+    sessionAccountCursorLocksHoldSessionRows,
+} from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
 
 type CurrentSessionPublisherReadAuthority =
     | CurrentSessionPublisherAuthority
@@ -60,7 +63,8 @@ export async function hasExactCurrentPublisherAuthorityInTx(
 
 /**
  * Takes the Session row's publisher-replacement lock without changing any
- * user-visible Session timestamp. The updatedAt equality is part of the CAS so
+ * user-visible Session timestamp: the audience cursor locks hold the row on
+ * PostgreSQL/MySQL; on SQLite a guarded no-op update takes the writer lock. The updatedAt equality is part of the CAS so
  * the preserved value cannot overwrite a concurrent semantic update.
  * Metadata commits use the stable registration generation; exact-heartbeat
  * callers (including historical takeover) retain their timestamp precondition.
@@ -104,6 +108,9 @@ export async function fenceExactCurrentPublisherAuthorityInTx(
     ) {
         return false;
     }
+    // The cursor locks above already hold this Session row where the dialect has row
+    // locks, so the read is the fence. SQLite's guarded update is its writer lock.
+    if (sessionAccountCursorLocksHoldSessionRows()) return true;
     const fenced = await tx.session.updateMany({
         where: {
             id: sessionId,

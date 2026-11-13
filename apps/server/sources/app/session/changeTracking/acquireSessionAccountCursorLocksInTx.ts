@@ -150,6 +150,15 @@ export async function prepareSessionAccountCursorLocks(
 }
 
 /**
+ * Whether `acquireSessionAccountCursorLocksInTx` leaves the attempt holding its Sessions'
+ * row locks (PostgreSQL `FOR NO KEY UPDATE`, MySQL `FOR UPDATE`). SQLite has one database
+ * writer rather than independently lockable rows, so it holds none.
+ */
+export function sessionAccountCursorLocksHoldSessionRows(): boolean {
+  return getDbProviderFromEnv(process.env, 'postgres') !== 'sqlite';
+}
+
+/**
  * Admit the complete Account audience before locking the Session resources.
  * PostgreSQL ordinary admission is compatible with unrelated cursor writers;
  * exclusive admission is selected at entry by transition/lifecycle owners.
@@ -162,9 +171,7 @@ export async function acquireSessionAccountCursorLocksInTx(
   additionalAccountIds: readonly string[] = [],
   options?: SessionAccountCursorLockOptions,
 ): Promise<readonly string[]> {
-  const provider = getDbProviderFromEnv(process.env, 'postgres');
-  // SQLite has one database writer rather than independently lockable rows.
-  if (provider === 'sqlite') return [];
+  if (!sessionAccountCursorLocksHoldSessionRows()) return [];
   const requestedSessionIds = [...new Set(sessionIds)].sort();
   const requestedAccountIds = [...new Set(additionalAccountIds)].sort();
   const matchHeldScopes = (context: SessionAudienceContext | undefined) =>

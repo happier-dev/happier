@@ -387,7 +387,7 @@ export async function createSessionMessageFromPending(tx: Tx, params: {
             ? {}
             : { requestEqualityEvidenceV1: effectiveRequestEqualityEvidenceV1 }),
         createdAt: messageCreatedAt,
-        meaningfulActivityAt: messageCreatedAt,
+        recordsMeaningfulActivity: true,
     });
     if (!persisted.ok) {
         return persisted;

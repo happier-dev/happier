@@ -86,8 +86,13 @@ vi.mock("@/app/presence/sessionCache", () => ({
         markSessionInactive: activityCacheMarkSessionInactive,
     },
 }));
-vi.mock("@/app/session/turns/publishSessionTurnMutationUpdate", () => ({
+vi.mock("@/app/session/turns/publishSessionTurnMutationUpdate", async () => ({
     publishSessionTurnMutationUpdate,
+    // The real per-Session post-commit order owner runs the substituted fan-out.
+    publishSessionTurnMutationAfterCommit: async (params: { sessionId: string }) => {
+        const { publishSessionAfterCommit } = await import("@/app/session/publishSessionAfterCommit");
+        return publishSessionAfterCommit(params.sessionId, "Session turn mutation", () => (publishSessionTurnMutationUpdate as unknown as (value: unknown) => Promise<void>)(params));
+    },
 }));
 vi.mock("@/app/session/pending/pendingMessageService", () => ({
     enqueuePendingMessage,
@@ -1853,6 +1858,45 @@ describe("sessionUpdateHandler", () => {
                 appliedAt: 124,
             },
         });
+    });
+
+    it("acknowledges a committed turn mutation before its fan-out, which stays in commit order", async () => {
+        const applied = (mutationId: string) => ({
+            ok: true, didApply: true,
+            receipt: { v: 1, sessionId: "s-1", mutationId, turnId: "turn-1", action: "complete", decision: "applied", observedAt: 123, appliedAt: 124 },
+            latestTurnId: "turn-1", latestTurnStatus: "completed", latestTurnStatusObservedAt: 123, lastRuntimeIssue: null,
+            recipientCursors: [{ accountId: "user-1", cursor: 10 }], badgeAttentionChanged: false,
+        });
+        applySessionTurnMutation.mockResolvedValueOnce(applied("mutation-1")).mockResolvedValueOnce(applied("mutation-2"));
+        const order: string[] = [];
+        let releaseFirstPublication!: () => void;
+        publishSessionTurnMutationUpdate
+            .mockImplementationOnce(async () => {
+                order.push("publish-1:start");
+                await new Promise<void>(resolve => { releaseFirstPublication = resolve; });
+                order.push("publish-1:end");
+            })
+            .mockImplementationOnce(async () => { order.push("publish-2"); });
+        const socket = createAuthenticatedSessionScopedSocket();
+        registerSessionUpdateHandler("user-1", socket as any,
+            { connectionType: "session-scoped", socket: socket as any, userId: "user-1", sessionId: "s-1" } as any);
+        const handler = getSocketHandler(socket, "session-turn-mutation");
+        const mutation = (mutationId: string) => ({ v: 1, sessionId: "s-1", mutationId, turnId: "turn-1", action: "complete",
+            provider: "codex", agentTurnId: "provider-turn-1", observedAt: 123 });
+        const firstAck = vi.fn();
+        const first = handler(mutation("mutation-1"), firstAck);
+
+        // The ack follows the commit; it does not wait for client fan-out or badge work.
+        await vi.waitFor(() => expect(firstAck).toHaveBeenCalledWith(expect.objectContaining({ result: "success", applied: true })));
+        expect(order).toEqual(["publish-1:start"]);
+        const secondAck = vi.fn();
+        const second = handler(mutation("mutation-2"), secondAck);
+        await vi.waitFor(() => expect(secondAck).toHaveBeenCalledWith(expect.objectContaining({ result: "success" })));
+        // A later commit's fan-out still waits for the earlier one.
+        expect(order).toEqual(["publish-1:start"]);
+        releaseFirstPublication();
+        await Promise.all([first, second]);
+        expect(order).toEqual(["publish-1:start", "publish-1:end", "publish-2"]);
     });
 
     it.each([

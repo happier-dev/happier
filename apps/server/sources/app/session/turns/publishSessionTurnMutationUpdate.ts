@@ -9,6 +9,8 @@ import {
     projectSessionTranscriptPublicationRealtimeProjection,
 } from "@/app/session/sessionTranscriptPublicationPolicy";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
+import { log } from "@/utils/logging/log";
+import { publishSessionAfterCommit } from "@/app/session/publishSessionAfterCommit";
 import type {
     ApplySessionTurnMutationResult,
 } from "@/app/session/sessionWriteService";
@@ -63,5 +65,26 @@ export async function publishSessionTurnMutationUpdate(params: {
     await refreshTrackedSessionAccountBadgePushes({
         badgeAttentionChanged: params.result.badgeAttentionChanged,
         sessionId: params.sessionId,
+    });
+}
+
+/**
+ * A committed turn mutation's fan-out, for every transport: the caller acknowledges on commit
+ * (the runner's turn end and the next send wait on that ack) and this runs after the Session's
+ * earlier fan-out. One phase line per mutation splits commit time from fan-out time.
+ */
+export function publishSessionTurnMutationAfterCommit(params: Parameters<typeof publishSessionTurnMutationUpdate>[0] & Readonly<{
+    action: string;
+    applyStartedAtMs: number;
+    committedAtMs: number;
+}>): Promise<void> {
+    const { action, applyStartedAtMs, committedAtMs, ...publication } = params;
+    return publishSessionAfterCommit(params.sessionId, "Session turn mutation", async () => {
+        const publishStartedAt = Date.now();
+        await publishSessionTurnMutationUpdate(publication);
+        log({ module: "session-turns", level: "info", event: "session-turn-mutation-phases",
+            sessionId: params.sessionId, action, applied: params.result.didApply,
+            commitMs: committedAtMs - applyStartedAtMs, publishQueuedMs: publishStartedAt - committedAtMs,
+            publishMs: Date.now() - publishStartedAt }, "Session turn mutation committed and published");
     });
 }

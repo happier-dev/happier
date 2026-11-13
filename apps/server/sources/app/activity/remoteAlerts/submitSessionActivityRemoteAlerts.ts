@@ -161,18 +161,32 @@ export async function submitSessionActivityRemoteAlerts(
     const alertEvent = disposition.kind === 'alert' ? disposition.event.type === 'source_unavailable' && params.stalledOccurrence
         ? { ...disposition.event, stalledOccurrence: params.stalledOccurrence } : disposition.event : null;
 
-    const session = await db.session.findUnique({ where: { id: params.sessionId }, select: { accountId: true, agentStateVersion: true } });
-    if (!session) return [];
-
     const acceptedOnceAccountIds = new Set(params.acceptedOnceAccountIds ?? []);
 
+    const readDevices = (accountIds: readonly string[]) => db.accountPushToken.findMany({
+        where: { accountId: { in: [...accountIds] } },
+        select: { accountId: true, token: true, remoteAlerts: true },
+    });
+    // Without a one-shot Follow occurrence a recipient's only effect here is a
+    // push to its devices, so Accounts without one are not evaluated at all.
+    const narrowed: { devices?: Awaited<ReturnType<typeof readDevices>> } = {};
     const recipients = await listSessionPersonalEventRecipients({
         sessionId: params.sessionId,
         event: params.event,
         onceOccurrence: params.onceOccurrence,
         followEvent: params.followEvent,
         targetAccountIds: [...new Set([...(params.targetAccountIds ?? []), ...acceptedOnceAccountIds])],
-    });
+    }, alertEvent !== null && !params.onceOccurrence && acceptedOnceAccountIds.size === 0 ? {
+        narrowCandidates: async accountIds => {
+            const devices = await readDevices(accountIds);
+            narrowed.devices = devices;
+            return [...new Set(devices.map(device => device.accountId))];
+        },
+    } : undefined);
+    // Every transcript line submits here; most reach nobody, so the Session is read only for recipients.
+    if (recipients.length === 0) return [];
+    const session = await db.session.findUnique({ where: { id: params.sessionId }, select: { accountId: true, agentStateVersion: true } });
+    if (!session) return [];
     const richOwnerSenderOwnsDelivery = alertEvent !== null && await resolveRichOwnerSenderResponsibility({
         sessionId: params.sessionId,
         sessionOwnerAccountId: session.accountId,
@@ -217,10 +231,10 @@ export async function submitSessionActivityRemoteAlerts(
         where: { id: { in: candidates } },
         select: { id: true, settingsVersion: true, remoteAlertPolicy: true },
     });
-    const tokens = await db.accountPushToken.findMany({
-        where: { accountId: { in: candidates } },
-        select: { accountId: true, token: true, remoteAlerts: true },
-    });
+    const candidateSet = new Set(candidates);
+    const tokens = narrowed.devices
+        ? narrowed.devices.filter(device => candidateSet.has(device.accountId))
+        : await readDevices(candidates);
 
     const deliveries: AccountPushDelivery[] = [];
     const alerted = new Set<string>();

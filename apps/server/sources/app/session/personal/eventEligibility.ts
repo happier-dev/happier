@@ -2,10 +2,10 @@ import { isSessionPersonallyTrackedV1 } from '@happier-dev/protocol/sessions/per
 import { resolveSessionPersonalEventEligibilityV1, type SessionPersonalEventKindV1, type SessionPersonalEventEligibilityReasonV1 } from '@happier-dev/protocol/sessions/personal/eventEligibility';
 import { db } from "@/storage/db";
 import { admitSessionBackgroundDeliveryInTx } from "./backgroundDelivery";
-import { listActivelyFollowingAccountIdsInTx, resolveSessionFollowFactsForAccountsInTx } from "./followFacts";
+import { listActivelyFollowingAccountIdsInTx, projectSessionFollowFacts, resolveSessionFollowFactsForAccountsInTx, type SessionFollowCandidates } from "./followFacts";
 import { resolveSessionPersonalFollowEventV1 } from '@happier-dev/protocol/sessions/personal/eventEligibility';
 import { matchesPersonalFollowOnceOccurrenceV1, normalizeSessionFollowDefaultRulesV1, projectSessionFollowDefaultRelationshipsV1, resolveEffectiveAccountFollowPolicyV1, type PersonalFollowOnceOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
-import { type FollowEventV1, type FollowPolicyV1, type ResolveFollowDeliveryV1Params } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
+import { resolveFollowDeliveryV1, type FollowEventV1, type FollowPolicyV1, type ResolveFollowDeliveryV1Params } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { readAccountDeliveryMutedForRecipientsInTx } from '@/app/session/follow/sessionDeliveryMuteService';
 import type { Tx } from '@/storage/inTx';
 import { acceptAccountSessionFollowOnceDeliveryInTx } from '@/app/session/follow/accountFollowService';
@@ -36,19 +36,56 @@ export type SessionPersonalEventRecipient = Readonly<{
  * arm is a restricted Team is admitted only while that Team qualifies without
  * evidence. Owner, direct and inherited-authentication arms are unaffected.
  */
-export async function listSessionPersonalEventRecipients(params: SessionPersonalEventRecipientsInput): Promise<readonly SessionPersonalEventRecipient[]> {
-    return listSessionPersonalEventRecipientsInTx(db, params);
+export async function listSessionPersonalEventRecipients(params: SessionPersonalEventRecipientsInput,
+    options?: SessionPersonalEventRecipientOptions): Promise<readonly SessionPersonalEventRecipient[]> {
+    return listSessionPersonalEventRecipientsInTx(db, params, options);
 }
+
+/**
+ * Whether an untargeted, Follow-routed event (no one-shot occurrence, no assignment rules) can select
+ * any of its candidates at all: the owner and the active followers. Recipients are a subset of the
+ * Accounts whose effective Follow policy selects the event, so `false` means nobody can be reached
+ * and the recipient census can be skipped. A streamed agent line (`message`) selects only an
+ * `everything` or custom Follow, never the owner's default `important`.
+ */
+export function canSessionFollowEventSelectAnyCandidate(params: Readonly<{
+    event: SessionPersonalEventKindV1;
+    followEvent?: FollowEventV1;
+    candidates: SessionFollowCandidates;
+}>): boolean {
+    const event = params.followEvent ?? resolveSessionPersonalFollowEventV1(params.event);
+    if (!event) return true;
+    const { ownerAccountId, activelyFollowingAccountIds, factsByAccountId } = params.candidates;
+    return [ownerAccountId, ...activelyFollowingAccountIds].some(accountId => {
+        const policy = resolveEffectiveAccountFollowPolicyV1({
+            facts: factsByAccountId.get(accountId) ?? projectSessionFollowFacts(null),
+            isSessionOwner: accountId === ownerAccountId,
+        });
+        return policy !== null && resolveFollowDeliveryV1({ policies: [policy], event }).selected;
+    });
+}
+
+export type SessionPersonalEventRecipientOptions = Readonly<{
+    /**
+     * A delivery leg that can reach only some candidates (for example, Accounts
+     * with a push device) narrows them before any per-recipient policy, mute or
+     * access read. Only for a leg whose recipients have no other effect.
+     */
+    narrowCandidates?: (accountIds: readonly string[]) => Promise<readonly string[]>;
+}>;
 
 /** Same pure admission under the committed source writer's existing transaction. */
 export async function listSessionPersonalEventRecipientsInTx(tx: Tx, params: SessionPersonalEventRecipientsInput,
+    options?: SessionPersonalEventRecipientOptions,
 ): Promise<readonly SessionPersonalEventRecipient[]> {
     const session = await tx.session.findUnique({ where: { id: params.sessionId }, select: { accountId: true, archivedAt: true, responsibleAccountId: true } });
     if (!session || session.archivedAt) return [];
     const targets = new Set(params.targetAccountIds ?? []);
     const following = await listActivelyFollowingAccountIdsInTx(tx, { sessionId: params.sessionId });
-    const candidateIds = [...new Set([session.accountId, ...following, ...targets])];
-    const accounts = await tx.account.findMany({ where: { id: { in: candidateIds }, status: "active" }, select: {
+    const allCandidateIds = [...new Set([session.accountId, ...following, ...targets])];
+    const candidateIds = options?.narrowCandidates ? await options.narrowCandidates(allCandidateIds) : allCandidateIds;
+    if (candidateIds.length === 0) return [];
+    const accounts = await tx.account.findMany({ where: { id: { in: [...candidateIds] }, status: "active" }, select: {
         id: true, sessionAutoFollowAssigned: true, sessionAutoFollowDirect: true,
         sessionAutoFollowTeam: true, sessionAutoFollowGroup: true,
     } });
