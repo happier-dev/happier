@@ -41,12 +41,13 @@ export class DesktopQuitLifecycle {
     }
 
     attachWindow(window: BrowserWindow): void {
+        const sender = window.webContents;
         window.on('close', (event) => {
             if (this.exiting) return;
             event.preventDefault();
             this.requestQuit();
         });
-        window.on('closed', () => this.dependencies.eventBus.releaseSender(window.webContents));
+        window.on('closed', () => this.dependencies.eventBus.releaseSender(sender));
     }
 
     /** Called after the event bridge registers the shared renderer's quit listener. */

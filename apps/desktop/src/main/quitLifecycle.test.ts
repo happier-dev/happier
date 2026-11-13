@@ -17,12 +17,18 @@ function createHarness(options: Readonly<{
     let quitCalls = 0;
     const electronApp = Object.assign(app, { quit: () => { quitCalls += 1; } }) as unknown as Pick<App, 'on' | 'quit'>;
     const window = new EventEmitter();
+    let windowDestroyed = false;
     const messages: unknown[] = [];
     const sender = {
         isDestroyed: () => options.senderDestroyed === true,
         send: (_channel: string, message: unknown) => messages.push(message),
     } as unknown as WebContents;
-    const electronWindow = Object.assign(window, { webContents: sender }) as unknown as BrowserWindow;
+    const electronWindow = Object.defineProperty(window, 'webContents', {
+        get: () => {
+            if (windowDestroyed) throw new TypeError('Object has been destroyed');
+            return sender;
+        },
+    }) as unknown as BrowserWindow;
     const eventBus = new DesktopEventBus();
     if (options.rendererReady !== false) eventBus.listen('desktop_app_exit_requested', 11, sender);
     let openCount = 0;
@@ -41,6 +47,7 @@ function createHarness(options: Readonly<{
     if (options.windowOpen !== false) lifecycle.attachWindow(electronWindow);
     const emit = (emitter: EventEmitter, name: string) => {
         let prevented = false;
+        if (emitter === window && name === 'closed') windowDestroyed = true;
         emitter.emit(name, { preventDefault: () => { prevented = true; } });
         return prevented;
     };
@@ -107,6 +114,8 @@ test('an accepted exit releases close/quit interception and settles Iroh before 
     assert.equal(host.readState().quitCalls, 1);
     assert.equal(host.emit(host.app, 'before-quit'), false);
     assert.equal(host.emit(host.window, 'close'), false);
+    assert.doesNotThrow(() => host.emit(host.window, 'closed'));
+    assert.equal(host.eventBus.listenerCount('desktop_app_exit_requested'), 0);
     assert.equal(host.emit(host.app, 'will-quit'), true);
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(host.readState().shutdownCount, 1);
