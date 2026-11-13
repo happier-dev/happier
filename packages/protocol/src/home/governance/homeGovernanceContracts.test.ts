@@ -32,6 +32,13 @@ describe('public-profile moderation audit contract', () => {
   });
 });
 
+describe('Home policy audit contract', () => {
+  it('keeps a Session-defaults policy change readable in the audit list', () => {
+    const summary = { revision: 2, changes: [{ field: 'sessionDefaults', from: null, to: { permissionMode: 'default' } }] };
+    expect(parseHomeAdministrationEventDetailV1('home.policy.set', summary)).toEqual({ action: 'home.policy.set', summary });
+  });
+});
+
 describe('Home governance error contract', () => {
   it('maps each refusal category to its canonical HTTP status', () => {
     expect(HomeGovernanceErrorV1Schema.safeParse({ error: 'invalid_home_input' }).success).toBe(true);

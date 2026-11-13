@@ -85,6 +85,8 @@ function policyFieldLabel(field: HomeGovernancePolicyFieldV1): string {
             return t('homeGovernance.activity.fieldTeamProviders');
         case 'identityNetworkPolicy':
             return t('homeGovernance.privateEndpoints');
+        case 'sessionDefaults':
+            return t('settingsAgents.detailPage.sessionDefaultsTitle');
     }
 }
 

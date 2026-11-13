@@ -30,6 +30,7 @@ export const HomeGovernancePolicyFieldV1Schema = lazyZodSchema(() => z.enum([
   'authenticationPolicy',
   'teamProviderPolicy',
   'identityNetworkPolicy',
+  'sessionDefaults',
 ]));
 export type HomeGovernancePolicyFieldV1 = z.infer<typeof HomeGovernancePolicyFieldV1Schema>;
 

@@ -2,7 +2,7 @@ import { HOME_TEAM_CREATION_POLICY_DEFAULT_V1, HOME_TEAMS_VISIBLE_TO_MEMBERS_DEF
 import { ManagedSessionDefaultsV1Schema, readManagedDefaultsV1, type ManagedSessionDefaultsV1 } from '@happier-dev/protocol/teams';
 import { type HomeSignInServicePolicyV1 } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 
-import type { HomeGovernanceErrorCodeV1 } from "@happier-dev/protocol/home/governance";
+import { HomeGovernancePolicyFieldV1Schema, type HomeGovernanceErrorCodeV1 } from "@happier-dev/protocol/home/governance";
 import { managedPlacementAudienceInTx } from "@/app/teams/managedPlacementAudience";
 import { db, isPrismaErrorCode } from "@/storage/db";
 import { resolveEffectiveHomeAuthMethodsInTx } from "@/app/auth/methods/effectiveHomeAuthMethods";
@@ -321,14 +321,8 @@ async function assessAuthenticationPolicyChangeInTx(
     return { valid: true, widens };
 }
 
-const POLICY_FIELDS = [
-    "teamCreationPolicy",
-    "teamsVisibleToMembers",
-    "authenticationPolicy",
-    "teamProviderPolicy",
-    "identityNetworkPolicy",
-    "sessionDefaults",
-] as const;
+/** The audit contract owns which policy fields a change records. */
+const POLICY_FIELDS = HomeGovernancePolicyFieldV1Schema.options;
 
 /** Records the fields this patch changed, as stored before and after (§3.9). */
 async function recordPolicyChangeInTx(tx: Tx, input: Readonly<{
