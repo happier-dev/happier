@@ -4,6 +4,7 @@ import type { Readable, Writable } from 'node:stream';
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 
+import { bindToHostedSessionScope } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { logger } from '@/ui/logger';
 import { createMcpWatchSession, type McpWatchSession } from '@/mcp/resources/watchSubscriptions';
 import type { ForwardingMcpUpstreamKind } from '@/mcp/bridges/forwardingMcpServer';
@@ -88,7 +89,12 @@ export async function serveSessionMcpRelayConnection(
         import('@/mcp/bridges/forwardingMcpServer'),
     ]);
     const watchSession = createMcpWatchSession();
-    const upstream = async <T>(operation: (client: Client) => Promise<T>, kind: ForwardingMcpUpstreamKind): Promise<T> => {
+    // Relay bytes arrive on the connection's socket, whose callbacks run outside the hosted Session
+    // scope after an HTTP upgrade (Node does not carry async context into post-upgrade socket data).
+    // Each request runs in the scope that admitted this connection, so its Session reads (authority
+    // path, environment) are this Session's, never the host process's.
+    const upstream = bindToHostedSessionScope(async <T>(operation: (client: Client) => Promise<T>,
+        kind: ForwardingMcpUpstreamKind): Promise<T> => {
         const mcp = await host.createRequestServer({ kind, watchSession });
         const [serverSide, clientSide] = InMemoryTransport.createLinkedPair();
         const client = new Client({ name: 'happier-session-relay', version: '1' });
@@ -100,7 +106,7 @@ export async function serveSessionMcpRelayConnection(
             await client.close().catch(() => undefined);
             await Promise.resolve(mcp.close()).catch(() => undefined);
         }
-    };
+    });
     const server = createForwardingMcpServer({
         upstream,
         ...(toolNameMaxLength === undefined ? {} : { toolNameMaxLength }),
