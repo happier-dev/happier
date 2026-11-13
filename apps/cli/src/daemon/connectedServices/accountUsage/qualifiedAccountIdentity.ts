@@ -1,3 +1,4 @@
+import { buildQualifiedConnectedAccountLocalSubjectId } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type { QualifiedProviderAccountUsagePersistenceTarget } from './persistence';
 import type { ConnectedServiceUsageSourceV1, QualifiedConnectedAccountCredentialSnapshotV4 } from '@happier-dev/protocol';
 import { buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
@@ -16,7 +17,7 @@ export function buildProviderAccountUsageIdentityFromQualifiedAccount(input: Rea
 }>): QualifiedProviderAccountUsageIdentity {
     const providerId = input.usageIdentity?.providerId ?? buildQualifiedPluginContributionKey(input.ref.service);
     const providerAccountId = input.providerIdentity?.accountId?.trim() ?? '';
-    const accountSubjectId = providerAccountId || input.ref.accountId;
+    const accountSubjectId = providerAccountId || buildQualifiedConnectedAccountLocalSubjectId(input.ref);
     const providerOrganizationId = input.providerOrganizationId?.trim();
     const recordKey: ProviderAccountUsageRecordKeyV1 = {
         providerId, accountSubjectId,
@@ -29,7 +30,7 @@ export function buildProviderAccountUsageIdentityFromQualifiedAccount(input: Rea
         accountSubject: providerAccountId
             ? { kind: 'providerSubject', id: accountSubjectId }
             : { kind: 'provisionalLocalSubject', id: accountSubjectId,
-                mergeKey: JSON.stringify([input.ref.service.pluginId, input.ref.service.localId, input.ref.accountId]) },
+                mergeKey: accountSubjectId },
     };
 }
 

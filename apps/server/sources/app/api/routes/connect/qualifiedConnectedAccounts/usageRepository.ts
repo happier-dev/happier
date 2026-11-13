@@ -4,12 +4,15 @@ import { acquireAccountChangePublicationLocksInTx, markAccountChanged } from '@/
 
 import { isProviderAccountUsageOrganizationContextMatch } from '@happier-dev/protocol/connect/accountUsage';
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema, ProviderAccountUsageRecordKeyV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
-import { QualifiedConnectedAccountRefSchema, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { buildQualifiedConnectedAccountLocalSubjectId, QualifiedConnectedAccountRefSchema, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { projectProviderAccountUsageSnapshotToQualifiedConnectedAccountQuotaSnapshotV4, type QualifiedConnectedServiceUsageSourceResolutionV4, type QualifiedConnectedServiceUsageSourceV4 } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { QualifiedConnectedServiceUsageSourceV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { readAccountScopedCiphertextKindByte, isAccountScopedBlobCiphertextForKind } from '@happier-dev/protocol/crypto/accountScopedCipherEnvelope';
 import type { ProviderAccountUsagePageProjectionWriteV1Schema } from '@happier-dev/protocol/connect/providerAccountUsagePageProjection';
 import { readProviderAccountUsagePageProjection, writeProviderAccountUsagePageProjection } from '../providerAccountUsage/pageProjectionStorage';
+import { readProviderAccountUsageDaySummaries, writeProviderAccountUsageDaySummary } from '../providerAccountUsage/daySummaryStorage';
+import type { ProviderAccountUsageDaySummaryReadV1Schema, ProviderAccountUsageDaySummaryWriteV1Schema,
+    StoredProviderAccountUsageDaySummaryV1 } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
 import { type ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { type ConnectedServiceQuotaSnapshotV1, type SealedConnectedServiceQuotaSnapshotV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { isConnectedServiceUsageProviderCompatible } from "@happier-dev/agents";
@@ -414,6 +417,7 @@ async function resolveQualifiedUsageBinding(
 }
 
 function assertQualifiedUsageOwnership(params: Readonly<{
+    ref: QualifiedConnectedAccountRef;
     providerAccountId: string | null;
     providerOrganizationId: string | null;
     recordAccountSubjectId: string;
@@ -421,6 +425,12 @@ function assertQualifiedUsageOwnership(params: Readonly<{
     recordQuotaScope: string;
     recordQuotaScopeId: string | null;
 }>): void {
+    // An identity-free provider sample belongs only to this exact connected Account.
+    // It proves no provider-global or organization ownership and cannot be shared.
+    if (params.providerAccountId === null && params.providerOrganizationId === null
+        && params.recordSubjectKind === 'unknown' && params.recordQuotaScope === 'account'
+        && params.recordQuotaScopeId === null
+        && params.recordAccountSubjectId === buildQualifiedConnectedAccountLocalSubjectId(params.ref)) return;
     if (
         params.providerAccountId === null
         || params.recordSubjectKind !== "account"
@@ -632,6 +642,7 @@ async function readExactQualifiedConnectedServiceUsageSourceWithCredentialAdmiss
                 });
             if (!record) return null;
             assertQualifiedUsageOwnership({
+                ref: binding.source.ref,
                 providerAccountId: binding.providerAccountId,
                 providerOrganizationId: binding.providerOrganizationId,
                 recordAccountSubjectId: record.accountSubjectId,
@@ -717,6 +728,7 @@ async function upsertQualifiedSourceInTx(
         );
     }
     assertQualifiedUsageOwnership({
+        ref: binding.source.ref,
         providerAccountId: binding.providerAccountId,
         providerOrganizationId: binding.providerOrganizationId,
         recordAccountSubjectId: record.accountSubjectId,
@@ -1329,6 +1341,7 @@ async function listQualifiedUsageSourcesForRecordInStorage(
         const metadata = resolveQualifiedConnectedAccountStoredMetadata({ rowId: row.credential.id, metadata: row.credential.metadata });
         try {
             assertQualifiedUsageOwnership({
+                ref: source.ref,
                 providerAccountId: metadata.presentation.providerIdentity?.accountId ?? null,
                 providerOrganizationId: metadata.presentation.providerIdentity?.organizationId ?? null,
                 recordAccountSubjectId: row.providerAccountUsageRecord.accountSubjectId,
@@ -1394,8 +1407,49 @@ export async function readQualifiedProviderAccountUsageHistory(params: Readonly<
 }
 
 function projectionMatchesMode(value: Pick<ReturnType<typeof ProviderAccountUsagePageProjectionWriteV1Schema.parse>, 'content'>, record: StoredProviderAccountUsageRecord) {
+    return usageDocumentMatchesMode(value, record, 'provider_account_usage_page_projection');
+}
+
+function usageDocumentMatchesMode(value: Readonly<{ content: { t: 'plain'; v: unknown } | { t: 'encrypted'; c: string } }>,
+    record: StoredProviderAccountUsageRecord, kind: Parameters<typeof isAccountScopedBlobCiphertextForKind>[0]['kind']) {
     return record.payloadMode === 'plain_json_v1' ? value.content.t === 'plain'
-        : value.content.t === 'encrypted' && isAccountScopedBlobCiphertextForKind({ kind: 'provider_account_usage_page_projection', ciphertext: value.content.c });
+        : value.content.t === 'encrypted' && isAccountScopedBlobCiphertextForKind({ kind, ciphertext: value.content.c });
+}
+
+function daySummaryMatchesRecord(payload: StoredProviderAccountUsageDaySummaryV1, record: StoredProviderAccountUsageRecord, dayStartAtMs: number) {
+    if (!usageDocumentMatchesMode(payload, record, 'provider_account_usage_day_summary')) return false;
+    if (payload.content.t === 'encrypted') return true;
+    const value = payload.content.v;
+    return value.recordId === record.recordId && value.dayStartAtMs === dayStartAtMs
+        && value.lastSnapshot.recordId === record.recordId && value.windows.every(window => window.lastSnapshot.recordId === record.recordId);
+}
+
+export async function readQualifiedProviderAccountUsageDaySummaries(params: Readonly<{ accountId: string }> & ReturnType<typeof ProviderAccountUsageDaySummaryReadV1Schema.parse>) {
+    return await inReadSnapshot(async tx => {
+        const admitted = await admitQualifiedProviderAccountUsageRecordInTx(tx, params);
+        if (admitted.status !== 'resolved') return admitted;
+        try {
+            const result = await readProviderAccountUsageDaySummaries(params, tx);
+            const summaries = [...result.summaries, ...result.missingDays.flatMap(day => day.precedingSummary ? [day.precedingSummary] : [])];
+            if (summaries.some(day => !daySummaryMatchesRecord(day.payload, admitted.record, day.dayStartAtMs))) return { status: 'storage_mode_mismatch' as const };
+            return { status: 'resolved' as const, ...result };
+        } catch (error) {
+            if (error instanceof ProviderAccountUsagePayloadInvariantError) return { status: 'storage_mode_mismatch' as const };
+            throw error;
+        }
+    });
+}
+
+/** Account/source admission and exact day coverage precede opaque summary publication. */
+export async function writeQualifiedProviderAccountUsageDaySummary(params: Readonly<{ accountId: string }> & ReturnType<typeof ProviderAccountUsageDaySummaryWriteV1Schema.parse>) {
+    return await inTx(async tx => {
+        await acquireAccountChangePublicationLocksInTx(tx, [params.accountId], { intent: 'content' });
+        const admitted = await admitQualifiedProviderAccountUsageRecordInTx(tx, params);
+        if (admitted.status !== 'resolved') return admitted.status;
+        if (!daySummaryMatchesRecord(params.payload, admitted.record, params.dayStartAtMs)) return 'storage_mode_mismatch' as const;
+        const { accountId, ...value } = params;
+        return await writeProviderAccountUsageDaySummary({ accountId, value }, tx) ? 'written' as const : 'summary_conflict' as const;
+    }, { isolationLevel: 'ReadCommitted' });
 }
 
 /** Derived B materialization; accepted history and qualified source admission remain authoritative. */
@@ -1576,6 +1630,7 @@ async function readFirstQualifiedSourceForRef(
                 const record = row.providerAccountUsageRecord;
                 try {
                     assertQualifiedUsageOwnership({
+                        ref,
                         providerAccountId: binding.providerAccountId,
                         providerOrganizationId: binding.providerOrganizationId,
                         recordAccountSubjectId: record.accountSubjectId,

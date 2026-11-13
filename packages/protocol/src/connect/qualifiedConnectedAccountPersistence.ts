@@ -70,6 +70,11 @@ export const QualifiedConnectedAccountRefJsonSchema = /* @__PURE__ */ (() => Qua
 
 export type QualifiedConnectedAccountRef = ReturnType<typeof QualifiedConnectedAccountRefSchema.parse>;
 
+/** Source-owned usage without a provider identity must never merge across qualified Accounts. */
+export function buildQualifiedConnectedAccountLocalSubjectId(ref: QualifiedConnectedAccountRef): string {
+  return JSON.stringify([ref.service.pluginId, ref.service.localId, ref.accountId]);
+}
+
 /**
  * The one equality for a qualified connected-account ref.
  *
