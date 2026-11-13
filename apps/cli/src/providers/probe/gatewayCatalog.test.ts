@@ -509,6 +509,9 @@ it('composes G1 Gateway setup, hub and peer tool turns, isolation, outage, Pendi
       expect(await peer.probe(request)).toMatchObject({ status: 'success', models: [{ id: 'gateway-model' }] });
       expect(await peer.models(request)).toMatchObject({ status: 'success', connectionId: request.connectionId,
         models: expect.arrayContaining([expect.objectContaining({ id: 'gateway-model' })]) });
+      expect(await peer.models(request, undefined, { forceRefresh: true })).toMatchObject({ status: 'success',
+        connectionId: request.connectionId,
+        models: expect.arrayContaining([expect.objectContaining({ id: 'gateway-model', stale: false })]) });
       const experimental = await projectPeerModels();
       if (experimental.status !== 'success') throw new Error('Expected experimental source projection');
       const row = experimental.groups[0]!.rows.find(row => row.ref.modelId === 'gateway-model')!;

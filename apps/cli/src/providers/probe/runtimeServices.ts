@@ -1630,17 +1630,29 @@ export function createRuntimeProviderServices(input: Readonly<{
       const connection = await resolveConnectionContext(identity, operationScope);
       if (!isProviderFeatureEnabled()) return providerFeatureDisabled(identity);
       if (!connection.ok) return { status: 'error', error: connection.error };
-      if (operationScope.forceRefresh) return { status: 'error',
-        error: createProviderErrorV1('provider_catalog_unavailable', identity) };
       const remote = await readPlacedGatewayCatalog(identity, connection.value,
-        (reader, target, signal) => reader.models(target, signal));
+        async (reader, target, signal) => {
+          if (operationScope.forceRefresh) {
+            const refreshed = await reader.probe(target, signal);
+            if (refreshed.status === 'error') return refreshed;
+          }
+          return reader.models(target, signal);
+        });
       if (remote) return remote;
-      const context = await resolveCatalogContext(identity, undefined, {
+      const admittedScope = {
         ...operationScope, registry: connection.value.registry,
         accountSettingsBasis: connection.value.accountSettingsBasis,
         dnsEvidenceByConnectionId: new Map([[identity.connectionId, connection.value.dnsEvidenceByEndpointUrl]]),
-      });
+      };
+      const context = await resolveCatalogContext(identity, undefined, admittedScope);
       if (context.status === 'error') return context;
+      if (operationScope.forceRefresh) {
+        const error = await awaitWithinProviderOperation(
+          scheduleDemandRefresh(identity, 'manual_refresh', admittedScope), operationScope.lifetime,
+        );
+        if (error) return { status: 'error', error };
+        return projectModels(identity, projectProviderCatalogContextRuntimeState(context, await runtimeStore.read()));
+      }
       if (context.catalogFingerprint !== null && context.catalogRuntimeRecord?.state.snapshot == null
         && projectModelCatalog(identity, context).rows.length === 0) {
         const error = await awaitWithinProviderOperation(

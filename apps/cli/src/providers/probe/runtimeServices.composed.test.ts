@@ -238,18 +238,35 @@ function grantedSettings(providerRegistry = registry) {
 }
 
 describe('runtime provider services', () => {
-  it('does not report an ordinary catalog read as an explicit source refresh', async () => {
-    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-source-refresh-unsupported-'));
+  it('awaits each explicit connection refresh and returns the newly observed catalog', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-provider-source-refresh-'));
     temporaryPaths.push(happyHomeDir);
     const snapshot = providerSnapshot(grantedSettings());
+    let observedModel = 'first-observation';
+    const transport = vi.fn(async () => ({ status: 200, headers: { 'content-type': 'application/json' },
+      body: Buffer.from(JSON.stringify({ data: [{ id: observedModel }] })) }));
     const services = createRuntimeProviderServices({ machineId: 'machine-a', happyHomeDir, registry,
       getAccountSettingsSnapshot: () => snapshot, resolveAddresses: async () => ['1.1.1.1'],
       featureGate: { isEnabled: () => true },
-      client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'],
-        transport: async () => { throw new Error('An ordinary refresh remains with its probe owner'); } }),
+      client: createProviderProbeHttpClient({ resolveAddresses: async () => ['1.1.1.1'], transport }),
     });
-    await expect(services.models({ connectionId, machineId: 'machine-a' }, undefined, { forceRefresh: true }))
-      .resolves.toMatchObject({ status: 'error', error: { code: 'provider_catalog_unavailable' } });
+    const refresh = () => services.models({ connectionId, machineId: 'machine-a' }, undefined, { forceRefresh: true });
+    const first = await refresh();
+    expect(first).toMatchObject({ status: 'success', catalogObserved: true,
+      models: expect.arrayContaining([
+        expect.objectContaining({ id: 'first-observation', stale: false }),
+        expect.objectContaining({ id: 'static-a' }), expect.objectContaining({ id: 'manual-a' }),
+      ]) });
+    observedModel = 'second-observation';
+    const second = await refresh();
+    expect(second).toMatchObject({ status: 'success', catalogObserved: true,
+      models: expect.arrayContaining([expect.objectContaining({ id: 'second-observation', stale: false })]) });
+    if (second.status !== 'success') throw new Error('Expected refreshed catalog');
+    expect(second.models).toContainEqual(expect.objectContaining({ id: 'first-observation', stale: true }));
+    const state = await services.runtimeStore.read();
+    expect(state.catalogs[0]?.state.snapshot?.models).toEqual([{ id: 'second-observation' }]);
+    // Explicit retries observe once per request, including a warm catalog.
+    expect(transport).toHaveBeenCalledTimes(2);
   });
 
   it('preserves catalog observation absence independently of a successful empty probe', async () => {
@@ -330,7 +347,7 @@ describe('runtime provider services', () => {
     await expect(services.models(identity)).resolves.toMatchObject({ status: 'success', models: [{ id: 'probe-a' }] });
     await services.scheduleDemandRefresh(identity, 'picker_open');
     unresolved = true;
-    await expect(services.probe(identity)).resolves.toMatchObject(failure);
+    await expect(services.models(identity, undefined, { forceRefresh: true })).resolves.toMatchObject(failure);
     await expect(services.models(identity)).resolves.toMatchObject({ status: 'success', models: [{ id: 'probe-a', stale: true }] });
     await services.scheduleDemandRefresh(identity, 'picker_open');
   });
