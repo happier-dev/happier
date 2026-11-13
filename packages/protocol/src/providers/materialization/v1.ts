@@ -2,6 +2,70 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
 import { SessionEnvOverlayEntryV1Schema } from '../../spawn/envOverlay.js';
+import { ProviderAdapterBindingKeyV1Schema } from '../sessions/adapterBindingKeyV1.js';
+import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderContributionKeySchema, ProviderLocalIdSchema } from '../ids.js';
+import { ProviderModelDescriptorV1Schema } from '../../models/descriptor.js';
+import { ProviderWireProtocolSchema } from '../capabilities/v1.js';
+import { ProviderEndpointUrlSyntaxSchema } from '../endpointUrlSchema.js';
+import { ProviderCredentialTransportV1Schema } from '../credentials/v1.js';
+import { ProviderModelGenerationSettingsV1Schema, ProviderRoleModelsV1Schema } from '../connections/v1.js';
+
+const MaterializationKindSchema = z.enum(['spawnEnv', 'engineConfig', 'configFile']);
+const ProviderBindingKeySchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1), z.maxLength(512)));
+
+const PrepareInputBaseSchema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  agentTargetKey: ProviderAgentTargetKeySchema,
+  model: z.optional(ProviderModelDescriptorV1Schema),
+  roleModels: z.optional(ProviderRoleModelsV1Schema),
+  reservedBindingCandidate: z.optional(z.strictObject({
+    contributionKey: ProviderContributionKeySchema,
+    endpointTemplateId: ProviderLocalIdSchema,
+    protocol: ProviderWireProtocolSchema,
+    normalizedUrl: ProviderEndpointUrlSyntaxSchema,
+  })),
+}));
+
+export const AgentProviderBindingPrepareInputV1Schema = lazyZodSchema(() => z.union([
+  z.extend(PrepareInputBaseSchema, { bindingKey: ProviderBindingKeySchema }),
+  z.extend(PrepareInputBaseSchema, { connectionId: ProviderConnectionIdSchema }),
+]));
+
+export const AgentProviderBindingPreparedV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  materialization: MaterializationKindSchema,
+  adapterBindingKey: z.optional(ProviderAdapterBindingKeyV1Schema),
+}));
+
+const ResolvedSelectionBaseSchema = lazyZodSchema(() => z.strictObject({
+  model: ProviderModelDescriptorV1Schema,
+}));
+
+const ResolvedSelectionSchema = z.union([
+  z.extend(ResolvedSelectionBaseSchema, { bindingKey: ProviderBindingKeySchema }),
+  z.extend(ResolvedSelectionBaseSchema, { connectionId: ProviderConnectionIdSchema }),
+]);
+
+export const AgentProviderBindingResolvedFactsV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  agentTargetKey: ProviderAgentTargetKeySchema,
+  selection: ResolvedSelectionSchema,
+  contributionKey: z.nullable(ProviderContributionKeySchema),
+  endpoint: z.strictObject({
+    endpointTemplateId: ProviderLocalIdSchema,
+    normalizedUrl: ProviderEndpointUrlSyntaxSchema,
+    protocol: ProviderWireProtocolSchema,
+    publicHeaders: z.record(z.string(), z.string()),
+  }),
+  runtimeCredentialTransport: z.nullable(ProviderCredentialTransportV1Schema),
+  modelSettings: z.optional(ProviderModelGenerationSettingsV1Schema),
+  roleModels: z.optional(ProviderRoleModelsV1Schema),
+  compatibilityFingerprint: z.string().check(z.minLength(1), z.maxLength(512)),
+}));
+
+export type AgentProviderBindingPrepareInputV1 = z.infer<typeof AgentProviderBindingPrepareInputV1Schema>;
+export type AgentProviderBindingPreparedV1 = z.infer<typeof AgentProviderBindingPreparedV1Schema>;
+export type AgentProviderBindingResolvedFactsV1 = z.infer<typeof AgentProviderBindingResolvedFactsV1Schema>;
 
 export const PROVIDER_BINDING_MATERIALIZATION_LIMITS_V1 = Object.freeze({
   env: Object.freeze({ maxRows: 32, maxNameBytes: 128, maxValueBytes: 32 * 1024, maxAggregateBytes: 256 * 1024 }),

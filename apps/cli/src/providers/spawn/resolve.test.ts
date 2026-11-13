@@ -7,6 +7,8 @@ import type { AgentProviderBindingMaterializeInput } from '@happier-dev/plugin-s
 // Composed first-party test: exercise the native materializer, not a replacement
 // for the internal binding logic. No production host/plugin import is introduced.
 import { CODEX_OPENAI_CONNECTED_ACCOUNT_SERVICE_KEY } from '../../../../../packages/plugins/codex/src/constants';
+import { PLUGIN_MANIFEST as OPENCODE_PLUGIN_MANIFEST } from '../../../../../packages/plugins/opencode/src/manifest';
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { OPENCODE_PROVIDER_BINDING_ADAPTER_V1 } from '../../../../../packages/plugins/opencode/src/agent/providerBinding/adapter';
 
 import {
@@ -36,6 +38,7 @@ import {
   resolveExecutablePluginRuntimeRegistry,
   type ResolvedExecutablePluginRuntimeRegistry,
 } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
+import { materializeLeasedAgentProviderBinding } from '@/plugins/runtime/providerBindings/adapter';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import type {
   ResolvedContributionRegistry,
@@ -1315,9 +1318,9 @@ describe('provider spawn authorization resolver', () => {
       ...runtimeLease.registry,
       agentRuntimesByAgentId: new Map([['codex', { ...native, providerBinding: OPENCODE_PROVIDER_BINDING_ADAPTER_V1 }]]),
       contributes: { ...runtimeLease.registry.contributes, agentDefinitionsById: new Map([['codex', {
-        ...definition, definition: { ...definition.definition, providerRequirements: {
-          ...definition.definition.providerRequirements!, materialization: 'configFile' as const,
-        } },
+        ...definition, definition: { ...definition.definition,
+          providerRequirements: normalizePluginManifestV2(OPENCODE_PLUGIN_MANIFEST).contributes.agents![0]!.providerRequirements!,
+        },
       }]]) },
     } };
     const input = {
@@ -1336,8 +1339,8 @@ describe('provider spawn authorization resolver', () => {
     const endpoint = binding.endpoint;
     if (!('normalizedUrl' in endpoint) || typeof endpoint.normalizedUrl !== 'string') throw new Error('expected external endpoint');
     expect(binding.modelSettings).toEqual({ temperature: 0.4, maxTokens: 2048 });
-    const output = await OPENCODE_PROVIDER_BINDING_ADAPTER_V1.materialize({
-      v: 1, binding: { ...binding, endpoint: { ...endpoint, normalizedUrl: endpoint.normalizedUrl } }, prepared, credential: {
+    const output = await materializeLeasedAgentProviderBinding({
+      lease: nativeLease, agentId: 'codex', binding: { ...binding, endpoint: { ...endpoint, normalizedUrl: endpoint.normalizedUrl } }, prepared, credential: {
         kind: 'apiKey', transport: binding.runtimeCredentialTransport!, value: 'test-provider-key',
       },
     });
@@ -1908,23 +1911,25 @@ describe('provider spawn authorization resolver', () => {
     const familyRegistry = { providersByContributionKey: new Map([[canonicalContributionKey,
       { ...managedContribution, definition: familyDefinition }]]) };
     const settings = managedGrantedSettings(familyRegistry);
+    // Declared through the owner's type so the testkit's const inference keeps it mutable.
+    const managedPurposeBindingSnapshot: Parameters<typeof resolveProviderSpawnAuthorization>[0]['managedPurposeBindingSnapshot'] = { v: 1, bindings: [{
+      purpose: { consumer: managedContribution.identity, purpose: 'upstream' },
+      target: { kind: 'account', account: { service: { pluginId: 'happier.connected-account.example', localId: 'example' }, accountId: 'account-a' } },
+    }] };
     const result = resolveProviderSpawnAuthorization(withSavedSecretMaterializer({
       selection: { v: 1, updatedAt: 1, ref: { agentTargetKey: 'agent:happier.agent.codex/codex',
         providerConnectionId: connectionId, modelId: 'model-a' } },
       machineId: 'machine-a', agentTargetKey: 'agent:happier.agent.codex/codex', agentId: 'codex',
       accountSettings: { providerSettingsV1: settings }, providerSettings: settings, registry: familyRegistry,
       dnsEvidenceByEndpointUrl: new Map(), lease: lease(), managedProviderRuntime: exactManagedProviderRuntime(),
-      managedPurposeBindingSnapshot: { v: 1, bindings: [{
-        purpose: { consumer: managedContribution.identity, purpose: 'upstream' },
-        target: { kind: 'account', account: { service: { pluginId: 'happier.connected-account.example', localId: 'example' }, accountId: 'account-a' } },
-      }] },
+      managedPurposeBindingSnapshot,
     }));
     expect(result, JSON.stringify(result)).toMatchObject(experimental ? { ok: false, error: { code: 'provider_compatibility_unverified' } }
       : toolRoundTrips === 'supported' ? { ok: true }
         : { ok: false, error: { code: 'provider_incompatible_with_agent' } });
   });
 
-  it.each([
+  it.each<{ roleModels: Record<string, string>; accepted: boolean; consumesHelpers: boolean }>([
     { roleModels: { fast: 'model-a', default: 'model-a' }, accepted: true, consumesHelpers: true },
     { roleModels: { reviewer: 'model-a' }, accepted: true, consumesHelpers: true },
     { roleModels: { reviewer: 'missing-helper' }, accepted: false, consumesHelpers: true },

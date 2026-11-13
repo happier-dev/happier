@@ -1,13 +1,7 @@
 import { z } from 'zod/mini';
-import { AgentProviderBindingMaterializationV1Schema } from '@happier-dev/protocol/providers/materialization/v1';
+import { AgentProviderBindingMaterializationV1Schema, AgentProviderBindingResolvedFactsV1Schema, AgentProviderBindingPrepareInputV1Schema, AgentProviderBindingPreparedV1Schema } from '@happier-dev/protocol/providers/materialization/v1';
 import { AgentProviderRequirementsV1Schema } from '@happier-dev/protocol/providers/compatibility/v1';
-import { ProviderAdapterBindingKeyV1Schema } from '@happier-dev/protocol/providers/sessions/adapterBindingKeyV1';
 import { ProviderCredentialTransportV1Schema } from '@happier-dev/protocol/providers/credentials/v1';
-import { ProviderWireProtocolSchema } from '@happier-dev/protocol/providers/capabilities/v1';
-import { ProviderAgentTargetKeySchema, ProviderConnectionIdSchema, ProviderContributionKeySchema, ProviderLocalIdSchema } from '@happier-dev/protocol/providers/ids';
-import { ProviderEndpointUrlSyntaxSchema } from '@happier-dev/protocol/providers/endpoint-url';
-import { ProviderRoleModelsV1Schema } from '@happier-dev/protocol/providers/connections/v1';
-import { ProviderModelDescriptorV1Schema } from '@happier-dev/protocol/models/descriptor';
 import type { AgentProviderBindingMaterializationV1, AgentProviderRequirementsV1 } from '@happier-dev/protocol';
 import type {
     AgentProviderBindingAdapter,
@@ -20,8 +14,6 @@ import type { ConnectedServiceStateSharingDescriptor } from '@/agent/catalog/typ
 import { isAgentRuntimeGenerationCurrent } from '../lifecycle/contributions/agentGenerationCurrentness';
 import type { PluginRuntimeRegistryLease } from '../reload/controller';
 
-const MaterializationKindSchema = z.enum(['spawnEnv', 'engineConfig', 'configFile']);
-
 /** Read native layout from the same admitted registration as the binding adapter. */
 export function readLeasedAgentProviderNativeHome(params: Readonly<{
     lease: PluginRuntimeRegistryLease;
@@ -32,57 +24,6 @@ export function readLeasedAgentProviderNativeHome(params: Readonly<{
         ? { descriptor: { ...descriptor, providerId: params.agentId } }
         : undefined;
 }
-
-const ProviderBindingKeySchema = z.string().check(z.trim(), z.minLength(1), z.maxLength(512));
-
-const PrepareInputBaseSchema = z.strictObject({
-    v: z.literal(1),
-    agentTargetKey: ProviderAgentTargetKeySchema,
-    model: z.optional(ProviderModelDescriptorV1Schema),
-    roleModels: z.optional(ProviderRoleModelsV1Schema),
-    reservedBindingCandidate: z.optional(z.strictObject({
-        contributionKey: ProviderContributionKeySchema,
-        endpointTemplateId: ProviderLocalIdSchema,
-        protocol: ProviderWireProtocolSchema,
-        normalizedUrl: ProviderEndpointUrlSyntaxSchema,
-    })),
-});
-
-const PrepareInputSchema = z.union([
-    z.extend(PrepareInputBaseSchema, { bindingKey: ProviderBindingKeySchema }),
-    z.extend(PrepareInputBaseSchema, { connectionId: ProviderConnectionIdSchema }),
-]);
-
-const PreparedSchema = z.strictObject({
-    v: z.literal(1),
-    materialization: MaterializationKindSchema,
-    adapterBindingKey: z.optional(ProviderAdapterBindingKeyV1Schema),
-});
-
-const ResolvedSelectionBaseSchema = z.strictObject({
-    model: ProviderModelDescriptorV1Schema,
-});
-
-const ResolvedSelectionSchema = z.union([
-    z.extend(ResolvedSelectionBaseSchema, { bindingKey: ProviderBindingKeySchema }),
-    z.extend(ResolvedSelectionBaseSchema, { connectionId: ProviderConnectionIdSchema }),
-]);
-
-const ResolvedFactsSchema = z.strictObject({
-    v: z.literal(1),
-    agentTargetKey: ProviderAgentTargetKeySchema,
-    selection: ResolvedSelectionSchema,
-    contributionKey: z.nullable(ProviderContributionKeySchema),
-    endpoint: z.strictObject({
-        endpointTemplateId: ProviderLocalIdSchema,
-        normalizedUrl: ProviderEndpointUrlSyntaxSchema,
-        protocol: ProviderWireProtocolSchema,
-        publicHeaders: z.record(z.string(), z.string()),
-    }),
-    runtimeCredentialTransport: z.nullable(ProviderCredentialTransportV1Schema),
-    roleModels: z.optional(ProviderRoleModelsV1Schema),
-    compatibilityFingerprint: z.string().check(z.minLength(1), z.maxLength(512)),
-});
 
 function deepFreeze<T>(value: T, seen = new Set<object>()): T {
     if (typeof value !== 'object' || value === null || seen.has(value)) return value;
@@ -248,10 +189,10 @@ export function prepareLeasedAgentProviderBinding(params: Readonly<{
 }>): AgentProviderBindingPrepared {
     const resolved = readLeasedAgentProviderBindingAdapter(params);
     if (!resolved) throw new Error(`Agent '${params.agentId}' has no provider-binding adapter`);
-    const input = deepFreeze(PrepareInputSchema.parse(params.input));
+    const input = deepFreeze(AgentProviderBindingPrepareInputV1Schema.parse(params.input));
     const rawPrepared = resolved.adapter.prepare(input);
     if (isThenable(rawPrepared)) throw new Error('Agent provider binding preparation must be synchronous');
-    const prepared = deepFreeze(PreparedSchema.parse(rawPrepared));
+    const prepared = deepFreeze(AgentProviderBindingPreparedV1Schema.parse(rawPrepared));
     if (prepared.materialization !== resolved.support.materialization) {
         throw new Error('Agent provider binding prepared materialization does not match static agent support');
     }
@@ -284,8 +225,8 @@ export async function materializeCapturedAgentProviderBinding(params: Readonly<{
     credential: AgentProviderBindingCredential;
 }>): Promise<AgentProviderBindingMaterializationV1> {
     const resolved = params.resolved;
-    const binding = deepFreeze(ResolvedFactsSchema.parse(params.binding));
-    const prepared = deepFreeze(PreparedSchema.parse(params.prepared));
+    const binding = deepFreeze(AgentProviderBindingResolvedFactsV1Schema.parse(params.binding));
+    const prepared = deepFreeze(AgentProviderBindingPreparedV1Schema.parse(params.prepared));
     const credential = deepFreeze(params.credential.kind === 'none'
         ? { kind: 'none' as const }
         : {

@@ -20,8 +20,6 @@ import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connec
 import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 import type {
     ConnectedAccountRequestAuthUseV1,
-    PluginSourceCustodyV1,
-    ProviderRuntimeBindingBasisV1,
     SessionProviderBindingMetadataV1,
 } from '@happier-dev/protocol';
 import { PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/pluginActionSurface';
@@ -193,17 +191,7 @@ export const RunnerDaemonExternalSessionsTakeoverResultV1Schema =
 export const RunnerDaemonExternalSessionsFollowEventV1Schema =
     HostExternalSessionTranscriptFollowEventV1Schema;
 
-export type RunnerDaemonManagedProviderCustodyScopeV1 = Readonly<{
-    v: 1;
-    sessionId: string;
-    runtimeBindingBasis: ProviderRuntimeBindingBasisV1;
-    pluginId: string;
-    providerLocalId: string;
-    occurrenceId: string;
-    sourceCustody: PluginSourceCustodyV1;
-    manifestAuthority: 'external' | 'bundled_first_party';
-    operationClaimId: string;
-}>;
+export type RunnerDaemonManagedProviderCustodyScopeV1 = Readonly<z.infer<typeof RunnerDaemonManagedProviderCustodyScopeV1Schema>>;
 
 export type RunnerDaemonManagedProviderBootstrapV1 = Readonly<{
     v: 1;
@@ -218,8 +206,7 @@ export type RunnerDaemonManagedProviderBootstrapV1 = Readonly<{
     sessionBindingMetadata?: SessionProviderBindingMetadataV1;
 }>;
 
-export const RunnerDaemonManagedProviderCustodyScopeV1Schema:
-    z.ZodMiniType<RunnerDaemonManagedProviderCustodyScopeV1> = lazyZodSchema(() => z.strictObject({
+export const RunnerDaemonManagedProviderCustodyScopeV1Schema = lazyZodSchema(() => z.strictObject({
     v: z.literal(1),
     sessionId: BoundedIdSchema,
     runtimeBindingBasis: ProviderRuntimeBindingBasisV1Schema,
@@ -302,15 +289,9 @@ export const RunnerDaemonManagedProviderBootstrapV1Schema:
     }
 })));
 
-export type RunnerDaemonManagedProviderRetentionV1 = Readonly<{
-    v: 1;
-    custody?: 'daemonShared';
-    scope: RunnerDaemonManagedProviderCustodyScopeV1;
-    providerPluginHardRevocationRevisionAtAdmission: number;
-}>;
+export type RunnerDaemonManagedProviderRetentionV1 = Readonly<z.infer<typeof RunnerDaemonManagedProviderRetentionV1Schema>>;
 
-export const RunnerDaemonManagedProviderRetentionV1Schema:
-    z.ZodMiniType<RunnerDaemonManagedProviderRetentionV1> = lazyZodSchema(() => z.strictObject({
+export const RunnerDaemonManagedProviderRetentionV1Schema = lazyZodSchema(() => z.strictObject({
         v: z.literal(1),
         custody: z.optional(z.literal('daemonShared')),
         scope: RunnerDaemonManagedProviderCustodyScopeV1Schema,

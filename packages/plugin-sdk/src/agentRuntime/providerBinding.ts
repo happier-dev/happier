@@ -1,13 +1,11 @@
+import type { AgentProviderBindingResolvedFactsV1, AgentProviderBindingPrepareInputV1, AgentProviderBindingPreparedV1 } from '@happier-dev/protocol/providers/materialization/v1';
 import type {
     AgentProviderRequirementsV1,
-    ProviderConnectionV1,
     ProviderModelDescriptorV1,
     ProviderWireProtocol,
 } from '@happier-dev/protocol';
 
 import type { JsonValue } from '../identity.js';
-
-declare const canonicalProviderModelSettings: NonNullable<ProviderConnectionV1['modelSettings']>[string];
 
 export type AgentProviderBindingModel = ProviderModelDescriptorV1;
 
@@ -66,24 +64,13 @@ export type AgentProviderBindingSourceKey = Readonly<
     | { connectionId: string; bindingKey?: never }
 >;
 
-export type AgentProviderBindingPrepareInput = Readonly<{
-    v: 1;
-    agentTargetKey: string;
-    model?: AgentProviderBindingModel;
-    roleModels?: ProviderConnectionV1['roleModels'];
-    reservedBindingCandidate?: Readonly<{
-        contributionKey: string;
-        endpointTemplateId: string;
-        protocol: ProviderWireProtocol;
-        normalizedUrl: string;
-    }>;
+export type AgentProviderBindingPrepareInput = Readonly<Omit<
+    AgentProviderBindingPrepareInputV1, 'bindingKey' | 'connectionId' | 'reservedBindingCandidate'
+> & {
+    reservedBindingCandidate?: Readonly<NonNullable<AgentProviderBindingPrepareInputV1['reservedBindingCandidate']>>;
 }> & AgentProviderBindingSourceKey;
 
-export type AgentProviderBindingPrepared = Readonly<{
-    v: 1;
-    materialization: 'spawnEnv' | 'engineConfig' | 'configFile';
-    adapterBindingKey?: string;
-}>;
+export type AgentProviderBindingPrepared = Readonly<AgentProviderBindingPreparedV1>;
 
 export type AgentProviderBindingCredential =
     | Readonly<{ kind: 'none' }>
@@ -94,27 +81,15 @@ export type AgentProviderBindingCredential =
         additionalCredentials?: readonly Readonly<{ slotId: string; value: string }>[];
     }>;
 
-export type AgentProviderBindingResolvedFacts = Readonly<{
-    v: 1;
-    agentTargetKey: string;
-    selection: Readonly<{
-        model: AgentProviderBindingModel;
-    }> & AgentProviderBindingSourceKey;
-    contributionKey: string | null;
-    endpoint: Readonly<{
-        endpointTemplateId: string;
-        normalizedUrl: string;
-        protocol: ProviderWireProtocol;
-        publicHeaders: Readonly<Record<string, string>>;
+/** Protocol owns the closed DTO; SDK identities remain unbranded and transports immutable. */
+export type AgentProviderBindingResolvedFacts = Readonly<Omit<
+    AgentProviderBindingResolvedFactsV1, 'selection' | 'endpoint' | 'runtimeCredentialTransport'
+> & {
+    selection: Readonly<Pick<AgentProviderBindingResolvedFactsV1['selection'], 'model'>> & AgentProviderBindingSourceKey;
+    endpoint: Readonly<Omit<AgentProviderBindingResolvedFactsV1['endpoint'], 'publicHeaders'> & {
+        publicHeaders: Readonly<AgentProviderBindingResolvedFactsV1['endpoint']['publicHeaders']>;
     }>;
     runtimeCredentialTransport: AgentProviderCredentialTransport | null;
-    /** Settings of the selected model from the canonical Provider connection. */
-    modelSettings?: typeof canonicalProviderModelSettings extends infer TSettings
-        ? { [TKey in keyof TSettings]: TSettings[TKey] }
-        : never;
-    /** Connection-owned selections for the adapter's declared model roles. */
-    roleModels?: ProviderConnectionV1['roleModels'];
-    compatibilityFingerprint: string;
 }>;
 
 export type AgentProviderBindingMaterializeInput = Readonly<{
