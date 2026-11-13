@@ -516,6 +516,7 @@ export async function applyViewerReadCursorOperation(params: Readonly<{
             }
             return await applyViewerReadCursorOperationInTx(tx, {
                 accountId, sessionId, operation, latestMainMessageSeq, initialVisibleSeq, authentication: params.authentication,
+                actorSocketsReceiveUpdate: true,
             });
         });
     } catch {
@@ -540,6 +541,11 @@ export async function applyViewerReadCursorOperationInTx(
         /** Canonical main-transcript scan, prepared outside the mutation transaction. */
         latestMainMessageSeq?: number | null;
         initialVisibleSeq?: number | null;
+        /**
+         * Only the released route/socket entry: its callers push the new frontier through
+         * `publishSessionReadCursorUpdate`, which replaces the actor's duplicate Session wake.
+         */
+        actorSocketsReceiveUpdate?: true;
     }>,
 ): Promise<ViewerReadCursorOperationInTxResult> {
     const { accountId, sessionId, operation, latestMainMessageSeq = null, initialVisibleSeq = null } = params;
@@ -596,6 +602,7 @@ export async function applyViewerReadCursorOperationInTx(
             sessionId,
             accountIds: [accountId],
             hint: { lastViewedSessionSeq: nextLastViewedSessionSeq },
+            ...(params.actorSocketsReceiveUpdate ? { currentViewForAccount: () => true } : {}),
         });
         return publication;
     };

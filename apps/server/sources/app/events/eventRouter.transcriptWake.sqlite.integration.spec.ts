@@ -2,20 +2,26 @@ import { createServer } from 'node:http';
 import { performance } from 'node:perf_hooks';
 import { Server } from 'socket.io';
 import { io as connect } from 'socket.io-client';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { SessionMessagesPageV1Schema } from '@happier-dev/protocol';
 
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
-import { createSessionMessage } from '@/app/session/sessionWriteService';
+import { applySessionReadCursorOperation, applySessionTurnMutation, createSessionMessage } from '@/app/session/sessionWriteService';
+import { publishSessionReadCursorUpdate } from '@/app/session/readCursor/publishSessionReadCursorUpdate';
 import { eventRouter } from './connectionEventRouter';
 import { buildNewMessageUpdate, buildUpdateSessionUpdate } from './eventPayloadBuilders';
 import { evaluateAccountStoredContentSocketCompatibility, writeAccountStoredContentCompatibilityForSocket } from '@/app/clientCompatibility/accountStoredContentCompatibility';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerSessionMessageRoutes } from '@/app/api/routes/session/registerSessionMessageRoutes';
 import { projectSessionMessageAccountActors, resolveSessionMessageAccountActor } from '@/app/session/messages/projectSessionMessageAccountActors';
+import { CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION, buildAccountStoredContentCompatibilitySocketAuthV1 } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
+import { createFakeSocket } from '@/app/api/testkit/socketHarness';
+import type { ClientConnection } from './eventPayloadTypes';
+import { publishSessionTurnMutationUpdate } from '@/app/session/turns/publishSessionTurnMutationUpdate';
+import { publishSessionReadyProjectionUpdate } from '@/app/session/ready/publishSessionReadyProjectionUpdate';
 
 describe('committed transcript socket wake (SQLite)', () => {
     let harness: LightSqliteHarness;
@@ -180,6 +186,75 @@ describe('committed transcript socket wake (SQLite)', () => {
             eventRouter.clearIo();
             await new Promise<void>(resolve => io.close(() => resolve()));
         }
+    });
+
+    it.each(['message', 'turn', 'ready', 'read'] as const)('sends a Session viewer the row push instead of a duplicate Account wake (%s)', async writer => {
+        const owner = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: 'plain' } });
+        const session = await db.session.create({ data: { accountId: owner.id, tag: crypto.randomUUID(),
+            encryptionMode: 'plain', metadata: JSON.stringify({ t: 'plain', v: {} }) } });
+        const authentication = { env: process.env, authority: 'present_user' as const, authenticationEvidence: [] };
+        // Socket admission is the external boundary: stamp its verified facts on in-process connections.
+        // Index 2 is an app sync socket of the same Account that is NOT viewing this Session
+        // (no consumption declared): it must get the bodyless row push, never a wake (Q10b).
+        const connections = (['user-scoped', 'machine-scoped', 'user-scoped'] as const).map((kind, index) => {
+            const socket = Object.assign(createFakeSocket({ id: `${kind}-${index}` }), { data: { userId: owner.id, clientType: kind,
+                ...(index === 2 ? { clientPurpose: 'sync' } : {}),
+                authAuthority: 'present_user', authTokenAuthenticationEvidence: [] } });
+            writeAccountStoredContentCompatibilityForSocket(socket, evaluateAccountStoredContentSocketCompatibility(
+                buildAccountStoredContentCompatibilitySocketAuthV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION)));
+            const connection: ClientConnection = kind === 'user-scoped'
+                ? { connectionType: kind, userId: owner.id, socket: socket as unknown as ClientConnection['socket'] }
+                : { connectionType: kind, userId: owner.id, machineId: 'm1', socket: socket as unknown as ClientConnection['socket'] };
+            eventRouter.addConnection(owner.id, connection);
+            return { socket, connection };
+        });
+        // Account-stream frames only; a sync socket also receives its personal-event ephemerals.
+        const updates = (index: number) => connections[index]!.socket.emit.mock.calls
+            .filter(([event]) => event === 'update').map(([, payload]) => UpdateContainerSchema.parse(payload).body);
+        const frames = (index: number) => updates(index).map(body => body.t);
+        try {
+            if (writer === 'message') {
+                await withAuthenticatedTestApp(registerSessionMessageRoutes, async app => {
+                    const response = await app.inject({ method: 'POST', url: `/v2/sessions/${session.id}/messages`,
+                        headers: { 'x-test-user-id': owner.id }, payload: { localId: 'viewer-row',
+                            content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'viewer' } } } } });
+                    expect(response.statusCode, response.body).toBe(200);
+                });
+            } else if (writer === 'turn') {
+                const result = await applySessionTurnMutation({ actorUserId: owner.id, authentication, mutation: { v: 1,
+                    sessionId: session.id, mutationId: crypto.randomUUID(), action: 'begin', turnId: crypto.randomUUID(), observedAt: Date.now() } });
+                if (!result.ok) throw new Error(`Turn failed: ${result.error}`);
+                await publishSessionTurnMutationUpdate({ sessionId: session.id, actorUserId: owner.id, result });
+            } else if (writer === 'ready') {
+                await publishSessionReadyProjectionUpdate({ sessionId: session.id,
+                    readyProjection: { latestReadyEventSeq: 1, latestReadyEventAt: Date.now() } });
+            } else {
+                // Seed this reader's frontier, then commit a row to read up to; only the second mark is counted.
+                expect(await applySessionReadCursorOperation({ actorUserId: owner.id, sessionId: session.id,
+                    operation: { kind: 'mark-read' }, authentication })).toMatchObject({ ok: true });
+                expect(await createSessionMessage({ inputAdmission: 'transcriptOnly', actorUserId: owner.id, sessionId: session.id,
+                    localId: 'read-row', messageRole: 'agent', content: { t: 'plain', v: { role: 'agent', content: { type: 'text', text: 'read' } } } }))
+                    .toMatchObject({ ok: true, didWrite: true });
+                for (const { socket } of connections) socket.emit.mockClear();
+                const result = await applySessionReadCursorOperation({ actorUserId: owner.id, sessionId: session.id,
+                    operation: { kind: 'mark-read' }, authentication });
+                if (!result.ok) throw new Error(`Read failed: ${result.error}`);
+                expect(result.didChange).toBe(true);
+                await publishSessionReadCursorUpdate({ sessionId: session.id, ...result, authentication });
+            }
+            const push = writer === 'message' ? 'new-message' : 'update-session';
+            // Some publishers do not await their per-recipient emit; the wake, if any, precedes the push.
+            await vi.waitFor(() => expect(frames(0)).toContain(push));
+            expect(frames(0)).toEqual([push]);
+            // The Machine is outside the Session audience and keeps its Account wake.
+            expect(frames(1)).toEqual(['account-change']);
+            // Delivery follows consumption: the non-viewing sync socket gets facts, not a wake or a body.
+            await vi.waitFor(() => expect(frames(2)).toContain(push));
+            expect(frames(2)).toEqual([push]);
+            if (writer === 'message') {
+                expect(updates(2)[0]).toMatchObject({ delivery: 'hint' });
+            }
+        } finally { for (const { connection } of connections) eventRouter.removeConnection(owner.id, connection); }
     });
 
     it('rereads a committed transcript page within a second while a writer holds the write pool', async () => {

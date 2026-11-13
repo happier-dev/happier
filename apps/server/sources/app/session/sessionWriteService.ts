@@ -1248,6 +1248,8 @@ async function reconcileExistingTrustedLocalIdInTx(params: Readonly<{
             sessionId: params.sessionId,
             hint: { updatedMessageSeq: updated.seq, updatedMessageId: updated.id, updatedMessageUpdatedAt: updated.updatedAt.getTime() },
             recipientAccountIds: access.recipientAccountIds,
+            // Every createSessionMessage caller pushes `message-updated` to each recipient.
+            sessionAudienceReceivesUpdate: true,
         });
         return {
             status: "reconciled",
@@ -1286,6 +1288,8 @@ async function reconcileExistingTrustedLocalIdInTx(params: Readonly<{
         sessionId: params.sessionId,
         hint: { updatedMessageSeq: updated.seq, updatedMessageId: updated.id, updatedMessageUpdatedAt: updated.updatedAt.getTime() },
         recipientAccountIds: access.recipientAccountIds,
+        // Every createSessionMessage caller pushes `message-updated` to each recipient.
+        sessionAudienceReceivesUpdate: true,
     });
     return {
         status: "reconciled",
@@ -1585,6 +1589,8 @@ async function createSessionMessageAttempt(
                 hint: { lastMessageSeq: created.seq, lastMessageId: created.id },
                 recipientAccountIds: access.recipientAccountIds,
                 publication: persisted.publication,
+                // Every createSessionMessage caller pushes `new-message` to each recipient.
+                sessionAudienceReceivesUpdate: true,
             });
             observeCreateSessionMessageStage({
                 stage: "change_tracking",
@@ -1893,6 +1899,8 @@ async function createSessionMessageAttempt(
                         sessionId,
                         hint: { updatedMessageSeq: updated.seq, updatedMessageId: updated.id, updatedMessageUpdatedAt: updated.updatedAt.getTime() },
                         recipientAccountIds: access.recipientAccountIds,
+                        // Every createSessionMessage caller pushes `message-updated` to each recipient.
+                        sessionAudienceReceivesUpdate: true,
                     });
                     observeCreateSessionMessageStage({
                         stage: "change_tracking",
@@ -3175,6 +3183,8 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
                 tx, sessionId, recipientAccountIds: access.recipientAccountIds,
                 hint: { latestTurnStatusObservedAt: params.turnMutation.observedAt },
                 usageAccountingChanged: false,
+                // Participant-marking callers (applySessionTurnMutation) publish through publishSessionTurnMutationUpdate.
+                sessionAudienceReceivesUpdate: true,
             }) : [];
             return sessionRecipientPublicationResult({ ok: true as const, didApply: true, receipt,
                 ...state, lastRuntimeIssue: null, latestTurnStatusObservedAt: params.turnMutation.observedAt,
@@ -3461,6 +3471,8 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
                 recipientAccountIds: access.recipientAccountIds,
                 hint: { latestTurnStatusObservedAt: params.turnMutation.observedAt },
                 usageAccountingChanged: false,
+                // Participant-marking callers (applySessionTurnMutation) publish through publishSessionTurnMutationUpdate.
+                sessionAudienceReceivesUpdate: true,
             })
             : [];
         const badgeAttentionChanged = shouldMaterialize

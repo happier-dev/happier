@@ -36,6 +36,8 @@ export async function publishSessionReadyProjectionUpdate(params: Readonly<{
             sessionId: params.sessionId,
             usageAccountingChanged: false,
             memoryInputsChanged: false,
+            // Pushed below as `update-session` to each recipient.
+            sessionAudienceReceivesUpdate: true,
             hint: {
                 latestReadyEventSeq: readyProjection.latestReadyEventSeq,
                 latestReadyEventAt: readyProjection.latestReadyEventAt,

@@ -1,5 +1,6 @@
 import { readCurrentSessionPublicationAudienceInTx } from "@/app/session/access/sessionRecipients";
 import {
+    isFiniteSessionTranscriptPublicationRecipient,
     loadSessionTranscriptPublication,
     type SessionTranscriptPublicationFields,
     projectSessionTranscriptPublicationChangeHint,
@@ -47,6 +48,13 @@ export async function markSessionProjectionRecipientsChanged(params: {
     hintForRecipient?: (accountId: string) => unknown;
     /** Only writers whose caller publishes the committed current view may supply this. */
     currentViewPublication?: SessionCurrentViewPublicationAudience;
+    /**
+     * Only writers whose every caller pushes this row change to each recipient's Session
+     * audience (`all-interested-in-session`) at the returned cursor may supply this. Like a
+     * current-view publication, that push replaces those sockets' duplicate wake; a finite
+     * collaborator's push and hint are filtered separately, so it keeps its wake.
+     */
+    sessionAudienceReceivesUpdate?: true;
 }): Promise<SessionRecipientPublication[]> {
     const { publication, recipientAccountIds } = params.recipientAccountIds
         ? { publication: params.publication ?? await loadSessionTranscriptPublication(params.tx, params.sessionId),
@@ -70,14 +78,17 @@ export async function markSessionProjectionRecipientsChanged(params: {
         ...[...destinationRecipients.values()].flat(),
     ]);
     const currentViewPublication = params.currentViewPublication;
+    const audienceReceivesUpdate = (accountId: string) => params.sessionAudienceReceivesUpdate === true
+        ? !isFiniteSessionTranscriptPublicationRecipient(publication, accountId)
+        : currentViewPublication !== undefined && publishesSessionCurrentViewForAccount(currentViewPublication, accountId);
     const cursors = await markAccountChangesForSessionAccounts({
         tx: params.tx,
         sessionId: params.sessionId,
         accountIds: recipientAccountIds,
-        currentViewForAccount: currentViewPublication ? accountId => {
+        currentViewForAccount: currentViewPublication || params.sessionAudienceReceivesUpdate ? accountId => {
             const hint = hints.get(accountId);
             return hint?.kind === 'publish' && isSessionSystemRecordUnchangedHintV1(hint.value)
-                && publishesSessionCurrentViewForAccount(currentViewPublication, accountId);
+                && audienceReceivesUpdate(accountId);
         } : undefined,
         hintForAccount: (accountId) => {
             const hint = hints.get(accountId);

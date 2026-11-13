@@ -110,7 +110,8 @@ function suppressSessionTranscriptPublicationRecipientValue<T>(): SessionTranscr
     return { kind: "suppress" };
 }
 
-function isFiniteSessionTranscriptPublicationRecipient(
+/** A collaborator bounded by a publication ceiling: its pushes and hints are filtered separately. */
+export function isFiniteSessionTranscriptPublicationRecipient(
     publication: SessionTranscriptPublicationFields,
     recipientAccountId: string,
 ): boolean {
