@@ -12621,6 +12621,21 @@ Read [runtime ownership](runtime-core.md) before changing runtime core, the plug
 
 - The host runtime owns session/turn lifecycle, prompt custody, transcript writes and work-state; plugins contribute through the single `activate(api)` ABI and the public `packages/plugin-sdk/` seam only.
 
+### SCM operation environment (unreleased 0.3)
+
+The existing in-process SCM `BackendRuntimeServices` can provide
+`readEnvironment()` for the admitted operation. The CLI backend adapter delegates
+to the active hosted Session scope when called, so a registered backend can serve
+several Sessions without capturing the physical host environment. The Git plugin
+uses this reader when restoring inherited configuration for pre-2.36 hooks and
+selecting the default XDG ignore-file watch path.
+
+Without this optional reader, an active runtime service raises the existing
+`BACKEND_UNAVAILABLE` error at the environment read; the containing operation
+keeps its existing error projection. Other command operations remain available. With no active service, the standalone reader uses
+its process environment. This additive method is not serialized and changes no
+wire epoch, persisted format or capability gate.
+
 ### Installed update discovery (unreleased 0.3)
 
 The CLI registry update checker includes installed plugins on its existing check

@@ -2,7 +2,7 @@ import { join, resolve } from 'node:path';
 
 import { inspectGitCheckoutIdentity } from './checkoutIdentity.js';
 import { buildScmNonInteractiveEnv } from './providers/shared/nonInteractiveEnv.js';
-import { runScmCommand } from './runtime.js';
+import { readScmEnvironment, runScmCommand } from './runtime.js';
 import type { ScmBackend } from './types.js';
 
 /** Git owns both checkout metadata resolution and ignore configuration sources. */
@@ -10,11 +10,12 @@ export const readGitWorkspaceWatchInputs: NonNullable<NonNullable<ScmBackend['wo
     const identity = await inspectGitCheckoutIdentity({ cwd: context.cwd });
     if (!identity) throw Object.assign(new Error('Git checkout metadata is unavailable.'), { code: 'COMMAND_FAILED' });
     const env = buildScmNonInteractiveEnv();
+    const environment = readScmEnvironment();
     const [origins, excludes, globalConfig, systemConfig] = await Promise.all([
         runScmCommand({ bin: 'git', cwd: context.cwd, env,
             args: ['config', '--show-origin', '--name-only', '--null', '--list', '--includes'] }),
         runScmCommand({ bin: 'git', cwd: context.cwd, env,
-            args: ['config', '--path', '--default', `${process.env.XDG_CONFIG_HOME || '~/.config'}/git/ignore`, '--get', 'core.excludesFile'] }),
+            args: ['config', '--path', '--default', `${environment.XDG_CONFIG_HOME || '~/.config'}/git/ignore`, '--get', 'core.excludesFile'] }),
         runScmCommand({ bin: 'git', cwd: context.cwd, env, args: ['var', 'GIT_CONFIG_GLOBAL'] }),
         runScmCommand({ bin: 'git', cwd: context.cwd, env, args: ['var', 'GIT_CONFIG_SYSTEM'] }),
     ]);

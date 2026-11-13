@@ -4,7 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 import { resolveGitIndexPath } from '@happier-dev/plugin-sdk/scm/git';
 import { SCM_OPERATION_ERROR_CODES, type ScmCommitCreateRequest, type ScmCommitCreateResponse, type ScmOperationErrorCode } from '@happier-dev/plugin-sdk/scm';
 
-import { getScmCommandIndeterminateErrorCode, type ScmExecResult } from '../runtime.js';
+import { getScmCommandIndeterminateErrorCode, readScmEnvironment, type ScmExecResult } from '../runtime.js';
 import { mapGitErrorCode } from '../remote.js';
 import type { ScmBackendContext } from '../types.js';
 import { createGitTemporaryIndex, runGitCommand, type GitTemporaryIndex } from './commitExecutionRuntime.js';
@@ -186,7 +186,7 @@ export async function publishGitCommit(input: { context: ScmBackendContext; requ
             // Before `git hook run`, let Git's POSIX shell-alias executor exec the resolved
             // hook directly. Git supplies root cwd/GIT_PREFIX and argv quoting; the existing
             // command service still owns stdin, output, cancellation and process-tree cleanup.
-            const inheritedConfig = process.env.GIT_CONFIG_PARAMETERS;
+            const inheritedConfig = readScmEnvironment().GIT_CONFIG_PARAMETERS;
             const launcher = '!f() { if test "$1" = set; then GIT_CONFIG_PARAMETERS=$2; export GIT_CONFIG_PARAMETERS; else unset GIT_CONFIG_PARAMETERS; fi; shift 2; exec "$@"; }; f';
             return run(['-c', `alias.happier-commit-hook=${launcher}`, 'happier-commit-hook', inheritedConfig === undefined ? 'unset' : 'set', inheritedConfig ?? '', hookPath, ...args], stdin, env);
         };

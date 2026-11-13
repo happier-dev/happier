@@ -3,6 +3,7 @@ import { isAbsolute, relative, sep } from 'node:path';
 import path from 'node:path';
 
 import {
+  readCurrentBackendRuntimeServices,
   type BackendCommandRunInput,
   type BackendCommandRunResult,
   type BackendCommandStreamInput,
@@ -21,6 +22,14 @@ import { GIT_INSTALLABLE_DEP_ID } from './installables/gitInstallable.js';
 const SAFE_GIT_ALLOW_PROTOCOL = 'https:ssh:git:file';
 
 export type ScmExecResult = BackendCommandRunResult;
+
+/** The host owns Session scope; standalone callers use their one process environment. */
+export function readScmEnvironment(): Readonly<Record<string, string | undefined>> {
+  const services = readCurrentBackendRuntimeServices();
+  if (!services) return process.env;
+  if (!services.readEnvironment) throw Object.assign(new Error('SCM environment reader is unavailable'), { code: SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE });
+  return services.readEnvironment();
+}
 
 export function getScmCommandIndeterminateErrorCode(result: ScmExecResult): ScmOperationErrorCode | null {
   if (result.timedOut) return SCM_OPERATION_ERROR_CODES.COMMAND_TIMEOUT;

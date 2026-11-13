@@ -2,13 +2,26 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { runWithBackendRuntimeServices as runWithScmBackendRuntimeServices } from '@happier-dev/plugin-sdk/scm/backend';
 
-import { normalizePathspec, normalizeRepoRootPathspec, normalizeRepoRootRelativePath, runScmCommand } from './runtime.js';
+import { normalizePathspec, normalizeRepoRootPathspec, normalizeRepoRootRelativePath, readScmEnvironment, runScmCommand } from './runtime.js';
 
 describe('Git SCM plugin runtime', () => {
+  it('requires an active host to provide the environment reader instead of borrowing the physical host environment', () => {
+    expect(() => runWithScmBackendRuntimeServices({
+      async runCommand() { throw new Error('No command is needed to read an environment'); },
+    }, readScmEnvironment)).toThrow(expect.objectContaining({ code: 'BACKEND_UNAVAILABLE' }));
+  });
+
+  it('uses the standalone process environment when no host runtime service is installed', () => {
+    vi.stubEnv('HAPPIER_SCM_STANDALONE_FIXTURE', 'standalone');
+    try {
+      expect(readScmEnvironment().HAPPIER_SCM_STANDALONE_FIXTURE).toBe('standalone');
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it('delegates command execution to the host SCM backend runtime service', async () => {
     const calls: unknown[] = [];
 

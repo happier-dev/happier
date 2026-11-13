@@ -34,4 +34,4 @@ export {
 } from './windows/windowsSystemToolPath.js';
 export { spawnBackgroundSync } from './spawnBackgroundSync.js';
 
-export { resolveExecutableCommand } from './resolveExecutableCommand.js';
+export { resolveExecutableCommand, resolveExecutableSearchPath } from './resolveExecutableCommand.js';

@@ -93,6 +93,7 @@ function runInteractiveGitCommand(input: ScmBackendCommandRunInput): Promise<Scm
 
 export function createRealGitScmBackendRuntimeServices(): ScmBackendRuntimeServices {
     return {
+        readEnvironment: () => process.env,
         async renamePathNoReplace({ sourcePath, targetPath, expectedIdentity, signal }) {
             const { renameStoragePathNoReplace } = await import('../../../../../apps/cli/src/storage/trash/renameStoragePath');
             await renameStoragePathNoReplace(sourcePath, targetPath, signal, expectedIdentity);
@@ -198,6 +199,7 @@ export function runWithRealGitScmRuntime<T>(
 
 export function runWithGitScmCommandRunner<T>(runner: GitScmCommandRunner, callback: () => T): T {
     return runWithScmBackendRuntimeServices({
+        readEnvironment: () => process.env,
         runCommandStreaming: runner,
         async runCommand(input) {
             if (input.command !== 'git') {

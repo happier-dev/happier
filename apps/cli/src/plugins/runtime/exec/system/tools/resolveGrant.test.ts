@@ -3,15 +3,17 @@ import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { isPluginError } from '@happier-dev/plugin-sdk';
+import { buildSpawnChildProcessEnv } from '@/daemon/spawn/buildSpawnChildProcessEnv';
 
 import { createPluginExecSystemToolResolver } from './resolveGrant';
 
 const temporaryRoots = new Set<string>();
 
 afterEach(async () => {
+    vi.unstubAllEnvs();
     await Promise.all([...temporaryRoots].map(async (root) => {
         await rm(root, { recursive: true, force: true });
         temporaryRoots.delete(root);
@@ -19,6 +21,71 @@ afterEach(async () => {
 });
 
 describe('createPluginExecSystemToolResolver', () => {
+    it.skipIf(process.platform === 'win32')('preserves an unset Session PATH through lookup instead of reinheriting the host PATH', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-system-tool-unset-path-'));
+        temporaryRoots.add(root);
+        const decoy = join(root, 'cat');
+        await writeFile(decoy, '#!/bin/sh\nprintf host-only\n', { mode: 0o755 });
+        vi.stubEnv('PATH', root);
+        const environment = buildSpawnChildProcessEnv({
+            processEnv: { PATH: root }, extraEnv: {}, unsetEnvKeys: ['PATH'],
+        });
+        const resolver = createPluginExecSystemToolResolver({
+            definitions: [{ toolId: 'cat', displayName: 'Cat', lookupNames: ['cat'] }],
+            baseEnv: environment,
+            registerGrant() {},
+        });
+
+        const grant = await resolver.resolve({ toolId: 'cat', purpose: 'Use the Session search environment' });
+        expect(grant.executablePath).not.toBe(decoy);
+        const observed = spawnSync(grant.launch.executablePath, [...(grant.launch.args ?? [])], {
+            env: environment, input: 'session-default', encoding: 'utf8',
+        });
+        expect(observed.status).toBe(0);
+        expect(observed.stdout).toBe('session-default');
+    });
+
+    it('preserves an unset Session PATHEXT so the Windows owner selects its default extension order', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-system-tool-unset-pathext-'));
+        temporaryRoots.add(root);
+        const executable = join(root, 'fixture.exe');
+        await writeFile(executable, 'native fixture', { mode: 0o755 });
+        await writeFile(join(root, 'fixture.bat'), '@echo off\r\n', { mode: 0o755 });
+        vi.stubEnv('PATHEXT', '.BAT');
+        const environment = buildSpawnChildProcessEnv({
+            processEnv: { PATH: root, PATHEXT: '.BAT' }, extraEnv: {}, unsetEnvKeys: ['PATHEXT'],
+        });
+        const resolver = createPluginExecSystemToolResolver({
+            definitions: [{ toolId: 'fixture', displayName: 'Fixture', lookupNames: ['fixture'] }],
+            baseEnv: environment,
+            platform: 'win32',
+            registerGrant() {},
+        });
+
+        await expect(resolver.resolve({ toolId: 'fixture', purpose: 'Use the Session extension environment' }))
+            .resolves.toMatchObject({ executablePath: executable });
+    });
+
+    it('keeps the Windows process PATH fallback when the Session unsets PATH', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-system-tool-windows-unset-path-'));
+        temporaryRoots.add(root);
+        const executable = join(root, 'fixture.exe');
+        await writeFile(executable, 'native fixture', { mode: 0o755 });
+        vi.stubEnv('PATH', root);
+        const environment = buildSpawnChildProcessEnv({
+            processEnv: { PATH: root, PATHEXT: '.EXE' }, extraEnv: {}, unsetEnvKeys: ['PATH'],
+        });
+        const resolver = createPluginExecSystemToolResolver({
+            definitions: [{ toolId: 'fixture', displayName: 'Fixture', lookupNames: ['fixture'] }],
+            baseEnv: environment,
+            platform: 'win32',
+            registerGrant() {},
+        });
+
+        await expect(resolver.resolve({ toolId: 'fixture', purpose: 'Preserve Windows search semantics' }))
+            .resolves.toMatchObject({ executablePath: executable });
+    });
+
     it('names the missing declared tool and safe remedy without disclosing lookup paths', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-system-tool-missing-'));
         temporaryRoots.add(root);

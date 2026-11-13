@@ -1,3 +1,4 @@
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { createScmCapabilitiesFromBackendCapabilities } from '@happier-dev/protocol/scm/capabilities';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import type {
@@ -123,7 +124,7 @@ function createScmBackendRuntimeServices(
             ...('stdoutConsumer' in input ? { stdoutConsumer: input.stdoutConsumer } : {}),
         }));
     };
-    return { runCommand, runCommandStreaming: runCommand,
+    return { readEnvironment: sessionProcessEnvironment, runCommand, runCommandStreaming: runCommand,
         async renamePathNoReplace({ sourcePath, targetPath, expectedIdentity, signal }) {
             const { renameStoragePathNoReplace } = await import('@/storage/trash/renameStoragePath');
             await renameStoragePathNoReplace(sourcePath, targetPath, signal, expectedIdentity);

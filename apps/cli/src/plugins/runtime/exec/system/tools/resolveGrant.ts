@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { basename, isAbsolute } from 'node:path';
 
 import { PluginError, type PluginDiagnosticData } from '@happier-dev/plugin-sdk';
+import { resolveExecutableSearchPath } from '@happier-dev/cli-common/process';
 
 import type {
     SystemToolDiagnosticV1,
@@ -213,11 +214,14 @@ function readCaseInsensitiveEnvValue(
  * half of "which filenames count as this command", and dropping it silently
  * pins every lookup to the default extension list instead of the user's.
  */
-function buildSystemToolLookupEnv(baseEnv: Readonly<Record<string, string>> | undefined): Readonly<Record<string, string>> {
-    const pathext = readCaseInsensitiveEnvValue(baseEnv, 'PATHEXT')
-        ?? readCaseInsensitiveEnvValue(process.env, 'PATHEXT');
+function buildSystemToolLookupEnv(
+    baseEnv: Readonly<Record<string, string>> | undefined,
+    platform: NodeJS.Platform,
+): Readonly<Record<string, string>> {
+    const env = baseEnv ?? process.env;
+    const pathext = readCaseInsensitiveEnvValue(env, 'PATHEXT');
     return Object.freeze({
-        PATH: readCaseInsensitiveEnvValue(baseEnv, 'PATH') ?? process.env.PATH ?? '',
+        PATH: resolveExecutableSearchPath(env, platform),
         ...(pathext === undefined ? {} : { PATHEXT: pathext }),
     });
 }
@@ -350,7 +354,8 @@ export function createPluginExecSystemToolResolver(params: CreatePluginExecSyste
             const tool = definition;
             assertSystemToolSupportedOnHost(definition);
 
-            const env = buildSystemToolLookupEnv(params.baseEnv);
+            const lookupPlatform = params.platform ?? process.platform;
+            const env = buildSystemToolLookupEnv(params.baseEnv, lookupPlatform);
             const invalidPreferredPath = typeof request.preferredPath === 'string'
                 && request.preferredPath.trim().length > 0
                 && !isAbsolute(request.preferredPath.trim());
@@ -371,7 +376,6 @@ export function createPluginExecSystemToolResolver(params: CreatePluginExecSyste
                 });
             }
             validatePreferredCommand(definition, request);
-            const lookupPlatform = params.platform ?? process.platform;
             const candidates = normalizeLookupCandidates(
                 definition,
                 request,

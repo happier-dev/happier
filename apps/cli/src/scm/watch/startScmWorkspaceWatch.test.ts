@@ -1,3 +1,4 @@
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { execFile } from 'node:child_process';
 import { appendFile, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -229,4 +230,61 @@ it.each(['ENOSPC', 'EMFILE'])('settles %s once and releases every native watch w
     expect(ready).not.toHaveBeenCalled();
     if (baseline !== null) await vi.waitFor(async () => expect(await inotifyCount()).toBe(baseline));
     expect(boundary.paths.filter(path => path === boundary.failurePath)).toHaveLength(1);
+});
+
+it('observes through the admitted workspace source and releases every source watch on dispose', async () => {
+    const { localWorkspaceSource } = await import('@/workspaces/source/localWorkspaceSource');
+    const directory = await fixture();
+    await writeFile(join(directory, 'tracked.txt'), 'one');
+    const used: string[] = [];
+    const released: string[] = [];
+    // A target stand-in sharing this disk: kind/id differ, so every reach must go through it.
+    const source = { ...localWorkspaceSource, kind: 'target' as const, id: 'target:watch-test',
+        realpath: async (path: string) => { used.push('realpath'); return await localWorkspaceSource.realpath(path); },
+        spawn: (request: Parameters<typeof localWorkspaceSource.spawn>[0]) => { used.push('spawn'); return localWorkspaceSource.spawn(request); },
+        watchTree: (...args: Parameters<typeof localWorkspaceSource.watchTree>) => {
+            used.push('watchTree'); const stop = localWorkspaceSource.watchTree(...args); return () => { released.push('watchTree'); stop(); };
+        },
+        watchFile: (...args: Parameters<typeof localWorkspaceSource.watchFile>) => {
+            used.push('watchFile'); const stop = localWorkspaceSource.watchFile(...args); return () => { released.push('watchFile'); stop(); };
+        } };
+    const ready = vi.fn();
+    const changed = vi.fn();
+    const unavailable = vi.fn();
+    const dispose = startScmWorkspaceWatch({ source, directory, registry, onReady: ready, onChange: changed, onUnavailable: unavailable });
+    cleanup.push(dispose);
+    await vi.waitFor(() => expect(ready).toHaveBeenCalledOnce(), { timeout: 10_000 });
+    expect(unavailable).not.toHaveBeenCalled();
+    expect(used).toEqual(expect.arrayContaining(['realpath', 'spawn', 'watchTree', 'watchFile']));
+    await appendFile(join(directory, 'tracked.txt'), 'two');
+    await vi.waitFor(() => expect(changed).toHaveBeenCalled(), { timeout: 10_000 });
+    dispose();
+    expect(released.filter(kind => kind === 'watchTree').length).toBe(used.filter(kind => kind === 'watchTree').length);
+    expect(released.filter(kind => kind === 'watchFile').length).toBe(used.filter(kind => kind === 'watchFile').length);
+});
+
+
+it.skipIf(process.platform !== 'linux')('re-filters each hosted Session when its XDG default ignore file changes', async () => {
+    const directories = await Promise.all([fixture(), fixture()]);
+    await Promise.all(directories.map((directory, index) => runAddedHostedSession({
+        environment: { ...process.env, HOME: join(directory, '..'), USERPROFILE: join(directory, '..'),
+            XDG_CONFIG_HOME: join(directory, '..', 'session-xdg'),
+            GIT_CONFIG_GLOBAL: join(directory, '..', 'absent-global'), GIT_CONFIG_SYSTEM: join(directory, '..', 'absent-system') },
+        workingDirectory: directory, end() {},
+    }, async () => {
+        const configDirectory = join(directory, '..', 'session-xdg', 'git');
+        await mkdir(configDirectory, { recursive: true });
+        await mkdir(join(directory, 'excluded'));
+        const ready = vi.fn();
+        const unavailable = vi.fn();
+        const changed = vi.fn();
+        const dispose = startScmWorkspaceWatch({ directory, registry, onReady: ready, onUnavailable: unavailable, onChange: changed });
+        cleanup.push(dispose);
+        await vi.waitFor(() => expect(ready).toHaveBeenCalledOnce());
+        expect(unavailable).not.toHaveBeenCalled();
+        expect(boundary.active.has(join(directory, 'excluded'))).toBe(true);
+        await writeFile(join(configDirectory, 'ignore'), 'excluded/\n');
+        await vi.waitFor(() => expect(boundary.active.has(join(directory, 'excluded')), 'Session ' + index).toBe(false));
+        expect(changed).toHaveBeenCalled();
+    })));
 });

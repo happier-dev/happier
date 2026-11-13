@@ -766,6 +766,8 @@ export type BackendCommandRunResult = Readonly<{
 }>;
 
 export type BackendRuntimeServices = Readonly<{
+    /** Environment inherited by this admitted SCM operation; absence makes environment-dependent operations unavailable. */
+    readEnvironment?(): Readonly<Record<string, string | undefined>>;
     runCommand(input: BackendCommandRunInput): Promise<BackendCommandRunResult>;
     /** Optional operation: a buffered-only host cannot silently satisfy a streamed read. */
     runCommandStreaming?(input: BackendCommandStreamInput): Promise<BackendCommandRunResult>;

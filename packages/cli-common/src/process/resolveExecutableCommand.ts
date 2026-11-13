@@ -7,6 +7,16 @@ import { resolveWindowsCommandOnPath, resolveWindowsCommandPath } from './window
 
 type ExecutableCommandOptions = Readonly<{ env?: NodeJS.ProcessEnv; cwd?: string }>;
 
+/** Match child_process search semantics when a selected environment omits PATH. */
+export function resolveExecutableSearchPath(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string {
+  if (platform !== 'win32') return env.PATH ?? '/usr/bin:/bin';
+  const pathKey = Object.keys(env).find((key) => key.toLowerCase() === 'path');
+  return env.PATH ?? (pathKey === undefined ? undefined : env[pathKey]) ?? process.env.PATH ?? '';
+}
+
 function isExecutableFile(path: string): boolean {
   try {
     if (!statSync(path).isFile()) return false;
@@ -20,10 +30,9 @@ function isExecutableFile(path: string): boolean {
 function* commandsOnPath(command: string, options: ExecutableCommandOptions): Generator<string, void, unknown> {
   const env = options.env ?? process.env;
   const cwd = options.cwd ?? process.cwd();
+  const path = resolveExecutableSearchPath(env);
   if (process.platform === 'win32') {
     // Preserve Windows Path spelling, PATHEXT ordering, and native npm-shim handling.
-    const pathKey = Object.keys(env).find((key) => key.toLowerCase() === 'path');
-    const path = env.PATH ?? (pathKey === undefined ? undefined : env[pathKey]) ?? process.env.PATH ?? '';
     const lookupEnv = { ...env, PATH: path.split(delimiter).map((dir) => absolutePathFromWorkingDirectory(dir, cwd)).join(delimiter) };
     const found = resolveWindowsCommandOnPath(command, lookupEnv, isExecutableFile);
     if (found && isExecutableFile(found)) yield found;
@@ -31,7 +40,7 @@ function* commandsOnPath(command: string, options: ExecutableCommandOptions): Ge
   }
   // Node's child_process contract uses /usr/bin:/bin when PATH is absent on Unix.
   // An explicitly empty PATH entry means the child's cwd; a login shell must not replace it.
-  for (const dir of (env.PATH ?? '/usr/bin:/bin').split(delimiter)) {
+  for (const dir of path.split(delimiter)) {
     const candidate = absolutePathFromWorkingDirectory(dir ? `${dir}${sep}${command}` : command, cwd);
     if (isExecutableFile(candidate)) yield candidate;
   }
