@@ -1,3 +1,4 @@
+import { composeConnectedServiceTeamCredentialBindingIntents } from '../../../../ui/sources/components/sessions/new/modules/connectedServicesNewSessionBindings';
 import { TeamCredentialSourceBindingV1Schema } from '@happier-dev/protocol/teams';
 import { projectTeamCredentialCatalogModels } from '../../../../server/sources/app/teams/credentials/catalogModels';
 import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
@@ -556,14 +557,25 @@ describe('Direct Team purpose selection through Agent preflight', () => {
     const directResource = TeamCredentialResourceCatalogEntryV1Schema.parse({ ...resource, id: 'direct-resource',
       mayBroker: false, mayReceiveDirect: true, directMaterialState: 'current', providerModels: [],
       connectedServiceSelections: [directSelection], sourcePresentation: { kind: 'connected_service', service } });
+    const teamCredentialBindings = composeConnectedServiceTeamCredentialBindingIntents({
+      consumer: scope.purpose.consumer,
+      declarations: [{ purpose: scope.purpose.purpose, service }],
+      bindings: { v: 2, bindingsByServiceId: { [pluginId + '/' + localId]: directSelection } },
+      resources: [directResource],
+    });
+    // Launch can infer omitted intents; require the UI's authored intent so that
+    // inference cannot conceal a broken selection producer in this journey.
+    expect(teamCredentialBindings).toEqual([expect.objectContaining({
+      teamId: directResource.teamId, resourceId: directResource.id, deliveryMode: 'direct',
+      slot: { kind: 'connected_service_purpose', purpose: scope.purpose },
+    })]);
     const agentTargetKey = buildBackendTargetKeyV2({ kind: 'agent', identity: scope.purpose.consumer });
     const launch = await normalizeSessionTeamCredentialLaunch({ agentId, agentTargetKey, contributions,
       applications: applications.map(application => ({ ...application, agentTargetKey })),
       options: { directory: '/tmp/direct-team-preflight',
         ...(modelId ? { modelSelection: { v: 1, updatedAt: 1, ref: { agentTargetKey, providerConnectionId: null, modelId } } } : {}),
         connectedServices: { v: 2, bindingsByServiceId: { [pluginId + '/' + localId]: directSelection } },
-        teamCredentialBindings: [{ v: 1, slot: { kind: 'connected_service_purpose', purpose: scope.purpose },
-          resourceId: directResource.id, teamId: directResource.teamId, expectedResourceRevision: directResource.resourceRevision, deliveryMode: 'direct' }] },
+        teamCredentialBindings },
       readCatalog: () => readSessionTeamCredentialResourceCatalog({
         applications: applications.map(application => ({ ...application, agentTargetKey })), teamIds: [directResource.teamId],
         homeDomainAction: async request => {
