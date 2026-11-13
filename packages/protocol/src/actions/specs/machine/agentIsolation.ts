@@ -14,7 +14,7 @@ const isolationReentry: ActionOperationReentryPolicyV1 = (snapshot, input) => {
   if (snapshot.state === 'succeeded' || snapshot.state === 'failed' || snapshot.state === 'cancelled') return 'replay';
   const review = snapshot.observation;
   const request = MachineAgentIsolationSetInputV1Schema.safeParse(input);
-  if (review?.kind !== 'review_required' || !request.success) return 'refuse';
+  if (review?.kind !== 'review_required' || review.code !== 'agent_isolation_effect_changed' || !request.success) return 'refuse';
   return request.data.machineId === review.machineId && request.data.enabled === review.enabled
     && request.data.expectedPolicy.enabled === review.current.policy.enabled
     && request.data.expectedMetadataVersion === review.current.metadataVersion
