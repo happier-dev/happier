@@ -2025,6 +2025,9 @@ export type ProjectExecutionActionResultById = {
                         platform: 'linux';
                         agentUser: 'happier-agent';
                     } | {
+                        kind: 'effective';
+                        platform: 'linux';
+                    } | {
                         kind: 'enable_required';
                         reason: 'existing_machine_workspace_migration';
                     } | {
@@ -4074,6 +4077,9 @@ export type ProjectExecutionActionResultById = {
                         platform: 'linux';
                         agentUser: 'happier-agent';
                     } | {
+                        kind: 'effective';
+                        platform: 'linux';
+                    } | {
                         kind: 'enable_required';
                         reason: 'existing_machine_workspace_migration';
                     } | {
@@ -6122,6 +6128,9 @@ export type ProjectExecutionActionResultById = {
                         kind: 'effective';
                         platform: 'linux';
                         agentUser: 'happier-agent';
+                    } | {
+                        kind: 'effective';
+                        platform: 'linux';
                     } | {
                         kind: 'enable_required';
                         reason: 'existing_machine_workspace_migration';

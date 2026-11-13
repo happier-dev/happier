@@ -427,6 +427,7 @@ export type MachineConnectionActionResultById = {
         } | {
             ok: true;
             cwd: string;
+            preparation?: 'member_not_prepared' | undefined;
         };
     };
     readonly "machines.terminal.read": {

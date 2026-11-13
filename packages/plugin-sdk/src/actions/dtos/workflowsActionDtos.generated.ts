@@ -11483,6 +11483,7 @@ export type WorkflowsActionResultById = {
                 kind: 'ciFailed';
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
             } | {
                 kind: 'pluginEvent';
                 eventRef: {
@@ -11491,15 +11492,18 @@ export type WorkflowsActionResultById = {
                 };
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
             } | {
                 kind: 'prComment';
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
             } | {
                 kind: 'runLifecycle';
                 condition: 'needs_attention' | 'terminal';
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
             } | {
                 kind: 'schedule';
                 schedule: {
@@ -11520,11 +11524,13 @@ export type WorkflowsActionResultById = {
                 remainingOccurrences?: null | number | undefined;
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
             } | {
                 kind: 'sessionLifecycle';
                 events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
             })[];
             nextRunAt: null | number;
             contentStatus: 'available';
@@ -11563,6 +11569,7 @@ export type WorkflowsActionResultById = {
                 kind: 'ciFailed';
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
             } | {
                 kind: 'pluginEvent';
                 eventRef: {
@@ -11571,15 +11578,18 @@ export type WorkflowsActionResultById = {
                 };
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
             } | {
                 kind: 'prComment';
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
             } | {
                 kind: 'runLifecycle';
                 condition: 'needs_attention' | 'terminal';
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
             } | {
                 kind: 'schedule';
                 schedule: {
@@ -11600,11 +11610,13 @@ export type WorkflowsActionResultById = {
                 remainingOccurrences?: null | number | undefined;
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
             } | {
                 kind: 'sessionLifecycle';
                 events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
                 automationId?: string | undefined;
                 triggerId?: (string) | undefined;
+                enabled?: boolean | undefined;
             })[];
             nextRunAt: null | number;
             contentStatus: 'unavailable';

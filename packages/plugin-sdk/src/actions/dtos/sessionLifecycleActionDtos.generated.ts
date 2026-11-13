@@ -3674,6 +3674,7 @@ export type SessionLifecycleActionResultById = {
             kind: 'available';
             homeDir: string;
             workspaceRoot: null | string;
+            preparation?: 'member_not_prepared' | undefined;
         } | {
             kind: 'unavailable';
             reason: 'agent_isolation_unavailable' | 'requester_authority_unavailable';

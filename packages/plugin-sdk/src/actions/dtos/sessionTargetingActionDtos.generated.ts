@@ -50,6 +50,7 @@ export type SessionTargetingActionInputById = {
                     projectKeys?: undefined | {
                         include: string[];
                         exclude: string[];
+                        none?: true | undefined;
                     };
                     underSessionId?: string | undefined;
                 };
@@ -63,6 +64,7 @@ export type SessionTargetingActionInputById = {
             projectKeys?: undefined | {
                 include: string[];
                 exclude: string[];
+                none?: true | undefined;
             };
             underSessionId?: string | undefined;
         };

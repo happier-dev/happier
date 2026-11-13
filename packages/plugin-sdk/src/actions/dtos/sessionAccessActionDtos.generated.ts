@@ -120,6 +120,8 @@ export type SessionAccessActionInputById = {
         isConsentRequired?: boolean | undefined;
         networkOff?: boolean | undefined;
         recipientAccountId?: string | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "session.public_link.remove": {
         sessionId: string;
@@ -546,10 +548,10 @@ export type SessionAccessActionResultById = {
         useCount: number;
         isConsentRequired: boolean;
         updatedAt: number;
-        url: string;
         networkOff?: boolean | undefined;
         keyDerivation?: 'fragment_v1' | 'legacy_token_v1' | undefined;
         viewerOrigin?: string | undefined;
+        url?: string | undefined;
     };
     readonly "session.public_link.remove": {
         changed: boolean;

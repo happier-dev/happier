@@ -2289,6 +2289,9 @@ export type LocalServicesActionsActionResultById = {
                         platform: 'linux';
                         agentUser: 'happier-agent';
                     } | {
+                        kind: 'effective';
+                        platform: 'linux';
+                    } | {
                         kind: 'enable_required';
                         reason: 'existing_machine_workspace_migration';
                     } | {

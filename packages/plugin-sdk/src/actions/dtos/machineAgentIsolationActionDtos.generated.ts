@@ -228,6 +228,9 @@ export type MachineAgentIsolationActionResultById = {
             platform: 'linux';
             agentUser: 'happier-agent';
         } | {
+            kind: 'effective';
+            platform: 'linux';
+        } | {
             kind: 'enable_required';
             reason: 'existing_machine_workspace_migration';
         } | {
@@ -402,6 +405,9 @@ export type MachineAgentIsolationActionResultById = {
             kind: 'effective';
             platform: 'linux';
             agentUser: 'happier-agent';
+        } | {
+            kind: 'effective';
+            platform: 'linux';
         } | {
             kind: 'enable_required';
             reason: 'existing_machine_workspace_migration';
@@ -585,6 +591,9 @@ export type MachineAgentIsolationActionResultById = {
                 platform: 'linux';
                 agentUser: 'happier-agent';
             } | {
+                kind: 'effective';
+                platform: 'linux';
+            } | {
                 kind: 'enable_required';
                 reason: 'existing_machine_workspace_migration';
             } | {
@@ -655,6 +664,9 @@ export type MachineAgentIsolationActionResultById = {
             kind: 'effective';
             platform: 'linux';
             agentUser: 'happier-agent';
+        } | {
+            kind: 'effective';
+            platform: 'linux';
         } | {
             kind: 'enable_required';
             reason: 'existing_machine_workspace_migration';
