@@ -691,6 +691,7 @@ describe('runner daemon PluginServices host', () => {
                 code: 'runner_plugin_services_unavailable',
                 message: 'Runner PluginServices preparation failed (registry_acquisition: runner_plugin_services_unavailable)',
                 cause: { code: 'runner_plugin_services_unavailable', stage: 'registry_acquisition' },
+                failureCause: expect.objectContaining({ phase: 'dispatch' }),
                 retryable,
             } });
             expect(JSON.stringify(preparedError.data)).not.toContain(privateText);
@@ -709,7 +710,8 @@ describe('runner daemon PluginServices host', () => {
         expect(AgentRuntimeDaemonServiceResponseV1Schema.parse({ ok: false,
             error: projectRunnerDaemonPluginServicesFailure(typed) })).toEqual({ ok: false,
             error: { code, message: `Runner PluginServices operation failed (dispatch: ${code})`,
-                cause: { code, stage: 'dispatch' }, retryable: false } });
+                cause: { code, stage: 'dispatch' },
+                failureCause: expect.objectContaining({ phase: 'dispatch', errorCode: code }), retryable: false } });
         // Filesystem/loader failures use uppercase machine codes. Keep the
         // underlying code in the diagnostic, without exposing their path text.
         const missingFile = Object.assign(new Error(privateText), { code: 'ENOENT', path: privateText });
@@ -718,6 +720,7 @@ describe('runner daemon PluginServices host', () => {
             error: projectRunnerDaemonPluginServicesFailure(missingFileError, 'dispatch') });
         expect(missingFileRefusal).toMatchObject({ ok: false, error: {
             code: 'runner_plugin_services_unavailable', cause: { code: 'ENOENT', stage: 'registry_acquisition' },
+            failureCause: { phase: 'dispatch', errorClass: 'Error', errorCode: 'ENOENT', httpStatus: null },
         } });
         expect(missingFileError.details).toEqual({ cause: { code: 'ENOENT', stage: 'registry_acquisition' } });
         expect(JSON.stringify(missingFileRefusal)).not.toContain(privateText);

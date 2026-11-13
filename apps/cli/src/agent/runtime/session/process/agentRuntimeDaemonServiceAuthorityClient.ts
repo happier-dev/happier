@@ -18,6 +18,7 @@ import type {
 import { createProviderErrorV1, ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
 import type { SessionInputEnqueueResultV1 } from '@happier-dev/protocol';
 import type { SessionRuntimeTeamCredentialDenialDetailsV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+import { projectSessionRuntimeFailureCause } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { TeamCredentialErrorCodeV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import {
   HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY,
@@ -248,8 +249,10 @@ export function createCurrentRunnerManagedProviderRunServices(
     if (response.ok) return response.result;
     const code = ProviderErrorCodeV1Schema.safeParse(response.error.code);
     if (code.success) throw createProviderErrorV1(code.data,
-      'runtimeBindingBasis' in operation ? { connectionId: operation.runtimeBindingBasis.connectionId } : {});
-    throw createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect');
+      'runtimeBindingBasis' in operation ? { connectionId: operation.runtimeBindingBasis.connectionId } : {}, response.error);
+    throw Object.assign(createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect'), {
+      failureCause: projectSessionRuntimeFailureCause(response.error, 'turn_start'),
+    });
   };
   const services: RunnerManagedProviderRunServices = {
     async resolvePurpose({ signal, ...proof }) {
@@ -271,9 +274,11 @@ export function createCurrentRunnerManagedProviderRunServices(
       if (result.ok && result.result.kind === 'provider_managed.binding') return result.result;
       if (!result.ok) {
         const code = ProviderErrorCodeV1Schema.safeParse(result.error.code);
-        if (code.success) throw createProviderErrorV1(code.data, { connectionId: proof.runtimeBindingBasis.connectionId });
+        if (code.success) throw createProviderErrorV1(code.data, { connectionId: proof.runtimeBindingBasis.connectionId }, result.error);
       }
-      throw createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect');
+      throw Object.assign(createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect'), {
+        ...(!result.ok ? { failureCause: projectSessionRuntimeFailureCause(result.error, 'turn_start') } : {}),
+      });
     },
     async closeBinding(proof) {
       const result = await dispatch({ kind: 'provider_managed.binding.close', requestId: randomUUID(), ...proof });
@@ -304,27 +309,29 @@ export async function openCurrentRunnerTeamCredentialProviderBinding(
   }
   if (!response.ok) {
     if (response.error.code === 'team_credential_provider_selection_not_current') {
-      throw new SessionTeamCredentialLaunchUnavailableError();
+      throw new SessionTeamCredentialLaunchUnavailableError(undefined, 'binding', response.error);
     }
     const brokerCode = ProviderBrokerAdmissionFailureCodeV1Schema.safeParse(response.error.code);
     const providerCode = ProviderErrorCodeV1Schema.safeParse(response.error.code);
     if (providerCode.success) {
       const error = brokerCode.success
-        ? new SessionTeamCredentialLaunchUnavailableError(brokerCode.data)
+        ? new SessionTeamCredentialLaunchUnavailableError(brokerCode.data, 'binding', response.error)
         : new Error(providerCode.data);
       throw Object.assign(error, createProviderErrorV1(providerCode.data, {
         connectionId: input.operation.resourceId,
-      }));
+      }, response.error));
     }
     if (brokerCode.success) {
-      throw new SessionTeamCredentialLaunchUnavailableError(brokerCode.data);
+      throw new SessionTeamCredentialLaunchUnavailableError(brokerCode.data, 'binding', response.error);
     }
     const teamCredentialCode = TeamCredentialErrorCodeV1Schema.safeParse(response.error.code);
     if (teamCredentialCode.success) {
-      throw new TeamCredentialDirectMaterialOperationError({ error: teamCredentialCode.data });
+      throw new TeamCredentialDirectMaterialOperationError({ error: teamCredentialCode.data }, response.error);
     }
   }
-  throw createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect');
+  throw Object.assign(createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect'), {
+    ...(!response.ok ? { failureCause: projectSessionRuntimeFailureCause(response.error, 'turn_start') } : {}),
+  });
 }
 
 export async function closeCurrentRunnerTeamCredentialProviderBinding(
@@ -548,12 +555,12 @@ export async function authorizeCurrentAgentRuntimeDaemonModelTransition(
     if (providerCode.success) {
       throw Object.assign(new Error(providerCode.data), createProviderErrorV1(providerCode.data, {
         connectionId: input.selection.providerConnectionId,
-      }));
+      }, response.error));
     }
   }
-  throw createNativeAgentSessionEffectBoundaryError(
-    'authority_unavailable_before_effect',
-  );
+  throw Object.assign(createNativeAgentSessionEffectBoundaryError('authority_unavailable_before_effect'), {
+    ...(!response.ok ? { failureCause: projectSessionRuntimeFailureCause(response.error, 'turn_start') } : {}),
+  });
 }
 
 
@@ -666,6 +673,7 @@ export async function dispatchCurrentRunnerDaemonPluginService(
       code: response.error.code,
       message: response.error.message,
       ...(response.error.cause ? { details: { cause: response.error.cause } } : {}),
+      ...(response.error.failureCause ? { failureCause: response.error.failureCause } : {}),
     });
   }
   throw createNativeAgentSessionEffectBoundaryError(

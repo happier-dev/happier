@@ -1,3 +1,4 @@
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isRetainedManagedProviderInvocationCurrent, isManagedProviderSessionInvocationCurrent } from "@/providers/broker/invocationCurrentness";
 import { createAgentIsolationSessionContext } from "@/daemon/agentIsolation/agentIsolationSessionContext";
 import { isDeepStrictEqual } from "node:util";
@@ -27,7 +28,7 @@ import { readProviderSettingsForCli } from "@/providers/settings/read";
 import type { CurrentMachineExecutionOriginContext } from "@/api/machine/resolveCurrentMachineExecutionOriginContext";
 import { createRunnerExecutionRunSnapshots } from "@/daemon/agentRuntime/runnerExecutionRunSnapshots";
 import { createRunnerManagedServicesClient, type RunnerManagedServicesCustodyDispatchV1, type RunnerManagedProviderCustodyScopeV1 } from "@/agent/runtime/session/process/runnerManagedServicesCustody";
-import { resolveSessionTransportContext } from "@/session/services/resolveSessionTransportContext";
+import { deferSessionRpcEncryption } from "@/session/services/resolveSessionTransportContext";
 import { callSessionRpc } from "@/session/transport/rpc/sessionRpc";
 import { startPublicManagedProviderRuntime } from "@/providers/lifecycle/publicManagedProviderRuntimeStart";
 import { createProviderLaunchResourceScope } from "@/providers/lifecycle/resourceScope";
@@ -400,6 +401,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                 if (!started.ok) throw new PluginError({
                   code: started.code,
                   message: 'Managed gateway Session runtime start failed',
+                  ...(started.startupFailure ? { failureCause: started.startupFailure.failureCause } : {}),
                 });
                 launchScope.transfer();
               },
@@ -879,8 +881,12 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                       pluginId: identity.pluginId,
                     })) === providerPluginHardRevocationRevisionAtAdmission
                   );
-                } catch {
-                  return false;
+                } catch (error) {
+                  throw new PluginError({
+                    code: 'plugin_services_managed_provider_authority_unavailable',
+                    message: 'Managed Provider initial authority is unavailable',
+                    failureCause: projectActionFailureCauseV1(error, 'providers.runtime_start'),
+                  });
                 }
               };
             if (isRemoteProviderGatewayPlacement(runtimeBindingBasis.deployment.gatewayPlacement, params.machineId)) {
@@ -1039,6 +1045,7 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                   throw new PluginError({
                     code: started.code,
                     message: 'Managed Provider Session runtime start failed',
+                    ...(started.startupFailure ? { failureCause: started.startupFailure.failureCause } : {}),
                   });
                 }
                 adoptionCommitted = true;
@@ -1616,13 +1623,11 @@ getApiMachineForSessions: () => ApiMachineClient | null;
                   // encryption owner. No Run lifecycle decision is copied here.
                   return await runWithServerHttpBaseUrl(account.serverHttpBaseUrl, async () => {
                     const controlSignal = shutdownCancellationDomains.daemonWorkSignal;
-                    const transport = await resolveSessionTransportContext({ reason: 'session-control', credentials, idOrPrefix: sessionId, signal: controlSignal });
-                    if (!transport.ok || transport.sessionId !== sessionId) throw new PluginError({
-                      code: 'execution_run_target_unavailable', message: 'Run controller transport is unavailable' });
-                    const rpc = { token: credentials.token, sessionId, method: `${sessionId}:${method}`,
-                      request: { runId: invocationId }, signal: controlSignal, timeoutMs: null };
-                    return transport.mode === 'plain' ? await callSessionRpc({ ...rpc, mode: 'plain' })
-                      : await callSessionRpc({ ...rpc, mode: 'e2ee', ctx: transport.ctx });
+                    return await callSessionRpc({ token: credentials.token, sessionId, method: `${sessionId}:${method}`,
+                      request: { runId: invocationId }, signal: controlSignal, timeoutMs: null,
+                      ...deferSessionRpcEncryption({ reason: 'session-control', credentials, idOrPrefix: sessionId, signal: controlSignal,
+                        unavailable: () => new PluginError({
+                          code: 'execution_run_target_unavailable', message: 'Run controller transport is unavailable' }) }) });
                   });
                 };
                 projectLaunchInvocation ??= createRunnerAgentProjectLaunchInvocation({

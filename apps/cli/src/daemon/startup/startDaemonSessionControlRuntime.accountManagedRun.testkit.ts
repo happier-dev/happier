@@ -10,6 +10,7 @@ import { createSessionRunReportPolicyReader } from '@/api/sessionFollowCreationP
 import { ProviderConnectionIdSchema, type AccountEncryptionCurrentnessResponse, type ProviderRuntimeBindingBasisV1, type SessionExecutionRunBrokerAuthorityRequestV1, type SessionExecutionRunBrokerAuthorityResponseV1 } from '@happier-dev/protocol';
 import type { StoredCredentials } from '@/persistence';
 import { reloadConfiguration } from '@/configuration';
+import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createManagedRunLaunchFixture } from '@/providers/lifecycle/managedRunLaunch.testkit';
@@ -36,11 +37,17 @@ import type { SpawnResourceCleanupByKey } from '@/daemon/sessions/cleanupSession
 
 const boundary = vi.hoisted(() => ({ control: null as Parameters<typeof startDaemonControlServer>[0] | null,
   resolveRunAuthority: null as ((request: SessionExecutionRunBrokerAuthorityRequestV1, signal?: AbortSignal) => SessionExecutionRunBrokerAuthorityResponseV1 | Promise<SessionExecutionRunBrokerAuthorityResponseV1>) | null,
-  refusedCapabilityRoot: '', blockedCapabilityPaths: new Set<string>() }));
-// One filesystem boundary for the two exact capability-retirement fault cases.
+  refusedRegistryPath: '', registryReadFailures: 0, refusedCapabilityRoot: '', blockedCapabilityPaths: new Set<string>() }));
+// The genuine filesystem boundary owns retirement and initial-policy read faults.
 vi.mock('node:fs/promises', async importOriginal => {
   const original = await importOriginal<typeof import('node:fs/promises')>();
-  return { ...original, rm: async (...args: Parameters<typeof original.rm>) => {
+  return { ...original, readFile: async (...args: Parameters<typeof original.readFile>) => {
+    if (boundary.refusedRegistryPath && String(args[0]) === boundary.refusedRegistryPath) {
+      boundary.registryReadFailures += 1;
+      throw Object.assign(new Error('Fixture registry read refused'), { code: 'EACCES' });
+    }
+    return await original.readFile(...args);
+  }, rm: async (...args: Parameters<typeof original.rm>) => {
     const path = String(args[0]);
     if (boundary.refusedCapabilityRoot && path.startsWith(boundary.refusedCapabilityRoot)) {
       boundary.blockedCapabilityPaths.add(path);
@@ -96,6 +103,7 @@ export type AttachedManagedRunFixture = Readonly<{
   context: AgentRuntimeDaemonServiceDispatchContext;
   tracked: TrackedSession;
   spawnResourceCleanupByKey: SpawnResourceCleanupByKey;
+  initialPolicyFilesystem: Readonly<{ refuse(): void; restore(): void; readFailures(): number }>;
   capabilityCleanupFilesystem: Readonly<{ refuse(): void; restore(): void; readBlockedPaths(): string[] }>;
   resolveRunReportPolicy: ReturnType<typeof createSessionRunReportPolicyReader>;
   requester: RequesterSessionRuntimeContext | null;
@@ -136,6 +144,8 @@ export async function createAttachedManagedRunFixture(input: Readonly<{ director
   const sourceDiagnostics: { stage: string; error: string | null } = { stage: 'not_opened', error: null };
   let releaseAuthorization: (() => void | Promise<void>) | null = null;
   const cleanup = async () => {
+    boundary.refusedRegistryPath = '';
+    boundary.registryReadFailures = 0;
     boundary.refusedCapabilityRoot = '';
     try { await requester?.dispose(); await requesterChannel?.close(); await daemon?.stopControlServer(); await releaseAuthorization?.(); await fixture.cleanup(); }
     finally {
@@ -287,6 +297,11 @@ export async function createAttachedManagedRunFixture(input: Readonly<{ director
       runtimeBindingBasis: basis, expectedAccountSettingsScopeKey: requester?.readAccountSettingsSnapshot().scopeKey ?? snapshot.scopeKey };
     return { directory, fixture, runtime: daemon, control: boundary.control, attempt: authorization.attempt, authorization: authorization.attempt.authorization, credentials, snapshot, proof,
       dispatch, dispatchRequest, context, tracked, spawnResourceCleanupByKey,
+      initialPolicyFilesystem: {
+        refuse: () => { boundary.refusedRegistryPath = resolvePluginStorePaths({ happyHomeDir: fixture.happyHomeDir }).registryCurrentFilePath; },
+        restore: () => { boundary.refusedRegistryPath = ''; },
+        readFailures: () => boundary.registryReadFailures,
+      },
       capabilityCleanupFilesystem: {
         refuse: () => { boundary.refusedCapabilityRoot = join(directory, 'request-auth'); },
         restore: () => { boundary.refusedCapabilityRoot = ''; },
@@ -352,7 +367,7 @@ export async function createAttachedManagedRunControlTransport(
     await new Promise<void>(resolve => server.close(() => resolve()));
     throw error;
   }
-  return { services: createCurrentRunnerManagedProviderRunServices(authority),
+  return { authority, services: createCurrentRunnerManagedProviderRunServices(authority),
     readBinding() {
       if (!binding) throw new Error('Expected real daemon binding response');
       return binding;

@@ -123,6 +123,7 @@ export function projectRunnerDaemonPluginServicesFailure(
         code,
         message: `Runner PluginServices ${preparationStage ? 'preparation' : 'operation'} failed (${cause.stage}: ${cause.code})`,
         cause,
+        failureCause: actionCause,
         ...(isPluginError(error) ? { retryable: error.retryable } : {}),
     };
 }
@@ -137,6 +138,7 @@ export function createRunnerDaemonPluginServicesPreparationError(
         message: failure.message,
         retryable: isPluginError(error) ? error.retryable : true,
         details: { cause: { code: failure.cause?.code ?? failure.code, stage } },
+        failureCause: failure.failureCause,
     });
 }
 

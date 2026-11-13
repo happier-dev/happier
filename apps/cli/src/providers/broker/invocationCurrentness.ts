@@ -17,14 +17,10 @@ export async function isManagedProviderSessionInvocationCurrent(
   }>,
 ): Promise<boolean> {
   if (!input.adoptionCommitted()) {
-    try {
-      return (
-        (await input.revalidateInitialPolicy()) === true &&
-        !input.adoptionCommitted()
-      );
-    } catch {
-      return false;
-    }
+    return (
+      (await input.revalidateInitialPolicy()) === true &&
+      !input.adoptionCommitted()
+    );
   }
   return await isRetainedManagedProviderInvocationCurrent({
     readsRetainedAuthorityCurrent: input.readsRetainedAuthorityCurrent,
