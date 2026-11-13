@@ -2446,6 +2446,13 @@ binding, including the Machine owner, before the folder worker starts.
 Background folder and isolation-status reads omit this intent and consume only
 an existing binding; they never provision a member.
 
+In unreleased 0.3, Agent inventory also remains read-only. A requester without a
+member binding receives `preparation: member_not_prepared`, with the declared
+install options still available; this is not a failed probe. Deliberate Agent
+install admission uses the same native preparation owner as Session launch to
+prepare that requester's member once, then runs the installer under that held
+identity. Subsequent inventory probes that member's installed executables.
+
 The daemon's Session spawn path also prepares the requesting person's native
 identity before creating a checkout or checking the Session folder. It passes
 that held identity into the existing native filesystem worker, which runs the

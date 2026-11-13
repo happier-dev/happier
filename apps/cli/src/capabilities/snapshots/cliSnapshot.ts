@@ -615,7 +615,7 @@ async function resolveCliPathForName(
     } : null;
 }
 
-async function detectAgentSetupFacts(name: DetectCliName, includeVersion: boolean): Promise<Pick<MachineAgentInventoryItem, 'platform' | 'install' | 'dependencies' | 'signIn'>> {
+export async function detectAgentSetupFacts(name: DetectCliName, includeVersion: boolean, memberNotPrepared = false): Promise<Pick<MachineAgentInventoryItem, 'platform' | 'install' | 'dependencies' | 'signIn'>> {
     const registry = readCurrentContributionRegistry();
     const agent = registry.agentDefinitionsById.get(name);
     const dependencyId = agent ? resolveAgentRuntimeManagedDependencyId(agent) : null;
@@ -629,7 +629,7 @@ async function detectAgentSetupFacts(name: DetectCliName, includeVersion: boolea
         arch: process.arch,
     };
     const dependencies: MachineAgentInventoryItem['dependencies'] = [];
-    if (dependencyId) {
+    if (dependencyId && !memberNotPrepared) {
         const installablesRegistry = resolveExecutableManagedDependenciesRegistry(declarations);
         const candidates = await Promise.all(selectExecutableManagedDependencies(declarations).map(async ({ definition }) => {
             const adapter = await getRuntimeInstallableAdapter(definition.key, { installablesRegistry });

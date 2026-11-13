@@ -18,14 +18,15 @@ export function createAcpAgentInventoryCapability(input: Readonly<{
       const accountId = context.accountId ?? input.accountId;
       if (!accountId) throw new CapabilityError('ACP inventory requires an admitted Account', 'account-unavailable');
       const executionScope = context.agentInstallExecutionScope;
-      const installs = parsed.data.definitions.some(definition => definition.launch.kind !== 'command')
+      const installs = !context.memberNotPrepared && parsed.data.definitions.some(definition => definition.launch.kind !== 'command')
         ? await listManagedAcpInstalls({ env: input.env, accountId }) : [];
       const items: MachineAgentInventoryItem[] = parsed.data.definitions.map(definition => {
         const { agentId } = buildConfiguredAcpAgentSelectionV1(definition.definitionId);
         const launch = definition.launch;
         if (launch.kind === 'command') {
           return { agentId, definitionId: definition.definitionId, title: definition.title,
-            installed: commandExistsOnPath(launch.command, { env: input.env }), managed: false,
+            ...(context.memberNotPrepared ? { preparation: 'member_not_prepared' as const } : {}),
+            installed: !context.memberNotPrepared && commandExistsOnPath(launch.command, { env: input.env }), managed: false,
             fit: resolveAcpPlatformFitV1(launch, { platform: input.platform ?? process.platform, arch: input.arch ?? process.arch }),
             version: null, latestVersion: null, update: { supported: false, command: null },
             signIn: { status: 'unknown', loginSupport: 'unsupported' }, platform: { supported: true },
@@ -36,6 +37,7 @@ export function createAcpAgentInventoryCapability(input: Readonly<{
         const install = matching.find(install => install.version === launch.version) ?? matching[0];
         const fit = resolveAcpPlatformFitV1(launch, { platform: input.platform ?? process.platform, arch: input.arch ?? process.arch });
         return { agentId, definitionId: definition.definitionId, title: definition.title,
+          ...(context.memberNotPrepared ? { preparation: 'member_not_prepared' as const } : {}),
           installed: Boolean(install), version: install?.version ?? null, managed: Boolean(install), fit,
           latestVersion: launch.version,
           update: { supported: Boolean(install), command: null },

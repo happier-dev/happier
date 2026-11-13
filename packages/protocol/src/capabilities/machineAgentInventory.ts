@@ -50,6 +50,8 @@ export function projectAcpCatalogForMachineInventory(catalog: AcpCatalogSnapshot
 }
 
 const MachineAgentFactsSchema = lazyZodSchema(() => z.object({
+  /** Read-only cold inventory; deliberate install admission prepares this member. */
+  preparation: z.optional(z.literal('member_not_prepared')),
   installed: z.boolean(),
   managed: z.optional(z.boolean()),
   fit: z.optional(AcpPlatformFitV1Schema),

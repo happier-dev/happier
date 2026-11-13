@@ -54,9 +54,11 @@ export type CapabilityEffectExecution = <T>(effects: CapabilityEffects, execute:
 const UNCLASSIFIED_EFFECTS: CapabilityEffects = ['private_read', 'file_write', 'process'];
 
 export type CapabilitiesDetectContext = {
+    memberNotPrepared?: true;
     accountId?: string;
     cliSnapshot: DetectCliSnapshot | null;
-    /** Fixed by the host's actual native member binding, never a request operand. */
+    /** Host-selected requester scope, never a request operand. Cold inventory
+     * declares member scope without claiming a prepared native binding. */
     agentInstallExecutionScope?: 'member';
 };
 

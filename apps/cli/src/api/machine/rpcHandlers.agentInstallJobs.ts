@@ -19,7 +19,7 @@ export function registerMachineAgentInstallJobRpcHandlers(params: { rpcHandlerMa
   const unavailable = { ok: false as const, errorCode: 'install_unavailable' as const,
     error: 'Agent jobs require current Account admission.' };
   const memberUnavailable = { ok: false as const, errorCode: 'member_install_unavailable' as const,
-    error: 'Agent installation requires an existing isolated member user on Linux.' };
+    error: 'Agent installation requires available isolated member execution on Linux.' };
   const admittedAccount = async (context?: RpcHandlerContext): Promise<string | null> => {
     if (!context?.machineAdmission || context.signal.aborted
       || !context.verifyMachineAdmissionCurrent) return null;

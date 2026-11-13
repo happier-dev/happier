@@ -7,7 +7,7 @@ import { createInstalledFilesystemMachineFixture } from '@/daemon/testkit/instal
 import { createAgentIsolationMemberPreparationBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
 import type { HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
-it.skipIf(process.platform !== 'linux').each(['member', 'requester'])('reads Agent inventory without preparing a missing member binding and preserves owner discovery', async actorAccountId => {
+it.skipIf(process.platform !== 'linux').each(['member', 'requester'])('reports cold Agent inventory without preparing a missing member binding and preserves owner discovery', async actorAccountId => {
   let isolationEnabled = true;
   let member: ReturnType<typeof createAgentIsolationMemberPreparationBoundary> | undefined;
   const getMember = (input: Parameters<NonNullable<HostAgentIsolationLaunchContext['readMember']>>[0]): ReturnType<typeof createAgentIsolationMemberPreparationBoundary> => member ??= (
@@ -27,12 +27,20 @@ it.skipIf(process.platform !== 'linux').each(['member', 'requester'])('reads Age
   } });
   try {
     const request = { requests: [{ id: 'cli.codex' as const }], bypassCache: true };
-    const unavailable = await fixture.invoke(RPC_METHODS.CAPABILITIES_DETECT, request, { actorAccountId, role: 'use' });
-    expect(unavailable).toMatchObject({ failureCause: { errorCode: 'agent_isolation_unavailable' } });
+    const cold = await fixture.invoke(RPC_METHODS.CAPABILITIES_DETECT, request, { actorAccountId, role: 'use' });
+    expect(cold).toMatchObject({ results: { 'cli.codex': { ok: true, data: {
+      preparation: 'member_not_prepared', installed: false, install: { available: true, executionScope: 'member' },
+    } } } });
     await expect(fixture.invoke(RPC_METHODS.CAPABILITIES_DETECT, {
-      requests: [{ id: 'tool.acpAgentInventory', params: { definitions: [] } }],
+      requests: [{ id: 'tool.acpAgentInventory', params: { definitions: [{
+        definitionId: 'present-on-daemon', title: 'Daemon executable',
+        launch: { kind: 'command', command: process.execPath, args: [] },
+      }] } }],
     }, { actorAccountId, role: 'use' })).resolves.toMatchObject({
-      failureCause: { errorCode: 'agent_isolation_unavailable' },
+      results: { 'tool.acpAgentInventory': { ok: true, data: { items: [{
+        preparation: 'member_not_prepared', installed: false,
+        install: { available: false, executionScope: 'member' },
+      }] } } },
     });
     expect(member).toBeDefined();
     // This cost is the contract: a read starts zero owner setup effects or

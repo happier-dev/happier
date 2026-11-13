@@ -104,8 +104,14 @@ export async function readAgentIsolationMemberBinding(activeServerDir: string, o
 export async function readAgentIsolationMemberLaunchIdentity(input: AgentIsolationMemberNativeIdentityInput & Readonly<{ activeServerDir: string }>,
   backend?: Pick<MachineSetupBackend, 'observe'>,
 ): Promise<AgentIsolationMemberNativeIdentity> {
-  const observed = await readAgentIsolationNativeIdentity(input, backend);
-  if (!await readAgentIsolationMemberBinding(input.activeServerDir, observed)) throw unavailable();
+  const requester = input.requesterIdentity.requester;
+  const binding = await readAgentIsolationMemberBindingForAccount({ activeServerDir: input.activeServerDir,
+    homeServerIdentityId: input.requesterIdentity.homeServerIdentityId,
+    machineId: requester.machineId, installationId: requester.installationId }, requester.accountId);
+  if (!binding) throw new PluginError({ code: 'member_not_prepared',
+    message: 'Private execution will be prepared when you install or start an Agent', retryable: false });
+  const observed = await readAgentIsolationNativeIdentity({ ...input, expectedUid: binding.uid }, backend);
+  requireMatch(binding, observed);
   return observed;
 }
 

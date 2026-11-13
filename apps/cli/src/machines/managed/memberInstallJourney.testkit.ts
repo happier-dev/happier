@@ -114,7 +114,12 @@ export async function createMemberInstallJourney(input: Readonly<{ home: Guest; 
             const policy = context.readIsolation();
             return policy ? { ...policy, workspaceRoots: [] } : undefined;
         },
-            readMember: request => members.read(request) };
+            readMember: request => members.read(request),
+            prepareMember: async request => {
+                const result = await members.prepare(request);
+                if (result.kind !== 'ready') throw new Error(`Member preparation failed: ${JSON.stringify(result)}`);
+                return result;
+            } };
         const prepareNativeOperation = (request: Parameters<typeof prepareRequesterNativeOperation>[0]) =>
             prepareRequesterNativeOperation(request, {
                 machine, homeServerIdentityId: home.serverId, machineId: home.machineId, installationId: home.installationId });
@@ -140,10 +145,14 @@ export async function createMemberInstallJourney(input: Readonly<{ home: Guest; 
     };
     return { register, backing, identity,
         async run(invoke: MemberJourneyInvoke) {
-            // This is the actual first-use policy/setup owner, not a fabricated
-            // binding. Install itself is forbidden from provisioning a member.
-            const prepared = await members.prepare({ requesterIdentity, signal: new AbortController().signal });
-            expect(prepared, JSON.stringify(prepared)).toMatchObject({ kind: 'ready' });
+            // Sharing leaves the requester cold. Only deliberate install
+            // admission may ask the existing native owner to prepare it.
+            const cold = await invoke('machines.agents.list', { machineId: home.machineId, agentId: 'claude', refresh: true });
+            expect(cold, JSON.stringify(cold)).toMatchObject({ ok: true, result: { items: [{
+                preparation: 'member_not_prepared', installed: false,
+                install: { available: true, executionScope: 'member' },
+            }] } });
+            await expect(members.read({ requesterIdentity })).rejects.toMatchObject({ code: 'member_not_prepared' });
             const start = await invoke('machines.agents.install', { machineId: home.machineId, agentId: 'claude', intent: 'install', consent: { vendorRecipe: true } });
             expect(start, JSON.stringify(start)).toMatchObject({ ok: true, result: { ok: true, executionScope: 'member' } });
             if (!start.ok || !start.result || typeof start.result !== 'object' || !('jobId' in start.result) || typeof start.result.jobId !== 'string') throw new Error('Member install admission failed');

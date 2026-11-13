@@ -21,6 +21,19 @@ export type PreparedRequesterNativeIdentity = Readonly<{
   | { kind: 'sharedAgent'; identity: Pick<AgentIsolationMemberNativeIdentity, 'agentUid' | 'agentGid' | 'home'> }
 )>;
 
+/** Deliberate admission uses the incumbent member provisioner on a cold or
+ * broken binding. Read-only inventory never calls this preparation entry. */
+export async function prepareAgentIsolationMemberForIntent(machine: HostAgentIsolationLaunchContext,
+  input: Parameters<NonNullable<HostAgentIsolationLaunchContext['readMember']>>[0]
+): ReturnType<NonNullable<HostAgentIsolationLaunchContext['readMember']>> {
+  if (!machine.readMember) throw new Error('Member identity reader is unavailable');
+  return machine.readMember(input).catch(error => {
+    input.signal?.throwIfAborted();
+    if (!machine.prepareMember) throw error;
+    return machine.prepareMember(input);
+  });
+}
+
 /** A committed member binding is ready independently of the shared agent user. */
 export function projectMemberNativeOperationSnapshot(snapshot: HostAgentIsolationLaunchSnapshot | undefined): HostAgentIsolationLaunchSnapshot | undefined {
   return snapshot && { ...snapshot, status: { kind: 'effective', platform: 'linux' } };
@@ -79,13 +92,8 @@ export async function prepareRequesterNativeOperation(input: PrepareRequesterNat
   if (placement === 'member') {
     if (!input.preparedIdentity && !machine.readMember) throw unavailable();
     const memberInput = { requesterIdentity, rpcContext: input.ingress, signal: input.signal };
-    const native = input.preparedIdentity?.kind === 'member' ? input.preparedIdentity : await machine.readMember!(memberInput).catch(error => {
-      input.signal.throwIfAborted();
-      // Missing binding/native identity is an actual preparation failure. Keep
-      // cold member auto-setup at the incumbent owner; never use the daemon UID.
-      if (!machine.prepareMember) throw error;
-      return machine.prepareMember(memberInput);
-    });
+    const native = input.preparedIdentity?.kind === 'member' ? input.preparedIdentity
+      : await prepareAgentIsolationMemberForIntent(machine, memberInput);
     // This operation consumes a committed member binding. Global shared-user
     // readiness is independent and is not republished by native operations.
     const memberSnapshot = projectMemberNativeOperationSnapshot(snapshot);

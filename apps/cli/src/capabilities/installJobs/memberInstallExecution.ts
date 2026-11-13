@@ -12,6 +12,7 @@ import { selectHostRequesterExecutionIdentity, resolveHostRequesterAgentExecutio
 import type { AgentLaunchOperationMaterialization } from '@/daemon/agentIsolation/agentLaunchMaterials';
 import { authorizeResolvedProjectExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import { runMemberAgentEffect } from '@/daemon/agentIsolation/runMemberNativeOperation';
+import { prepareAgentIsolationMemberForIntent } from '@/daemon/agentIsolation/prepareNativeOperation';
 import { buildMemberAgentInstallEnvironment } from './memberInstallEnvironment';
 import type { MemberAgentInstallExecutor } from './agentInstallJobOwner';
 
@@ -28,7 +29,7 @@ const RecordSchema = z.discriminatedUnion('t', [
 
 /** Agent placement owns scope, including the custodian on a separate-users Machine.
  * undefined retains machine execution; null refuses unavailable member execution.
- * Eligibility consumes an existing committed native binding; it never provisions. */
+ * Deliberate install admission prepares the requester through the native owner. */
 export async function readMemberAgentInstallExecutor(context: RpcHandlerContext,
   deps: MemberAgentInstallExecutionDeps = {}): Promise<MemberAgentInstallExecutor | null | undefined> {
   const placement = resolveMachineAgentExecutionPlacementV1({
@@ -46,7 +47,8 @@ export async function readMemberAgentInstallExecutor(context: RpcHandlerContext,
   if (selected.kind !== 'isolated' || resolveHostRequesterAgentPlacementForHost({ identity: selected, snapshot,
     platform: deps.platform }) !== 'member') return null;
   const requesterIdentity = { ...selected, homeServerIdentityId };
-  const observed = await deps.agentIsolation.readMember({ requesterIdentity, rpcContext: context, signal: context.signal });
+  const observed = await prepareAgentIsolationMemberForIntent(deps.agentIsolation,
+    { requesterIdentity, rpcContext: context, signal: context.signal });
   context.signal.throwIfAborted();
   const preparedIdentity = { ...observed, kind: 'member' as const, requesterIdentity, snapshot };
   const nativeRuntime = deps.nativeOperationRuntime;

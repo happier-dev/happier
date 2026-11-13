@@ -11,6 +11,8 @@ import { windowsTerminalCapability } from '@/capabilities/registry/toolWindowsTe
 import { executionRunsCapability } from '@/capabilities/registry/toolExecutionRuns';
 import { systemTasksCapability } from '@/capabilities/registry/toolSystemTasks';
 import { createAcpAgentInventoryCapability } from '@/capabilities/registry/machineAgentsInventory';
+import { readColdMemberInventory } from '@/capabilities/registry/coldMemberInventory';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { ghDepCapability } from '@/capabilities/registry/depGh';
 import { azDepCapability } from '@/capabilities/registry/depAz';
 import {
@@ -705,7 +707,11 @@ export function registerCapabilitiesHandlers(
                     context && names.length ? { ...context, capabilitySessionFactories } : context,
                     () => execute(names.length ? { observations: capabilitySessionFactories,
                         isCurrent: () => context?.signal?.aborted !== true } : undefined),
-                    failure => { throw new CapabilityError(failure.error, failure.errorCode); });
+                    failure => { throw new CapabilityError(failure.error, failure.errorCode); }).catch(error => {
+                    if (method !== RPC_METHODS.CAPABILITIES_DETECT || !detectRequest
+                        || !isPluginError(error) || error.code !== 'member_not_prepared') throw error;
+                    return readColdMemberInventory(detectRequest, context?.machineAdmission?.actorAccountId);
+                });
                 // This private pipe returns the same installed capability
                 // service's response; no external caller supplies this value.
                 return result as T;
