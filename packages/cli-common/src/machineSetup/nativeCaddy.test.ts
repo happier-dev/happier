@@ -79,6 +79,24 @@ it('does not treat permission to bind privileged ports as occupied-port evidence
     }] }, { run: async () => ok('') })).toEqual({ status: 'ready' });
 });
 
+it('uses one native listener snapshot when privileged bind probes are denied', async () => {
+    vi.spyOn(net.Server.prototype, 'listen').mockImplementation(function (this: net.Server) {
+        queueMicrotask(() => this.emit('error', Object.assign(new Error('native bind denied'), { code: 'EACCES' })));
+        return this;
+    });
+    const f = await fixture(false);
+    const readLocalListeners = vi.fn(async () => [{ address: '127.0.0.3', port: 443 }]);
+    const result = await checkNativeCaddyPortAvailability({ ...f.input,
+        publicBindings: nativeCaddyProfile.publicPortRequirements.map(binding => ({ ...binding,
+            requirementId: binding.id, hostAddress: '0.0.0.0' })) }, {
+        run: async () => ok(''), readLocalListeners,
+    });
+    expect(result).toMatchObject({ status: 'unavailable', reason: 'foreign_effect_conflict', details: {
+        failure: { reason: 'port_in_use', port: 443 }, remedy: expect.stringContaining('Tunnel'),
+    } });
+    expect(readLocalListeners).toHaveBeenCalledTimes(1);
+});
+
 it.skipIf(process.platform === 'win32')('prepares Caddy on a fresh host with no Happier state parent and remains idempotent', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-caddy-fresh-')); roots.push(root);
     const stateDirectory = join(root, 'happier', 'caddy');

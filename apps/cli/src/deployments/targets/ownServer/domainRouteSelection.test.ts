@@ -1,4 +1,5 @@
 import { Resolver } from 'node:dns/promises';
+import * as nativeFs from 'node:fs/promises';
 import { mkdtemp, writeFile, readFile, mkdir, chmod, rm } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import { Server as TcpServer } from 'node:net';
@@ -580,7 +581,7 @@ it.skipIf(process.platform === 'win32')('selects one container origin common to 
         tunnelOrigin: { members: [{ machineId: 'a' }, { machineId: 'joining' }] } });
 });
 
-it.skipIf(process.platform === 'win32').each(['membership join installed', 'membership drain', 'shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator elevation denied', 'administrator native check unavailable', 'administrator native outcome unknown', 'administrator native outcome unknown with fact', 'managed CLI unavailable', 'network review required', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'Remove native parsed output invalid', 'Remove malformed native observation', 'native cancelled', 'direct installed Caddy', 'direct installed Caddy redirect', 'incumbent receipt joining member', 'incumbent other installation', 'incumbent no serving release', 'direct installed Caddy admin write refused', 'direct installed Caddy admin unavailable', 'native Caddy port occupied', 'native Caddy host port occupied', 'Tunnel retained public seed', 'Tunnel foreign seed', 'Tunnel running public Caddy', 'Tunnel running private network failure', 'Tunnel running private retired network'] as const)(
+it.skipIf(process.platform === 'win32').each(['membership join installed', 'membership drain', 'shared', 'no active Domain members', 'Domain Environment HTTP unavailable', 'Domain Home purpose refused', 'missing tunnel origin', 'misdirected discovery', 'administrator access off', 'administrator access not applied', 'administrator elevation denied', 'administrator native check unavailable', 'administrator native outcome unknown', 'administrator native outcome unknown with fact', 'managed CLI unavailable', 'network review required', 'firewall prerequisite failed', 'firewall policy unavailable', 'firewall partial failure', 'daemon ACK unavailable', 'daemon ACK unknown', 'Remove native parsed output invalid', 'Remove malformed native observation', 'native cancelled', 'direct installed Caddy', 'direct installed Caddy redirect', 'incumbent receipt joining member', 'incumbent other installation', 'incumbent no serving release', 'direct installed Caddy admin write refused', 'direct installed Caddy admin unavailable', 'native Caddy port occupied', 'native Caddy host port occupied', ...(process.platform === 'linux' ? ['native Caddy privileged host port occupied'] as const : []), 'Tunnel retained public seed', 'Tunnel foreign seed', 'Tunnel running public Caddy', 'Tunnel running private network failure', 'Tunnel running private retired network'] as const)(
     'carries the complete shared origin through the real controller and private child transport: %s', async scenario => {
     const noActiveDomainMembers = scenario === 'no active Domain members' || scenario === 'incumbent other installation'
         || scenario === 'incumbent no serving release';
@@ -624,7 +625,7 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
     if (noActiveDomainMembers || incumbentJoining) link.members[0]!.state = 'joining';
     if (scenario === 'no active Domain members') delete link.activeDeploymentId;
     if (scenario === 'membership join installed') link.members[0]!.state = 'joining';
-    const occupiedPort = scenario === 'native Caddy port occupied' || scenario === 'native Caddy host port occupied';
+    const occupiedPort = scenario === 'native Caddy port occupied' || scenario === 'native Caddy host port occupied' || scenario === 'native Caddy privileged host port occupied';
     const installedCaddy = incumbentJoining || scenario === 'direct installed Caddy admin write refused' || recordedReplicaCase || scenario === 'membership join installed' || scenario === 'direct installed Caddy admin unavailable' || occupiedPort || retainedSeed;
     if (installedCaddy) {
         link.state = 'deployed';
@@ -694,11 +695,19 @@ it.skipIf(process.platform === 'win32').each(['membership join installed', 'memb
                     ] : [])],
                 nativeDocker: async () => occupiedPort ? { engineId: 'engine-a', async run(args) {
                     if (args.includes('--all')) return { exitCode: 0, stdout: '', stderr: '' };
-                    if (scenario === 'native Caddy host port occupied') {
+                    if (scenario === 'native Caddy host port occupied' || scenario === 'native Caddy privileged host port occupied') {
+                        if (scenario === 'native Caddy privileged host port occupied') {
+                            const realReadFile = nativeFs.readFile;
+                            vi.spyOn(nativeFs, 'readFile').mockImplementation(async (...args: Parameters<typeof realReadFile>) => {
+                                if (args[0] === '/proc/net/tcp') return '  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n   0: 0300007F:0050 00000000:0000 0A 00000000:00000000 00:00000000 00000000 0 0 123\n';
+                                if (args[0] === '/proc/net/tcp6') return '  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode\n';
+                                return realReadFile(...args);
+                            });
+                        }
                         // The server is the OS boundary; the Domain acquisition,
                         // port owner and public failure projection remain real.
                         vi.spyOn(TcpServer.prototype, 'listen').mockImplementation(function (this: TcpServer) {
-                            queueMicrotask(() => this.emit('error', Object.assign(new Error('native listener'), { code: 'EADDRINUSE' })));
+                            queueMicrotask(() => this.emit('error', Object.assign(new Error('native listener'), { code: scenario === 'native Caddy privileged host port occupied' ? 'EACCES' : 'EADDRINUSE' })));
                             return this;
                         });
                         return { exitCode: 0, stdout: '', stderr: '' };

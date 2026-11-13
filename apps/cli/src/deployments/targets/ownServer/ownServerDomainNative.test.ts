@@ -85,6 +85,9 @@ it.each([
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', diagnostic: 'removalMalformedOutput' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, diagnostic: 'verifyExposureUnavailable' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, preview: true },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, preview: true, caddyAbsent: true },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, preview: true, caddyAbsent: true, dns: 'missing' },
+    { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, preview: true, caddyStopped: true },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, dns: 'missing' },
     { encryptionMode: 'plain', missingEngine: false, mismatchedEngine: false, cutover: false, connectorRetirement: 'none', verify: true, dns: 'ipv6' },
@@ -197,15 +200,15 @@ it.each([
     const channel = await createRequesterCurrentnessSocketHarness();
     try {
         const bin = join(directory, 'bin');
-        const docker = await createOwnServerDockerBoundary(bin, { ...(desktop ? { operatingSystem: 'Docker Desktop' } : {}), ...(mismatchedEngine ? { engineId: 'replacement-engine' } : {}), nativeCaddy: {
-            Id: 'c'.repeat(64), Name: '/observed-caddy', State: { Running: true },
+        const docker = await createOwnServerDockerBoundary(bin, { ...(desktop ? { operatingSystem: 'Docker Desktop' } : {}), ...(mismatchedEngine ? { engineId: 'replacement-engine' } : {}), ...(!('caddyAbsent' in scenario && scenario.caddyAbsent) ? { nativeCaddy: {
+            Id: 'c'.repeat(64), Name: '/observed-caddy', State: { Running: !('caddyStopped' in scenario && scenario.caddyStopped) },
             Config: { Image: nativeCaddyImage, Labels: { 'dev.happier.machine-setup.recipe': 'caddy@1' },
                 Cmd: ['caddy', 'run', '--resume', '--config', '/etc/caddy/happier.json'] },
             HostConfig: { RestartPolicy: { Name: 'unless-stopped' }, Mounts: [
                 { Type: 'bind', Source: directory, Target: '/run/domain-native' },
                 { Type: 'bind', Source: configPath, Target: '/etc/caddy/happier.json' },
             ] }, NetworkSettings: { Ports: {}, Networks: {} },
-        }, ...(connectorRetirement !== 'none' ? { nativeCloudflare: nativeConnector } : {}) });
+        } } : {}), ...(connectorRetirement !== 'none' ? { nativeCloudflare: nativeConnector } : {}) });
         vi.stubEnv('PATH', `${bin}${delimiter}${process.env.PATH ?? ''}`);
         const environment = createDeploymentEnvironmentDetailV1();
         environment.environment.serverId = 'srv_archive_home';
@@ -409,8 +412,10 @@ it.each([
             return;
         }
         if (preview) {
-            expect(rawResult).toMatchObject({ ok: false, errorCode: 'required_fact_unavailable',
-                details: { requiredFact: 'publicCaddyListener' } });
+            expect(rawResult).toMatchObject({ ok: true, environmentId: placement.environmentId,
+                dnsHealth: { status: dns === 'missing' ? 'down' : 'unknown' } });
+            expect(JSON.stringify(rawResult)).toContain(dns === 'missing' ? 'dns_missing' : 'dns_public_listener_unavailable');
+            expect(resolveDns).toHaveBeenCalledTimes(2);
             expect(artifactReads).toBe(0);
             expect(mutations).toEqual([]);
             expect(rootLaunches).toEqual([]);

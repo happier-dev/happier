@@ -219,7 +219,7 @@ function nativeDocker(input: ContainerInput, options: NativeOptions) {
 /** Admission-time observation only. Docker start remains the final binding
  * authority if another process acquires a port after this finite review. */
 export async function checkNativeCaddyPortAvailability(input: Pick<NativeCaddySetupInput, 'dockerHost' | 'containerName' | 'publicBindings'>,
-    options: NativeOptions = {}) {
+    options: NativeOptions & { readLocalListeners?(): Promise<readonly { address: string; port: number }[]> } = {}) {
     if (!input.publicBindings?.length) return { status: 'ready' as const };
     const run = nativeDocker(input, options);
     const owned = await inspectOwnedContainer(input, run);
@@ -230,7 +230,7 @@ export async function checkNativeCaddyPortAvailability(input: Pick<NativeCaddySe
     return checkCaddyPublishedPortConflicts(requested, {
         // Native Domain uses local host mounts and its local Unix admin socket.
         // An explicit network Docker endpoint cannot establish local port ownership.
-        docker: run, signal: options.signal,
+        docker: run, signal: options.signal, readLocalListeners: options.readLocalListeners,
         probeLocalPorts: input.dockerHost === undefined || /^(?:unix|npipe):/.test(input.dockerHost),
         ...(owned.status === 'observed' && owned.running ? { ownedContainerId: owned.containerId } : {}),
     });

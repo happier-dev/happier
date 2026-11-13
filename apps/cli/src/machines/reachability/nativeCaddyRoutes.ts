@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { HealthCheckResultV1 } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
-import { nativeCaddyDnsResult, readNativeCaddyDnsResolution, readNativeCaddyDnsChallenge } from './nativeCaddyDnsReadiness';
+import { nativeCaddyDnsResult, readNativeCaddyDnsReadiness, readNativeCaddyDnsChallenge } from './nativeCaddyDnsReadiness';
 import tweetnacl from 'tweetnacl';
 import { type NativeCaddyAdminExchange, type NativeCaddyObservationResult } from '@happier-dev/cli-common/machineSetup';
 export { createNativeCaddyAdminExchange, type NativeCaddyAdminExchange } from '@happier-dev/cli-common/machineSetup';
@@ -276,43 +276,41 @@ export function createNativeCaddyRoutes(host: Readonly<{
         const signal = request.signal ?? new AbortController().signal;
         const context = { observer: { machineId: host.machineId, installationId: host.installationId },
             vantage: 'sameMachine' as const, signal, startedAt: Date.now() };
-        try {
-            const resolution = await readNativeCaddyDnsResolution(request.hostname, context);
-            if (resolution.status !== 'up') return resolution;
-        } catch (error) { return dnsFailure(error, signal, 'deployment.domain.dns.resolve'); }
-        if (request.listener !== 'public') return nativeCaddyDnsResult(context, 'unknown', 'dns_private_listener_unavailable');
-        const challenge = { id: `happier_dns_${randomUUID()}`, path: `/.well-known/happier-dns/${randomUUID()}`,
-            token: randomBytes(32).toString('hex') };
-        const challengeRoute = { '@id': challenge.id,
-            match: [{ host: [request.hostname], path: [challenge.path] }],
-            handle: [{ handler: 'static_response', status_code: 200, body: challenge.token,
-                headers: { 'Cache-Control': ['no-store'] } }], terminal: true };
-        const path = serverPath({ nativeServer: caddyPublicHttpServerId(request.nativeServer) });
-        let issued = false;
-        let result: HealthCheckResultV1 | NativeCaddyRouteResult;
-        try {
-            const root = await readRoot(request, path);
-            if (!Array.isArray(root.value.routes)) throw new Error('native_route_unavailable');
-            try { await write(request, root, 'PUT', `${path}/routes/0`, challengeRoute); issued = true; }
-            catch (error) { issued = !(error instanceof NativeRouteRefusal); throw error; }
-            result = await readNativeCaddyDnsChallenge(request.hostname, challenge, context);
-        } catch (error) { result = dnsFailure(error, signal, 'deployment.domain.dns.install'); }
-        finally {
-            if (issued) {
-                // Caller cancellation ends the probe, never its exact cleanup.
-                const cleanup = { ...request, signal: undefined };
-                try {
-                    const root = await readRoot(cleanup, path);
-                    if (!Array.isArray(root.value.routes)) throw new Error('native_route_unavailable');
-                    const installed = root.value.routes.find(item => id(item) === challenge.id);
-                    if (installed !== undefined) {
-                        if (!isDeepStrictEqual(installed, challengeRoute)) throw new NativeRouteRefusal('conflict', 'route_conflict');
-                        await write(cleanup, root, 'DELETE', `/id/${encodeURIComponent(challenge.id)}`);
-                    }
-                } catch (error) { result = dnsFailure(error, undefined, 'deployment.domain.dns.cleanup'); }
+        try { return await readNativeCaddyDnsReadiness(request.hostname, context, async () => {
+            if (request.listener !== 'public') return nativeCaddyDnsResult(context, 'unknown', 'dns_private_listener_unavailable');
+            const challenge = { id: `happier_dns_${randomUUID()}`, path: `/.well-known/happier-dns/${randomUUID()}`,
+                token: randomBytes(32).toString('hex') };
+            const challengeRoute = { '@id': challenge.id,
+                match: [{ host: [request.hostname], path: [challenge.path] }],
+                handle: [{ handler: 'static_response', status_code: 200, body: challenge.token,
+                    headers: { 'Cache-Control': ['no-store'] } }], terminal: true };
+            const path = serverPath({ nativeServer: caddyPublicHttpServerId(request.nativeServer) });
+            let issued = false;
+            let result: HealthCheckResultV1 | NativeCaddyRouteResult;
+            try {
+                const root = await readRoot(request, path);
+                if (!Array.isArray(root.value.routes)) throw new Error('native_route_unavailable');
+                try { await write(request, root, 'PUT', `${path}/routes/0`, challengeRoute); issued = true; }
+                catch (error) { issued = !(error instanceof NativeRouteRefusal); throw error; }
+                result = await readNativeCaddyDnsChallenge(request.hostname, challenge, context);
+            } catch (error) { result = dnsFailure(error, signal, 'deployment.domain.dns.install'); }
+            finally {
+                if (issued) {
+                    // Caller cancellation ends the probe, never its exact cleanup.
+                    const cleanup = { ...request, signal: undefined };
+                    try {
+                        const root = await readRoot(cleanup, path);
+                        if (!Array.isArray(root.value.routes)) throw new Error('native_route_unavailable');
+                        const installed = root.value.routes.find(item => id(item) === challenge.id);
+                        if (installed !== undefined) {
+                            if (!isDeepStrictEqual(installed, challengeRoute)) throw new NativeRouteRefusal('conflict', 'route_conflict');
+                            await write(cleanup, root, 'DELETE', `/id/${encodeURIComponent(challenge.id)}`);
+                        }
+                    } catch (error) { result = dnsFailure(error, undefined, 'deployment.domain.dns.cleanup'); }
+                }
             }
-        }
-        return result;
+            return result;
+        }); } catch (error) { return dnsFailure(error, signal, 'deployment.domain.dns.resolve'); }
     };
     const activate = async (request: ActivationRequest & Readonly<{ expected?: CaddyDomainRouteMaterial }>): Promise<NativeCaddyRouteResult> => {
         const refusal = admitted(request); if (refusal) return refusal;

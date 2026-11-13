@@ -28,6 +28,8 @@ import { createProjectNativeInvocationCustody } from '@/workspaces/projectSetup/
 import { presentMachineAuthorityV1 } from '@happier-dev/protocol/machines/machineAuthorityV1';
 import { readNativeComposeEngine } from '@/daemon/local/services/launch/nativeComposeEngine';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
+import { readNativeCaddyHostListeners } from '@/machines/reachability/nativeCaddyHostListeners';
+import { readNativeCaddyDnsReadiness, nativeCaddyDnsResult } from '@/machines/reachability/nativeCaddyDnsReadiness';
 import { createNativeCaddyRoutes } from '@/machines/reachability/nativeCaddyRoutes';
 import type { StoredCredentials } from '@/persistence';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -273,7 +275,7 @@ export function createOwnServerDomainNative(host: Readonly<{
                 if (prepared.status !== 'ready') return refuse(prepared.reason, 'details' in prepared ? prepared.details : undefined);
                 // The native binding owner observes conflicts before administrator
                 // setup, firewall or Docker mutations. Apply consumes this once.
-                const ports = await checkNativeCaddyPortAvailability(prepared.input, { run, signal });
+                const ports = await checkNativeCaddyPortAvailability(prepared.input, { run, signal, readLocalListeners: readNativeCaddyHostListeners });
                 if (ports.status !== 'ready') return refuse(ports.reason, ports.details);
                 const ready = await prepared.ensure({ setup, context, actionId: job.actionId,
                     installationId: identity.installationId, dockerEngineId: docker.engineId, run, signal });
@@ -281,13 +283,13 @@ export function createOwnServerDomainNative(host: Readonly<{
                     'details' in ready ? ready.details : undefined);
                 caddy = await observeNativeCaddyContainer({ privateNetworks }, { run, signal });
             }
-            if (caddy.status !== 'ready') return refuse(caddy.status === 'unavailable' ? caddy.reason : 'native_route_unavailable',
+            if (caddy.status !== 'ready' && job.kind !== 'domainDns') return refuse(caddy.status === 'unavailable' ? caddy.reason : 'native_route_unavailable',
                 caddy.status === 'unavailable' ? caddy.details : undefined);
-            if (job.kind === 'domain' && !caddy.servers.some(server => server.serverId === job.capture.placement.nativeServer
+            if (job.kind === 'domain' && caddy.status === 'ready' && !caddy.servers.some(server => server.serverId === job.capture.placement.nativeServer
                 && (job.capture.listener === 'public' ? server.tls : !server.tls && server.automaticHttpsDisabled))) return refuse('target_mismatch');
-            const topology = DeploymentDomainMachineTopologyV1Schema.parse({ machineId: host.machineId,
-                installationId: identity.installationId, dockerEngineId: docker.engineId, privateNetworks, caddy, replicas });
-            return { identity, signal, environmentContent, members, domain: opened.content, docker, run, topology,
+            return { identity, signal, environmentContent, members, domain: opened.content, docker, run, caddy,
+                get topology() { return DeploymentDomainMachineTopologyV1Schema.parse({ machineId: host.machineId,
+                    installationId: identity.installationId, dockerEngineId: docker.engineId, privateNetworks, caddy, replicas }); },
                 async release() { try { await custody.release(); } finally { custody.dispose(); await lease?.release(); } } };
         } catch (error) {
             try { await custody.release(); } finally { custody.dispose(); await lease?.release(); }
@@ -301,12 +303,19 @@ export function createOwnServerDomainNative(host: Readonly<{
     async function preview(job: DeploymentDomainDnsChildRpcV1, context: ActionExecutorContext) {
         const acquired = await acquire(job, context);
         try {
-            const { identity, topology, domain, signal } = acquired;
-            const selection = selectDomainPublicCaddyServer(topology);
-            if (selection.status !== 'ready') return refuse(selection.reason, selection.details);
+            const { identity, caddy, domain, signal } = acquired;
+            const selection = selectDomainPublicCaddyServer({ machineId: host.machineId, caddy });
+            if (selection.status !== 'ready' || caddy.status !== 'ready') {
+                const basis = { observer: { machineId: host.machineId, installationId: identity.installationId },
+                    vantage: 'sameMachine' as const, signal, startedAt: Date.now() };
+                const health = await readNativeCaddyDnsReadiness(domain.hostname, basis, async () =>
+                    nativeCaddyDnsResult(basis, 'unknown', 'dns_public_listener_unavailable'));
+                return { ok: true as const, environmentId: job.input.environmentId,
+                    dnsHealth: { status: health.status, evidence: health.evidence } };
+            }
             const native = createNativeCaddyRoutes({ machineId: host.machineId, installationId: identity.installationId,
                 privateKey: decodeBase64(identity.privateKey, 'base64url'),
-                exchange: createNativeCaddyAdminExchange(topology.caddy.adminSocketPath) });
+                exchange: createNativeCaddyAdminExchange(caddy.adminSocketPath) });
             const health = await native.checkDnsReadiness({ hostname: domain.hostname,
                 nativeServer: selection.nativeServer, listener: 'public', signal });
             if (!('status' in health)) return refuse('reason' in health ? health.reason : 'native_route_unavailable',

@@ -14,14 +14,14 @@ function overlaps(left: string, right: string): boolean {
         && (left === '::' || right === '::' || left === '0.0.0.0' || right === '0.0.0.0');
 }
 
-async function occupied(binding: NativeCaddyFirewallExposure, signal?: AbortSignal): Promise<boolean> {
+async function occupied(binding: NativeCaddyFirewallExposure, signal?: AbortSignal): Promise<boolean | undefined> {
     signal?.throwIfAborted();
     return new Promise((resolve, reject) => {
         const socket = createServer();
         const abort = () => { socket.close(); reject(signal?.reason); };
-        const finish = (inUse: boolean) => { signal?.removeEventListener('abort', abort); resolve(inUse); };
+        const finish = (inUse: boolean | undefined) => { signal?.removeEventListener('abort', abort); resolve(inUse); };
         signal?.addEventListener('abort', abort, { once: true });
-        socket.once('error', (error: NodeJS.ErrnoException) => finish(error.code === 'EADDRINUSE'));
+        socket.once('error', (error: NodeJS.ErrnoException) => finish(error.code === 'EACCES' || error.code === 'EPERM' ? undefined : error.code === 'EADDRINUSE'));
         socket.listen({ port: binding.hostPort, host: binding.hostAddress, exclusive: true }, () => socket.close(() => finish(false)));
     });
 }
@@ -33,6 +33,7 @@ async function occupied(binding: NativeCaddyFirewallExposure, signal?: AbortSign
 export async function checkCaddyPublishedPortConflicts(bindings: readonly NativeCaddyFirewallExposure[], options: Readonly<{
     docker(args: readonly string[]): Promise<MachineSetupNativeCommandResult>;
     ownedContainerId?: string; signal?: AbortSignal; probeLocalPorts: boolean;
+    readLocalListeners?(): Promise<readonly { address: string; port: number }[]>;
 }>): Promise<Result> {
     const listed = await options.docker(['container', 'ls', '--no-trunc', '--format', '{{json .ID}}']);
     if (listed.code === 0) {
@@ -59,8 +60,16 @@ export async function checkCaddyPublishedPortConflicts(bindings: readonly Native
             }
         }
     }
+    let listeners: Promise<readonly { address: string; port: number }[]> | undefined;
     for (const binding of options.probeLocalPorts ? bindings : []) {
-        if (binding.protocol === 'tcp' && await occupied(binding, options.signal)) return conflict(binding.hostPort);
+        if (binding.protocol !== 'tcp') continue;
+        const inUse = await occupied(binding, options.signal);
+        if (inUse) return conflict(binding.hostPort);
+        if (inUse === undefined && options.readLocalListeners) {
+            listeners ??= options.readLocalListeners();
+            if ((await listeners).some(listener => listener.port === binding.hostPort
+                && overlaps(binding.hostAddress, listener.address))) return conflict(binding.hostPort);
+        }
     }
     return { status: 'ready' };
 }

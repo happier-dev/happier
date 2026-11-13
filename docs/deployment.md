@@ -3794,18 +3794,25 @@ reuses an unchanged app container while adding a database. The existing source
 custody reader proves each folder against its receipt before observation;
 competing native projects remain a conflict.
 
-Unreleased 0.3 Domain readiness also consumes the signed DNS health result from
-the existing finite DNS health owner during native add or verification. Home
-settles a desired Domain as `warning` until every desired placement reports DNS
-`up`; installed Caddy material alone does not establish `active`. Missing DNS
-retains `dns_missing` and its remedy in the header's `dnsHealth` evidence.
-Resolver unavailability stays `unknown`. No hostname, answer, observation clock
-or latency is copied into this semantic public projection. Verification uses A,
-then AAAA only when A does not resolve, and runs again only through the existing
-verify Action. There is no DNS polling. NetworkExposure remains a native topology
-observation and makes no Internet reachability claim. Home, native executors and
-clients must load this development contract together; observations without DNS
-stay warning.
+Unreleased 0.3 Domain verification consumes the finite DNS health owner through
+an explicit verify Action. Draft preview resolves A and AAAA concurrently without
+creating a Domain or requiring Caddy to be applied. Missing DNS reports `down`;
+resolver failure reports `unknown`. When DNS resolves but the public Caddy
+listener is absent or stopped, preview reports `unknown` with
+`dns_public_listener_unavailable`. A configured public listener additionally
+serves one exact temporary HTTP challenge through the native route owner, then
+removes that challenge. This proves routing from the Machine's vantage, not
+Internet reachability, TLS validity or application health. No DNS polling runs.
+The semantic projection consumes the same health evidence for saved Domains;
+a successful native route alone does not establish DNS readiness.
+
+Before public Caddy setup, the native port owner checks Docker publications and
+host bind availability. On Linux, a denied privileged-port bind probe also reads
+the existing listener inventory's kernel facts without process attribution.
+A positive occupied-port observation returns `foreign_effect_conflict` with the
+existing Tunnel-or-stop-the-other-proxy recovery before setup effects. It never
+takes over a running listener. A port acquired after this finite check remains a
+native-start failure with its reported recovery.
 
 Recovery Add resolves ingress through the same Domain route-selection owner as
 installation. It reads topology from the existing private Environment content;

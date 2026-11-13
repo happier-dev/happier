@@ -19,6 +19,13 @@ export async function readNativeCaddyDnsResolution(hostname: string, context: Co
         ?? results.find(result => result.status === 'unknown') ?? results[0]!;
 }
 
+/** DNS resolution does not depend on an applied route or an installed listener. */
+export async function readNativeCaddyDnsReadiness<T>(hostname: string, context: Context,
+    probe: () => Promise<T>): Promise<HealthCheckResultV1 | T> {
+    const resolution = await readNativeCaddyDnsResolution(hostname, context);
+    return resolution.status === 'up' ? probe() : resolution;
+}
+
 /** This token proves routing, not TLS or application health. Never follow redirects
  * to another authority or retain a response body larger than the exact comparison. */
 export async function readNativeCaddyDnsChallenge(hostname: string, challenge: NativeCaddyDnsChallenge,
