@@ -276,11 +276,17 @@ exit code), truncated output and an invalid status response. Exec launch refusal
 and cancellation retain their original cause instead of becoming authentication
 verification failures.
 
+Provider config parents remain private (0700 on POSIX), including when state
+sharing created the directory before config projection. FX ignores an unsafe
+profile directory and can report `UnknownConfiguredProvider`.
+
 Grok Provider-bound ACP authentication selects the advertised `xai.api_key`
 method from the admitted binding. It does not depend on seeing the key in the
 request environment: the host supplies the credential in the finalized native
 launch environment. Native Connected Account authentication keeps its selected
-subscription or API-key method.
+subscription or API-key method. A native CLI that does not advertise the selected
+method refuses with `grok_auth_method_unavailable`; it never switches billing
+modes.
 
 Devin retains its vendor-managed login. Its documented
 [authentication](https://docs.devin.ai/cli/enterprise/devin-auth) uses a Devin
@@ -842,9 +848,14 @@ These rows are `account_unverified`, with unknown load state, unchecked health,
 no probe observation and no runtime confirmation. Their declaration fingerprint
 is not executable-adapter evidence and cannot prompt runtime confirmation.
 
-Connected Account source catalogs in 0.3 development also retain a plugin's static
-fallback models as `account_unverified` diagnostics when no exact-account model
-observation is available. The CLI's
+Connected Account source catalogs in 0.3 development use the declared exact-account
+observation for model membership. A declared observer that cannot supply a catalog
+returns `provider_catalog_unavailable`; gateway compatibility declarations cannot
+supply account membership. Sources without an observation declaration retain their
+static models as `account_unverified` diagnostics. Managed-purpose launch reads the
+same catalog owner through the Account-scoped model projection port, so launch and
+the picker admit the same models. A selected source model missing from its current
+catalog returns `provider_model_not_found`, including during confirmation. The CLI's
 `modelManagement/sourceCatalog.ts#projectCurrentProviderSourceModelCatalogs` owns
 runnable source-catalog membership for Provider connections and Connected Account
 or pool targets. It excludes unverified, stale, hidden and incompatible rows.

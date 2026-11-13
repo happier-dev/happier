@@ -4,6 +4,16 @@ import { selectGrokAuthentication } from './auth.js';
 import { GROK_PREFLIGHT_SESSION_CONTROLS } from '../preflight/models.js';
 
 describe('Grok ACP authentication', () => {
+  it.each<Readonly<Record<string, string>>>([{ GROK_CONNECTED_ACCOUNT_MODE: 'api-key' }, {}])('types an unavailable selected or native method (%j)', environment => {
+    let error: unknown;
+    try {
+      selectGrokAuthentication({ advertisedMethodIds: ['grok.com'], initializeMetadata: null }, environment);
+    } catch (cause) { error = cause; }
+    expect(error).toMatchObject({ code: 'grok_auth_method_unavailable', retryable: false,
+      details: { failureCause: { phase: 'authentication', failureReason: 'unknown',
+        providerErrorCode: 'grok_auth_method_unavailable', retryable: false } } });
+  });
+
   it('honors an explicit subscription over an ambient key and an initialized API-key default', () => {
     expect(selectGrokAuthentication({ advertisedMethodIds: ['cached_token', 'xai.api_key'],
       initializeMetadata: { defaultAuthMethodId: 'xai.api_key' } }, { XAI_API_KEY: 'fake-ambient-key', GROK_CONNECTED_ACCOUNT_MODE: 'subscription' }))

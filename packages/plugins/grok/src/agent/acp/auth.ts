@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import type {
   AgentAcpAuthenticationContext,
   AgentAcpAuthenticationSelection,
@@ -11,6 +12,12 @@ const HEADLESS_METADATA = Object.freeze({ headless: true });
 
 export function selectGrokConnectedAccountAuthentication(mode: GrokConnectedAccountMode): AgentAcpAuthenticationSelection {
   return { methodId: mode === 'subscription' ? 'cached_token' : 'xai.api_key', metadata: HEADLESS_METADATA };
+}
+
+function authenticationUnavailable(message: string): PluginError {
+  return new PluginError({ code: 'grok_auth_method_unavailable', message, retryable: false,
+    details: { failureCause: { phase: 'authentication', failureReason: 'unknown',
+      providerErrorCode: 'grok_auth_method_unavailable', retryable: false } } });
 }
 
 function readExactNonemptyString(value: unknown): string | null {
@@ -35,7 +42,7 @@ export function selectGrokAuthenticationFromFacts(
   const advertised = new Set(context.advertisedMethodIds);
   if (facts.selectedMode) {
     const selection = selectGrokConnectedAccountAuthentication(facts.selectedMode);
-    if (!advertised.has(selection.methodId)) throw new Error('Selected Grok authentication method is unavailable');
+    if (!advertised.has(selection.methodId)) throw authenticationUnavailable('Selected Grok authentication method is unavailable');
     return selection;
   }
   if (facts.hasApiKey && advertised.has('xai.api_key')) {
@@ -51,7 +58,7 @@ export function selectGrokAuthenticationFromFacts(
   if (advertised.has('cached_token')) {
     return { methodId: 'cached_token', metadata: HEADLESS_METADATA };
   }
-  throw new Error(
+  throw authenticationUnavailable(
     'Grok authentication is unavailable. Run `grok login` or `grok login --device-auth`, then retry.',
   );
 }

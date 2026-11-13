@@ -82,8 +82,10 @@ describe('registered FX Provider binding', () => {
       const exec = createStablePluginExecService({ allowedExecutables: [{ kind: 'systemTool', id: 'fx-cli' }],
         allowedEnvKeys: [], environment, signal: controller.signal, isOccurrenceCurrent: () => true,
         resolveExecutable: async () => ({ command: process.execPath, args: ['-e', `
-          const { readFileSync } = require('node:fs');
+          const { readFileSync, statSync } = require('node:fs');
           const { join } = require('node:path');
+          // Installed FX refuses a profile whose directory mode is not private.
+          if (process.platform !== 'win32' && (statSync(join(process.env.HOME, '.fx')).mode & 0o777) !== 0o700) process.exit(1);
           const settings = JSON.parse(readFileSync(join(process.env.HOME, '.fx/settings.json'), 'utf8'));
           const provider = settings.providers[process.env.FX_PROVIDER];
           const selected = provider.base_url === 'http://127.0.0.1:2345/v1'

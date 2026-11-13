@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   closeSync,
   mkdirSync,
   mkdtempSync,
@@ -219,6 +220,9 @@ export async function composeProviderBindingMaterialization(input: Readonly<{
       const absolutePath = join(rootPath, ...file.relativePath.split(/[\\/]/u));
       const parentPath = resolveProviderMaterializationParentPath(absolutePath);
       mkdirSync(parentPath, { recursive: true, mode: 0o700 });
+      // State-sharing may have created this private config parent earlier.
+      // Native profiles such as FX ignore config unless its directory is 0700.
+      if (process.platform !== 'win32') chmodSync(parentPath, 0o700);
       const contents = overlays[relativePath]?.('{}') ?? file.utf8;
       // Descriptor config copies belong to this private root. Replace only that
       // private destination; never write through a linked native source.

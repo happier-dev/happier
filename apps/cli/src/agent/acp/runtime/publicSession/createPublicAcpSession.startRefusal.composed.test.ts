@@ -1,3 +1,5 @@
+import { selectGrokAuthentication } from '@happier-dev/plugins-grok';
+import { sanitizeNativeAgentSessionBoundaryError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -109,7 +111,7 @@ it('retains a native ACP authentication refusal through host publication, attest
         throw new Error('Native authentication refusal unexpectedly opened a Session');
       }, error => error);
       expect(refusal).toMatchObject({ code: -32000, diagnostic: { details: { requestErrorCode: -32000,
-        v: 1, source: 'auth_error',
+        v: 1, source: 'auth_error', failureCause: { phase: 'turn', providerErrorCode: -32000 },
       } } });
       expect(JSON.parse(await readFile(join(directory, 'refused.json'), 'utf8'))).toEqual(['initialize', 'session/new']);
       const home = 'srv_native_start_refusal';
@@ -126,8 +128,8 @@ it('retains a native ACP authentication refusal through host publication, attest
       await assertStartupFailureThroughCli({ preparationCode: 'provider_endpoint_auth_required', settlementKind: 'returned',
         expectedRetryable: false,
         sessionId: h.sessionId,
-        // This raw refusal has no declared phase; the shared startup classifier owns it.
-        expectedFailureCause: { phase: 'client_start', failureReason: 'authentication_required', providerErrorCode: -32000 },
+        // The public ACP diagnostic owns this phase; strict startup attestation preserves it.
+        expectedFailureCause: { phase: 'turn', failureReason: 'authentication_required', providerErrorCode: -32000 },
         publishFailure: async persist => {
           const runtime = await runInstalledFirstConversationRuntime({ fixture: h, homeServerIdentityId: home, control,
             persistTurnMutation: persist });
@@ -158,4 +160,40 @@ it.each(['authentication', 'thread_open', 'turn'] as const)('retains the shared 
   expect(diagnostic.details).toMatchObject({ v: 1, source: issue.source, failureCause: issue.failureCause });
   expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: diagnostic }).failureCause).toEqual(issue.failureCause);
   expect(JSON.stringify(diagnostic)).not.toContain('synthetic-private-token');
+});
+
+
+it('retains Grok selected-method refusal through ACP startup and host publication', async () => {
+  await withTempDir('grok-selected-auth-unavailable-', async directory => {
+    const script = writeAcpTestAgentScript({ dir: directory, fileName: 'grok.mjs', source: `
+      import { createInterface } from 'node:readline';
+      for await (const line of createInterface({ input: process.stdin })) {
+        const r = JSON.parse(line); if (r.id === undefined) continue;
+        const result = r.method === 'initialize' ? { protocolVersion: 1, agentCapabilities: {},
+          authMethods: [{ id: 'grok.com', name: 'Grok account' }] } : { sessionId: 'native-grok' };
+        process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: r.id, result }) + '\\n');
+      }
+    ` });
+    const lifetime = new AbortController();
+    const publications = createNativeAgentSessionPublications({ agentId: 'grok', session: null,
+      signal: lifetime.signal, isCurrent: () => !lifetime.signal.aborted, supportsInFlightSteer: false });
+    try {
+      const error: unknown = await createPublicAcpSession({ kind: 'create', sessionId: 'session', cwd: directory }, {
+        transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'grok-cli' } },
+        definition: { mcp: { policy: 'pass_through' }, auth: { selectMethod: context => selectGrokAuthentication(context,
+          { GROK_CONNECTED_ACCOUNT_MODE: 'api-key' }) } },
+      }, { pluginId: 'happier.agent.grok', agentId: 'grok', signal: lifetime.signal, isCurrent: () => !lifetime.signal.aborted,
+        systemTools: { resolve: async () => ({ toolId: 'grok-cli', launch: { kind: 'binary', executablePath: process.execPath, args: [script] } }) },
+        interactions: { async request() { throw new Error('Unexpected interaction'); } },
+        media: { async registerSourceRoot() { throw new Error('Unexpected media'); } },
+        models: publications.services.models, modes: publications.services.modes,
+      }).then(async session => { await session.dispose(); throw new Error('Unavailable selected auth unexpectedly opened'); }, error => error);
+      expect(error).toMatchObject({ code: 'grok_auth_method_unavailable' });
+      const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', startupPhase: 'client_start',
+        error: sanitizeNativeAgentSessionBoundaryError(error, true) });
+      expect(issue.failureCause).toMatchObject({ phase: 'authentication', failureReason: 'unknown',
+        providerErrorCode: 'grok_auth_method_unavailable' });
+      expect(JSON.stringify(issue)).not.toContain('unclassified_provider_error');
+    } finally { lifetime.abort(); publications.dispose(); }
+  });
 });
