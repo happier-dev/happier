@@ -174,7 +174,9 @@ const textRoleStyleKeys = {
     groupCount: 'groupCount',
 } as const satisfies Readonly<Record<HappierCollectionListTextRole, keyof typeof styles>>;
 
-function createCollectionListText(roleStyleKeys: Readonly<Record<HappierCollectionListTextRole, keyof typeof styles>>): HappierCollectionListHost['Text'] {
+type CollectionListTextStyleKey = (typeof textRoleStyleKeys)[HappierCollectionListTextRole] | 'groupTitleTouch' | 'subgroupTitleTouch';
+
+function createCollectionListText(roleStyleKeys: Readonly<Record<HappierCollectionListTextRole, CollectionListTextStyleKey>>): HappierCollectionListHost['Text'] {
     return (props) => (
         <Text
             style={styles[roleStyleKeys[props.role]]}
@@ -239,7 +241,7 @@ export function CollectionSearchToggle(props: React.ComponentProps<NonNullable<H
 }
 
 /** The list's own ground in the current theme. */
-function useCollectionListSurfaceStyle(): ViewStyle {
+function useCollectionListSurfaceStyle() {
     const base = useUnistyles().theme.colors.surface.base;
     return React.useMemo(() => ({ backgroundColor: glassSurfaceBackgroundColor(base, 'content', true) }), [base]);
 }
@@ -248,8 +250,8 @@ function useCollectionListSurfaceStyle(): ViewStyle {
  * A navigation column beside the page (the app shell's column) lies on the column's plane
  * (`appShellColumnSurface`): the list draws no ground of its own there, in every theme.
  */
-const PLANE_SURFACE: ViewStyle = Object.freeze({ backgroundColor: 'transparent' });
-function useCollectionListPlaneSurfaceStyle(): ViewStyle {
+const PLANE_SURFACE = Object.freeze({ backgroundColor: 'transparent' });
+function useCollectionListPlaneSurfaceStyle() {
     // The same hooks as the page ground's (`useCollectionListSurfaceStyle`): a list that turns from a column into the page
     // in place (Workflows' column becoming the phone page) swaps hosts without changing its hook order.
     useUnistyles();
