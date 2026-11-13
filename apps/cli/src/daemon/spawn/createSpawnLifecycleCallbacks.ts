@@ -95,7 +95,7 @@ export function createSpawnLifecycleCallbacks<
   }>) => void;
   getSpawnResourceCleanupOnExit: () => SpawnResourceCleanup | null;
   onSpawnResourceCleanupArmed: () => void;
-  onTrackedSessionRegistered?: (trackedSession: Readonly<Pick<TrackedSession, 'pid' | 'childProcess'>>) => void;
+  onTrackedSessionRegistered?: (trackedSession: Readonly<Pick<TrackedSession, 'pid' | 'childProcess' | 'hostedSession'>>) => void;
   projectSetupOperation?: TrackedSession['projectSetupOperation'];
   spawnResourceCleanupByKey: SpawnResourceCleanupByKey;
   getSessionAttachCleanup: () => SessionAttachCleanup | null;

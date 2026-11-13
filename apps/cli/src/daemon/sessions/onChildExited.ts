@@ -116,6 +116,8 @@ export function createOnChildExited(params: Readonly<{
    * owner ends it on every give-up.
    */
   spareHeldAgent?: (tracked: TrackedSession) => Promise<SparedHeldAgentTransaction | null>;
+  /** A final exit with no spare: a target-held Agent its runner could not stop is ended in its target. */
+  endStrandedHeldAgent?: (tracked: TrackedSession) => Promise<void>;
   observeSessionScopeExit?: (tracked: TrackedSession) => Promise<void>;
   processPresenceDependencies?: Readonly<{
     readProcessRunState?: typeof readProcessRunState;
@@ -385,6 +387,7 @@ export function createOnChildExited(params: Readonly<{
           && isServerBackedSessionId(finalSessionId) ? await params.spareHeldAgent?.(tracked) ?? null : null;
         const spared = spare.transaction?.held;
         if (spared) tracked.sparedHeldAgentV1 = { ...spared, ...(spare.transaction?.turnId ? { turnId: spare.transaction.turnId } : {}) };
+        else if (shouldReportSessionEnd) await params.endStrandedHeldAgent?.(tracked);
         // A target-held Agent's pids are the target's: nothing on this Machine to spare.
         const sparedLocalHolder = spared && !tracked.spawnOptions?.managedTargetPlacement ? spared.holderPid : null;
         const remainder = await params.ownerRemainder.end({ kind: 'session', sessionId: finalSessionId }, tracked.ownerRemainderCapture,

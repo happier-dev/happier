@@ -26,7 +26,8 @@ import type { ProviderRedactionLease } from '@/providers/spawn/redaction';
 
 type DisposeReason = Extract<PluginProcessTerminationRequest, { kind: 'dispose' }>['reason'];
 export type SupervisedPluginGracefulStop = (signal: AbortSignal) => Promise<void>;
-const PROCESS_TERMINATION_GRACE_MS = 100;
+/** Graceful-stop budget before termination; shared by every host-owned process stop. */
+export const PROCESS_TERMINATION_GRACE_MS = 100;
 
 // Host-internal workload guard pending RA21 traffic/platform measurement. Authors may
 // select a smaller result buffer, but cannot turn process supervision into an

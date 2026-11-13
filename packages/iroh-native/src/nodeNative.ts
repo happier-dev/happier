@@ -154,6 +154,19 @@ export function resolveIrohNodeAddonPath(
   );
 }
 
+/**
+ * The static musl holder for a Session execution target (a Linux container of
+ * `arch`), shipped by every build in `native/targets/` whatever the host.
+ */
+export function resolveSessionTargetHolderExecutablePath({
+  arch,
+  packageRoot = resolveDefaultIrohNodePackageRoot(),
+  pathExists = existsSync,
+}: Readonly<{ arch: 'x64' | 'arm64'; packageRoot?: string; pathExists?: (path: string) => boolean }>): string | null {
+  const path = join(packageRoot, 'native', 'targets', `happier-session-holder.linux-${arch}-musl`);
+  return pathExists(path) ? path : null;
+}
+
 function requireNodeAddon(addonPath: string): unknown {
   const requireFromAddon = createRequire(pathToFileURL(addonPath));
   return requireFromAddon(addonPath);

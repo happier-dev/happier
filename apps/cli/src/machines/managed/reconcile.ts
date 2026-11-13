@@ -324,6 +324,9 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
         || !params.nativePolicyAdmission && !admittedRestore && !sessionTarget && !params.options.context?.operationOwnerUpdate)) {
         throw new ManagedMachineControllerError('admission_unavailable');
     }
+    // A Session's target authority serves concurrent invocations for the Session's life (its Agents' held
+    // channels next to finite execs); each is its own provider operation, never one shared identity.
+    let sessionTargetInvocations = 0;
     async function roleCredentialAuthorization(localId: string, input = params.input) {
         const launch = readMachine().launch;
         return resolveManagedRoleCredentialAuthorizations(input, launch.provider, localId, launch.credentials,
@@ -377,7 +380,8 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
             const declaration = input.runtimeRegistry.contributes.actionsById?.get(actionId);
             const binding: ConnectedAccountInvocationPurposeBinding = {
                 identity: { pluginId: contribution.pluginId, localId },
-                operationId: params.options.context?.externalActionExecutionAuthorization?.binding.requestId ?? params.options.requestId,
+                operationId: sessionTarget ? `${params.options.requestId}:${++sessionTargetInvocations}`
+                    : params.options.context?.externalActionExecutionAuthorization?.binding.requestId ?? params.options.requestId,
                 purposes: authorizations.map(authorization => authorization.purpose),
                 purposeBindings: projectManagedMachineRolePurposeBindingsV1(authorizations),
                 ...(declaration?.pluginVersion ? { actionOperation: { pluginVersion: declaration.pluginVersion, signal,
@@ -495,7 +499,7 @@ export function createManagedNativeInvocation<NativePolicyAdmission extends true
             // the dispatcher's explicit notStarted/guard evidence is definite.
             if (!dispatched) throw error instanceof ManagedMachineControllerError
                 ? new ManagedMachineNativeEffectGuardRefusal(error.code, error.status, error.details, error.failureCause, error.cause)
-                : new ManagedMachineNativeEffectGuardRefusal('admission_unavailable');
+                : new ManagedMachineNativeEffectGuardRefusal('admission_unavailable', undefined, undefined, undefined, error);
             throw error;
         }
     }

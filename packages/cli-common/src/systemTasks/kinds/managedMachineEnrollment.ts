@@ -14,7 +14,7 @@ import { ManagedBootstrapCarrierV1Schema } from '@happier-dev/protocol/machines/
 import { ManagedMachineBootstrapPromptV1Schema, type ManagedMachineBootstrapPromptV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { parseSshTrustPromptData } from '@happier-dev/protocol/system/tasks/promptPayloadContracts';
 import { buildRemoteHappierInvocationCommand, buildDedicatedDaemonInvocationCommand } from '../ssh/remoteBootstrapCommandBuilder.js';
-import { normalizeRemoteReleaseArch, normalizeRemoteReleaseOs, resolveRemoteInstalledFirstPartyBinaryPath } from '../ssh/remoteFirstPartyInstallPath.js';
+import { resolveRemoteInstalledFirstPartyBinaryPath } from '../ssh/remoteFirstPartyInstallPath.js';
 import { installRemoteCli as installSharedRemoteCli } from '../ssh/installRemoteCli.js';
 import { prepareDedicatedDaemonBootstrap } from '../ssh/dedicatedDaemonBootstrap.js';
 import { resolveRemoteSelfDownloadFirstPartyInstallPlan, executeRemoteSelfDownloadFirstPartyInstallPlan } from '../ssh/remoteSelfDownloadFirstPartyInstallCommand.js';
@@ -23,7 +23,7 @@ import { createEnrollMachineFlowExecutorFromHappierJsonExecutor } from '../execu
 import { resolveLocalHappierCommandTimeoutMs } from '../executors/happierJsonExecutorFromTextRunner.js';
 import type { InteractiveSystemTaskPromptRequest } from '../interactiveTaskKinds.js';
 import { parseSshKnownHostLine } from './sshKnownHostLine.js';
-import { buildManagedNativeGuestCommand, startManagedNativeGuestDaemon } from '../../machines/managed/nativeBootstrap.js';
+import { buildManagedNativeGuestCommand, probeManagedNativeGuestPlatform, startManagedNativeGuestDaemon } from '../../machines/managed/nativeBootstrap.js';
 import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
 import { DEFAULT_COMMAND_CAPTURE_MAX_BYTES } from '../../process/commandCaptureBudget.js';
 import { GuestServiceFailureFactsV1Schema, readGuestCliFailureOutput } from '@happier-dev/protocol/ssh/commandFailure';
@@ -235,11 +235,8 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
         },
       },
       transport: { exec, install: async placement => {
-        const platform = await exec({ command: 'uname -s; uname -m; printf "%s\\n" "$HOME"', signal });
-        if (platform.status !== 0) throw new SystemTaskExecutionError('provider_unavailable', 'Native guest platform could not be observed.');
-        const [os, arch, home] = platform.stdout.trim().split(/\r?\n/u);
-        if (!home?.startsWith('/')) throw new SystemTaskExecutionError('provider_unavailable', 'Native guest home could not be observed.');
-        const installation = { channel: configuration.channel, signal, os: normalizeRemoteReleaseOs(os), arch: normalizeRemoteReleaseArch(arch), home,
+        const { os, arch, home } = await probeManagedNativeGuestPlatform(exec, signal);
+        const installation = { channel: configuration.channel, signal, os, arch, home,
           remoteHomeDir: placement.remoteHomeDir ?? nativeGuestHome?.happyHomeDir, dedicatedIdentity: !!dedicatedIdentity,
           resource: correlation.resource.value, exec: payloadExec, putFile, bootstrapExec: exec,
           cleanupExec: (request: Parameters<ManagedNativeBootstrapIO['exec']>[0]) => native.exec(request),

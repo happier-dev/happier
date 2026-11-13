@@ -54,6 +54,12 @@
       "import": "./dist/machines/managed/reconcile.js",
       "default": "./dist/machines/managed/reconcile.js"
     },
+    "./machines/managed/nativeChannel": {
+      "happier-source": "./src/machines/managed/nativeChannel.ts",
+      "types": "./dist/machines/managed/nativeChannel.d.ts",
+      "import": "./dist/machines/managed/nativeChannel.js",
+      "default": "./dist/machines/managed/nativeChannel.js"
+    },
     "./plugins/registration/cleanupTimeout": {
       "happier-source": "./src/plugins/registration/cleanupTimeout.ts",
       "types": "./dist/plugins/registration/cleanupTimeout.d.ts",

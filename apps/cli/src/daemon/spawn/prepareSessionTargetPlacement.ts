@@ -5,11 +5,14 @@ import { basename, isAbsolute, join, posix, relative, sep } from 'node:path';
 import type { ManagedSessionTarget, ManagedSessionTargetRequest } from '@/machines/managed/acquire';
 import { planAgentCliInstallForRuntime, type AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 import { safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
+import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/composition/executableTypes';
 import type { ProviderLaunchResourceScope } from '@/providers/lifecycle/resourceScope';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { createSessionHolderSocketPath, readAdoptableHolderHello, type SessionHeldAgentV1 } from '@/subprocess/supervision/sessionHolder';
 import { readSessionTargetHolderArtifacts } from '@/subprocess/supervision/sessionHolderTargetArtifacts';
-import { createTargetHolderSocketPath, serveSessionTargetRelay, type SessionTargetLaunch, type SessionTargetPlacement } from '@/subprocess/supervision/sessionTargetRelay';
+import { assertSessionTargetWorkspaceUnambiguous, createTargetHolderSocketPath, serveSessionTargetRelay, type SessionTargetLaunch, type SessionTargetPlacement } from '@/subprocess/supervision/sessionTargetRelay';
+import { logger } from '@/ui/logger';
+import type { TrackedSession } from '@/daemon/types';
 
 export type OpenManagedSessionTarget = (request: ManagedSessionTargetRequest) => Promise<ManagedSessionTarget>;
 
@@ -24,10 +27,11 @@ export function projectSessionTargetLaunchFailure(error?: unknown): Extract<Spaw
 /**
  * Spawn step for a Session placed on a managed target (no daemon inside it):
  * the target's custody stays with this daemon (the managed driver), the runner
- * gets only the relay address in its placement. The placement's lifetime is the
- * launch's resources: a refused/failed spawn retires it at once, a launched
- * Session's resources retire when it exits, so the authority, every channel and
- * the relay end with the Session.
+ * gets only the relay address in its placement. A refused/failed spawn ends the
+ * placement at once; a launched Session's placement ends when its runner has
+ * exited (also when a Stop retired the launch resources first: the runner stops
+ * its target Agents through their holders over this relay). Its end runs the
+ * `onSessionEnd` steps, then the authority, every channel and the relay end.
  */
 export async function prepareSessionTargetPlacement(input: Readonly<{
     request: Readonly<{ managedId: string }>;
@@ -42,26 +46,57 @@ export async function prepareSessionTargetPlacement(input: Readonly<{
     socketPath?: string;
     /** A respawn adopting the crashed runner's held primary Agent: its holder's address in the target. */
     primarySocketPath?: string;
+    /** Settles once the Session's runner process has exited (the tracked Session ended). */
+    runnerExit: Promise<void>;
 }>): Promise<Readonly<{ ok: true; placement: SessionTargetPlacement; target: ManagedSessionTarget; signal: AbortSignal;
     /** The Session's plain target key (names its guest directory and authority). */
-    sessionKey: string }> | Readonly<{ ok: false; result: Extract<SpawnSessionResult, { type: 'error' }> }>> {
+    sessionKey: string;
+    /** A step of the Session's end in the target, run (latest first) while the target authority is still live. */
+    onSessionEnd(step: () => Promise<void>): void }> | Readonly<{ ok: false; result: Extract<SpawnSessionResult, { type: 'error' }> }>> {
     const sessionKey = plainSessionTargetKey(input.sessionKey);
     const refused = (error?: unknown) => ({ ok: false as const, result: projectSessionTargetLaunchFailure(error) });
     if (!input.openManagedSessionTarget || !input.requesterAccountId) return refused();
     const lifetime = new AbortController();
-    input.launchResourceScope.register(() => lifetime.abort());
+    const endSteps: Array<() => Promise<void>> = [];
+    let ending: Promise<void> | undefined;
+    const end = () => ending ??= (async () => {
+        for (const step of [...endSteps].reverse()) {
+            await step().catch((error: unknown) => logger.warn('[DAEMON RUN] Session target end step failed',
+                { code: (error as { code?: unknown })?.code ?? 'session_target_unavailable' }));
+        }
+        lifetime.abort();
+    })();
+    input.launchResourceScope.register({ onFailure: end,
+        // A Stop retires launch resources before it signals the runner, and the runner stops its Agents through
+        // their holders over this relay (no target pid is local): the authority ends once the runner has exited.
+        onExit: () => { void input.runnerExit.then(end); } });
     try {
         const target = await input.openManagedSessionTarget({ managedId: input.request.managedId, sessionId: sessionKey,
             requesterAccountId: input.requesterAccountId, lifetime: lifetime.signal,
             holder: { version: input.holderVersion, resolveArtifacts: readSessionTargetHolderArtifacts } });
         const relay = await serveSessionTargetRelay({ operations: target, lifetime: lifetime.signal, readTrustedCallerPid: input.readTrustedCallerPid,
             socketPath: input.socketPath ?? createSessionHolderSocketPath() });
-        return { ok: true, target, signal: lifetime.signal, sessionKey, placement: { id: target.id, holderPath: target.holderPath,
+        return { ok: true, target, signal: lifetime.signal, sessionKey, onSessionEnd: step => { endSteps.push(step); }, placement: { id: target.id, holderPath: target.holderPath,
             socketDirectory: target.socketDirectory, relaySocketPath: relay.socketPath, primarySocketPath: input.primarySocketPath ?? createTargetHolderSocketPath(target) } };
     } catch (error) {
         lifetime.abort();
         return refused(error);
     }
+}
+
+/**
+ * When a placed Session's runner has exited, so its target may end (a Stop retires
+ * launch resources before it signals the runner, which stops its Agents through the
+ * target). A Session in the daemon's session host has no process of its own: its end
+ * is the host's end of that Session (`hostedSession.observed`). A runner process: its
+ * `exit`. Without either (a runner this daemon only observes) the exit is already
+ * the caller's fact.
+ */
+export function observeSessionTargetRunnerExit(runner: Readonly<Pick<TrackedSession, 'childProcess' | 'hostedSession'>>): Promise<void> {
+    if (runner.hostedSession) return runner.hostedSession.observed;
+    const child = runner.childProcess;
+    if (!child || child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+    return new Promise(resolve => { child.once('exit', () => resolve()); });
 }
 
 /**
@@ -164,15 +199,15 @@ async function hashFile(path: string): Promise<string> {
  * Agent credentials cross, never Happier auth or Account keys, and only for the
  * Session's life.
  * - Credentials: only the entries the provider owner declares as its auth
- *   material (`authIsolation.secretEntries` of its native-home descriptor) are
- *   copied from the Session's materialized Agent home to
+ *   material (`authIsolation.secretEntries` of its native-home descriptor: paths
+ *   relative to the native home, a file or a credential directory, e.g. Muse's
+ *   `muse/auth.json`, Codex's `accounts`) are copied from the Session's materialized Agent home to
  *   `~/.happier/sessions/<key>/agent-home`; config, hooks, MCP settings and
  *   plugins never cross. Runner env entries pointing into that home are
  *   rewritten there; no other env crosses (values would sit in the guest's
  *   process list).
- * - Lifetime: the guest directory is removed by a cleanup on the launch's
- *   resource scope (registered after the authority's end, so it runs first,
- *   while the authority is still live). Leftovers of Sessions that ended without
+ * - Lifetime: the guest directory is removed by a Session-end step of the
+ *   placement (it runs before the authority ends). Leftovers of Sessions that ended without
  *   cleanup (daemon crash) are swept when a later Session is placed: a directory
  *   is stale when no Agent holds its `.live` lock (`flock`, held shared by every
  *   Agent of the Session for its life) and this daemon is not placing it.
@@ -195,21 +230,25 @@ export async function deliverSessionTargetLaunch(input: Readonly<{
     sessionKey: string;
     runnerEnvironment: Readonly<Record<string, string>>;
     materializedRoot: string | null;
-    /** The provider owner's auth entries (top-level names in the Agent home); required when a home is materialized. */
-    credentialEntries: readonly string[] | null;
     requestAuthMaterializedRoot: string | null;
     agentCommand: string | null;
-    /** The Agent's CLI descriptor (catalog): its Linux install recipe when this Machine's CLI cannot run in the target. */
-    agentRuntime?: AgentCliRuntimeDescriptor | null;
+    /**
+     * The Session's Agent in the spawn's leased runtime catalog: its declared auth entries (required when a home is
+     * materialized) and its CLI descriptor (the Linux install recipe when this Machine's CLI cannot run in the target).
+     */
+    agent: Readonly<{ id: string; catalog: SessionTargetAgentCatalog }> | null;
     workspace: Readonly<{ hostRoot: string; targetRoot: string }>;
-    launchResourceScope: Pick<ProviderLaunchResourceScope, 'register'>;
+    /** The placement's Session-end steps (`prepareSessionTargetPlacement`). */
+    onSessionEnd(step: () => Promise<void>): void;
     signal?: AbortSignal;
 }>): Promise<SessionTargetLaunch> {
     const signal = input.signal ?? new AbortController().signal;
     if (input.requestAuthMaterializedRoot) {
         throw refusal('connected_service_target_unsupported', 'This Agent credential is served on this Machine only and cannot reach a Session target');
     }
-    if (input.materializedRoot && !input.credentialEntries?.length) {
+    assertSessionTargetWorkspaceUnambiguous(input.workspace);
+    const { credentialEntries, runtime } = await readSessionTargetAgent(input.agent);
+    if (input.materializedRoot && !credentialEntries?.length) {
         throw refusal('connected_service_target_unsupported', 'This Agent does not declare which credential files a Session target needs');
     }
     if (!/^[A-Za-z0-9._-]+$/u.test(input.sessionKey)) throw refusal('invalid_request', 'Session target key is not a plain name');
@@ -225,7 +264,7 @@ export async function deliverSessionTargetLaunch(input: Readonly<{
     let locking = false;
     // The Session's end (or its runner's crash) removes the directory unless an Agent of the Session still holds
     // it: a crashed runner's spared Agent keeps its credentials for the respawned runner that adopts it.
-    input.launchResourceScope.register(async () => {
+    input.onSessionEnd(async () => {
         try { await input.target.exec(locking ? `if flock -n -x ${q(`${base}/.live`)} true 2>/dev/null; then rm -rf ${q(base)}; fi` : `rm -rf ${q(base)}`, signal); }
         finally { activeSessionTargetKeys.delete(input.sessionKey); }
     });
@@ -236,8 +275,11 @@ export async function deliverSessionTargetLaunch(input: Readonly<{
     const env: Record<string, string> = {};
     if (input.materializedRoot) {
         const root = input.materializedRoot;
-        const allowed = new Set(input.credentialEntries);
-        const files = (await listFiles(root)).filter(file => allowed.has(file.split(sep)[0]!));
+        const declared = credentialEntries ?? [];
+        const files = (await listFiles(root)).filter(file => {
+            const path = file.split(sep).join('/');
+            return declared.some(entry => path === entry || path.startsWith(`${entry}/`));
+        });
         const directories = [...new Set(files.map(file => posix.dirname(posix.join(base, 'agent-home', ...file.split(sep)))))];
         if (directories.length) await run(`umask 077; mkdir -p ${directories.map(q).join(' ')}`);
         for (const file of files) {
@@ -253,7 +295,7 @@ export async function deliverSessionTargetLaunch(input: Readonly<{
     if (input.agentCommand) {
         const arch = await readElfArch(input.agentCommand).catch(() => null);
         if (input.target.platform.os !== 'linux' || arch !== input.target.platform.arch) {
-            executables[input.agentCommand] = await installAgentCliInTarget({ target: input.target, runtime: input.agentRuntime ?? null, env, signal });
+            executables[input.agentCommand] = await installAgentCliInTarget({ target: input.target, runtime, env, signal });
             return { executables, env, workspace: input.workspace, ...(locking ? { lockPath: posix.join(base, '.live') } : {}) };
         }
         const digest = await hashFile(input.agentCommand);
@@ -277,6 +319,19 @@ export async function deliverSessionTargetLaunch(input: Readonly<{
         executables[input.agentCommand] = placed;
     }
     return { executables, env, workspace: input.workspace, ...(locking ? { lockPath: posix.join(base, '.live') } : {}) };
+}
+
+/** The leased runtime registry members the launch step reads (catalog facts live under `contributes`). */
+export type SessionTargetAgentCatalog = Pick<ResolvedExecutablePluginRuntimeRegistry, 'contributes' | 'acquireAgentCatalogEntry'>;
+
+async function readSessionTargetAgent(agent: Readonly<{ id: string; catalog: SessionTargetAgentCatalog }> | null) {
+    if (!agent) return { credentialEntries: null, runtime: null };
+    const entry = agent.catalog.acquireAgentCatalogEntry
+        ? await agent.catalog.acquireAgentCatalogEntry(agent.id)
+        : agent.catalog.contributes.catalogEntriesById[agent.id];
+    const sharing = await entry?.getConnectedServiceStateSharingDescriptor?.();
+    return { credentialEntries: sharing?.authIsolation?.secretEntries ?? null,
+        runtime: agent.catalog.contributes.agentDefinitionsById.get(agent.id)?.runtimeSpec ?? null };
 }
 
 const SHELL_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/u;

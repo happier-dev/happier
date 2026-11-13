@@ -1,8 +1,9 @@
 import { randomBytes } from 'node:crypto';
 import { connect, createServer, type Server, type Socket } from 'node:net';
-import { isAbsolute, posix, relative, sep } from 'node:path';
+import { isAbsolute, join, posix, relative, sep } from 'node:path';
 import type { Duplex } from 'node:stream';
 
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { createOwnerOnlyLocalEndpoint } from '@/utils/ipc/ownerOnlyLocalEndpoint';
 
 import { observeLocalIpcPeerIdentity, resolveProcessCustodyPeerIdentityExecutable, type ProcessCustodyPeerIdentity } from './processCustody';
@@ -54,20 +55,116 @@ function targetLaunchError(code: string, message: string): Error {
     return Object.assign(new Error(message), { code });
 }
 
+type SessionTargetWorkspace = NonNullable<SessionTargetLaunch['workspace']>;
+
+/**
+ * The one mapping between a placed Session's two names for its workspace
+ * (decided once at admission by the launch step): this Machine's Session path
+ * (`hostRoot`, which host machinery such as Exec admission and path policy
+ * speaks) and the same workspace inside the target (`targetRoot`, the only
+ * path the Agent may see: protocol cwd/workspaceRoot, launch cwd).
+ */
+export function toSessionTargetPath(workspace: SessionTargetWorkspace | undefined, hostPath: string): string {
+    const rest = workspace ? relative(workspace.hostRoot, hostPath) : '..';
+    if (rest === '..' || rest.startsWith(`..${sep}`) || isAbsolute(rest)) {
+        throw targetLaunchError('workspace_root_unsafe', 'The Agent working directory is outside the Session target workspace');
+    }
+    return rest ? posix.join(workspace!.targetRoot, ...rest.split(sep)) : workspace!.targetRoot;
+}
+
+/** The inverse of `toSessionTargetPath`; `null` when `targetPath` is not under the target workspace. */
+function toSessionHostPath(workspace: SessionTargetWorkspace, targetPath: string): string | null {
+    const rest = posix.relative(workspace.targetRoot, targetPath);
+    if (rest === '..' || rest.startsWith('../') || posix.isAbsolute(rest)) return null;
+    return rest ? join(workspace.hostRoot, ...rest.split('/')) : workspace.hostRoot;
+}
+
+function readPlacedSessionWorkspace(): SessionTargetWorkspace | null {
+    return readSessionTargetPlacement(sessionProcessEnvironment())?.launch?.workspace ?? null;
+}
+
+/**
+ * The Agent-facing path of a Session path: in a placed Session the target path
+ * (e.g. `/workspace/sub`), otherwise the path itself. Every value the Agent
+ * receives as its workspace (open request cwd, control contexts) goes through here.
+ */
+export function resolveSessionAgentPath(hostPath: string): string {
+    const workspace = readPlacedSessionWorkspace();
+    return workspace ? toSessionTargetPath(workspace, hostPath) : hostPath;
+}
+
+/** A placed Session's skill delivery the Agent can read: the target names of its paths, or none. */
+type SessionAgentSkillDelivery = Readonly<{
+    pluginRoot: string;
+    skillsRoot: string;
+    items: readonly Readonly<{ name: string; skillId: string; digest: string; directory: string }>[];
+    nativeDisables: readonly Readonly<{ name: string; path: string }>[];
+}>;
+
+/**
+ * The Agent-facing form of a skill delivery (open request `skills`). Its folders are
+ * materialized on this Machine; in a placed Session only paths inside the Session
+ * workspace exist in the target (under their target names). A delivery whose root is
+ * elsewhere is withheld (`undefined`): the Agent would read paths that do not exist there.
+ */
+export function resolveSessionAgentSkills<T extends SessionAgentSkillDelivery>(skills: T | undefined): T | undefined {
+    const workspace = readPlacedSessionWorkspace();
+    if (!skills || !workspace) return skills;
+    const map = (path: string) => { try { return toSessionTargetPath(workspace, path); } catch { return null; } };
+    const pluginRoot = map(skills.pluginRoot);
+    const skillsRoot = map(skills.skillsRoot);
+    const items = skills.items.map(item => ({ ...item, directory: map(item.directory) }));
+    const nativeDisables = skills.nativeDisables.map(entry => ({ ...entry, path: map(entry.path) }));
+    if (pluginRoot === null || skillsRoot === null || items.some(item => item.directory === null)
+        || nativeDisables.some(entry => entry.path === null)) return undefined;
+    return { ...skills, pluginRoot, skillsRoot, items, nativeDisables } as T;
+}
+
+/**
+ * The host name of an Agent-facing working directory, for this Machine's Exec
+ * admission (which resolves and authorizes paths on this Machine): a target
+ * path under the placed workspace becomes its Session path; the holder launch
+ * maps it back (`prepareTargetAgentLaunch`). Anything else is returned as is.
+ */
+export function resolveSessionHostCwd(cwd: string): string {
+    const workspace = readPlacedSessionWorkspace();
+    return workspace ? toSessionHostPath(workspace, cwd) ?? cwd : cwd;
+}
+
+/**
+ * The Session MCP context file an Agent's relay (`holder mcp-relay`) reads. This
+ * Machine's endpoint is a local socket nothing in a target can reach, so in a
+ * placed Session it is the context the primary holder writes beside its socket
+ * in the target (`serve --session-mcp`): the relay connects to that holder, which
+ * admits only its Agent tree and carries the connection on its client channel to
+ * this runner (`sessionHolder.ts`, `M` stream). `undefined` when it has none.
+ */
+export function resolveSessionAgentMcpContextFile(hostContextFile: string | undefined): string | undefined {
+    const placement = readSessionTargetPlacement(sessionProcessEnvironment());
+    if (!placement) return hostContextFile;
+    return placement.primarySocketPath ? `${placement.primarySocketPath}.mcp.json` : undefined;
+}
+
+/**
+ * Admission invariant for the mapping above: the two roots are equal or
+ * disjoint, so a path names one side only (a host root inside the target root,
+ * or the reverse, would make `/workspace/a/x` both a host and a target path).
+ */
+export function assertSessionTargetWorkspaceUnambiguous(workspace: SessionTargetWorkspace): void {
+    const host = workspace.hostRoot.split(sep).join('/');
+    if (host === workspace.targetRoot) return;
+    const nested = (outer: string, inner: string) => { const rest = posix.relative(outer, inner); return rest !== '' && rest !== '..' && !rest.startsWith('../') && !posix.isAbsolute(rest); };
+    if (nested(host, workspace.targetRoot) || nested(workspace.targetRoot, host)) {
+        throw targetLaunchError('workspace_root_unsafe', 'The Session path and the target workspace root must be equal or disjoint');
+    }
+}
+
 /** Maps one Agent launch on this Machine to its launch in the target; refuses anything not placed there. */
 export function prepareTargetAgentLaunch(launch: SessionTargetLaunch | undefined,
     request: Readonly<{ command: string; args: readonly string[]; cwd?: string }>): Readonly<{ command: string; args: readonly string[]; cwd?: string; env: Readonly<Record<string, string>> }> {
     const command = launch?.executables[request.command];
     if (!command) throw targetLaunchError('agent_cli_target_unavailable', 'This Agent CLI was not placed in the Session target');
-    let cwd: string | undefined;
-    if (request.cwd !== undefined) {
-        const workspace = launch?.workspace;
-        const rest = workspace ? relative(workspace.hostRoot, request.cwd) : '..';
-        if (rest === '..' || rest.startsWith(`..${sep}`) || isAbsolute(rest)) {
-            throw targetLaunchError('workspace_root_unsafe', 'The Agent working directory is outside the Session target workspace');
-        }
-        cwd = rest ? posix.join(workspace!.targetRoot, ...rest.split(sep)) : workspace!.targetRoot;
-    }
+    const cwd = request.cwd === undefined ? undefined : toSessionTargetPath(launch?.workspace, request.cwd);
     return { command: launch?.lockPath ? 'flock' : command, args: launch?.lockPath ? ['-s', launch.lockPath, command, ...request.args] : request.args,
         ...(cwd !== undefined ? { cwd } : {}), env: launch?.env ?? {} };
 }

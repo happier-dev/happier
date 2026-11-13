@@ -1,4 +1,5 @@
 import { createSessionHolderAdoptedTurnReader, hasSessionHolderAdoptToken } from '@/subprocess/supervision/sessionHolder';
+import { resolveSessionAgentPath, resolveSessionAgentSkills } from '@/subprocess/supervision/sessionTargetRelay';
 import { SessionGoalControlFailureV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import { sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { readSessionGoalControlDiagnosticDetails } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -4464,10 +4465,14 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             const cwd = hostRuntimeParams.directory;
             let originalConstructionFailure: unknown;
             let nativeOpenCompleted = false;
+            // What the Agent is told its workspace is: in a placed Session the path inside the target.
+            let failureAgentCwd: string | undefined;
             try {
             if (!sessionId || !cwd) {
                 throw new Error(`Agent runtime '${identity.agentId}' requires a session id and working directory`);
             }
+            const agentCwd = resolveSessionAgentPath(cwd);
+            failureAgentCwd = agentCwd;
             const runtimeIncarnationId = randomUUID();
             const sessionCapabilities = params.sessionCapabilities ?? readAgentSessionCapabilities(
                 params.agent.richDefinition?.definition,
@@ -4499,8 +4504,12 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                 : null;
             const strictNativeResumeIdentity = openIntent.kind === 'resume'
                 && openIntent.strictNativeResumeIdentity === true;
-            const nativeForkSource = openIntent.kind === 'fork'
+            const parsedForkSource = openIntent.kind === 'fork'
                 ? parseNativeAgentForkSource(openIntent.source)
+                : null;
+            // The source Session's workspace as the Agent names it (a target path in a placed Session).
+            const nativeForkSource = parsedForkSource
+                ? Object.freeze({ ...parsedForkSource, cwd: resolveSessionAgentPath(parsedForkSource.cwd) })
                 : null;
             if (openIntent.kind === 'fork' && !nativeForkSource) {
                 throw new Error('Native Agent fork source is invalid');
@@ -5672,24 +5681,25 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
             recordOpenPhase('resume_projection');
             const mcpServers = await resolveAgentSessionMcpLaunchConfigs(hostRuntimeParams.mcpServers, openInputs.configuration, signal);
             recordOpenPhase('mcp_launch');
+            const agentSkills = resolveSessionAgentSkills(hostRuntimeParams.skills);
             const buildOpenRequest = (): AgentSessionOpenRequest =>
                 nativeForkSource
                     ? Object.freeze({
                         kind: 'fork',
                         sessionId,
-                        cwd,
+                        cwd: agentCwd,
                         source: nativeForkSource,
                         ...openInputs,
                         ...(mcpServers ? { mcpServers } : {}),
                         ...(hostRuntimeParams.mcpToolPolicy ? { mcpToolPolicy: hostRuntimeParams.mcpToolPolicy } : {}),
                         ...(hostRuntimeParams.mcpServersStrictMode !== undefined ? { mcpServersStrictMode: hostRuntimeParams.mcpServersStrictMode } : {}),
-                        ...(hostRuntimeParams.skills ? { skills: hostRuntimeParams.skills } : {}),
+                        ...(agentSkills ? { skills: agentSkills } : {}),
                     })
                     : resumeId
                     ? Object.freeze({
                         kind: 'resume',
                         sessionId,
-                        cwd,
+                        cwd: agentCwd,
                         providerSessionId: resumeId,
                         ...(strictNativeResumeIdentity
                             ? { strictNativeResumeIdentity: true }
@@ -5699,18 +5709,18 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         ...(mcpServers ? { mcpServers } : {}),
                         ...(hostRuntimeParams.mcpToolPolicy ? { mcpToolPolicy: hostRuntimeParams.mcpToolPolicy } : {}),
                         ...(hostRuntimeParams.mcpServersStrictMode !== undefined ? { mcpServersStrictMode: hostRuntimeParams.mcpServersStrictMode } : {}),
-                        ...(hostRuntimeParams.skills ? { skills: hostRuntimeParams.skills } : {}),
+                        ...(agentSkills ? { skills: agentSkills } : {}),
                     })
                     : Object.freeze({
                         kind: 'create',
                         sessionId,
-                        cwd,
+                        cwd: agentCwd,
                         ...openInputs,
                         ...(startupInstructions ? { startupInstructions } : {}),
                         ...(mcpServers ? { mcpServers } : {}),
                         ...(hostRuntimeParams.mcpToolPolicy ? { mcpToolPolicy: hostRuntimeParams.mcpToolPolicy } : {}),
                         ...(hostRuntimeParams.mcpServersStrictMode !== undefined ? { mcpServersStrictMode: hostRuntimeParams.mcpServersStrictMode } : {}),
-                        ...(hostRuntimeParams.skills ? { skills: hostRuntimeParams.skills } : {}),
+                        ...(agentSkills ? { skills: agentSkills } : {}),
                     });
             let sessions: NonNullable<AgentRuntime['sessions']> | undefined;
             let continuationRefusalMustRemainPrimary = false;
@@ -5844,7 +5854,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     const continuationContext =
                         createNativeAgentSessionControlContext({
                             context,
-                            cwd,
+                            cwd: agentCwd,
                             activity: 'inactive',
                             connectedAccounts:
                                 openRequest.connectedAccounts ?? [],
@@ -6145,7 +6155,7 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                         ? { usageLimitRecovery: sessions.usageLimitRecovery }
                         : {}),
                     context,
-                    cwd,
+                    cwd: agentCwd,
                     getWorkspaceWrites: hostRuntimeParams.getWorkspaceWrites,
                     resolveMcpToolPolicy: hostRuntimeParams.resolveMcpToolPolicy,
                     get connectedAccounts() { return openRequest.connectedAccounts ?? []; },
@@ -6301,16 +6311,16 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     startupPhase: 'client_start' });
                 // Lack of an effect acknowledgement is not proof of failed construction.
                 // Generation cancellation and native-mode refusal retain their existing owners.
-                if (!nativeOpenCompleted && sessionId && cwd && !params.generationSignal?.aborted
+                if (!nativeOpenCompleted && sessionId && failureAgentCwd && !params.generationSignal?.aborted
                     && issue.code !== 'action_outcome_unknown'
                     && !(failure instanceof SessionStartupInputRefusalError)
                     && classifyNativeAgentSessionEffectBoundaryError(failure) !== 'outcome_unknown_after_dispatch') {
                     const source = openIntent.kind === 'fork' ? parseNativeAgentForkSource(openIntent.source) : null;
                     const request: AgentSessionOpenRequest | null = openIntent.kind === 'create'
-                        ? { kind: 'create', sessionId, cwd }
+                        ? { kind: 'create', sessionId, cwd: failureAgentCwd }
                         : openIntent.kind === 'resume'
-                            ? { kind: 'resume', sessionId, cwd, providerSessionId: openIntent.providerSessionId }
-                            : source ? { kind: 'fork', sessionId, cwd, source } : null;
+                            ? { kind: 'resume', sessionId, cwd: failureAgentCwd, providerSessionId: openIntent.providerSessionId }
+                            : source ? { kind: 'fork', sessionId, cwd: failureAgentCwd, source } : null;
                     if (request) {
                         // Carry typed diagnostics only; native error bodies remain in their owning process.
                         const failureCause = issue.failureCause

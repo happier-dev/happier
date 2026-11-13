@@ -5,7 +5,7 @@ import { prepareAdmittedScmEffect } from '@/workspaces/activation/workspaceEffec
 import type { PersistedTakeoverAdmissionWaiter } from '../spawn/persistedTakeoverAdmission';
 import { configuration } from '@/configuration';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
-import { deliverSessionTargetLaunch, prepareSessionTargetPlacement, projectSessionTargetLaunchFailure, type OpenManagedSessionTarget } from '@/daemon/spawn/prepareSessionTargetPlacement';
+import { deliverSessionTargetLaunch, observeSessionTargetRunnerExit, prepareSessionTargetPlacement, projectSessionTargetLaunchFailure, type OpenManagedSessionTarget } from '@/daemon/spawn/prepareSessionTargetPlacement';
 import { SESSION_TARGET_PLACEMENT_ENV_KEY, type SessionTargetPlacement } from '@/subprocess/supervision/sessionTargetRelay';
 import { registerSessionTargetWorkspace } from '@/daemon/sessions/sessionTargetWorkspaces';
 import type { SpawnFailureLimitsReader } from '@/processes/spawnFailure/classifySpawnFailure';
@@ -937,6 +937,9 @@ export async function executeSpawnSessionRequest(
 
             // The relay admits only this Session's runner; read live (a wrapper→runner promotion moves the pid).
             let sessionTargetRunner: Readonly<{ pid: number }> | null = null;
+            // The placed Session's runner process exit (its target authority outlives a Stop's resource retirement).
+            let settleSessionTargetRunnerExit: () => void = () => undefined;
+            const sessionTargetRunnerExit = new Promise<void>(resolve => { settleSessionTargetRunnerExit = resolve; });
             let sessionTarget: Extract<Awaited<ReturnType<typeof prepareSessionTargetPlacement>>, { ok: true }> | undefined;
             const sessionTargetKey = optionsWithProviderIsolation.spawnNonce ?? normalizedExistingSessionId ?? randomUUID();
             if (optionsWithProviderIsolation.managedTargetPlacement) {
@@ -948,6 +951,7 @@ export async function executeSpawnSessionRequest(
                     ...(params.openManagedSessionTarget ? { openManagedSessionTarget: params.openManagedSessionTarget } : {}),
                     // A respawn adopting the crashed runner's held Agent keeps that holder as the Session's primary.
                     ...(optionsWithProviderIsolation.adoptSessionHolder ? { primarySocketPath: optionsWithProviderIsolation.adoptSessionHolder.socketPath } : {}),
+                    runnerExit: sessionTargetRunnerExit,
                     launchResourceScope });
                 if (!placed.ok) return await refuseSpawn(placed.result);
                 sessionTarget = placed;
@@ -1376,17 +1380,12 @@ export async function executeSpawnSessionRequest(
             if (sessionTarget && effectiveOptionsForSpawn.managedTargetPlacement) {
                 // The launch step: this Session's own Agent material and CLI into the target, then the placement to the runner.
                 try {
-                    const catalogEntry = catalogAgentId && appliedPluginRuntimeLease.registry.acquireAgentCatalogEntry
-                        ? await appliedPluginRuntimeLease.registry.acquireAgentCatalogEntry(catalogAgentId)
-                        : catalogAgentId ? appliedPluginRuntimeLease.registry.contributes.catalogEntriesById[catalogAgentId] : undefined;
-                    const sharing = await catalogEntry?.getConnectedServiceStateSharingDescriptor?.();
                     const launch = await deliverSessionTargetLaunch({ target: sessionTarget.target, sessionKey: sessionTarget.sessionKey,
-                        runnerEnvironment: extraEnvForChild, launchResourceScope,
-                        credentialEntries: sharing?.authIsolation?.secretEntries ?? null,
+                        runnerEnvironment: extraEnvForChild, onSessionEnd: sessionTarget.onSessionEnd,
+                        agent: catalogAgentId ? { id: catalogAgentId, catalog: appliedPluginRuntimeLease.registry } : null,
                         materializedRoot: connectedServiceAuth?.targetMaterializedRoot ?? null,
                         requestAuthMaterializedRoot: connectedServiceAuth?.requestAuthMaterializedRoot ?? null,
                         agentCommand: spawnEnvironment.agentCliLaunchSpec?.command ?? null,
-                        agentRuntime: catalogAgentId ? appliedPluginRuntimeLease.registry.contributes.agentDefinitionsById.get(catalogAgentId)?.runtimeSpec ?? null : null,
                         workspace: { hostRoot: effectiveOptionsForSpawn.directory, targetRoot: effectiveOptionsForSpawn.managedTargetPlacement.workspaceRoot },
                         signal: sessionTarget.signal });
                     extraEnvForChild[SESSION_TARGET_PLACEMENT_ENV_KEY] = JSON.stringify({ ...sessionTarget.placement, launch } satisfies SessionTargetPlacement);
@@ -1449,6 +1448,7 @@ export async function executeSpawnSessionRequest(
                 ...(requesterRuntime ? { requesterSessionRuntimeContext: requesterRuntime } : {}),
                 onTrackedSessionRegistered: (trackedSession) => {
                     sessionTargetRunner = trackedSession;
+                    void observeSessionTargetRunnerExit(trackedSession).then(settleSessionTargetRunnerExit);
                     childLaunchSubmitted = true;
                     params.onTrackedSessionRegistered?.();
                 },

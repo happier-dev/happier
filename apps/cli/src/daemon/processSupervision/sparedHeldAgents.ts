@@ -84,6 +84,18 @@ export function createSparedHeldAgentCustody(input: Readonly<{
         handOver(sessionId: string): void {
             spared.delete(sessionId);
         },
+        /**
+         * A final runner exit with no spare. A placed Session's runner that this daemon
+         * reattached ran without its placement (relay and authority ended with the previous
+         * daemon), so it could not stop its target-held Agent through its holder: that Agent
+         * is ended in its target. A runner this daemon placed stopped its Agents itself.
+         */
+        async endStranded(tracked: TrackedSession): Promise<void> {
+            const held = tracked.heldAgentsV1?.find(agent => agent.role === 'primary');
+            if (!held || !tracked.reattachedFromDiskMarker || !tracked.spawnOptions?.managedTargetPlacement || !input.target) return;
+            await input.target.end(tracked, held);
+            logger.infoFile('[DAEMON RUN] Ended the target-held Agent of a reattached runner that left without it', { sessionId: tracked.happySessionId });
+        },
         end,
     });
 }

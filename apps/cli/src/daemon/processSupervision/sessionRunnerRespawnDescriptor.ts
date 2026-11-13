@@ -18,6 +18,7 @@ import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from
 import { RuntimeDescriptorV1Schema, writeRuntimeDescriptorV1ForPersistence } from '@happier-dev/protocol/sessions/metadata/runtime-descriptor';
 import { readCapabilitySelectionCarrierV1, SessionCapabilitySelectionV1Schema } from '@happier-dev/protocol/reach/sessionCapabilitySelectionV1';
 import { SessionCreationTagV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { SessionManagedTargetPlacementV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { SessionModelSelectionV1Schema } from '@happier-dev/protocol/providers/model-selection';
 import { SessionProviderBindingMetadataV1Schema } from '@happier-dev/protocol/providers/sessions/bindingMetadataV1';
 import type { AccountScopedCryptoMaterial, BackendTargetRefV1, BackendTargetRefV2, BackendTargetRefV2Input, AgentExecutionTargetV1 } from '@happier-dev/protocol';
@@ -352,6 +353,9 @@ export const SessionRunnerRespawnDescriptorSchema = lazyZodSchema(() => (<I exte
     connectedServiceMaterializationIdentityV1: z.optional(ConnectedServiceMaterializationIdentityV1Schema),
     capabilitySelection: z.optional(SessionCapabilitySelectionV1Schema),
     runtimeDescriptorV1: z.optional(RuntimeDescriptorV1Schema),
+    // A placed Session (its Agents run in a managed target): a daemon that reattaches its runner, or
+    // respawns it, keeps it there and reaches its held Agent through that target.
+    managedTargetPlacement: z.optional(SessionManagedTargetPlacementV1Schema),
   }).check(z.superRefine((value, ctx) => {
     const backendTargetRefs = value.backendTarget
       ? resolveConcreteCompatBackendTargetRefs(value.backendTarget)
@@ -612,6 +616,7 @@ export function buildSessionRunnerRespawnDescriptorV1FromSpawnOptions(
       : {}),
     ...(spawnOptions.capabilitySelection ? { capabilitySelection: spawnOptions.capabilitySelection } : {}),
     ...(runtimeDescriptorV1 ? { runtimeDescriptorV1 } : {}),
+    ...(spawnOptions.managedTargetPlacement ? { managedTargetPlacement: spawnOptions.managedTargetPlacement } : {}),
   };
 
   const parsed = SessionRunnerRespawnDescriptorV1Schema.safeParse(descriptor);
@@ -671,6 +676,7 @@ export function buildSpawnSessionOptionsFromRespawnDescriptorV1(
       : {}),
     ...(descriptor.capabilitySelection ? { capabilitySelection: descriptor.capabilitySelection } : {}),
     ...(descriptor.runtimeDescriptorV1 ? { runtimeDescriptorV1: descriptor.runtimeDescriptorV1 } : {}),
+    ...(descriptor.managedTargetPlacement ? { managedTargetPlacement: descriptor.managedTargetPlacement } : {}),
     approvedNewDirectoryCreation: descriptor.directoryKind !== 'managed',
   };
 }

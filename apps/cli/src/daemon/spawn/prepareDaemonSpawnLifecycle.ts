@@ -70,7 +70,7 @@ export async function prepareDaemonSpawnLifecycle(input: Readonly<{
     setPendingSessionAttachCleanup: (cleanup: (() => Promise<void>) | null) => void;
     getSpawnResourceCleanupOnExit: () => SpawnResourceCleanup | null;
     onSpawnResourceCleanupArmed: () => void;
-    onTrackedSessionRegistered?: (trackedSession: Readonly<Pick<TrackedSession, 'pid' | 'childProcess'>>) => void;
+    onTrackedSessionRegistered?: (trackedSession: Readonly<Pick<TrackedSession, 'pid' | 'childProcess' | 'hostedSession'>>) => void;
     deviceLocalSecretStorage?: DeviceLocalSecretStorage;
     requesterSessionRuntimeContext?: RequesterSessionRuntimeContext;
     projectSetupOperation?: SpawnSessionOptions['projectSetupOperation'];

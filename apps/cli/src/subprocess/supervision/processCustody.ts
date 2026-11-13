@@ -82,6 +82,11 @@ export function resolveProcessCustodySupportExecutable(
     return resolveStagedCustodyBinaryPath(platform, stagedCustodyExecutableName(platform));
 }
 
+/** The static Linux helper a Session holder bootstrap places in a container target of `arch`. */
+export function resolveProcessCustodyTargetExecutable(arch: 'x64' | 'arm64'): string | null {
+    return resolveStagedCustodyBinaryPath('linux', join('targets', `${PROCESS_CUSTODY_RUNTIME_BINARY_BASE_NAME}.linux-${arch}`));
+}
+
 export type ProcessCustodySpawnSpec = Readonly<{
     jobName: string;
     executablePath: string;

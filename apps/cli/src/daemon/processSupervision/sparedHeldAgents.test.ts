@@ -122,6 +122,24 @@ describe('spared held Agent custody through the respawn owner', () => {
         expect(ended).toEqual(['row-1:4102']);
     });
 
+    it('ends the target-held Agent of a reattached placed runner that leaves without a spare (its relay ended with the previous daemon)', async () => {
+        const ended: string[] = [];
+        const custody = createSparedHeldAgentCustody({
+            ownerRemainder: { end: async () => ({ status: 'complete', outcomes: [] }) },
+            endTurn: async () => undefined,
+            target: { probe: async () => true, end: async (tracked, candidate) => { ended.push(`${tracked.happySessionId}:${candidate.agentPid}`); } },
+        });
+        const placement = { managedId: 'row-1', workspaceRoot: '/workspace' };
+        const session = (id: string, extra: Partial<TrackedSession>) => ({ trackingKey: legacyPidSessionTrackingKey(4300), pid: 4300, happySessionId: id, startedBy: 'daemon',
+            heldAgentsV1: [held], ...extra }) as TrackedSession;
+        await custody.endStranded(session('reattached', { reattachedFromDiskMarker: true,
+            spawnOptions: { directory: '/tmp/work', managedTargetPlacement: placement } as SpawnSessionOptions }));
+        // This daemon's own placement stopped its Agents through the relay; a local Session has no target.
+        await custody.endStranded(session('placed-here', { spawnOptions: { directory: '/tmp/work', managedTargetPlacement: placement } as SpawnSessionOptions }));
+        await custody.endStranded(session('local', { reattachedFromDiskMarker: true, spawnOptions: { directory: '/tmp/work' } as SpawnSessionOptions }));
+        expect(ended).toEqual(['reattached:4102']);
+    });
+
     it('spares nothing when the holder is not the recorded adoptable one', async () => {
         const run = scenario({ maxRestarts: 0 });
         const custody = createSparedHeldAgentCustody({ ownerRemainder: { end: async () => ({ status: 'complete', outcomes: [] }) },
