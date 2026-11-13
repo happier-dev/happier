@@ -123,7 +123,7 @@
     "@workos-inc/node": "10.13.0",
     "axios": "^1.6.8",
     "chalk": "4.1.2",
-    "cron-parser": "^5.5.0",
+    "cron-parser": "^5.10.5",
     "date-fns": "^4.1.0",
     "dotenv": "^16.4.5",
     "elevenlabs": "^1.54.0",
