@@ -36,28 +36,24 @@ export const PageAsideColumns = React.memo(function PageAsideColumns(props: Omit
         setWide((current) => (current === next ? current : next));
     }, []);
     const oneColumnAside = props.compactAside === 'none' ? null : props.aside;
-    const sideBySide = wide && !props.compact && props.aside !== null;
+    const measureColumns = !props.compact && Boolean(props.aside);
+    const sideBySide = measureColumns && wide;
     const children = typeof props.children === 'function' ? props.children({ sideBySide }) : props.children;
-    if (props.compact || !props.aside) {
-        return (
-            <>
-                {props.compactAside === 'first' ? oneColumnAside : null}
-                {children}
-                {props.compactAside === 'first' ? null : oneColumnAside}
-                {props.closing}
-            </>
-        );
-    }
+    const asideFirst = !measureColumns && props.compactAside === 'first';
+    const aside = sideBySide || oneColumnAside ? (
+        <View key="aside" style={sideBySide ? styles.aside : undefined}>{props.aside}</View>
+    ) : null;
+    // Keep the same parents through responsive changes and receipt arrival. Keyed sibling slots can
+    // change their reading order without resetting a field or an open control in either column.
     return (
-        <View onLayout={onLayout} style={wide ? [styles.row, columnWidth] : undefined}>
-            <View style={wide ? styles.main : undefined}>
+        <View onLayout={measureColumns ? onLayout : undefined} style={sideBySide ? [styles.row, columnWidth] : undefined}>
+            {asideFirst ? aside : null}
+            <View key="main" style={sideBySide ? styles.main : undefined}>
                 {children}
-                {wide ? props.closing : null}
+                {sideBySide ? props.closing : null}
             </View>
-            {wide || oneColumnAside ? (
-                <View style={wide ? styles.aside : undefined}>{props.aside}</View>
-            ) : null}
-            {wide ? null : props.closing}
+            {asideFirst ? null : aside}
+            {sideBySide ? null : props.closing}
         </View>
     );
 });
