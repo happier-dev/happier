@@ -28,8 +28,11 @@ vi.mock('socket.io-client', async importOriginal => {
     return createSocketIoClientBoundary(importOriginal);
 });
 
+// Each target co-declares a drop target, which consumers read synchronously,
+// so these targets keep eager complete-set preparation (Action-only targets load on first use).
 function executableBytes(id: number): Uint8Array {
-    return new TextEncoder().encode(`exports.activate = api => { api.actions.register('run', async () => 'acme.concurrent-${id}'); };`);
+    return new TextEncoder().encode(`exports.activate = api => { api.actions.register('${id === 3 ? 'peer' : 'run'}', async () => 'acme.concurrent-${id}');
+        api.dropTargets.register('${id === 3 ? 'peer-drop' : 'drop'}', { resolve: () => ({ status: 'refused', reason: { code: 'fixture', message: 'fixture' } }) }); };`);
 }
 
 // Only packaged inventory and asset IO are replaced. Projection, Availability,
@@ -37,14 +40,15 @@ function executableBytes(id: number): Uint8Array {
 vi.mock('@/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts', async () => {
     const { computePluginUiArtifactFileSetSha256DigestV1, computePluginUiArtifactSha256DigestV1,
         PluginUiArtifactsManifestEntryV2Schema } = await import('@happier-dev/protocol/plugins/ui');
-    return { BUNDLED_PLUGIN_BRAND_MARKS: [], BUNDLED_PLUGIN_UI_APP_DECLARATIONS: [], BUNDLED_PLUGIN_UI_APP_ARTIFACTS: [1, 2].map(id => {
+    return { BUNDLED_PLUGIN_BRAND_MARKS: [], BUNDLED_PLUGIN_UI_APP_DECLARATIONS: [], BUNDLED_PLUGIN_UI_APP_ARTIFACTS: [1, 2, 3].map(id => {
         const bytes = executableBytes(id);
-        const entry = 'react-native/action/entry.cjs.bundle';
+        const artifactId = id === 3 ? 'peer' : 'action';
+        const entry = `react-native/${artifactId}/entry.cjs.bundle`;
         const digest = computePluginUiArtifactFileSetSha256DigestV1([{ relativePath: entry, bytes }]);
-        const artifactGraph = PluginUiArtifactsManifestEntryV2Schema.parse({ artifactId: 'action', tier: 'reactNative', entry,
+        const artifactGraph = PluginUiArtifactsManifestEntryV2Schema.parse({ artifactId, tier: 'reactNative', entry,
             files: [{ relativePath: entry, digest: computePluginUiArtifactSha256DigestV1(bytes), byteSize: bytes.byteLength }],
             digest, builtWith: { bundler: 'esbuild', version: '0.27.2' }, executable: { exports: ['activate'] }, hostUiApiRange: '^1.0.0' });
-        return { pluginId: `acme.concurrent-${id}`, artifactId: 'action', tier: 'reactNative', digest, releaseVersion: '1.0.0',
+        return { pluginId: `acme.concurrent-${id === 3 ? 1 : id}`, artifactId, tier: 'reactNative', digest, releaseVersion: '1.0.0',
             artifactGraph, files: [{ relativePath: entry, asset: id }] };
     }) };
 });
@@ -93,7 +97,7 @@ const authoredAccountArtifact = await (async () => {
     return { manifest, graph, bytes: compiled.bytes };
 })();
 
-function fixture() {
+function fixture(includePeer = false) {
     let current = true;
     const listeners = new Set<() => void>();
     const lifetime: ActiveServerAccountScopeLifetime = {
@@ -106,10 +110,14 @@ function fixture() {
     let installedPackagesById: PluginUiProjectionModel['installedPackagesById'] = {};
     let actionsById: PluginUiProjectionModel['actionsById'] = {};
     let reactNativeBundlesById: PluginUiProjectionModel['reactNativeBundlesById'] = {};
+    let dropTargetsById: PluginUiProjectionModel['dropTargetsById'] = {};
     for (const artifact of BUNDLED_PLUGIN_UI_APP_ARTIFACTS) {
+        if (artifact.artifactId === 'peer' && !includePeer) continue;
+        const actionId = artifact.artifactId === 'peer' ? 'peer' : 'run';
+        const dropId = artifact.artifactId === 'peer' ? 'peer-drop' : 'drop';
         const origin = { machineId: 'byte-supplier', serverId: lifetime.scope.serverId,
             interactionEnabled: true, phase: 'current' as const, executionOrigin: null };
-        const action = PluginContributesV2Schema.parse({ actions: [{ id: 'run', title: 'Run', scopes: ['session'],
+        const action = PluginContributesV2Schema.parse({ actions: [{ id: actionId, title: 'Run', scopes: ['session'],
             surfaces: ['ui'], placementBindings: ['detailsPanel'], dangerLevel: 'safe',
             execution: { target: 'client', client: { artifactId: artifact.artifactId, exportName: 'activate' }, platforms: ['web'] },
         }] }).actions[0]!;
@@ -117,27 +125,35 @@ function fixture() {
             id: artifact.pluginId, displayName: artifact.pluginId, version: '1.0.0', enabled: true,
             source: { kind: 'bundled', locator: artifact.pluginId },
         } };
-        actionsById = { ...actionsById, [`${artifact.pluginId}/run`]: {
+        actionsById = { ...actionsById, [`${artifact.pluginId}/${actionId}`]: {
             ...action, pluginId: artifact.pluginId, occurrenceId: `${artifact.pluginId}:current`, available: true,
             [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: origin,
         } };
-        reactNativeBundlesById = { ...reactNativeBundlesById, [`reactNativeBundle:${artifact.pluginId}:run`]: {
-            id: `reactNativeBundle:${artifact.pluginId}:run`, pluginId: artifact.pluginId, contributionKind: 'reactNativeBundle',
-            contributionId: 'run', generatedOwnerKind: 'clientContribution', artifactGraph: artifact.artifactGraph,
-            executionOrigin: null, artifactSelectionOwner: 'daemonProjection',
-            runtime: { decision: { state: 'load' }, loadPolicy: { source: 'installedArtifact' }, cacheIdentity: { artifactDigest: artifact.digest } },
-            [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: origin,
-        } };
+        const drop = PluginContributesV2Schema.parse({ dropTargets: [{ id: dropId, title: 'Drop', acceptedKinds: ['session'],
+            actions: [{ kind: 'host', actionId: 'session.open' }],
+            client: { artifactId: artifact.artifactId, exportName: 'activate' }, platforms: ['web'] }] }).dropTargets[0]!;
+        dropTargetsById = { ...dropTargetsById, [`${artifact.pluginId}/${dropId}`]: { id: `${artifact.pluginId}/${dropId}`,
+            pluginId: artifact.pluginId, pluginVersion: '1.0.0', occurrenceId: `${artifact.pluginId}:current`, definition: drop,
+            [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: origin } };
+        for (const contributionId of [actionId, `dropTargets/${dropId}`]) {
+            reactNativeBundlesById = { ...reactNativeBundlesById, [`reactNativeBundle:${artifact.pluginId}:${contributionId}`]: {
+                id: `reactNativeBundle:${artifact.pluginId}:${contributionId}`, pluginId: artifact.pluginId, contributionKind: 'reactNativeBundle',
+                contributionId, generatedOwnerKind: 'clientContribution', artifactGraph: artifact.artifactGraph,
+                executionOrigin: null, artifactSelectionOwner: 'daemonProjection',
+                runtime: { decision: { state: 'load' }, loadPolicy: { source: 'installedArtifact' }, cacheIdentity: { artifactDigest: artifact.digest } },
+                [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: origin,
+            } };
+        }
     }
     const model: PluginUiProjectionModel = { ...EMPTY_PLUGIN_UI_PROJECTION, generation: 1,
-        installedPackagesById, actionsById, reactNativeBundlesById };
+        installedPackagesById, actionsById, dropTargetsById, reactNativeBundlesById };
     const host = createPluginUiExecutableModuleHost();
     const input = { actionProjection: { projection: model }, platform: 'web' as const, executableHost: host,
         reader: store.bind(lifetime.scope), accountLifetime: lifetime, loaderBackend: createPluginUiCommonJsLoaderBackend() };
     const composition = getPluginUiClientExecutableComposition(host);
     const targets = resolveProjectedPluginUiClientExecutables(input);
-    return { input, get loaded() { return targets.filter(target => composition.read({ family: 'actions',
-        pluginId: target.pluginId, localId: 'run', occurrenceId: target.occurrenceId,
+    return { input, availability: store, get loaded() { return targets.filter(target => composition.read({ family: 'actions',
+        pluginId: target.pluginId, localId: target.cacheIdentity.artifactId === 'peer' ? 'peer' : 'run', occurrenceId: target.occurrenceId,
         target: target.target, executionOrigin: target.executionOrigin })).map(target => target.pluginId); }, composition, listeners,
         retire: () => { current = false; for (const listener of [...listeners]) listener(); } };
 }
@@ -352,7 +368,7 @@ it('propagates a genuine host publication fault instead of converting it into a 
 it('does not acquire or register unneeded visual bodies', async () => {
     const state = fixture();
     try {
-        const model = { ...state.input.actionProjection.projection, actionsById: {} };
+        const model = { ...state.input.actionProjection.projection, actionsById: {}, dropTargetsById: {} };
         expect(await reconcileProjectedPluginUiClientExecutables({ ...state.input, actionProjection: { projection: model } })).toEqual([]);
         expect(assetIo.read).not.toHaveBeenCalled();
         expect(rpcIo.request).not.toHaveBeenCalled();
@@ -373,7 +389,7 @@ it('keeps retained predecessor registrations when a successor is superseded', as
     current = false;
     expect(await pending).toEqual([]);
     expect(state.loaded).toEqual(['acme.concurrent-1', 'acme.concurrent-2']);
-    for (const artifact of BUNDLED_PLUGIN_UI_APP_ARTIFACTS) {
+    for (const artifact of BUNDLED_PLUGIN_UI_APP_ARTIFACTS.filter(artifact => artifact.artifactId !== 'peer')) {
         expect(state.composition.read({ family: 'actions', pluginId: artifact.pluginId,
             occurrenceId: `${artifact.pluginId}:current`, localId: 'run',
             target: { artifactId: artifact.artifactId, exportName: 'activate', platform: 'web' },
@@ -383,4 +399,50 @@ it('keeps retained predecessor registrations when a successor is superseded', as
     state.retire();
     await state.composition.unload();
     expect(state.listeners.size).toBe(0);
+});
+
+
+it('keeps a current sibling executable when an older target lease revokes and re-adopts that target', async () => {
+    const state = fixture(true);
+    assetIo.read.mockImplementation(async id => executableBytes(id));
+    let predecessorCurrent = true;
+    const full = state.input.actionProjection.projection;
+    const withoutPeer = { ...full,
+        actionsById: Object.fromEntries(Object.entries(full.actionsById).filter(([id]) => !id.endsWith('/peer'))),
+        dropTargetsById: Object.fromEntries(Object.entries(full.dropTargetsById).filter(([id]) => !id.endsWith('/peer-drop'))),
+    };
+    try {
+        await reconcileProjectedPluginUiClientExecutables({ ...state.input,
+            actionProjection: { projection: withoutPeer }, isCurrent: () => predecessorCurrent });
+        await reconcileProjectedPluginUiClientExecutables(state.input);
+        const targets = resolveProjectedPluginUiClientExecutables(state.input);
+        const selected = (artifactId: string) => targets.find(target => target.pluginId === 'acme.concurrent-1'
+            && target.cacheIdentity.artifactId === artifactId)!;
+        const address = (artifactId: string, localId: string) => {
+            const target = selected(artifactId);
+            return { family: 'actions' as const, pluginId: target.pluginId, localId,
+                occurrenceId: target.occurrenceId, target: target.target, executionOrigin: target.executionOrigin };
+        };
+        expect(state.composition.read(address('action', 'run'))).not.toBeNull();
+        expect(state.composition.read(address('peer', 'peer'))).not.toBeNull();
+        predecessorCurrent = false;
+        state.availability.replace({ scope: state.input.accountLifetime.scope, snapshot: {
+            availabilityCursor: 2, intentReads: [], materializations: [], snapshots: [],
+        } });
+        expect(state.composition.read(address('action', 'run'))).toBeNull();
+        const peer = state.composition.read(address('peer', 'peer'));
+        expect(peer).not.toBeNull();
+        expect(state.composition.readRefusal(address('action', 'run'))).toMatchObject({
+            code: 'artifact_lease_revoked', layer: 'artifact', phase: 'activation',
+        });
+        const handler = peer!.registration.value;
+        if (typeof handler !== 'function') throw new Error('Missing peer Action');
+        expect(await Reflect.apply(handler, undefined, [{}])).toBe('acme.concurrent-3');
+        await reconcileProjectedPluginUiClientExecutables(state.input);
+        expect(state.composition.read(address('action', 'run'))).not.toBeNull();
+    } finally {
+        state.retire();
+        await state.composition.unload();
+        expect(state.listeners.size).toBe(0);
+    }
 });

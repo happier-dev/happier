@@ -1,23 +1,59 @@
-import { PluginError, type PluginAccountApi } from '@happier-dev/plugin-sdk';
-import type { PluginAccountActionHandler } from '@happier-dev/plugin-sdk/actions';
+import { PluginError, type PluginAccountApi, type PluginClientApi } from '@happier-dev/plugin-sdk';
+import type { PluginAccountActionHandler, PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
 import type { PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { derivePluginAccountContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
+import {
+    derivePluginAccountContributionRegistrationRights,
+    derivePluginClientContributionRegistrationRights,
+    type PluginContributionRegistrationRight,
+} from '@happier-dev/protocol/plugins/contributions/catalog';
 import { createPluginRegistrationScope, type PluginRuntimeRegistration } from '@/sync/domains/plugins/registrationScope';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import type { PluginReactNativeExportLoaderResult } from './loader';
 import type { PluginUiClientExecutableTarget } from './clientExecutableContributions';
 
-/** Account declarations stay available while their callbacks load on first use. */
-export function createLazyAccountExecutable(input: Readonly<{
+type LazyExecutableInput = Readonly<{
+    contributes: Readonly<Record<string, unknown>>;
+    target: PluginUiClientExecutableTarget;
+}>;
+
+/** Families whose consumers prepare the registration before reading its runtime value. */
+const DEFERRED_FAMILIES_BY_REALM = Object.freeze({
+    account: new Set<string>(['actions', 'resources', 'connectedAccountDescriptors']),
+    client: new Set<string>(['actions']),
+});
+
+function deriveLazyExecutableRights(input: LazyExecutableInput): readonly PluginContributionRegistrationRight[] {
+    const { artifactId, exportName, platform } = input.target;
+    return input.target.realm === 'account'
+        ? derivePluginAccountContributionRegistrationRights(input.contributes, { artifactId, exportName })
+        : derivePluginClientContributionRegistrationRights(input.contributes, { artifactId, exportName, platform });
+}
+
+/**
+ * A target loads on first use when every registration it owns is prepared by
+ * its consumer before use. Families read synchronously (drag/drop, work items,
+ * Voice) keep eager activation.
+ */
+export function canActivatePluginUiExecutableLazily(input: LazyExecutableInput): boolean {
+    const deferred = DEFERRED_FAMILIES_BY_REALM[input.target.realm ?? 'client'];
+    const rights = deriveLazyExecutableRights(input);
+    return rights.length > 0 && rights.every(right => deferred.has(right.family));
+}
+
+/** Declarations stay available while their callbacks load on first use. */
+export function createLazyPluginUiExecutable(input: Readonly<{
     pluginId: string;
     contributes: Readonly<Record<string, unknown>>;
     target: PluginUiClientExecutableTarget;
     isCurrent(): boolean;
     load(): Promise<PluginReactNativeExportLoaderResult>;
 }>) {
-    const target = { realm: 'account' as const, artifactId: input.target.artifactId, exportName: input.target.exportName };
-    const rights = derivePluginAccountContributionRegistrationRights(input.contributes, target);
+    const target = input.target.realm === 'account'
+        ? { realm: 'account' as const, artifactId: input.target.artifactId, exportName: input.target.exportName }
+        : { realm: 'client' as const, artifactId: input.target.artifactId, exportName: input.target.exportName,
+            platform: input.target.platform };
+    const rights = deriveLazyExecutableRights(input);
     let pending: Promise<readonly PluginRuntimeRegistration[]> | undefined;
     let retired = false;
     let scope: Pick<ReturnType<typeof createPluginRegistrationScope>, 'dispose'> | undefined;
@@ -41,7 +77,9 @@ export function createLazyAccountExecutable(input: Readonly<{
             const loaded = await input.load();
             if (!loaded.ok) throw Object.assign(new Error(loaded.code), loaded);
             assertCurrent();
-            const capture = createPluginRegistrationScope({ pluginId: input.pluginId, target, rights });
+            const capture = target.realm === 'account'
+                ? createPluginRegistrationScope({ pluginId: input.pluginId, target, rights })
+                : createPluginRegistrationScope({ pluginId: input.pluginId, target, rights });
             scope = capture;
             try {
                 const result: unknown = await Reflect.apply(loaded.exported, undefined, [capture.api]);
@@ -83,21 +121,24 @@ export function createLazyAccountExecutable(input: Readonly<{
             if (selected.family !== 'actions' && selected.family !== 'resources' && selected.family !== 'connectedAccountDescriptors') return selected;
             return registration(selected.family, selected.localId);
         },
-        activate(api: PluginAccountApi) {
+        activate(api: PluginAccountApi | PluginClientApi) {
             for (const right of rights) {
                 if (right.family === 'actions') {
-                    api.actions.register(right.localId, async (value, context) => {
+                    const handler: PluginAccountActionHandler = async (value, context) => {
                         throwIfAborted(context.signal);
                         const selected = await registration('actions', right.localId);
                         throwIfAborted(context.signal);
+                        // The realm dispatcher supplies the context its loaded handler was registered for.
                         return (selected.value as unknown as PluginAccountActionHandler)(value, context);
-                    });
-                } else if (right.family === 'resources') {
+                    };
+                    if ('resources' in api) api.actions.register(right.localId, handler);
+                    else api.actions.register(right.localId, handler as unknown as PluginClientActionHandler);
+                } else if (right.family === 'resources' && 'resources' in api) {
                     api.resources.registerDynamicResource(right.localId, {
                         read: async options => (await resource(right.localId, options.signal)).read(options),
                         observe: async (invalidate, options) => (await resource(right.localId, options.signal)).observe(invalidate, options),
                     });
-                } else if (right.family === 'connectedAccountDescriptors') {
+                } else if (right.family === 'connectedAccountDescriptors' && 'connectedAccounts' in api) {
                     // Consumers prepare this existing registration before reading its
                     // actual mode set; unopened services acquire no executable bytes.
                     api.connectedAccounts.register(right.localId, { authentication: { modes: {} } });

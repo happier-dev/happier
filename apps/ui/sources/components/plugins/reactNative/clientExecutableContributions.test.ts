@@ -401,8 +401,6 @@ const contributes = PluginContributesV2Schema.parse({
                 cancelResponse: true,
                 bargeIn: false,
                 clearInput: true,
-                resumption: 'resume',
-                replay: 'stable_ids',
                 exactMessage: true,
                 interruptionPolicy: 'provider_immediate',
             },

@@ -671,6 +671,7 @@ export type PluginUiClientExecutableComposition = Readonly<{
     refuse(admission: PluginUiClientExecutableAdmission, failure: PluginUiClientExecutableFailure): void;
     revision(): number;
     subscribe(listener: () => void): () => void;
+    invalidateActivation(activation: PluginUiClientExecutableActivation, failure: PluginUiClientExecutableFailure): Promise<void>;
     invalidatePlugin(pluginId: string): Promise<void>;
     unload(): Promise<void>;
 }>;
@@ -1231,6 +1232,19 @@ export function createPluginUiClientExecutableComposition(input: Readonly<{
         },
         revision: registrationIndex.revision,
         subscribe: registrationIndex.subscribe,
+        invalidateActivation: async (activation, failure) => {
+            const key = getPluginUiClientExecutableTargetAddressKey(activation);
+            const active = activeByTargetKey.get(key);
+            // A retired lease cannot withdraw a successor at the same address.
+            if (active?.activation !== activation) return;
+            activeByTargetKey.delete(key);
+            active.controller.abort();
+            const retirement = active.executableHost.invalidateActivation({
+                identity: active.identity, moduleReference: active.moduleReference,
+            });
+            registrationIndex.refuse(activation, failure);
+            await retirement;
+        },
         invalidatePlugin: async (pluginId) => {
             registrationIndex.retainRefusals(admission => admission.pluginId !== pluginId);
             const leaves = new Set<PluginUiExecutableModuleHost>();

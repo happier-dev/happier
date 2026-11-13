@@ -19,7 +19,7 @@ import {
     type PluginUiExecutableModuleHost,
 } from './executableModuleHost';
 import { loadPluginReactNativeBundleExport, type PluginReactNativeLoaderBackend } from './loader';
-import { createLazyAccountExecutable } from './lazyAccountExecutable';
+import { canActivatePluginUiExecutableLazily, createLazyPluginUiExecutable } from './lazyAccountExecutable';
 import { resolveDefaultReactNativeLoaderBackend } from './resolveDefaultReactNativeLoaderBackend';
 import {
     resolveProjectedPluginUiClientExecutables,
@@ -83,6 +83,16 @@ function targetAdmission(target: PluginUiProjectedClientExecutableTarget): Plugi
     };
 }
 
+function retireRevokedArtifact(
+    composition: PluginUiClientExecutableComposition,
+    activation: PluginUiClientExecutableActivation,
+): void {
+    void composition.invalidateActivation(activation, Object.freeze({
+        ok: false, code: 'artifact_lease_revoked', layer: 'artifact', phase: 'activation',
+        retryable: false, diagnostics: Object.freeze(['artifact_lease_revoked']),
+    }));
+}
+
 /** Same normalization and composition fingerprint as adoption, without acquiring bytes. */
 export function retainProjectedPluginUiClientExecutables(input: Readonly<{
     actionProjection?: PluginUiClientExecutableProjectionSource | null;
@@ -118,19 +128,22 @@ async function createProjectedClientExecutableActivation(input: Readonly<{
     if (!accountLifetime || !input.reader || !target.authority.serverId || !isCurrent(input)) return null;
     if ('kind' in target.authority && (target.authority.accountId !== accountLifetime.scope.accountId
         || target.authority.serverId !== accountLifetime.scope.serverId)) return null;
-    if (target.target.realm !== 'account') return createAcquiredClientExecutableActivation(input);
+    // Delivery follows consumption: a target whose registrations are all
+    // prepared before use commits its declarations now and acquires bytes on first use.
+    if (!canActivatePluginUiExecutableLazily(target)) return createAcquiredClientExecutableActivation(input);
     let claimed = false;
     let accountRetirement: Readonly<{ dispose(): void }> | undefined;
     let acquired: Awaited<ReturnType<typeof createAcquiredClientExecutableActivation>>;
     let activation: PluginUiClientExecutableActivation;
     const scopeIsCurrent = () => accountLifetime.isCurrent() && (claimed
         ? input.composition.isCurrentActivation(activation) : isCurrent(input));
-    const lazy = createLazyAccountExecutable({ pluginId: target.pluginId, contributes: target.contributes,
+    const lazy = createLazyPluginUiExecutable({ pluginId: target.pluginId, contributes: target.contributes,
         target: target.target, isCurrent: scopeIsCurrent,
         async load() {
             if (!acquired || 'refusal' in acquired) {
                 acquired = await createAcquiredClientExecutableActivation({ ...input, isCurrent: scopeIsCurrent,
-                    retainCommittedActivation: false });
+                    retainCommittedActivation: false,
+                    onArtifactRevoke: () => retireRevokedArtifact(input.composition, activation) });
             }
             if (!acquired) throw Object.assign(new Error('client_executable_activation_retired'), { code: 'plugin_action_generation_retired' });
             if ('refusal' in acquired) throw Object.assign(new Error(acquired.refusal.code), acquired.refusal);
@@ -165,6 +178,8 @@ async function createAcquiredClientExecutableActivation(input: Readonly<{
     isCurrent?: () => boolean;
     retainCommittedActivation?: boolean;
     createDerivedScope?: PluginUiClientExecutableDerivedScopeFactory;
+    /** Deferred acquisition belongs to the outer, already-adopted descriptor. */
+    onArtifactRevoke?: () => void;
 }>): Promise<Readonly<{ activation: PluginUiClientExecutableActivation; release: () => void }>
     | Readonly<{ refusal: PluginUiClientExecutableFailure }> | null> {
     const { accountLifetime, reader, target } = input;
@@ -226,10 +241,11 @@ async function createAcquiredClientExecutableActivation(input: Readonly<{
         acquired.dispose();
     };
     artifactRevocation = acquired.onRevoke(() => {
-        void input.composition.invalidatePlugin(target.pluginId);
+        if (input.onArtifactRevoke) input.onArtifactRevoke();
+        else if (activation) retireRevokedArtifact(input.composition, activation);
     });
-    // Deferred Account targets already bind retirement at descriptor admission.
-    if (target.target.realm !== 'account') {
+    // Deferred targets already bind retirement at descriptor admission.
+    if (!canActivatePluginUiExecutableLazily(target)) {
         accountRetirement = accountLifetime.onRetire(() => {
             void input.composition.invalidatePlugin(target.pluginId);
         });
