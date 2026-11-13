@@ -139,7 +139,7 @@ function SubmenuHarness({ component: MenuComponent = Menu, onSelect }: Readonly<
 }>) {
     const [open, setOpen] = React.useState(false);
     const context = React.useMemo(() => createSurfaceContext(), []);
-    const host = React.useMemo(() => createPluginUiPrivatePresentationHost(), []);
+    const host = React.useMemo(() => createPluginUiPrivatePresentationHost(undefined), []);
     // A variable also reaches the pre-change type without suppressing a diagnostic:
     // RED observes the missing behavior through the real public component and host.
     const items = [{ id: 'move', label: 'Move to', submenu: {
@@ -161,7 +161,7 @@ function PlainMenuHarness({ component: MenuComponent, onSelect }: Readonly<{ com
     const [open, setOpen] = React.useState(false);
     const [query, setQuery] = React.useState('');
     const context = React.useMemo(() => createSurfaceContext(), []);
-    const host = React.useMemo(() => createPluginUiPrivatePresentationHost(), []);
+    const host = React.useMemo(() => createPluginUiPrivatePresentationHost(undefined), []);
     return <PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
         <PluginUiPresentationHostProviderInternal host={host}>
             <MenuComponent open={open} onOpenChange={setOpen} trigger="More" triggerAccessibilityLabel="More actions"

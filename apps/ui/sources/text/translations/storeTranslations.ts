@@ -25,7 +25,8 @@ export type StoreTranslation = Readonly<{
   becauseRepository: (params: Readonly<{ repository: string }>) => string;
   kinds: Readonly<{
     app: KindCopy;
-    browserExtension: KindCopy;
+    /** Browsing the Chrome Web Store runs on a Machine, so the page asks for one first. */
+    browserExtension: KindCopy & Readonly<{ chooseMachine: string }>;
     mcpServer: KindCopy;
     skill: KindCopy;
     agent: KindCopy;

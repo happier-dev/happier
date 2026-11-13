@@ -10,6 +10,7 @@ import { ManagedInventorySections } from './ManagedInventorySections';
 import { ManagedInventoryDirectory } from './ManagedInventoryDirectory';
 import type { ManagedInventoryView } from './useManagedInventory';
 import type { InstalledSoftwareRow } from '../catalog/storeSoftwareInstalled';
+import type { InstalledAppsResult } from '../catalog/storeApps';
 
 afterEach(() => standardCleanup());
 
@@ -25,8 +26,10 @@ it.each([false, true])('offers Docker removal only for manageable installations 
     presentation: { title: 'Docker Engine' }, native: { ref: DOCKER_ENGINE_RECIPE_REF_V1, inputs: {} },
     installations: [{ machineId: 'shared-machine', observation: null }] };
   const empty = { rows: [], coverage: 'available' } as const;
+  const appNavigation: InstalledAppsResult['navigation'] = { hasNextPage: false, hasPreviousPage: false,
+    nextPage: () => undefined, previousPage: () => undefined, refresh: async () => {} };
   const inventory: ManagedInventoryView = {
-    families: { app: empty, browserExtension: empty, mcpServer: empty, skill: empty, agent: empty,
+    families: { app: { ...empty, navigation: appNavigation }, browserExtension: empty, mcpServer: empty, skill: empty, agent: empty,
       provider: empty, plugin: empty, software: { rows: [row], coverage: 'available' } },
     operationalFamilies: { watchedService: empty, setup: empty, configuredCheck: empty, configuredBackup: empty },
     rows: [row], coverage: 'complete', loading: false, attention: [], noticeSource: null,

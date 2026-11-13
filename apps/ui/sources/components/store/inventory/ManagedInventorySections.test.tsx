@@ -164,7 +164,7 @@ it('lets All follow the native Skills continuation on intent while preserving th
         return Object.assign((...invocation: Parameters<typeof execute>) => {
             if (invocation[0] === 'skills.list') listings++;
             return execute(...invocation).finally(() => { if (invocation[0] === 'skills.list') settled++; });
-        }, { prepare: execute.prepare });
+        }, { prepare: execute.prepare, confirmed: execute.confirmed });
     });
     const scope = storage.getState().settingsScope!;
     let presented = true;

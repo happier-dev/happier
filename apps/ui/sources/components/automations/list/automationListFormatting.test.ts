@@ -34,6 +34,7 @@ describe('formatAutomationTriggerLabel', () => {
         const trigger = AutomationTriggerListItemSchema.parse({ id: 'once', revision: 1, enabled: true,
             createdAt: 1, updatedAt: 1, kind: 'schedule', nextRunAt: null, remainingOccurrences: 0,
             schedule: { kind: 'once', scheduledAt: new Date(2030, 10, 11, 9, 15).getTime() } });
+        if (trigger.kind !== 'schedule') throw new Error('Expected a schedule trigger');
         expect(formatAutomationTriggerLabel(trigger)).toContain('2030');
         expect(formatAutomationTriggerStatusLabel(trigger)).toBe(t('common.done'));
         expect(formatAutomationTriggerStatusLabel({ ...trigger, enabled: false, remainingOccurrences: 1 })).toBe(t('automations.detail.status.paused'));

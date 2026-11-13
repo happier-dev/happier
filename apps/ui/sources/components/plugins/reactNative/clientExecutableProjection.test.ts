@@ -14,6 +14,7 @@ import {
 } from '@happier-dev/protocol/plugins/ui';
 import { DaemonPluginUiArtifactByteIdentityV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { PluginSourceCustodyV1Schema } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
+import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
 
 import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY } from '@/sync/domains/plugins/ui/projectionUnion';
@@ -204,7 +205,10 @@ function resolve(projectionInput: PluginUiProjectionModel) {
 }
 
 it('admits the Health opener only when its authored client declaration publishes the installed activation export', async () => {
-    const opener = PLUGIN_MANIFEST.contributes.actions.find(entry => entry.id === HEALTH_SETUP_OPEN_ACTION_ID);
+    // Projections carry the admitted declaration; the cold authored manifest only feeds the real build below.
+    const admitted = ingestPluginManifestV2(PLUGIN_MANIFEST);
+    if (!admitted.ok) throw new Error('Expected the admitted Machine services manifest');
+    const opener = admitted.manifest.contributes.actions?.find(entry => entry.id === HEALTH_SETUP_OPEN_ACTION_ID);
     if (!opener || opener.execution.target !== 'client') throw new Error('Health client opener declaration missing');
     const client = opener.execution.client;
     const repositoryRoot = resolvePath(import.meta.dirname, '../../../../../..');
@@ -218,7 +222,7 @@ it('admits the Health opener only when its authored client declaration publishes
             // Reproduce the former authoring gap through the real metadata producer,
             // retaining the renderer and every other authored contribution.
             await writeFile(manifestPath, JSON.stringify({ ...PLUGIN_MANIFEST,
-                contributes: { ...PLUGIN_MANIFEST.contributes, actions: PLUGIN_MANIFEST.contributes.actions
+                contributes: { ...PLUGIN_MANIFEST.contributes, actions: (PLUGIN_MANIFEST.contributes.actions ?? [])
                     .filter(entry => includeOpener || entry.id !== opener.id) },
             }));
             const publication = await buildUniversalPluginUiArtifacts(projectRoot, manifestPath, {

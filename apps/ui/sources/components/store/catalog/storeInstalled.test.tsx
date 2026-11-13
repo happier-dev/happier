@@ -288,7 +288,7 @@ it('exposes the real Skills retry without following it on open, and retires its 
         return Object.assign((...invocation: Parameters<typeof execute>) => {
             if (invocation[0] === 'skills.list') listings++;
             return execute(...invocation).finally(() => { if (invocation[0] === 'skills.list') settled++; });
-        }, { prepare: execute.prepare });
+        }, { prepare: execute.prepare, confirmed: execute.confirmed });
     });
     const scope = storage.getState().settingsScope!;
     let presented = true;

@@ -348,11 +348,13 @@ describe('Account Action targeted-contribution services', () => {
             let current: ReturnType<typeof useMountedTargetedContributions> | undefined;
             const emptyTargetedContributions = { target: { pluginId: target.manifest.id,
                 occurrenceId: selected.custodyId, sourceCustody: selected.sourceCustody }, points: [] };
+            // A hoisted function declaration does not keep the narrowed selection; read its facts once here.
+            const { custodyId, sourceCustody } = selected;
             function Rows() {
                 current = useMountedTargetedContributions({ accountLifetime: lifetime!,
                     machineId: 'machine-1', serverId: lifetime!.scope.serverId, pluginId: target.manifest.id,
-                    mountedOccurrenceId: selected.custodyId, enabled: true,
-                    accountExecutionOrigin: { ...lifetime!.scope, custodyId: selected.custodyId, sourceCustody: selected.sourceCustody },
+                    mountedOccurrenceId: custodyId, enabled: true,
+                    accountExecutionOrigin: { ...lifetime!.scope, custodyId, sourceCustody },
                     ...(pendingStage === 'unavailable' || pendingStage === 'points-free'
                         ? { machineTarget: mountReply.targetedContributions.target } : {}),
                     ...(pendingStage === 'points-free' ? { emptyTargetedContributions } : {}),
@@ -571,6 +573,7 @@ describe('Account Action targeted-contribution services', () => {
                     // The daemon boundary rejects a containing Surface context;
                     // parsing, declaration resolution and mounted stores stay real.
                     const payload = DaemonPluginUiResourceReadRequestSchema.parse(request.payload);
+                    if (!('expectedCallerOccurrenceId' in payload)) throw new Error('Expected a plugin Resource read');
                     expect(payload.expectedCallerOccurrenceId).toBe(declarations[0]!.occurrenceId);
                     return payload.context?.kind !== 'global'
                         ? { ok: false, reason: 'unavailable', code: 'plugin_resource_context_unavailable' }
@@ -596,7 +599,7 @@ describe('Account Action targeted-contribution services', () => {
             expect(result.resourceDeclarationsByPluginId?.[target.manifest.id]).toEqual(resources);
             const controller = createBoundPluginSurfaceController({ facts: {
                 pluginId: target.manifest.id, contributionId: 'settings', surfaceId: 'account-settings',
-                placement: 'settingsPage', platform: 'web', channel: 'internal', resourceScope: [], diagnostics: [],
+                placement: 'appSurface', platform: 'web', channel: 'internal', resourceScope: [], diagnostics: [],
                 accountLifetime: lifetime, machineId: 'machine-1', serverId: lifetime.scope.serverId,
                 occurrenceId: selected.custodyId, daemonOccurrenceId: declarations[0]!.occurrenceId,
                 accountExecutionOrigin: { ...lifetime.scope, custodyId: selected.custodyId, sourceCustody: selected.sourceCustody },

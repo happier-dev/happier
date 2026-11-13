@@ -319,6 +319,8 @@ function createDocumentHost(input: Readonly<{
         readClipboard: async () => unexpectedHostApiCall('readClipboard'),
         writeClipboard: async () => unexpectedHostApiCall('writeClipboard'),
         openExternalLink: async () => unexpectedHostApiCall('openExternalLink'),
+        openResource: async () => unexpectedHostApiCall('openResource'),
+        setPageNavigation: async () => unexpectedHostApiCall('setPageNavigation'),
     };
 }
 

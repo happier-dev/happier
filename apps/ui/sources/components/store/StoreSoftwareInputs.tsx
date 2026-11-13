@@ -4,7 +4,7 @@ import {
   type ActionInputHints,
 } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
 import { readHappierActionInputPath } from '@happier-dev/plugin-ui/presentation';
-import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import type { PluginJsonValueV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 
 import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
 import { buildSessionActionFieldOptionsResolver } from '@/components/sessions/actions/sessionActionFieldOptions';
@@ -18,9 +18,10 @@ export type SoftwareInputDraft = Readonly<Record<string, unknown>>;
 /**
  * What the form holds is text as typed; the recipe's schema speaks of values that are present or absent. A box left
  * empty is absent, and an object emptied by those blanks is absent too, so an optional exact pin never reaches the
- * owner as an empty string. An explicitly entered empty JSON object is a value in its own right.
+ * owner as an empty string. An explicitly entered empty JSON object is a value in its own right. The result is the
+ * recipe selection's own input value (freshly built arrays and objects).
  */
-export function omitBlankSoftwareInputs(value: unknown): JsonValue | undefined {
+export function omitBlankSoftwareInputs(value: unknown): PluginJsonValueV2 | undefined {
   if (typeof value === 'string') return value.trim() === '' ? undefined : value;
   if (Array.isArray(value))
     return value.flatMap((item) => omitBlankSoftwareInputs(item) ?? []);
@@ -33,7 +34,7 @@ export function omitBlankSoftwareInputs(value: unknown): JsonValue | undefined {
     });
     return kept.length === 0 ? undefined : Object.fromEntries(kept);
   }
-  return value as JsonValue | undefined;
+  return value as PluginJsonValueV2 | undefined;
 }
 
 /** The fields the draft shows now, and the title of the first required one still empty (the reason Install waits). */

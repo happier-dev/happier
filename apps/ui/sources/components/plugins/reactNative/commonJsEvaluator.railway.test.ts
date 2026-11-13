@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { resolve, join } from 'node:path';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import { compileUniversalPluginUiCommonJs } from '../../../../../../packages/plugin-sdk/src/ui/build/universalCommonJsCompiler';
 import { packageNameOfSpecifier, readWorkspacePackages, resolveWorkspaceSource } from '../../../../../../packages/cli-common/sourceRuntimeEntries.mjs';
 import { railwayVendor } from '../../../../../../packages/plugins/machine-railway/testkit/vendor';
@@ -40,12 +41,11 @@ describe('Railway portable Account artifact', () => {
             } });
             kit = await createPluginTestkit({ manifest: entry.manifest, module: { activate: entry.activate,
                 activateAccount(api, target) {
-                    return target.artifactId === artifactId ? activateAccount(api, target) : entry.PLUGIN.activateAccount(api, target);
+                    return target?.artifactId === artifactId ? activateAccount(api, target) : entry.PLUGIN.activateAccount(api, target);
                 },
             }, services: { http } });
             const result = await kit.invokeAction('acquire', { launch: { environmentId: 'environment-one' }, managedId: 'portable-managed' }, { surface: 'plugin' });
-            if (!result || typeof result !== 'object' || Array.isArray(result) || result.kind !== 'bound'
-                || !result.resource || typeof result.resource !== 'object' || Array.isArray(result.resource)) throw new Error('Expected portable acquisition');
+            if (!isJsonObject(result) || result.kind !== 'bound' || !isJsonObject(result.resource)) throw new Error('Expected portable acquisition');
             const resource = result.resource.value;
             if (resource === undefined) throw new Error('Missing resource value');
             expect(await kit.invokeAction('bootstrap', { resource }, { surface: 'plugin' }))

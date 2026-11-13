@@ -780,7 +780,7 @@ describe('plugin contributed Action controller', () => {
         const request = {
             action: { pluginId: 'acme.channels', localId: declared.id },
             expectedOccurrenceId: 'contributor-generation-a',
-            ...(!hinted ? { allowSchemaDeclaredDraftFields: true } : {}),
+            ...(!hinted ? { allowSchemaDeclaredDraftFields: true as const } : {}),
         };
 
         const selected = await controller.selectExactBoundActionInput({ ...request, draft: { repository: 'happier-dev/triage-qa-sandbox' } });

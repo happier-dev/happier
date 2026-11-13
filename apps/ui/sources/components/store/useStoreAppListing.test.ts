@@ -219,7 +219,7 @@ it.each((['failed', 'succeeded'] as const).flatMap(state =>
     const { apiSocket } = await import('@/sync/api/session/apiSocket');
     expect(fixture.account.accountLifetime.scope).toEqual({ serverId: fixture.account.serverIdentityId, accountId: 'owner' });
     let publishedOperation: ActionOperationSnapshotV1 | undefined;
-    let reconnect = () => { throw new Error('Expected connected install receipt socket'); };
+    let reconnect: () => void = () => { throw new Error('Expected connected install receipt socket'); };
     let homeSocketCaptured = false;
     let getAttempts = 0;
     const socket = installDisconnectedServerSocketBoundary(socket => {

@@ -177,7 +177,12 @@ function createDefaultConnection(): DaemonProviderConnectionViewV1 {
 }
 
 export function createProviderConnectionViewFixture(
-    overrides: Omit<Partial<DaemonProviderConnectionViewV1>, 'connectionId'> & { connectionId?: string } = {},
+    overrides: Omit<Partial<DaemonProviderConnectionViewV1>, 'connectionId' | 'grants' | 'runtime'> & {
+        connectionId?: string;
+        /** Merged over the default grants and runtime facts, so a fixture names only what it changes. */
+        grants?: Partial<DaemonProviderConnectionViewV1['grants']>;
+        runtime?: Partial<DaemonProviderConnectionViewV1['runtime']>;
+    } = {},
 ): DaemonProviderConnectionViewV1 {
     return DaemonProviderConnectionViewV1Schema.parse({
         ...createDefaultConnection(),

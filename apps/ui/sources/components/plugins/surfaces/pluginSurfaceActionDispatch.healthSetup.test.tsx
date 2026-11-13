@@ -8,6 +8,7 @@ import { createPluginClientTestkit, createPluginUiTestkit, createSurfaceContextF
     type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
+import { PluginJsonValueV2Schema } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema,
     DaemonContributionRegistryProjectionDescribeResponseSchema, DaemonPluginActionSchemasReadResponseSchema,
     PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -112,7 +113,8 @@ it.each(['current', 'wrong-observer'] as const)('runs a saved check through its 
                 : actionId.endsWith('/health/kinds') ? admitted.manifest.contributes.healthCheckKinds.map(kind => ({ ...kind, pluginId }))
                 : { status: 'down', observedAt: 1000, evidence: { v: 1, items: [{ source: { kind: 'alert', label: 'HTTP' },
                     author: { kind: 'process' }, text: 'HTTP 200; expected 503' }] } };
-            return { supported: true, result: { ok: true, result } };
+            // The Machine wire carries JSON: the Protocol owner admits the authored facts as a plugin JSON value.
+            return { supported: true, result: { ok: true, result: PluginJsonValueV2Schema.parse(result) } };
         } },
     });
     const adapter = createCanonicalPluginReactNativeHostApiAdapter({ surface: createPluginSurfaceContextFixture(),

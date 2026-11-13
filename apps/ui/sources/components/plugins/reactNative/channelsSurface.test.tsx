@@ -107,6 +107,13 @@ type ChannelDeliveriesRow = PluginCollectionRow<ChannelDeliveriesValue>;
 type ChannelDeliveriesCollection = PluginUiAccountCollectionForDefinition<typeof CHANNEL_DELIVERIES_COLLECTION>;
 type ChannelDeliveriesCollectionPage = Awaited<ReturnType<ChannelDeliveriesCollection['query']>>;
 
+const refuseSharing = async (): Promise<never> => {
+  throw new Error('Channels UI does not share Account Collection rows.');
+};
+/** Channels UI never reads or writes row sharing; every sharing member refuses. */
+const refusedSharing = Object.freeze({ setGrant: refuseSharing, listGrants: refuseSharing, revokeGrant: refuseSharing,
+  sharedWithMe: refuseSharing, get: refuseSharing, put: refuseSharing });
+
 function createChannelsSettingsSurfaceContextFixture(
   overrides: Omit<Partial<SurfaceContext>, 'mount' | 'target'> = {},
 ): SurfaceContext {
@@ -715,6 +722,7 @@ function createOfflineChannelsDataClient(input: Readonly<{
     measureBatch: async () => {
       throw new Error('Channels offline policy does not size its direct state writes.');
     },
+    sharing: refusedSharing,
   } satisfies ChannelStateCollection;
   const deliveriesCollection = { query: deliveryQuery };
   const client: PluginUiDataClient = completePresentationPluginUiDataClient({
@@ -842,6 +850,7 @@ function createDeliveryResolutionDataClient(input: Readonly<{
     measureBatch: async () => {
       throw new Error('Delivery-resolution UI does not size retained-custody writes.');
     },
+    sharing: refusedSharing,
   } satisfies ChannelDeliveriesCollection;
   const stateCollection = {
     identityTag: async () => {
@@ -867,6 +876,7 @@ function createDeliveryResolutionDataClient(input: Readonly<{
     measureBatch: async () => {
       throw new Error('Delivery-resolution UI does not size ingress-custody writes.');
     },
+    sharing: refusedSharing,
   } satisfies ChannelStateCollection;
   const client: PluginUiDataClient = completePresentationPluginUiDataClient({
     collection<TDefinition extends PluginAccountCollectionDefinition>(definition: TDefinition) {

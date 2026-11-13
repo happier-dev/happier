@@ -754,10 +754,9 @@ describe('outward-effect settlement across the React Native and hosted-web carri
             invoke: (api: PluginUiHostApi) => api.settleEphemeralInput({ kind: 'completed', input: { answer: 7 } }) },
     ] as const;
     function createTearingDownMount(method: PluginUiHostMethodV1, tearDown: () => void): MountFixture {
-        const settle = async () => { tearDown(); return method === 'openSurface' ? { ok: true as const } : null; };
         return method === 'openSurface'
-            ? createMount({ openSurface: settle })
-            : createMount({ handlers: { [method]: settle } });
+            ? createMount({ openSurface: async () => { tearDown(); return { ok: true as const }; } })
+            : createMount({ handlers: { [method]: async () => { tearDown(); return null; } } });
     }
 
     it.each(tornDownEffects)('delivers $method whose settlement tore down its own surface, on both carriers', async ({ method, payload, invoke }) => {

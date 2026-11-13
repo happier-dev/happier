@@ -3,6 +3,7 @@ import { act, renderHook, standardCleanup } from '@/dev/testkit';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import type { RegistryUpdateCheckState } from '@/registries/useRegistryUpdateCheck';
 import type { InstalledSkillRow } from '../catalog/storeKinds';
+import type { StorePluginUpdateEntry } from './useStorePluginUpdates';
 
 installDisconnectedServerSocketBoundary();
 const { storage } = await import('@/sync/domains/state/storage');
@@ -32,6 +33,7 @@ it('shares the page count with passive badges, retains equal summaries, and with
       itemId: id, importedAt: 1, ref: { kind: 'version', version: '1' } } },
   }) });
   let rows = [row('sample')];
+  const noPlugins: readonly StorePluginUpdateEntry[] = [];
   let check: RegistryUpdateCheckState = { checking: false, checkedAt: null, failed: false, code: null, results: [] };
   let presented = true;
   let inventoryReady = true;
@@ -39,7 +41,7 @@ it('shares the page count with passive badges, retains equal summaries, and with
   // subscription and Account retirement logic runs through its real owner.
   const fetches = vi.spyOn(globalThis, 'fetch');
   vi.useFakeTimers();
-  const page = await renderHook(() => useStoreUpdates(rows, check, scope, presented, inventoryReady));
+  const page = await renderHook(() => useStoreUpdates(rows, check, scope, presented, inventoryReady, noPlugins));
   const column = await renderHook(() => useStoreUpdatesCount(scope));
   const phone = await renderHook(() => useStoreUpdatesCount(scope));
   const publications = vi.fn();

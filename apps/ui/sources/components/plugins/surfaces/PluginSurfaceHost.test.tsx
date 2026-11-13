@@ -204,7 +204,8 @@ import {
 } from '@/sync/domains/local/services/preview/store';
 import {
     EMPTY_PLUGIN_UI_PROJECTION,
-    type PluginUiPhysicalSurfacePlacementProjection,
+    isPluginUiDestinationSurfacePlacementProjection,
+    type PluginUiInlineSurfacePlacementProjection,
     type PluginUiProjectionModel,
     type PluginUiSettingsPageProjection,
     type PluginUiSurfacePlacementProjection,
@@ -794,6 +795,7 @@ describe('external targeted source products through the bound surface host', () 
         const targetFixture = Object.freeze({
             mountedTarget,
             targetedContributions,
+            projection,
         }) satisfies ReturnType<typeof primeExactTargetedContributions>;
         return Object.freeze({
             targetFixture,
@@ -928,6 +930,7 @@ function externalTargetDeclarativePlacement(root: unknown, occurrenceId: string)
             // the source role's presentation requirement.
             renderSurface: defineUiSurface(() => {
                 const { targetedContributions } = useSurfaceContext();
+                if (!targetedContributions) return null;
                 const selected = selectTargetedContributionSurface(targetedContributions, {
                     pointId: point.pointId,
                     protocol: point.protocol,
@@ -2908,7 +2911,8 @@ function primeExactTargetedContributions(input: Readonly<{
 
 function withMountedTargetPackage(
     projection: PluginUiProjectionModel,
-    targetFixture: ReturnType<typeof primeExactTargetedContributions>,
+    /** Only the mounted target's identity is installed; the fixture's projection stays with the describe mock. */
+    targetFixture: Pick<ReturnType<typeof primeExactTargetedContributions>, 'mountedTarget'>,
     input: Readonly<{
         displayName: string;
         version: string;
@@ -3057,7 +3061,7 @@ function reactNativeSurfacePlacementFixture(
 function reactNativeInlineSurfacePlacementFixture(
     input: PluginUiInlineSurfaceBindingInputV1,
     occurrenceId = `${input.pluginId}-test-occurrence`,
-): PluginUiPhysicalSurfacePlacementProjection {
+): PluginUiInlineSurfacePlacementProjection {
     const binding = normalizePluginUiInlineSurfaceBindingV1({
         ...input,
         availableRendererIds: [input.rendererId],
@@ -3231,7 +3235,7 @@ describe('PluginSurfacePlacementHost', () => {
         const { ComposerPluginSurface } = await import('@/components/sessions/presentation/ComposerPluginSurface');
         const pluginId = 'happier.triage';
         const occurrenceId = 'triage-picker-mount';
-        const custody = developmentSourceCustody('triage-picker-mount-root');
+        const custody = developmentSourceCustody('triage-picker-mount-test-root');
         const protocol = { id: TriageSourcesContributionProtocolV1.id, version: TriageSourcesContributionProtocolV1.version };
         const targetedContributions = projectPluginUiTargetedContributionsV1({
             target: { pluginId, occurrenceId }, readSourceCustody: () => custody,
@@ -18642,7 +18646,8 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
             return { error: 'Method not found' };
         };
         const { resolvePluginPages } = await import('@/components/plugins/pages/pluginPages');
-        const pages = resolvePluginPages({ target: { kind: 'app' }, placements: Object.values(pageProjection.surfacePlacementsById) });
+        const pages = resolvePluginPages({ target: { kind: 'app' },
+            placements: Object.values(pageProjection.surfacePlacementsById).filter(isPluginUiDestinationSurfacePlacementProjection) });
         expect(pages).toHaveLength(1);
         const catalog = resolveCompactAppDestinations({ pages, builtins: {
             externalSessions: false, inbox: true, workflows: false, friends: false,
@@ -18744,12 +18749,12 @@ describe('canonical action dispatch reaches every mounted placement (EU-2)', () 
                 .toBe('Review the selected pull request and explain the changes.');
             expect(originContext.signal.aborted).toBe(false);
             expect(hiddenContext.signal).toBe(originContext.signal);
-            expect(hiddenContext.activity.active).toBe(false);
+            expect(hiddenContext.activity?.active).toBe(false);
             await act(async () => { navigation.activateTab(originGroupId, originTabId); });
             await vi.waitFor(() => {
                 const current = (reactNativeSurfaceProps.at(-1) as { renderContext: RenderContext }).renderContext;
                 expect(current.signal).toBe(originContext.signal);
-                expect(current.activity.active).toBe(true);
+                expect(current.activity?.active).toBe(true);
             });
             expect(push.mock.calls.filter(([href]) => typeof href === 'object' && href !== null && 'pathname' in href && href.pathname === '/new')).toHaveLength(1);
         } finally {

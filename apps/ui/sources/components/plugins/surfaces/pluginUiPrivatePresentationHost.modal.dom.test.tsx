@@ -286,6 +286,8 @@ function createHostApi(
         readClipboard: async () => '',
         writeClipboard: async () => undefined,
         openExternalLink: async () => undefined,
+        openResource: async () => unexpectedHostApiCall('openResource'),
+        setPageNavigation: async () => unexpectedHostApiCall('setPageNavigation'),
     };
 }
 

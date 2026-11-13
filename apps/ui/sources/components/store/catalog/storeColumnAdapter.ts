@@ -38,7 +38,7 @@ function nativeReference(row: StoreSearchRow): MarketplaceCatalogReferenceV1 | n
         case 'plugin': return row.summary.ref.itemId ? { type: 'registryItem', kind: 'plugin',
             sourceId: row.summary.ref.sourceId, itemId: row.summary.ref.itemId,
             ...(row.summary.ref.version ? { version: row.summary.ref.version } : {}) } : null;
-        case 'app': case 'browserExtension': case 'mcpServer': case 'skill': return { type: 'registryItem', kind: row.summary.ref.kind,
+        case 'app': case 'browserExtension': case 'mcpServer': case 'skill': case 'starter': return { type: 'registryItem', kind: row.summary.ref.kind,
             sourceId: row.summary.ref.sourceId, itemId: row.summary.ref.itemId,
             ...(row.summary.ref.version ? { version: row.summary.ref.version } : {}) };
     }

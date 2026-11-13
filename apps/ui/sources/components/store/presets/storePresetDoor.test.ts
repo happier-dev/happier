@@ -4,7 +4,8 @@ import { projectAddToPresetChoices } from './storePresetDoor';
 
 const chrome = { kind: 'softwareRecipe' as const, selection: { ref: { pluginId: 'tools.browsers', recipeId: 'chrome', revision: '2' }, inputs: {} } };
 const kuma = { kind: 'app' as const, definition: { name: 'Status page', project: { kind: 'create' as const },
-    definition: { from: 'catalogApp' as const, templateRef: { sourceId: 'catalog', itemId: 'uptime-kuma', version: '2.0.2' } } } };
+    definition: { from: 'catalogApp' as const, templateRef: { sourceId: 'catalog', itemId: 'uptime-kuma', version: '2.0.2',
+        ref: { kind: 'version' as const, version: '2.0.2' } } } } };
 const preset = (id: string, items: ManagedMachinePresetV1['setup'] extends infer S ? S extends { items?: infer I } ? I : never : never): ManagedMachinePresetV1 =>
     ({ homeId: 'srv', id, revision: 1, name: id, owner: { kind: 'account', accountId: 'a' }, setup: { items } }) as ManagedMachinePresetV1;
 

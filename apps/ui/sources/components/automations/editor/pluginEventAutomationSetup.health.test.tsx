@@ -33,6 +33,7 @@ import type { FreshPluginMachineExecutionOriginV1 } from '@/sync/domains/machine
 
 import { configurePluginEventAutomationSetup } from './pluginEventAutomationSetup';
 import { readPluginEventAutomationWatcherFailure } from './pluginEventAutomationObservationBinding';
+import type { PluginContributedActionDispatch } from '@/components/plugins/actions/pluginContributedActionController';
 import { PLUGIN_MANIFEST } from '../../../../../../packages/plugins/machine-services/src/manifest';
 import { renderSurface } from '@happier-dev/plugins-machine-services/happier-plugin-ui/health-setup';
 import { createPluginEventAutomationSetupSurfaceBinding } from './presentPluginEventAutomationSetupSurface';
@@ -445,7 +446,7 @@ it.each([
         if (starter === 'environmentSettingsAddCheck') {
             const { DeploymentEnvironmentSettingsPanel } = await import('@/components/projects/deployments/DeploymentEnvironmentSettingsPanel');
             const { SectionActionButton } = await import('@/components/ui/lists/SectionActionButton');
-            const { createDeploymentReadControllerV1 } = await import('@happier-dev/deployments');
+            const { createDeploymentReadControllerV1, selectDeploymentRuntimeTargetLinkV1 } = await import('@happier-dev/deployments');
             const { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
             const { createDeploymentReadTransport } = await import('@/components/projects/deployments/deploymentReadTransport');
             const { createDeploymentActions } = await import('@/components/projects/deployments/deploymentActions');
@@ -453,10 +454,11 @@ it.each([
             const controller = createDeploymentReadControllerV1({ scope: { ...accountLifetime.scope, projectSourceId: 'source-production' },
                 transport: createDeploymentReadTransport(accountLifetime) });
             retireController = () => controller.retire();
-            const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({
+            const stored = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({
                 serverId: connection.serverId, id: triggerSubject.environmentId, controllerMachineId: machineId,
                 projectSourceId: 'source-production',
             }) });
+            const detail = { ...stored, runtimeTargetLink: selectDeploymentRuntimeTargetLinkV1(stored), memberVersions: {}, secretRevisions: [] };
             screen = await renderScreen(<ItemList><DeploymentEnvironmentSettingsPanel detail={detail} controller={controller}
                 lifetime={accountLifetime} demand={{ mounted: false, visible: false, focused: false }}
                 machineName={id => id} environmentTitle={() => null}
@@ -549,7 +551,8 @@ it('admits the machine-services Health Event, offers its installation as a watch
         releaseContent: 'matched', validation: { kind: 'admitted' } }, event)).toBeNull();
     let presentForm: (form: SetupForm | null) => void = () => {};
     const presented = new Promise<SetupForm | null>(resolve => { presentForm = resolve; });
-    const dispatch = vi.fn(async () => ({ ok: false as const, reason: 'contributed_action_unavailable' as const }));
+    const dispatch = vi.fn<PluginContributedActionDispatch>(async () => ({ ok: false, code: 'contributed_action_unavailable',
+        reason: 'contributed_action_unavailable' }));
     const setup = configurePluginEventAutomationSetup({ eligibleEvent: event, observationTransport: 'checkpointedPull',
         filter: null, maximumObservationAgeMs: null, resolveExecutionOrigin: () => fresh,
         accountLifetime: { scope: { serverId: source.serverId, accountId: 'health-account' }, isCurrent: () => true,

@@ -10,7 +10,7 @@ import type { RegistryUpdateCheckResultV1 } from '@happier-dev/protocol/registri
 import { PluginMachineMaterializationV1Schema } from '@happier-dev/protocol/plugins/availability';
 import { createPluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/reader';
 
-import type { InstalledRow, InstalledSkillRow, InstalledPluginRow } from '../catalog/storeKinds';
+import type { InstalledAppRow, InstalledRow, InstalledSkillRow, InstalledPluginRow } from '../catalog/storeKinds';
 import { buildStoreUpdates, captureStoreUpdateBasis, describeUncheckedSources } from './storeUpdatesModel';
 
 const scope = { serverId: 'server-a', accountId: 'account-a' };
@@ -58,8 +58,8 @@ function skill(
 describe('buildStoreUpdates', () => {
   it('projects supplied app observations into the existing Environment review without body reads', () => {
     const detail = createDeploymentEnvironmentDetailV1();
-    const row: InstalledRow = { kind: 'app', key: 'app:env', scope,
-      native: { environment: detail.environment, title: detail.content.name }, home: '/environment', projectKeys: null };
+    const row: InstalledAppRow = { kind: 'app', key: 'app:env', scope,
+      native: { environment: detail.environment, title: detail.content.name, chip: null }, home: '/environment', projectKeys: null };
     const results: RegistryUpdateCheckResultV1['results'] = [{ kind: 'app', key: detail.environment.id,
       upstream: { state: 'update_available', latest: { kind: 'version', version: '2.0' } } }];
     const view = buildStoreUpdates([row], results, { checkedAt: 20, failed: false, basis: captureStoreUpdateBasis([row]) });

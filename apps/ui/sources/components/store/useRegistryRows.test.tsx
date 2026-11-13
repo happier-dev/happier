@@ -11,6 +11,7 @@ afterEach(standardCleanup);
 
 const item = (itemId: string): RegistryCatalogItemSummary => ({ sourceId: 'catalog', kind: 'mcpServer', itemId, title: `Server ${itemId}` });
 const sourceTitle = () => 'Catalog';
+const noItems: readonly RegistryCatalogItemSummary[] = [];
 
 it('keeps a catalog row as the same object while the list around it changes', async () => {
     const [a, b, c] = [item('a'), item('b'), item('c')];
@@ -85,7 +86,7 @@ it('keeps editorial category and row positions when catalog summaries arrive in 
             { id: 'errors', title: 'Error tracking', items: ['glitchtip'] }], jobs: [],
     } }];
     const hook = await renderHook((items: readonly RegistryCatalogItemSummary[]) => useRegistryRows(
-        { items, curation, curatedKind: 'mcpServer' }, () => {}, sourceTitle), { initialProps: [] });
+        { items, curation, curatedKind: 'mcpServer' }, () => {}, sourceTitle), { initialProps: noItems });
     const positions = () => ({ groups: hook.getCurrent().groups.map(group => group.title),
         rows: hook.getCurrent().rows.map(row => row.key) });
     const before = positions();
@@ -106,7 +107,7 @@ it('keeps the curated exact version for opening and adding after a newer listing
     const open = vi.fn();
     const add = vi.fn();
     const hook = await renderHook((items: readonly RegistryCatalogItemSummary[]) => useRegistryRows(
-        { items, curation, curatedKind: 'mcpServer' }, open, sourceTitle, undefined, add), { initialProps: [] });
+        { items, curation, curatedKind: 'mcpServer' }, open, sourceTitle, undefined, add), { initialProps: noItems });
     await hook.rerender([{ ...item('a'), version: '2' }]);
     expect(hook.getCurrent().rows).toHaveLength(1);
     hook.getCurrent().rows[0]!.open();

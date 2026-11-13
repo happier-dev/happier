@@ -321,7 +321,7 @@ describe('Automations · Latest runs on Home', () => {
             return style?.height ?? style?.minHeight ?? null;
         };
         const widget = await renderScreen(<WidgetFrame testID="small-widget" placement="home" fill title="Local services"
-            widgetPresentation={presentation} body={{ kind: 'empty', title: 'Nothing running' }} />);
+            widgetPresentation={presentation} body={{ kind: 'empty', title: 'Nothing running', reason: 'Local services show here.' }} />);
         await flushHookEffects({ cycles: 2 });
         const widgetRoom = room(widget, 'small-widget');
         expect(widgetRoom).toBeGreaterThan(0);

@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { act } from 'react';
 import { expect, it, vi } from 'vitest';
-import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
+import { PluginUiSurfaceContextV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { renderSurface } from '@happier-dev/plugins-triage/happier-plugin-ui/triage-comparison-picker-native';
 
@@ -16,8 +17,9 @@ vi.mock('react-native', () => import('react-native-web'));
 it.each([false, true])('mounts the comparison picker in the Files ephemeral host (current-UI publisher=%s)', async withPublisher => {
     const binding = createPluginEventAutomationSetupSurfaceBinding({ isSettled: () => false, settle: () => {} });
     const bundle = binding.createMountedHostApiHandlers?.({ isCurrent: () => true });
-    const requestSurface = { pluginId: 'happier.triage', contributionId: 'comparison-picker',
-        surfaceId: 'files-comparison-picker', platform: 'web' as const, channel: 'development' as const };
+    // The Protocol owner supplies the request surface's defaulted placement, resource scope and diagnostics.
+    const requestSurface = PluginUiSurfaceContextV1Schema.parse({ pluginId: 'happier.triage', contributionId: 'comparison-picker',
+        surfaceId: 'files-comparison-picker', platform: 'web', channel: 'development' });
     const publications: unknown[] = [];
     const publishCurrentUiContext: PluginSurfaceHostApiMethodHandler = request => {
         publications.push(request.payload);
@@ -33,7 +35,7 @@ it.each([false, true])('mounts the comparison picker in the Files ephemeral host
         surface: createSurfaceContextFixture(), requestSurface,
         installedMethods: host.installedMethods, handleRequest: host.handleRequest,
     });
-    let picker: Awaited<ReturnType<typeof createPluginUiTestkit>> | undefined;
+    let picker: PluginUiTestkit | undefined;
     try {
         await act(async () => {
             picker = await createPluginUiTestkit({

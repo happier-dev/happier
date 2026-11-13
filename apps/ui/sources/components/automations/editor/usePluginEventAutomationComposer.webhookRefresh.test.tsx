@@ -478,9 +478,14 @@ describe('usePluginEventAutomationComposer webhook refresh', () => {
     });
 
     it.each(['sentry', 'posthog'] as const)('admits the real %s source through shared watcher selection without a portable release', async (provider) => {
-        const { PLUGIN_MANIFEST: manifest } = provider === 'sentry'
+        const { PLUGIN_MANIFEST: declared } = provider === 'sentry'
             ? await import('../../../../../../packages/plugins/sentry/src/manifest')
             : await import('../../../../../../packages/plugins/posthog/src/manifest');
+        // Hosts consume the admitted manifest, not the cold emitted declaration facts.
+        const { ingestPluginManifestV2 } = await import('@happier-dev/protocol/plugins/manifest');
+        const admittedManifest = ingestPluginManifestV2(declared);
+        if (!admittedManifest.ok) throw new Error('Expected the admitted source manifest');
+        const manifest = admittedManifest.manifest;
         const declaration = manifest.contributes.events?.find(row => row.kind === 'event' && row.automation?.eligible);
         if (!declaration?.automation) throw new Error('Expected the real source Event declaration');
         const pluginId = manifest.id;

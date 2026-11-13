@@ -55,11 +55,12 @@ describe('mounted plugin entity bridge', () => {
         const source = binding.mountSource({ mountId: 'source', sourceId: 'issue', reference: 'issue-1' })!;
         const target = binding.mountTarget({ mountId: 'target', targetId: 'board', getBounds: () => ({ x: 0, y: 0, width: 100, height: 100 }) })!;
         try {
-            for (const outcome of [
+            const outcomes: readonly EntityDropOutcomeV1[] = [
                 { status: 'refused', reason: { code: 'unsupportedOperation', message: 'Unsupported operation' } },
                 { status: 'unknown', reason: { code: 'responseLost', message: 'Check before trying again' } },
                 { status: 'applied' },
-            ] satisfies EntityDropOutcomeV1[]) {
+            ];
+            for (const outcome of outcomes) {
                 const before = writes;
                 const carry = route === 'chooser' ? null : source.begin(route)!;
                 if (route === 'pointer') carry!.move({ x: 20, y: 20 });

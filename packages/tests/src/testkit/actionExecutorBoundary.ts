@@ -1,7 +1,7 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
 
 /** Supply only the host ports exercised by a fixture; every other required boundary fails loudly. */
-export function createActionExecutorBoundaryFixture(overrides: Partial<ActionExecutorDeps>): ActionExecutorDeps {
+export function createActionExecutorBoundaryFixture(overrides: Partial<ActionExecutorDeps> = {}): ActionExecutorDeps {
     const unexpected = async (): Promise<never> => {
         throw new Error('Unexpected Action executor host boundary outside this fixture');
     };

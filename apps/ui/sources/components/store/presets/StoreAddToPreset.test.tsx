@@ -79,7 +79,7 @@ it('saves and reads back the carried Software with the exact Lima #131 fields an
             packageName: '@happier-dev/plugins-devcontainer', displayName: 'Docker container Machines', entriesById: {},
             normalizedManifest: PluginPortableReleaseManifestV1Schema.parse(DEVCONTAINER_PLUGIN.manifest) }]));
     const serverId = await home.addHome({ name: 'Recipes', serverUrl: 'https://recipes.example.test',
-        serverIdentityId: 'srv_recipes', accountId: 'owner', currentAccount: true });
+        serverIdentityId: 'srv_recipes', accountId: 'owner', currentAccount: true, accountEncryptionMode: 'plain' });
     const { replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
     const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
     onTestFinished(clearPluginAccountAvailabilityProjection);
@@ -88,12 +88,14 @@ it('saves and reads back the carried Software with the exact Lima #131 fields an
     const { storage } = await import('@/sync/domains/state/storage');
     storage.setState({ machineListByServerId: { [serverId]: [] }, machineListStatusByServerId: { [serverId]: 'idle' } });
     const { buildQualifiedPluginContributionKey } = await import('@happier-dev/protocol/plugins/contribution-identity');
-    const { ManagedMachinePresetCreateInputV1Schema, ManagedMachinePresetV1Schema, PresetMutationResultV1Schema } =
+    const { ManagedMachinePresetCreateInputV1Schema, ManagedMachinePresetRecipientCensusInputV1Schema,
+        ManagedMachinePresetRecipientCensusResultV1Schema, ManagedMachinePresetV1Schema, PresetMutationResultV1Schema } =
         await import('@happier-dev/protocol/machines/managed/managedMachinePresetV1');
     const descriptor = manifest.contributes.machineProvisioners[0]!;
     const provisioner = buildQualifiedPluginContributionKey({ pluginId: manifest.id, localId: descriptor.id });
     const onReturn = vi.fn();
-    let saved: ReturnType<typeof ManagedMachinePresetV1Schema.parse> | null = null;
+    // Written by the boundary handler; a holder keeps the closure write visible to control flow.
+    const persisted: { preset: ReturnType<typeof ManagedMachinePresetV1Schema.parse> | null } = { preset: null };
     const runtime = await import('@/utils/system/runtimeFetch');
     const runtimeHost = vi.spyOn(runtime, 'readRuntimeFetchHost');
     onTestFinished(() => runtimeHost.mockRestore());
@@ -118,24 +120,35 @@ it('saves and reads back the carried Software with the exact Lima #131 fields an
         await act(async () => form.props.onPatch({ arch: 'x86_64', vmType: 'qemu' }));
         await waitForHomeGovernance(() => expect(screen.findByTestId('managed-config.create')?.props.disabled, screen.getTextContent()).toBe(false));
         expect(form.props.input.mounts).toEqual([]);
+        home.answer(serverId, '/v1/machines/presets/recipient-census', { select: value => {
+            ManagedMachinePresetRecipientCensusInputV1Schema.parse(value);
+            return { body: ManagedMachinePresetRecipientCensusResultV1Schema.parse({
+                kind: 'ready', contentEncryptionMode: 'plain', recipients: [],
+            }) };
+        } });
         home.answer(serverId, '/v1/machines/presets/create', { select: value => {
             const input = ManagedMachinePresetCreateInputV1Schema.parse(value);
-            saved = ManagedMachinePresetV1Schema.parse({ ...input, revision: 1 });
-            return { body: PresetMutationResultV1Schema.parse({ kind: 'saved', preset: saved }) };
+            persisted.preset = ManagedMachinePresetV1Schema.parse({ ...input, revision: 1 });
+            return { body: PresetMutationResultV1Schema.parse({ kind: 'saved', preset: persisted.preset }) };
         } });
         await act(async () => screen.pressByTestId('managed-config.create'));
+        await waitForHomeGovernance(() => expect(home.requestsFor('/v1/machines/presets/recipient-census')).toHaveLength(1));
         await waitForHomeGovernance(() => expect(onReturn).toHaveBeenCalledTimes(1));
-        expect(home.requestsFor('/v1/machines/presets/create')[0]?.input).toMatchObject({
+        const request = ManagedMachinePresetCreateInputV1Schema.parse(home.requestsFor('/v1/machines/presets/create')[0]?.input);
+        expect(request).toMatchObject({ contentEncryptionMode: 'plain', recipients: [], content: { t: 'plain', v: {
             setup: { items: [item] }, launch: { provider: { pluginId: manifest.id, localId: descriptor.id },
                 choices: { store: '/home/happier/.lima', image: 'https://images.example.test/lima.qcow2',
                     arch: 'x86_64', vmType: 'qemu', cpus: 4, memoryGiB: 4, diskGiB: 100, mounts: [] } },
-        });
+        } } });
+        expect(request).not.toHaveProperty('launch');
+        expect(request).not.toHaveProperty('setup');
         expect(runtimeHost).not.toHaveBeenCalled();
         expect(routerPush).not.toHaveBeenCalled();
         expect(home.requests.filter(request => /machines\.provisioners\.(check|options)|machines\.managed\.acquire/.test(request.path))).toHaveLength(0);
         expect(home.requestsFor('/v4/connect/qualified/accounts')).toHaveLength(0);
     } finally { await screen.unmount(); }
 
+    const saved = persisted.preset;
     if (!saved) throw new Error('Expected persisted Lima preset');
     home.answer(serverId, '/v1/machines/presets/get', { body: { kind: 'found', preset: saved } });
     const { createMachinePresetCollectionClient } = await import('@/sync/ops/machines/machinePresetCollectionClient');

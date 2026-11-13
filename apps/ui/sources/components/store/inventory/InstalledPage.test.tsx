@@ -161,7 +161,8 @@ it.each([2, 1])('reviews removal of one explicit installed Software Machine (%i 
     } });
     const combined = createCombinedMachineSetupActionDeps({ readDeps: () => deps, targetPlan: deps.machineSetupPlan!,
         readHostFacts: async () => ({ machines: machines.map(machine => ({ machineId: machine.id, online: true })) }), orchestrationDirectory: '.',
-        startCombined: async () => { throw new Error('Review must not start a Run'); }, waitForRun: async () => { throw new Error('Review must not await a Run'); } });
+        startCombined: async () => { throw new Error('Review must not start a Run'); }, waitForRun: async () => { throw new Error('Review must not await a Run'); },
+        readInvocations: async () => { throw new Error('Review must not read Run invocations'); } });
     const executor = createActionExecutor({ ...deps, machineSetupPlan: combined.machineSetupPlan });
     account.home.answer(home.serverId, '/v1/actions/machines.setup.plan', { select: async input => {
         const authorized = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(input);

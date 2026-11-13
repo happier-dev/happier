@@ -21,6 +21,7 @@ import { readPluginActionFailureAuthorPayload } from '@happier-dev/protocol/plug
 import type { PluginUiActionProjection } from '@/sync/domains/plugins/ui/projection';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import { createPluginConnectionSettlement } from './connectionSettlement';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 
 /**
  * The CALLER's cancellation for one in-flight request (§3.4).
@@ -260,7 +261,7 @@ export async function settlePluginSurfaceHostApiRequest(
                 ...readPluginActionFailureAuthorPayload(error.data),
                 code: error.code, message: error.message, retryable: error.retryable,
                 requestId: readPluginErrorRequestIdV1(error) ?? request.requestId,
-                ...(error.details && typeof error.details === 'object' && !Array.isArray(error.details)
+                ...(isJsonObject(error.details)
                     && typeof error.details.effectAttempted === 'boolean' ? { effectAttempted: error.details.effectAttempted } : {}),
                 ...readPluginSurfaceHostApiFailureMetadata(error.details),
                 diagnostics: error.diagnostics?.map(diagnostic => diagnostic.code) ?? [],

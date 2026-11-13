@@ -11,6 +11,7 @@ import type { ShellColumnActionOwner } from '@/sync/ops/actions/scopeActionFamil
 import { PluginDetailCockpitTabBar } from './PluginDetailNavigationViews';
 import type { PluginSurfaceOpenHandler, PluginSurfaceOpenRequest } from '@/components/plugins/surfaces/openPluginSurface';
 import { createPluginPageNavigationOwner } from './pluginPageNavigationOwner';
+import type { PluginCompanionOpenedFrom } from './pluginPageNavigationContext';
 
 export type PluginDetailNavigationModel = Readonly<{
     scope: ServerAccountScope | null;
@@ -23,6 +24,8 @@ export type PluginDetailNavigationModel = Readonly<{
     companionAddress: DetailNavigationAddress;
     phoneAddress: DetailNavigationAddress;
     readColumn: (column: 'main' | 'side') => ShellColumnActionOwner;
+    /** The page's launch input and current location, which its page companions read. */
+    openedFrom?: PluginCompanionOpenedFrom;
 }>;
 const EMPTY_ITEMS: readonly DetailPageNavigationItem[] = Object.freeze([]);
 
