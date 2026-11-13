@@ -450,7 +450,8 @@ function DiscussionsListReady(props: Readonly<{
         const archivedItems: DiscussionListItem[] = [{ kind: 'archived_disclosure' }];
         if (archived.status === 'loading' && archived.items.length === 0) archivedItems.push({ kind: 'archived_loading' });
         else if (isUnreadable(archived.status) && archived.items.length === 0) archivedItems.push({ kind: 'archived_error' });
-        else if (archived.items.length === 0) archivedItems.push({ kind: 'archived_empty' });
+        // A settled empty answer withdraws the group, open or not: nothing is left to show under it (QA-RERUN-1113 F3).
+        else if (archived.items.length === 0) return primary;
         else {
             archivedItems.push(...archived.items.map((discussion) => ({ kind: 'archived_discussion' as const, discussion })));
             if (archived.nextCursor) archivedItems.push({ kind: 'archived_load_more' });

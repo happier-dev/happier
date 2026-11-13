@@ -128,8 +128,9 @@ function DockedPill() {
     const { pane, pillBottom } = useDockSeat();
     const scope = useActiveServerAccountScope() ?? null;
     const draftId = typeof shell.host.params.draftId === 'string' ? shell.host.params.draftId : null;
-    const { hasText, isBot } = useNewSessionDraftDockPresentation(scope, draftId);
-    const label = isBot ? t('bots.new') : t('sessionDrafts.new.action');
+    const { hasText, isBot, name } = useNewSessionDraftDockPresentation(scope, draftId);
+    // A named draft folds to its name; the kind's "New …" stands in only until it has one (UI refinements, F6).
+    const label = name ?? (isBot ? t('bots.new') : t('sessionDrafts.new.action'));
     const { open } = shell;
     const restore = React.useCallback(() => open(), [open]);
     return <View pointerEvents="box-none" style={[styles.pillSeat, { left: pane.left, width: pane.width, bottom: pillBottom }]}>

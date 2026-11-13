@@ -108,7 +108,8 @@ const LIBRARY_GROUPS = {
         return [
             { key: 'library', title: t('workflows.destination.sections.library') },
             { key: 'sharedWithYou', title: t('workflows.destination.sections.sharedWithYou') },
-            { key: 'fromPlugins', title: t('workflows.plugins.fromPlugins') },
+            // Read-only is a fact about the whole group, said once above it rather than on every row (F9).
+            { key: 'fromPlugins', title: t('workflows.plugins.fromPlugins'), description: t('workflows.plugins.fromPluginsDescription') },
         ];
     },
     groupOf: (row: LibraryRow) => row.group,
@@ -393,7 +394,6 @@ function useLibraryAnatomy(): CollectionAnatomy<LibraryRow> {
         titleMeta: row => !isAccountRow(row) && row.group !== 'fromPlugins' && row.definition.nextRunAt !== null
             ? formatNextScheduledRun(row.definition.nextRunAt) : null,
         reason: (row) => isAccountRow(row) ? isAccountWorkflowReviewRequired(row) ? t('workflows.triggers.legacy.reviewRequired') : null
-            : row.group === 'fromPlugins' ? t('workflows.plugins.readOnly')
             : row.definition.contentStatus === 'unavailable'
                 ? formatWorkflowDefinitionContentUnavailableReason(row.definition.contentUnavailableReason) : null,
         accessibilityLabel: rowTitle,

@@ -426,13 +426,10 @@ export function AgentRegistryDetail(
         </ItemGroup>
       ) : null}
 
-      <ItemGroup title={t('capabilities.agentAdd.detail.signInTitle')}>
-        <Item
-          title={t('capabilities.agentAdd.detail.signInBody', { name })}
-          titleLines={2}
-          icon={<Icon name="key" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />}
-          showChevron={false}
-        />
+      {/* A fact, not a row: the sentence reads whole as the section's description at every width (F7). */}
+      <ItemGroup title={t('capabilities.agentAdd.detail.signInTitle')}
+        description={t('capabilities.agentAdd.detail.signInBody', { name })}>
+        {null}
       </ItemGroup>
       <CapabilityListingSections
         testID={`${props.testID}.detail.listing`}

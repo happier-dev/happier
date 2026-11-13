@@ -39,9 +39,10 @@ export const en = {
         weekdaysAt: ({ time }: { time: string }) => `Weekdays at ${time}`,
         weeklyAt: ({ day, time }: { day: string; time: string }) => `Every ${day} at ${time}`,
         hourlyAt: ({ minute }: { minute: string }) => `Every hour at :${minute}`,
-        monthlyAt: ({ day, time }: { day: number; time: string }) => `Every month on day ${day} at ${time}`,
+        monthlyAt: ({ days, count, time }: { days: string; count: number; time: string }) => `Every month on ${count === 1 ? 'day' : 'days'} ${days} at ${time}`,
+        monthDaysAt: ({ days, count, months, time }: { days: string; count: number; months: string; time: string }) =>
+            `On ${count === 1 ? 'day' : 'days'} ${days} of ${months} at ${time}`,
         yearlyAt: ({ date, time }: { date: string; time: string }) => `Every ${date} at ${time}`,
-        withExpression: ({ sentence, expression }: { sentence: string; expression: string }) => `${sentence} · ${expression}`,
         everyMinutes: ({ count }: Count) => (count === 1 ? 'Every minute' : `Every ${count} minutes`),
         everyHours: ({ count }: Count) => (count === 1 ? 'Every hour' : `Every ${count} hours`),
         cron: ({ expression }: { expression: string }) => `On a schedule · ${expression}`,

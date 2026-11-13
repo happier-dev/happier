@@ -12,9 +12,12 @@ export type HappierModalCardFooterActionsProps = Readonly<{
 /** One short-form footer: quiet dismissal first, primary last; phone sheets keep only full-width actions. */
 export function HappierModalCardFooterActions(props: HappierModalCardFooterActionsProps) {
   if (props.phoneSheet) {
-    return <View style={[styles.phoneRow, { gap: props.gap }]}>
-      {React.Children.map(props.children, (child) => child == null || child === false
-        ? null : <View style={styles.phoneAction}>{child}</View>)}
+    const actions = React.Children.toArray(props.children);
+    // Two actions share the sheet's width; three or more stack, each at full width with the primary last
+    // (nearest the thumb), so no label clips to "Initialize rep…" at a phone width.
+    const stacked = actions.length > 2;
+    return <View style={[stacked ? styles.phoneStack : styles.phoneRow, { gap: props.gap }]}>
+      {actions.map((child, index) => <View key={index} style={stacked ? null : styles.phoneAction}>{child}</View>)}
     </View>;
   }
   return <View style={[styles.row, { gap: props.gap }]}>
@@ -28,5 +31,6 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center' },
   lead: { flex: 1, minWidth: 0 },
   phoneRow: { flexDirection: 'row' },
+  phoneStack: { flexDirection: 'column', alignItems: 'stretch' },
   phoneAction: { flex: 1 },
 });

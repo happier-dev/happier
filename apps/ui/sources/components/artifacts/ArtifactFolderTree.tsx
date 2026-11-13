@@ -985,7 +985,8 @@ function RowTrailing(props: Readonly<{ node: Node; title: string }>) {
           {node.kind === 'leaf' ? artifactKindLabel(node.row.kind) : ''}
         </Text>
       ) : null}
-      <Text style={[styles.age, styles.ageColumn]} numberOfLines={1}>
+      {/* Without column titles (a phone) the age takes its own width, as the List view's does, so names keep the room (F8). */}
+      <Text style={[styles.age, tree.wide ? styles.ageColumn : styles.ageInline]} numberOfLines={1}>
         {node.kind === 'leaf'
           // The same Edited column as the List view of this library: the bare tabular age (lab c-art T).
           ? formatShortRelativeTime(node.row.artifact.updatedAt)
@@ -1451,6 +1452,9 @@ const stylesheet = StyleSheet.create((theme) => ({
   ageColumn: {
     width: AGE_COLUMN_PX,
     textAlign: 'right',
+  },
+  ageInline: {
+    marginLeft: theme.space.s8,
   },
   menuColumn: {
     width: MENU_COLUMN_PX,

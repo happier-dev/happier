@@ -11130,8 +11130,8 @@ const sessionCollaborationTranslations: Pick<Record<'en'|'ca'|'de'|'es'|'fr'|'it
         participantReturnFailed: ({ participant }: { participant: string }) => `${participant}からの返信を投稿できませんでした。`,
         participantHeld: ({ participant }: { participant: string }) => `${participant}は保留中です。別のアカウントからの依頼にはまだ対応していません。`,
         participantPending: ({ participant }: { participant: string }) => `${participant} へのリクエストは配信待ちです。`,
-        listUnavailable: "ディスカッションを利用できません。", featureUnavailable: "この Home では会話が有効になっていません。", bindingUnavailable: "会話を表示するには、この Home に再度サインインしてください。", scopeMismatch: "これらの会話は、この Home の別のアカウントに属しています。", modeMismatch: "内容がセッションの暗号化モードと一致しません。再試行するか、セッション管理者にアクセスの確認を依頼してください。",  title: "ディスカッション", newDiscussion: "新しいディスカッション", create: '会話を作成', titlePlaceholder: '会話のタイトル', messagePlaceholder: 'メッセージを書く…', active: '進行中', activeDisclosure: '進行中の会話を表示', archived: 'アーカイブ済み', archivedDisclosure: 'アーカイブ済みの会話を表示', emptyActive: '進行中の会話はまだありません。', emptyArchived: 'アーカイブ済みの会話はありません。', loading: '会話を読み込み中…', loadError: '会話を読み込めませんでした。', retry: 'もう一度試す', checking: '更新を確認中…', deliveryUnknown: '配信結果が不明です — 再試行する前に確認してください。', locked: 'この会話は読めますが、投稿はできません。', offline: 'オフラインです。再接続して続けてください。', unavailable: 'この会話は利用できません。', unreadCount: ({ count }) => `未読${count.toLocaleString()}件`, unreadMentionCount: ({ count }) => `未読のメンション${count.toLocaleString()}件`,
-        mentioned: 'あなたがメンションされました', unreadConversations: '未読の会話', messageCount: ({ count }) => `${count.toLocaleString()}件のメッセージ`, viaAgent: 'Agent経由', externalSender: 'Happier 外の人', viaExternal: ({ conversation }) => `${conversation} 経由`, outwardReply: ({ conversation }) => `返信は Happier の外にある ${conversation} にも送信されます。`, collaborator: '共同作業者', contentUnavailable: 'メッセージを利用できません', rename: 'ディスカッション名を変更', archive: 'ディスカッションをアーカイブ', restore: 'ディスカッションを復元', draftDetails: "始まると、名前の変更、アーカイブ、パターンとして保存ができます。", selection: { copy: 'コピー', askAgent: 'Agentに質問', sendToSession: 'セッションに送信', handoffError: '選択したメッセージをセッションの入力欄に追加できませんでした。' }, titleRequired: 'この会話を始めるにはタイトルを追加してください。', encryptedTitle: '暗号化された会話', rowOnDoc: "ドキュメントについて", rowFreshOpinions: ({ count }) => `独立した意見 · ${`${count.toLocaleString()}件の回答`}`, rowFreshOpinionsSynthesis: ({ count }) => `独立した意見 · ${`${count.toLocaleString()}件の回答`}と統合`, rowAnswerReviewSettled: '回答 + レビュー · 完了', rowOpenComments: ({ count }) => `未解決のコメント${count.toLocaleString()}件`, archivedNotice: 'この会話はアーカイブされています。', sessionArchived: 'このセッションはアーカイブされています。', postDenied: 'このセッションには投稿できなくなりました。', invalidMention: 'メンションした相手はこのセッションを読めなくなりました。', invalidContent: 'このメッセージはこのままでは送信できません。空か、長すぎる可能性があります。', idempotencyConflict: 'この識別子では別のメッセージがすでに送信されています。', sendFailed: 'このメッセージを送信できませんでした。', dismiss: '閉じる', loadMore: 'さらに会話を読み込む' } } };
+        listUnavailable: "ディスカッションを利用できません。", featureUnavailable: "この Home では会話が有効になっていません。", bindingUnavailable: "会話を表示するには、この Home に再度サインインしてください。", scopeMismatch: "これらの会話は、この Home の別のアカウントに属しています。", modeMismatch: "内容がセッションの暗号化モードと一致しません。再試行するか、セッション管理者にアクセスの確認を依頼してください。",  title: "ディスカッション", newDiscussion: "新しいディスカッション", create: '会話を作成', titlePlaceholder: '会話のタイトル', messagePlaceholder: 'メッセージを書く…', active: '進行中', activeDisclosure: '進行中のディスカッションを表示', archived: 'アーカイブ済み', archivedDisclosure: 'アーカイブ済みのディスカッションを表示', emptyActive: '進行中のディスカッションはまだありません。', emptyArchived: 'アーカイブ済みのディスカッションはありません。', loading: '会話を読み込み中…', loadError: '会話を読み込めませんでした。', retry: 'もう一度試す', checking: '更新を確認中…', deliveryUnknown: '配信結果が不明です — 再試行する前に確認してください。', locked: 'この会話は読めますが、投稿はできません。', offline: 'オフラインです。再接続して続けてください。', unavailable: 'この会話は利用できません。', unreadCount: ({ count }) => `未読${count.toLocaleString()}件`, unreadMentionCount: ({ count }) => `未読のメンション${count.toLocaleString()}件`,
+        mentioned: 'あなたがメンションされました', unreadConversations: '未読のディスカッション', messageCount: ({ count }) => `${count.toLocaleString()}件のメッセージ`, viaAgent: 'Agent経由', externalSender: 'Happier 外の人', viaExternal: ({ conversation }) => `${conversation} 経由`, outwardReply: ({ conversation }) => `返信は Happier の外にある ${conversation} にも送信されます。`, collaborator: '共同作業者', contentUnavailable: 'メッセージを利用できません', rename: 'ディスカッション名を変更', archive: 'ディスカッションをアーカイブ', restore: 'ディスカッションを復元', draftDetails: "始まると、名前の変更、アーカイブ、パターンとして保存ができます。", selection: { copy: 'コピー', askAgent: 'Agentに質問', sendToSession: 'セッションに送信', handoffError: '選択したメッセージをセッションの入力欄に追加できませんでした。' }, titleRequired: 'このディスカッションを始めるにはタイトルを追加してください。', encryptedTitle: '暗号化されたディスカッション', rowOnDoc: "ドキュメントについて", rowFreshOpinions: ({ count }) => `独立した意見 · ${`${count.toLocaleString()}件の回答`}`, rowFreshOpinionsSynthesis: ({ count }) => `独立した意見 · ${`${count.toLocaleString()}件の回答`}と統合`, rowAnswerReviewSettled: '回答 + レビュー · 完了', rowOpenComments: ({ count }) => `未解決のコメント${count.toLocaleString()}件`, archivedNotice: 'このディスカッションはアーカイブされています。', sessionArchived: 'このセッションはアーカイブされています。', postDenied: 'このセッションには投稿できなくなりました。', invalidMention: 'メンションした相手はこのセッションを読めなくなりました。', invalidContent: 'このメッセージはこのままでは送信できません。空か、長すぎる可能性があります。', idempotencyConflict: 'この識別子では別のメッセージがすでに送信されています。', sendFailed: 'このメッセージを送信できませんでした。', dismiss: '閉じる', loadMore: 'さらにディスカッションを読み込む' } } };
 
 return { sessionCollaborationTranslations };
 })();
@@ -11293,6 +11293,7 @@ const ja: typeof en = {
         confirmDescription: '同期されているすべての端末からこの下書きが削除されます。',
         failedTitle: '下書きを削除できませんでした',
         launchInCustody: 'この下書きはセッションを開始中です。開始が終わったら削除できます。',
+        botTitle: 'ボットの下書きを削除',
     },
     conflict: {
         title: '競合する変更を確認',
@@ -16138,7 +16139,7 @@ type Copy = Shared_workflowPluginTranslations.Copy;
 
 const en = Shared_workflowPluginTranslations.en;
 
-const workflowPluginTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "ja"> = { ja: { fromPlugins: 'プラグインから', readOnly: '読み取り専用 · 編集するにはライブラリに複製', duplicateToLibrary: 'ライブラリに複製' } };
+const workflowPluginTranslations: Pick<Record<'en'|'de'|'es'|'fr'|'it'|'pt'|'ca'|'pl'|'ru'|'ja'|'zhHans'|'zhHant', Copy>, "ja"> = { ja: { fromPlugins: 'プラグインから', fromPluginsDescription: 'プラグインが追加したもの。変更するには複製してください。', readOnly: '読み取り専用 · 編集するにはライブラリに複製', duplicateToLibrary: 'ライブラリに複製' } };
 
 return { workflowPluginTranslations };
 })();
@@ -16330,9 +16331,9 @@ const ja: WorkflowTriggersCopy = {
         weekdaysAt: ({ time }) => `平日 ${time}`,
         weeklyAt: ({ day, time }) => `毎週${day} ${time}`,
         hourlyAt: ({ minute }) => `毎時 :${minute}`,
-        monthlyAt: ({ day, time }) => `毎月${day}日 ${time}`,
+        monthlyAt: ({ days, time }) => `毎月${days}日 ${time}`,
+        monthDaysAt: ({ days, months, time }) => `${months}の${days}日 ${time}`,
         yearlyAt: ({ date, time }) => `毎年${date} ${time}`,
-        withExpression: ({ sentence, expression }) => `${sentence} · ${expression}`,
         everyMinutes: ({ count }) => (count === 1 ? '毎分' : `${count}分ごと`),
         everyHours: ({ count }) => (count === 1 ? '毎時' : `${count}時間ごと`),
         cron: ({ expression }) => `スケジュール · ${expression}`,

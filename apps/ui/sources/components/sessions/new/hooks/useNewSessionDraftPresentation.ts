@@ -54,16 +54,33 @@ export function useNewSessionDraftPresentation(scope: ServerAccountScope | null,
     return React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 }
 
+/**
+ * What a New Session draft is and what it is called: a Bot draft or a Session draft, and the name a person gave it.
+ * The folded dock and the Delete confirmation both read it here (QA-RERUN-1113 F5/F6), so a draft never reads as a
+ * bot in one place and a New Session in another.
+ */
+export type NewSessionDraftIdentity = Readonly<{ isBot: boolean; name: string | null }>;
+
+function readNewSessionDraftIdentity(snapshot: SessionDraftSnapshot | null): NewSessionDraftIdentity {
+    const facts = snapshot ? getSessionDraftDocumentFieldValue(snapshot.document, { kind: 'authoring', fieldId: 'initialSessionFacts' }) : null;
+    const name = snapshot ? getSessionDraftDocumentFieldValue(snapshot.document, { kind: 'authoring', fieldId: 'sessionName' }) : null;
+    return { isBot: Boolean(facts && typeof facts === 'object' && 'bot' in facts && facts.bot),
+        name: typeof name === 'string' && name.trim().length > 0 ? name.trim() : null };
+}
+
+/** The identity of a draft at one moment, for a surface that is not subscribed to it (a confirmation). */
+export function getNewSessionDraftIdentity(scope: ServerAccountScope | null, draftId: string): NewSessionDraftIdentity {
+    return readNewSessionDraftIdentity(scope ? getSessionDraftSnapshot(scope, { kind: 'newSession', draftId }) : null);
+}
+
 /** The folded composer's identity and text marker, without subscribing it to every draft edit. */
-export function useNewSessionDraftDockPresentation(scope: ServerAccountScope | null, draftId: string | null): Readonly<{ hasText: boolean; isBot: boolean }> {
+export function useNewSessionDraftDockPresentation(scope: ServerAccountScope | null, draftId: string | null): Readonly<{ hasText: boolean } & NewSessionDraftIdentity> {
     const subscribe = React.useCallback((listener: () => void) => (
         scope && draftId ? subscribeSessionDraft(scope, { kind: 'newSession', draftId }, listener) : () => undefined
     ), [draftId, scope]);
     const selectPresentation = useShallow((snapshot: SessionDraftSnapshot | null) => {
         const text = snapshot ? getSessionDraftDocumentFieldValue(snapshot.document, { kind: 'composer', field: 'text' }) : null;
-        const facts = snapshot ? getSessionDraftDocumentFieldValue(snapshot.document, { kind: 'authoring', fieldId: 'initialSessionFacts' }) : null;
-        return { hasText: typeof text === 'string' && text.trim().length > 0,
-            isBot: Boolean(facts && typeof facts === 'object' && 'bot' in facts && facts.bot) };
+        return { hasText: typeof text === 'string' && text.trim().length > 0, ...readNewSessionDraftIdentity(snapshot) };
     });
     const getSnapshot = React.useCallback(() => selectPresentation(scope && draftId
         ? getSessionDraftSnapshot(scope, { kind: 'newSession', draftId }) : null), [draftId, scope, selectPresentation]);

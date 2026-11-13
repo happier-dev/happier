@@ -72,30 +72,68 @@ export function parseSimpleSchedule(expression: string): SimpleSchedule | null {
 }
 
 /**
- * The calendar crons the simple editor cannot write but a person still reads as a sentence (F5, owner 2026-11-12):
- * every hour at a minute, every month on a day, every year on a date. Anything else stays `null`.
+ * A cron a person reads as one sentence (QA-RERUN-1113 F1), whether or not the simple editor can write it:
+ * every hour at a minute; or at one minute past listed hours on every day, listed weekdays, listed days of every
+ * month, or listed days of listed months. Day, month, weekday and hour fields take lists and ranges. Steps, minute
+ * lists and a day restricted by both date and weekday (cron reads that as either) stay `null`.
  */
+export type ClockTime = Readonly<{ hour: number; minute: number }>;
 export type CalendarSchedule =
     | Readonly<{ repeat: 'hourly'; minute: number }>
-    | Readonly<{ repeat: 'monthly'; day: number; hour: number; minute: number }>
-    | Readonly<{ repeat: 'yearly'; month: number; day: number; hour: number; minute: number }>;
+    | Readonly<{ repeat: 'daily'; times: readonly ClockTime[] }>
+    | Readonly<{ repeat: 'weekly'; weekdays: readonly number[]; times: readonly ClockTime[] }>
+    | Readonly<{ repeat: 'monthly'; days: readonly number[]; times: readonly ClockTime[] }>
+    | Readonly<{ repeat: 'yearly'; months: readonly number[]; days: readonly number[]; times: readonly ClockTime[] }>;
 
 /** Days in each month of a leap year, so 29 February stays a date. */
 const MONTH_DAYS = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31] as const;
 
+/** "5", "2,8", "1-5" or "1,15-17": the sorted distinct values, or null for anything else (steps, `*`, out of range). */
+function readValueList(field: string, min: number, max: number): number[] | null {
+    const values = new Set<number>();
+    for (const part of field.split(',')) {
+        const match = /^(\d{1,2})(?:-(\d{1,2}))?$/u.exec(part);
+        if (!match) return null;
+        const from = Number(match[1]);
+        const to = match[2] === undefined ? from : Number(match[2]);
+        if (from < min || to > max || from > to) return null;
+        for (let value = from; value <= to; value += 1) values.add(value);
+    }
+    return [...values].sort((left, right) => left - right);
+}
+
 export function parseCalendarSchedule(expression: string): CalendarSchedule | null {
     const fields = expression.trim().split(/\s+/u);
-    if (fields.length !== 5 || fields[4] !== '*') return null;
-    const minute = readNumber(fields[0]!, 59);
+    if (fields.length !== 5) return null;
+    const [minuteField, hourField, dayField, monthField, weekdayField] = fields as [string, string, string, string, string];
+    const minute = readNumber(minuteField, 59);
     if (minute === null) return null;
-    if (fields[1] === '*' && fields[2] === '*' && fields[3] === '*') return { repeat: 'hourly', minute };
-    const hour = readNumber(fields[1]!, 23);
-    const day = readNumber(fields[2]!, 31);
-    if (hour === null || day === null || day < 1) return null;
-    if (fields[3] === '*') return { repeat: 'monthly', day, hour, minute };
-    const month = readNumber(fields[3]!, 12);
-    if (month === null || month < 1 || day > MONTH_DAYS[month - 1]!) return null;
-    return { repeat: 'yearly', month, day, hour, minute };
+    if (hourField === '*') {
+        return dayField === '*' && monthField === '*' && weekdayField === '*' ? { repeat: 'hourly', minute } : null;
+    }
+    const hours = readValueList(hourField, 0, 23);
+    if (hours === null) return null;
+    const times = hours.map((hour) => ({ hour, minute }));
+    if (dayField === '*') {
+        if (monthField !== '*') return null;
+        if (weekdayField === '*') return { repeat: 'daily', times };
+        const weekdays = readValueList(weekdayField, 0, 7);
+        return weekdays === null ? null
+            : { repeat: 'weekly', weekdays: [...new Set(weekdays.map((day) => day % 7))].sort((left, right) => left - right), times };
+    }
+    if (weekdayField !== '*') return null;
+    const days = readValueList(dayField, 1, 31);
+    if (days === null) return null;
+    if (monthField === '*') return { repeat: 'monthly', days, times };
+    const months = readValueList(monthField, 1, 12);
+    // A day some listed month doesn't have would fire only in the others: say it as written instead.
+    if (months === null || months.some((month) => days.some((day) => day > MONTH_DAYS[month - 1]!))) return null;
+    return { repeat: 'yearly', months, days, times };
+}
+
+/** "February": a month's name in the person's language. */
+export function formatMonthName(month: number): string {
+    return formatWithCachedDateTimeFormatter(new Date(Date.UTC(2024, month - 1, 1)), getPreferredLanguage(), { month: 'long', timeZone: 'UTC' });
 }
 
 /** "1 January" / "January 1": a yearly date in the person's language, independent of the year. */

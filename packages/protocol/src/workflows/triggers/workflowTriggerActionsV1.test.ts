@@ -30,6 +30,10 @@ describe('workflow trigger Action boundary', () => {
       { triggerId: 'disabled', nextRunAt: null }, { triggerId: 'unscheduled', nextRunAt: null },
       { triggerId: 'event', nextRunAt: undefined }, { triggerId: 'disabled-set-schedule', nextRunAt: null },
     ]);
+    // QA-RERUN-1113 F2: a Library row says Off for the same trigger its detail does.
+    expect(summary.triggers.map(trigger => [trigger.triggerId, trigger.enabled])).toEqual([
+      ['earlier', true], ['later', true], ['disabled', false], ['unscheduled', true], ['event', true], ['disabled-set-schedule', false],
+    ]);
   });
   it('preserves authoritative removed revisions and accepts identity-only older deletion receipts', () => {
     const deleted = { automationId: 'deleted-set', deleted: true };

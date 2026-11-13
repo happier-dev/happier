@@ -9,7 +9,7 @@ vi.mock('@/text', async () => {
 
 const { formatTriggerSetSummary, formatTriggerSummary, formatNextScheduledRun, formatNextScheduledRunAccessibilityLabel, readNextScheduledRunRefreshAtMs } = await import('./formatTriggerSummary');
 const { resolveTriggerEventGroup } = await import('./triggerEventGroups');
-const { formatClockTime, parseClockTime } = await import('./triggerSchedule');
+const { formatClockTime, parseCalendarSchedule, parseClockTime } = await import('./triggerSchedule');
 
 afterEach(() => { language.value = 'en'; });
 
@@ -104,21 +104,35 @@ describe('formatTriggerSummary', () => {
         expect(formatTriggerSummary(cron('30 2 * * 3'))).toBe(`workflows.triggers.summary.weeklyAt(day=Wednesday,time=${formatClockTime({ hour: 2, minute: 30 })})`);
         // Sunday may be written 0 or 7.
         expect(formatTriggerSummary(cron('0 18 * * 7'))).toBe(`workflows.triggers.summary.weeklyAt(day=Sunday,time=${formatClockTime({ hour: 18, minute: 0 })})`);
-        // Out-of-range, stepped and mixed crons are never guessed at.
-        for (const expression of ['*/5 * * * *', '0 25 * * *', '0 9 1 * 1', '0 9 31 2 *']) {
+        // Out-of-range, stepped and either-day crons are never guessed at.
+        for (const expression of ['*/5 * * * *', '0 25 * * *', '0 9 1 * 1', '0 9 31 2 *', '0 9 * 2 *', '0 9 31 2,8 *', '0 9 5-3 * *']) {
             expect(formatTriggerSummary(cron(expression))).toBe(`workflows.triggers.summary.cron(expression=${expression})`);
         }
     });
-    // F5 (owner 18:55Z): the yearly, monthly and hourly shapes read as a sentence, with the expression after it.
-    it('reads yearly, monthly and hourly crons as a sentence and keeps the expression as secondary', () => {
-        const yearly = formatTriggerSummary(cron('0 0 1 1 *'));
-        expect(yearly).toMatch(/^workflows\.triggers\.summary\.withExpression\(sentence=workflows\.triggers\.summary\.yearlyAt\(date=.*January.*,time=/);
-        expect(yearly).toContain(`time=${formatClockTime({ hour: 0, minute: 0 })}`);
-        expect(yearly).toContain('expression=0 0 1 1 *');
-        expect(formatTriggerSummary(cron('30 9 15 * *'))).toBe('workflows.triggers.summary.withExpression(sentence='
-            + `workflows.triggers.summary.monthlyAt(day=15,time=${formatClockTime({ hour: 9, minute: 30 })}),expression=30 9 15 * *)`);
-        expect(formatTriggerSummary(cron('5 * * * *'))).toBe('workflows.triggers.summary.withExpression(sentence='
-            + 'workflows.triggers.summary.hourlyAt(minute=05),expression=5 * * * *)');
+    // QA-RERUN-1113 F1: one plain sentence in rows and detail; lists and ranges are read, never collapsed.
+    it('reads yearly, monthly, hourly and listed crons as one sentence without the expression', () => {
+        const time = (hour: number, minute: number) => formatClockTime({ hour, minute });
+        expect(formatTriggerSummary(cron('0 0 1 1 *'))).toBe(`workflows.triggers.summary.yearlyAt(date=January 1,time=${time(0, 0)})`);
+        expect(formatTriggerSummary(cron('17 3 5 2,8 *')))
+            .toBe(`workflows.triggers.summary.monthDaysAt(days=5,count=1,months=February and August,time=${time(3, 17)})`);
+        expect(formatTriggerSummary(cron('0 9 1,15 6-8 *')))
+            .toBe(`workflows.triggers.summary.monthDaysAt(days=1 and 15,count=2,months=June, July, and August,time=${time(9, 0)})`);
+        expect(formatTriggerSummary(cron('30 9 15 * *'))).toBe(`workflows.triggers.summary.monthlyAt(days=15,count=1,time=${time(9, 30)})`);
+        expect(formatTriggerSummary(cron('0 8 1,15 * *'))).toBe(`workflows.triggers.summary.monthlyAt(days=1 and 15,count=2,time=${time(8, 0)})`);
+        expect(formatTriggerSummary(cron('5 * * * *'))).toBe('workflows.triggers.summary.hourlyAt(minute=05)');
+        expect(formatTriggerSummary(cron('0 9,17 * * *'))).toBe(`workflows.triggers.summary.everyDayAt(time=${time(9, 0)} and ${time(17, 0)})`);
+        expect(formatTriggerSummary(cron('0 9 * * 1,3,5'))).toBe(`workflows.triggers.summary.weeklyAt(day=Monday, Wednesday, and Friday,time=${time(9, 0)})`);
+        expect(formatTriggerSummary(cron('0 9 * * 1,2,3,4,5'))).toBe(`workflows.triggers.summary.weekdaysAt(time=${time(9, 0)})`);
+    });
+    it('parses lists and ranges in the day, month, weekday and hour fields', () => {
+        expect(parseCalendarSchedule('17 3 5 2,8 *')).toEqual({ repeat: 'yearly', months: [2, 8], days: [5], times: [{ hour: 3, minute: 17 }] });
+        expect(parseCalendarSchedule('0 9 1-3 * *')).toEqual({ repeat: 'monthly', days: [1, 2, 3], times: [{ hour: 9, minute: 0 }] });
+        expect(parseCalendarSchedule('0 9,17 * * 0,6')).toEqual({ repeat: 'weekly', weekdays: [0, 6], times: [{ hour: 9, minute: 0 }, { hour: 17, minute: 0 }] });
+        expect(parseCalendarSchedule('0 9 * * 7,1')).toEqual({ repeat: 'weekly', weekdays: [0, 1], times: [{ hour: 9, minute: 0 }] });
+        expect(parseCalendarSchedule('5 * * * *')).toEqual({ repeat: 'hourly', minute: 5 });
+        for (const expression of ['0,30 9 * * *', '0 9 1 * 1', '0 9 */2 * *', '0 9 0 * *', '0 9 1,, * *', '5 * 1 * *', '0 9 * 13 *']) {
+            expect(parseCalendarSchedule(expression)).toBeNull();
+        }
     });
 
     it('names an interval in hours when it is whole hours', () => {
@@ -154,9 +168,9 @@ describe('formatTriggerSetSummary', () => {
 });
 
 
-it('keeps advanced cron expressions in trigger details and summarizes the schedule in collection metadata', () => {
-    const trigger = cron('0 0 1 1 *');
-    expect(formatTriggerSummary(trigger)).toContain('0 0 1 1 *');
-    expect(formatTriggerSetSummary([trigger])).toBe('workflows.triggers.summary.schedule');
-    expect(formatTriggerSetSummary([cron('0 9 * * *')])).toBe(formatTriggerSummary(cron('0 9 * * *')));
+it('says the same sentence in collection rows and details, and keeps an unsayable expression out of rows', () => {
+    expect(formatTriggerSetSummary([cron('17 3 5 2,8 *')])).toBe(formatTriggerSummary(cron('17 3 5 2,8 *')));
+    expect(formatTriggerSetSummary([{ ...cron('0 0 1 1 *'), enabled: false }])).toBe(`workflows.triggers.row.off · ${formatTriggerSummary(cron('0 0 1 1 *'))}`);
+    expect(formatTriggerSummary(cron('*/5 * * * *'))).toContain('*/5 * * * *');
+    expect(formatTriggerSetSummary([cron('*/5 * * * *')])).toBe('workflows.triggers.summary.schedule');
 });

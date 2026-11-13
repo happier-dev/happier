@@ -657,6 +657,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
     // Only page sections that choose no surface take it: menus and pickers opened from the pane reset to
     // grouped rows, and a section laid out as its own surface (`none`) stays as it is.
     const surface = surfaceProp ?? 'sheet';
+    const hasRows = React.Children.toArray(children).length > 0;
     const flatSheet = surfaceProp === undefined && isPage && defaultSurface === 'flat';
     // A flat page section in a side pane (Session Info) keeps the pane's text edge, not a page's optical inset.
     const sidePaneFlat = sidePaneTextEdge && flatSheet;
@@ -783,7 +784,9 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
 
                 {/* Content Container. A page section decides its rows' leading column once; only page
                     rows register with it (see `sectionLeadingColumn.tsx`). */}
-                <SectionLeadingColumnProvider>
+                {/* A section with no rows (its only row is conditional and absent) keeps its heading but draws no
+                    empty sheet: an empty card reads as a stray rule (QA-RERUN-1113 F7). */}
+                {hasRows ? <SectionLeadingColumnProvider>
                 <SectionItemDensityProvider value={density}>
                 <BareSectionRowsContext.Provider value={surface === 'none' && !bleedRows}>
                 <BareRowBleedContext.Provider value={bleedRows ? rowPaddingPx : 0}>
@@ -830,7 +833,7 @@ export const ItemGroup = React.memo<ItemGroupProps>((props) => {
                 </BareRowBleedContext.Provider>
                 </BareSectionRowsContext.Provider>
                 </SectionItemDensityProvider>
-                </SectionLeadingColumnProvider>
+                </SectionLeadingColumnProvider> : null}
 
                 {/* Footer (grouped presentation only; a page reads it as the section description) */}
                 {!isPage && description && (

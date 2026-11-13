@@ -376,8 +376,9 @@ const MachinesPopoverRow = React.memo(function MachinesPopoverRow(props: Readonl
                 availability={availability} style={setting.style} metrics={setting.metrics} layout="under" />
         )
     ) : undefined;
-    // An offline or away machine has no strip: its one quiet line ("Offline · last seen yesterday") closes the
-    // name's line, as the lab draws it (MPG-18), and steps beneath the name only when the two cannot share it.
+    // An offline or away machine has no strip: its one quiet line ("Offline · last seen yesterday") sits under
+    // the name, left-aligned like the Machines column's row, rather than wrapping right-aligned off the name's
+    // line (QA-RERUN-1113 F4).
     return (
         <Item
             rowRole="item"
@@ -386,11 +387,11 @@ const MachinesPopoverRow = React.memo(function MachinesPopoverRow(props: Readonl
             titleRef={nameRef}
             // A roster row keeps the name on its one line, as the list column does (lab `rm` P).
             titleLines={1}
-            subtitle={strip}
+            subtitle={strip ?? (row.online ? undefined : <Text style={styles.quietLine} numberOfLines={1}>{detail}</Text>)}
             titleAccessory={tag ? <Text style={styles.tag} numberOfLines={1}>{tag}</Text> : undefined}
             // What it is doing (or why it is away) closes the name's line, level with the name, never centred
             // against the strip beneath it (lab `rm` P).
-            titleMeta={<Text style={row.online ? styles.rowMeta : styles.quietLine} numberOfLines={1}>{detail}</Text>}
+            titleMeta={row.online ? <Text style={styles.rowMeta} numberOfLines={1}>{detail}</Text> : undefined}
             accessibilityLabel={[row.title, tag, detail].filter(Boolean).join(', ')}
             icon={(
                 <MachineResourceLiveDemand machineKeys={[{ serverId: row.serverId, machineId }]} detail="summary"

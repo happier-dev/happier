@@ -64,8 +64,13 @@ const MachineNeedsYouItem = React.memo(function MachineNeedsYouItem(props: Reado
         <Item
             testID={`machines.needs-you.${entry.serverId}.${entry.machineId}`}
             title={entry.name}
-            titleAccessory={<Text style={[stylesheet.word, { color: tone }]} numberOfLines={1}>{word}</Text>}
-            subtitle={detail}
+            // On a phone the name keeps its line and the reason leads the line beneath it, so neither the name
+            // wraps nor the reason truncates beside it (QA-RERUN-1113 F8); wider rows keep the word on the name's line.
+            titleLines={props.compact ? 1 : undefined}
+            titleAccessory={props.compact ? undefined : <Text style={[stylesheet.word, { color: tone }]} numberOfLines={1}>{word}</Text>}
+            subtitle={props.compact ? <Text style={stylesheet.detail} numberOfLines={2}>
+                <Text style={[stylesheet.word, { color: tone }]}>{word}</Text>{` · ${detail}`}
+            </Text> : detail}
             accessibilityLabel={`${entry.name}, ${word}. ${detail}`}
             icon={<Icon name="desktop" color={theme.colors.text.secondary} />}
             showChevron={!action || props.compact}
@@ -90,7 +95,11 @@ const MachineNeedsYouItem = React.memo(function MachineNeedsYouItem(props: Reado
     );
 });
 
-const stylesheet = StyleSheet.create(() => ({
+const stylesheet = StyleSheet.create((theme) => ({
+    detail: {
+        ...Typography.variant('meta'),
+        color: theme.colors.text.secondary,
+    },
     word: {
         ...Typography.variant('meta'),
         ...Typography.default('semiBold'),

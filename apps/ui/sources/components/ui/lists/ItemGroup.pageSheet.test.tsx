@@ -111,6 +111,22 @@ describe('ItemGroup page sections render through the shared page sheet', () => {
         expect(text.indexOf('Theme')).toBeLessThan(text.indexOf('Density'));
     });
 
+    // QA-RERUN-1113 F7: a section whose only row is conditional and absent keeps its title and description,
+    // but draws no empty sheet (an empty card reads as a stray rule).
+    it('draws no sheet for a page section with no rows', async () => {
+        const { ItemGroup, ListPresentationProvider, presentation } = await loadModules();
+        const screen = await renderScreen(
+            <ListPresentationProvider value="page">
+                <ItemGroup title="What you're trusting" description="Where it comes from.">
+                    {null}
+                    {false}
+                </ItemGroup>
+            </ListPresentationProvider>,
+        );
+        expect(screen.findAllByType(presentation.HappierPageSheet as never)).toHaveLength(0);
+        expect(screen.getTextContent()).toContain('Where it comes from.');
+    });
+
     it('lays a page section on one HappierPageSheet, so its rows take the sheet policy', async () => {
         const { ItemGroup, Item, ListPresentationProvider, presentation } = await loadModules();
         const screen = await renderScreen(

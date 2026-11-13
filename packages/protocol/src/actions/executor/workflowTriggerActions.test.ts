@@ -1682,7 +1682,7 @@ describe('workflow trigger Automation composition', () => {
       openContext: async () => { throw new Error('summary_must_not_open_private_context'); } });
     expect(await read.readWorkflowSummaries([workflow])).toEqual(new Map([[workflow, {
       triggers: [{ kind: 'schedule', schedule: trigger.schedule, automationId: saved.set.automationId,
-        triggerId: saved.triggerId, nextRunAt: null }], nextRunAt: null,
+        triggerId: saved.triggerId, enabled: false, nextRunAt: null }], nextRunAt: null,
     }]]));
   });
   it('merges the authorized Team summary into the same library facts without opening another Account context', async () => {
@@ -1696,7 +1696,7 @@ describe('workflow trigger Automation composition', () => {
     } });
     expect((await read.readWorkflowSummaries([workflow])).get(workflow)).toEqual({
       triggers: [{ kind: 'schedule', schedule: trigger.schedule, automationId: saved.set.automationId,
-        triggerId: saved.triggerId, nextRunAt: 2 }, { kind: 'schedule', schedule: trigger.schedule }], nextRunAt: 1,
+        triggerId: saved.triggerId, enabled: true, nextRunAt: 2 }, { kind: 'schedule', schedule: trigger.schedule }], nextRunAt: 1,
     });
   });
   it('uses the earliest enabled scheduler occurrence across attached sets without recomputing schedules', async () => {

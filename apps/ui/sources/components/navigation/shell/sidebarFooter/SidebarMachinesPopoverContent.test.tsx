@@ -219,12 +219,13 @@ describe('SidebarMachinesPopoverContent', () => {
         expect(row('mine')?.props.detail).toBeUndefined();
         expect(meta('mine')).toBe('machineDetailPage.work.working:2');
         expect(meta('shared')).toBe('machineDetailPage.work.working:1');
-        // Offline says why, never "No work": one quiet line that closes the name's line (lab `rm` P, MPG-18), with no
-        // strip beneath the name.
+        // Offline says why, never "No work": one quiet line under the name where the strip would be, as the
+        // Machines column reads it, never wrapped right-aligned off the name's line (QA-RERUN-1113 F4).
         const edge = row('edge')?.props;
-        expect(edge?.subtitle).toBeUndefined();
-        expect(meta('edge')).toEqual(expect.stringMatching(/./));
-        expect(meta('edge')).not.toBe('machineDetailPage.work.none');
+        expect(meta('edge')).toBeUndefined();
+        const offlineLine = (edge?.subtitle as React.ReactElement<{ children: unknown }> | undefined)?.props.children;
+        expect(offlineLine).toEqual(expect.stringMatching(/./));
+        expect(offlineLine).not.toBe('machineDetailPage.work.none');
         expect(screen.findByTestId('sidebar-machines-working')?.props.children).toBe('machineDetailPage.work.working:3');
     });
 

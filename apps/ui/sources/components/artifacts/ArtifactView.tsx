@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { PANE_TEXT_INSET_PX } from '@/components/ui/layout/headerBand';
 import { resolvePressTriggerAnchor } from '@/components/ui/popover/resolvePointerMenuAnchor';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -452,8 +453,9 @@ const stylesheet = StyleSheet.create((theme) => ({
         color: theme.colors.text.secondary,
         textAlign: 'center',
     },
+    // The pane's one text edge, the inset its header title uses, so facts, actions and body start under the title (F8).
     paneColumn: {
-        paddingHorizontal: theme.space.s24,
+        paddingHorizontal: PANE_TEXT_INSET_PX,
         paddingTop: theme.space.s4,
         paddingBottom: theme.space.s32,
     },

@@ -92,7 +92,8 @@ export function RailPopoverRoster(
   return (
     <View testID={props.testID} style={{ maxHeight: props.maxHeight }}>
       <View style={styles.header}>
-        <Text style={styles.title} accessibilityRole="header" numberOfLines={1}>
+        {/* A sentence title ("edge-1's system disk is nearly full") reads whole on two lines (F4). */}
+        <Text style={styles.title} accessibilityRole="header" numberOfLines={2}>
           {props.title}
         </Text>
         {props.summary}
@@ -115,7 +116,8 @@ const styles = StyleSheet.create((theme) => ({
   fadeBottom: { bottom: 0 },
   header: {
     flexDirection: 'row',
-    alignItems: 'center',
+    // The trailing menu stays on the title's first line when the title wraps.
+    alignItems: 'flex-start',
     justifyContent: 'space-between',
     gap: theme.space.s12,
     paddingHorizontal: theme.space.s16,
@@ -135,6 +137,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   title: {
     // The roster's name leads its rows: the section-title step, one above the rows' meta and summary line.
+    flexShrink: 1,
     ...Typography.default('semiBold'),
     ...happierPageTextMetrics('sectionTitle'),
     color: theme.colors.text.primary,

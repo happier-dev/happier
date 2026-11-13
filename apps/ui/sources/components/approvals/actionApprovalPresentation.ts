@@ -14,6 +14,8 @@ import type { ApprovalRequest, StoredApprovalRequestV2 } from '@happier-dev/prot
 import { DiscussionPostInputV1Schema } from '@happier-dev/protocol/discussions/actions';
 import { isDiscussionPostActionIdV1, type DiscussionExternalSourceV1 } from '@happier-dev/protocol/discussions';
 import { SettingsDeclarationActionInputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
+import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
+import { getNewSessionDraftIdentity } from '@/components/sessions/new/hooks/useNewSessionDraftPresentation';
 
 export type ActionApprovalPresentationInput = Readonly<{
     actionId: string;
@@ -172,6 +174,20 @@ export function presentActionApproval(input: ActionApprovalPresentationInput): R
             confirmLabel,
             ...(spec.irreversible ? { destructive: true } : {}),
         };
+    }
+    // A Bot draft's Delete names a bot draft, and any named draft its name, from the draft's own identity (F5).
+    if (spec.id === 'session.draft.delete' && input.kind === 'confirmation') {
+        const draft = spec.inputSchema.safeParse(input.actionArgs);
+        const identity = draft.success ? getNewSessionDraftIdentity(getActiveServerAccountScope(), draft.data.draftId) : null;
+        if (identity?.isBot || identity?.name) {
+            return {
+                title: t('actionPresentation.title', { actionId: spec.id,
+                    source: identity.isBot ? t('sessionDrafts.delete.botTitle') : t('sessionDrafts.delete.action'), subject: identity.name }),
+                summary: null,
+                confirmLabel,
+                destructive: true,
+            };
+        }
     }
     if (serviceControl) return { ...serviceControl, confirmLabel, destructive: spec.irreversible === true };
     const role = input.role?.roleId === readActionApprovalRoleId(input) ? input.role : null;

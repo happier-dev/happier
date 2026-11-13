@@ -32,6 +32,8 @@ export const WorkflowTriggerSummaryInputV1Schema = lazyZodSchema(() => {
   const historyIdentity = {
     automationId: zMini.optional(asProtocolZod(AutomationIdV1Schema)),
     triggerId: zMini.optional(AutomationTriggerIdSchema),
+    /** False when the trigger or its set is off, so every summary says Off where its detail does; older summaries omit it. */
+    enabled: zMini.optional(z.boolean()),
   };
   return z.discriminatedUnion('kind', [
     zMini.extend(zMini.pick(AutomationScheduleTriggerProjectionSchema, { kind: true, schedule: true }), {
@@ -65,7 +67,7 @@ export function summarizeWorkflowTriggerRowsV1(rows: readonly Readonly<{
     if (!row.workflowDefinitionId) continue;
     const summary = result.get(row.workflowDefinitionId) ?? { workflowDefinitionId: row.workflowDefinitionId, triggers: [], nextRunAt: null };
     for (const trigger of row.triggers) {
-      const historyIdentity = { automationId: row.id, triggerId: trigger.id };
+      const historyIdentity = { automationId: row.id, triggerId: trigger.id, enabled: row.enabled && trigger.enabled };
       switch (trigger.kind) {
         case 'schedule': {
           const nextRunAt = row.enabled && trigger.enabled ? trigger.nextRunAt : null;
@@ -91,6 +93,7 @@ export const WorkflowTriggerListRequestV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ workflow: WorkflowDefinitionRefV1StringSchema }),
   z.strictObject({ managedTarget: AutomationManagedTargetV1Schema }),
   z.strictObject({ deploymentBackup: WorkflowDeploymentBackupTargetV1Schema }),
+  z.strictObject({ backupFreshness: z.strictObject({ automationId: asProtocolZod(AutomationIdV1Schema) }) }),
   z.strictObject({ deploymentBackupEnvironment: z.strictObject({
     serverId: WorkflowDeploymentBackupTargetV1Schema.shape.serverId,
     environmentId: WorkflowDeploymentBackupTargetV1Schema.shape.environmentId,
@@ -220,6 +223,10 @@ export type WorkflowTriggerHealthSourceV1 = z.infer<typeof WorkflowTriggerHealth
 export const WorkflowTriggerListResultV1Schema = lazyZodSchema(() => z.strictObject({
   sets: z.array(WorkflowTriggerSetV1Schema), triggerDefinition: z.optional(WorkflowTriggerEventDefinitionV1Schema),
   healthSources: z.optional(z.array(WorkflowTriggerHealthSourceV1Schema)),
+  backupEnvironments: z.optional(z.array(z.strictObject({
+    serverId: WorkflowDeploymentBackupTargetV1Schema.shape.serverId,
+    environmentId: WorkflowDeploymentBackupTargetV1Schema.shape.environmentId,
+  }))),
 }));
 export const WorkflowTriggerWriteResultV1Schema = lazyZodSchema(() => z.strictObject({
   set: WorkflowTriggerSetV1Schema,

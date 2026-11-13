@@ -585,6 +585,15 @@ describe('web shell Docked composer', () => {
     await vi.waitFor(() => expect(screen.findAllHostsByTestId('new-session-docked-pill')).toHaveLength(1));
     expect(screen.findAllHostsByTestId('new-session-docked-pill')[0]!.props.accessibilityLabel).toBe(t('bots.new'));
     expect(screen.getTextContent()).toContain(t('bots.new'));
+    // QA-RERUN-1113 F5: deleting it names a bot draft, through the same draft identity.
+    const { presentActionApproval } = await import('@/components/approvals/actionApprovalPresentation');
+    const confirm = presentActionApproval({ actionId: 'session.draft.delete', actionArgs: { draftId: state().draftId }, kind: 'confirmation' });
+    expect(confirm.title).toContain(t('sessionDrafts.delete.botTitle'));
+    // F6 (UI refinements ruling): a named draft folds to its name; "New bot" shows only until it has one.
+    await act(async () => { writeNewSessionDraft({ scope, draftId: state().draftId, materializationIntent: 'seeded', patch: { authoring: { sessionName: 'Nightly build watcher' } } }); });
+    await vi.waitFor(() => expect(screen.findAllHostsByTestId('new-session-docked-pill')[0]!.props.accessibilityLabel).toBe('Nightly build watcher'));
+    expect(presentActionApproval({ actionId: 'session.draft.delete', actionArgs: { draftId: state().draftId }, kind: 'confirmation' }).title)
+      .toContain('Nightly build watcher');
     await screen.unmount();
   });
 

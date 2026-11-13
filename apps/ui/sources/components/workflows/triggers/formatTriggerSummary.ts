@@ -10,8 +10,9 @@ import { readCurrentAppShellPluginUiTranslationRuntime } from '@/components/appS
 import { arePluginContributionIdentitiesEqual } from '@/sync/domains/automations/pluginEventAutomationCurrentness';
 import { createPluginLocalizedTextResolver, type PluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
+import { joinList } from '@/utils/text/joinList';
 
-import { formatCalendarDate, formatClockTime, parseCalendarSchedule, parseSimpleSchedule, readOnceScheduleState } from './triggerSchedule';
+import { formatCalendarDate, formatClockTime, formatMonthName, parseCalendarSchedule, readOnceScheduleState } from './triggerSchedule';
 
 function scheduledRunTimeUnits(nextRunAt: number, nowMs: number) {
     const next = new Date(nextRunAt);
@@ -112,31 +113,31 @@ export function weekdayName(day: number): string {
     }
 }
 
-/**
- * The common daily, weekday and weekly crons read as a sentence; hourly, monthly and yearly ones read as a sentence
- * followed by their expression (F5); anything else shows its expression rather than a guess at what it means.
- */
-function formatCron(expression: string): string {
-    const simple = parseSimpleSchedule(expression);
-    if (simple === null) {
-        const calendar = parseCalendarSchedule(expression);
-        if (calendar === null) return t('workflows.triggers.summary.cron', { expression: expression.trim() });
-        const sentence = calendar.repeat === 'hourly'
-            ? t('workflows.triggers.summary.hourlyAt', { minute: String(calendar.minute).padStart(2, '0') })
-            : calendar.repeat === 'monthly'
-                ? t('workflows.triggers.summary.monthlyAt', { day: calendar.day, time: formatClockTime(calendar) })
-                : t('workflows.triggers.summary.yearlyAt', { date: formatCalendarDate(calendar), time: formatClockTime(calendar) });
-        return t('workflows.triggers.summary.withExpression', { sentence, expression: expression.trim() });
-    }
-    const time = formatClockTime(simple);
-    switch (simple.repeat) {
+/** The sentence a calendar cron reads as, or null when it can't be said and only its expression is true. */
+function formatCronSentence(expression: string): string | null {
+    const calendar = parseCalendarSchedule(expression);
+    if (calendar === null) return null;
+    if (calendar.repeat === 'hourly') return t('workflows.triggers.summary.hourlyAt', { minute: String(calendar.minute).padStart(2, '0') });
+    const time = joinList(calendar.times.map(formatClockTime));
+    switch (calendar.repeat) {
         case 'daily':
             return t('workflows.triggers.summary.everyDayAt', { time });
-        case 'weekdays':
-            return t('workflows.triggers.summary.weekdaysAt', { time });
         case 'weekly':
-            return t('workflows.triggers.summary.weeklyAt', { day: weekdayName(simple.day), time });
+            return calendar.weekdays.join(',') === '1,2,3,4,5' ? t('workflows.triggers.summary.weekdaysAt', { time })
+                : t('workflows.triggers.summary.weeklyAt', { day: joinList(calendar.weekdays.map(weekdayName)), time });
+        case 'monthly':
+            return t('workflows.triggers.summary.monthlyAt', { days: joinList(calendar.days.map(String)), count: calendar.days.length, time });
+        case 'yearly':
+            return calendar.months.length === 1 && calendar.days.length === 1
+                ? t('workflows.triggers.summary.yearlyAt', { date: formatCalendarDate({ month: calendar.months[0]!, day: calendar.days[0]! }), time })
+                : t('workflows.triggers.summary.monthDaysAt', { days: joinList(calendar.days.map(String)), count: calendar.days.length,
+                    months: joinList(calendar.months.map(formatMonthName)), time });
     }
+}
+
+/** A cron reads as one sentence everywhere; only one that can't be said shows its expression (QA-RERUN-1113 F1). */
+function formatCron(expression: string): string {
+    return formatCronSentence(expression) ?? t('workflows.triggers.summary.cron', { expression: expression.trim() });
 }
 
 /** "Every hour", "Every 15 minutes": an interval schedule's one wording. */
@@ -230,8 +231,9 @@ export function formatTriggerSetSummary(
     if (first === undefined) return t('workflows.triggers.summary.manual');
     // A trigger that won't fire says so first, as its row does ("Off · Every day at 2:00 AM"); a spent
     // one-time schedule says how it ended ("Done · Once at …"), a pending one keeps its due time.
+    // A collection row never shows a raw expression: a cron that can't be said reads "On a schedule" there.
     const when = first.kind === 'schedule' && first.schedule?.kind === 'cron'
-        && parseSimpleSchedule(first.schedule.scheduleExpr ?? '') === null
+        && formatCronSentence(first.schedule.scheduleExpr ?? '') === null
         ? t('workflows.triggers.summary.schedule')
         : formatTriggerSummary(first);
     const once = readOnceScheduleState(first, lastRunState);

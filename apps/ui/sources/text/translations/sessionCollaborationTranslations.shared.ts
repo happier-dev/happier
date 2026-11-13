@@ -39,8 +39,8 @@ participants: { title: "Participants", loading: "Checking who’s here…", more
 
         title: 'Discussions', newDiscussion: 'New discussion', create: 'Start discussion',
         titlePlaceholder: 'Discussion title', messagePlaceholder: 'Write to everyone here…',
-        active: 'Active', activeDisclosure: 'Show active conversations', archived: 'Archived', archivedDisclosure: 'Show archived conversations',
-        emptyActive: 'No active conversations yet.', emptyArchived: 'No archived conversations.',
+        active: 'Active', activeDisclosure: 'Show active Discussions', archived: 'Archived', archivedDisclosure: 'Show archived Discussions',
+        emptyActive: 'No active Discussions yet.', emptyArchived: 'No archived Discussions.',
         loading: 'Loading conversations…', loadError: 'Conversations could not be loaded.', retry: 'Try again', checking: 'Checking for updates…', deliveryUnknown: 'Delivery unknown — check before retrying.',
         locked: 'You can read this conversation, but you cannot post to it.', offline: 'You’re offline. Reconnect to continue.', unavailable: 'This conversation is unavailable.',
         listUnavailable: 'Discussions aren’t available.',
@@ -50,12 +50,12 @@ participants: { title: "Participants", loading: "Checking who’s here…", more
         modeMismatch: 'This conversation content does not match the Session’s encryption mode. Try again, or ask a Session manager to check access.',
         unreadCount: ({ count }: { count: number }) => count === 1 ? '1 unread' : `${count.toLocaleString()} unread`,
         unreadMentionCount: ({ count }: { count: number }) => count === 1 ? '1 unread mention' : `${count.toLocaleString()} unread mentions`,
-        mentioned: 'You were mentioned', unreadConversations: 'Unread conversations',
+        mentioned: 'You were mentioned', unreadConversations: 'Unread Discussions',
         messageCount: ({ count }: { count: number }) => count === 1 ? '1 message' : `${count.toLocaleString()} messages`,
         viaAgent: 'Via Agent', externalSender: 'Someone outside Happier', viaExternal: ({ conversation }: { conversation: string }) => `Via ${conversation}`, outwardReply: ({ conversation }: { conversation: string }) => `Your reply is also sent to ${conversation}, outside Happier.`, collaborator: 'Collaborator', contentUnavailable: 'Message unavailable',
         rename: 'Rename Discussion', archive: 'Archive Discussion', restore: 'Restore Discussion', draftDetails: 'Rename it, archive it or save it as a pattern once it starts.',
         selection: { copy: 'Copy', askAgent: 'Ask Agent', sendToSession: 'Send to Session', handoffError: 'The selected messages could not be added to the Session composer.' },
-        titleRequired: 'Add a title to start this conversation.', encryptedTitle: 'Encrypted conversation', rowOnDoc: "On a doc", rowFreshOpinions: ({ count }: { count: number }) => `Fresh opinions · ${count === 1 ? '1 answer' : `${count.toLocaleString()} answers`}`, rowFreshOpinionsSynthesis: ({ count }: { count: number }) => `Fresh opinions · ${count === 1 ? '1 answer' : `${count.toLocaleString()} answers`} and a synthesis`, rowAnswerReviewSettled: 'Answer + review · settled', rowOpenComments: ({ count }: { count: number }) => count === 1 ? '1 open comment' : `${count.toLocaleString()} open comments`, archivedNotice: 'This conversation is archived.', sessionArchived: 'This Session is archived.', postDenied: 'You can no longer post in this Session.', invalidMention: 'Someone you mentioned can no longer read this Session.', invalidContent: 'This message can’t be sent as written. It may be empty or too long.', idempotencyConflict: 'A different message was already sent under this identity.', sendFailed: 'This message could not be sent.', dismiss: 'Dismiss', loadMore: 'Load more conversations',
+        titleRequired: 'Add a title to start this Discussion.', encryptedTitle: 'Encrypted Discussion', rowOnDoc: "On a doc", rowFreshOpinions: ({ count }: { count: number }) => `Fresh opinions · ${count === 1 ? '1 answer' : `${count.toLocaleString()} answers`}`, rowFreshOpinionsSynthesis: ({ count }: { count: number }) => `Fresh opinions · ${count === 1 ? '1 answer' : `${count.toLocaleString()} answers`} and a synthesis`, rowAnswerReviewSettled: 'Answer + review · settled', rowOpenComments: ({ count }: { count: number }) => count === 1 ? '1 open comment' : `${count.toLocaleString()} open comments`, archivedNotice: 'This Discussion is archived.', sessionArchived: 'This Session is archived.', postDenied: 'You can no longer post in this Session.', invalidMention: 'Someone you mentioned can no longer read this Session.', invalidContent: 'This message can’t be sent as written. It may be empty or too long.', idempotencyConflict: 'A different message was already sent under this identity.', sendFailed: 'This message could not be sent.', dismiss: 'Dismiss', loadMore: 'Load more Discussions',
     },
 };
 

@@ -812,6 +812,26 @@ describe('DiscussionsList and its Session anchor consumer', () => {
         expect(readListItems(screen).map((item) => item.kind)).toContain('archived_disclosure');
     });
 
+    // QA-RERUN-1113 F3: an open Archived group whose list settles empty (the last one was restored) goes away.
+    it('withdraws an open archived group once its list is proven empty', async () => {
+        discussionApi.list.mockImplementation((input?: Readonly<{ state?: 'active' | 'archived'; limit?: number }>) => (
+            input?.state === 'archived' && input.limit === 1
+                ? Promise.resolve({ kind: 'failed' as const, errorCode: 'offline' })
+                : succeededList([], null)
+        ));
+        const { screen } = await renderConversations();
+
+        await vi.waitFor(() => expect(readListItems(screen).map((item) => item.kind)).toContain('archived_disclosure'));
+        await screen.pressByTestIdAsync('session-discussion-archived-disclosure');
+        await vi.waitFor(() => expect(discussionApi.list.mock.calls.some(([input]) => input?.state === 'archived'
+            && (input as Readonly<{ limit?: number }>).limit === undefined)).toBe(true));
+        await vi.waitFor(() => {
+            const kinds = readListItems(screen).map((item) => item.kind);
+            expect(kinds).not.toContain('archived_disclosure');
+            expect(kinds).not.toContain('archived_empty');
+        });
+    });
+
     it('does not own a second repository decision apart from the shared Lane 05 registry', async () => {
         useEmptyDiscussionApi();
         const { screen } = await renderConversations();
