@@ -208,12 +208,28 @@ test('admission uses jobs cgroup headroom rather than host memory', { skip: proc
   const cgroup = `/sys/fs/cgroup/user.slice/user-${process.getuid()}.slice/user@${process.getuid()}.service/happier.slice/happier-jobs.slice`;
   const cases = [
     // nl1 /proc/meminfo + jobs memory.{high,max,current,stat}, 2026-11-10 16:02:58Z.
-    // Continuation 3: charged inactive file cache is reclaimable, not job working set.
+    // Charged file LRUs and reclaimable slab do not consume job working set.
     { name: 'nl1 reclaimable cache does not consume admission headroom',
       meminfo: 'MemTotal: 131348608 kB\nMemAvailable: 65598876 kB\nMemFree: 8165464 kB\nCached: 36107036 kB\nSReclaimable: 16705680 kB\n',
       high: '107600777216', max: 'max', current: '88252342272',
       stat: 'inactive_file 28026961920\nactive_file 1158443008\nslab_reclaimable 4788865112\n',
-      total: 105078884, available: 46265036 },
+      total: 105078884, available: 52072954 },
+    // windows2-linux kernel observations, 2026-11-13 06:03:24Z.
+    { name: 'windows2 active file cache and reclaimable slab preserve admission headroom',
+      meminfo: 'MemTotal: 26676008 kB\nMemAvailable: 18984828 kB\n',
+      high: '21852983296', max: 'max', current: '14815215616',
+      stat: 'anon 5203443712\nfile 8617799680\nshmem 16384\ninactive_file 1516421120\nactive_file 7101362176\nslab_reclaimable 833288512\n',
+      total: 21340804, available: 16102382 },
+    { name: 'windows2 cache credit remains bounded by host availability',
+      meminfo: 'MemTotal: 26676008 kB\nMemAvailable: 5476744 kB\n',
+      high: '21852983296', max: 'max', current: '14815215616',
+      stat: 'inactive_file 1516421120\nactive_file 7101362176\nslab_reclaimable 833288512\n',
+      total: 21340804, available: 5476744 },
+    { name: 'anonymous and shared-memory file charges remain in the working set',
+      meminfo: 'MemTotal: 26676008 kB\nMemAvailable: 18984828 kB\n',
+      high: '21852983296', max: 'max', current: '14815215616',
+      stat: 'anon 5203443712\nfile 8617799680\nshmem 7101362176\ninactive_file 1516421120\nactive_file 0\nslab_reclaimable 0\n',
+      total: 21340804, available: 8353700 },
     { name: 'reclaimable cache remains capped by host MemAvailable', high: '2048000', max: 'max', current: '1638400', stat: 'inactive_file 819200\n', total: 1000, available: 900 },
     { name: 'cache cannot enlarge cgroup capacity', high: '614400', max: 'max', current: '102400', stat: 'inactive_file 204800\n', total: 600, available: 600 },
     { name: 'memory.high below host', high: '614400', max: '819200', current: '409600', total: 600, available: 200 },

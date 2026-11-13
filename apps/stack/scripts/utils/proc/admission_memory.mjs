@@ -24,13 +24,15 @@ export function readLinuxAdmissionMemory({ waitingResidentMemoryKiB = 0 } = {}) 
   // A finite limit requires its usage observation; never fall back to the host
   // when that observation is unavailable.
   const current = Number(readFileSync(`${cgroup}/memory.current`, 'utf8').trim());
-  // memory.current includes the slice's page cache. The kernel can reclaim
-  // inactive file pages before charging new work against memory.high/max;
-  // counting them as working set discarded nl1's 26 GiB of reclaimable cache.
-  // Keep the existing slice boundary and the host MemAvailable estimate.
+  // File LRUs and reclaimable slab can be reclaimed under memory pressure.
+  // Crediting only inactive_file discarded windows2's active file cache and
+  // reclaimable slab (7.4 GiB, 2026-11-13). Anonymous/shmem and unevictable
+  // pages stay charged. Keep both the slice limit and host MemAvailable caps.
   const stat = readFileSync(`${cgroup}/memory.stat`, 'utf8');
   const inactiveFile = Number(/^inactive_file\s+(\d+)/m.exec(stat)?.[1]);
-  const workingSet = Math.max(0, current - inactiveFile);
+  const activeFile = Number(/^active_file\s+(\d+)/m.exec(stat)?.[1] ?? 0);
+  const reclaimableSlab = Number(/^slab_reclaimable\s+(\d+)/m.exec(stat)?.[1] ?? 0);
+  const workingSet = Math.max(0, current - inactiveFile - activeFile - reclaimableSlab);
   return { totalMemoryKiB: Math.min(totalMemoryKiB, Math.floor(limit / 1024)),
     availableMemoryKiB: Math.min(availableMemoryKiB, Math.max(0, Math.floor((limit - workingSet) / 1024))) };
 }
