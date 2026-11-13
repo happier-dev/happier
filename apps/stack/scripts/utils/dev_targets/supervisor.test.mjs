@@ -1947,6 +1947,13 @@ test('source snapshot supervisor builds on each mirror without native transfer o
   const states = [];
   let resolveRunning;
   const running = new Promise(resolve => { resolveRunning = resolve; });
+  let reportRetry;
+  const retryRequested = new Promise(resolve => { reportRetry = resolve; });
+  const { sourceRuntimeProducerUnavailable } = await import('../../build/build_source_runtime.mjs');
+  const { sourceRuntimeCaptureUnavailable } = await import('../../build/source_runtime_last_green.mjs');
+  const { readSourceReloadRefusal } = await import('../../runtime/shared/source_reload_refusal.mjs');
+  const producerRefusal = sourceRuntimeProducerUnavailable(sourceRuntimeCaptureUnavailable(),
+    { producerStackName: 'repo-producer', env: {} });
   const commands = [];
   const dataChecks = [];
   const authorities = [];
@@ -2003,8 +2010,7 @@ test('source snapshot supervisor builds on each mirror without native transfer o
           'ordinary source starts must carry controller sentinel facts to worker reload preparation');
         const target = targets.find(target => input.args.includes(target.ssh));
         if (admission === 'refused') {
-          input.onLine?.({ stream: 'stderr', line: 'HSTACK_SOURCE_RELOAD_REFUSAL=' + JSON.stringify({
-            code: 'source_runtime_producer_capture_unavailable', phase: 'source-producer', retryable: false }) });
+          input.onLine?.({ stream: 'stderr', line: 'HSTACK_SOURCE_RELOAD_REFUSAL=' + JSON.stringify(readSourceReloadRefusal(producerRefusal)) });
           child.refused = true;
           return child;
         }
@@ -2021,12 +2027,17 @@ test('source snapshot supervisor builds on each mirror without native transfer o
     stopProcess: async child => { child.exitCode = 0; },
     waitForProcess: async child => child.refused ? { code: 1 } : await new Promise(() => {}),
     waitForServerReady: async () => {}, waitForDaemonReady: async () => {},
-    waitForRetry: async () => await new Promise(() => {}), logger: { error() {}, info(message) { phaseLogs.push(message); } },
+    waitForRetry: async () => { reportRetry(); await new Promise(() => {}); }, logger: { error() {}, info(message) { phaseLogs.push(message); } },
   });
   try {
-    await running;
+    await Promise.race([running, retryRequested.then(() => assert.fail('capture-unavailable must settle before any readiness retry'))]);
     if (admission === 'refused') {
       assert.equal(controller.targetFailures.length, 2);
+      for (const { error } of controller.targetFailures) {
+        assert.equal(error.reason, 'source_runtime_producer_capture_unavailable');
+        assert.equal(error.retryable, false);
+        assert.match(error.nextAction, /--source-after/);
+      }
       return;
     }
     assert.equal(controller.workers.length, 2);

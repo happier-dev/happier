@@ -123,8 +123,16 @@ test('QA requests adopt one producer capture across source movement and join an 
   const dependencyChanged = await native.build({ ...options, stackBaseDir: stacks[0] });
   assert.notEqual(dependencyChanged.entrypoint, newer[0].entrypoint, 'changed installed dependencies cannot adopt the previous capture');
   assert.deepEqual((await readFile(compilers, 'utf8')).trim().split('\n'), ['repo-producer', 'repo-producer', 'repo-producer']);
-  await assert.rejects(native.build({ ...options, stackBaseDir: stacks[0], sourceCapturedAfter: '2999-01-01T00:00:00.000Z' }),
-    { code: 'source_runtime_producer_failed', reason: 'source_runtime_producer_capture_unavailable', sourceStack: 'repo-producer' });
+  let captureDiagnostics = '';
+  const captureStderr = new Writable({ write(chunk, _encoding, done) { captureDiagnostics += chunk; done(); } });
+  await assert.rejects(native.build({ ...options, stackBaseDir: stacks[0], sourceCapturedAfter: '2999-01-01T00:00:00.000Z', stderrStream: captureStderr }),
+    { code: 'source_runtime_producer_failed', reason: 'source_runtime_producer_capture_unavailable', sourceStack: 'repo-producer', retryable: false });
+  const refusals = captureDiagnostics.split('\n').map(line => parseSourceReloadRefusalLine(line)).filter(Boolean);
+  assert.ok(refusals.length > 0, 'the real producer child must publish its refusal');
+  for (const refusal of refusals) {
+    assert.equal(refusal.retryable, false, 'the first child refusal must already be terminal');
+    assert.match(refusal.nextAction, /--source-after/);
+  }
   assert.equal(JSON.parse(await readFile(join(stacks[0], 'source-runtime/selected-daemon.json'), 'utf8')).entrypoint, dependencyChanged.entrypoint,
     'an unavailable future capture must preserve the incumbent');
   await writeFile(entry, 'this is invalid syntax !');

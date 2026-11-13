@@ -49,9 +49,11 @@ export async function readGreenSourceRuntimeCandidateGroups({ repoDir, bundleRoo
 }
 
 
-export function sourceRuntimeLastGreenUnavailable() {
-  return Object.assign(new Error('No retained producer capture has a completed post-capture sentinel PASS'), {
-    code: 'source_runtime_producer_capture_unavailable',
-    nextAction: 'Restore the post-capture load sentinel verdict or request a fresh capture with --source-after',
+export function sourceRuntimeCaptureUnavailable({
+  message = 'No retained producer capture has a completed post-capture sentinel PASS',
+  nextAction = 'Restore the post-capture load sentinel verdict or request a fresh capture with --source-after',
+} = {}) {
+  return Object.assign(new Error(message), {
+    code: 'source_runtime_producer_capture_unavailable', retryable: false, nextAction,
   });
 }

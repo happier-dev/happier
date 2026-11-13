@@ -1,4 +1,4 @@
-import { readGreenSourceRuntimeCandidateGroups, sourceRuntimeLastGreenUnavailable } from './source_runtime_last_green.mjs';
+import { readGreenSourceRuntimeCandidateGroups, sourceRuntimeCaptureUnavailable } from './source_runtime_last_green.mjs';
 import { removeOwnedDirectorySync } from '../utils/fs/fs.mjs';
 import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, symlink, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -242,7 +242,7 @@ async function exportSharedSourceWebUi({ repoDir, stackBaseDir, requestId, env, 
   if (cached) return cached;
   if (reuseOnly) return null;
   try {
-    if (requireLastGreen) throw sourceRuntimeLastGreenUnavailable();
+    if (requireLastGreen) throw sourceRuntimeCaptureUnavailable();
     const inputs = { repoDir, baseDir: join(context.producerStackBaseDir, 'source-runtime'),
       stackBaseDir: context.producerStackBaseDir, consumerStackBaseDir: stackBaseDir, requestId,
       buildOptions, sourceCapturedAfter, requireCurrentSource };
@@ -294,9 +294,9 @@ async function prepareSharedSourceWebUi({ repoDir, baseDir, stackBaseDir, consum
     try {
       const { built, captured } = await consumeSourceWebUiInputs({ repoDir, baseDir, outputDir, env, signal });
       if (sourceCapturedAfter !== undefined && !(Date.parse(captured.capturedAt) >= sourceCapturedAfter)) {
-        throw Object.assign(new Error('producer capture predates the requested sourceCapturedAfter boundary'), {
-          code: 'source_runtime_producer_capture_unavailable',
-          nextAction: 'Wait until the requested capture boundary or retry with a valid sourceCapturedAfter timestamp',
+        throw sourceRuntimeCaptureUnavailable({
+          message: 'producer capture predates the requested sourceCapturedAfter boundary',
+          nextAction: 'Request a fresh capture with a valid --source-after=<ISO timestamp> boundary',
         });
       }
       // The shared product contains only its serving closure. Compiler candidates

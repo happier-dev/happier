@@ -32,7 +32,7 @@ import { emitSourceAuthorPackages, isFirstPartyBuiltInput } from './source_autho
 import { readSourceRuntimeDependencyIdentity } from './source_author_inputs.mjs';
 import { buildSourceGuestPayload, readSourceGuestPayloadTargets } from './source_guest_payload.mjs';
 import { resolveRuntimeBuildAuthority } from '../runtime/shared/runtime_build_authority.mjs';
-import { readGreenSourceRuntimeCandidateGroups, sourceRuntimeLastGreenUnavailable } from './source_runtime_last_green.mjs';
+import { readGreenSourceRuntimeCandidateGroups, sourceRuntimeCaptureUnavailable } from './source_runtime_last_green.mjs';
 import { assertSourceReloadBundledPluginFailures } from '../runtime/launch/sourceReloadPluginFailures.mjs';
 import { rememberSourceCaptureFailure, withSourceCaptureRetry } from './source_capture_retry.mjs';
 
@@ -739,7 +739,8 @@ export function sourceRuntimeProducerUnavailable(cause, context) {
   const nextAction = cause.nextAction ?? 'Repair repository producer inputs and retry the Stack reload';
   return Object.assign(new Error(`[source-bundle] repository producer ${context.producerStackName} unavailable (${cause.code ?? cause.name}): ${redactFailureDiagnostic(cause.message, context.env)}; ${nextAction}`, { cause }), {
     code: cause.producerFailed || cause.code === 'source_runtime_producer_failed' ? 'source_runtime_producer_failed' : 'source_runtime_producer_unavailable',
-    reason: cause.code ?? 'producer_request_failed', phase: 'source-producer', retryable: true,
+    reason: cause.code ?? 'producer_request_failed', phase: 'source-producer',
+    retryable: cause.retryable ?? true,
     producerStackName: context.producerStackName, sourceStack: context.producerStackName,
     nextAction,
   });
@@ -831,7 +832,7 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
   try {
     const completed = await adopt();
     if (completed) return report(completed);
-    if (requireLastGreen) throw sourceRuntimeLastGreenUnavailable();
+    if (requireLastGreen) throw sourceRuntimeCaptureUnavailable();
     if (!existsSync(join(repoDir, 'package.json'))) throw Object.assign(new Error('producer checkout is unavailable'), { code: 'ENOENT' });
     const response = await withSingleTrailingBuildPass({ run: async () => {
       const response = await withSourceRuntimeWorkerResult(async resultPath => {
@@ -892,9 +893,9 @@ async function prepareSourceRuntimeProducerInProcess({ repoDir, stackBaseDir, co
         repoDir, stackBaseDir, ...descriptor, fingerprint: fingerprints[index], sharedSourceInputs, env, signal,
       });
       if (sourceCapturedAfter != null && Object.values(prepared).some(built => !(Date.parse(built.sourceCapture?.capturedAt) >= sourceCapturedAfter))) {
-        throw Object.assign(new Error('Producer capture predates the requested sourceCapturedAfter boundary'), {
-          code: 'source_runtime_producer_capture_unavailable',
-          nextAction: 'Wait until the requested capture boundary or retry with a valid sourceCapturedAfter timestamp',
+        throw sourceRuntimeCaptureUnavailable({
+          message: 'Producer capture predates the requested sourceCapturedAfter boundary',
+          nextAction: 'Request a fresh capture with a valid --source-after=<ISO timestamp> boundary',
         });
       }
       await withSourceBundlePublicationCustody({ bundleRoot, signal, operation: 'producer-completion' }, async () => {
