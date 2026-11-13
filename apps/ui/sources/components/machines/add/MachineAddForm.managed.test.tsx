@@ -35,6 +35,19 @@ beforeEach(async () => { routeBoundary.params = {}; routeBoundary.focused = true
 afterEach(async () => { const { discardMachineAdd } = await import('./useMachineAddFlow'); await act(async () => discardMachineAdd()); standardCleanup(); });
 
 describe('Add machine Connect and Create entry', () => {
+    it('opens the connection path for an explicit Connect entry when cloud creation is enabled', async () => {
+        const target = await harness.addHome({ name: 'Connect', serverUrl: 'https://connect-entry.example', accountId: 'owner' });
+        harness.answer(target, '/v2/account/settings', { body: { content: { t: 'plain', v: { managedMachineCreationEnabled: true } }, version: 1 } });
+        routeBoundary.params = { intent: 'connect' };
+        const { MachineAddDraftScreen } = await import('./MachineAddDraftScreen');
+        const { readMachineAddFlowDraft } = await import('./machineAddFlowStore');
+        const screen = await renderScreen(<MachineAddDraftScreen />);
+        try {
+            await waitForHomeGovernance(() => expect(screen.tree.findAll(node => node.props.testID === 'settings.machines.draft.form.path:create').length).toBeGreaterThan(0));
+            expect(readMachineAddFlowDraft()).toMatchObject({ creating: false, path: 'thisComputer' });
+            expect(screen.tree.findAll(node => node.props.testID === 'managed-picker')).toHaveLength(0);
+        } finally { await screen.unmount(); }
+    });
     it('opens Create in the addressed Home while retaining a connection draft for another Home', async () => {
         const connected = await harness.addHome({ name: 'Existing setup', serverUrl: 'https://retained-connect.example', accountId: 'owner' });
         const target = await harness.addHome({ name: 'Notice Home', serverUrl: 'https://notice-create.example', accountId: 'owner' });

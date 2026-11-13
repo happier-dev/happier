@@ -2719,7 +2719,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         router.push('/(app)/settings/machines');
     }, [router]);
     const onOpenAddMachine = React.useCallback(() => {
-        router.push({ pathname: '/settings/machines/add', params: { draftId, ...(dataId ? { dataId } : {}) } });
+        router.push({ pathname: '/settings/machines/add', params: { intent: 'connect', draftId, ...(dataId ? { dataId } : {}) } });
     }, [router, draftId, dataId]);
     const selectMachinePoolTarget = React.useCallback((target: Readonly<{
         serverId: string;

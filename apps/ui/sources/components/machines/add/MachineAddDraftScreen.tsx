@@ -75,7 +75,7 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
     const router = useRouter();
     const navigation = useNavigation();
     const returnToHost = useNewSessionPickerReturnHost();
-    const params = useLocalSearchParams<{ path?: string | string[]; serverId?: string | string[]; draftId?: string; newSessionHostDraftId?: string }>();
+    const params = useLocalSearchParams<{ path?: string | string[]; intent?: string | string[]; serverId?: string | string[]; draftId?: string; newSessionHostDraftId?: string }>();
     const routePath = readMachineAddRoutePath(params.path);
     const requestedServerId = Array.isArray(params.serverId) ? params.serverId[0] : params.serverId;
     const returning = hasNewSessionPickerContinuation(params);
@@ -101,12 +101,13 @@ export const MachineAddDraftScreen = React.memo(function MachineAddDraftScreen()
     // `?path=create` (Home's Machines widget, "Create one in the cloud") opens Create one, as its tab would. Without
     // a path, a phone or a browser opens on it too (58d §D2), unless a setup is already running from this draft.
     const pathParam = Array.isArray(params.path) ? params.path[0] : params.path;
+    const intent = Array.isArray(params.intent) ? params.intent[0] : params.intent;
     const initialPath = routePath === 'create' ? undefined : routePath;
     // A phone's pushed way is titled by it; Back (the settings registry's parent) returns to the ways.
     const pushesWays = useMachineAddPushesWays();
     const pushedWay = pushesWays ? routePath : undefined;
     const initialCreating = pathParam === 'create' ? true
-        : pathParam || !machineAddLeadsWithCreate(readMachineAddDevice()) ? false
+        : pathParam || intent === 'connect' || !machineAddLeadsWithCreate(readMachineAddDevice()) ? false
         : !accountSettings.settings && !accountSettings.error && (accountScope.resolution.kind === 'resolving' || accountScope.resolution.kind === 'bound') ? null
         : canCreate;
     const flow = useMachineAddFlow({ serverId: connectionServerId, initialPath, initialCreating,
