@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import type { AgentLaunchSelectedMaterial } from './agentLaunchFrame';
 
@@ -63,6 +64,7 @@ export async function selectRequiredAgentLaunchFiles(input: Readonly<{
       const causeCode = (error as NodeJS.ErrnoException).code;
       throw new PluginError({ code: 'agent_launch_required_file_unavailable',
         message: 'Required Agent extension or configuration could not be selected for the native launch', retryable: false,
+        failureCause: projectActionFailureCauseV1(error),
         details: { phase: 'materialization', reason: 'unreadable',
           ...(causeCode ? { causeCode } : {}) } });
     }

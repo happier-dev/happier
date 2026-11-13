@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
 import { expect, it } from 'vitest';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { authorizeResolvedProjectExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import type { HostAgentIsolationLaunchContext } from './agentIsolationLaunchPolicy';
 import { readAgentLaunchFrame, type AgentLaunchSelectedMaterial } from './agentLaunchFrame';
@@ -23,13 +24,18 @@ it.skipIf(process.platform !== 'linux')('keeps a missing generated source typed 
   const root = await mkdtemp(join(tmpdir(), 'required-source-missing-'));
   try {
     const source = join(root, 'missing-extension.mjs');
-    await expect(authorizeResolvedProjectExecLaunchForHost({
+    const failure: unknown = await authorizeResolvedProjectExecLaunchForHost({
       launch: { command: process.execPath, args: ['--extension', source], requiredFiles: [source], cwd: root, env: {} },
       agentIsolation: context(root, []), requesterIdentity, agentLaunchKind: 'workspaceExec',
       signal: new AbortController().signal, assertCurrent() {},
-    })).rejects.toMatchObject({ code: 'agent_launch_required_file_unavailable', data: {
+    }).catch((error: unknown) => error);
+    expect(failure).toMatchObject({ code: 'agent_launch_required_file_unavailable', data: {
       retryable: false, details: { phase: 'materialization', reason: 'unreadable', causeCode: 'ENOENT' },
     }, execLaunch: 'notStarted' });
+    expect(projectActionFailureCauseV1(failure)).toEqual({
+      phase: 'dispatch', errorClass: 'Error', errorCode: 'ENOENT', httpStatus: null,
+    });
+    expect(JSON.stringify(projectActionFailureCauseV1(failure))).not.toContain(root);
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
