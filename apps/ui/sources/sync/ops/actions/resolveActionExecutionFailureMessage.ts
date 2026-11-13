@@ -124,7 +124,8 @@ function readFailureMessage(value: unknown, options?: FailurePresentationOptions
 
 /** Host code copy is the fallback when the author supplied no reason. */
 function readFailureFallbackMessage(record: Record<string, unknown>, options?: FailurePresentationOptions): string | null {
-    const code = record.errorCode ?? record.code;
+    const code = record.errorCode ?? record.code ?? record.rpcErrorCode;
+    if (code === RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE) return t('errors.networkError');
     const transient = readTransientFailure(record, options);
     if (transient) return !options?.safeToRetry && transient.effectMayHaveApplied ? t('toolView.pending.unknownDescription') : transient.message;
     const discussionCode = typeof code === 'string' && code.startsWith('discussion')

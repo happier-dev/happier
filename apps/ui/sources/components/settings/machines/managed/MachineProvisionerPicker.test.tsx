@@ -10,6 +10,7 @@ import {
 } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { createDeferred, flushHookEffects, renderHook, renderScreen, standardCleanup, reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit';
 import { createManagedControllerMachineFixture as createControllerMachineFixture } from '@/dev/testkit/fixtures/machineProvisionerFixtures';
+import { publishMachineActivityForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { ExternalActionRequestEnvelopeV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -42,6 +43,9 @@ const { resetScopedHomeActionExecutorsForTests } =
 beforeEach(async () => {
   await harness.reset();
   resetScopedHomeActionExecutorsForTests();
+  const { storage } = await import('@/sync/domains/state/storage');
+  storage.setState({ machines: {}, machineDisplayById: {}, machinePresenceById: {}, machinePresenceByServerId: {},
+    machineListByServerId: {}, machineRecordsByServerId: {}, machineListStatusByServerId: {} });
 });
 afterEach(async () => {
   standardCleanup();
@@ -128,8 +132,7 @@ describe('provisioner picker demand', () => {
     onTestFinished(clearPluginAccountAvailabilityProjection);
     replacePluginAccountAvailabilityProjection({ scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' },
       snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({ machineListByServerId: { [serverId]: [] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []);
     runtimeHost.current = 'browser';
     onTestFinished(() => { runtimeHost.current = null; });
     const selected = vi.fn();
@@ -176,11 +179,10 @@ describe('provisioner picker demand', () => {
     const serverId = await harness.addHome({ name: 'Build', serverUrl: `https://${name}-daemon.example`,
       serverIdentityId: `srv_${name}_daemon`, accountId: 'owner', currentAccount: true });
     await publishNoAccountProvisioners(serverId);
-    const { storage } = await import('@/sync/domains/state/storage');
     const controller = { machineId: 'controller', installationId: 'installation' };
-    storage.setState({ machineListByServerId: { [serverId]: [
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
       createControllerMachineFixture({ id: controller.machineId, installationId: controller.installationId, activeAt: Date.now(), kind: 'persistent' }),
-    ] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    ]);
     const { MachineProvisionersListResultV1Schema } = await import('@happier-dev/protocol/plugins/contributions/machineProvisioners');
     const result = MachineProvisionersListResultV1Schema.parse({ controller,
       provisioners: manifest.contributes.machineProvisioners?.map(descriptor => ({
@@ -232,8 +234,7 @@ describe('provisioner picker demand', () => {
       snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
     runtimeHost.current = 'browser';
     onTestFinished(() => { runtimeHost.current = null; });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({ machineListByServerId: { [serverId]: [] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []);
     const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
     const screen = await renderPicker(<MachineProvisionerPicker serverId={serverId} onSelectProvisioner={() => {}} />);
     try {
@@ -262,8 +263,7 @@ describe('provisioner picker demand', () => {
     const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
     replacePluginAccountAvailabilityProjection({ scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' },
       snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({ machineListByServerId: { [serverId]: [] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []);
     runtimeHost.current = 'browser';
     onTestFinished(() => { runtimeHost.current = null; });
     const { Modal } = await import('@/modal');
@@ -296,8 +296,7 @@ describe('provisioner picker demand', () => {
     // Maritime declares browserReachable: false; Vercel and E2B support browser recipes.
     replacePluginAccountAvailabilityProjection({ scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'owner' },
       snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({ machineListByServerId: { [serverId]: [] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []);
     // This device is a browser: provider calls without a controller would run in the page itself.
     runtimeHost.current = 'browser';
     onTestFinished(() => { runtimeHost.current = null; });
@@ -341,9 +340,8 @@ describe('provisioner picker demand', () => {
     const publicationScope = { sourceServerId: serverId, sourceAccountId: 'owner' };
     const previousMachines = storage.getState().machineListByServerId[scopeServerId] ?? [];
     storage.setState({ profileScope: { serverId, accountId: 'owner' } });
-    storage.getState().applyMachines([selected, other], true, publicationScope);
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [selected, other]);
     expect(storage.getState().machineRecordsByServerId[scopeServerId]?.controller?.installationId).toBe(controller.installationId);
-    storage.getState().markMachineListSettled(serverId);
     try {
     const renders = vi.fn();
     const hook = await renderHook(() => {
@@ -377,11 +375,12 @@ describe('provisioner picker demand', () => {
     const previousAvailable = isAppliedActiveServerRuntimeAvailable();
     onTestFinished(() => publishAppliedActiveServerSnapshot(previousRuntime, previousAvailable));
     publishAppliedActiveServerSnapshot({ ...previousRuntime, serverId, serverUrl: 'https://build.example' });
-    storage.setState({ profileScope: { serverId, accountId: 'owner' }, machineListByServerId: { srv_build: [
+    storage.setState({ profileScope: { serverId, accountId: 'owner' } });
+    await publishMachineInventoryForTest({ serverId: 'srv_build', accountId: 'owner' }, [
       createControllerMachineFixture({ id: 'old', installationId: 'old-installation', activeAt: Date.now(), operationProtocolCapabilitiesRevision: 3,
         operationProtocolCapabilities: { sessionSpawn: { protocolVersions: [1] } } }),
       createControllerMachineFixture({ id: 'ready', installationId: 'ready-installation', activeAt: Date.now() }),
-    ] }, machineListStatusByServerId: { srv_build: 'idle' } });
+    ]);
     const { rememberMachineAdministrationTargetObservation } = await import('@/sync/domains/state/machineAdministrationUiState');
     rememberMachineAdministrationTargetObservation({ serverId: 'srv_build', accountId: 'owner' }, 'machines.managed', { serverIdentityId: 'srv_build', machineId: 'old' });
     const baselineRequests = harness.requests.length;
@@ -399,8 +398,10 @@ describe('provisioner picker demand', () => {
     const captured = ready.getCurrent().selection!.resolveExecutionTarget;
     expect(captured()?.machine.id).toBe('ready');
     await act(async () => {
-      storage.setState(state => ({ machineListByServerId: { srv_build: state.machineListByServerId.srv_build!.map(machine =>
-        machine.id === 'ready' ? { ...machine, operationProtocolCapabilitiesRevision: 2, operationProtocolCapabilities: {} } : machine) } }));
+      const current = storage.getState().machineListByServerId.srv_build ?? [];
+      storage.getState().applyMachines(current.map(machine =>
+        machine.id === 'ready' ? { ...machine, operationProtocolCapabilitiesRevision: 2, operationProtocolCapabilities: {} } : machine), false,
+        { sourceServerId: 'srv_build', sourceAccountId: 'owner' });
       expect(captured()).toBeNull();
     });
     await ready.unmount();
@@ -410,7 +411,6 @@ describe('provisioner picker demand', () => {
   // instruction require an admitted provisioner controller, beyond protocol support.
   it('defaults to the admitted provisioner controller 58f6 instead of remembered online 10a7 without reads or renewal renders', async () => {
     const serverId = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
-    const { storage } = await import('@/sync/domains/state/storage');
     const { useManagedControllerScope } = await import('./useManagedControllerScope');
     const { readPluginAccountAvailability, replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
     const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
@@ -427,7 +427,7 @@ describe('provisioner picker demand', () => {
     }));
     const machines = Array.from({ length: 128 }, (_, index) => createControllerMachineFixture({ id: index === 0 ? '10a7' : index === 127 ? '58f6' : `controller-${String(index).padStart(3, '0')}`,
       installationId: `installation-${index}`, activeAt: Date.now() }));
-    storage.setState({ machineListByServerId: { srv_build: machines }, machineListStatusByServerId: { srv_build: 'idle' } });
+    await publishMachineInventoryForTest({ serverId: 'srv_build', accountId: 'owner' }, machines);
     replacePluginAccountAvailabilityProjection({ scope, snapshot: {
       availabilityCursor: 1, intentReads: [], materializations, snapshots: [],
     } });
@@ -481,7 +481,6 @@ describe('provisioner picker demand', () => {
 
   it('orders controllers by availability and removes confirmed-absent resources without redirecting the retained draft', () => withPopoverWebGlobals(async () => {
     const serverId = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
-    const { storage } = await import('@/sync/domains/state/storage');
     const { useManagedControllerScope } = await import('./useManagedControllerScope');
     const { ManagedMachineV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
     const { publishHomeAccountChange } = await import('@/sync/runtime/orchestration/homeAccountChange');
@@ -494,10 +493,10 @@ describe('provisioner picker demand', () => {
     onTestFinished(() => firstRead.resolve());
     let managedMachines = [absent];
     harness.answer(serverId, `POST ${listPath}`, { select: () => ({ body: { machines: managedMachines }, respondAfter: firstRead.promise }) });
-    storage.setState({ machineListByServerId: { srv_build: [
+    await publishMachineInventoryForTest({ serverId: 'srv_build', accountId: 'owner' }, [
       createControllerMachineFixture({ id: 'ghost', installationId: 'ghost-installation', active: false, activeAt: 0 }),
       createControllerMachineFixture({ id: 'live', installationId: 'live-installation', activeAt: Date.now() }),
-    ] }, machineListStatusByServerId: { srv_build: 'idle' } });
+    ]);
     const onSelect = vi.fn();
     let current: ReturnType<typeof useManagedControllerScope> | undefined;
     function ControllerPicker() {
@@ -534,7 +533,6 @@ describe('provisioner picker demand', () => {
 
   it('keeps the real provisioner picker open when its last controller is confirmed absent', () => withPopoverWebGlobals(async () => {
     const serverId = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
-    const { storage } = await import('@/sync/domains/state/storage');
     const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
     const { ManagedMachineV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
     const controller = { machineId: 'ghost', installationId: 'ghost-installation' };
@@ -544,8 +542,8 @@ describe('provisioner picker demand', () => {
       retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
     const listPath = '/v1/machines/managed/actions/list';
     harness.answer(serverId, `POST ${listPath}`, { body: { machines: [absent] } });
-    storage.setState({ machineListByServerId: { srv_build: [createControllerMachineFixture({ id: 'ghost',
-      installationId: controller.installationId, active: false, activeAt: 0 })] }, machineListStatusByServerId: { srv_build: 'idle' } });
+    await publishMachineInventoryForTest({ serverId: 'srv_build', accountId: 'owner' }, [createControllerMachineFixture({ id: 'ghost',
+      installationId: controller.installationId, active: false, activeAt: 0 })]);
     await publishNoAccountProvisioners(serverId);
     const screen = await renderPicker(<MachineProvisionerPicker serverId={serverId} />);
     // The chip sits on the folded computer-run offers once the catalog answers.
@@ -567,10 +565,10 @@ describe('provisioner picker demand', () => {
     const { storage } = await import('@/sync/domains/state/storage');
     const { useManagedControllerScope } = await import('./useManagedControllerScope');
     const { useMachineAdministrationTargetSelection } = await import('@/sync/domains/machines/administration/useTargetSelection');
-    const { publishMachineActivity } = await import('@/sync/domains/machines/machineActivity');
     const machines = Array.from({ length: 128 }, (_, index) => createControllerMachineFixture({ id: `controller-${String(index).padStart(3, '0')}`,
       installationId: `installation-${index}`, activeAt: Date.now() }));
-    storage.setState({ machineListByServerId: { srv_build: machines }, machineListStatusByServerId: { srv_build: 'idle' } });
+    await publishMachineInventoryForTest({ serverId: 'srv_build', accountId: 'owner' }, machines);
+    const publishedMachines = storage.getState().machineListByServerId.srv_build ?? [];
     let renders = 0;
     const hook = await renderHook(() => {
       renders += 1;
@@ -583,13 +581,15 @@ describe('provisioner picker demand', () => {
     const baselineRenders = renders;
     const baselineRequests = harness.requests.length;
     await act(async () => {
-      for (let beat = 1; beat <= 4; beat++) for (const machine of machines) {
-        publishMachineActivity(machine, { active: true, activeAt: Date.now() + beat }, []);
+      for (let beat = 1; beat <= 4; beat++) for (const machine of publishedMachines) {
+        publishMachineActivityForTest([machine], { active: true, activeAt: Date.now() + beat });
       }
     });
     expect(renders - baselineRenders).toBe(0);
     expect(hook.getCurrent().managed.selection!.pickerRows).toBe(originalRows);
-    await act(async () => publishMachineActivity(machines[0]!, { active: false, activeAt: 0 }, []));
+    const firstPublishedMachine = publishedMachines.find(machine => machine.id === machines[0]!.id);
+    if (!firstPublishedMachine) throw new Error('Expected the first published controller');
+    await act(async () => publishMachineActivityForTest([firstPublishedMachine], { active: false, activeAt: 0 }));
     // R2: keep the resolved target and publish its offline state instead of redirecting.
     expect(hook.getCurrent().managed.controller?.machineId).toBe('controller-000');
     expect(hook.getCurrent().managed.selection?.state.kind).toBe('offline');
@@ -606,7 +606,6 @@ describe('provisioner picker demand', () => {
     const serverId = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
     const { storage } = await import('@/sync/domains/state/storage');
     const { useManagedControllerScope } = await import('./useManagedControllerScope');
-    const { publishMachineActivity } = await import('@/sync/domains/machines/machineActivity');
     const { t } = await import('@/text');
     const { formatLastSeen } = await import('@/utils/sessions/sessionUtils');
     const { ManagedMachineV1Schema } = await import('@happier-dev/protocol/machines/managed/managedMachineV1');
@@ -625,7 +624,7 @@ describe('provisioner picker demand', () => {
       createControllerMachineFixture({ id: 'd', installationId: 'd-installation', active: false, activeAt: 200 }),
       createControllerMachineFixture({ id: 'sleeping', installationId: 'sleeping-installation', active: false, activeAt: 50 }),
     ];
-    storage.setState({ machineListByServerId: { srv_build: machines }, machineListStatusByServerId: { srv_build: 'idle' } });
+    await publishMachineInventoryForTest({ serverId: 'srv_build', accountId: 'owner' }, machines);
     function ControllerPicker() { return useManagedControllerScope({ serverId, testIDPrefix: 'presence.scope' }).chip; }
     const screen = await renderScreen(<ControllerPicker />);
     await screen.pressByTestIdAsync('presence.scope.chip');
@@ -637,7 +636,9 @@ describe('provisioner picker demand', () => {
       expect(sleeping?.props.accessibilityLabel ?? sleeping?.props['aria-label']).toContain(t('managedPower.asleep'));
     });
     expect(orderedOptions()).toEqual(['a', 'z', 'sleeping', 'd', 'b'].map(id => `presence.scope.picker-option:${id}`));
-    await act(async () => publishMachineActivity(machines[0]!, { active: false, activeAt: 0 }, []));
+    const firstPublishedMachine = storage.getState().machineListByServerId.srv_build?.find(machine => machine.id === machines[0]!.id);
+    if (!firstPublishedMachine) throw new Error('Expected the first published controller');
+    await act(async () => publishMachineActivityForTest([firstPublishedMachine], { active: false, activeAt: 0 }));
     expect(orderedOptions()).toEqual(['z', 'sleeping', 'd', 'b', 'a'].map(id => `presence.scope.picker-option:${id}`));
     const row = screen.findHostByTestId('presence.scope.picker-option:a');
     expect(row?.props.accessibilityLabel ?? row?.props['aria-label']).toContain(t('settingsOverview.machineOffline', { lastSeen: formatLastSeen(0) }));
@@ -668,11 +669,13 @@ describe('provisioner picker demand', () => {
     onTestFinished(() => publishLocalDaemonStatus(runner, previous));
     publishLocalDaemonStatus(runner, { serviceInstalled: true, daemonRunning: true, needsAuth: false, machineId: 'z' });
     const online = (id: string) => createControllerMachineFixture({ id, installationId: `${id}-installation`, activeAt: Date.now() });
-    await act(async () => storage.setState({ machineListByServerId: { srv_build: [online('a'), online('z')] }, machineListStatusByServerId: { srv_build: 'idle' } }));
+    await publishMachineInventoryForTest({ serverId: 'srv_build', accountId: 'owner' }, [online('a'), online('z')]);
     const local = await renderHook(() => useManagedControllerScope({ serverId, testIDPrefix: 'scope-probe' }));
     expect(local.getCurrent().controller?.machineId).toBe('z');
     await local.unmount();
-    await act(async () => storage.setState({ machineListByServerId: { srv_build: [online('a'), createControllerMachineFixture({ id: 'z', installationId: 'z-installation', active: false, activeAt: 0 })] } }));
+    const z = storage.getState().machineListByServerId.srv_build?.find(machine => machine.id === 'z');
+    if (!z) throw new Error('Expected the seeded z controller');
+    await act(async () => publishMachineActivityForTest([z], { active: false, activeAt: 0 }));
     const remote = await renderHook(() => useManagedControllerScope({ serverId, testIDPrefix: 'scope-probe' }));
     expect(remote.getCurrent().controller?.machineId).toBe('a');
     await remote.unmount();
@@ -684,14 +687,15 @@ describe('provisioner picker demand', () => {
     const online = (id: string) => createControllerMachineFixture({ id, installationId: `${id}-installation`, activeAt: Date.now(), metadata: null });
     const asleep = createControllerMachineFixture({ id: 'ghost', installationId: 'ghost-installation', active: false, activeAt: 0 });
     const retired = createControllerMachineFixture({ id: 'retired', installationId: 'retired-installation', activeAt: Date.now(), replacedByMachineId: 'a' });
-    await act(async () => storage.setState({ machineListByServerId: { srv_build: [asleep, retired, online('z'), online('a')] }, machineListStatusByServerId: { srv_build: 'idle' } }));
+    await publishMachineInventoryForTest({ serverId: 'srv_build', accountId: 'owner' }, [asleep, retired, online('z'), online('a')]);
     const onSelect = vi.fn();
     const scope = await renderHook(() => useManagedControllerScope({ serverId, testIDPrefix: 'scope-probe', onSelect }));
     expect(scope.getCurrent().controller?.machineId).toBe('a');
-    await act(async () => storage.setState({ machineListByServerId: { srv_build: [online('z'), asleep, online('a'), retired] } }));
+    await act(async () => publishMachineInventoryForTest({ serverId: 'srv_build', accountId: 'owner' }, [online('z'), asleep, online('a'), retired]));
     expect(scope.getCurrent().controller?.machineId).toBe('a');
-    await act(async () => storage.setState({ machineListByServerId: { srv_build: [online('z'), asleep,
-      createControllerMachineFixture({ id: 'a', installationId: 'a-installation', active: false, activeAt: 0 })] } }));
+    const a = storage.getState().machineListByServerId.srv_build?.find(machine => machine.id === 'a');
+    if (!a) throw new Error('Expected the seeded a controller');
+    await act(async () => publishMachineActivityForTest([a], { active: false, activeAt: 0 }));
     // R2: an unavailable resolved default stays selected until the person chooses.
     expect(scope.getCurrent().controller?.machineId).toBe('a');
     expect(scope.getCurrent().selection?.state.kind).toBe('offline');
@@ -701,8 +705,8 @@ describe('provisioner picker demand', () => {
     expect(onSelect).toHaveBeenCalledWith({ machineId: 'z', installationId: 'z-installation' });
     await scope.rerender();
     expect(scope.getCurrent().controller?.machineId).toBe('z');
-    await act(async () => storage.setState({ machineListByServerId: { srv_build: [online('a'),
-      createControllerMachineFixture({ id: 'z', installationId: 'z-installation', activeAt: Date.now(), replacedByMachineId: 'a' })] } }));
+    await act(async () => publishMachineInventoryForTest({ serverId: 'srv_build', accountId: 'owner' }, [online('a'),
+      createControllerMachineFixture({ id: 'z', installationId: 'z-installation', activeAt: Date.now(), replacedByMachineId: 'a' })]));
     expect(scope.getCurrent().controller?.machineId).toBe('z');
     expect(scope.getCurrent().selection?.state.kind).toBe('replaced');
     expect(scope.getCurrent().selection?.resolveExecutionTarget()).toBeNull();
@@ -713,7 +717,7 @@ describe('provisioner picker demand', () => {
     const { storage } = await import('@/sync/domains/state/storage');
     const { useManagedControllerScope } = await import('./useManagedControllerScope');
     const online = (id: string) => createControllerMachineFixture({ id, installationId: `${id}-installation`, activeAt: Date.now(), metadata: null });
-    await act(async () => storage.setState({ machineListByServerId: { srv_build: [online('a'), online('z')] }, machineListStatusByServerId: { srv_build: 'idle' } }));
+    await publishMachineInventoryForTest({ serverId: 'srv_build', accountId: 'owner' }, [online('a'), online('z')]);
     // A navigation observation never becomes a deliberate default, even when Settings writes are refused.
     const syncRuntime = await import('@/sync/syncEngine');
     (createRequire(import.meta.url)('../../../../sync/sync.ts') as typeof import('@/sync/sync')).registerSyncRuntime(syncRuntime);
@@ -746,13 +750,15 @@ describe('provisioner picker demand', () => {
     const { useManagedControllerScope } = await import('./useManagedControllerScope');
     const machine = (id: string, online: boolean) => createControllerMachineFixture({ id, installationId: `${id}-installation`,
       active: online, activeAt: online ? Date.now() : 0, metadata: null });
-    await act(async () => storage.setState({ machineListByServerId: { srv_build: [machine('a', true), machine('z', true)] }, machineListStatusByServerId: { srv_build: 'idle' } }));
+    await publishMachineInventoryForTest({ serverId: 'srv_build', accountId: 'owner' }, [machine('a', true), machine('z', true)]);
     const first = await renderHook(() => useManagedControllerScope({ serverId: 'srv_build', testIDPrefix: 'scope-probe' }));
     const target = first.getCurrent().selection?.pickerRows.find(row => row.candidate.target.machineId === 'z')?.candidate.target;
     await act(async () => first.getCurrent().selection?.selectTarget(target!));
     await first.unmount();
     // The remembered pick is a preference among online machines, not a reason to land on one that is away.
-    await act(async () => storage.setState({ machineListByServerId: { srv_build: [machine('a', true), machine('z', false)] } }));
+    const z = storage.getState().machineListByServerId.srv_build?.find(machine => machine.id === 'z');
+    if (!z) throw new Error('Expected the seeded z controller');
+    await act(async () => publishMachineActivityForTest([z], { active: false, activeAt: 0 }));
     const second = await renderHook(() => useManagedControllerScope({ serverId: 'srv_build', testIDPrefix: 'scope-probe' }));
     expect(second.getCurrent().controller?.machineId).toBe('a');
     await second.unmount();
@@ -763,11 +769,13 @@ describe('provisioner picker demand', () => {
     const { useManagedControllerScope } = await import('./useManagedControllerScope');
     const machine = (id: string, online: boolean) => createControllerMachineFixture({ id, installationId: `${id}-installation`,
       active: online, activeAt: online ? Date.now() : 0, metadata: null });
-    await act(async () => storage.setState({ machineListByServerId: { srv_build: [machine('a', true), machine('b', true)] }, machineListStatusByServerId: { srv_build: 'idle' } }));
+    await publishMachineInventoryForTest({ serverId: 'srv_build', accountId: 'owner' }, [machine('a', true), machine('b', true)]);
     const scope = await renderHook(() => useManagedControllerScope({ serverId: 'srv_build', testIDPrefix: 'scope-probe' }));
     expect(scope.getCurrent().controller?.machineId).toBe('a');
     // 'b' goes away while the chooser is closed; opening it must show that, not the presence it had when it closed.
-    await act(async () => storage.setState({ machineListByServerId: { srv_build: [machine('a', true), machine('b', false)] } }));
+    const b = storage.getState().machineListByServerId.srv_build?.find(machine => machine.id === 'b');
+    if (!b) throw new Error('Expected the seeded b controller');
+    await act(async () => publishMachineActivityForTest([b], { active: false, activeAt: 0 }));
     const availability = () => scope.getCurrent().selection?.pickerRows
       .find(row => row.candidate.target.machineId === 'b')?.candidate.availability;
     const chip = scope.getCurrent().chip as React.ReactElement<{ onChipOpenChange(open: boolean): void }>;
@@ -777,12 +785,11 @@ describe('provisioner picker demand', () => {
   });
   it('retains a resolved controller after a failed request proves it unreachable', async () => {
     const serverId = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
-    const { storage } = await import('@/sync/domains/state/storage');
     const { useManagedControllerScope } = await import('./useManagedControllerScope');
     const { clearMachineRequestReachabilityForTest, recordMachineRequestFailed } = await import('@/sync/domains/machines/reachability/machineReachability');
     onTestFinished(clearMachineRequestReachabilityForTest);
     const online = (id: string) => createControllerMachineFixture({ id, installationId: `${id}-installation`, activeAt: Date.now(), metadata: null });
-    await act(async () => storage.setState({ machineListByServerId: { srv_build: [online('a'), online('z')] }, machineListStatusByServerId: { srv_build: 'idle' } }));
+    await publishMachineInventoryForTest({ serverId: 'srv_build', accountId: 'owner' }, [online('a'), online('z')]);
     const scope = await renderHook(() => useManagedControllerScope({ serverId, testIDPrefix: 'scope-probe' }));
     expect(scope.getCurrent().controller?.machineId).toBe('a');
 
@@ -798,7 +805,8 @@ describe('provisioner picker demand', () => {
     const { storage } = await import('@/sync/domains/state/storage');
     const { useManagedControllerScope } = await import('./useManagedControllerScope');
     const online = (id: string) => createControllerMachineFixture({ id, installationId: `${id}-installation`, activeAt: Date.now(), metadata: null });
-    await act(async () => storage.setState({ machineListByServerId: { srv_build: [online('a'), online('z')] }, machineListStatusByServerId: { srv_build: 'error' } }));
+    await publishMachineInventoryForTest({ serverId: 'srv_build', accountId: 'owner' }, [online('a'), online('z')]);
+    storage.setState({ machineListStatusByServerId: { srv_build: 'error' } });
     const onSelect = vi.fn();
     const scope = await renderHook(() => useManagedControllerScope({ serverId, testIDPrefix: 'scope-probe', onSelect,
       preferred: { machineId: 'a', installationId: 'a-installation' } }));
@@ -811,12 +819,11 @@ describe('provisioner picker demand', () => {
   });
   it('leaves automatic scope unselected when only offline or retired controllers exist', async () => {
     const serverId = await harness.addHome({ name: 'Build', serverUrl: 'https://build.example', serverIdentityId: 'srv_build', accountId: 'owner', currentAccount: true });
-    const { storage } = await import('@/sync/domains/state/storage');
     const { useManagedControllerScope } = await import('./useManagedControllerScope');
-    await act(async () => storage.setState({ machineListByServerId: { srv_build: [
+    await publishMachineInventoryForTest({ serverId: 'srv_build', accountId: 'owner' }, [
       createControllerMachineFixture({ id: 'ghost', installationId: 'ghost-installation', active: false, activeAt: 0 }),
       createControllerMachineFixture({ id: 'retired', installationId: 'retired-installation', activeAt: Date.now(), replacedByMachineId: 'next' }),
-    ] }, machineListStatusByServerId: { srv_build: 'idle' } }));
+    ]);
     const scope = await renderHook(() => useManagedControllerScope({ serverId, testIDPrefix: 'scope-probe' }));
     expect(scope.getCurrent().controller).toBeUndefined();
     await scope.unmount();
@@ -866,20 +873,14 @@ describe('provisioner picker demand', () => {
         accountId: 'owner',
         currentAccount: true,
       });
-      const { storage } = await import('@/sync/domains/state/storage');
-      storage.setState({
-        machineListByServerId: {
-          [serverId]: [
-            createControllerMachineFixture({
-              id: 'controller',
-              installationId: 'installation',
-              activeAt: Date.now(),
-              kind: 'persistent',
-            }),
-          ],
-        },
-        machineListStatusByServerId: { [serverId]: 'idle' },
-      });
+      await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [
+        createControllerMachineFixture({
+          id: 'controller',
+          installationId: 'installation',
+          activeAt: Date.now(),
+          kind: 'persistent',
+        }),
+      ]);
       const contribution = { pluginId: 'custom.compute', localId: 'native' };
       await publishNoAccountProvisioners(serverId);
       const provisioner = {
@@ -1103,12 +1104,8 @@ describe('provisioner picker demand', () => {
     });
     const provisioners = (hold.declared ?? [['alpha', 'Alpha', 'VM'], ['beta', 'Beta', 'VM']] as const)
       .map(([localId, title, kind, location, acquire]) => descriptor(localId, title, kind, location, acquire));
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: { [serverId]: ['controller', 'other'].map(id =>
-        createControllerMachineFixture({ id, installationId: `${id}-installation`, activeAt: Date.now(), kind: 'persistent' })) },
-      machineListStatusByServerId: { [serverId]: 'idle' },
-    });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, ['controller', 'other'].map(id =>
+      createControllerMachineFixture({ id, installationId: `${id}-installation`, activeAt: Date.now(), kind: 'persistent' })));
     const reads = { list: 0, check: new Map<string, number>() };
     let release: () => void = () => {};
     const gate = new Promise<void>(resolve => { release = resolve; });
@@ -1138,6 +1135,37 @@ describe('provisioner picker demand', () => {
     await publishNoAccountProvisioners(serverId);
     return { serverId, reads, release, provisioners };
   }
+
+  it('keeps Account creation offers when the selected controller catalog fails', async () => {
+    const { serverId } = await arrangeCatalog({ home: 'failed-controller-account-offers' });
+    const { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+    // An omitted intent retains the disabled answer installed by arrangeCatalog.
+    clearPluginAccountAvailabilityProjection();
+    replacePluginAccountAvailabilityProjection({
+      scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'owner' },
+      snapshot: { availabilityCursor: 2, inventoryComplete: false, intentReads: [], materializations: [], snapshots: [] },
+    });
+    harness.answer(serverId, '/v1/actions/machines.provisioners.list', { select: value => {
+      const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
+      return { body: ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'machines.provisioners.list', requestId: request.requestId,
+        execution: { ok: false, errorCode: 'controller_unavailable', error: 'controller_unavailable' } }) };
+    } });
+    const { useManagedProvisioners } = await import('./useManagedProvisioners');
+    const controller = { machineId: 'controller', installationId: 'controller-installation' };
+    const hook = await renderHook(() => useManagedProvisioners(serverId, undefined, controller));
+    try {
+      await waitForHomeGovernance(() => {
+        expect(hook.getCurrent().reading).toBe(false);
+        expect(hook.getCurrent().error).toBe('controller_unavailable');
+        expect(hook.getCurrent().provisioners.some(row => row.contribution.pluginId === 'happier.machine.vercel')).toBe(true);
+        expect(hook.getCurrent().current).toBe(false);
+        const accountOffer = hook.getCurrent().provisioners.find(row => row.contribution.pluginId === 'happier.machine.vercel')!;
+        expect(hook.getCurrent().isCurrentFor(buildQualifiedPluginContributionKey(accountOffer.contribution))).toBe(true);
+        expect(hook.getCurrent().isCurrentFor('custom.compute/alpha')).toBe(false);
+      });
+    } finally { await hook.unmount(); }
+  });
 
   it('recovers a cold controller catalog when Account availability arrives without Retry', async () => {
     const { serverId, reads } = await arrangeCatalog({});
@@ -1258,8 +1286,7 @@ describe('provisioner picker demand', () => {
     const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
     replacePluginAccountAvailabilityProjection({ scope: { serverId: resolveServerProfileScopeIdForIdentifier(serverId) || serverId, accountId: 'fold-owner' },
       snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({ machineListByServerId: { [serverId]: [] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'fold-owner' }, []);
     runtimeHost.current = 'native';
     onTestFinished(() => { runtimeHost.current = null; });
     const addComputer = vi.fn();
@@ -1475,11 +1502,11 @@ describe('provisioner picker demand', () => {
     expect(onSelect).toHaveBeenCalledOnce();
     await screen.unmount();
   });
-  it('says the chosen controller is offline, with its next step, while its last cards stay on screen (J8)', async () => {
+  it('keeps the reported check failure when controller activity changes, with Retry and retained cards', async () => {
     const { serverId } = await arrangeCatalog({ home: 'offline-cards' });
     const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
     const { storage } = await import('@/sync/domains/state/storage');
-    const { publishMachineActivity } = await import('@/sync/domains/machines/machineActivity');
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
     function FixedPicker() {
       return <MachineProvisionerPicker serverId={serverId} />;
     }
@@ -1488,10 +1515,14 @@ describe('provisioner picker demand', () => {
       .flatMap(node => node.props.cards as { title: string }[]);
     await waitForHomeGovernance(async () => { await act(async () => {}); expect(cards().some(card => card.title === 'Alpha')).toBe(true); });
     expect(screen.findByTestId('managed-picker.offline')).toBeNull();
-    const machine = storage.getState().machineListByServerId[serverId]!.find(entry => entry.id === 'controller')!;
-    await act(async () => publishMachineActivity(machine, { active: false, activeAt: 0 }, []));
-    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-picker.offline')).not.toBeNull());
-    expect(screen.findByTestId('managed-picker.offline-action')).not.toBeNull();
+    const scopeId = resolveServerProfileScopeIdForIdentifier(serverId);
+    const machine = storage.getState().machineListByServerId[scopeId]!.find(entry => entry.id === 'controller')!;
+    await act(async () => publishMachineActivityForTest([machine], { active: false, activeAt: 0 }));
+    await waitForHomeGovernance(() => expect(screen.findByTestId('managed-picker.unavailable')).not.toBeNull());
+    const failure = screen.tree.findAll(node => node.props.testID === 'managed-picker.unavailable' && 'diagnosticCode' in node.props)[0];
+    expect(failure?.props.diagnosticCode).toBe('controller_unavailable');
+    expect(screen.findByTestId('managed-picker.offline')).toBeNull();
+    expect(screen.findByTestId('managed-picker.unavailable-action')).not.toBeNull();
     expect(cards().some(card => card.title === 'Alpha')).toBe(true);
     await screen.unmount();
   });
@@ -1679,20 +1710,14 @@ describe('provisioner picker demand', () => {
       serverIdentityId: 'srv_other',
       accountId: 'other',
     });
-    const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        [first]: [
-          createControllerMachineFixture({
-            id: 'build-controller',
-            installationId: 'build-installation',
-            activeAt: Date.now(),
-            kind: 'persistent',
-          }),
-        ],
-      },
-      machineListStatusByServerId: { [first]: 'idle' },
-    });
+    await publishMachineInventoryForTest({ serverId: first, accountId: 'owner' }, [
+      createControllerMachineFixture({
+        id: 'build-controller',
+        installationId: 'build-installation',
+        activeAt: Date.now(),
+        kind: 'persistent',
+      }),
+    ]);
     harness.answer(first, '/v1/actions/machines.provisioners.list', {
       select: (value) => {
         const request = ExternalActionRequestEnvelopeV1Schema.parse(value);
@@ -1740,21 +1765,17 @@ describe('provisioner picker demand', () => {
     });
     const scopeId = identifierKind === 'portable' ? 'srv_build' : serverId;
     await publishNoAccountProvisioners(scopeId);
+    await publishMachineInventoryForTest({ serverId: scopeId, accountId: 'owner' }, [
+      createControllerMachineFixture({
+        id: 'asleep',
+        installationId: 'installation',
+        active: false,
+        activeAt: 0,
+        kind: 'persistent',
+      }),
+    ]);
     const { storage } = await import('@/sync/domains/state/storage');
-    storage.setState({
-      machineListByServerId: {
-        srv_build: [
-          createControllerMachineFixture({
-            id: 'asleep',
-            installationId: 'installation',
-            active: false,
-            activeAt: 0,
-            kind: 'persistent',
-          }),
-        ],
-      },
-      machineListStatusByServerId: { srv_build: 'loading' },
-    });
+    storage.setState({ machineListStatusByServerId: { srv_build: 'loading' } });
     const { MachineProvisionerPicker } =
       await import('./MachineProvisionerPicker');
     const { useManagedControllerScope } = await import('./useManagedControllerScope');
@@ -1768,13 +1789,9 @@ describe('provisioner picker demand', () => {
     await act(async () => { storage.setState({ machineListStatusByServerId: { srv_build: 'idle' } }); });
     expect(controllerScope.getCurrent().status).toBe('idle');
     await controllerScope.unmount();
-    storage.setState({
-      machineListByServerId: {
-        srv_build: [
-          createControllerMachineFixture({ id: 'plain', installationId: null }),
-        ],
-      },
-    });
+    await publishMachineInventoryForTest({ serverId: scopeId, accountId: 'owner' }, [
+      createControllerMachineFixture({ id: 'plain', installationId: null }),
+    ]);
     const onSetUpThisComputer = vi.fn();
     const empty = await renderPicker(
       <MachineProvisionerPicker
@@ -1793,11 +1810,10 @@ describe('provisioner picker demand', () => {
   });
   it('says why nothing is listed when every controller is offline, instead of an empty page under the chip', async () => {
     const homeId = await harness.addHome({ name: 'Build', serverUrl: 'https://offline-picker.example', serverIdentityId: 'srv_offline_picker', accountId: 'owner', currentAccount: true });
-    const { storage } = await import('@/sync/domains/state/storage');
     const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
-    await act(async () => storage.setState({ machineListByServerId: { [homeId]: [
+    await publishMachineInventoryForTest({ serverId: homeId, accountId: 'owner' }, [
       createControllerMachineFixture({ id: 'studio', installationId: 'studio-installation', active: false, activeAt: 0 }),
-    ] }, machineListStatusByServerId: { [homeId]: 'idle' } }));
+    ]);
     await publishNoAccountProvisioners(homeId);
     const screen = await renderPicker(<MachineProvisionerPicker serverId={homeId} />);
     expect(screen.findByTestId('managed-picker.no-controller')).toBeNull();
@@ -1814,11 +1830,10 @@ describe('provisioner picker demand', () => {
       snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
     runtimeHost.current = 'browser';
     onTestFinished(() => { runtimeHost.current = null; });
-    const { storage } = await import('@/sync/domains/state/storage');
     const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
-    await act(async () => storage.setState({ machineListByServerId: { [homeId]: [
+    await publishMachineInventoryForTest({ serverId: homeId, accountId: 'owner' }, [
       createControllerMachineFixture({ id: 'studio', installationId: 'studio-installation', active: false, activeAt: 0 }),
-    ] }, machineListStatusByServerId: { [homeId]: 'idle' } }));
+    ]);
     const screen = await renderPicker(<MachineProvisionerPicker serverId={homeId} onSelectProvisioner={() => {}} />);
     try {
       // Loading, and then settled: an Account provider needs no Machine, so the page never says one must be online.
@@ -1829,13 +1844,12 @@ describe('provisioner picker demand', () => {
   });
   it('asks for a choice instead of saying nothing is online when a machine is online but none was preselected', async () => {
     const homeId = await harness.addHome({ name: 'Build', serverUrl: 'https://unpicked-picker.example', serverIdentityId: 'srv_unpicked_picker', accountId: 'owner', currentAccount: true });
-    const { storage } = await import('@/sync/domains/state/storage');
     const { MachineProvisionerPicker } = await import('./MachineProvisionerPicker');
     const { t } = await import('@/text');
     // Online, but a shared machine is never the page's automatic default.
-    await act(async () => storage.setState({ machineListByServerId: { [homeId]: [
+    await publishMachineInventoryForTest({ serverId: homeId, accountId: 'owner' }, [
       createControllerMachineFixture({ id: 'teammate', installationId: 'teammate-installation', activeAt: Date.now(), isShared: true }),
-    ] }, machineListStatusByServerId: { [homeId]: 'idle' } }));
+    ]);
     await publishNoAccountProvisioners(homeId);
     const screen = await renderPicker(<MachineProvisionerPicker serverId={homeId} />);
     await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain(t('managedMachines.add.chooseController')));
@@ -1850,7 +1864,7 @@ describe('provisioner picker demand', () => {
     const screen = await renderPicker(<MachineProvisionerPicker serverId={homeId} />);
     expect(screen.findByTestId('managed-picker.no-controller')).toBeNull();
     expect(screen.findByTestId('managed-picker.loading')).not.toBeNull();
-    await act(async () => storage.setState({ machineListByServerId: { [homeId]: [] }, machineListStatusByServerId: { [homeId]: 'idle' } }));
+    await act(async () => publishMachineInventoryForTest({ serverId: homeId, accountId: 'owner' }, []));
     expect(screen.findByTestId('managed-picker.no-controller')).not.toBeNull();
     await act(async () => storage.setState({ machineListStatusByServerId: { [homeId]: 'error' }, machineListByServerId: { [homeId]: null } }));
     expect(screen.findByTestId('managed-picker.no-controller')).toBeNull();

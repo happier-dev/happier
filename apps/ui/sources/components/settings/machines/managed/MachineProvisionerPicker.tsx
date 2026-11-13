@@ -12,9 +12,6 @@ import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useServerProfilesGeneration } from '@/hooks/server/useServerProfilesGeneration';
 import { listServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { resolveHomeDisplayLabel } from '@/components/settings/server/homeDisplayName';
-import { resolveMachinePickerPresence } from '@/sync/domains/machines/identity/resolveMachinePickerPresence';
-import { useMachineReachabilityRevision } from '@/sync/domains/machines/reachability/useMachineReachabilityRevision';
-import { useMachinePresenceNowMs } from '@/hooks/machine/useMachinePresenceNowMs';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 import { getMachineSentenceName } from '@/utils/sessions/machineDisplayNames';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
@@ -74,7 +71,6 @@ export function MachineProvisionerPicker(props: MachineProvisionerPickerProps) {
 }
 
 function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
-    useMachineReachabilityRevision();
     const handler = React.useRef<(registration: ActionApprovalRegistration) => void>(() => {});
     const onApprovalPending = React.useCallback((registration: ActionApprovalRegistration) => handler.current(registration), []);
     // "Managed from": the Machine that runs the offers placed on a Machine. The invoking host can also place
@@ -82,7 +78,7 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
     const scope = useManagedControllerScope({ serverId: props.serverId, observeThisComputer: !props.presetOnly, testIDPrefix: 'managed-picker.controller' });
     const controller = props.presetOnly ? undefined : scope.controller;
     const catalog = useManagedProvisioners(props.serverId, onApprovalPending, controller);
-    const { checks, setChecks } = catalog;
+    const { checks, setChecks, isCurrentFor } = catalog;
     const approval = useActionApprovalContinuation({ serverId: props.serverId, scopeKey: JSON.stringify([props.serverId, catalog.binding?.accountId]), onExecuted: () => {} });
     handler.current = approval.requestApproval;
     const router = useRouter();
@@ -117,6 +113,7 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
         const readChecks = async () => {
           await Promise.all(catalog.provisioners.map(async provisioner => {
             const id = buildQualifiedPluginContributionKey(provisioner.contribution);
+            if (!isCurrentFor(id)) return;
             const placement = readMachineProvisionerHostAvailability({ host: accountHost === 'browser' ? 'browser' : 'native',
                 provisioner: provisioner.descriptor, acquireExecutionTarget: provisioner.acquireExecutionTarget, controller });
             if (!placement.available) return;
@@ -131,9 +128,9 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
         void readChecks().then(() => { if (current()) setError(null); })
             .catch(() => { if (current()) setError('unavailable'); });
         return () => { abort.abort(); retirement.dispose(); };
-    }, [props.presetOnly, catalog.binding, catalog.homeId, catalog.client, catalog.provisioners, catalog.reading, controller, onApprovalPending, accountHost, setChecks]);
+    }, [props.presetOnly, catalog.binding, catalog.homeId, catalog.client, catalog.provisioners, catalog.reading, controller, onApprovalPending, accountHost, setChecks, isCurrentFor]);
     const open = (contribution: string, placedController: ManagedControllerV1 | undefined, connectPurpose?: string) => {
-        if (!catalog.current) return;
+        if (!catalog.isCurrentFor(contribution)) return;
         const handoff = placedController ? { controller: placedController } : {};
         if (props.onSelectProvisioner) {
             if (catalog.binding?.isCurrent()) props.onSelectProvisioner({ serverId: props.serverId, provisioner: contribution, ...handoff,
@@ -162,7 +159,7 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
             location: provisioner.descriptor.billing.location === 'local' ? 'local' : 'cloud', enrollmentRole: provisioner.descriptor.enrollmentRole,
             acquire: provisioner.acquireExecutionTarget === 'daemon' ? 'daemon' : 'account', mark: (size: number) => markFor(provisioner, size),
             status: { tone: 'none', label: '' }, action: { kind: 'choose', label: t('managedMachines.add.action.choose'),
-                onPress: () => open(buildQualifiedPluginContributionKey(provisioner.contribution), undefined), disabled: !catalog.current } }];
+                onPress: () => open(buildQualifiedPluginContributionKey(provisioner.contribution), undefined), disabled: !catalog.isCurrentFor(buildQualifiedPluginContributionKey(provisioner.contribution)) } }];
         if (waitsForComputer(provisioner, controller)) { waiting.push(titleOf(provisioner)); return []; }
         const location = provisioner.descriptor.billing.location;
         const id = buildQualifiedPluginContributionKey(provisioner.contribution);
@@ -224,15 +221,11 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
                     outcome: createPluginSurfaceActionFailure('unavailable', 'unavailable') }); });
             } } : { kind: 'choose', label: t(connectPurpose ? 'managedMachines.add.action.connect' : 'managedMachines.add.action.choose'),
                 onPress: () => open(id, placement.controller, connectPurpose),
-                // Retained checks describe the card; the current controller catalog admits the handoff.
-                ...(!catalog.current || hostPending || unreadable || check?.available === false && missingExecutable
+                // Retained checks describe the card; its answering catalog owns whether the handoff is current.
+                ...(!catalog.isCurrentFor(id) || hostPending || unreadable || check?.available === false && missingExecutable
                     ? { disabled: true } : {}) } }];
     });
     const controllerName = scope.machine ? getMachineSentenceName(scope.machine) : '';
-    const observedMachines = React.useMemo(() => scope.machine ? [scope.machine] : [], [scope.machine]);
-    const presenceNowMs = useMachinePresenceNowMs(observedMachines);
-    const controllerPresence = scope.machine ? resolveMachinePickerPresence(scope.machine, presenceNowMs,
-        catalog.binding?.isCurrent() ? catalog.binding.scope : null).status : 'unknown';
     const failedCheck = Object.values(checks).find(result => result.kind === 'failed' && result.code !== 'credential_unavailable');
     const checkFailed = failedCheck?.kind === 'failed';
     const failure = catalog.error ?? error ?? (failedCheck?.kind === 'failed' ? failedCheck.code : null);
@@ -245,9 +238,7 @@ function MachineProvisionerCatalog(props: MachineProvisionerPickerProps) {
             ? <SurfaceStateCard testID="managed-picker.no-online-controller" kind="unavailable" size="line"
             title={t(scope.hasOnlineCandidate ? 'managedMachines.add.chooseController' : 'managedMachines.add.noOnlineController')} />
             : null)
-        : (failure || cards.length === 0) && controllerPresence === 'offline' ? <SurfaceStateCard testID="managed-picker.offline" kind="unavailable" size="line"
-            title={t('managedMachines.add.controllerOffline', { controller: controllerName })} action={{ label: t('common.retry'), onPress: catalog.refresh }} />
-        : failure || cards.length === 0 && controllerPresence === 'unknown' ? <SurfaceStateCard testID="managed-picker.unavailable" kind={controllerPresence === 'unknown' ? 'unavailable' : 'error'} size="line" diagnosticCode={failure ?? undefined}
+        : failure ? <SurfaceStateCard testID="managed-picker.unavailable" kind="error" size="line" diagnosticCode={failure}
             diagnosticDetail={failure ? describeManagedProvisionerFailure(failure) : undefined}
             title={t(partialRead ? 'managedMachines.add.checksUnreadable' : 'managedMachines.add.controllerUnreadable', { controller: controllerName })}
             action={{ label: t('common.retry'), onPress: catalog.refresh }} />

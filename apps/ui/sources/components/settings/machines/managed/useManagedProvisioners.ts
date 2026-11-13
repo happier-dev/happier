@@ -24,7 +24,7 @@ type ProvisionerPresentation = Readonly<{
     binding: ServerCredentialAccountScopeBinding | null; accountId: string | null; requestKey: string;
     provisioners: MachineProvisionersListResultV1['provisioners']; checks: ProvisionerChecks;
     error: string | null; loading: boolean;
-    settled: Readonly<{ binding: ServerCredentialAccountScopeBinding; requestKey: string }> | null;
+    settled: Readonly<{ binding: ServerCredentialAccountScopeBinding; requestKey: string; contributionKeys: readonly string[] }> | null;
 }>;
 // Like managed inventory, retain only presentation under the existing Account
 // lifetime. Unmount still cancels reads; this grants no execution authority.
@@ -104,9 +104,10 @@ export function useManagedProvisioners(serverId: string, onApprovalPending?: (re
                 // Account availability that has not loaded yet is readiness, not an answer: the read stays
                 // pending and runs again when the Account projection publishes (`accountReader` below).
                 if (isAccountAvailabilityPending(result)) return retainShallow(current, { ...current, error: null });
-                const settled = retainShallow(current.settled ?? undefined, { binding, requestKey });
-                if (result.kind === 'failed') return retainShallow(current, { ...current, settled, loading: false, error: result.code });
-                const provisioners = [...result.value.provisioners];
+                const provisioners = [...(result.kind === 'succeeded' ? result.value.provisioners
+                    : current.provisioners.filter(entry => accountResult?.kind !== 'succeeded' || entry.acquireExecutionTarget !== 'account'))];
+                const contributionKeys = result.kind === 'succeeded'
+                    ? result.value.provisioners.map(entry => buildQualifiedPluginContributionKey(entry.contribution)) : [];
                 const seen = new Set(provisioners.map(entry => buildQualifiedPluginContributionKey(entry.contribution)));
                 // The selected daemon owns its installed catalog and OS filtering. Account creation
                 // offers are also available when that installation has no copy of their declaration.
@@ -114,13 +115,18 @@ export function useManagedProvisioners(serverId: string, onApprovalPending?: (re
                     : accountResult?.kind === 'failed' ? current.provisioners : EMPTY_PROVISIONERS;
                 for (const entry of accountEntries) {
                     const key = buildQualifiedPluginContributionKey(entry.contribution);
-                    if (entry.acquireExecutionTarget !== 'account' || seen.has(key)) continue;
+                    if (entry.acquireExecutionTarget !== 'account') continue;
+                    if (accountResult?.kind === 'succeeded' && !contributionKeys.includes(key)) contributionKeys.push(key);
+                    if (seen.has(key)) continue;
                     seen.add(key);
                     provisioners.push(entry);
                 }
+                const settled = retainShallow(current.settled ?? undefined, { binding, requestKey,
+                    contributionKeys: retainDeep(current.settled?.contributionKeys, contributionKeys) });
                 return retainShallow(current, { ...current, settled, loading: false,
                     provisioners: retainDeep(current.provisioners, provisioners),
-                    error: accountResult?.kind === 'failed' && !isAccountAvailabilityPending(accountResult) ? accountResult.code : null });
+                    error: result.kind === 'failed' ? result.code
+                        : accountResult?.kind === 'failed' && !isAccountAvailabilityPending(accountResult) ? accountResult.code : null });
             });
         };
         const read = (namedController?: ManagedControllerV1) => client.read('machines.provisioners.list', {
@@ -130,8 +136,9 @@ export function useManagedProvisioners(serverId: string, onApprovalPending?: (re
         const selectedRead = read(selectedController);
         const accountRead = selectedController && !contribution ? read() : undefined;
         void selectedRead.then(async result => {
-            // A failed controller read settles immediately with its retained cards, as before.
-            publish(result, result.kind === 'succeeded' ? await accountRead : undefined);
+            // A controller failure cannot suppress independently available Account offers.
+            if (result.kind === 'failed') publish(result);
+            publish(result, await accountRead);
         });
         return () => { abort.abort(); retirement.dispose(); };
     }, [enabled, binding, client, homeId, requestKey, contributionKey, refreshRevision, lifetime, accountReader]);
@@ -145,7 +152,11 @@ export function useManagedProvisioners(serverId: string, onApprovalPending?: (re
         provisioners: [], error: resolution.kind === 'resolving' || resolution.kind === 'bound' ? null : resolution.kind,
         loading: resolution.kind === 'resolving' || resolution.kind === 'bound',
     };
-    return { binding, resolution, homeId, client, provisioners: visible.provisioners,
+    const settledCurrent = enabled && sameAccount && homeId !== null && binding?.isCurrent() === true
+        && state.settled?.binding === binding && state.settled.requestKey === requestKey;
+    const isCurrentFor = React.useCallback((key: string) => settledCurrent && state.settled?.contributionKeys.includes(key) === true,
+        [settledCurrent, state.settled]);
+    return { binding, resolution, homeId, client, provisioners: visible.provisioners, isCurrentFor,
         checks: enabled && sameAccount ? state.checks : EMPTY_CHECKS, setChecks,
         error: enabled && binding && !homeId ? 'unsupported_action' : visible.error,
         // Read demand and initial presentation are separate: an equal revalidation

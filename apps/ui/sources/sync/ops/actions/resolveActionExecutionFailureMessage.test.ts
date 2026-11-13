@@ -1,14 +1,38 @@
 import { describe, expect, it } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { PluginUiPresentActionFailureRequestV1Schema } from '@happier-dev/protocol/plugins/ui/client';
+import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { HappyError } from '@/utils/errors/errors';
 
 import { t } from '@/text';
 
 import { presentActionExecutionFailure, resolveActionExecutionErrorMessage, resolveActionExecutionFailureMessage, resolveActionExecutionFailureTitle } from './resolveActionExecutionFailureMessage';
+import { resolveSessionSpawnNewResultFailureMessage } from './sessionSpawnFailurePresentation';
 
 describe('Action failure presentation', () => {
+    it('retains a child Session refusal through returned and thrown parent Action failures', () => {
+        const child = SessionSpawnNewActionResultV1Schema.parse({ type: 'error', code: 'agent_signed_out',
+            retryable: false, agentId: 'claude', launchError: { kind: 'launch_error', code: 'agent_signed_out',
+                message: 'Private native authentication diagnostic',
+                failureCause: { phase: 'authentication', failureReason: 'authentication_required' } } });
+        if (child.type !== 'error') throw new Error('Expected a Session refusal');
+        const expected = resolveSessionSpawnNewResultFailureMessage(child);
+        const failure = { ok: false, errorCode: child.code, error: child.code, details: child };
+        expect(resolveActionExecutionFailureMessage(failure, 'Parent unavailable')).toBe(expected);
+        expect(resolveActionExecutionErrorMessage(new HappyError(child.code, false,
+            { code: child.code, details: child }), 'Parent unavailable')).toBe(expected);
+        expect(expected).not.toContain(child.launchError?.message);
+        expect(resolveActionExecutionFailureMessage({ ...failure, message: 'Choose another signed-in Agent.' }, 'fallback'))
+            .toBe('Choose another signed-in Agent.');
+    });
+    it('presents a typed interrupted read without exposing socket adapter text', () => {
+        const error = 'Socket disconnected before the read completed';
+        const failure = { ok: false as const, errorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE, error };
+        expect(resolveActionExecutionErrorMessage(new RpcError(error, RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE), 'fallback'))
+            .toBe(t('errors.networkError'));
+        expect(resolveActionExecutionFailureMessage(failure, 'fallback')).toBe(t('errors.networkError'));
+    });
     it('keeps consumer refusal reasons and recovery in prose, with correlation in Details', () => {
         const cases = [
             { consumer: 'plugin action', errorCode: 'credential_unavailable', message: 'Sign in to the provider.',
@@ -25,8 +49,7 @@ describe('Action failure presentation', () => {
                 ...(row.message ? { message: row.message } : {}),
                 ...(row.remediation ? { remediation: row.remediation } : {}),
             });
-            const returned = { ok: false, ...failure };
-            const input = row.consumer === 'plugin action' ? { ok: true, result: returned } : returned;
+            const input = row.consumer === 'plugin action' ? { ok: true, result: failure } : failure;
             expect(resolveActionExecutionFailureMessage(input, 'Fallback'), row.consumer).toBe(row.expected);
             if (row.consumer === 'Account erasure') {
                 expect(resolveActionExecutionErrorMessage(new HappyError('Private transport detail', false,
