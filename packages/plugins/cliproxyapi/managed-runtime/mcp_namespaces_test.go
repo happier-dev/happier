@@ -96,7 +96,7 @@ func TestCodexMcpNamespaceRoundTrip(t *testing.T) {
 				if response.StatusCode != 200 {
 					t.Fatalf("response %d: %s", response.StatusCode, body)
 				}
-				if len(model.names) != 1 || model.names[0] != "mcp__happier__action_spec_search" {
+				if len(model.names) != 1 || model.names[0] != "mcp__7_happier__action_spec_search" {
 					t.Fatalf("presented names = %v; expected flat MCP function", model.names)
 				}
 				for _, fragment := range []string{`"namespace":"mcp__happier"`, `"name":"action_spec_search"`, `call_01a1d2e5e25c76f399c8cfb81136ee3c`} {
@@ -172,7 +172,7 @@ func TestNativeCodexMcpNamespaceRoundTrip(t *testing.T) {
 		t.Fatalf("history was not flattened: %s", model.requests[1])
 	}
 	for _, name := range model.names {
-		if name != "mcp__happier__action_spec_search" {
+		if name != "mcp__7_happier__action_spec_search" {
 			t.Fatalf("model-facing name = %q", name)
 		}
 	}
@@ -214,7 +214,7 @@ func TestCodexMcpFixtureProcess(t *testing.T) {
 func TestMcpNamespaceContinuationWithoutRepeatedCatalog(t *testing.T) {
 	request := []byte(`{"input":[{"type":"function_call","call_id":"call_144","namespace":"mcp__happier","name":"action_spec_search","arguments":"{}"},{"type":"function_call_output","call_id":"call_144","output":"ACTION_SPECS_OK"}],"tool_choice":{"type":"function","namespace":"mcp__happier","name":"action_spec_search"}}`)
 	translated := mcpNamespaceTranslation{}.NormalizeRequest(context.Background(), sdktranslator.FormatOpenAIResponse, sdktranslator.FormatCodex, "muse-spark-1.3", request, true)
-	if strings.Contains(string(translated), `"namespace"`) || !strings.Contains(string(translated), `"name":"mcp__happier__action_spec_search"`) || !strings.Contains(string(translated), "ACTION_SPECS_OK") {
+	if strings.Contains(string(translated), `"namespace"`) || !strings.Contains(string(translated), `"name":"mcp__7_happier__action_spec_search"`) || !strings.Contains(string(translated), "ACTION_SPECS_OK") {
 		t.Fatalf("continuation lost flat-name correlation: %s", translated)
 	}
 }
@@ -228,7 +228,7 @@ func TestMcpNamespacePreservesOtherToolsAndUnofferedCalls(t *testing.T) {
 			t.Fatalf("lost tool contract %s: %s", fragment, translated)
 		}
 	}
-	for _, name := range []string{"mcp__happier.action_spec_search", "mcp__happier__unoffered"} {
+	for _, name := range []string{"mcp__happier.action_spec_search", "mcp__happier__action_spec_search", "mcp__happier__unoffered"} {
 		response := []byte(fmt.Sprintf(`{"type":"response.output_item.done","item":{"type":"function_call","name":%q,"arguments":"{}"}}`, name))
 		got := hook.NormalizeResponseBefore(context.Background(), sdktranslator.FormatCodex, sdktranslator.FormatOpenAIResponse, "muse-spark-1.3", request, translated, response, true)
 		if string(got) != string(response) {
@@ -243,12 +243,59 @@ func TestMcpNamespaceDeferredDiscovery(t *testing.T) {
 	request := []byte(`{"input":[{"type":"tool_search_output","call_id":"search_1","status":"completed","execution":"client","tools":[{"type":"namespace","name":"mcp__happier","tools":[{"type":"function","name":"action_spec_search","defer_loading":true,"parameters":{}}]}]}]}`)
 	hook := mcpNamespaceTranslation{}
 	translated := hook.NormalizeRequest(context.Background(), sdktranslator.FormatOpenAIResponse, sdktranslator.FormatCodex, "muse-spark-1.3", request, true)
-	if strings.Contains(string(translated), `"type":"namespace"`) || !strings.Contains(string(translated), `"name":"mcp__happier__action_spec_search"`) {
+	if strings.Contains(string(translated), `"type":"namespace"`) || !strings.Contains(string(translated), `"name":"mcp__7_happier__action_spec_search"`) {
 		t.Fatalf("deferred catalog remains namespaced: %s", translated)
 	}
-	response := []byte(`{"type":"response.output_item.added","item":{"type":"function_call","call_id":"call_144","name":"mcp__happier__action_spec_search","arguments":"{}"}}`)
+	response := []byte(`{"type":"response.output_item.added","item":{"type":"function_call","call_id":"call_144","name":"mcp__7_happier__action_spec_search","arguments":"{}"}}`)
 	restored := hook.NormalizeResponseBefore(context.Background(), sdktranslator.FormatCodex, sdktranslator.FormatOpenAIResponse, "muse-spark-1.3", request, translated, response, true)
 	if !strings.Contains(string(restored), `"namespace":"mcp__happier"`) || !strings.Contains(string(restored), `"name":"action_spec_search"`) {
 		t.Fatalf("deferred tool identity lost: %s", restored)
+	}
+}
+
+// Different native addresses must remain reachable even when joining them with
+// double underscores would produce the same model-facing name.
+func TestMcpNamespaceInjectiveFlatNames(t *testing.T) {
+	for _, deferred := range []bool{false, true} {
+		t.Run(fmt.Sprint("deferred=", deferred), func(t *testing.T) {
+			catalog := `[{"type":"namespace","name":"mcp__a","tools":[{"type":"function","name":"b__c","parameters":{}}]},{"type":"namespace","name":"mcp__a__b","tools":[{"type":"function","name":"c","parameters":{}}]}]`
+			request := []byte(`{"tools":` + catalog + `,"input":[{"type":"function_call","namespace":"mcp__a","name":"b__c","call_id":"first","arguments":"{}"}],"tool_choice":{"type":"function","namespace":"mcp__a__b","name":"c"}}`)
+			if deferred {
+				request = []byte(`{"input":[{"type":"tool_search_output","tools":` + catalog + `}]}`)
+			}
+			hook := mcpNamespaceTranslation{}
+			translated := hook.NormalizeRequest(context.Background(), sdktranslator.FormatOpenAIResponse, sdktranslator.FormatCodex, "muse-spark-1.3", request, true)
+			var root wireObject
+			_ = json.Unmarshal(translated, &root)
+			var tools []wireObject
+			if deferred {
+				var input []wireObject
+				_ = json.Unmarshal(root["input"], &input)
+				root = input[0]
+			}
+			_ = json.Unmarshal(root["tools"], &tools)
+			if len(tools) != 2 || textField(tools[0], "name") == textField(tools[1], "name") {
+				t.Fatalf("distinct offered addresses collided: %s", translated)
+			}
+			for i, address := range []toolAddress{{"mcp__a", "b__c"}, {"mcp__a__b", "c"}} {
+				response := encodeWire(wireObject{"type": encodeWire("function_call"), "name": tools[i]["name"], "arguments": encodeWire("{}")})
+				restored := hook.NormalizeResponseBefore(context.Background(), sdktranslator.FormatCodex, sdktranslator.FormatOpenAIResponse, "muse-spark-1.3", request, translated, response, true)
+				var call wireObject
+				_ = json.Unmarshal(restored, &call)
+				if textField(call, "namespace") != address.namespace || textField(call, "name") != address.name {
+					t.Fatalf("wrong restored address %d: %s", i, restored)
+				}
+			}
+			if !deferred {
+				_ = json.Unmarshal(translated, &root)
+				var input []wireObject
+				_ = json.Unmarshal(root["input"], &input)
+				var choice wireObject
+				_ = json.Unmarshal(root["tool_choice"], &choice)
+				if textField(input[0], "name") != textField(tools[0], "name") || textField(choice, "name") != textField(tools[1], "name") {
+					t.Fatalf("history/choice diverged from catalog: %s", translated)
+				}
+			}
+		})
 	}
 }

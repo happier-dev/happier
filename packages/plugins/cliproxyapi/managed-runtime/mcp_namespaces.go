@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v8/sdk/translator"
@@ -28,7 +29,14 @@ func mcpAddress(o wireObject) (toolAddress, bool) {
 	address := toolAddress{textField(o, "namespace"), textField(o, "name")}
 	return address, strings.HasPrefix(address.namespace, "mcp__") && address.name != ""
 }
-func (a toolAddress) flat() string { return a.namespace + "__" + a.name }
+
+// Length-prefix the namespace so embedded double underscores in either
+// component cannot merge two native addresses. This is catalog-independent,
+// keeping continuation history and deferred discovery on the same encoding.
+func (a toolAddress) flat() string {
+	namespace := strings.TrimPrefix(a.namespace, "mcp__")
+	return "mcp__" + strconv.Itoa(len(namespace)) + "_" + namespace + "__" + a.name
+}
 
 func flattenMcpCatalog(root wireObject) map[string]toolAddress {
 	addresses := map[string]toolAddress{}
