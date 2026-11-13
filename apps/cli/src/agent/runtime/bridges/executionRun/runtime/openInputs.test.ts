@@ -5,6 +5,7 @@ import { buildExecutionRunConfiguration, resolveExecutionRunChildSelection } fro
 import type { ExecutionRunAppliedParentSelection } from './openInputs';
 import { decodeScmDiffSummaryModelOverride, encodeScmDiffSummaryModelOverride } from '@happier-dev/protocol/actions/settings/scmDiffSummarySettings';
 import { projectExecutionRunResolvedSelection } from '@happier-dev/protocol/execution/runs/requestedConfiguration';
+import { findCatalogEntry } from '@/agent/catalog/registry';
 
 const codexTarget = { kind: 'builtInAgent', agentId: 'codex' } as const;
 const claudeTarget = { kind: 'builtInAgent', agentId: 'claude' } as const;
@@ -54,6 +55,23 @@ it('delivers a native model keyed by the admitted installed Agent without requir
 });
 
 describe('resolveExecutionRunChildSelection', () => {
+    it('inherits a supported Account through the captured child declaration absent from the global catalog', () => {
+        const child = resolveExecutionRunChildSelection({
+            backendTarget: { kind: 'backend', backendId: 'acme.snapshot/child' },
+            agentCatalogEntry: findCatalogEntry('codex'),
+            lifecycle: 'attached', modelId: 'child-model',
+            parent: { ...appliedParent, modelSelection: { ...providerSelection, providerConnectionId: null } },
+        });
+        expect(child.connectedServices).toEqual({ v: 2, bindingsByServiceId: {
+            'happier.agent.codex/openai-codex': { source: 'connected', selection: 'group', groupId: 'parent-pool' },
+        } });
+        expect(() => resolveExecutionRunChildSelection({
+            backendTarget: { kind: 'backend', backendId: 'acme.snapshot/child' },
+            agentCatalogEntry: null,
+            lifecycle: 'attached', modelId: 'child-model',
+            parent: { ...appliedParent, modelSelection: { ...providerSelection, providerConnectionId: null } },
+        })).toThrow(expect.objectContaining({ code: 'execution_run_child_choice_required' }));
+    });
     it.each([undefined, 'chosen/custom'] as const)('carries resolved child provenance into the native configuration for %s', modelId => {
         const child = resolveExecutionRunChildSelection({ backendTarget: claudeTarget, lifecycle: 'attached',
             parent: { ...appliedParent, connectedServices: null }, ...(modelId ? { modelId } : {}) });

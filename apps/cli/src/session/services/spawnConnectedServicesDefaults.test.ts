@@ -1,9 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
+import axios from 'axios';
+import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { QualifiedConnectedAccountPurposeBindingsV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
+import { projectManifestAgentContribution } from '@/plugins/projection/registry/projectManifestAgentContribution';
+import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import {
   createSpawnConnectedServicesTeamResourceCatalogResolver,
   mergeSessionTeamCredentialBindingIntents,
@@ -11,6 +19,7 @@ import {
   resolvePurposeTeamCredentialBindingIntentsFromHome,
   resolveSpawnConnectedServicesDefaultDisposition,
   resolveSpawnConnectedServicesDefaults,
+  resolveSessionSpawnConnectedServicesDefaultsPayload,
 } from './spawnConnectedServicesDefaults';
 
 // Codex's real declared purpose, read from the bundled contribution projection.
@@ -27,6 +36,64 @@ const nativeBindingsForAgent = (agentId: string) => Object.fromEntries(
 );
 
 describe('resolveSpawnConnectedServicesDefaults', () => {
+  it('uses the retained authored Agent for Account defaults without installing it in the ambient catalog', async () => {
+    const pluginId = 'acme.retained-defaults';
+    const definition = PluginAgentContributionV2Schema.parse({
+      id: 'child', title: 'Retained child', runtime: { kind: 'custom' }, primary: 'executionRuns',
+      capabilities: { executionRuns: { open: ['create'], checkpoint: false, stop: true } },
+      connectedAccounts: [{ purpose: 'model', service: { pluginId, localId: 'subscription' },
+        materializationKinds: ['environment'], credentialKinds: ['token'] }],
+    });
+    const agent = projectManifestAgentContribution({
+      pluginId, definition, provenance: 'external', source: { kind: 'path' },
+    });
+    const contributions = createResolvedContributionRegistry({ agents: [agent] });
+    const catalogEntry = contributions.catalogEntriesById[agent.id];
+    const scope = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({
+      agentId: agent.id, contributions, catalogEntry,
+    })?.authorizedPurposes[0];
+    if (!scope || !catalogEntry) throw new Error('Expected the authored child purpose and catalog entry');
+    expect(readCurrentContributionRegistry().agentDefinitionsById.has(agent.id)).toBe(false);
+
+    const credentials = { token: 'retained-child-default', encryption: null };
+    const serverHttpBaseUrl = 'https://retained-defaults.example';
+    // Only Home HTTP is replaced; bootstrap, purpose declarations, catalog opening,
+    // Account selection and Session binding materialization all stay real.
+    const get = vi.spyOn(axios, 'get').mockImplementation(async input => {
+      const path = new URL(String(input)).pathname;
+      if (path === '/v2/account/settings') return { status: 200,
+        data: { version: 7, content: { t: 'plain', v: {} } } };
+      if (path.endsWith('/currentness')) return { status: 200, data: { mode: 'plain', version: 1,
+        signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      if (path.endsWith('/connected-accounts/purposes')) return { status: 200, data: {
+        status: 'present', revision: 3, content: { t: 'plain', v: { key: 'purposes', value: {
+          v: 1, bindings: [{ purpose: scope.purpose, target: { kind: 'account',
+            account: { service: scope.serviceRefs[0], accountId: 'selected-account' } } }],
+        } } },
+      } };
+      return { status: 404, data: { error: 'unsupported' } };
+    });
+    try {
+      const payload = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => {
+        const operationContext = createInvocationSavedSecretOperationContextV1({
+          credentials, serverHttpBaseUrl,
+          snapshot: { source: 'network', scopeKey: resolveAccountSettingsScopeKey(credentials), loadedAtMs: 1,
+            settingsVersion: 7, settings: accountSettingsParse({}), rawSettings: {}, settingsSecretsReadKeys: [] },
+          isCurrent: async () => true,
+        });
+        return resolveSessionSpawnConnectedServicesDefaultsPayload({
+          agentId: agent.id, credentials, contributions, catalogEntry, operationContext,
+        });
+      });
+      expect(payload?.connectedServices).toEqual({ v: 2, bindingsByServiceId: {
+        [`${pluginId}/subscription`]: { source: 'connected', selection: 'profile', profileId: 'selected-account' },
+      } });
+      expect(readCurrentContributionRegistry().agentDefinitionsById.has(agent.id)).toBe(false);
+    } finally {
+      get.mockRestore();
+    }
+  });
+
   it('classifies a no-longer-offered Team purpose default with the canonical resource refusal', async () => {
     if (!CODEX_SCOPE) throw new Error('Expected real Codex purpose declaration');
     let reads = 0;

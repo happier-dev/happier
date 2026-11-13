@@ -1,6 +1,6 @@
 import { AgentSessionConfigurationSnapshotV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import { ProviderBoundModelRefSchema } from '@happier-dev/protocol/providers/model-selection';
-import { ProviderDefaultModelSelectionsByAgentTargetKeyV1StoredSchema } from '@happier-dev/protocol/providers/selection/v1';
+import { readAgentDefaultModelSelectionV1 } from '@happier-dev/protocol/providers/selection/v1';
 import { ConnectedServiceBindingsV2Schema } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { resolveAgentStartBaselineSelectionV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { TeamCredentialProviderModelSelectionV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
@@ -10,8 +10,9 @@ import type {
     AgentSessionConfigurationSnapshot,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 
-import { permissionMode } from '@/agent/executionRuns/policy/permissionMode';
-import { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
+import { executionRunPermissionIntentV1 as permissionMode } from '@happier-dev/protocol/actions/executionRunActionPermissionMode';
+import { readDeclaredCatalogConnectedAccountServiceIds, resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
+import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import { createExecutionRunCodedError } from '../errors';
 import { projectExecutionRunChildChoiceV1 } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { areExecutionRunBackendTargetsEqual, resolveExecutionRunRuntimeBackendId } from '../backendTargets';
@@ -48,10 +49,8 @@ export function resolveExecutionRunAgentDefaultSelection(input: Readonly<{
     backendTarget: BackendTargetRefV2Input;
     accountSettings?: Readonly<{ providerDefaultModelSelectionsByAgentTargetKeyV1?: unknown }> | null;
 }>): ProviderBoundModelRef | null {
-    const defaults = ProviderDefaultModelSelectionsByAgentTargetKeyV1StoredSchema.parse(
-        input.accountSettings?.providerDefaultModelSelectionsByAgentTargetKeyV1 ?? {},
-    );
-    return defaults[buildBackendTargetKeyV2(readBackendTargetRefV2(input.backendTarget))]?.ref ?? null;
+    return readAgentDefaultModelSelectionV1(input.accountSettings?.providerDefaultModelSelectionsByAgentTargetKeyV1,
+        input.backendTarget)?.ref ?? null;
 }
 
 export function readExecutionRunAppliedParentModelId(parent: ExecutionRunAppliedParentSelection): string | null {
@@ -68,12 +67,13 @@ function projectInheritedConnectedServices(
     bindings: ConnectedServiceBindingsV2 | null,
     backendTarget: BackendTargetRefV2Input,
     sameAgent: boolean,
+    agentCatalogEntry: Pick<AgentCatalogEntry, 'connectedAccountServiceIds'> | null | undefined,
 ): ConnectedServiceBindingsV2 | null {
     if (bindings === null) return null;
     const parsed = ConnectedServiceBindingsV2Schema.parse(bindings);
-    const declaredServiceIds = sameAgent ? null : resolveCatalogAgentConnectedAccountServiceIds(
-        resolveExecutionRunRuntimeBackendId(backendTarget),
-    );
+    const declaredServiceIds = sameAgent ? null : agentCatalogEntry === undefined
+        ? resolveCatalogAgentConnectedAccountServiceIds(resolveExecutionRunRuntimeBackendId(backendTarget))
+        : readDeclaredCatalogConnectedAccountServiceIds(agentCatalogEntry);
     const bindingsByServiceId: ConnectedServiceBindingsV2['bindingsByServiceId'] = {};
     for (const [serviceId, binding] of Object.entries(parsed.bindingsByServiceId)) {
         if (declaredServiceIds && !declaredServiceIds.includes(serviceId)) {
@@ -92,6 +92,7 @@ function projectInheritedConnectedServices(
 /** Resolves child omissions once, before credential or Provider materialization. */
 export type ExecutionRunChildSelectionInput = Readonly<{
     backendTarget: BackendTargetRefV2Input;
+    agentCatalogEntry?: Pick<AgentCatalogEntry, 'connectedAccountServiceIds'> | null;
     lifecycle: 'attached' | 'independent' | 'retained';
     modelId?: string;
     modelSelection?: ProviderBoundModelRef | null;
@@ -199,7 +200,7 @@ function resolveExecutionRunChildSelectionInput(input: ExecutionRunChildSelectio
     }
     if (selection) {
         return { ...explicit,
-            connectedServices: projectInheritedConnectedServices(parent.connectedServices, input.backendTarget, sameAgent),
+            connectedServices: projectInheritedConnectedServices(parent.connectedServices, input.backendTarget, sameAgent, input.agentCatalogEntry),
             inheritedFromDifferentAgent: !sameAgent,
         };
     }
@@ -223,7 +224,7 @@ function resolveExecutionRunChildSelectionInput(input: ExecutionRunChildSelectio
     const agentTargetKey = sameAgent && parentModelTargetKey
         ? parentModelTargetKey
         : buildBackendTargetKeyV2(readBackendTargetRefV2(input.backendTarget));
-    const connectedServices = projectInheritedConnectedServices(parent.connectedServices, input.backendTarget, sameAgent);
+    const connectedServices = projectInheritedConnectedServices(parent.connectedServices, input.backendTarget, sameAgent, input.agentCatalogEntry);
     return {
         ...(resolvedModelId ? { modelId: resolvedModelId } : {}),
         ...(inheritedTeam ? { teamCredentialModel: { ...inheritedTeam, agentTargetKey, modelId: resolvedModelId ?? inheritedTeam.modelId } } : {}),

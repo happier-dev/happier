@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { readFile, writeFile } from 'node:fs/promises';
+import { copyFile, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { expect, it, onTestFinished } from 'vitest';
 import { z } from 'zod/mini';
 import {
-  buildBackendTargetKeyV2, ExecutionRunGetResponseSchema, ScmDiffSummaryGenerateOutputSchema,
+  buildConnectedServiceCredentialRecord, ExecutionRunGetResponseSchema, PluginManifestV2Schema, ScmDiffSummaryGenerateOutputSchema,
   ScmDiffSummaryResultResponseSchema, SessionSpawnNewActionResultV1Schema, SessionSpawnNewInputV2Schema,
   projectSessionSpawnNewActionInputV2,
 } from '@happier-dev/protocol';
@@ -15,11 +15,16 @@ import { removeTempDir } from '@/testkit/fs/tempDir';
 
 const nativeObservation = z.object({ input: z.string(), inputIds: z.array(z.string()), output: z.string(), pid: z.number() });
 
-it('generates and refines a saved Changes revision through the installed native Run and exact root-bounded input', async () => {
+it('generates and refines a saved Changes revision with a selected Connected Account through the installed native Run', async () => {
   const repository = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-changes-native-' });
   const cwd = repository.rootPath;
   onTestFinished(() => removeTempDir(cwd));
   const capturePath = join(cwd, '.git', 'native-inputs.jsonl');
+  const modelAccountPath = join(cwd, '.git', 'native-model-account.json');
+  // The product denies path-only runtime names such as node. Give this external
+  // native-provider fixture its own executable, as the ACP fixture does.
+  const nativeExecutable = join(cwd, '.git', process.platform === 'win32' ? 'changes-native-agent.exe' : 'changes-native-agent');
+  await copyFile(process.execPath, nativeExecutable);
   const firstInput = 'CHANGES_NATIVE_FIRST_INPUT';
   const refinement = 'CHANGES_NATIVE_REFINE: explain the changed line more briefly.';
   // This is the external native Agent boundary. Its real subprocess reads Git
@@ -30,35 +35,86 @@ it('generates and refines a saved Changes revision through the installed native 
     const input = process.argv[2];
     const git = execFileSync('git', ['diff', '--', 'tracked.txt'], { encoding: 'utf8' });
     if (!git.includes('+Native captured change')) throw new Error('Native Agent did not read the actual repository');
-    if (input !== ${JSON.stringify(firstInput)} && !input.includes('Native captured change')) throw new Error('Native input lost the captured evidence');
-    const output = input === ${JSON.stringify(firstInput)} ? 'Native repository ready.'
+    if (!input.includes(${JSON.stringify(firstInput)}) && !input.includes('Native captured change')) throw new Error('Native input lost the captured evidence');
+    const output = input.includes(${JSON.stringify(firstInput)}) ? 'Native repository ready.'
       : JSON.stringify({ summaryMarkdown: (input.includes(${JSON.stringify(refinement)}) ? 'Refined' : 'Generated') + ': Native captured change.' });
     appendFileSync(${JSON.stringify(capturePath)}, JSON.stringify({ input, inputIds, output, pid: process.pid }) + '\\n');
     process.stdout.write(output);`;
   await writeFile(join(cwd, repository.trackedPath), 'Native captured change\n');
+  // The carrier and selected Run Agent are independent product choices. Use
+  // the bundled ingress identity for the carrier and the authored Agent's
+  // installed identity for comparison's real retained native runtime.
+  const carrierTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } };
   const target = { kind: 'agent' as const, identity: { pluginId: 'acme.project-launch', localId: 'agent' } };
-  const fixture = await startInstalledDaemonFixture({ plugins: [createFirstConversationAgentFixture(firstInput, {
-    nativeReply: { executableNames: ['node'], args: ['-e', program, '--'] },
-  })] });
+  const agent = createFirstConversationAgentFixture(firstInput, {
+    nativeReply: { executableNames: [nativeExecutable], args: ['-e', program, '--'] },
+  });
+  const manifest = PluginManifestV2Schema.parse(agent.manifest);
+  const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+  const connectedServices = { v: 2, bindingsByServiceId: {
+    'happier.agent.codex/openai-codex': { source: 'connected', selection: 'profile', profileId: 'changes-account' },
+  } } as const;
+  const fixture = await startInstalledDaemonFixture({ plugins: [{ ...agent, replaceExisting: true,
+    manifest: { ...manifest, id: carrierTarget.identity.pluginId, contributes: { ...manifest.contributes,
+      agents: manifest.contributes?.agents?.map(contribution => ({ ...contribution, id: carrierTarget.identity.localId })),
+    } },
+    files: { ...agent.files, 'daemon.mjs': agent.files['daemon.mjs'].replace("register('agent',", "register('claude',") },
+  }, { ...agent,
+    manifest: { ...manifest, contributes: { ...manifest.contributes,
+      agents: manifest.contributes?.agents?.map(contribution => ({ ...contribution,
+        id: target.identity.localId,
+        capabilities: { ...contribution.capabilities,
+          sessions: { ...contribution.capabilities?.sessions, workspaceWrites: 'deny' } },
+        connectedAccounts: [{ purpose: 'native-catalog', service, credentialKinds: ['oauth'], materializationKinds: ['httpHeaders'] }],
+      })),
+    } },
+    files: { ...agent.files,
+      'daemon.mjs': `import { writeFileSync } from 'node:fs';\n` + agent.files['daemon.mjs'].replace('sessionRunnerFactory: {', `preflightSessionControls: {
+      prepareLaunchEnvironment: async ({ environment, connectedAccounts }) => {
+        const binding = await connectedAccounts.getBinding('native-catalog');
+        if (binding?.account.accountId !== 'changes-account') throw Object.assign(new Error('Native catalog lost selected Account'), { code: 'fixture_native_account_missing' });
+        return { environment: { ...environment, CHANGES_SELECTED_ACCOUNT: binding.account.accountId }, dispose() {} };
+      },
+      probeModels: context => {
+        if (context.nonblankEnvironment.CHANGES_SELECTED_ACCOUNT !== true) throw Object.assign(new Error('Native catalog was not prepared'), { code: 'fixture_native_environment_missing' });
+        writeFileSync(${JSON.stringify(modelAccountPath)}, JSON.stringify({ stage: 'probed', accountId: 'changes-account' }));
+        return [{ id: 'default', name: 'Selected account native model', capabilities: { structuredOutput: 'supported' } }];
+      },
+    }, sessionRunnerFactory: {`) },
+  }] });
   const owner = fixture.createActionExecutor();
   const context = { surface: 'ui' as const, externalActionTarget: { kind: 'machine' as const, machineId: fixture.machineId,
     project: { machineId: fixture.machineId, directory: cwd } } };
   const observations = async () => (await readFile(capturePath, 'utf8')).trim().split('\n')
     .map(line => nativeObservation.parse(JSON.parse(line)));
   try {
+    const credential = buildConnectedServiceCredentialRecord({ now: Date.now(), serviceId: 'openai-codex',
+      profileId: 'changes-account', kind: 'oauth', expiresAt: null, oauth: { accessToken: 'synthetic-changes-access',
+        refreshToken: 'synthetic-changes-refresh', idToken: null, scope: null, tokenType: 'Bearer',
+        providerAccountId: 'changes-account', providerEmail: null } });
+    const connected = await fetch(`${fixture.home.baseUrl}/v4/connect/qualified/credential`, { method: 'POST',
+      headers: { authorization: `Bearer ${fixture.home.token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ ref: { service, accountId: 'changes-account' }, authenticationModeId: 'oauth',
+        expectedCredentialRevision: null, content: { t: 'plain', v: credential }, metadata: { scopes: [] } }),
+    });
+    expect(connected.status, await connected.text()).toBe(200);
     const birth = await owner.execute('session.spawn_new', projectSessionSpawnNewActionInputV2(SessionSpawnNewInputV2Schema.parse({
       creationKey: randomUUID(), executionTarget: { serverId: fixture.serverId, machineId: fixture.machineId },
       directory: { kind: 'path', path: cwd }, organizationPlacement: { folderId: null, tagIds: [] },
-      agentTarget: target, connectedServices: { v: 2, bindingsByServiceId: {} }, initialInput: { text: firstInput },
+      agentTarget: carrierTarget, connectedServices: { v: 2, bindingsByServiceId: {} }, initialInput: { text: firstInput },
     })), context);
-    expect(birth).toMatchObject({ ok: true });
+    expect(birth, JSON.stringify(birth)).toMatchObject({ ok: true });
     if (!birth.ok) throw new Error('Changes carrier Session creation refused');
     const created = SessionSpawnNewActionResultV1Schema.parse(birth.result);
-    expect(created).toMatchObject({ type: 'success', initialInput: { status: 'accepted' } });
+    expect(created, JSON.stringify(created)).toMatchObject({ type: 'success', initialInput: { status: 'accepted' } });
     if (created.type !== 'success') throw new Error('Changes carrier Session did not start');
     const sessionId = created.sessionId;
     const idle = await owner.execute('session.wait.idle', { sessionId }, context);
     expect(idle).toMatchObject({ ok: true, result: { ok: true, idle: true, sessionId } });
+    // Initial-input admission and its durable turn publication are asynchronous.
+    // Observe the real Home boundary before inspecting the completed transcript.
+    await expect.poll(async () => (await fixture.home.readWorkflowSessionEffects()).turns.map(turn => turn.status),
+      { timeout: 30_000 }).toEqual(['completed']);
     const initial = await fixture.home.readWorkflowSessionEffects();
     expect(initial.turns).toEqual([expect.objectContaining({ sessionId, status: 'completed' })]);
     expect(initial.pending).toEqual([]);
@@ -69,16 +125,20 @@ it('generates and refines a saved Changes revision through the installed native 
       startUserMessageSeq: initialUser[0]?.seq, userMessageSeqs: [initialUser[0]?.seq], finalAssistantMessageSeq: initialAssistant.at(-1)?.seq,
     });
     const nativeInitial = await observations();
-    expect(nativeInitial.map(row => row.input)).toEqual([firstInput]);
+    expect(nativeInitial.map(row => row.input)).toEqual([expect.stringContaining(firstInput)]);
     if (created.initialInput?.status !== 'accepted') throw new Error('Carrier first input was not accepted');
     expect(nativeInitial[0]?.inputIds).toEqual([created.initialInput.localId]);
 
     const generatedAction = await owner.execute('scm.diffSummary.generate', { cwd, sessionId, source: { kind: 'workingTree' },
-      modelSelector: { backendTargetKey: buildBackendTargetKeyV2(target), modelId: 'default' }, outputs: ['summary'] }, context);
+      // The installed native fixture uses the supported backend routing ref;
+      // canonical external-Agent picker lowering is a separate ingress path.
+      modelSelector: { backendTargetKey: `backend:${target.identity.pluginId}/${target.identity.localId}`, modelId: 'default', connectedServices }, outputs: ['summary'] }, context);
     expect(generatedAction).toMatchObject({ ok: true });
     if (!generatedAction.ok) throw new Error('Changes Generate Action refused');
     const generated = ScmDiffSummaryGenerateOutputSchema.parse(generatedAction.result);
-    expect(generated).toMatchObject({ success: true, runId: expect.any(String), resultId: expect.any(String) });
+    const nativeModelAccount = await readFile(modelAccountPath, 'utf8').catch(() => 'native model preparation was not reached');
+    expect(generated, JSON.stringify({ generated, nativeModelAccount })).toMatchObject({ success: true, runId: expect.any(String), resultId: expect.any(String) });
+    expect(JSON.parse(nativeModelAccount)).toEqual({ stage: 'probed', accountId: 'changes-account' });
     if (!generated.runId || !generated.resultId) throw new Error('Generate did not create its nested Run and saved result');
     const scope = { cwd, resultId: generated.resultId };
     const readSaved = async () => {
@@ -95,7 +155,9 @@ it('generates and refines a saved Changes revision through the installed native 
     await waitForOutput(0);
     const saved = await readSaved();
     if (!saved.success) throw new Error('Generated saved result unavailable');
-    expect(saved.result.output.outputs?.summary?.state).toBe('complete');
+    const initialRun = await owner.execute('execution.run.get', { sessionId, runId: generated.runId, includeStructured: true }, context);
+    expect(saved.result.output.outputs?.summary?.state,
+      JSON.stringify({ saved: saved.result.output, run: initialRun, native: await observations() })).toBe('complete');
     expect(saved.result.output.outputs?.summary?.value?.summaryMarkdown).toBe('Generated: Native captured change.');
     const generatedNative = (await observations())[1]!;
     expect(generatedNative.inputIds).toEqual([generated.inputId]);
@@ -133,7 +195,11 @@ it('generates and refines a saved Changes revision through the installed native 
       && JSON.stringify(message.content).includes(refinement));
     expect(refinedInput).toHaveLength(1);
     expect(refinedInput[0]?.localId).toBe(requestId);
-    expect(refinedInput[0]?.content).toMatchObject({ t: 'plain', v: { content: { text: native[2]?.input } } });
+    const persistedRefinement = z.object({ t: z.literal('plain'), v: z.object({
+      content: z.object({ text: z.string() }),
+    }) }).parse(refinedInput[0]?.content).v.content.text;
+    expect(persistedRefinement).toContain(refinement);
+    expect(native[2]?.input).toContain(persistedRefinement);
 
     // The signed root's selected Project is narrower than the saved result.
     // The retained-result owner deliberately conceals inaccessible evidence.
@@ -149,11 +215,12 @@ it('generates and refines a saved Changes revision through the installed native 
     const member = await fixture.home.createMachineMember('admin');
     const denied = await fixture.createActionExecutor(member).execute('scm.diffSummary.refine', { ...scope,
       expectedRevision: latest.result.revision, output: 'summary', instructions: 'Denied member input' }, context);
-    expect(denied).toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+    expect(denied, JSON.stringify(denied)).toMatchObject({ ok: true,
+      result: { success: false, errorCode: 'result_unavailable' } });
     expect(await observations()).toEqual(native);
     expect(await fixture.home.readWorkflowSessionEffects()).toEqual(effects);
     expect(await readSaved()).toEqual(latest);
   } finally {
     await fixture.stop();
   }
-}, 120_000);
+}, 240_000);

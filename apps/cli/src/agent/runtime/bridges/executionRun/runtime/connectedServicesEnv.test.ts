@@ -27,6 +27,7 @@ import { projectActionWorkflowSelectionInputV1 } from '@happier-dev/protocol/act
 import { ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/startRequest';
 import { resolveSessionSpawnConnectedServicesDefaultsPayload } from '@/session/services/spawnConnectedServicesDefaults';
 import { resolveExecutionRunChildSelection } from './openInputs';
+import { findCatalogEntry } from '@/agent/catalog/registry';
 
 const CONNECTED_BINDINGS = {
     v: 2,
@@ -99,7 +100,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
             controller.abort();
             return response;
         });
-        await expect(resolveExecutionRunConnectedServicesEnv({ runId: 'run_1', backendId: 'codex',
+        await expect(resolveExecutionRunConnectedServicesEnv({ runId: 'run_1', backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'),
             backendSourceKind: 'built_in', cwd: '/tmp/project', connectedServices: CONNECTED_BINDINGS,
             signal: controller.signal, deps,
         })).rejects.toMatchObject({ name: 'AbortError' });
@@ -111,7 +112,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
         const recoverRuntimeFailure = vi.fn(async () => ({ status: 'continue' as const, input: 'Continue where you left off', rematerialize: true }));
         const deps = createDeps({ recoverRuntimeFailure });
         const resolved = await resolveExecutionRunConnectedServicesEnv({
-            runId: 'run_1', backendId: 'codex', backendSourceKind: 'built_in',
+            runId: 'run_1', backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'), backendSourceKind: 'built_in',
             connectedServices: CONNECTED_BINDINGS, cwd: '/tmp/project', deps,
         });
         const signal = new AbortController().signal;
@@ -146,7 +147,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
             } } }, connectedServicesUpdatedAt: 1,
         })) });
         await resolveExecutionRunConnectedServicesEnv({
-            runId: 'run_1', backendId: 'codex', backendSourceKind: 'built_in', cwd: '/tmp/project',
+            runId: 'run_1', backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'), backendSourceKind: 'built_in', cwd: '/tmp/project',
             connectedServices: selected.connectedServices, modelId: selected.modelId, deps,
         });
         expect(deps.requestMaterialization).toHaveBeenCalledWith(expect.objectContaining({
@@ -184,7 +185,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
             } };
         });
         const opened = await resolveExecutionRunConnectedServicesEnv({
-            runId: 'run_1', backendId: 'codex', backendSourceKind: 'built_in', cwd: '/tmp/project',
+            runId: 'run_1', backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'), backendSourceKind: 'built_in', cwd: '/tmp/project',
             connectedServices: selected.connectedServices, modelId: selected.modelId, deps,
         });
         expect(opened).toMatchObject({ connectedServicesBindings: teamBindings,
@@ -216,7 +217,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
             executionRunStart: async (_sessionId, raw) => {
                 const input = ExecutionRunStartRequestSchema.parse(raw);
                 await resolveExecutionRunConnectedServicesEnv({
-                    runId: 'run_1', backendId: 'codex', backendSourceKind: 'built_in', cwd: '/tmp/project',
+                    runId: 'run_1', backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'), backendSourceKind: 'built_in', cwd: '/tmp/project',
                     connectedServices: input.connectedServices,
                     connectedServicesDefaultServiceIds: input.connectedServicesDefaultServiceIds,
                     deps,
@@ -243,7 +244,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
                 : { status: 'unavailable' as const, reason: 'wrong_activation' };
         });
         const resolved = await resolveExecutionRunConnectedServicesEnv({
-            runId: 'run_1', backendId: 'codex', backendSourceKind: 'built_in',
+            runId: 'run_1', backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'), backendSourceKind: 'built_in',
             connectedServices: CONNECTED_BINDINGS, cwd: '/tmp/project',
             deps: { ...createDeps(), refreshRuntimeAuth },
         });
@@ -265,7 +266,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
         const recoverRejectedStart = vi.fn(async (_request: ConnectedServiceRunRejectedStartRequest): Promise<ConnectedServiceRunRejectedStartResult> => ({ ok: true, retry: true }));
         const deps = createDeps({ recoverRejectedStart });
         const resolved = await resolveExecutionRunConnectedServicesEnv({
-            runId: 'run_1', backendId: 'codex', backendSourceKind: 'built_in',
+            runId: 'run_1', backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'), backendSourceKind: 'built_in',
             connectedServices: CONNECTED_BINDINGS, cwd: '/tmp/project', modelId: 'gpt-6.1-sol', deps,
         });
         expect(deps.requestMaterialization).toHaveBeenCalledWith(expect.objectContaining({ modelId: 'gpt-6.1-sol' }), expect.anything());
@@ -302,7 +303,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
         });
 
         await expect(resolveExecutionRunConnectedServicesSelection({
-            backendId: 'codex',
+            backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'),
             backendSourceKind: 'built_in',
             deps,
         })).resolves.toEqual({
@@ -327,7 +328,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
 
         const resolved = await resolveExecutionRunConnectedServicesEnv({
             runId: 'run_1',
-            backendId: 'codex',
+            backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'),
             backendSourceKind: 'built_in',
             connectedServices: CONNECTED_BINDINGS,
             cwd: '/tmp/project',
@@ -372,7 +373,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
             })),
         });
         await resolveExecutionRunConnectedServicesEnv({
-            runId: 'run_1', backendId: 'codex', backendSourceKind: 'built_in',
+            runId: 'run_1', backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'), backendSourceKind: 'built_in',
             connectedServices: CONNECTED_BINDINGS, cwd: '/tmp/project', deps,
         });
         const context = loggerInfoMock.mock.calls.find(([message]) => message === '[EXECUTION RUN] connected services: materialized')?.[1];
@@ -404,7 +405,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
 
         const resolved = await resolveExecutionRunConnectedServicesEnv({
             runId: 'run_1',
-            backendId: 'codex',
+            backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'),
             backendSourceKind: 'built_in',
             cwd: '/tmp/project',
             deps,
@@ -414,6 +415,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
         expect(deps.readCredentials).toHaveBeenCalledTimes(1);
         expect(deps.resolveSessionSpawnDefaults).toHaveBeenCalledWith({
             agentId: 'codex',
+            catalogEntry: findCatalogEntry('codex'),
             credentials: CREDENTIALS,
         });
         const requested = deps.requestMaterialization.mock.calls[0]?.[0] as {
@@ -445,7 +447,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
 
         await resolveExecutionRunConnectedServicesEnv({
             runId: 'run_1',
-            backendId: 'pi',
+            backendId: 'pi', agentCatalogEntry: findCatalogEntry('pi'),
             backendSourceKind: 'built_in',
             connectedServices: {
                 v: 2,
@@ -497,7 +499,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
         });
 
         await expect(resolveExecutionRunConnectedServicesSelection({
-            backendId: 'codex',
+            backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'),
             backendSourceKind: 'built_in',
             connectedServicesDefaultServiceIds: [OPENAI_CODEX_ACCOUNT_SERVICE_ID],
             deps,
@@ -518,7 +520,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
         });
         await expect(resolveExecutionRunConnectedServicesEnv({
             runId: 'run_1',
-            backendId: 'codex',
+            backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'),
             backendSourceKind: 'built_in',
             connectedServicesDefaultServiceIds: [OPENAI_CODEX_ACCOUNT_SERVICE_ID],
             cwd: '/tmp/project',
@@ -533,7 +535,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
         // No explicit selection, session owner resolves no defaults.
         expect(await resolveExecutionRunConnectedServicesEnv({
             runId: 'run_1',
-            backendId: 'codex',
+            backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'),
             backendSourceKind: 'built_in',
             cwd: '/tmp/project',
             deps,
@@ -542,7 +544,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
         // Explicitly native selection.
         expect(await resolveExecutionRunConnectedServicesEnv({
             runId: 'run_2',
-            backendId: 'codex',
+            backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'),
             backendSourceKind: 'built_in',
             connectedServices: NATIVE_BINDINGS,
             cwd: '/tmp/project',
@@ -552,7 +554,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
         // Explicit opt-out (null) suppresses defaulting entirely.
         expect(await resolveExecutionRunConnectedServicesEnv({
             runId: 'run_3',
-            backendId: 'codex',
+            backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'),
             backendSourceKind: 'built_in',
             connectedServices: null,
             cwd: '/tmp/project',
@@ -562,7 +564,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
         // Non-built-in backends never default into connected services.
         expect(await resolveExecutionRunConnectedServicesEnv({
             runId: 'run_4',
-            backendId: 'my-configured-acp',
+            backendId: 'my-configured-acp', agentCatalogEntry: findCatalogEntry('my-configured-acp'),
             backendSourceKind: 'configured',
             cwd: '/tmp/project',
             deps,
@@ -576,7 +578,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
 
         expect(await resolveExecutionRunConnectedServicesEnv({
             runId: 'run_1',
-            backendId: 'codex',
+            backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'),
             backendSourceKind: 'built_in',
             cwd: '/tmp/project',
             deps,
@@ -599,7 +601,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
         });
         await expect(resolveExecutionRunConnectedServicesEnv({
             runId: 'run_1',
-            backendId: 'codex',
+            backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'),
             backendSourceKind: 'built_in',
             connectedServices: CONNECTED_BINDINGS,
             cwd: '/tmp/project',
@@ -611,7 +613,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
         });
         await expect(resolveExecutionRunConnectedServicesEnv({
             runId: 'run_1',
-            backendId: 'codex',
+            backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'),
             backendSourceKind: 'built_in',
             connectedServices: CONNECTED_BINDINGS,
             cwd: '/tmp/project',
@@ -623,7 +625,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
         const deps = createDeps();
         await expect(resolveExecutionRunConnectedServicesEnv({
             runId: 'run_1',
-            backendId: 'my-configured-acp',
+            backendId: 'my-configured-acp', agentCatalogEntry: findCatalogEntry('my-configured-acp'),
             backendSourceKind: 'configured',
             connectedServices: CONNECTED_BINDINGS,
             cwd: '/tmp/project',
@@ -636,7 +638,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
         const deps = createDeps();
         const resolved = await resolveExecutionRunConnectedServicesEnv({
             runId: 'run_1',
-            backendId: 'codex',
+            backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'),
             backendSourceKind: 'built_in',
             connectedServices: CONNECTED_BINDINGS,
             cwd: '/tmp/project',
@@ -665,7 +667,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
         const deps = createDeps({ release });
         const resolved = await resolveExecutionRunConnectedServicesEnv({
             runId: 'run_1',
-            backendId: 'codex',
+            backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'),
             backendSourceKind: 'built_in',
             connectedServices: CONNECTED_BINDINGS,
             cwd: '/tmp/project',
@@ -689,7 +691,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
             .mockResolvedValueOnce({ ok: true as const, released: true });
         const resolved = await resolveExecutionRunConnectedServicesEnv({
             runId: 'run_1',
-            backendId: 'codex',
+            backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'),
             backendSourceKind: 'built_in',
             connectedServices: CONNECTED_BINDINGS,
             cwd: '/tmp/project',
@@ -706,7 +708,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
     it('finishes cleanup when its exact activation was already released or superseded', async () => {
         const release = vi.fn(async () => ({ ok: true as const, released: false }));
         const resolved = await resolveExecutionRunConnectedServicesEnv({
-            runId: 'run_1', backendId: 'codex', backendSourceKind: 'built_in',
+            runId: 'run_1', backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'), backendSourceKind: 'built_in',
             connectedServices: CONNECTED_BINDINGS, cwd: '/tmp/project', deps: createDeps({ release }),
         });
         await expect(resolved!.cleanup()).resolves.toBeUndefined();
@@ -720,7 +722,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
             const deps = createDeps();
             await resolveExecutionRunConnectedServicesEnv({
                 runId: 'run_1',
-                backendId: 'codex',
+                backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'),
                 backendSourceKind: 'built_in',
                 connectedServices: CONNECTED_BINDINGS,
                 cwd: '/tmp/project',
@@ -745,7 +747,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
             const deps = createDeps();
             await resolveExecutionRunConnectedServicesEnv({
                 runId: 'run_1',
-                backendId: 'codex',
+                backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'),
                 backendSourceKind: 'built_in',
                 cwd: '/tmp/project',
                 deps,
@@ -767,7 +769,7 @@ describe('resolveExecutionRunConnectedServicesEnv', () => {
             });
             await expect(resolveExecutionRunConnectedServicesEnv({
                 runId: 'run_1',
-                backendId: 'codex',
+                backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'),
                 backendSourceKind: 'built_in',
                 connectedServices: CONNECTED_BINDINGS,
                 cwd: '/tmp/project',

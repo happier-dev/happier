@@ -1,3 +1,4 @@
+import { findCatalogEntry } from '@/agent/catalog/registry';
 import { existsSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
@@ -1896,7 +1897,7 @@ describe('materializeConnectedServicesForSpawn', () => {
         expect(resumed).toMatchObject({ ok: false, errorCode: 'provider_session_state_unavailable_for_resume' });
         if (resumed.ok) throw new Error('Missing conversation unexpectedly materialized');
         await expect(resolveExecutionRunConnectedServicesEnv({
-          runId: params.materializationKey, backendId: 'codex', backendSourceKind: 'built_in', cwd: root,
+          runId: params.materializationKey, backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'), backendSourceKind: 'built_in', cwd: root,
           resolvedSelection: { bindings, source: 'explicit', hadCredentials: true },
           deps: { runnerPid: process.pid, requestMaterialization: async () => resumed,
             release: async () => ({ ok: true, released: true }), readCredentials: async () => credentials,

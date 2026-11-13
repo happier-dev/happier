@@ -269,6 +269,8 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
             const connectedServicesSelection =
                 await trace('connected_services_selection', () => resolveExecutionRunConnectedServicesSelection({
                     backendId: engineResolution.backendId,
+                    agentCatalogEntry: engineResolution.agent.catalogEntry ?? null,
+                    contributions: opts.engineRegistry?.contributions,
                     signal,
                     backendSourceKind:
                         opts.backendSourceKind ?? 'built_in',
@@ -365,6 +367,8 @@ function createEngineExecutionRunRuntimeShellConfig(opts: Readonly<{
                     ...(opts.controllerOccurrenceId ? { controllerOccurrenceId: opts.controllerOccurrenceId } : {}),
                     backendId: engineResolution.backendId,
                     backendSourceKind: opts.backendSourceKind ?? 'built_in',
+                    agentCatalogEntry: engineResolution.agent.catalogEntry ?? null,
+                    contributions: opts.engineRegistry?.contributions,
                     ...(opts.connectedServices !== undefined
                         ? {
                             connectedServices:

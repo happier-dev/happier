@@ -19,9 +19,10 @@ import { readConnectedAccountCatalogUnavailableReason, refreshConnectedAccountCa
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { configuration } from '@/configuration';
-import { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
+import { readDeclaredCatalogConnectedAccountServiceIds, resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
+import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
-import { resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
+import { resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn, type AgentSpawnPurposeContributions } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { isAccountSettingsContentInvalidError } from '@/settings/accountSettings/accountSettingsRefreshError';
 import { readTeamCredentialLaunchReadinessRefusal } from './sessionTeamCredentialReadiness';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
@@ -32,8 +33,14 @@ import { readTeamCredentialLaunchFailureCode, type TeamCredentialLaunchFailureCo
 export { readSpawnConnectedServicesTeamResources } from './sessionTeamCredentialCatalog';
 export { readTeamCredentialLaunchReadinessRefusal } from './sessionTeamCredentialReadiness';
 
-export function agentSupportsSpawnConnectedServicesDefaults(agentId: string): boolean {
-  return resolveCatalogAgentConnectedAccountServiceIds(agentId).length > 0;
+function readSpawnConnectedAccountServiceIds(agentId: string, catalogEntry: AgentCatalogEntry | null | undefined) {
+  return catalogEntry === undefined
+    ? resolveCatalogAgentConnectedAccountServiceIds(agentId)
+    : readDeclaredCatalogConnectedAccountServiceIds(catalogEntry);
+}
+
+export function agentSupportsSpawnConnectedServicesDefaults(agentId: string, catalogEntry?: AgentCatalogEntry | null): boolean {
+  return readSpawnConnectedAccountServiceIds(agentId, catalogEntry).length > 0;
 }
 
 export type SpawnConnectedServicesDefaultDisposition =
@@ -136,6 +143,8 @@ export class ConnectedServicesDefaultUnavailableError extends Error {
  */
 export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params: Readonly<{
   agentId: string;
+  contributions?: AgentSpawnPurposeContributions;
+  catalogEntry?: AgentCatalogEntry | null;
   credentials: StoredCredentials;
   signal?: AbortSignal;
   operationContext?: SavedSecretOperationContextV1;
@@ -152,7 +161,7 @@ export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params
   teamCredentialBindings?: SessionTeamCredentialBindingIntentListV1;
 }> | null> {
   const agentId = params.agentId.trim();
-  if (!agentSupportsSpawnConnectedServicesDefaults(agentId)) return null;
+  if (!agentSupportsSpawnConnectedServicesDefaults(agentId, params.catalogEntry)) return null;
 
   const resolve = async () => {
   const serverHttpBaseUrl = params.operationContext?.serverHttpBaseUrl ?? resolveServerHttpBaseUrl();
@@ -185,7 +194,9 @@ export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params
     const accountSettings = admittedSnapshot.settings;
     const payload = await materializeSessionSpawnConnectedServicesDefaults({
       agentId,
-      purposeDefaults: readAgentPurposeDefaults({ accountSettings, agentId, purposeCatalog }),
+      catalogEntry: params.catalogEntry,
+      purposeDefaults: readAgentPurposeDefaults({ accountSettings, agentId, purposeCatalog,
+        contributions: params.contributions, catalogEntry: params.catalogEntry }),
       ...(params.resolveTeamCredentialResourceCatalog ? { resolveTeamCredentialResourceCatalog: params.resolveTeamCredentialResourceCatalog } : {}),
       ...(params.signal ? { signal: params.signal } : {}),
     });
@@ -210,17 +221,21 @@ export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params
  * The Agent's default authentication, read through the one owner
  * (the opened purpose catalog, with released service-keyed defaults migrated
  * forward on read). The Agent's purposes come from its current
- * contribution projection — the same declarations its Session materializes.
+ * contribution projection — or its retained launch projection when supplied —
+ * the same declarations its Session materializes.
  */
 export function readAgentPurposeDefaults(params: Readonly<{
   onlySavedDefaults?: boolean;
   accountSettings: unknown;
   agentId: string;
+  contributions?: AgentSpawnPurposeContributions;
+  catalogEntry?: AgentCatalogEntry | null;
   purposeCatalog?: ConnectedAccountCatalogSnapshotV1;
 }>): readonly AgentConnectedAccountPurposeDefault[] {
   const snapshot = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({
     agentId: params.agentId,
-    contributions: readCurrentContributionRegistry(),
+    contributions: params.contributions ?? readCurrentContributionRegistry(),
+    catalogEntry: params.catalogEntry,
   });
   const consumer = snapshot?.authorizedPurposes[0]?.purpose.consumer;
   if (!snapshot || !consumer) return [];
@@ -243,6 +258,7 @@ export function readAgentPurposeDefaults(params: Readonly<{
 /** Materialize already resolved purposes through the same Team readiness and slot owners. */
 export async function materializeSessionSpawnConnectedServicesDefaults(params: Readonly<{
   agentId: string;
+  catalogEntry?: AgentCatalogEntry | null;
   purposeDefaults: readonly AgentConnectedAccountPurposeDefault[];
   resolveTeamCredentialResourceCatalog?: ResolveSpawnConnectedServicesTeamResourceCatalog;
   signal?: AbortSignal;
@@ -265,6 +281,7 @@ export async function materializeSessionSpawnConnectedServicesDefaults(params: R
   }
   const disposition = resolveSpawnConnectedServicesDefaultDisposition({
     agentId: params.agentId, accountSettings: {}, purposeDefaults: params.purposeDefaults,
+    catalogEntry: params.catalogEntry,
     ...(teamCredentialResourceCatalog ? { teamCredentialResourceCatalog } : {}),
   });
   if (disposition.kind === 'unavailable') throw new ConnectedServicesDefaultUnavailableError(disposition.reason, 'purpose_binding', disposition.catalogReason);
@@ -426,11 +443,13 @@ export async function resolvePurposeTeamCredentialBindingIntentsFromHome(params:
 export function resolveSpawnConnectedServicesDefaultDisposition(params: Readonly<{
   accountSettings: unknown;
   agentId: string;
+  contributions?: AgentSpawnPurposeContributions;
+  catalogEntry?: AgentCatalogEntry | null;
   purposeCatalog?: ConnectedAccountCatalogSnapshotV1;
   teamCredentialResourceCatalog?: SpawnConnectedServicesTeamResourceCatalog;
   purposeDefaults?: readonly AgentConnectedAccountPurposeDefault[];
 }>): SpawnConnectedServicesDefaultDisposition {
-  const supportedServiceIds = resolveCatalogAgentConnectedAccountServiceIds(params.agentId);
+  const supportedServiceIds = readSpawnConnectedAccountServiceIds(params.agentId, params.catalogEntry);
   if (supportedServiceIds.length === 0) return { kind: 'native' };
 
   if (params.purposeCatalog && (params.purposeCatalog.status !== 'ready' || params.purposeCatalog.record.key !== 'purposes')) {
@@ -499,6 +518,8 @@ export function resolveSpawnConnectedServicesDefaultDisposition(params: Readonly
 export function resolveSpawnConnectedServicesDefaults(params: Readonly<{
   accountSettings: unknown;
   agentId: string;
+  contributions?: AgentSpawnPurposeContributions;
+  catalogEntry?: AgentCatalogEntry | null;
   purposeCatalog?: ConnectedAccountCatalogSnapshotV1;
   teamCredentialResourceCatalog?: SpawnConnectedServicesTeamResourceCatalog;
 }>): ConnectedServiceBindingsV2 | null {

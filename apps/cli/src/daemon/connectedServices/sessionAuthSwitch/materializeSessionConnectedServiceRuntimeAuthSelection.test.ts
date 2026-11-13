@@ -1,3 +1,4 @@
+import { findCatalogEntry } from '@/agent/catalog/registry';
 import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -305,7 +306,7 @@ describe('materializeSessionConnectedServiceRuntimeAuthSelection', () => {
       });
       let failure: unknown;
       try {
-        await resolveExecutionRunConnectedServicesEnv({ runId: 'refine-run', backendId: 'codex', backendSourceKind: 'built_in',
+        await resolveExecutionRunConnectedServicesEnv({ runId: 'refine-run', backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'), backendSourceKind: 'built_in',
           cwd: root, connectedServices: bindings, deps: {
             runnerPid: process.pid, readCredentials: async () => credentials, resolveSessionSpawnDefaults: async () => null,
             requestMaterialization: requestExecutionRunConnectedServicesMaterialization,

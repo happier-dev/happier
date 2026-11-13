@@ -517,6 +517,8 @@ async function startAdmittedExecutionRun(
     const primaryModelId = voiceInput ? originalParams.modelId ?? originalParams.chatModelId : originalParams.modelId;
     const voiceCommitSelectionInput = voiceInput ? {
       backendTarget: originalParams.backendTarget,
+      ...(args.contributions ? { agentCatalogEntry: args.contributions.agentDefinitionsById
+        .get(resolveExecutionRunRuntimeBackendId(originalParams.backendTarget))?.catalogEntry ?? null } : {}),
       lifecycle,
       modelId: originalParams.commitModelId === 'default' ? undefined : originalParams.commitModelId,
       modelSelection: originalParams.commitModelId === 'default' ? null : voiceInput.commitModelSelection,
@@ -542,6 +544,8 @@ async function startAdmittedExecutionRun(
     }
     childSelection = args.childSelectionContext?.resolvedSelection ?? resolveExecutionRunChildSelection({
       backendTarget: originalParams.backendTarget,
+      ...(args.contributions ? { agentCatalogEntry: args.contributions.agentDefinitionsById
+        .get(resolveExecutionRunRuntimeBackendId(originalParams.backendTarget))?.catalogEntry ?? null } : {}),
       lifecycle,
       modelId: primaryModelId,
       modelSelection: originalParams.modelSelection,

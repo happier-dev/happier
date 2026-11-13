@@ -29,6 +29,7 @@ import { getAgentModelConfig } from '@happier-dev/agents';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
 import { readDeclaredCatalogConnectedServiceIds, resolveCatalogAgentConnectedServiceIds, readDeclaredCatalogConnectedAccountServiceIds, resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
 import { resolveProbeBackendContext } from '@/rpc/handlers/capabilitiesProbeContext';
+import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resolveConnectedServiceAuthForSpawn } from '@/daemon/connectedServices/resolveConnectedServiceAuthForSpawn';
 import { buildConnectedServiceCredentialSpawnErrorResult } from '@/daemon/connectedServices/diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult';
 import { isConnectedServiceUxDiagnosticSpawnErrorDetail } from '@happier-dev/protocol/spawnSession';
@@ -321,6 +322,11 @@ export async function invokeCliPreflightMethod(
         { requireCredentials: requiresMaterializedAuth, catalogEntry: dependencies.agentCatalogEntry, signal: requestContext.signal,
           accountContext: dependencies.accountContext },
     );
+    // Cache evidence per Account without changing the executable occurrence
+    // supplied to the invocation-services owner for native preparation.
+    const runtimeCacheKey = probeContext.credentials
+        ? JSON.stringify([dependencies.agentRuntimeCacheKey ?? null, resolveAccountSettingsScopeKey(probeContext.credentials)])
+        : dependencies.agentRuntimeCacheKey;
     const modelConfig = method === 'probeModels' ? getAgentModelConfig(agentId) : null;
     if (method === 'probeModels' && !isDynamicModelProbeEnabled({
         modelConfig,
@@ -331,7 +337,7 @@ export async function invokeCliPreflightMethod(
             agentId,
             catalogEntry: dependencies.agentCatalogEntry,
             registrySnapshot,
-            runtimeCacheKey: dependencies.agentRuntimeCacheKey,
+            runtimeCacheKey,
             savedSecretOperationContext: dependencies.savedSecretOperationContext,
             secretSources: dependencies.secretSources,
             machineAdmission: requestContext.machineAdmission,
@@ -495,6 +501,7 @@ export async function invokeCliPreflightMethod(
             pluginId: identity.pluginId, pluginVersion: target.manifest.version, agentId,
             occurrenceId: dependencies.agentRuntimeCacheKey, correlationId: randomUUID(), cwd,
             exactPurposeBindingSubjectId: connectedServiceProbeEnvironment.exactPurposeBindingSubjectId,
+            connectedAccountsOwner: dependencies.connectedAccountsOwner,
             environment: values, signal: preparationSignal,
             isOccurrenceCurrent: dependencies.isAgentRegistryCurrent ?? (() => false),
         });
@@ -542,7 +549,7 @@ export async function invokeCliPreflightMethod(
         agentId,
         catalogEntry: dependencies.agentCatalogEntry,
         registrySnapshot,
-        runtimeCacheKey: dependencies.agentRuntimeCacheKey,
+        runtimeCacheKey,
         savedSecretOperationContext: dependencies.savedSecretOperationContext,
         secretSources: dependencies.secretSources,
         machineAdmission: requestContext.machineAdmission,

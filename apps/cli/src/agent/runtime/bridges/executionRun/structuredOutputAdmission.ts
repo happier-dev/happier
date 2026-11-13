@@ -5,7 +5,6 @@ import { resolveExecutionRunRuntimeBackendId } from './backendTargets';
 import type { ExecutionRunManagerStartParams } from './executionRunTypes';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import type { ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
-import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import type { CreateAgentInvocationServices } from '@/plugins/runtime/invocation/services/types';
 import { readExecutionRunErrorCode } from './errors';
 import type { AgentModelDescriptor } from '@happier-dev/protocol/models/descriptor';
@@ -38,10 +37,6 @@ export async function readNativeExecutionRunOfferedModel(params: Parameters<NonN
     isCurrent?: () => boolean;
     preflightDependencies?: Pick<CliProbeDependencies, 'createApiClient' | 'activatePurposeBindings' | 'connectedAccountsOwner'>;
   }>) {
-  // The same executable occurrence may probe for more than one Session Account.
-  const runtimeCacheKey = params.promptCredentials
-    ? JSON.stringify([params.runtimeCacheKey ?? null, resolveAccountSettingsScopeKey(params.promptCredentials)])
-    : params.runtimeCacheKey;
   const agentId = resolveExecutionRunRuntimeBackendId(params.backendTarget);
   const response = await invokeCliPreflightMethod(agentId, 'probeModels', {
     backendTarget: params.backendTarget, cwd: params.cwd, runtimeDescriptorV1: params.runtimeDescriptorV1,
@@ -52,7 +47,7 @@ export async function readNativeExecutionRunOfferedModel(params: Parameters<NonN
     createApiClient: params.preflightDependencies?.createApiClient
       ?? (async credentials => (await import('@/api/api')).ApiClient.create(credentials)),
     accountContext: { credentials: params.promptCredentials ?? null, accountSettings: params.accountSettings ?? null },
-    agentCatalogEntry: params.catalogEntry, agentRuntimeCacheKey: runtimeCacheKey,
+    agentCatalogEntry: params.catalogEntry, agentRuntimeCacheKey: params.runtimeCacheKey,
     agentRegistrySnapshot: params.registrySnapshot,
     createAgentInvocationServices: params.createAgentInvocationServices,
     isAgentRegistryCurrent: params.isCurrent,

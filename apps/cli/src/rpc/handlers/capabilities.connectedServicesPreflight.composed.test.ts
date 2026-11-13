@@ -769,10 +769,11 @@ describe('capabilities.invoke connected-service preflight', () => {
       trackedSession: { pid: 123, startedBy: 'daemon' as const, happySessionId: 'selected-codex-review' },
       isCurrent: async () => true };
     const requesterPurposeRuntime = createPurposeRuntime();
+    let nativeRequesterCredentials = credentials;
     const snapshots = createRunnerExecutionRunSnapshots({ machineId: 'selected-machine', controller: pluginReloadController,
       // A Session requester has its own Account runtime, even on the same Home.
       // Activation and credential materialization must use that same owner.
-      withNativeModelAccount: async (_context, read) => read({ accountSettings: {}, promptCredentials: credentials,
+      withNativeModelAccount: async (_context, read) => read({ accountSettings: {}, promptCredentials: nativeRequesterCredentials,
         preflightDependencies: { createApiClient: async () => api,
           activatePurposeBindings: requesterPurposeRuntime.activatePurposeBindings,
           connectedAccountsOwner: requesterPurposeRuntime.owner } }),
@@ -793,13 +794,23 @@ describe('capabilities.invoke connected-service preflight', () => {
     const persistence = await import('@/persistence');
     const foregroundCredentials = vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(null);
     try {
-      await expect(assertExecutionRunStructuredOutputModelAllowed({ ...nativeRequest,
+      const admit = () => assertExecutionRunStructuredOutputModelAllowed({ ...nativeRequest,
         readNativeOfferedModel: async request => {
           const result = await dispatch({ ...request, kind: 'execution_run.native_offered_model.read_v1', backendTarget }, snapshotId);
           if (!result.ok || result.result.kind !== 'execution_run.native_offered_model') throw new Error('Missing selected native model');
           return result.result.model ?? undefined;
         },
-      })).resolves.toBeUndefined();
+      });
+      await expect(admit()).resolves.toBeUndefined();
+      const methodsPath = join(tempDir, 'captured-methods.json');
+      writeFileSync(methodsPath, '[]');
+      await expect(admit()).resolves.toBeUndefined();
+      expect(JSON.parse(readFileSync(methodsPath, 'utf8'))).not.toContain('model/list');
+      // Same occurrence and selected profile, different Happier Account:
+      // native catalog evidence must be acquired in that Account's scope.
+      nativeRequesterCredentials = { ...credentials, token: 'other-happier-account-token' };
+      await expect(admit()).resolves.toBeUndefined();
+      expect(JSON.parse(readFileSync(methodsPath, 'utf8'))).toContain('model/list');
     } finally { foregroundCredentials.mockRestore(); await snapshots.dispose(); }
     expect(credentialReads).not.toHaveLength(0);
     const captured = JSON.parse(readFileSync(captureFile, 'utf8')) as Record<string, unknown>;

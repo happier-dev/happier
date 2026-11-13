@@ -16,7 +16,9 @@ import {
     createCredentialsSpawnConnectedServicesTeamResourceCatalogResolver,
     resolveSessionSpawnConnectedServicesDefaultsPayload,
 } from '@/session/services/spawnConnectedServicesDefaults';
-import { resolveCatalogAgentConnectedAccountServiceIds } from '@/agent/catalog/registry';
+import { readDeclaredCatalogConnectedAccountServiceIds } from '@/agent/catalog/registry';
+import type { AgentCatalogEntry } from '@/agent/catalog/types';
+import type { AgentSpawnPurposeContributions } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { logger } from '@/ui/logger';
 import { CONNECTED_SERVICE_RUN_MATERIALIZATION_ERROR_CODES, type ExecutionRunConnectedServicesRegistrationV1 } from '@/daemon/connectedServices/runs/materializeContract';
 import { readConnectedServiceChildMemberLogContextFromEnv } from '@/daemon/connectedServices/connectedServiceChildEnvironment';
@@ -71,6 +73,8 @@ export class ExecutionRunConnectedServicesError extends Error {
 
 type ResolveSessionSpawnDefaults = (params: Readonly<{
     agentId: string;
+    catalogEntry: AgentCatalogEntry | null;
+    contributions?: AgentSpawnPurposeContributions;
     credentials: StoredCredentials;
     signal?: AbortSignal;
 }>) => Promise<Readonly<{ connectedServices: ConnectedServiceBindingsV2 }> | null>;
@@ -109,13 +113,6 @@ export type ResolvedExecutionRunConnectedServicesSelection = Readonly<{
 export function hasConnectedExecutionRunBinding(bindings: ConnectedServiceBindingsV2): boolean {
     return Object.values(bindings.bindingsByServiceId)
         .some((binding) => binding.source === 'connected' || binding.source === 'team_resource');
-}
-
-function resolveExecutionRunDeclaredConnectedServiceIds(params: Readonly<{
-    backendId: string;
-    backendSourceKind: 'built_in' | 'configured' | (string & {});
-}>): readonly string[] {
-    return resolveCatalogAgentConnectedAccountServiceIds(params.backendId);
 }
 
 function hasUndeclaredConnectedExecutionRunBinding(
@@ -159,16 +156,15 @@ function defaultDeps(): MaterializationDeps {
 export async function resolveExecutionRunConnectedServicesSelection(params: Readonly<{
     backendId: string;
     backendSourceKind: 'built_in' | 'configured' | (string & {});
+    agentCatalogEntry: AgentCatalogEntry | null;
+    contributions?: AgentSpawnPurposeContributions;
     connectedServices?: ConnectedServiceBindingsV2 | null;
     connectedServicesDefaultServiceIds?: readonly string[];
     signal?: AbortSignal;
     deps?: Pick<MaterializationDeps, 'readCredentials' | 'resolveSessionSpawnDefaults'>;
 }>): Promise<ResolvedExecutionRunConnectedServicesSelection | null> {
     const backendId = params.backendId.trim();
-    const declaredServiceIds = resolveExecutionRunDeclaredConnectedServiceIds({
-        backendId,
-        backendSourceKind: params.backendSourceKind,
-    });
+    const declaredServiceIds = readDeclaredCatalogConnectedAccountServiceIds(params.agentCatalogEntry);
     const supportsCatalogConnectedServices = declaredServiceIds.length > 0;
     const deps = params.deps ?? defaultDeps();
 
@@ -211,7 +207,8 @@ export async function resolveExecutionRunConnectedServicesSelection(params: Read
         }
         const credentials = await deps.readCredentials();
         const resolvedDefaults = credentials
-            ? await deps.resolveSessionSpawnDefaults({ agentId: backendId, credentials, signal: params.signal })
+            ? await deps.resolveSessionSpawnDefaults({ agentId: backendId, catalogEntry: params.agentCatalogEntry,
+                contributions: params.contributions, credentials, signal: params.signal })
             : null;
         const merged: Record<string, ConnectedServiceBindingSelectionV2> = {
             ...explicitBindingsByServiceId,
@@ -251,6 +248,8 @@ export async function resolveExecutionRunConnectedServicesSelection(params: Read
     if (!credentials) return null;
     const resolved = await deps.resolveSessionSpawnDefaults({
         agentId: backendId,
+        catalogEntry: params.agentCatalogEntry,
+        contributions: params.contributions,
         credentials,
         signal: params.signal,
     });
@@ -269,6 +268,8 @@ export async function resolveExecutionRunConnectedServicesEnv(params: Readonly<{
     controllerOccurrenceId?: string;
     backendId: string;
     backendSourceKind: 'built_in' | 'configured' | (string & {});
+    agentCatalogEntry: AgentCatalogEntry | null;
+    contributions?: AgentSpawnPurposeContributions;
     connectedServices?: ConnectedServiceBindingsV2 | null;
     /**
      * Bare per-service default tokens (RO-F5): serviceIds asking for their STORED account default,
@@ -287,10 +288,7 @@ export async function resolveExecutionRunConnectedServicesEnv(params: Readonly<{
     params.signal?.throwIfAborted();
     const backendId = params.backendId.trim();
     const supportsCatalogConnectedServices =
-        resolveExecutionRunDeclaredConnectedServiceIds({
-            backendId,
-            backendSourceKind: params.backendSourceKind,
-        }).length > 0;
+        readDeclaredCatalogConnectedAccountServiceIds(params.agentCatalogEntry).length > 0;
     const deps = params.deps ?? defaultDeps();
 
     if (params.connectedServices === null && params.resolvedSelection === undefined) return null;
@@ -300,6 +298,8 @@ export async function resolveExecutionRunConnectedServicesEnv(params: Readonly<{
         : await resolveExecutionRunConnectedServicesSelection({
             backendId,
             backendSourceKind: params.backendSourceKind,
+            agentCatalogEntry: params.agentCatalogEntry,
+            contributions: params.contributions,
             signal: params.signal,
             ...(params.connectedServices !== undefined
                 ? { connectedServices: params.connectedServices }

@@ -1,3 +1,4 @@
+import { findCatalogEntry } from '@/agent/catalog/registry';
 import { assertQualifiedConnectedAccountLaunchUsesProduced } from './connectedServices/materialize/materializeQualifiedConnectedAccountLaunchUses';
 import { projectExecutionRunError } from '@/agent/runtime/bridges/executionRun/errors';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -110,7 +111,7 @@ describe('resolveExecutionRunConnectedServiceMaterializeTimeoutMs', () => {
       : new Response(JSON.stringify({ ok: false, errorCode: 'connected_service_run_materialization_blocked',
         errorMessage: owner.errorMessage, failureCause }), { status: 403 }));
     let caught: unknown;
-    try { await resolveExecutionRunConnectedServicesEnv({ runId: 'credential-refusal', backendId: 'codex',
+    try { await resolveExecutionRunConnectedServicesEnv({ runId: 'credential-refusal', backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'),
       backendSourceKind: 'built_in', connectedServices: materializeRequest.connectedServices, cwd: '/repo' });
     } catch (error) { caught = error; }
     expect(ExecutionRunErrorSchema.parse(projectExecutionRunError(caught))).toMatchObject({
@@ -138,7 +139,7 @@ describe('resolveExecutionRunConnectedServiceMaterializeTimeoutMs', () => {
       throw new Error('Unexpected daemon HTTP request');
     });
     const createRuntime = () => createLazyExecutionRunHostRuntime({ resolveRuntime: async () => {
-      await resolveExecutionRunConnectedServicesEnv({ runId: 'voice-profile-refusal', backendId: 'codex',
+      await resolveExecutionRunConnectedServicesEnv({ runId: 'voice-profile-refusal', backendId: 'codex', agentCatalogEntry: findCatalogEntry('codex'),
         backendSourceKind: 'built_in', connectedServices: materializeRequest.connectedServices, cwd: '/repo',
       });
       throw new Error('A refused profile cannot create an Agent runtime');
