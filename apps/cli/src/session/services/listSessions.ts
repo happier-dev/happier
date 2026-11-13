@@ -117,7 +117,7 @@ export function resolveAdmittedSessionListQueryAdmission(
   if (query.audiences.length > 0) arms.push('audiences');
   if (query.tagIds.length > 0) arms.push('tagIds');
   if (query.folderIds?.length) arms.push('folderIds');
-  if (query.projectKeys && (query.projectKeys.include.length || query.projectKeys.exclude.length)) arms.push('projectKeys');
+  if (query.projectKeys && (query.projectKeys.include.length || query.projectKeys.exclude.length || query.projectKeys.none)) arms.push('projectKeys');
   if (arms.length > 0) return { kind: 'unsupported', arms };
   // An Account-corpus continuation cannot be replayed as the first (and only) page
   // of this corpus. Treat it as already past that row rather than ignoring it.

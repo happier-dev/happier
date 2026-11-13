@@ -3163,6 +3163,10 @@ An owner patch with `projectKey: null` publishes the classification "this
 Session is in no Project": the CLI sends it once, when the canonical resolver
 (`resolveSessionProjectKeyV1`) returns `none` for an unkeyed Session (a
 Session-private managed folder, or a placement no accepted Workspace covers).
+When that Machine's accepted checkouts change, its daemon reclassifies its own
+Sessions through the same owner (see the filtered-listing Project selector in
+`docs/compatibility.md`): a new checkout publishes the key over "no Project",
+and a forgotten checkout returns the Sessions stamped with it to "no Project".
 The server stores that as `projectKeyNone` and row projections carry
 `projectKeyNone: true`; it is equally contentless. Null without that flag, or
 absence on reads, means not yet classified (every 0.2-created row stays so until

@@ -30,7 +30,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('P
             ...buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) };
         await db.session.createMany({ data: ids.map((id, index) => ({ id, accountId: owner.id, tag: id,
             encryptionMode: 'plain', metadataLayoutVersion: 1, metadata: '{"v":1}', ownerMetadata: '{"t":"plain","v":{"v":1}}',
-            projectKey: index < 3 ? 'payments' : index === 3 ? null : 'other', meaningfulActivityAt: new Date(index),
+            projectKey: index < 3 ? 'payments' : index <= 5 ? null : 'other', meaningfulActivityAt: new Date(index),
+            // Two owner-published "no Project" rows: skipped by an include, admitted by an exclude-only selection.
+            projectKeyNone: index === 4 || index === 5,
         })) });
         await db.session.create({ data: { id: `${prefix}-foreign`, tag: prefix, accountId: foreign.id,
             projectKey: 'payments', encryptionMode: 'plain', metadata: '{}' } });
@@ -50,15 +52,15 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('P
                 cursor = page.hasNext ? page.nextCursor : undefined;
                 if (page.hasNext) expect(cursor).toBeTruthy();
                 // A broad or repeating query must fail promptly instead of paging the whole fixture.
-                expect(selected.length).toBeLessThanOrEqual(5);
+                expect(selected.length).toBeLessThanOrEqual(6);
             } while (cursor);
             return selected.sort();
         };
         try {
             const expected = ids.slice(0, 4).sort();
             expect(await read(['payments'], [])).toEqual(expected);
-            expect(await read([], ['other'])).toEqual(expected);
-            await db.session.update({ where: { id: ids[4] }, data: { projectKey: 'payments' } });
+            expect(await read([], ['other'])).toEqual(ids.slice(0, 6).sort());
+            await db.session.update({ where: { id: ids[4] }, data: { projectKey: 'payments', projectKeyNone: false } });
             expect(await read(['payments'], [])).toEqual(ids.slice(0, 5).sort());
         } finally {
             await app.close();

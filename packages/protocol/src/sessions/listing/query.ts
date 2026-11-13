@@ -67,13 +67,15 @@ const structuralFields = () => ({
   /** Relation facts are selected by the Home owner before pagination. */
   folderIds: z.optional(FolderIdsSchema),
   /** Accepted Home-local keys preselect candidates; unpublished identities remain locally resolvable. */
-  projectKeys: z.optional(z.strictObject({ include: ProjectKeysSchema, exclude: ProjectKeysSchema })),
+  /** `none` selects only Sessions their owner published as in no Project (owner reclassification); it takes no keys. */
+  projectKeys: z.optional(z.strictObject({ include: ProjectKeysSchema, exclude: ProjectKeysSchema, none: z.optional(z.literal(true)) })
+    .check(z.refine((value) => value.none !== true || value.include.length + value.exclude.length === 0, { message: 'A no-Project selection takes no Project keys' }))),
   underSessionId: z.optional(SelectorIdSchema),
 });
 export const SessionListMembershipFilterV1Schema = lazyZodSchema(() => z.strictObject(structuralFields()));
 export type SessionListMembershipFilterV1 = Readonly<Omit<z.infer<typeof SessionListMembershipFilterV1Schema>, 'audiences' | 'tagIds' | 'folderIds' | 'projectKeys'> & {
   audiences: readonly SessionAudienceSelectionV1[]; tagIds: readonly string[]; folderIds?: readonly string[];
-  projectKeys?: Readonly<{ include: readonly string[]; exclude: readonly string[] }>;
+  projectKeys?: Readonly<{ include: readonly string[]; exclude: readonly string[]; none?: true }>;
 }>;
 export const SessionListMembershipV1Schema = lazyZodSchema(() => z.strictObject({
   mode: z.enum(['filter_or_manual', 'manual_only']), tagIds: TagIdsSchema, filter: z.optional(SessionListMembershipFilterV1Schema),
@@ -101,7 +103,7 @@ export type SessionListQueryV1 = Readonly<Omit<z.infer<typeof SessionListQueryV1
   audiences: readonly SessionAudienceSelectionV1[];
   tagIds: readonly string[];
   folderIds?: readonly string[];
-  projectKeys?: Readonly<{ include: readonly string[]; exclude: readonly string[] }>;
+  projectKeys?: Readonly<{ include: readonly string[]; exclude: readonly string[]; none?: true }>;
   membership?: SessionListMembershipV1;
 }>;
 

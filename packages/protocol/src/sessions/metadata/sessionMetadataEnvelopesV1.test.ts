@@ -1396,7 +1396,10 @@ describe('session metadata privacy envelopes v1', () => {
       .toEqual(ownerPatch);
     expect(SessionMetadataTuplePatchV1Schema.parse({ ...ownerPatch, projectKey: 'accepted-project' }))
       .toEqual({ ...ownerPatch, projectKey: 'accepted-project' });
-    for (const projectKey of ['', '  ', null]) {
+    // `null` is the owner's "in no Project" classification.
+    expect(SessionMetadataTuplePatchV1Schema.parse({ ...ownerPatch, projectKey: null }))
+      .toEqual({ ...ownerPatch, projectKey: null });
+    for (const projectKey of ['', '  ']) {
       expect(SessionMetadataTuplePatchV1Schema.safeParse({ ...ownerPatch, projectKey }).success).toBe(false);
     }
     expect(SessionMetadataTuplePatchV1Schema.safeParse({ ...sharedEditorPatch, projectKey: 'accepted-project' }).success)

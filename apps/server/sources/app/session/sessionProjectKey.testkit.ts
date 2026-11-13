@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { expect, it } from 'vitest';
-import { V2SessionRecordSchema } from '@happier-dev/protocol/sessions/control/contract';
+import { V2SessionListRowSchema } from '@happier-dev/protocol/sessions/control/contract';
 import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
 import { buildAccountStoredContentCompatibilityHttpHeadersV1, CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { createPlainSessionOwnerMetadataEnvelopeV1, encodeSessionOwnerMetadataEnvelopeV1, SessionMetadataTuplePatchV1Schema, SessionMetadataInactiveModelIntentOwnerPatchV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
@@ -66,7 +66,7 @@ export function sessionProjectKeyContractTests(): void {
             const response = await app.inject({ method: 'GET', url: '/v2/sessions', headers: headers(accountId) });
             expect(response.statusCode, response.body).toBe(200);
             const record = response.json().sessions.find((row: { id: string }) => row.id === session.id);
-            return V2SessionRecordSchema.parse(record);
+            return V2SessionListRowSchema.parse(record);
         };
         try {
             // The patch is the genuine strict HTTP boundary: removing its new
@@ -103,7 +103,7 @@ export function sessionProjectKeyContractTests(): void {
             expect(await updateSessionMetadataEnvelopeTuple(directSharedPatch)).toMatchObject({ ok: false, error: 'invalid-params' });
             expect((await patch(ownerPatch(3, 'spoofed-project'), editor.id)).statusCode).toBe(403);
             expect(await read(owner.id)).toMatchObject({ projectKey: 'other-project' });
-            for (const invalid of ['', '  ', null]) {
+            for (const invalid of ['', '  ']) {
                 expect((await patch({ ...ownerPatch(3), projectKey: invalid })).statusCode).toBe(400);
             }
             expect(SessionMetadataInactiveModelIntentOwnerPatchV1Schema.safeParse({
@@ -128,6 +128,79 @@ export function sessionProjectKeyContractTests(): void {
         }
     });
 
+    it('selects a Project in one page: members and unclassified Sessions, never owner-published no-Project ones', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const ownerMetadata = createPlainSessionOwnerMetadataEnvelopeV1({ v: 1 });
+        const sessions = await Promise.all(Array.from({ length: 8 }, (_, index) => db.session.create({ data: {
+            accountId: owner.id, tag: randomUUID(), encryptionMode: 'plain', active: true,
+            metadataLayoutVersion: 1, metadata: '{"v":1}', agentState: '{}', meaningfulActivityAt: new Date(index + 1),
+            ownerMetadata: encodeSessionOwnerMetadataEnvelopeV1(ownerMetadata),
+            ...(index === 0 ? { projectKey: 'payments' } : {}),
+        } })));
+        const [member, unclassified, ...withoutProject] = sessions;
+        await db.accountSessionFollow.createMany({ data: sessions.map(session => ({ accountId: owner.id, sessionId: session.id })) });
+        const app = createAuthenticatedTestApp();
+        registerSessionPatchRoute(app);
+        registerSessionListingRoutes(app);
+        const publish = (sessionId: string, expectedVersion: number, projectKey: string | null) => app.inject({ method: 'PATCH',
+            url: `/v2/sessions/${sessionId}`, headers: headers(owner.id), payload: {
+                mode: 'owner', metadataLayoutVersion: 1, expectedOwnerMetadata: ownerMetadata, ownerMetadata,
+                sharedMetadata: { ciphertext: '{"v":1}', expectedVersion },
+                agentState: { ciphertext: '{}', expectedVersion: 0 }, projectKey,
+            } });
+        // Reads the Project roster's own selector and counts the pages one open walks.
+        const select = async (projectKeys: { include: string[]; exclude: string[]; none?: true }) => {
+            const ids: string[] = [];
+            let pages = 0;
+            let cursor: string | undefined;
+            do {
+                const response = await app.inject({ method: 'POST', url: '/v2/sessions/query', headers: headers(owner.id), payload: {
+                    v: 1, storage: 'active', scope: 'my_work', attention: 'any', includeInactive: true,
+                    audiences: [], tagIds: [], projectKeys, limit: 2, includeAttention: false, ...(cursor ? { cursor } : {}),
+                } });
+                expect(response.statusCode, response.body).toBe(200);
+                const page = response.json();
+                pages += 1;
+                ids.push(...page.sessions.map((row: { id: string }) => row.id));
+                cursor = page.hasNext ? page.nextCursor : undefined;
+            } while (cursor && pages < 10);
+            return { ids: ids.sort(), pages };
+        };
+        try {
+            for (const session of withoutProject) {
+                const published = await publish(session.id, 0, null);
+                expect(published.statusCode, published.body).toBe(200);
+                // An exact retry of the no-Project publication is idempotent.
+                expect((await publish(session.id, 0, null)).json()).toMatchObject({ success: true });
+            }
+            const listed = await app.inject({ method: 'GET', url: '/v2/sessions', headers: headers(owner.id) });
+            const rows = listed.json().sessions.map((row: unknown) => V2SessionListRowSchema.parse(row));
+            expect(rows.find((row: { id: string }) => row.id === withoutProject[0]!.id)).toMatchObject({ projectKey: null, projectKeyNone: true });
+            expect(rows.find((row: { id: string }) => row.id === unclassified!.id)).not.toHaveProperty('projectKeyNone');
+
+            expect(await select({ include: ['payments'], exclude: [] })).toEqual({ ids: [member!.id, unclassified!.id].sort(), pages: 1 });
+            // Excluding other Projects still admits Sessions known to have none.
+            expect((await select({ include: [], exclude: ['other'] })).ids).toHaveLength(sessions.length);
+            // The owner's reclassification reads exactly its published no-Project rows (6 of 8, 3 pages of 2).
+            expect(await select({ include: [], exclude: [], none: true }))
+                .toEqual({ ids: withoutProject.map(session => session.id).sort(), pages: 3 });
+
+            // A Session gaining a Project later is selected once its owner publishes the key.
+            expect((await publish(withoutProject[0]!.id, 1, 'payments')).statusCode).toBe(200);
+            expect(await select({ include: ['payments'], exclude: [] }))
+                .toEqual({ ids: [member!.id, unclassified!.id, withoutProject[0]!.id].sort(), pages: 2 });
+            expect(await db.session.findUniqueOrThrow({ where: { id: withoutProject[0]!.id } }))
+                .toMatchObject({ projectKey: 'payments', projectKeyNone: false });
+            // A key replacing none leaves the no-Project selection.
+            expect((await select({ include: [], exclude: [], none: true })).ids).toHaveLength(withoutProject.length - 1);
+        } finally {
+            await app.close();
+            await db.accountSessionFollow.deleteMany({ where: { accountId: owner.id } });
+            await db.session.deleteMany({ where: { accountId: owner.id } });
+            await db.account.delete({ where: { id: owner.id } });
+        }
+    });
+
     it('lists a never-published Session as null and accepts older server records without the field', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), encryptionMode: 'plain',
@@ -140,10 +213,10 @@ export function sessionProjectKeyContractTests(): void {
         try {
             const response = await app.inject({ method: 'GET', url: '/v2/sessions', headers: headers(owner.id) });
             expect(response.statusCode, response.body).toBe(200);
-            const record = V2SessionRecordSchema.parse(response.json().sessions.find((row: { id: string }) => row.id === session.id));
+            const record = V2SessionListRowSchema.parse(response.json().sessions.find((row: { id: string }) => row.id === session.id));
             expect(record.projectKey).toBeNull();
             const { projectKey: _key, ...olderServerRecord } = record;
-            expect(V2SessionRecordSchema.safeParse(olderServerRecord).success).toBe(true);
+            expect(V2SessionListRowSchema.safeParse(olderServerRecord).success).toBe(true);
         } finally {
             await app.close();
             await db.session.delete({ where: { id: session.id } });

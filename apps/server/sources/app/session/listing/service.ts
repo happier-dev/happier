@@ -219,7 +219,7 @@ async function listSessionRuntimeManagedSubtree(params: Readonly<{
     if (!principal || principal.accountId !== params.userId || query.underSessionId !== principal.sessionId
         || query.scope !== 'all_accessible' || query.attention !== 'any'
         || query.audiences.length || query.tagIds.length || query.folderIds?.length
-        || query.projectKeys?.include.length || query.projectKeys?.exclude.length
+        || query.projectKeys?.include.length || query.projectKeys?.exclude.length || query.projectKeys?.none
         || query.coordinator !== undefined || query.membership !== undefined
         || query.includeAttention === true || query.attentionCursor !== undefined
         || !query.includeInactive) throw new SessionListCredentialScopeDeniedError();

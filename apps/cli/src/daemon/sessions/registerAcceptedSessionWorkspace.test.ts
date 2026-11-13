@@ -69,6 +69,7 @@ describe('accepted Session workspace registration', () => {
       getBoundSessionId: () => requesterSessionId, isCurrent: async () => requesterCurrent, release: async () => {} };
     let ownerProjection: 'owner' | 'recipient' | 'missing' = 'owner';
     let publishedProjectKey: string | null = null;
+    let publishedProjectKeyNone = false;
     let currentSessionMetadata = createTestMetadata({ path: directory, machineId: 'machine-a' });
     let currentSessionVersion = 0;
     let conflictOnNextMetadataPatch: (() => void) | null = null;
@@ -84,7 +85,10 @@ describe('accepted Session workspace registration', () => {
         return { status: 409, data: { code: 'session_metadata_version_conflict', metadataLayoutVersion: 1,
           sharedMetadata: { version: currentSessionVersion }, agentState: { version: currentSessionVersion } } };
       }
-      if (patch.projectKey !== undefined) publishedProjectKey = patch.projectKey;
+      if (patch.projectKey !== undefined) {
+        publishedProjectKey = patch.projectKey;
+        publishedProjectKeyNone = patch.projectKey === null;
+      }
       return { status: 200, data: { success: true, metadataLayoutVersion: 1,
         sharedMetadata: { version: patch.sharedMetadata.expectedVersion + 1 },
         agentState: { version: patch.agentState.expectedVersion + 1 } } };
@@ -102,6 +106,7 @@ describe('accepted Session workspace registration', () => {
         ...(requesterRead || ownerProjection === 'owner' ? { metadataLayoutVersion: 1,
           metadata: fields.sharedMetadata.ciphertext, ownerMetadata: fields.ownerMetadata } : {}),
         projectKey: publishedProjectKey,
+        ...(publishedProjectKeyNone ? { projectKeyNone: true as const } : {}),
         ...(requesterRead || ownerProjection === 'owner' ? { share: null } : ownerProjection === 'recipient' ? {
           share: { accessLevel: 'edit', canApprovePermissions: false },
         } : {}),
@@ -163,8 +168,13 @@ describe('accepted Session workspace registration', () => {
       await expect(register(metadata, 'accepted-session')).rejects.toMatchObject({ code: 'workspace_registration_owner_unavailable' });
       expect(requests).toHaveLength(0);
       ownerProjection = 'owner';
+      // A Session-private managed folder is classified once as in no Project, never as a Project row.
       await register({ ...metadata, sessionDirectoryV1: { v: 1, kind: 'managed' } }, 'accepted-session');
       expect(requests).toHaveLength(0);
+      expect(metadataPatches).toEqual([expect.objectContaining({ mode: 'owner', projectKey: null })]);
+      await register({ ...metadata, sessionDirectoryV1: { v: 1, kind: 'managed' } }, 'accepted-session');
+      expect(metadataPatches).toHaveLength(1);
+      metadataPatches.length = 0;
       await register(metadata, 'accepted-session');
       const accepted = rows.flatMap(row => row.content?.t === 'plain' && row.content.v.key.kind === 'workspace-ref'
         && 'id' in row.content.v.value && row.content.v.value.serverId === 'srv_rf10_home' ? [row.content.v.value] : []);
@@ -199,7 +209,8 @@ describe('accepted Session workspace registration', () => {
       await register({ ...metadata, workspaceId: accepted[0]!.id, projectId: project.projectKey }, 'accepted-session');
       expect(requests).toHaveLength(2);
       expect(metadataPatches).toHaveLength(1);
-      expect(vi.mocked(axios.get).mock.calls.filter(([url]) => String(url).endsWith('/v1/account/encryption/currentness'))).toHaveLength(1);
+      // One currentness read per owner write: the managed "no Project" publication and the Project key.
+      expect(vi.mocked(axios.get).mock.calls.filter(([url]) => String(url).endsWith('/v1/account/encryption/currentness'))).toHaveLength(2);
       // A retained accepted checkout remains authoritative in a sandbox whose
       // execution directory cannot itself be inspected as a repository.
       publishedProjectKey = null;
@@ -220,6 +231,15 @@ describe('accepted Session workspace registration', () => {
       // Open can accept an ordinary directory without SCM or an existing metadata workspaceId.
       const plainRoot = await realpath(await mkdtemp(join(tmpdir(), 'happier-accepted-plain-workspace-')));
       try {
+        // Before any Project accepts it, an unclassified plain folder publishes "no Project" once.
+        publishedProjectKey = null;
+        const beforeNone = metadataPatches.length;
+        await register(createTestMetadata({ path: plainRoot, machineId: 'machine-a' }), 'accepted-session');
+        expect(metadataPatches).toHaveLength(beforeNone + 1);
+        expect(metadataPatches.at(-1)?.projectKey).toBeNull();
+        expect(publishedProjectKeyNone).toBe(true);
+        await register(createTestMetadata({ path: plainRoot, machineId: 'machine-a' }), 'accepted-session');
+        expect(metadataPatches).toHaveLength(beforeNone + 1);
         const plainRef = materializeWorkspaceRefForMachineRoot([], { serverId: 'srv_rf10_home', machineId: 'machine-a',
           rootPath: plainRoot, nowMs: 1, createId: () => 'accepted-plain-checkout' }).workspaceRef;
         const key = { kind: 'workspace-ref' as const, serverId: plainRef.serverId, id: plainRef.id };
@@ -234,6 +254,8 @@ describe('accepted Session workspace registration', () => {
           expect(metadataPatches.at(-1)).toMatchObject({ projectKey: plainRef.projectKey,
             ownerMetadata: { t: 'plain', v: { workspace: { workspaceId: plainRef.id, projectId: plainRef.projectKey } } } });
           expect(requests).toHaveLength(2);
+          // Gaining a Project later replaces the published "no Project".
+          expect(publishedProjectKeyNone).toBe(false);
         }
       } finally { await rm(plainRoot, { recursive: true, force: true }); }
       publishedProjectKey = project.projectKey;

@@ -704,7 +704,7 @@ export async function updateSessionMetadataEnvelopeTupleWithRetry(
     sessionId: string;
     initialSnapshot: SessionMetadataWriterSnapshot;
     mutation: SessionMetadataEnvelopeTupleMutation;
-    projectKey?: string;
+    projectKey?: string | null;
     publisherPrecondition?: SessionMetadataPublisherPreconditionV1;
     sessionExpectation?:
       SessionMetadataInactiveModelIntentExpectationV1;
@@ -1090,7 +1090,7 @@ export async function updateSessionMetadataWithRetry(params: Readonly<{
   sessionId: string;
   rawSession: LayoutAwareRawSession;
   /** Accepted non-content Project relationship, written only by the owner tuple. */
-  projectKey?: string;
+  projectKey?: string | null;
   updater: (
     metadata: Record<string, unknown>,
     context?: SessionMetadataMutationContext,

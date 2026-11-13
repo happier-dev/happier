@@ -9,7 +9,7 @@ import type { StoredCredentials } from '@/persistence';
 import { inspectWorkspaceLocationWithScmWorkspace } from '@/scm/workspace/workspaceLocationInspection';
 import { materializeWorkspaceRefForMachineRoot } from '@/workspaces/workspaceRefsV1';
 import { fetchSessionByIdCompat } from '@/session/transport/http/sessionsHttp';
-import { publishAcceptedSessionProject } from '@/session/metadata/publishAcceptedSessionProject';
+import { publishAcceptedSessionProject, publishSessionWithoutProject } from '@/session/metadata/publishAcceptedSessionProject';
 import { createProjectAccountSnapshotMutation, type ProjectAccountRowsInput } from '@/workspaces/projectAccountRows';
 import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -31,7 +31,7 @@ export function createAcceptedSessionWorkspaceRegistration(input: Readonly<{
 }>): (metadata: Metadata, sessionId: string) => Promise<void> {
   return async (metadata, sessionId) => {
     // Session-private managed folders never become Account Projects, even if an Agent initializes SCM there.
-    if (readSessionDirectoryKind(metadata) === 'managed') return;
+    const managed = readSessionDirectoryKind(metadata) === 'managed';
     const observedPlacement = { ...metadata, machineId: input.machineId };
     const serverId = await resolveServerProfileHomeIdentityId(input.serverId);
     if (!serverId) throw Object.assign(new Error('workspace_registration_home_unavailable'), { code: 'workspace_registration_home_unavailable' });
@@ -57,6 +57,17 @@ export function createAcceptedSessionWorkspaceRegistration(input: Readonly<{
       const authority: ProjectAccountRowsInput = { credentials, serverId: input.serverId,
         ...(custody ? { sessionCustody: { serverId: custody.attribution.serverId, accountId: custody.attribution.accountId,
           serverHttpBaseUrl: custody.serverHttpBaseUrl, isCurrent: custody.isCurrent } } : {}) };
+      const currentness = { signal: input.signal, ...(custody ? { verifyCurrent: custody.isCurrent } : {}) };
+      // An unkeyed Session the canonical resolver proves is in no Project is published as such once,
+      // so Project selections stop paging it as a candidate.
+      const publishWithoutProject = (workspaceRefs: Parameters<typeof publishSessionWithoutProject>[0]['workspaceRefs']) =>
+        runWithServerHttpBaseUrl(serverHttpBaseUrl, () => publishSessionWithoutProject({
+          credentials, sessionId, rawSession: session, observedMetadata: observedPlacement, serverId, workspaceRefs, currentness,
+        }));
+      if (managed) {
+        await publishWithoutProject([]);
+        return;
+      }
       const mutate = createProjectAccountSnapshotMutation(authority);
       const inspected = await (input.inspectLocation ?? inspectWorkspaceLocationWithScmWorkspace)({
         candidatePath: resolveSessionWorkspaceRootForMachine({ metadata, machineId: input.machineId,
@@ -95,11 +106,15 @@ export function createAcceptedSessionWorkspaceRegistration(input: Readonly<{
           return { ...snapshot, workspaceRefs: accepted.workspaceRefs };
         }, input.signal);
         if (result.status === 'applied' || result.status === 'unchanged') {
-          if (!acceptedWorkspaceId) return;
+          // Assigned inside the mutation callback, so read it once as its declared type.
+          const workspaceId = acceptedWorkspaceId as string | null;
+          if (!workspaceId) {
+            await publishWithoutProject(result.snapshot.workspaceRefs);
+            return;
+          }
           await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => publishAcceptedSessionProject({
             credentials, sessionId, rawSession: session, observedMetadata: observedPlacement,
-            serverId, workspaceRefs: result.snapshot.workspaceRefs, workspaceId: acceptedWorkspaceId,
-            currentness: { signal: input.signal, ...(custody ? { verifyCurrent: custody.isCurrent } : {}) },
+            serverId, workspaceRefs: result.snapshot.workspaceRefs, workspaceId, currentness,
           }));
           return;
         }

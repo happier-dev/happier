@@ -269,7 +269,8 @@ export const SessionMetadataOwnerPatchV1Schema = lazyZodSchema(() => z.strictObj
   mode: z.literal('owner'),
   usageTimingV1: z.optional(UsageSessionTimingV1Schema),
   displayProjectionV1: z.optional(z.nullable(SessionDisplayProjectionV1Schema)),
-  projectKey: z.optional(NonBlankOpaqueIdentifierSchema),
+  /** Accepted Project identity; `null` publishes that the owner classified this Session as in no Project. */
+  projectKey: z.optional(z.nullable(NonBlankOpaqueIdentifierSchema)),
   activitySummaryV1: z.optional(SessionAgentStateActivitySummaryV1Schema),
   sharedActionConfirmationSummaryV1: z.optional(SessionSharedActionConfirmationSummaryV1Schema),
   metadataLayoutVersion: z.literal(SESSION_METADATA_LAYOUT_VERSION_V1),

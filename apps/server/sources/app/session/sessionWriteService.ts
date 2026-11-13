@@ -3813,8 +3813,8 @@ export type UpdateSessionMetadataEnvelopeTupleResult =
         agentStateVersion: number;
         ownerMetadata: Readonly<{ value: string }>;
         agentState: Readonly<{ version: number; value: string | null }>;
-        /** Present only when this owner patch admitted a Project identity. */
-        projectKey?: string;
+        /** Present only when this owner patch admitted a Project classification; null is "no Project". */
+        projectKey?: string | null;
         runtimeProjection?: SessionCurrentViewPublicationSourceV1['runtimeProjection'];
         /** Which private parts this commit changed; absent on an exact retry, which publishes nothing. */
         changed?: SessionCurrentViewPublicationSourceV1['changed'];
@@ -3881,7 +3881,7 @@ export function doesStoredSessionDisplayMatchTupleWrite(
 }
 
 function isExactMetadataEnvelopeTupleRetry(
-    current: StoredSessionMetadataEnvelopeTuple & Readonly<{ projectKey: string | null }>,
+    current: StoredSessionMetadataEnvelopeTuple & Readonly<{ projectKey: string | null; projectKeyNone: boolean }>,
     params: ActiveSessionMetadataEnvelopeTupleInput,
 ): boolean {
     if (
@@ -3889,7 +3889,8 @@ function isExactMetadataEnvelopeTupleRetry(
         || current.metadataVersion !== params.sharedMetadata.expectedVersion + 1
         || current.metadata !== params.sharedMetadata.ciphertext
         || !doesStoredSessionDisplayMatchTupleWrite(current.displayProjectionV1, params.displayProjectionV1, params.mode === 'shared_editor')
-        || (params.mode === "owner" && params.projectKey !== undefined && current.projectKey !== params.projectKey)
+        || (params.mode === "owner" && params.projectKey !== undefined
+            && (current.projectKey !== params.projectKey || current.projectKeyNone !== (params.projectKey === null)))
     ) {
         return false;
     }
@@ -4528,6 +4529,7 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
             latestTurnStatus: true,
             seq: true,
             projectKey: true,
+            projectKeyNone: true,
             encryptionMode: true,
             displayProjectionV1: true,
             metadataLayoutVersion: true,
@@ -4653,7 +4655,8 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
             metadataLayoutVersion: SESSION_METADATA_LAYOUT_VERSION_V1,
             agentState: params.agentState.ciphertext,
             agentStateVersion: nextAgentStateVersion,
-            ...(params.mode === "owner" && params.projectKey !== undefined ? { projectKey: params.projectKey } : {}),
+            ...(params.mode === "owner" && params.projectKey !== undefined
+                ? { projectKey: params.projectKey, projectKeyNone: params.projectKey === null } : {}),
             ...pendingSummary,
             ...sharedConfirmationSummary,
         }
@@ -4708,6 +4711,7 @@ async function updateSessionMetadataEnvelopeTupleAfterCursorFenceInTx(
                 active: true,
                 archivedAt: true,
                 projectKey: true,
+                projectKeyNone: true,
                 displayProjectionV1: true,
                 metadataLayoutVersion: true,
                 metadataVersion: true,

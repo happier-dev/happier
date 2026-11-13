@@ -38,8 +38,9 @@ export function buildSessionListQueryKey(serverIdRaw: string, query: SessionList
         ...(query.coordinator === undefined ? [] : [{ coordinator: query.coordinator }]),
         ...(query.underSessionId === undefined ? [] : [query.underSessionId]),
         ...(query.folderIds?.length ? [{ folderIds: [...new Set(query.folderIds)].sort() }] : []),
-        ...(query.projectKeys && (query.projectKeys.include.length || query.projectKeys.exclude.length) ? [{ projectKeys: {
+        ...(query.projectKeys && (query.projectKeys.include.length || query.projectKeys.exclude.length || query.projectKeys.none) ? [{ projectKeys: {
             include: [...new Set(query.projectKeys.include)].sort(), exclude: [...new Set(query.projectKeys.exclude)].sort(),
+            ...(query.projectKeys.none ? { none: true } : {}),
         } }] : []),
         ...(query.membership ? [{ membership: {
             mode: query.membership.mode,

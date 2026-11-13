@@ -6,7 +6,7 @@ import type { StoredCredentials } from '@/persistence';
 import type { RawSessionRecord } from '@/session/transport/http/sessionsHttp';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { fetchServerFeaturesSnapshot, readServerIdentityIdFromFeaturesSnapshot } from '@/features/serverFeaturesClient';
-import { publishAcceptedSessionProject } from '@/session/metadata/publishAcceptedSessionProject';
+import { publishAcceptedSessionProject, publishSessionWithoutProject } from '@/session/metadata/publishAcceptedSessionProject';
 import { readProjectAccountRowsObservation } from '@/workspaces/projectAccountRows';
 
 /** Only a current creation or real metadata write may publish a native link's accepted Project. */
@@ -37,16 +37,23 @@ export async function publishLinkedSessionProject(input: Readonly<{
   input.assertCurrent();
   if (!observation) return false;
   const accepted = resolveSessionProjectKeyV1(input.metadata, serverId, observation.snapshot.workspaceRefs);
+  const currentness = { signal: input.signal, verifyCurrent: async () => {
+    input.assertCurrent();
+    return observation.isCurrent();
+  } };
+  if (accepted.kind === 'none') {
+    return await publishSessionWithoutProject({ credentials: input.credentials, sessionId: input.rawSession.id,
+      rawSession: input.rawSession, observedMetadata: input.metadata, serverId,
+      workspaceRefs: observation.snapshot.workspaceRefs, accountEncryptionCurrentness: input.accountEncryptionCurrentness,
+      ...(input.updateMetadata ? { updateMetadata: input.updateMetadata } : {}), currentness });
+  }
   if (accepted.kind !== 'resolved' || !accepted.ref) return false;
   await publishAcceptedSessionProject({ credentials: input.credentials, sessionId: input.rawSession.id,
     rawSession: input.rawSession, observedMetadata: input.metadata, serverId,
     workspaceRefs: observation.snapshot.workspaceRefs, workspaceId: accepted.ref.id,
     accountEncryptionCurrentness: input.accountEncryptionCurrentness,
     ...(input.updateMetadata ? { updateMetadata: input.updateMetadata } : {}),
-    currentness: { signal: input.signal, verifyCurrent: async () => {
-      input.assertCurrent();
-      return observation.isCurrent();
-    } },
+    currentness,
   });
   return true;
 }

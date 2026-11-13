@@ -514,7 +514,7 @@ async function prepareTupleMutation<M, A>(params: Readonly<{
   current: SessionMetadataTupleMutationSnapshotV1<M, A>;
   mutation: SessionMetadataTupleMutationV1<M, A>;
   crypto: SessionMetadataTupleMutationCryptoV1;
-  projectKey?: string;
+  projectKey?: string | null;
 }>): Promise<
   | PreparedOwnerMutation<M, A>
   | PreparedSharedEditorMutation<M>
@@ -764,7 +764,7 @@ export async function updateSessionMetadataTupleWithRetry<M, A>(
     initialSnapshot: SessionMetadataTupleMutationSnapshotV1<M, A>;
     mutation: SessionMetadataTupleMutationV1<M, A>;
     /** An already accepted owner-only row relationship; the caller supplies it only on a real change. */
-    projectKey?: string;
+    projectKey?: string | null;
     crypto: SessionMetadataTupleMutationCryptoV1;
     commit: (
       patch: SessionMetadataTuplePatchV1,

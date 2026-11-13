@@ -87,6 +87,29 @@ export function createSessionViewerTagWhere(params: Readonly<{
 }
 
 /**
+ * A Project selection admits published members plus Sessions whose owner has not
+ * classified them yet: those stay candidates for the client's canonical Workspace
+ * resolver (project identity is Home-local/E2EE, so SQL never guesses it). A Session
+ * the owner published as in no Project is never a member of an included Project,
+ * and never a member of an excluded one.
+ */
+function createSessionProjectSelectionWhere(projectKeys: Readonly<{
+    include: readonly string[];
+    exclude: readonly string[];
+    none?: true;
+}>): Prisma.SessionWhereInput {
+    // The owner's reclassification candidates: Sessions it published as in no Project.
+    if (projectKeys.none) return { projectKey: null, projectKeyNone: true };
+    const keyed = { projectKey: {
+        ...(projectKeys.include.length ? { in: [...projectKeys.include] } : {}),
+        ...(projectKeys.exclude.length ? { notIn: [...projectKeys.exclude] } : {}),
+    } };
+    return projectKeys.include.length
+        ? { OR: [{ projectKey: null, projectKeyNone: false }, keyed] }
+        : { OR: [{ projectKey: null }, keyed] };
+}
+
+/**
  * Compose the V1 query only from predicates supplied by their canonical
  * owners. Access, personal scope/attention and applicable-audience semantics
  * are compiled before this boundary; listing owns storage, folders, tags and the
@@ -107,13 +130,8 @@ export function createFilteredSessionListWhere(params: Readonly<{
         params.scopeWhere,
         params.audienceWhere,
         createSessionViewerTagWhere({ accountId: params.accountId, tagIds: query.tagIds }),
-        // Null keys precede accepted identity publication. Keep them for the
-        // client's canonical Workspace resolver, not a second SQL identity rule.
-        query.projectKeys && (query.projectKeys.include.length || query.projectKeys.exclude.length)
-            ? { OR: [{ projectKey: null }, { projectKey: {
-                ...(query.projectKeys.include.length ? { in: [...query.projectKeys.include] } : {}),
-                ...(query.projectKeys.exclude.length ? { notIn: [...query.projectKeys.exclude] } : {}),
-            } }] }
+        query.projectKeys && (query.projectKeys.include.length || query.projectKeys.exclude.length || query.projectKeys.none)
+            ? createSessionProjectSelectionWhere(query.projectKeys)
             : undefined,
         query.folderIds?.length
             ? {
