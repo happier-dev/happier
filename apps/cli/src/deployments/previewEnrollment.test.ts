@@ -38,6 +38,7 @@ import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/acti
 import { DeploymentReceiptChangedEventV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { createForegroundPurposeOwnerFixture } from '@/daemon/agentRuntime/prepareForegroundAdmission.connectedServices.testkit';
 import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 
 afterEach(() => { vi.restoreAllMocks(); });
 
@@ -159,6 +160,34 @@ it('leaves a read-only fork eligibility preview without future enrollment effect
             patch: { previewTemplate: f.environment.content.previewTemplate! } }, {})).resolves.toBeNull();
         expect(f.saved).toEqual([]);
         expect(f.calls).toEqual([]);
+    } finally { await f.app.close(); }
+});
+
+it.each([
+    { actorAccountId: 'actor', expectedCredentialRef: undefined },
+    { actorAccountId: 'machine-owner', expectedCredentialRef: {
+        service: GITHUB_CONNECTED_ACCOUNT_SERVICE, accountId: 'machine-owner-github',
+    } },
+])('keeps preview review bound to acting Account $actorAccountId on the Machine owner host', async ({ actorAccountId, expectedCredentialRef }) => {
+    const f = await fixture();
+    try {
+        await f.selectSetupAccount('machine-owner-github');
+        const externalActionExecutionAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({
+            v: 1, token: 'admitted-preview-update', binding: {
+                accountId: actorAccountId, authentication: { kind: 'account', tokenEpoch: 1 }, serverIdentityId: 'home',
+                machineId: 'controller', installationId: 'installation', custodianAccountId: 'machine-owner',
+                accountEncryptionMode: 'plain', actionId: 'deployments.environments.update',
+                requestId: 'preview-request', requestEnvelopeDigest: 'a'.repeat(43),
+                target: { kind: 'machine', machineId: 'controller' }, environmentId: f.environment.environment.id,
+            },
+        });
+        const prepared = await f.enrollment.prepare({ environmentId: f.environment.environment.id,
+            patch: { previewTemplate: f.environment.content.previewTemplate! } }, { externalActionExecutionAuthorization });
+        if (!prepared || 'ok' in prepared) throw new Error('Expected reviewed child declarations');
+        const setup = prepared.children.find(child => child.role === 'preview.setup' && child.input);
+        expect(setup?.input).toEqual({ repository: 'owner/app',
+            ...(expectedCredentialRef ? { credentialRef: expectedCredentialRef } : {}) });
+        if (!expectedCredentialRef) expect(JSON.stringify(prepared.children)).not.toContain('machine-owner-github');
     } finally { await f.app.close(); }
 });
 

@@ -17,6 +17,7 @@ import type { z } from 'zod/mini';
 import type { PluginRuntimeRegistryLease } from '@/plugins/runtime/reload/controller';
 import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';
 import { resolveRegistryConnectedAccountActionCredentialPurposeAuthorization } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
+import { isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAttribution';
 
 type UpdateInput = Pick<DeploymentEnvironmentUpdateInputV1, 'environmentId' | 'mode' | 'patch'>;
 type UpdateSuccess = Extract<z.infer<typeof DeploymentEnvironmentUpdateResultV1Schema>, { ok: true }>;
@@ -78,7 +79,12 @@ export function createPreviewEnrollmentForHost(host: Readonly<{
             const enabledChildren = [...children, { action: 'workflow.trigger.add' as const, role: TRIGGER_ROLE }];
             try {
                 return await withEvents(policy.repository.kind, async (events, lease) => {
-                    const purposeOwner = lease.registry.resolveConnectedAccountPurposeBindingOwner?.();
+                    // A requester must never inherit the Machine custodian's Account selection.
+                    const requester = context.externalActionExecutionAuthorization?.binding;
+                    const purposeOwner = requester && !isCustodianMachineAdmission({
+                        actorAccountId: requester.accountId, custodianAccountId: requester.custodianAccountId,
+                    })
+                        ? undefined : lease.registry.resolveConnectedAccountPurposeBindingOwner?.();
                     const setupChildren = [];
                     for (const event of events) {
                         let setupInput: Record<string, unknown> = { repository: policy.repository.repository };
