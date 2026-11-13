@@ -232,7 +232,9 @@ describe('sessions domain: thinking grace', () => {
         }
     });
 
-    it('starts thinkingGraceUntil only after thinking turns off (prevents UI flicker without streaming churn)', async () => {
+    it('ends thinking in one publication with no deferred indicator timer when a turn stops without a terminal projection', async () => {
+        // Stop's local recovery and a runtime thinking=false both land here. Nothing presents a
+        // post-thinking "grace", so the turn end must not schedule a later store write for it.
         const scheduledTimeouts = new Map<number, { callback: () => void; delay: number }>();
         let nextTimeoutId = 1;
         let nowMs = Date.parse('2026-02-05T00:00:00.000Z');
@@ -255,63 +257,29 @@ describe('sessions domain: thinking grace', () => {
         const { createReducer } = await import("@happier-dev/session-core/reducer");
         const { createSessionsDomain } = await import('./sessions');
         const { get, domain } = createHarness(createSessionsDomain, createReducer);
+        const session = (thinking: boolean): Session => ({
+            id: 's1', seq: 0, createdAt: 1, updatedAt: nowMs, active: true, activeAt: nowMs,
+            metadata: null, metadataVersion: 0, agentState: null, agentStateVersion: 1,
+            thinking, thinkingAt: nowMs, presence: 'online',
+        });
 
-        const t0 = nowMs;
-
-        domain.applySessions([
-            {
-                id: 's1',
-                seq: 0,
-                createdAt: t0,
-                updatedAt: t0,
-                active: true,
-                activeAt: t0,
-                metadata: null,
-                metadataVersion: 0,
-                agentState: null,
-                agentStateVersion: 1,
-                thinking: true,
-                thinkingAt: t0,
-                presence: 'online',
-            } satisfies Session,
-        ]);
-
-        expect(get().sessions.s1?.thinkingGraceUntil ?? null).toBeNull();
-        expect(scheduledTimeouts.size).toBe(0);
-
+        domain.applySessions([session(true)]);
         nowMs += 250;
-        const t1 = nowMs;
-        domain.applySessions([
-            {
-                id: 's1',
-                seq: 0,
-                createdAt: t0,
-                updatedAt: t1,
-                active: true,
-                activeAt: t1,
-                metadata: null,
-                metadataVersion: 0,
-                agentState: null,
-                agentStateVersion: 1,
-                thinking: false,
-                thinkingAt: t1,
-                presence: 'online',
-            } satisfies Session,
-        ]);
+        const timersBeforeStop = new Set(scheduledTimeouts.keys());
+        let publications = 0;
+        const unsubscribe = storage.subscribe(() => { publications += 1; });
+        domain.applySessions([session(false)]);
+        const stopPublications = publications;
+        for (const [id, timeout] of [...scheduledTimeouts]) {
+            if (timersBeforeStop.has(id)) continue;
+            nowMs += timeout.delay;
+            timeout.callback();
+        }
+        unsubscribe();
 
-        const graceUntil = get().sessions.s1?.thinkingGraceUntil ?? null;
-        expect(typeof graceUntil).toBe('number');
-        expect(graceUntil).toBeGreaterThan(t1);
-        const graceTimeouts = [...scheduledTimeouts.values()].filter((timeout) => timeout.delay === 3_000);
-        expect(graceTimeouts).toHaveLength(1);
-
-        // Once the grace timer expires, the marker clears without polling.
-        nowMs = (graceUntil as number) + 1;
-        const expireThinkingGrace = graceTimeouts[0]?.callback;
-        expect(typeof expireThinkingGrace).toBe('function');
-        expireThinkingGrace?.();
-
-        expect(get().sessions.s1?.thinkingGraceUntil ?? null).toBeNull();
+        expect(get().sessions.s1?.thinking).toBe(false);
+        expect({ stopPublications, deferredPublications: publications - stopPublications })
+            .toEqual({ stopPublications: 1, deferredPublications: 0 });
     });
 
     it('clears optimistic thinking and grace when a terminal primary turn projection arrives', async () => {
@@ -384,7 +352,6 @@ describe('sessions domain: thinking grace', () => {
         expect(get().sessions.s1?.latestTurnStatus).toBe('completed');
         expect(get().sessions.s1?.thinking).toBe(false);
         expect(get().sessions.s1?.optimisticThinkingAt ?? null).toBeNull();
-        expect(get().sessions.s1?.thinkingGraceUntil ?? null).toBeNull();
         expect([...scheduledTimeouts.values()].filter((timeout) => (
             timeout.delay === 3_000 || timeout.delay === 15_000
         ))).toHaveLength(0);
@@ -442,9 +409,7 @@ describe('sessions domain: thinking grace', () => {
 
         expect(get().sessions.s1?.thinking).toBe(false);
         expect(get().sessions.s1?.thinkingAt).toBe(nowMs - 10);
-        expect(get().sessions.s1?.thinkingGraceUntil ?? null).toBeNull();
         expect((get().sessionListRowsByServerId['server_1'] ?? {}).s1?.thinking).toBe(false);
-        expect((get().sessionListRowsByServerId['server_1'] ?? {}).s1?.thinkingGraceUntil ?? null).toBeNull();
         expect(vi.mocked(globalThis.setTimeout).mock.calls.some(([, delay]) => delay === 3_000)).toBe(false);
     });
 });

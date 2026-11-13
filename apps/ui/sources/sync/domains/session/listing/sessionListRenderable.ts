@@ -227,7 +227,6 @@ export interface SessionListRenderableSession {
     presence?: 'online' | number;
     optimisticThinkingAt?: number | null;
     resumingAt?: number | null;
-    thinkingGraceUntil?: number | null;
     owner?: string;
     access?: Session['access'];
     responsibleAccountId?: Session['responsibleAccountId'];
@@ -816,7 +815,6 @@ export function buildSessionListRenderableFromSession(
         ...(Object.prototype.hasOwnProperty.call(session, 'presence') ? { presence: session.presence } : {}),
         optimisticThinkingAt: session.optimisticThinkingAt ?? null,
         resumingAt: session.resumingAt ?? null,
-        thinkingGraceUntil: session.thinkingGraceUntil ?? null,
         owner: session.owner,
         access: session.access,
         ...(Object.prototype.hasOwnProperty.call(session, 'responsibleAccountId')
@@ -1168,7 +1166,6 @@ export function areSessionListRenderablesEqual(
         && previous.presence === next.presence
         && (previous.optimisticThinkingAt ?? null) === (next.optimisticThinkingAt ?? null)
         && (previous.resumingAt ?? null) === (next.resumingAt ?? null)
-        && (previous.thinkingGraceUntil ?? null) === (next.thinkingGraceUntil ?? null)
         && (previous.owner ?? null) === (next.owner ?? null)
         && JSON.stringify(previous.access ?? null) === JSON.stringify(next.access ?? null)
         && previous.responsibleAccountId === next.responsibleAccountId

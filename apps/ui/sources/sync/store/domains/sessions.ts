@@ -432,7 +432,6 @@ export type SessionsDomain = {
     markSessionResuming: (sessionId: string) => void;
     armSessionResumingFallback: (sessionId: string) => void;
     clearSessionResuming: (sessionId: string) => void;
-    clearSessionThinkingGrace: (sessionId: string) => void;
     applySessionTerminalLifecycle: (sessionId: string, turnCompletedAt: number | null) => void;
     markSessionViewed: (sessionId: string) => void;
     /** Applies the server's authoritative responsible Account after a committed mutation. */
@@ -547,11 +546,6 @@ const OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS = 15_000;
 const optimisticThinkingTimeouts = createKeyedTimeoutScheduler();
 const resumingTimeouts = createKeyedTimeoutScheduler();
 
-// UI-only "thinking debounce" marker.
-// Kept for a short grace period after the session stops streaming, so the UI doesn't flicker
-// between "working" and "online" between output chunks.
-const SESSION_THINKING_GRACE_TIMEOUT_MS = 3_000;
-const thinkingGraceTimeouts = createKeyedTimeoutScheduler();
 const SESSION_LIST_WARM_CACHE_PROGRESS_SAVE_DEBOUNCE_MS = 1_000;
 
 type IncomingSessionApply = Omit<Session, 'presence'> & { presence?: 'online' | number };
@@ -1169,7 +1163,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             () => {
             const messageChanges = new Map<string, readonly SessionMessageChange[]>();
             set((state) => {
-            const localNowMs = Date.now();
 
             // Drafts are persisted out-of-band from the session payload, so we must always consult the
             // persisted draft map when hydrating a session. This ensures drafts written for a session
@@ -1242,21 +1235,12 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 const savedModelModeUpdatedAt = savedModelModeUpdatedAts[session.id];
                 const existingOptimisticThinkingAt = previousSession?.optimisticThinkingAt ?? null;
                 const existingResumingAt = previousSession?.resumingAt ?? null;
-                const existingThinkingGraceUntil = previousSession?.thinkingGraceUntil ?? null;
                 const runtimePresence = resolveSessionRuntimePresenceFields({
                     thinking: session.thinking,
                     thinkingAt: session.thinkingAt,
                     latestTurnStatus: session.latestTurnStatus,
                     latestTurnStatusObservedAt: session.latestTurnStatusObservedAt,
                 });
-                const wasThinking = previousSession
-                    ? resolveSessionRuntimePresenceFields({
-                        thinking: previousSession.thinking,
-                        thinkingAt: previousSession.thinkingAt,
-                        latestTurnStatus: previousSession.latestTurnStatus,
-                        latestTurnStatusObservedAt: previousSession.latestTurnStatusObservedAt,
-                    }).thinking
-                    : false;
                 const existingLastTurnCompletedAt = previousSession?.lastTurnCompletedAt ?? null;
                 const hasTerminalPrimaryTurnProjection = hasTerminalPrimaryTurnStatus(session.latestTurnStatus);
                 const incomingLastTurnCompletedAt = typeof session.lastTurnCompletedAt === 'number'
@@ -1287,46 +1271,7 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     }
                 }
 
-                let mergedThinkingGraceUntil = existingThinkingGraceUntil;
-                if (hasTerminalPrimaryTurnProjection) {
-                    mergedThinkingGraceUntil = null;
-                    optimisticThinkingTimeouts.cancel(session.id);
-                    thinkingGraceTimeouts.cancel(session.id);
-                } else if (presence !== 'online') {
-                    mergedThinkingGraceUntil = null;
-                    thinkingGraceTimeouts.cancel(session.id);
-                } else if (runtimePresence.thinking === true) {
-                    mergedThinkingGraceUntil = null;
-                    thinkingGraceTimeouts.cancel(session.id);
-                } else if (wasThinking) {
-                    mergedThinkingGraceUntil = localNowMs + SESSION_THINKING_GRACE_TIMEOUT_MS;
-
-                    const sessionId = session.id;
-                    const expectedThinkingGraceUntil = mergedThinkingGraceUntil;
-                    thinkingGraceTimeouts.schedule(sessionId, SESSION_THINKING_GRACE_TIMEOUT_MS, () => {
-                        set((s) => {
-                            const current = s.sessions[sessionId];
-                            if (!current) return s;
-                            if ((current.thinkingGraceUntil ?? null) !== expectedThinkingGraceUntil) return s;
-
-                            const next = {
-                                ...s.sessions,
-                                [sessionId]: {
-                                    ...current,
-                                    thinkingGraceUntil: null,
-                                },
-                            };
-                            return {
-                                ...s,
-                                sessions: next,
-                                sessionListRenderableDelta: singleSessionDelta(s, sessionId),
-                            };
-                        });
-                    });
-                } else if (typeof mergedThinkingGraceUntil === 'number' && mergedThinkingGraceUntil <= localNowMs) {
-                    mergedThinkingGraceUntil = null;
-                    thinkingGraceTimeouts.cancel(session.id);
-                }
+                if (hasTerminalPrimaryTurnProjection) optimisticThinkingTimeouts.cancel(session.id);
 
                 const activityAdvanced =
                     (session.latestTurnStatusObservedAt ?? 0) > (previousSession?.latestTurnStatusObservedAt ?? 0)
@@ -1381,7 +1326,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     presence,
                     optimisticThinkingAt: mergedOptimisticThinkingAt,
                     resumingAt: mergedResumingAt,
-                    thinkingGraceUntil: mergedThinkingGraceUntil,
                     lastTurnCompletedAt: incomingLastTurnCompletedAt ?? existingLastTurnCompletedAt,
                     permissionMode: mergedPermissionMode,
                     // Preserve local coordination timestamp (not synced to server)
@@ -2751,27 +2695,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             resumingTimeouts.cancel(sessionId);
             updateSessionResumingAt(sessionId, null);
         },
-        clearSessionThinkingGrace: (sessionId: string) => set((state) => {
-            const session = state.sessions[sessionId];
-            if (!session) return state;
-            if ((session.thinkingGraceUntil ?? null) === null) return state;
-
-            thinkingGraceTimeouts.cancel(sessionId);
-
-            const nextSessions = {
-                ...state.sessions,
-                [sessionId]: {
-                    ...session,
-                    thinkingGraceUntil: null,
-                },
-            };
-
-            return {
-                ...state,
-                sessions: nextSessions,
-                sessionListRenderableDelta: singleSessionDelta(state, sessionId),
-            };
-        }),
         applySessionTerminalLifecycle: (sessionId: string, turnCompletedAt: number | null) => {
             resumingTimeouts.cancel(sessionId);
             updateSessionResumingAt(sessionId, null);
@@ -2780,7 +2703,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                 if (!session) return state;
 
                 optimisticThinkingTimeouts.cancel(sessionId);
-                thinkingGraceTimeouts.cancel(sessionId);
 
                 const normalizedTurnCompletedAt = typeof turnCompletedAt === 'number'
                     && Number.isFinite(turnCompletedAt)
@@ -2793,7 +2715,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
                     updatedAt: nowServerMs(),
                     optimisticThinkingAt: null,
                     resumingAt: null,
-                    thinkingGraceUntil: null,
                     lastTurnCompletedAt: normalizedTurnCompletedAt,
                 };
 
@@ -3242,7 +3163,6 @@ export function createSessionsDomain<S extends SessionsDomain & SessionsDomainDe
             if (retireActiveCarrier) {
                 optimisticThinkingTimeouts.cancel(sessionId);
                 resumingTimeouts.cancel(sessionId);
-                thinkingGraceTimeouts.cancel(sessionId);
             }
 
             // Remove session from sessions

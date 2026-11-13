@@ -284,7 +284,6 @@ export function createSessionListRenderableSessionFixture(
         thinkingAt: 0,
         presence: 'online',
         optimisticThinkingAt: null,
-        thinkingGraceUntil: null,
         hasPendingPermissionRequests: false,
         hasPendingUserActionRequests: false,
         pendingRequestObservedAt: null,

@@ -19,8 +19,6 @@ describe('Workflow existing Session options', () => {
         }));
         storage.setState({ isDataReady: true, sessions: {}, sessionListRowsByServerId: {} });
         storage.getState().applySessions(sessions);
-        storage.setState(state => ({ sessions: { ...state.sessions,
-            'delta-0': { ...state.sessions['delta-0'], thinkingGraceUntil: 1 } } }));
         let unrelatedVisits = 0;
         // Observe inventory traversal at this reader, excluding the producer's own publication work.
         for (const session of Object.values(storage.getState().sessions)) {
@@ -35,7 +33,7 @@ describe('Workflow existing Session options', () => {
             expect(hook.getCurrent().existingSessions).toHaveLength(1000);
             unrelatedVisits = 0;
             const before = hook.getCurrent().existingSessions;
-            await act(async () => { storage.getState().clearSessionThinkingGrace('delta-0'); });
+            await act(async () => { storage.getState().markSessionOptimisticThinking('delta-0'); });
             expect(unrelatedVisits).toBe(0);
             expect(hook.getCurrent().existingSessions).toBe(before);
             await act(async () => { storage.getState().applySessions([{ ...sessions[0], seq: sessions[0].seq + 1 }]); });

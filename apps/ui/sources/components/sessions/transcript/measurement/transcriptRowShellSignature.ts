@@ -809,8 +809,7 @@ function resolveMessageRowState(params: Readonly<{
         //
         // This is an ALLOWLIST because there is no per-row growth signal to intersect with instead:
         // no message carries a streaming flag (`messageTypes.ts`), and the session-level
-        // `session.thinking` toggles between chunks — `thinkingGraceUntil` exists precisely to
-        // debounce that flicker for the indicator — so gating on it would delete a genuinely growing
+        // `session.thinking` toggles between chunks, so gating on it would delete a genuinely growing
         // row's measurement on every flicker, which is the R2 defect returning. An agent reply that
         // has FINISHED but is still the tail of an active session therefore stays growing-classified
         // until the next message commits; that residual is stated in the remote-dev review

@@ -1572,7 +1572,6 @@ describe('computeVisibleSessionListIndex', () => {
                     lastViewedSessionSeq: 10,
                     thinking: true,
                     optimisticThinkingAt: 1_000,
-                    thinkingGraceUntil: Date.now() + 10_000,
                     updatedAt: 1_000,
                 }),
             }),

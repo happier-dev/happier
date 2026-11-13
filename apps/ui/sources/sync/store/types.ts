@@ -155,7 +155,6 @@ export interface SessionsDomainSlice extends Pick<SessionsDomain,
     markSessionResuming: (sessionId: string) => void;
     armSessionResumingFallback: (sessionId: string) => void;
     clearSessionResuming: (sessionId: string) => void;
-    clearSessionThinkingGrace: (sessionId: string) => void;
     applySessionTerminalLifecycle: (sessionId: string, turnCompletedAt: number | null) => void;
     markSessionViewed: (sessionId: string) => void;
     /** Applies the server's authoritative responsible Account after a committed mutation. */

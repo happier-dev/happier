@@ -298,7 +298,7 @@ export function readSessionListPresentationOwnerMetadata(source: SessionListPres
 export function readSessionListPresentationRuntime(source: SessionListPresentationSource) {
     return { ...source.lifecycle, id: source.row.id, serverId: source.serverId, archivedAt: source.row.archivedAt,
         presence: source.row.presence, optimisticThinkingAt: source.row.optimisticThinkingAt,
-        resumingAt: source.row.resumingAt, thinkingGraceUntil: source.row.thinkingGraceUntil, lastRuntimeIssue: source.row.lastRuntimeIssue };
+        resumingAt: source.row.resumingAt, lastRuntimeIssue: source.row.lastRuntimeIssue };
 }
 
 export function readSessionListPresentationPendingFlags(source: SessionListPresentationSource, messages = source.messages) {
@@ -468,7 +468,6 @@ export function buildSessionFromListRenderable(
         presence: renderable.presence,
         optimisticThinkingAt: renderable.optimisticThinkingAt,
         resumingAt: renderable.resumingAt,
-        thinkingGraceUntil: renderable.thinkingGraceUntil,
         owner: renderable.owner,
         access: renderable.access,
         ...(Object.prototype.hasOwnProperty.call(renderable, 'responsibleAccountId')

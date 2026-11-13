@@ -32,7 +32,6 @@ type SessionRuntimeStatusFields = Pick<
     | 'pendingUserActionRequestCount'
     | 'optimisticThinkingAt'
     | 'resumingAt'
-    | 'thinkingGraceUntil'
 > & Readonly<{
     hasPendingPermissionRequests: boolean;
     hasPendingUserActionRequests: boolean;
@@ -65,7 +64,6 @@ function selectSessionRuntimeStatusFields(
         pendingUserActionRequestCount: session.pendingUserActionRequestCount,
         optimisticThinkingAt: session.optimisticThinkingAt ?? optimisticPendingUserMessageAt ?? null,
         resumingAt: session.resumingAt,
-        thinkingGraceUntil: session.thinkingGraceUntil,
         hasPendingPermissionRequests: pendingFlags.hasPendingPermissionRequests,
         hasPendingUserActionRequests: pendingFlags.hasPendingUserActionRequests,
         pendingRequestObservedAt: deriveLatestPendingRequestObservedAtFromSession(session),

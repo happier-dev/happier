@@ -191,27 +191,6 @@ describe('createVoiceSessionBindingStore', () => {
       expect(store.getState().getByControlSessionId('control-0')).toBeNull();
       expect(notifications).toBe(2);
 
-      // The natural grace-expiry publication must stay as narrow as explicit clearing.
-      vi.useFakeTimers();
-      const ordinary = storage.getState().sessions['session-999'];
-      storage.getState().applySessions([{ ...ordinary, presence: 'online', thinking: true, thinkingAt: Date.now(), updatedAt: Date.now() }]);
-      publish();
-      storage.getState().applySessions([{ ...storage.getState().sessions['session-999'],
-        presence: 'online', thinking: false, thinkingAt: Date.now() + 1, updatedAt: Date.now() + 1 }]);
-      published = publish();
-      const graceUntil = storage.getState().sessions['session-999'].thinkingGraceUntil;
-      expect(graceUntil).toBeTypeOf('number');
-      previousSessions = storage.getState().sessions;
-      vi.advanceTimersByTime(graceUntil! - Date.now());
-      expect(storage.getState().sessions).not.toBe(previousSessions);
-      expect(storage.getState().sessions['session-999'].thinkingGraceUntil).toBeNull();
-      metadataVisits = 0;
-      inventoryScans = 0;
-      published = publish();
-      expect(inventoryScans).toBe(0);
-      expect(metadataVisits).toBe(0);
-      expect(notifications).toBe(2);
-      vi.useRealTimers();
     } finally {
       vi.useRealTimers();
       stop();

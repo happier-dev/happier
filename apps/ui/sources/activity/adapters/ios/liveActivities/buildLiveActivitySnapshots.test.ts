@@ -280,7 +280,6 @@ describe('buildLiveActivitySnapshots', () => {
                     id: 'thinking',
                     active: true,
                     presence: 'online',
-                    thinkingGraceUntil: 1_500,
                     metadata: {
                         path: '/Users/tester/project/thinking',
                         host: 'tester.local',

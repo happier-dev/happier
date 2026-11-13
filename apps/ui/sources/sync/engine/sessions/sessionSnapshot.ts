@@ -511,7 +511,6 @@ export function buildRenderableFromRowAndCache(
             presence: currentRenderable?.presence ?? previous?.presence,
             optimisticThinkingAt: currentRenderable?.optimisticThinkingAt ?? previous?.optimisticThinkingAt,
             resumingAt: currentRenderable?.resumingAt ?? previous?.resumingAt,
-            thinkingGraceUntil: currentRenderable?.thinkingGraceUntil ?? previous?.thinkingGraceUntil,
             [SESSION_LIST_DOCUMENT_ADMISSION]: previous
                 ? mergeSessionListDocumentObservations(previous[SESSION_LIST_DOCUMENT_ADMISSION]!, admission) : admission,
         } as SessionListRenderableSource;

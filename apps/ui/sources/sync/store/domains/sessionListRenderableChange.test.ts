@@ -21,7 +21,6 @@ function makeRenderable(partial: Partial<SessionListRenderableSession> & Pick<Se
         thinkingAt: partial.thinkingAt ?? 0,
         presence: partial.presence ?? 0,
         optimisticThinkingAt: partial.optimisticThinkingAt ?? null,
-        thinkingGraceUntil: partial.thinkingGraceUntil ?? null,
         owner: partial.owner,
         accessLevel: partial.accessLevel,
         canApprovePermissions: partial.canApprovePermissions,

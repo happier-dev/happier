@@ -122,7 +122,6 @@ export function buildSessionViewShellSessionSignature(session: Session): string 
         presence: session.presence ?? null,
         thinking: session.thinking === true,
         optimisticThinkingAt: session.thinking ? null : session.optimisticThinkingAt ?? null,
-        thinkingGraceUntil: session.thinking ? null : session.thinkingGraceUntil ?? null,
         latestTurnStatus: session.latestTurnStatus ?? null,
         latestReadyEventAt: session.latestReadyEventAt ?? null,
         meaningfulActivityAt: session.meaningfulActivityAt ?? null,

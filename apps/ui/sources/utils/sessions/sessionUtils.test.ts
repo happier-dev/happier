@@ -826,7 +826,6 @@ describe('getSessionStatus', () => {
                 meaningfulActivityAt: 500,
                 thinking: true,
                 optimisticThinkingAt: 999,
-                thinkingGraceUntil: 2_000,
             }),
             latestTurnStatusObservedAt: 1_000,
         };
@@ -1069,22 +1068,6 @@ describe('getSessionStatus', () => {
         const { getSessionStatus, OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS } = await import('./sessionUtils');
         const now = 1_000_000;
         const session = createBaseSession({ optimisticThinkingAt: now - OPTIMISTIC_SESSION_THINKING_TIMEOUT_MS });
-        const status = getSessionStatus(session, now, 0);
-        expect(status.state).toBe('waiting');
-    });
-
-    it('does not return thinking when only thinkingGraceUntil is in the future', async () => {
-        const { getSessionStatus } = await import('./sessionUtils');
-        const now = 1_000_000;
-        const session = createBaseSession({ thinkingGraceUntil: now + 1_000 });
-        const status = getSessionStatus(session, now, 0);
-        expect(status.state).toBe('waiting');
-    });
-
-    it('does not treat thinkingGraceUntil in the past as thinking', async () => {
-        const { getSessionStatus } = await import('./sessionUtils');
-        const now = 1_000_000;
-        const session = createBaseSession({ thinkingGraceUntil: now - 1 });
         const status = getSessionStatus(session, now, 0);
         expect(status.state).toBe('waiting');
     });

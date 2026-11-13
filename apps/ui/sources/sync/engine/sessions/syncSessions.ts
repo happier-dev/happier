@@ -588,7 +588,6 @@ export function buildUpdatedSessionProjectionFromSocketUpdate(params: {
         ...(rollbackEligibleTurnStarts !== undefined ? { rollbackEligibleTurnStarts } : {}),
         ...(clearsStaleThinking ? {
             optimisticThinkingAt: null,
-            thinkingGraceUntil: null,
         } : {}),
         archivedAt:
             typeof updateBody.archivedAt === 'number' || updateBody.archivedAt === null
@@ -1114,7 +1113,6 @@ export async function buildUpdatedSessionListRenderablePatchFromSocketUpdate(par
         ),
         ...(clearsStaleThinking ? {
             optimisticThinkingAt: null,
-            thinkingGraceUntil: null,
         } : {}),
         hasPendingPermissionRequests: pendingFlags.hasPendingPermissionRequests,
         hasPendingUserActionRequests: pendingFlags.hasPendingUserActionRequests,
