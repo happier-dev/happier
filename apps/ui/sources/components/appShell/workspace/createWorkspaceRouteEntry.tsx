@@ -4,7 +4,7 @@ import { Platform, View } from 'react-native';
 import { PaneHeaderScrollScope, PaneHeaderShade } from '@/components/appShell/panes/paneHeaderScroll';
 import { useRouteNode } from 'expo-router/build/Route';
 import { resolveHref } from 'expo-router/build/link/href';
-import { useOptionalWorkspaceNavigation, useWorkspaceNavigationActive } from './WorkspaceNavigationContext';
+import { useOptionalWorkspaceNavigation, useWorkspaceNavigationActive, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
 import { DestinationTitlePublication, useDestinationInstanceKey } from './DestinationInstanceHost';
 import { WorkspaceRouteHostingContext } from './WorkspaceRouteHostingContext';
 import { PaneLoadingFallback } from '@/components/ui/panels/PaneLoadingFallback';
@@ -24,8 +24,14 @@ export function useExpoSceneMirrorsWorkspace(): boolean {
 }
 
 /** The Expo entry is only the URL sink when the workspace hosts its body. */
+const selectWorkspacePresent = (value: WorkspaceNavigationContextValue | null) => value !== null;
+const selectWorkspaceOwnsRoute = (value: WorkspaceNavigationContextValue | null) => value?.ownsRoute;
+
 export function WorkspaceRouteEntry(props: Readonly<{ Body: React.ComponentType; mirror?: React.ReactNode; loadingFallback?: React.ReactNode }>) {
-    const workspace = useOptionalWorkspaceNavigation();
+    // Only these three facts: a tab, title or route-param write (a Store keystroke) does not reach this entry.
+    const workspacePresent = useOptionalWorkspaceNavigation(selectWorkspacePresent);
+    const workspaceOwnsRoute = useOptionalWorkspaceNavigation(selectWorkspaceOwnsRoute);
+    const workspaceActive = useWorkspaceNavigationActive();
     const hosted = useDestinationInstanceKey() !== null;
     const mirrorsWorkspace = useExpoSceneMirrorsWorkspace();
     const pathname = usePathname();
@@ -33,8 +39,8 @@ export function WorkspaceRouteEntry(props: Readonly<{ Body: React.ComponentType;
     const ownsHref = React.useContext(WorkspaceRouteHostingContext);
     // Expo may commit this scene before its browser-history mirror. Consult the
     // workspace owner's route admission, not its preceding active-URL projection.
-    const ownsRoute = ownsHref ? ownsHref(workspaceRouteHref(pathname, params)) : workspace?.ownsRoute;
-    if (!hosted && ownsRoute && !workspace?.active) {
+    const ownsRoute = ownsHref ? ownsHref(workspaceRouteHref(pathname, params)) : workspaceOwnsRoute;
+    if (!hosted && ownsRoute && !workspaceActive) {
         // A temporary Expo body would lose edits when hydration admits the retained host.
         // Layout mirrors must stay mounted: Expo still owns their URL serialization.
         return <>{props.mirror ?? props.loadingFallback ?? <PaneLoadingFallback testID="workspace-route-hydrating" />}</>;
@@ -44,7 +50,7 @@ export function WorkspaceRouteEntry(props: Readonly<{ Body: React.ComponentType;
     // The workspace owns the visible title. Publishing each edit into Expo's hidden
     // scenes adds synchronous navigator layout updates to every title keystroke.
     if (mirrorsWorkspace) return <>{props.mirror}<ExpoStack.Screen options={WORKSPACE_MIRROR_SCREEN_OPTIONS} /></>;
-    const body = !hosted && workspace && Platform.OS !== 'web'
+    const body = !hosted && workspacePresent && Platform.OS !== 'web'
         ? <NativeWorkspaceRouteTitle><props.Body /></NativeWorkspaceRouteTitle> : <props.Body />;
     return hosted ? body : <ExpoWorkspaceRouteFocus>{body}</ExpoWorkspaceRouteFocus>;
 }

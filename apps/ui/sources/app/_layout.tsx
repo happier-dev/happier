@@ -47,7 +47,7 @@ import { NewSessionShellHostProvider } from '@/components/sessions/new/navigatio
 import { NewSessionDockedHost } from '@/components/sessions/new/components/NewSessionDockedHost';
 import { WorkspaceAppShellProvider } from '@/components/appShell/workspace/WorkspaceAppShellProvider';
 import { useDestinationRouter } from '@/components/appShell/workspace/DestinationInstanceHost';
-import { useOptionalWorkspaceNavigation } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { useWorkspaceNavigationActive } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 import { BrowserPresentationRetentionProvider } from '@/components/browser/surfaces/browserPresentationRetention';
 import { SessionCockpitChromeRegistryProvider } from '@/components/workspaceCockpit/session/SessionCockpitChromeRegistry';
 import { StatusBarProvider } from '@/components/ui/layout/StatusBarProvider';
@@ -717,10 +717,11 @@ function FullAppRootLayout() {
 /** Recovery enters through the same retained-destination owner as ordinary navigation. */
 function RestartBugReportNavigation(props: Readonly<{ pending: boolean; onDispatched: () => void }>) {
     const router = useDestinationRouter();
-    const workspace = useOptionalWorkspaceNavigation();
+    // Reads only whether the workspace hosts the route, so tab and query writes do not wake it.
+    const workspaceActive = useWorkspaceNavigationActive();
     // The provider also exists on native, where the stack owns navigation and
     // an inactive workspace is not a hydration barrier for that stack.
-    const ready = Platform.OS !== 'web' || workspace?.active === true;
+    const ready = Platform.OS !== 'web' || workspaceActive;
     React.useEffect(() => {
         if (!props.pending || !ready) return;
         try {

@@ -3,7 +3,7 @@ import { useGlobalSearchParams, useLocalSearchParams, usePathname, useRouter } f
 import { resolveHref } from 'expo-router/build/link/href';
 
 import type { DestinationRef } from '@/components/appShell/destinations/compactAppDestinationCatalog';
-import { useOptionalWorkspaceNavigation, useWorkspaceFocusedPathname, useWorkspaceFocusedRoute, useWorkspaceFocusedRouteSelector, useWorkspaceRouterFacts, type WorkspaceFocusedRoute } from './WorkspaceNavigationContext';
+import { useOptionalWorkspaceNavigation, useWorkspaceFocusedPathname, useWorkspaceFocusedRoute, useWorkspaceFocusedRouteSelector, useWorkspaceRouterFacts, type WorkspaceFocusedRoute, type WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
 import { sameDestinationRef } from './workspaceState';
 import { qualifyPaneScopeId } from '@/components/appShell/panes/paneScopeIdentity';
 import { PluginSurfaceFocusEligibilityProvider, useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -55,12 +55,13 @@ function RetainedDestinationContext(props: Readonly<{
     children: React.ReactNode;
 }>): React.ReactElement {
     const presented = useLayoutPresentationActive();
-    const workspace = useOptionalWorkspaceNavigation();
     const retire = useRetainedPresentationEntryRetirement();
     // The portal remains under the live workspace owner even after its route/binder leaves.
     // Only actual destination removal ends this lifetime; inactive workspaces still own their tabs.
-    const present = props.captured === null || workspace === null
-        || Object.hasOwn(workspace.state.tabs, props.captured.tabId);
+    // Membership alone: a tab's target or title write does not render this retained portal.
+    const capturedTabId = props.captured?.tabId ?? null;
+    const present = useOptionalWorkspaceNavigation(React.useCallback((workspace: WorkspaceNavigationContextValue | null) =>
+        capturedTabId === null || workspace === null || Object.hasOwn(workspace.state.tabs, capturedTabId), [capturedTabId]));
     React.useLayoutEffect(() => {
         if (!present) retire?.();
     }, [present, retire]);
@@ -114,7 +115,8 @@ export function DestinationInstanceHost(props: Readonly<{
     }), [focused, isFocused, props.navigation, props.pathname, props.ref, props.tabId, props.visible]);
     return <DestinationInstanceContext.Provider value={value}>
         <PluginSurfaceFocusEligibilityProvider active={value.focused} presentationActive={value.visible} currentUiContextActive={value.focused}>
-            <DestinationNavigationChrome scopeKey={`destination:${props.tabId}`} phone={props.phone === true} navigation={props.navigation} baseOptions={baseOptions}>
+            <DestinationNavigationChrome scopeKey={`destination:${props.tabId}`} phone={props.phone === true} navigation={props.navigation} baseOptions={baseOptions}
+                identityKey={props.pathname}>
                 {sessionRoute && !props.ref.params.serverId && props.navigation ? <HostedSessionRouteQualification
                     params={props.ref.params} pathname={props.pathname} focused={focused} replace={props.navigation.replace} /> : null}
                 {sessionAddress ? <SessionViewerDestinationScope key={sessionAddressKey(sessionAddress)}
@@ -133,6 +135,11 @@ function DestinationNavigationChrome(props: Readonly<{
     baseOptions?: NativeStackNavigationOptions;
     /** Native scenes keep their own router and visual chrome; collect only identity. */
     publicationOnly?: Readonly<{ tabId: string; ref: DestinationRef }> | null;
+    /**
+     * The destination this chrome titles (a hosted tab's pathname). Route-param writes move the target object
+     * without changing it, so title state and setters keep their identity; absent, the target object is the key.
+     */
+    identityKey?: string;
     children: React.ReactNode;
 }>) {
     const { theme } = useUnistyles();
@@ -145,11 +152,17 @@ function DestinationNavigationChrome(props: Readonly<{
     const tabId = instance?.tabId;
     const publishTitle = useOptionalWorkspaceNavigation(value => value?.publishDestinationTitle);
     // The publication owner changes with the Account even when a retained
-    // route happens to reuse the same target object.
-    type TitleIdentity = Readonly<{ ref: typeof ref; owner: typeof publishTitle }>;
-    const [declared, setDeclared] = React.useState<TitleIdentity & Readonly<{ options: NativeStackNavigationOptions }>>({ ref, owner: publishTitle, options: {} });
-    const [chromeTitle, setChromeTitle] = React.useState<TitleIdentity & Readonly<{ title: string | null | undefined }>>({ ref, owner: publishTitle, title: undefined });
-    const isCurrent = (identity: TitleIdentity) => identity.ref === ref && identity.owner === publishTitle;
+    // route happens to reuse the same target object. The destination key is
+    // the hosted pathname: a route-param write (a Store query keystroke) moves
+    // the target object, never the destination, so title state, setters and the
+    // publication keep their identity and only the held title follows the target.
+    const identityKey: unknown = props.identityKey ?? ref;
+    const identity = React.useRef({ ref, publishTitle });
+    identity.current = { ref, publishTitle };
+    type TitleIdentity = Readonly<{ key: unknown; owner: typeof publishTitle }>;
+    const [declared, setDeclared] = React.useState<TitleIdentity & Readonly<{ options: NativeStackNavigationOptions }>>({ key: identityKey, owner: publishTitle, options: {} });
+    const [chromeTitle, setChromeTitle] = React.useState<TitleIdentity & Readonly<{ title: string | null | undefined }>>({ key: identityKey, owner: publishTitle, title: undefined });
+    const isCurrent = (current: TitleIdentity) => Object.is(current.key, identityKey) && current.owner === publishTitle;
     const overrides = isCurrent(declared) ? declared.options : EMPTY_SCREEN_OPTIONS;
     const options = React.useMemo<NativeStackNavigationOptions>(() => ({
         ...props.baseOptions,
@@ -165,41 +178,53 @@ function DestinationNavigationChrome(props: Readonly<{
         let mounted = false;
         let dispose: (() => void) | undefined;
         const publish = () => {
-            if (!mounted || !publishTitle || !tabId || !ref) return;
+            const target = identity.current.ref;
+            if (!mounted || !publishTitle || !tabId || !target) return;
             const title = pageTitle !== undefined ? pageTitle : fallbackTitle;
-            if (title !== undefined) dispose = publishTitle(tabId, ref, title?.trim() ? title : null);
+            if (title !== undefined) dispose = publishTitle(tabId, target, title?.trim() ? title : null);
         };
         return {
             mount: () => {
                 mounted = true;
                 return () => { mounted = false; dispose?.(); };
             },
+            /** Same destination, moved target: the held title names the new target (the owner keys titles by it). */
+            retarget: publish,
             setPageTitle: (title: string | null | undefined) => { pageTitle = title; publish(); },
             setFallbackTitle: (title: string | null | undefined) => {
                 fallbackTitle = title;
                 if (pageTitle === undefined) publish();
             },
         };
-    }, [publishTitle, ref, tabId]);
+    // The target is read at call time; only a new destination, tab or owner starts a new publication.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [publishTitle, tabId, identityKey]);
     // Close publication before descendant effect cleanup withdraws its page
     // declaration, preserving the owner's last-known title through host removal.
     React.useLayoutEffect(titlePublication.mount, [titlePublication]);
+    const publishedRef = React.useRef({ ref, titlePublication });
+    React.useLayoutEffect(() => {
+        const previous = publishedRef.current;
+        publishedRef.current = { ref, titlePublication };
+        if (previous.titlePublication === titlePublication && previous.ref !== ref) titlePublication.retarget();
+    }, [ref, titlePublication]);
     const fallbackTitle = Object.hasOwn(options, 'title') ? options.title ?? null : undefined;
     React.useEffect(() => { titlePublication.setFallbackTitle(fallbackTitle); }, [fallbackTitle, titlePublication]);
     const [back, setBack] = React.useState<React.ReactNode>(null);
     const updateOptions = React.useCallback((next: NativeStackNavigationOptions) => {
         setDeclared(previous => {
-            const current = previous.ref === ref && previous.owner === publishTitle;
+            const current = Object.is(previous.key, identityKey) && previous.owner === publishTitle;
             const options = current ? previous.options : {};
             return current && Object.entries(next).every(([key, value]) => options[key as keyof NativeStackNavigationOptions] === value)
-                ? previous : { ref, owner: publishTitle, options: { ...options, ...next } };
+                ? previous : { key: identityKey, owner: publishTitle, options: { ...options, ...next } };
         });
-    }, [ref, publishTitle]);
+    }, [identityKey, publishTitle]);
     const publisher = React.useMemo(() => ({
-        setTitle: (title: string | null | undefined) => setChromeTitle(previous => previous.ref === ref && previous.owner === publishTitle && previous.title === title ? previous : { ref, owner: publishTitle, title }),
+        setTitle: (title: string | null | undefined) => setChromeTitle(previous => Object.is(previous.key, identityKey)
+            && previous.owner === publishTitle && previous.title === title ? previous : { key: identityKey, owner: publishTitle, title }),
         setPageTitle: titlePublication.setPageTitle,
         setBack,
-    }), [ref, publishTitle, titlePublication]);
+    }), [identityKey, publishTitle, titlePublication]);
     const identityPublisher = React.useMemo(() => publicationOnly ? { setPageTitle: publisher.setPageTitle } : publisher, [publicationOnly, publisher]);
     const canGoBack = props.navigation?.canGoBack?.() ?? false;
     const tintColor = options.headerTintColor ?? theme.colors.chrome.header.foreground;

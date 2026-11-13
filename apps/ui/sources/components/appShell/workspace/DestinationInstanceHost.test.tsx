@@ -74,6 +74,44 @@ function PageHeaderActionsProbe() {
 }
 
 describe('DestinationInstanceHost', () => {
+    it('keeps the title setters and moves the held title when a route-param write moves the tab target', async () => {
+        const { useDestinationPageTitle } = await import('./DestinationInstanceHost');
+        const { useNavigationTitleChromePublisher } = await import('@/components/ui/layout/navigationTitleChrome');
+        const publishers = new Set<unknown>();
+        function TitledPage() {
+            publishers.add(useNavigationTitleChromePublisher());
+            useDestinationPageTitle('Discover');
+            return null;
+        }
+        const published: Array<Readonly<{ q: string | undefined; title: string | null }>> = [];
+        const publishDestinationTitle = (_tabId: string, ref: { params: Readonly<Record<string, string>> }, title: string | null) => {
+            published.push({ q: ref.params.q, title });
+            return () => {};
+        };
+        const scene = (q: string) => {
+            const target = { kind: 'plugins', params: { view: 'search', q } };
+            const value: WorkspaceNavigationContextValue = {
+                active: true, publishDestinationTitle,
+                state: createWorkspaceState({ id: 'store', target, pinned: false, preview: false }),
+                canGoBack: false, canGoForward: false, openHref: () => true,
+                activateTab: () => {}, closeTab: () => {}, closeTabs: () => {}, dispatch: () => {},
+                navigationForTab: () => ({ push: () => {}, replace: () => {}, back: () => {} }),
+                registerBackStep: () => () => {}, back: () => {}, forward: () => {},
+            };
+            return <WorkspaceNavigationProvider value={value}>
+                <DestinationInstanceHost tabId="store" ref={target} pathname="/plugins" focused visible>
+                    <TitledPage />
+                </DestinationInstanceHost>
+            </WorkspaceNavigationProvider>;
+        };
+        const screen = await renderScreen(scene('g'));
+        publishers.clear();
+        published.length = 0;
+        for (const q of ['gi', 'git', 'gith']) await screen.update(scene(q));
+        // Three keystrokes: the page's setters never change, and the owner hears the same title under each new target.
+        expect({ publisherIdentities: publishers.size, last: published.at(-1) }).toEqual({ publisherIdentities: 1, last: { q: 'gith', title: 'Discover' } });
+        await screen.unmount();
+    });
     it('settles delayed navigation only for the current focused destination, including after its content disappears', async () => {
         let captured: ReturnType<typeof useNavigation> | undefined;
         let capturedRetained: ReturnType<typeof useNavigation> | undefined;
