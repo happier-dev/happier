@@ -310,6 +310,7 @@ describe('getPendingMessageVisualState', () => {
     it.each([
         'ambiguous_terminal_delivery',
         'delivery_outcome_uncertain',
+        'team_access_removed',
         'unknown',
     ] as const)('fails closed for effect-possible blocked reason %s', (pendingDeliveryBlockedReason) => {
         expect(getPendingMessageVisualState(pendingMessage({

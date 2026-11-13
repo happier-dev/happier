@@ -1,5 +1,20 @@
 # Compatibility and version skew
 
+## Turn publication refusals (unreleased 0.3)
+
+Home retains the existing Team binding rejection code and its canonical reason
+in socket and HTTP mutation failures. The CLI preserves that cause through Turn
+publication and ends the input's Pending settlement. Readers also settle a final
+rejection without a reason, retaining an unknown cause rather than inventing a
+withdrawal. The new Pending presentation reason `team_access_removed` maps to the
+existing Send rejection `session_input_unauthorized`.
+
+Home, CLI and UI refresh together under the unpublished 0.3 direct cut. The
+Pending reason is a bounded presentation addition, with no new authority,
+admission, persistence field or migration. The inspected `../0.2` frontier
+`dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no Team binding contract or
+scoped working change at the corresponding paths.
+
 ## Team broker job activity (unreleased 0.3)
 
 The existing opaque V1 `brokerPlacementFingerprint` in a signed Team broker

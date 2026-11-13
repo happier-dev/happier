@@ -18,7 +18,10 @@ import {
     SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_EVENT_V1,
     SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V1,
     SESSION_TRANSCRIPT_OBSERVATION_CAPABILITY_V2,
+    SESSION_TRANSCRIPT_OBSERVATION_BATCH_EVENT_V1,
     SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1,
+    SessionTranscriptObservationBatchAckV1Schema,
+    SessionTranscriptObservationBatchInputV1Schema,
     SessionTranscriptObservationAckV1Schema,
     SessionTranscriptObservationCapabilityAckSchema,
     SessionTranscriptObservationCapabilityRequestSchema,
@@ -47,7 +50,8 @@ import {
     updateSessionMetadata,
 } from "@/app/session/sessionWriteService";
 import { publishSessionReadyProjectionUpdate } from "@/app/session/ready/publishSessionReadyProjectionUpdate";
-import { publishSessionTurnMutationUpdate } from "@/app/session/turns/publishSessionTurnMutationUpdate";
+import { publishSessionTurnMutationAfterCommit } from "@/app/session/turns/publishSessionTurnMutationUpdate";
+import { publishSessionAfterCommit } from "@/app/session/publishSessionAfterCommit";
 import { publishSessionReadCursorUpdate } from "@/app/session/readCursor/publishSessionReadCursorUpdate";
 import { publishSessionCurrentViewUpdates } from "@/app/session/metadata/publishSessionCurrentViewUpdates";
 import { resolvePresenceTimeoutConfig } from "@/app/presence/timeout";
@@ -1090,93 +1094,96 @@ export function sessionUpdateHandler(
         }
     });
 
-    registerSessionEvent(SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1, async (data: unknown, callback?: (response: unknown) => void) => {
-        const respond = (response: unknown) => callback?.(SessionTranscriptObservationAckV1Schema.parse(response));
-        try {
-            const parsed = SessionTranscriptObservationInputSchema.safeParse(data);
-            if (!parsed.success) {
-                respond({ ok: false, error: "invalid_observation" });
-                return;
-            }
-            const observation = parsed.data;
-            // Reserved Agent-transition divider namespace. Even a trusted session
-            // publisher may not mint or overwrite a divider row: the owner-only
-            // transition service is its sole writer.
-            if (isSessionAgentTransitionDividerLocalId(observation.localId)) {
-                respond({ ok: false, error: "invalid_observation" });
-                return;
-            }
-            const isRecoveredHistory = isRecoveredHistoryTranscriptObservationProvenance(
-                observation.provenance,
-            );
-            if (
-                !canTargetSessionFromSocket({ socket, connection, sessionId: observation.sessionId })
-                || !trustedSessionPublisher
-                || trustedSessionPublisher.binding.sessionId !== observation.sessionId
-            ) {
-                respond({ ok: false, error: "forbidden" });
-                return;
-            }
-            const result = await trustedSessionPublisher.presence.runAsCurrentPublisher({
-                socket,
-                operation: async (publisherAuthority) => {
-                    const written = await createSessionMessage({
-                    inputAdmission: "transcriptOnly",
-                    actorUserId: userId,
-                    sessionId: observation.sessionId,
-                    localId: observation.localId,
-                    sidechainId: observation.sidechainId,
-                    messageRole: observation.messageRole,
-                    ...(typeof observation.content === "string"
-                        ? { ciphertext: observation.content }
-                        : { content: observation.content }),
-                    publisherAuthority,
-                    runtimeComposition: composeSessionActivityRuntimeComposition(publisherAuthority),
-                    trustedSourceTimestamps: { createdAt: observation.createdAt, updatedAt: observation.updatedAt },
-                    usageTimingV1: observation.usageTimingV1,
-                    trustedTranscriptObservationProvenance: observation.provenance,
-                    ...(observation.v === 2 && observation.surfaceItemReference !== undefined
-                        ? { trustedSurfaceItemReference: observation.surfaceItemReference } : {}),
-                    ...(isRecoveredHistory
-                        ? { trustedAttentionImpact: SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT }
-                        : {}),
-                    ...(observation.sessionEventType && !isRecoveredHistory
-                        ? { trustedSessionEventType: observation.sessionEventType }
-                        : {}),
-                    });
-                    if (written.ok && observation.v === 2 && observation.approvalRequestArtifactId) {
-                        const bound = await bindSessionTranscriptApprovalVisualPublication({
-                            accountId: userId, artifactId: observation.approvalRequestArtifactId,
-                            sessionId: observation.sessionId, localId: observation.localId,
-                            messageId: written.message.id, content: typeof observation.content === 'string'
-                                ? { t: 'encrypted', c: observation.content } : observation.content,
-                        });
-                        if (!bound) return { ok: false, error: 'invalid-params' } as const;
-                    }
-                    return written;
-                },
-            });
-            if (result === null || !result.ok) {
-                respond({
-                    ok: false,
-                    error: result === null || result.error === "forbidden"
-                        ? "forbidden"
-                        : result.error === "internal" ? "internal" : "invalid_observation",
+    /**
+     * One transcript observation: the write is acknowledged as soon as it commits, and its
+     * fan-out runs afterwards (`publish`). Both the single and the batch event use this path.
+     */
+    const observeTranscript = async (data: unknown): Promise<Readonly<{
+        ack: unknown;
+        /** The committed observation's fan-out, for `publishSessionAfterCommit` on its Session. */
+        publication?: Readonly<{ sessionId: string; publish: () => Promise<void> }>;
+    }>> => {
+        const parsed = SessionTranscriptObservationInputSchema.safeParse(data);
+        if (!parsed.success) {
+            return { ack: { ok: false, error: "invalid_observation" } };
+        }
+        const observation = parsed.data;
+        // Reserved Agent-transition divider namespace. Even a trusted session
+        // publisher may not mint or overwrite a divider row: the owner-only
+        // transition service is its sole writer.
+        if (isSessionAgentTransitionDividerLocalId(observation.localId)) {
+            return { ack: { ok: false, error: "invalid_observation" } };
+        }
+        const isRecoveredHistory = isRecoveredHistoryTranscriptObservationProvenance(
+            observation.provenance,
+        );
+        if (
+            !canTargetSessionFromSocket({ socket, connection, sessionId: observation.sessionId })
+            || !trustedSessionPublisher
+            || trustedSessionPublisher.binding.sessionId !== observation.sessionId
+        ) {
+            return { ack: { ok: false, error: "forbidden" } };
+        }
+        const result = await trustedSessionPublisher.presence.runAsCurrentPublisher({
+            socket,
+            operation: async (publisherAuthority) => {
+                const written = await createSessionMessage({
+                inputAdmission: "transcriptOnly",
+                actorUserId: userId,
+                sessionId: observation.sessionId,
+                localId: observation.localId,
+                sidechainId: observation.sidechainId,
+                messageRole: observation.messageRole,
+                ...(typeof observation.content === "string"
+                    ? { ciphertext: observation.content }
+                    : { content: observation.content }),
+                publisherAuthority,
+                runtimeComposition: composeSessionActivityRuntimeComposition(publisherAuthority),
+                trustedSourceTimestamps: { createdAt: observation.createdAt, updatedAt: observation.updatedAt },
+                usageTimingV1: observation.usageTimingV1,
+                trustedTranscriptObservationProvenance: observation.provenance,
+                ...(observation.v === 2 && observation.surfaceItemReference !== undefined
+                    ? { trustedSurfaceItemReference: observation.surfaceItemReference } : {}),
+                ...(isRecoveredHistory
+                    ? { trustedAttentionImpact: SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT }
+                    : {}),
+                ...(observation.sessionEventType && !isRecoveredHistory
+                    ? { trustedSessionEventType: observation.sessionEventType }
+                    : {}),
                 });
-                return;
-            }
-            recordWebLatencyPhase('socket.transcript-observation.ack', 0);
-            respond({
-                ok: true,
-                status: "observed",
-                id: result.message.id,
-                seq: result.message.seq,
-                localId: result.message.localId,
-                didWrite: result.didWrite,
-                ...(result.didUpdate ? { didUpdate: true } : {}),
-                ingestedAt: result.message.createdAt.getTime(),
-            });
-            if (!result.didWrite && !result.didUpdate) return;
+                if (written.ok && observation.v === 2 && observation.approvalRequestArtifactId) {
+                    const bound = await bindSessionTranscriptApprovalVisualPublication({
+                        accountId: userId, artifactId: observation.approvalRequestArtifactId,
+                        sessionId: observation.sessionId, localId: observation.localId,
+                        messageId: written.message.id, content: typeof observation.content === 'string'
+                            ? { t: 'encrypted', c: observation.content } : observation.content,
+                    });
+                    if (!bound) return { ok: false, error: 'invalid-params' } as const;
+                }
+                return written;
+            },
+        });
+        if (result === null || !result.ok) {
+            return { ack: {
+                ok: false,
+                error: result === null || result.error === "forbidden"
+                    ? "forbidden"
+                    : result.error === "internal" ? "internal" : "invalid_observation",
+            } };
+        }
+        recordWebLatencyPhase('socket.transcript-observation.ack', 0);
+        const ack = {
+            ok: true,
+            status: "observed",
+            id: result.message.id,
+            seq: result.message.seq,
+            localId: result.message.localId,
+            didWrite: result.didWrite,
+            ...(result.didUpdate ? { didUpdate: true } : {}),
+            ingestedAt: result.message.createdAt.getTime(),
+        } as const;
+        if (!result.didWrite && !result.didUpdate) return { ack };
+        return { ack, publication: { sessionId: observation.sessionId, publish: async () => {
             // Runtime observation never infers a human actor from `actorUserId`
             // or `messageRole`; the receipt-derived projector answers, and it
             // answers explicit null for machine-observed rows.
@@ -1224,10 +1231,59 @@ export function sessionUpdateHandler(
                 badgeAttentionChanged: result.badgeAttentionChanged,
                 sessionId: observation.sessionId,
             });
+        } } };
+    };
+
+    registerSessionEvent(SESSION_TRANSCRIPT_OBSERVATION_EVENT_V1, async (data: unknown, callback?: (response: unknown) => void) => {
+        const respond = (response: unknown) => callback?.(SessionTranscriptObservationAckV1Schema.parse(response));
+        let observed: Awaited<ReturnType<typeof observeTranscript>>;
+        try {
+            observed = await observeTranscript(data);
         } catch (error) {
             log({ module: "websocket", level: "warn" }, `Transcript observation failed: ${error}`);
             respond({ ok: false, error: "internal" });
+            return;
         }
+        respond(observed.ack);
+        if (observed.publication) {
+            await publishSessionAfterCommit(observed.publication.sessionId, "Transcript observation", observed.publication.publish);
+        }
+    });
+
+    // Observes in arrival order and stops at the first refusal, so nothing later commits ahead of
+    // it. Each observation's fan-out follows its commit in the same order, overlapping the next write.
+    registerSessionEvent(SESSION_TRANSCRIPT_OBSERVATION_BATCH_EVENT_V1, async (data: unknown, callback?: (response: unknown) => void) => {
+        const respond = (response: unknown) => callback?.(SessionTranscriptObservationBatchAckV1Schema.parse(response));
+        const parsed = SessionTranscriptObservationBatchInputV1Schema.safeParse(data);
+        if (!parsed.success) {
+            respond({ ok: false, error: "invalid_observation" });
+            return;
+        }
+        const acks: unknown[] = [];
+        let publications = Promise.resolve();
+        for (const observation of parsed.data.observations) {
+            const sessionId = observation !== null && typeof observation === "object" && "sessionId" in observation
+                ? observation.sessionId : undefined;
+            if (sessionId !== parsed.data.sessionId) {
+                acks.push({ ok: false, error: "invalid_observation" });
+                break;
+            }
+            let observed: Awaited<ReturnType<typeof observeTranscript>>;
+            try {
+                observed = await observeTranscript(observation);
+            } catch (error) {
+                log({ module: "websocket", level: "warn" }, `Transcript observation failed: ${error}`);
+                acks.push({ ok: false, error: "internal" });
+                break;
+            }
+            acks.push(observed.ack);
+            if (observed.publication) {
+                publications = publishSessionAfterCommit(observed.publication.sessionId, "Transcript observation", observed.publication.publish);
+            }
+            if ((observed.ack as { ok?: unknown }).ok !== true) break;
+        }
+        respond({ ok: true, acks });
+        await publications;
     });
 
     registerSessionEvent('update-metadata', async (data: any, callback: (response: any) => void) => {
@@ -1597,12 +1653,14 @@ export function sessionUpdateHandler(
                 parsed.data.sessionId,
                 ownerActivityDelivery ?? "rich_sender",
             );
+            const applyStartedAt = Date.now();
             const result = await applySessionTurnMutation({
                 actorUserId: userId,
                 mutation: parsed.data,
                 authentication: readSessionAccessAuthenticationFromSocket(socket),
                 ...(runtimeComposition ? { runtimeComposition } : {}),
             });
+            const committedAt = Date.now();
 
             if (!result.ok) {
                 if (result.error === "forbidden") {
@@ -1613,15 +1671,18 @@ export function sessionUpdateHandler(
                     callback?.({ result: "not-found" });
                     return;
                 }
-                callback?.({ result: "error" });
+                callback?.({ result: "error",
+                    ...(result.error === "invalid-params" && result.code ? { code: result.code } : {}),
+                    ...(result.error === "invalid-params" && result.reason ? { reason: result.reason } : {}),
+                });
                 return;
             }
 
-            await publishSessionTurnMutationUpdate({
-                sessionId: parsed.data.sessionId,
-                actorUserId: userId,
-                connection,
-                result,
+            // Acknowledge on commit, like transcript lines: the runner's turn end and the next
+            // send wait on this ack, not on client fan-out or badge work.
+            const published = publishSessionTurnMutationAfterCommit({
+                sessionId: parsed.data.sessionId, actorUserId: userId, connection, result,
+                action: parsed.data.action, applyStartedAtMs: applyStartedAt, committedAtMs: committedAt,
             });
             callback?.({
                 result: "success",
@@ -1629,6 +1690,7 @@ export function sessionUpdateHandler(
                 receipt: result.receipt,
                 ...(result.reason ? { reason: result.reason } : {}),
             });
+            await published;
         } catch (error) {
             log({ module: "websocket", level: "error" }, `Error in session-turn-mutation: ${error}`);
             callback?.({ result: "error" });
@@ -2553,7 +2615,7 @@ export function sessionUpdateHandler(
                             ...(result.deliveryState ? { deliveryState: result.deliveryState } : {}),
                         } as const;
                         respond(response);
-                        if (result.pendingStateChanged === true) {
+                        if (result.pendingStateChanged === true) await publishSessionAfterCommit(sid, "Pending materialization", async () => {
                             const recipientCursorsPending = result.recipientCursorsPending ?? [];
                             await emitPublicationSafePendingChanged({
                                 data: {
@@ -2569,7 +2631,7 @@ export function sessionUpdateHandler(
                                 badgeAttentionChanged: result.badgeAttentionChanged ?? false,
                                 sessionId: sid,
                             });
-                        }
+                        });
                         return;
                     }
 
@@ -2583,6 +2645,7 @@ export function sessionUpdateHandler(
                         ...(result.deliveryState ? { deliveryState: result.deliveryState } : {}),
                     });
 
+                    await publishSessionAfterCommit(sid, "Pending materialization", async () => {
                     const committedMessage = result.message.id !== null && result.message.seq !== null
                         ? {
                             ...result.message,
@@ -2627,6 +2690,7 @@ export function sessionUpdateHandler(
                     scheduleTrackedSessionBadgeRefresh({
                         badgeAttentionChanged: result.badgeAttentionChanged,
                         sessionId: sid,
+                    });
                     });
                 } catch (error) {
                     if (

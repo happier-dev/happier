@@ -4210,7 +4210,8 @@ export async function blockPendingDelivery(params: {
                     return { ok: true, ...(await readCurrentPendingMutationState(tx, sessionId)), didUpdate: false };
                 }
                 const progress = SessionMessageReplyProgressV1Schema.safeParse(existing.replyProgress);
-                if (reason === 'provider_rejected_before_acceptance' && progress.success && progress.data.workflow
+                if ((reason === 'provider_rejected_before_acceptance' || reason === 'team_access_removed')
+                    && progress.success && progress.data.workflow
                     && localId === deriveWorkflowSessionInputLocalIdV2(progress.data.workflow)) {
                     await settleUnacceptedSessionInputReplyInTx(tx, sessionId, localId, 'failed');
                 }

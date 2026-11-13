@@ -13,6 +13,19 @@ import { projectSessionSummaryV1, SessionStatusResultSchema } from '@happier-dev
 
 vi.mock('axios');
 
+it.each(['http', 'socket'] as const)('retains the Home Team withdrawal cause at the turn publication boundary (%s)', async transport => {
+    const rejection = { error: 'Invalid parameters', code: 'session_team_credential_binding_rejected', reason: 'access_removed' };
+    vi.mocked(axios.post).mockRejectedValue({ response: { status: 400, data: rejection } });
+    const socket = transport === 'socket' ? { connected: true, emit: vi.fn(), emitWithAck: async () => ({ result: 'error', ...rejection }) } : null;
+    try {
+        await expect(deliverSessionTurnMutation({ token: 'token', socket, mutation: {
+            v: 1, sessionId: 'session-1', mutationId: 'withdrawn-begin', action: 'begin', turnId: 'turn-1', observedAt: 200,
+        } })).resolves.toMatchObject({ delivered: false, reason: 'session_turn_mutation_rejected',
+            diagnostic: { code: 'session_team_credential_binding_rejected', reason: 'access_removed' } });
+        if (transport === 'socket') expect(axios.post).not.toHaveBeenCalled();
+    } finally { vi.mocked(axios.post).mockReset(); }
+});
+
 it('keeps a delayed turn mutation pending past a control timeout and retires its transport on cancellation', async () => {
     vi.useFakeTimers();
     try {

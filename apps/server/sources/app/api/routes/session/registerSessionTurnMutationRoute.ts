@@ -1,10 +1,11 @@
 import { SessionTurnMutationReceiptV1Schema, SessionTurnMutationV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
+import { SessionTeamCredentialBindingRejectionV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingV1';
 import { SessionTurnsProjectionV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import { projectSessionTurnWaitingHttpResponse } from '@/app/clientCompatibility/sessionTurnWaitingCompatibility';
 import { z } from "zod/mini";
 import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
 import { applySessionTurnMutation } from "@/app/session/sessionWriteService";
-import { publishSessionTurnMutationUpdate } from "@/app/session/turns/publishSessionTurnMutationUpdate";
+import { publishSessionTurnMutationAfterCommit } from "@/app/session/turns/publishSessionTurnMutationUpdate";
 import { type Fastify } from "../../types";
 import { PRESENT_USER_REQUIRED_ERROR } from "@/app/api/utils/apiTokenRouteAdmission";
 import { readSessionTurns } from './readSessionTurns';
@@ -27,6 +28,7 @@ export function registerSessionTurnMutationRoute(app: Fastify) {
                 400: z.object({
                     error: z.literal("Invalid parameters"),
                     code: z.optional(z.string()),
+                    reason: z.optional(SessionTeamCredentialBindingRejectionV1Schema),
                 }),
                 403: z.union([
                     z.object({ error: z.literal("Forbidden") }),
@@ -44,17 +46,20 @@ export function registerSessionTurnMutationRoute(app: Fastify) {
             return reply.code(400).send({ error: "Invalid parameters" });
         }
 
+        const applyStartedAt = Date.now();
         const result = await applySessionTurnMutation({
             actorUserId: userId,
             mutation: parsed.data,
             authentication: readSessionAccessAuthenticationFromRequest(request),
         });
+        const committedAt = Date.now();
 
         if (!result.ok) {
             if (result.error === "invalid-params") {
                 return reply.code(400).send({
                     error: "Invalid parameters",
                     ...(result.code ? { code: result.code } : {}),
+                    ...(result.reason ? { reason: result.reason } : {}),
                 });
             }
             if (result.error === "forbidden") return reply.code(403).send({ error: "Forbidden" });
@@ -62,18 +67,19 @@ export function registerSessionTurnMutationRoute(app: Fastify) {
             return reply.code(500).send({ error: "Failed to update session" });
         }
 
-        await publishSessionTurnMutationUpdate({
-            sessionId,
-            actorUserId: userId,
-            result,
+        // Acknowledge on commit, like the socket path; the fan-out follows in the Session's commit order.
+        const published = publishSessionTurnMutationAfterCommit({
+            sessionId, actorUserId: userId, result,
+            action: parsed.data.action, applyStartedAtMs: applyStartedAt, committedAtMs: committedAt,
         });
-
-        return reply.send({
+        reply.send({
             success: true as const,
             applied: result.didApply,
             ...(result.reason ? { reason: result.reason } : {}),
             receipt: result.receipt,
         });
+        await published;
+        return reply;
     });
 
     app.get("/v1/sessions/:sessionId/turns", {

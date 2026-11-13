@@ -10,8 +10,44 @@ import { ExactSessionTurnEndMutationV1Schema, isExactSessionTurnMutationPositive
 import { SessionTurnMutationReceiptV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import type { ExactSessionTurnEndMutationV1, SessionTurnMutationDecisionV1, SessionTurnMutationV1 } from '@happier-dev/protocol';
 
+import { SessionTeamCredentialBindingRejectionV1Schema, type SessionTeamCredentialBindingRejectionV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingV1';
+import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
+
 import type { SessionClientDurableMutationSocket } from './sessionClientDurableMutationTypes';
 import { projectRuntimeIssueForServer } from './projectRuntimeIssueForServer';
+
+type SessionTurnMutationRejectionDiagnostic = Readonly<{
+    code: 'session_team_credential_binding_rejected';
+    reason?: SessionTeamCredentialBindingRejectionV1;
+}>;
+
+function readRejectionDiagnostic(value: unknown): SessionTurnMutationRejectionDiagnostic | undefined {
+    if (!value || typeof value !== 'object') return undefined;
+    const record = value as Record<string, unknown>;
+    if (record.code !== 'session_team_credential_binding_rejected') return undefined;
+    const reason = SessionTeamCredentialBindingRejectionV1Schema.safeParse(record.reason);
+    return { code: record.code, ...(reason.success ? { reason: reason.data } : {}) };
+}
+
+/** Home's final refusal ends publication; it is not a retryable missing acknowledgement. */
+export class SessionTurnPublicationRejectedError extends Error {
+    readonly failureCause: NonNullable<SessionRuntimeIssueV1['failureCause']> & Readonly<{ code: string }>;
+
+    constructor(diagnostic?: unknown) {
+        const rejection = readRejectionDiagnostic(diagnostic);
+        const accessRemoved = rejection?.reason === 'access_removed';
+        super(accessRemoved ? 'Team access was withdrawn.'
+            : rejection ? 'Home refused this Session’s Team credential access.' : 'Home rejected Turn publication.');
+        this.name = 'SessionTurnPublicationRejectedError';
+        this.failureCause = {
+            code: rejection?.code ?? 'session_turn_mutation_rejected',
+            phase: 'turn_start',
+            failureReason: accessRemoved ? 'permission_denied' : 'unknown',
+            retryable: false,
+            ...(rejection?.reason ? { providerErrorCode: rejection.reason } : {}),
+        };
+    }
+}
 
 function isSuccessAck(value: unknown): boolean {
     if (!value || typeof value !== 'object') return false;
@@ -51,6 +87,7 @@ type SessionTurnMutationSocketResult =
     | Readonly<{ status: 'unsupported'; evidence: UnsupportedSessionTurnSocketEvidence }>
     | Readonly<{ status: 'exact_non_delivery'; diagnostic: ExactReceiptDiagnostic }>
     | Readonly<{ status: 'receipt_mismatch' }>
+    | Readonly<{ status: 'rejected'; diagnostic: SessionTurnMutationRejectionDiagnostic }>
     | Readonly<{ status: 'failed' }>;
 
 type SessionTurnMutationHttpResult =
@@ -58,7 +95,7 @@ type SessionTurnMutationHttpResult =
     | Readonly<{ status: 'unsupported'; evidence: UnsupportedSessionTurnHttpEvidence }>
     | Readonly<{ status: 'exact_non_delivery'; diagnostic: ExactReceiptDiagnostic }>
     | Readonly<{ status: 'receipt_mismatch' }>
-    | Readonly<{ status: 'incompatible'; statusCode: 400 | 422 }>
+    | Readonly<{ status: 'incompatible'; statusCode: 400 | 422; diagnostic?: SessionTurnMutationRejectionDiagnostic }>
     | Readonly<{ status: 'failed' }>;
 
 type ExactReceiptDiagnostic = Readonly<{
@@ -95,7 +132,8 @@ export type SessionTurnMutationDeliveryResult =
     | Readonly<{
         delivered: false;
         reason: 'session_turn_mutation_rejected';
-        httpStatus: 400 | 422;
+        httpStatus?: 400 | 422;
+        diagnostic?: SessionTurnMutationRejectionDiagnostic;
     }>
     | Readonly<{
         delivered: false;
@@ -210,6 +248,8 @@ async function trySocketSessionTurnMutation(params: Readonly<{
             };
         }
         const record = ack && typeof ack === 'object' ? ack as Record<string, unknown> : null;
+        const rejection = readRejectionDiagnostic(record);
+        if (rejection) return { status: 'rejected', diagnostic: rejection };
         if (params.exactMutation) {
             const classified = classifyExactReceipt(params.exactMutation, record?.receipt);
             return classified.delivered
@@ -265,7 +305,11 @@ async function tryHttpSessionTurnMutation(params: Readonly<{
         if (status === 404 || status === 405 || status === 501) {
             return { status: 'unsupported', evidence: { transport: 'http', evidence: 'unsupported_status', status } };
         }
-        if (status === 400 || status === 422) return { status: 'incompatible', statusCode: status };
+        if (status === 400 || status === 422) {
+            const response = (error as { response?: { data?: unknown } }).response;
+            const diagnostic = readRejectionDiagnostic(response?.data);
+            return { status: 'incompatible', statusCode: status, ...(diagnostic ? { diagnostic } : {}) };
+        }
         return { status: 'failed' };
     }
 }
@@ -308,6 +352,10 @@ export async function deliverSessionTurnMutation(params: Readonly<{
         : { status: 'failed' as const };
     if (socketResult.status === 'delivered') return { delivered: true, path: 'socket', ...(socketResult.beginApplied === undefined ? {} : { beginApplied: socketResult.beginApplied }) };
 
+    if (socketResult.status === 'rejected') {
+        return { delivered: false, reason: 'session_turn_mutation_rejected', diagnostic: socketResult.diagnostic };
+    }
+
     if (params.signal?.aborted) return { delivered: false, reason: 'session_turn_mutation_transport_unavailable' };
 
     const httpResult = await tryHttpSessionTurnMutation({
@@ -334,7 +382,8 @@ export async function deliverSessionTurnMutation(params: Readonly<{
         return { delivered: false, reason: 'ignored_lossy' };
     }
     if (httpResult.status === 'incompatible') {
-        return { delivered: false, reason: 'session_turn_mutation_rejected', httpStatus: httpResult.statusCode };
+        return { delivered: false, reason: 'session_turn_mutation_rejected', httpStatus: httpResult.statusCode,
+            ...(httpResult.diagnostic ? { diagnostic: httpResult.diagnostic } : {}) };
     }
     if (socketResult.status === 'receipt_mismatch' || httpResult.status === 'receipt_mismatch') {
         return { delivered: false, reason: 'session_turn_mutation_receipt_mismatch' };

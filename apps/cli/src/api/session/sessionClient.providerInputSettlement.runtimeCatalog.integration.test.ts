@@ -142,6 +142,44 @@ const native = await loader.import(`${pluginRoot}/nativeRuntime.ts`) as {
 };
 
 describe('ApiSessionClient provider-input settlement', () => {
+  it.each([true, false])('settles the recorded post-withdrawal input when Home refuses its Turn begin (classified cause: %s)', async classified => {
+    const transport = await vi.importActual<typeof import('./pendingQueueV2Transport')>('./pendingQueueV2Transport');
+    resolveAcceptedMock.mockImplementation(transport.resolveAcceptedPendingQueueV2Delivery);
+    sessionSocketStub = createApiSessionSocketStub({ connected: true, emitWithAck: (event, payload) => {
+      if (event === 'session-turn-mutation') return { result: 'error' };
+      if (event === 'pending-delivery-accepted-v1') return { ok: false, error: 'turn-publication-pending' };
+      return resolveApiSessionSocketDefaultAck(event, payload);
+    } });
+    userSocketStub = createApiSessionSocketStub({ connected: true });
+    blockDeliveryMock.mockImplementation(transport.blockPendingQueueV2Delivery);
+    vi.spyOn(axios, 'post').mockImplementation(async url => {
+      if (String(url).endsWith('/turns/mutations')) throw createTranscriptLookupHttpError({ status: 400,
+        message: 'Invalid parameters', data: { error: 'Invalid parameters', code: 'session_team_credential_binding_rejected', ...(classified ? { reason: 'access_removed' } : {}) } });
+      if (String(url).endsWith('/block')) return { status: 200, data: { ok: true, didUpdate: true } };
+      throw new Error('Unexpected HTTP POST');
+    });
+    const client = createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({ id: 's1' }));
+    const localId = 'e180e7dc-d935-4a19-90a1-e9fe9b65ce8a';
+    const turnId = 'native-turn-da3b2bdb-b307-41ee-bfa2-7615634d4b8f-2';
+    markMaterializedProviderInput(client, localId);
+    try {
+      await client.enqueueSessionTurnMutation({ v: 1, sessionId: 's1', mutationId: 'withdrawn-begin',
+        observedAt: 1794531278625, agentId: 'claude', action: 'begin', turnId, startingInputId: localId,
+        initiator: 'user', workDepth: 0 });
+      const publication = client.awaitTurnPublication(turnId, new AbortController().signal).then(() => null, error => error);
+      void client.observeProviderInputSettlement({ kind: 'accepted', localId, userMessageSeq: null,
+        providerTurnId: turnId, providerDeliveryKind: 'newTurn', acceptedAtMs: 1794531278625 });
+      await vi.waitFor(() => expect(blockDeliveryMock).toHaveBeenCalledWith(expect.objectContaining({
+        localId, reason: classified ? 'team_access_removed' : 'delivery_outcome_uncertain',
+      })));
+      expect(await publication).toMatchObject({ failureCause: { code: 'session_team_credential_binding_rejected',
+        phase: 'turn_start', failureReason: classified ? 'permission_denied' : 'unknown',
+        ...(classified ? { providerErrorCode: 'access_removed' } : {}) } });
+      await vi.waitFor(() => expect(client.hasPendingProviderInput(localId)).toBe(false));
+      expect(axios.post).toHaveBeenCalledWith(expect.stringContaining('/block'),
+        { reason: classified ? 'team_access_removed' : 'delivery_outcome_uncertain' }, expect.any(Object));
+    } finally { await client.close(); }
+  });
   it('releases a brokered effect only after the accepted Turn receives its Home acknowledgement', async () => {
     let acknowledge!: () => void;
     let offered!: () => void;

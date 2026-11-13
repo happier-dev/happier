@@ -233,6 +233,7 @@ const blockedReasonLabelKeys = {
     ambiguous_terminal_delivery: 'session.pendingMessages.deliveryBlockedReasons.ambiguousTerminalDelivery',
     // An effect may already have started: this row must not read like the "nothing was sent" case.
     delivery_outcome_uncertain: 'session.pendingMessages.deliveryBlockedReasons.deliveryOutcomeUncertain',
+    team_access_removed: 'errors.permissionDenied',
     terminal_host_unreachable: 'session.pendingMessages.deliveryBlockedReasons.terminalHostUnreachable',
     runtime_disposed_before_delivery: 'session.pendingMessages.deliveryBlockedReasons.runtimeDisposedBeforeDelivery',
     host_retired_before_dispatch: 'session.pendingMessages.deliveryBlockedReasons.runtimeDisposedBeforeDelivery',

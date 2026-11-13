@@ -24,6 +24,7 @@ export const PENDING_DELIVERY_BLOCKED_REASONS = [
   'manual_user_handled',
   'attempt_expired_before_write',
   'provider_rejected_before_acceptance',
+  'team_access_removed',
   'steering_unavailable',
   // Settlement-only signal. Current servers atomically requeue the same conditional-steer row;
   // this value is never persisted as a durable blocked reason.

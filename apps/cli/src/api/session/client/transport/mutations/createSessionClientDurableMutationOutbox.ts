@@ -43,8 +43,12 @@ import {
     type SessionClientDurableMutationPersistenceContext,
 } from './sessionClientDurableMutationPersistence';
 import { deliverSessionEndMutation, resetSessionEndDeliverySlotsForTests } from './deliverSessionEndMutation';
-import { deliverSessionTurnMutation, type UnsupportedSessionTurnMutationDiagnostic } from './deliverSessionTurnMutation';
-import { deliverTranscriptMessageMutation } from './deliverTranscriptMessageMutation';
+import { deliverSessionTurnMutation, SessionTurnPublicationRejectedError, type UnsupportedSessionTurnMutationDiagnostic } from './deliverSessionTurnMutation';
+import {
+    deliverTranscriptMessageMutation,
+    deliverTranscriptMessageMutationBatch,
+    type TranscriptMessageMutationDeliveryResult,
+} from './deliverTranscriptMessageMutation';
 import {
     findSessionClientDurableMutationDependencyCycles,
     readSessionClientDurableMutationDependencies,
@@ -203,6 +207,8 @@ type CreateGenericSessionClientDurableMutationOutboxParams = Readonly<{
     deliverTranscriptMessageMutation?: (
         mutation: TranscriptMessageAppendMutationV1,
     ) => Promise<boolean | undefined>;
+    /** Whether `deliverTranscriptMessageMutation` currently answers instead of the socket. */
+    hasTranscriptMessageMutationDelivery?: () => boolean;
     deliverAgentStateRequestSettlement?: (mutation: AgentStateRequestSettlementMutationV1) => Promise<DurableMutationDeliveryOutcome>;
     deliverRegisteredSessionStateFieldMutation?: (
         mutation: RegisteredSessionStateFieldMutationV1,
@@ -921,6 +927,8 @@ function createGenericSessionClientDurableMutationOutbox(
                         ?.deliverTranscriptMessageMutation;
                     return deliver ? await deliver(mutation) : undefined;
                 },
+                hasTranscriptMessageMutationDelivery: () => [...handles.values()].some((handle) =>
+                    handle.isDeliveryActive?.() !== false && handle.deliverTranscriptMessageMutation !== undefined),
                 isShuttingDown: () => [...handles.values()]
                     .some((handle) => handle.isShuttingDown?.() === true),
                 deliverAgentStateRequestSettlement: async (mutation) => {
@@ -1918,6 +1926,81 @@ function createGenericSessionClientDurableMutationOutboxInstance(
         retryTimer.unref?.();
     }
 
+    type TranscriptAppendMutation = Extract<QueuedSessionClientDurableMutation, { kind: 'transcript_message_append' }>;
+
+    // The append is a live-delivery hint that roughly doubles the frame: send it on the first
+    // attempt only, so a retry (a socket refusal of an oversized frame included) is the
+    // plain full-body write that worked before appends existed.
+    function readTranscriptAttemptPayload(mutation: TranscriptAppendMutation) {
+        const { append: _append, ...withoutAppend } = mutation.payload as TranscriptMessageAppendMutationV1;
+        return mutation.attempts === 0 ? mutation.payload : withoutAppend;
+    }
+
+    function interpretTranscriptMessageDelivery(
+        mutation: TranscriptAppendMutation,
+        result: TranscriptMessageMutationDeliveryResult,
+    ): DurableMutationDeliveryOutcome {
+        if (!result.delivered && result.reason === 'transcript_message_transport_unavailable') {
+            return { delivered: false, unsupportedCapability: true };
+        }
+        if (!result.delivered && (
+            result.reason === 'transcript_message_provenance_missing_or_invalid'
+            || result.reason === 'transcript_message_invalid_observation'
+        )) {
+            return { delivered: false, terminalFailureReason: result.reason };
+        }
+        if (result.delivered && result.ack && params.onTranscriptMessageCommitted) {
+            // The acknowledged original, not an enqueue attempt, owns this
+            // notification. Observer failure cannot undo transcript custody
+            // or cause a successfully delivered append to be retried.
+            try {
+                void Promise.resolve(params.onTranscriptMessageCommitted(mutation.payload, result.ack.seq))
+                    .catch(error => logger.debug('[API] Committed transcript observer unavailable', {
+                        sessionId: params.sessionId, localId: mutation.payload.localId,
+                        error: serializeAxiosErrorForLog(error),
+                    }));
+            } catch (error) {
+                logger.debug('[API] Committed transcript observer unavailable', {
+                    sessionId: params.sessionId, localId: mutation.payload.localId,
+                    error: serializeAxiosErrorForLog(error),
+                });
+            }
+        }
+        return {
+            delivered: result.delivered,
+            ...(result.delivered && result.ack ? { committedSequence: result.ack.seq } : {}),
+        };
+    }
+
+    /**
+     * Sends a contiguous run of ready transcript rows in one ordered frame. Home observes them in
+     * order and stops at its first refusal; outcomes for the observed members after the first are
+     * returned for the flush loop to settle in order, and unobserved members stay unattempted.
+     */
+    async function deliverTranscriptMessageRun(
+        members: readonly TranscriptAppendMutation[],
+    ): Promise<Readonly<{ first: DurableMutationDeliveryOutcome; later: ReadonlyMap<string, DurableMutationDeliveryOutcome> }> | null> {
+        if (members.length < 2) return null;
+        if (params.hasTranscriptMessageMutationDelivery
+            ? params.hasTranscriptMessageMutationDelivery()
+            : params.deliverTranscriptMessageMutation !== undefined) return null;
+        const delivered = await runWithServerHttpBaseUrl(serverUrl, async () => deliverTranscriptMessageMutationBatch({
+            signal: params.signal,
+            socket: params.getSocket(),
+            connectionContract: sessionSyncPendingInputServerContractResult,
+            mutations: members.map(readTranscriptAttemptPayload),
+            onSend: (count) => {
+                for (const member of members.slice(0, count)) params.onTranscriptMessageDeliveryAttempt?.(member.payload);
+            },
+        }));
+        if (!delivered) return null;
+        const later = new Map<string, DurableMutationDeliveryOutcome>();
+        delivered.results.forEach((result, index) => {
+            if (index > 0) later.set(members[index]!.mutationId, interpretTranscriptMessageDelivery(members[index]!, result));
+        });
+        return { first: interpretTranscriptMessageDelivery(members[0]!, delivered.results[0]!), later };
+    }
+
     async function deliver(mutation: QueuedSessionClientDurableMutation): Promise<DurableMutationDeliveryOutcome> {
         if (mutation.kind === 'agent_state_request_settlement') {
             if (!params.deliverAgentStateRequestSettlement) throw new Error('Request settlement delivery owner is unavailable');
@@ -1940,7 +2023,8 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                 return { delivered: false, ignoredLossy: true };
             }
             if (!result.delivered && result.reason === 'session_turn_mutation_rejected') {
-                return { delivered: false, terminalFailureReason: 'session_turn_mutation_rejected' };
+                return { delivered: false, terminalFailureReason: 'session_turn_mutation_rejected',
+                    ...('diagnostic' in result && result.diagnostic ? { terminalFailureDiagnostic: result.diagnostic } : {}) };
             }
             if (!result.delivered && result.reason === 'exact_session_turn_mutation_not_delivered'
                 && 'diagnostic' in result && 'classification' in result.diagnostic
@@ -1964,47 +2048,14 @@ function createGenericSessionClientDurableMutationOutboxInstance(
             if (overriddenDelivery !== undefined) {
                 return { delivered: overriddenDelivery };
             }
-            // The append is a live-delivery hint that roughly doubles the frame: send it on the first
-            // attempt only, so a retry (a socket refusal of an oversized frame included) is the
-            // plain full-body write that worked before appends existed.
-            const { append: _append, ...withoutAppend } = mutation.payload as TranscriptMessageAppendMutationV1;
             const result = await runWithServerHttpBaseUrl(serverUrl, async () => deliverTranscriptMessageMutation({
                 signal: params.signal,
                 token: params.token,
                 socket: params.getSocket(),
                 connectionContract: sessionSyncPendingInputServerContractResult,
-                mutation: mutation.attempts === 0 ? mutation.payload : withoutAppend,
+                mutation: readTranscriptAttemptPayload(mutation),
             }));
-            if (!result.delivered && result.reason === 'transcript_message_transport_unavailable') {
-                return { delivered: false, unsupportedCapability: true };
-            }
-            if (!result.delivered && (
-                result.reason === 'transcript_message_provenance_missing_or_invalid'
-                || result.reason === 'transcript_message_invalid_observation'
-            )) {
-                return { delivered: false, terminalFailureReason: result.reason };
-            }
-            if (result.delivered && result.ack && params.onTranscriptMessageCommitted) {
-                // The acknowledged original, not an enqueue attempt, owns this
-                // notification. Observer failure cannot undo transcript custody
-                // or cause a successfully delivered append to be retried.
-                try {
-                    void Promise.resolve(params.onTranscriptMessageCommitted(mutation.payload, result.ack.seq))
-                        .catch(error => logger.debug('[API] Committed transcript observer unavailable', {
-                            sessionId: params.sessionId, localId: mutation.payload.localId,
-                            error: serializeAxiosErrorForLog(error),
-                        }));
-                } catch (error) {
-                    logger.debug('[API] Committed transcript observer unavailable', {
-                        sessionId: params.sessionId, localId: mutation.payload.localId,
-                        error: serializeAxiosErrorForLog(error),
-                    });
-                }
-            }
-            return {
-                delivered: result.delivered,
-                ...(result.delivered && result.ack ? { committedSequence: result.ack.seq } : {}),
-            };
+            return interpretTranscriptMessageDelivery(mutation, result);
         }
         if (mutation.kind === 'voice_agent_transcript_turn') {
             params.onTranscriptMessageDeliveryAttempt?.(mutation.payload.user);
@@ -2156,6 +2207,34 @@ function createGenericSessionClientDurableMutationOutboxInstance(
             let runtimeActivitySettlementPendingDurableCut: RuntimeActivitySnapshotTail['settlement'] = null;
             let runtimeActivityRetirementPendingDurableCut: number | null = null;
             let earlierOrderedMutationBlocked = false;
+            // Outcomes Home already returned for later members of a transcript run sent with an
+            // earlier row; each is settled when the loop reaches that row, in order.
+            // Per-flush delivery timing: each awaited socket/HTTP delivery is one round trip.
+            const deliveryTiming = { roundTrips: 0, delivered: 0, runFrames: 0, runRows: 0, ackMsTotal: 0, ackMsMax: 0,
+                oldestRowAgeMs: 0 };
+            const observedTranscriptRunOutcomes = new Map<string, Readonly<{
+                outcome: DurableMutationDeliveryOutcome;
+                attemptedAt: number;
+            }>>();
+            const isReadyTranscriptRunMember = (candidate: QueuedSessionClientDurableMutation): candidate is TranscriptAppendMutation => (
+                candidate.kind === 'transcript_message_append'
+                && readSessionClientDurableMutationDependencies(candidate).length === 0
+                && !candidate.paused
+                && !dependencyCyclesByMutationId.has(candidate.mutationId)
+                && (
+                    reason === 'flush' || reason === 'connection_contract' || candidate.nextAttemptAt <= now
+                    || ((reason === 'connect' || reason === 'startup') && !shouldDeadLetterSessionClientDurableMutation(candidate))
+                )
+            );
+            const readTranscriptRun = (startIndex: number): TranscriptAppendMutation[] => {
+                const run: TranscriptAppendMutation[] = [];
+                for (let next = startIndex; next < batch.length; next += 1) {
+                    const candidate = batch[next]!;
+                    if (!isReadyTranscriptRunMember(candidate)) break;
+                    run.push(candidate);
+                }
+                return run;
+            };
             const refreshInFlightMutations = (nextIndex: number): void => {
                 inFlightMutations = mergeLiveQueuedMutations(
                     remaining,
@@ -2329,12 +2408,42 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                 let attemptFailureReason: SessionClientDurableMutationAttemptReason = 'delivery_not_confirmed';
                 let attemptedAt = 0;
                 try {
-                    outcome = await timeWebLatencyPhase('session.outbox.delivery', () =>
-                        withSessionClientDurableMutationDeliverySlot(() => {
-                            attemptedAt = Date.now();
-                            return timeWebLatencyPhase('session.outbox.deliver', () => deliver(mutation));
-                        }));
+                    const observedInRun = observedTranscriptRunOutcomes.get(mutation.mutationId);
+                    if (observedInRun) {
+                        observedTranscriptRunOutcomes.delete(mutation.mutationId);
+                        attemptedAt = observedInRun.attemptedAt;
+                        outcome = observedInRun.outcome;
+                    } else {
+                        const current = mutation;
+                        outcome = await timeWebLatencyPhase('session.outbox.delivery', () =>
+                            withSessionClientDurableMutationDeliverySlot(() => {
+                                attemptedAt = Date.now();
+                                return timeWebLatencyPhase('session.outbox.deliver', async () => {
+                                    deliveryTiming.roundTrips += 1;
+                                    const run = current.kind === 'transcript_message_append' ? readTranscriptRun(index) : [];
+                                    for (const row of run.length > 0 ? run : current.kind === 'transcript_message_append' ? [current] : []) {
+                                        deliveryTiming.oldestRowAgeMs = Math.max(deliveryTiming.oldestRowAgeMs,
+                                            attemptedAt - row.payload.createdAt);
+                                    }
+                                    try {
+                                        const delivered = run[0] === current ? await deliverTranscriptMessageRun(run) : null;
+                                        if (!delivered) return await deliver(current);
+                                        deliveryTiming.runFrames += 1;
+                                        deliveryTiming.runRows += 1 + delivered.later.size;
+                                        for (const [mutationId, laterOutcome] of delivered.later) {
+                                            observedTranscriptRunOutcomes.set(mutationId, { outcome: laterOutcome, attemptedAt });
+                                        }
+                                        return delivered.first;
+                                    } finally {
+                                        const ackMs = Date.now() - attemptedAt;
+                                        deliveryTiming.ackMsTotal += ackMs;
+                                        deliveryTiming.ackMsMax = Math.max(deliveryTiming.ackMsMax, ackMs);
+                                    }
+                                });
+                            }));
+                    }
                     if (outcome.delivered) {
+                        deliveryTiming.delivered += 1;
                         if (awaitedDeliveryMutationCounts.has(mutation.mutationId)) {
                             acknowledgedAwaitedDeliveryMutations.set(mutation.mutationId, {
                                 ...(outcome.committedSequence === undefined ? {} : { committedSequence: outcome.committedSequence }),
@@ -2469,10 +2578,22 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                 shouldRequestReconnect = true;
                 continue;
             }
+            if (deliveryTiming.roundTrips > 0) {
+                logger.infoFile('[API] Durable session mutation flush delivered', {
+                    sessionId: params.sessionId,
+                    reason,
+                    queued: batch.length,
+                    ...deliveryTiming,
+                    flushMs: Date.now() - now,
+                });
+            }
             for (const failed of deadLetteredMutationsPendingDurableCut) {
-                notifyAwaitedDelivery(failed.mutationId, new Error(
-                    `Committed transcript delivery rejected: ${failedMutationReasons.get(failed.mutationId)}`,
-                ));
+                notifyAwaitedDelivery(failed.mutationId,
+                    failed.kind === 'session_turn_mutation' && failed.payload.action === 'begin'
+                        ? new SessionTurnPublicationRejectedError(deadLetters.find(entry => entry.mutationId === failed.mutationId)?.diagnostic)
+                        : new Error(
+                            'Committed transcript delivery rejected: ' + failedMutationReasons.get(failed.mutationId),
+                        ));
             }
             mutations = mergeLiveQueuedMutations(
                 remaining,
@@ -2750,7 +2871,10 @@ function createGenericSessionClientDurableMutationOutboxInstance(
                 await requiredDelivery;
             } else if (opts.awaitFlush === true) {
                 await (acknowledgedDelivery
-                    ? Promise.race([flushPromise, acknowledgedDelivery.catch(() => flushPromise)])
+                    ? Promise.race([flushPromise, acknowledgedDelivery.catch(error => {
+                        if (admittedMutation.kind === 'session_turn_mutation' && admittedMutation.payload.action === 'begin') throw error;
+                        return flushPromise;
+                    })])
                     : flushPromise);
             }
             const delivered = acknowledgedAwaitedDeliveryMutations.has(deliveryMutationId);

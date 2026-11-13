@@ -5,6 +5,7 @@ import { Server as SocketIOServer } from "socket.io";
 import tweetnacl from 'tweetnacl';
 import type { Prisma } from "@prisma/client";
 import {
+    deriveWorkflowSessionInputLocalIdV2,
     buildTrustedHostSessionInputAdmissionV1,
     SESSION_MESSAGE_PROVENANCE_META_KEY,
     settleSessionInputRequestV1,
@@ -23,6 +24,7 @@ import {
 } from "@happier-dev/protocol";
 
 import { db } from "@/storage/db";
+import { createSessionInputReplyProgressInTx } from "@/app/session/messages/sessionMessageReply";
 import { changeDeliveryMute } from '@/app/session/follow/sessionDeliveryMuteService';
 import { deriveSessionMessageReplyReturnLocalIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { auth } from "@/app/auth/auth";
@@ -7227,6 +7229,26 @@ describe("pendingMessageService (shared sessions)", () => {
             expect((await send()).statusCode).toBe(409);
             expect(await db.session.findUniqueOrThrow({ where: { id: session.id } })).toMatchObject({ pendingActivationStatus: 'waiting' });
         });
+    });
+
+    it('settles an unaccepted Workflow reply when Team access is withdrawn', async () => {
+        const owner = await createAccount('withdrawn-workflow-owner');
+        const session = await createSession(owner.id);
+        const workflow = { purpose: 'invocation' as const, runId: randomUUID(), invocationRecordId: randomUUID() };
+        const localId = deriveWorkflowSessionInputLocalIdV2(workflow);
+        const progress = await inTx(tx => createSessionInputReplyProgressInTx(tx, {
+            accountId: owner.id, requestSessionId: session.id, reply: { mode: 'wait', workflow },
+        }));
+        if (!progress) throw new Error('Canonical reply admission failed');
+        await enqueuePendingMessage({ actorUserId: owner.id, sessionId: session.id, localId, ciphertext: 'workflow-input' });
+        await materializeNextPendingMessage({ actorUserId: owner.id, sessionId: session.id });
+        await db.sessionPendingMessage.update({ where: { sessionId_localId: { sessionId: session.id, localId } },
+            data: { replyProgress: progress, replyDisposition: progress.disposition } });
+        expect(await blockPendingDelivery({ actorUserId: owner.id, sessionId: session.id, localId,
+            reason: 'team_access_removed' })).toMatchObject({ ok: true });
+        expect(await db.sessionPendingMessage.findUniqueOrThrow({ where: { sessionId_localId: { sessionId: session.id, localId } } }))
+            .toMatchObject({ deliveryState: 'blocked', deliveryBlockedReason: 'team_access_removed',
+                replyProgress: { outcome: { kind: 'failed' } } });
     });
 
     it("withdraw reports actual removal and never mistakes an absent or accepted request for a restored draft", async () => {

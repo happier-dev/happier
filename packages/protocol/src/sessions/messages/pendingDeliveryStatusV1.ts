@@ -135,6 +135,7 @@ export function isPendingDeliveryProviderEffectPossibleV1(status: PendingDeliver
   if (status.status !== 'blocked') return false;
   return status.reason === 'ambiguous_terminal_delivery'
     || status.reason === 'delivery_outcome_uncertain'
+    || status.reason === 'team_access_removed'
     || status.reason === 'unknown';
 }
 

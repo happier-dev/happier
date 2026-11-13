@@ -1284,6 +1284,8 @@ Descriptors and compatibility confirmation scopes retain the source model id.
 No saved gateway connection or second observer is required. Static source models
 do not establish custom upstream membership. An account kind without an observed
 catalog retains its typed native refusal; a verified empty catalog stays empty.
+A missing required model returns outer `model_selection_required` from native
+preflight and `agents.models.list`, rather than a successful message-only observation.
 Agents without a selected source retain their existing model discovery path.
 
 In 0.3 development, managed Provider and plugin Fetch transports project headers
@@ -1860,6 +1862,16 @@ list/detail/catalog views consume this fact, including the custodian's other cli
 It does not change source authority and therefore starts no source census. Its
 separate coalescing identity preserves any pending `account/teams` authority fact.
 These checks add no idle timer or release retry loop.
+
+In 0.3 development, Home's new-Turn credential-binding refusal retains its code
+and reason through socket and HTTP publication. The CLI publication owner exposes
+that refusal as a typed runtime failure cause. Pending-input settlement ends on
+the refusal instead of retrying an impossible publication prerequisite. A withdrawn
+Team grant produces `team_access_removed` in Pending and
+`session_input_unauthorized` from a waiting Send. Publication alone does not prove
+whether a native/direct Agent already acted, so Pending retains conservative
+effect-uncertainty recovery. This adds no authorization read or retry policy.
+
 Home checks an admitted Run through its existing daemon attestation on the next
 request. It has no Run-end publication to the broker custodian: Home does not
 record which custodian a Run used. Stream closure releases its join without

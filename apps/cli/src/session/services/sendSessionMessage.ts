@@ -629,7 +629,14 @@ async function readOriginalReply(params: Readonly<{
   return readSessionMessageReply(params);
 }
 
+function readBlockedPromptDeliveryAdmissionCode(reason: PendingQueueDeliveryBlockedReason): SessionInputAdmissionRejectionCodeV1 {
+  if (reason === 'team_access_removed') return 'session_input_unauthorized';
+  const rejection = SessionInputAdmissionRejectionCodeV1Schema.safeParse(reason);
+  return rejection.success ? rejection.data : 'session_input_target_unavailable';
+}
+
 function formatBlockedPromptDeliveryFailure(reason: PendingQueueDeliveryBlockedReason): string {
+  if (reason === 'team_access_removed') return 'Current turn failed: Team access was withdrawn.';
   return `Current turn failed: pending delivery blocked (${reason})`;
 }
 
@@ -2207,12 +2214,11 @@ export async function sendSessionMessage(
       };
     }
     if (typeof turnOutcome === 'object' && turnOutcome?.kind === 'blocked') {
-      const rejection = SessionInputAdmissionRejectionCodeV1Schema.safeParse(turnOutcome.reason);
       return {
         ok: false,
         code: 'wait_failed',
         message: formatBlockedPromptDeliveryFailure(turnOutcome.reason),
-        admissionResult: { status: 'rejected', code: rejection.success ? rejection.data : 'session_input_target_unavailable' },
+        admissionResult: { status: 'rejected', code: readBlockedPromptDeliveryAdmissionCode(turnOutcome.reason) },
       };
     }
     if (turnOutcome === 'failed' || turnOutcome === 'cancelled') {
@@ -2262,10 +2268,9 @@ export async function sendSessionMessage(
         ok: false,
         code: 'wait_failed',
         message: formatBlockedPromptDeliveryFailure(promptDelivery.reason),
-        // The canonical queue proved that this input cannot reach the runtime.
-        // Preserve that evidence through Action output instead of reporting
-        // the earlier enqueue acknowledgement as a successful delivery.
-        admissionResult: { status: 'rejected', code: 'session_input_target_unavailable' },
+        // Retain the canonical queue's final refusal through Action output
+        // instead of treating enqueue acknowledgement as successful delivery.
+        admissionResult: { status: 'rejected', code: readBlockedPromptDeliveryAdmissionCode(promptDelivery.reason) },
       };
     }
     if (promptDelivery.kind === 'missing') {

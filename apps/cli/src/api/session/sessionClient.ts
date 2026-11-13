@@ -10,6 +10,7 @@ import { resolveSessionTransportContext } from '@/session/services/resolveSessio
 import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolveUsageLimitRecoveryEnabled } from '@/features/usageLimitRecoveryFeatureGate';
 import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { SessionTurnPublicationRejectedError } from './client/transport/mutations/deliverSessionTurnMutation';
 import { logger } from '@/ui/logger'
 import { registerSessionQuestionAnswerDelivery } from '@/agent/permissions/sessionQuestionAnswerDelivery';
 import { SessionMessageV1Schema, type SessionMessageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
@@ -169,6 +170,7 @@ import { readSidechainId } from './outbound/shared';
 import { fetchEncryptedTranscriptMessagesPage } from '@/session/replay/fetchEncryptedTranscriptMessages';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { registerLocalSessionRpcTarget } from '@/session/transport/rpc/localSessionRpcChannel';
+import { readDaemonState } from '@/persistence';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES } from '@happier-dev/protocol/rpcErrors';
 import { findTranscriptEncryptedMessageByLocalIdV2 } from './transcriptMessageLookup';
 import {
@@ -286,6 +288,7 @@ import {
     isAcceptedPendingQueueV2DeliveryAckResponseLoss,
     listPendingQueueV2DeliveryStatusesFromServer,
     PendingQueueAcceptedSettlementError,
+    type PendingQueueDeliveryBlockedReason,
     readAcceptedPendingQueueV2DeliveryRetryDirective,
     resolveAcceptedPendingQueueV2Delivery,
     resolveAcceptedPendingExecutionRunDelivery,
@@ -633,6 +636,8 @@ export class ApiSessionClient extends EventEmitter {
     private hasConnectedOnce = false;
     /** Bumped on every session socket connect; lets the streamed transcript writer resync after reconnects. */
     private sessionConnectionEpoch = 0;
+    /** Last `execution-run-updated` frame sent per Run, keyed with the connection epoch it was sent on. */
+    private readonly deliveredExecutionRunUpdates = new Map<string, string>();
     private sessionSyncPendingInputServerContractResult: SessionClientConnectionContractResult | null = null;
     private startupMessageCatchUpStarted = false;
     private readonly startupMessageCatchUpExplicitAfterSeq: number | null;
@@ -1832,17 +1837,27 @@ export class ApiSessionClient extends EventEmitter {
                 if (!this.socket?.connected) {
                     return;
                 }
+                // A running sub-agent re-reports its public state on every transcript fact; the
+                // server relays each frame and the UI re-reads its Run roster. Send real changes
+                // only. The key carries the connection epoch, so a reconnect re-sends the next report.
+                const delivered = `${this.sessionConnectionEpoch}:${JSON.stringify(run)}`;
+                if (this.deliveredExecutionRunUpdates.get(run.runId) === delivered) return;
+                this.deliveredExecutionRunUpdates.set(run.runId, delivered);
                 this.socket.emit('execution-run-updated', { sid: this.sessionId, run } as never);
             },
         });
         // Same-machine callers (the daemon) reach these handlers on the owner-only local channel.
-        this.localSessionRpcRetirement = options.localMachineId ? registerLocalSessionRpcTarget({
+        // Only the Session owner's own runtime serves locally: a shared editor's runtime holds another
+        // Account's grant that only the server can scope.
+        this.localSessionRpcRetirement = options.localMachineId && this.metadataAuthorityKind === 'owner' ? registerLocalSessionRpcTarget({
             sessionId: this.sessionId,
             credentialToken: this.token,
             handleRequest: async request => this.closed
                 ? { error: RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE }
                 : await runWithServerHttpBaseUrl(this.transport.serverUrl, () => this.rpcHandlerManager.handleRequest(request, undefined, 'local_session_channel')),
             cancelRequest: requestId => this.rpcHandlerManager.cancelTransportRequest(requestId),
+            // The daemon that spawned or adopted this runner publishes its pid in its own state.
+            readTrustedCallerPid: async () => (await readDaemonState())?.pid ?? null,
         }).catch((error: unknown) => {
             logger.warn('[API] Local Session RPC channel unavailable; same-machine calls use the server', {
                 error: error instanceof Error ? error.message : String(error),
@@ -4324,7 +4339,9 @@ export class ApiSessionClient extends EventEmitter {
             signal.throwIfAborted();
             return;
         }
-        await (begin?.catch(() => undefined) ?? Promise.all([...this.pendingSessionTurnMutationUpdates].map(update => update.catch(() => undefined))));
+        await (begin?.catch(error => {
+            if (error instanceof SessionTurnPublicationRejectedError) throw error;
+        }) ?? Promise.all([...this.pendingSessionTurnMutationUpdates].map(update => update.catch(() => undefined))));
         await this.durableMutationOutbox.flush('flush').catch(() => undefined);
     }
 
@@ -5395,16 +5412,35 @@ export class ApiSessionClient extends EventEmitter {
                         // steer joins a Turn that may predate this process.
                         const retained = this.terminalPendingSettlementLocalIds.get(localId);
                         const acceptedTurn = retained?.kind === 'accepted' ? retained.acceptedTurn : undefined;
-                        const drained = this.waitForOwnTurnBeginPublication(
-                            acceptedTurn?.kind === 'newTurn' ? acceptedTurn.turnId : undefined, authority.abortSignal);
-                        // Supersession still cancels the wait, as the abortable backoff did.
-                        await new Promise<void>((resolve) => {
-                            const signal = authority.abortSignal;
-                            if (signal.aborted) { resolve(); return; }
-                            const onAbort = () => resolve();
-                            signal.addEventListener('abort', onAbort, { once: true });
-                            void drained.finally(() => { signal.removeEventListener('abort', onAbort); resolve(); });
-                        });
+                        try {
+                            const drained = this.waitForOwnTurnBeginPublication(
+                                acceptedTurn?.kind === 'newTurn' ? acceptedTurn.turnId : undefined, authority.abortSignal);
+                            await new Promise<void>((resolve, reject) => {
+                                const signal = authority.abortSignal;
+                                if (signal.aborted) { resolve(); return; }
+                                const onAbort = () => resolve();
+                                const done = (error?: unknown) => {
+                                    signal.removeEventListener('abort', onAbort);
+                                    if (error) reject(error); else resolve();
+                                };
+                                signal.addEventListener('abort', onAbort, { once: true });
+                                void drained.then(() => done(), done);
+                            });
+                        } catch (publicationError) {
+                            if (authority.abortSignal.aborted) return;
+                            if (!(publicationError instanceof SessionTurnPublicationRejectedError)) throw publicationError;
+                            // Refusal is final, but publication alone does not prove whether a
+                            // native/direct runtime already acted. Preserve that uncertainty in Pending.
+                            await this.blockPendingProviderInputDeliveryByReason(localId,
+                                publicationError.failureCause.providerErrorCode === 'access_removed'
+                                    ? 'team_access_removed' : 'delivery_outcome_uncertain',
+                                authority.executionRun, authority.abortSignal);
+                            if (!this.isPendingProviderInputSettlementOperationCurrent(authority, localId)) return;
+                            this.deletePendingProviderInputLocalState(localId);
+                            this.executionRunPendingCustody.delete(localId);
+                            this.terminalPendingSettlementLocalIds.delete(localId);
+                            return;
+                        }
                         logger.infoFile('[pendingQueue] provider-input settlement retried after own Turn publication', {
                             sessionId: this.sessionId,
                             localId,
@@ -5504,13 +5540,12 @@ export class ApiSessionClient extends EventEmitter {
         await Promise.all(settlements);
     }
 
-    private async blockPendingProviderInputDelivery(
-        outcome: Exclude<SessionProviderInputOutcome, { kind: 'accepted' | 'custody_observed' }>,
-        executionRun?: ExecutionRunPendingInputBinding,
-        signal: AbortSignal = this.socketAckAbortController.signal,
+    private async blockPendingProviderInputDeliveryByReason(
+        localId: string,
+        reason: PendingQueueDeliveryBlockedReason,
+        executionRun: ExecutionRunPendingInputBinding | undefined,
+        signal: AbortSignal,
     ): Promise<boolean> {
-        const localId = outcome.localId;
-        const reason = outcome.kind === 'rejected_before_effect' ? outcome.reason : 'delivery_outcome_uncertain';
         const result = executionRun ? await blockPendingExecutionRunDelivery({
             signal,
             socket: this.socket, sessionId: this.sessionId, localId, recipient: executionRun.recipient, reason,
@@ -5523,6 +5558,18 @@ export class ApiSessionClient extends EventEmitter {
         if (!executionRun && result.pendingQueueState && this.materializationRuntime.applyPendingQueueState(result.pendingQueueState)) {
             this.emit('metadata-updated');
         }
+        return didRequeueConditionalSteer;
+    }
+
+    private async blockPendingProviderInputDelivery(
+        outcome: Exclude<SessionProviderInputOutcome, { kind: 'accepted' | 'custody_observed' }>,
+        executionRun?: ExecutionRunPendingInputBinding,
+        signal: AbortSignal = this.socketAckAbortController.signal,
+    ): Promise<boolean> {
+        const localId = outcome.localId;
+        const reason = outcome.kind === 'rejected_before_effect' ? outcome.reason : 'delivery_outcome_uncertain';
+        const didRequeueConditionalSteer = await this.blockPendingProviderInputDeliveryByReason(localId, reason, executionRun, signal);
+        if (executionRun && !executionRun.isCurrent()) return false;
         if (didRequeueConditionalSteer) {
             this.deletePendingProviderInputLocalState(localId);
             if (executionRun) this.executionRunPendingCustody.delete(localId);

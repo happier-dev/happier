@@ -772,6 +772,24 @@ describe('target Session input authoring through HTTP', () => {
     expect(http.post.mock.calls[0]?.[0]).toContain('/execution-runs/run-a/pending');
   });
 
+  it.each([undefined, recipient])('returns withdrawn Team access through Session Send (%s)', async target => {
+    const originalGet = http.get.getMockImplementation()!;
+    http.get.mockImplementation(async (url: string) => {
+      if (url.includes('/messages/by-local-id/')) return { status: 200, data: { message: null } };
+      if (url.includes('/pending')) return { status: 200, data: { ...(target ? { recipient: target } : {}), pending: [
+        { localId: 'withdrawn-team-input', status: 'queued', deliveryState: 'blocked', deliveryBlockedReason: 'team_access_removed' },
+      ] } };
+      const result = await originalGet(url);
+      if (url.endsWith(`/v2/sessions/${sessionId}`)) Object.assign(result.data.session, { active: true });
+      return result;
+    });
+    const result = await sendSessionMessage({ credentials, idOrPrefix: sessionId, localId: 'withdrawn-team-input',
+      message: 'Next prompt', ...(target ? { recipient: target } : {}), wait: true, timeoutMs: 1000 });
+    expect(result).toMatchObject({ ok: false, code: 'wait_failed',
+      admissionResult: { status: 'rejected', code: 'session_input_unauthorized' } });
+    expect(result.message).toContain('Team access');
+  });
+
   it('returns the exact target Pending refusal through Session Send without re-polling or resending', async () => {
     const originalGet = http.get.getMockImplementation()!;
     const pendingReads: string[] = [];

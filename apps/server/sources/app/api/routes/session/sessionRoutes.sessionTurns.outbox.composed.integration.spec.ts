@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyRequest } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { createPlannedSessionTeamCredentialFixture } from '@/app/teams/credentials/sessionBinding.testkit';
+import { encodeSessionTeamCredentialSlotKeyV1 } from '@happier-dev/protocol/teams';
+
 import { db } from '@/storage/db';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createAuthenticatedTestApp } from '../../testkit/sqliteFastify';
@@ -15,7 +18,7 @@ describe('Session turn outbox → real HTTP admission', () => {
     let harness: LightSqliteHarness;
 
     beforeAll(async () => {
-        harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-turnend-', initAuth: false });
+        harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-turnend-', initAuth: false, env: { HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED: '1' } });
         harness.resetEnv({ HAPPIER_HOME_DIR: harness.baseDir, HAPPIER_ACTIVE_SERVER_ID: 'turnend' });
         reloadConfiguration();
     }, 120_000);
@@ -23,6 +26,45 @@ describe('Session turn outbox → real HTTP admission', () => {
     afterAll(async () => {
         if (harness) await harness.close();
         reloadConfiguration();
+    });
+
+    it('preserves the Team withdrawal refusal through HTTP and awaited Turn publication', async () => {
+        const f = await createPlannedSessionTeamCredentialFixture('personal_allowed');
+        const session = await db.session.create({ data: { accountId: f.creator.id, tag: randomUUID(),
+            encryptionMode: 'plain', metadata: '{}', active: true } });
+        await db.sessionTeamCredentialBinding.create({ data: { sessionId: session.id,
+            slotKind: 'provider_model:brokered', slotKey: Buffer.from(encodeSessionTeamCredentialSlotKeyV1({ kind: 'provider_model' })),
+            resourceId: f.resource.id, resourceRevision: f.resource.revision } });
+        const app = createAuthenticatedTestApp();
+        app.addHook('onRequest', async (request: FastifyRequest) => { request.headers['x-test-user-id'] = f.creator.id; });
+        registerSessionTurnMutationRoute(app);
+        const serverUrl = await app.listen({ host: '127.0.0.1', port: 0 });
+        const outbox = createRuntimeSessionClientDurableMutationOutbox({ token: 'fixture', serverUrl,
+            sessionId: session.id, getSocket: () => null, requestReconnect: () => undefined });
+        const begin = (turnId: string, observedAt: number) => outbox.enqueueSessionTurnMutation({
+            v: 1, sessionId: session.id, turnId, action: 'begin', mutationId: turnId, observedAt,
+            agentId: 'claude', startingInputId: 'e180e7dc-d935-4a19-90a1-e9fe9b65ce8a', initiator: 'user', workDepth: 0,
+        }, { awaitDelivery: true });
+        try {
+            await outbox.awaitReady();
+            await begin('admitted-turn', 100);
+            await db.teamCredentialMemberGrant.deleteMany({ where: { resourceId: f.resource.id, teamMembershipId: f.creatorMembership.id } });
+            // Withdrawal stops the next admission, while already admitted work finishes.
+            await outbox.enqueueSessionTurnMutation({ v: 1, sessionId: session.id, turnId: 'admitted-turn',
+                action: 'complete', mutationId: 'complete-admitted', observedAt: 200 });
+            await outbox.flush('flush');
+            expect(await db.sessionTurn.findUniqueOrThrow({ where: {
+                sessionId_turnId: { sessionId: session.id, turnId: 'admitted-turn' },
+            } })).toMatchObject({ status: 'completed' });
+            await expect(begin('withdrawn-turn', 1794531278625)).rejects.toMatchObject({ failureCause: {
+                code: 'session_team_credential_binding_rejected', phase: 'turn_start',
+                failureReason: 'permission_denied', providerErrorCode: 'access_removed',
+            } });
+            expect(await db.sessionTurn.count({ where: { sessionId: session.id, turnId: 'withdrawn-turn' } })).toBe(0);
+            await db.teamCredentialMemberGrant.create({ data: { resourceId: f.resource.id, teamMembershipId: f.creatorMembership.id, deliveryMode: 'brokered' } });
+            await begin('fresh-turn-after-regrant', 1794531279625);
+            expect(await db.sessionTurn.count({ where: { sessionId: session.id, turnId: 'fresh-turn-after-regrant' } })).toBe(1);
+        } finally { await outbox.close(); await app.close(); }
     });
 
     it.each(['complete', 'fail', 'cancel'] as const)('retains exact quiet Workflow correspondence after %s through HTTP and the strict reader', async (action) => {
