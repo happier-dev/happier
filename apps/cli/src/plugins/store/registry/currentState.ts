@@ -1,3 +1,4 @@
+import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 
@@ -208,6 +209,7 @@ export type PluginDevelopmentRuntimeRemoval = Readonly<{
 export type PluginRegistryRuntimeLifecycle = Readonly<{
   prepare: (candidate: PluginRegistryRuntimeCandidate) => Promise<PreparedPluginRegistryRuntime>;
   prepareDevelopment?: (candidate: PluginDevelopmentRuntimeCandidate) => Promise<Readonly<{
+    diagnostic?: PluginCompatibilityDiagnostic;
     abort: () => Promise<void>;
     adopt: () => Promise<void>;
   }>>;

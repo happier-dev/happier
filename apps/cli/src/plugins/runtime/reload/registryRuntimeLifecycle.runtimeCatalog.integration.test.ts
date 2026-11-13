@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import axios from 'axios';
+import { artifactListResponse, artifactReadResponse } from '@/testkit/http/artifactHome';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -622,7 +623,7 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
       await rm(happyHomeDir, { recursive: true, force: true });
     }
   });
-  it.each([[false, false], [true, false], [true, true]])('boots the bundled daemon catalog with currentness bindings for every admitted Resource (restored development source: %s, waived install: %s)', async (restoredDevelopmentSource, waivedInstall) => {
+  it.each([[false, false], [true, false], [true, true]])('boots the bundled daemon catalog and demands currentness bindings for every admitted Resource (restored development source: %s, waived install: %s)', async (restoredDevelopmentSource, waivedInstall) => {
     resetActiveAccountSettingsSnapshotForTests();
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-bundled-resource-startup-'));
     const developmentPluginId = 'acme.restored-development-resources';
@@ -642,7 +643,7 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
         mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
       } };
       if (path === '/v1/account/encryption') return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
-      if (path === '/v1/artifacts') return { status: 200, data: [...artifacts.values()] };
+      if (path === '/v1/artifacts') return { status: 200, data: artifactListResponse(url, [...artifacts.values()]) };
       if (path.startsWith('/v1/artifacts/')) {
         const artifact = artifacts.get(decodeURIComponent(path.slice('/v1/artifacts/'.length)));
         return { status: artifact ? 200 : 404, data: artifact ?? {} };
@@ -653,9 +654,14 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
       const path = new URL(url).pathname;
       if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Invalid Artifact HTTP body');
       const body = input as Record<string, unknown>;
+      if (path === '/v1/artifacts/read') return artifactReadResponse(input, artifactId => {
+        const artifact = artifacts.get(artifactId);
+        return artifact ? { ...artifact, id: artifactId } : null;
+      });
       if (path === '/v1/artifacts' && typeof body.id === 'string') {
         if (artifacts.has(body.id)) return { status: 409, data: {} };
-        artifacts.set(body.id, { ...body, headerVersion: 1, bodyVersion: 1, seq: 1,
+        const { idScope: _idScope, ...storedBody } = body;
+        artifacts.set(body.id, { ...storedBody, headerVersion: 1, bodyVersion: 1, seq: 1,
           createdAt: 1, updatedAt: 1, ownerAccountId: 'account-1', access: 'owner', encryptionMode: 'plain' });
         return { status: 200, data: { id: body.id, headerVersion: 1, bodyVersion: 1 } };
       }
@@ -743,6 +749,20 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
           expect(registry.getPluginUiResourceCapability?.(pluginId)).toEqual({ readable: false, dynamic: false });
           continue;
         }
+        if (resource.definition.execution?.target === 'account') {
+          const activatedBefore = registry.activatedPluginIds.has(pluginId);
+          // Account Resources are executable only in their Account composition.
+          await expect(registry.activateContributionsOnDemand([{
+            pluginId, family: 'resources', localId: resource.definition.id,
+          }])).resolves.toEqual([]);
+          expect(registry.activatedPluginIds.has(pluginId), pluginId).toBe(activatedBefore);
+          continue;
+        }
+        // Dynamic Resources are demand-ready; cold startup need not activate
+        // their plugin. Exercise the same exact-contribution demand as readers.
+        await registry.activateContributionsOnDemand([{
+          pluginId, family: 'resources', localId: resource.definition.id,
+        }]);
         expect(registry.activatedPluginIds.has(pluginId), pluginId).toBe(true);
         const occurrenceId = registry.readPluginOccurrenceId?.(pluginId);
         expect(occurrenceId, pluginId).toBeTruthy();
@@ -755,11 +775,12 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
         expect(inbox.items).toHaveLength(1);
         const artifactId = inbox.items[0]!.artifactId;
         expect(inbox.items[0]).toMatchObject({ actionId: 'plugins.install', status: 'open' });
+        const pendingBefore = (await owner.changeService.listPendingPluginChanges()).changes;
+        expect(pendingBefore).toHaveLength(1);
         const request = ApprovalRequestV2Schema.parse(await store.approvalsGet({ artifactId, serverId: 'review-home' }));
         expect(request).toMatchObject({ preview: { pluginInstall: {
-          permissionsDisclosure: 'daemonEvaluated', pendingReview: { pendingChangeId: artifactId },
+          permissionsDisclosure: 'daemonEvaluated', pendingReview: { pendingChangeId: pendingBefore[0]!.pendingChangeId },
         } } });
-        const pendingBefore = (await owner.changeService.listPendingPluginChanges()).changes;
         await owner.changeService.controlPluginDevelopment!({ kind: 'registerExplicit', rootPath: reviewRoot });
         expect((await owner.changeService.listPendingPluginChanges()).changes).toEqual(pendingBefore);
         expect((await store.approvalsList({ status: 'open', limit: null, serverId: 'review-home' })).items).toHaveLength(1);
@@ -775,10 +796,15 @@ describe('daemon plugin registry runtime lifecycle owner', () => {
           executionRunTargetMachineId: 'review-machine', actionRequestId: 'author-rejoin',
         })).resolves.toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId } });
         expect((await owner.changeService.listPendingPluginChanges()).changes).toEqual(pendingBefore);
-        // A raw UI stamp is not signed Account ingress into this CLI factory.
+        // An API-token caller cannot claim present-user terminal authority.
         // Refusal must leave the exact retained candidate and Artifact open.
-        await expect(executor.execute('approval.request.decide', { artifactId, decision: 'approve' }, {
-          surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        const automationExecutor = createCliActionExecutor({
+          token: 'hap_v1_api-token',
+          credentials: { token: 'hap_v1_api-token', encryption: null, credentialProvenance: 'api_token' },
+          sessionId: '', mode: 'plain', ctx: null,
+        });
+        await expect(automationExecutor.execute('approval.request.decide', { artifactId, decision: 'approve' }, {
+          surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
         })).resolves.toMatchObject({ ok: false, errorCode: 'present_user_required' });
         expect((await owner.changeService.listPendingPluginChanges()).changes).toEqual(pendingBefore);
         expect(await store.approvalsGet({ artifactId, serverId: 'review-home' })).toEqual(request);

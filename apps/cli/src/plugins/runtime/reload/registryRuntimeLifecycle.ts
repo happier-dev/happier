@@ -1,5 +1,5 @@
-import { PluginDiagnosticError } from '../moduleFailure';
 import { collectBlockingPluginReloadDiagnostics } from './diagnostics';
+import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { createMergedContributionRegistry, selectPluginContributionInputs } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { getResolvedContributionRegistry, readCurrentBundledPluginEnablement } from '@/plugins/projection/registry/builtIn/snapshot';
 import { arePluginEnablementsEqual } from '@/plugins/projection/registry/builtIn/enablement';
@@ -301,6 +301,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
     developmentCandidate?: PluginDevelopmentRuntimeCandidate,
     developmentRemoval?: PluginDevelopmentRuntimeRemoval,
   ): Promise<Omit<Awaited<ReturnType<PluginRegistryRuntimeLifecycle['prepare']>>, 'adopt'> & Readonly<{
+    diagnostic?: PluginCompatibilityDiagnostic;
     adopt: (
       record?: Parameters<Awaited<ReturnType<PluginRegistryRuntimeLifecycle['prepare']>>['adopt']>[0],
     ) => Promise<Readonly<Record<string, string | null>> | void>;
@@ -647,12 +648,6 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
           registry,
           pluginIds: startupPluginIds,
         });
-        if (developmentCandidate) {
-          // Validate authored replacements before retiring their serving occurrence,
-          // including plugins whose ordinary daemon activation is demand-driven.
-          const failure = collectBlockingPluginReloadDiagnostics(registry, [developmentCandidate.pluginId])[0]?.diagnostics[0];
-          if (failure) throw new PluginDiagnosticError(failure);
-        }
         const candidateDaemonDatabasePluginIds = changedPluginIdList.filter((pluginId) => (
           registry.contributes.activationTargets.some((target) => (
             target.pluginId === pluginId
@@ -698,6 +693,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
       if (developmentCandidate || developmentRemoval) {
         const candidateToAdopt = developmentCandidate;
         return Object.freeze({
+          ...(developmentCandidate ? { diagnostic: collectBlockingPluginReloadDiagnostics(registry, [developmentCandidate.pluginId])[0]?.diagnostics[0] } : {}),
           abort: disposeOnce,
           async adopt() {
             if (adopted) return;
@@ -871,6 +867,7 @@ export function createDaemonPluginRegistryRuntimeLifecycle(params: Readonly<{
     async prepareDevelopment(candidate) {
       const prepared = await prepareCandidate(null, Object.freeze([]), candidate);
       return Object.freeze({
+        ...(prepared.diagnostic ? { diagnostic: prepared.diagnostic } : {}),
         abort: prepared.abort,
         adopt: async () => { await prepared.adopt(); },
       });

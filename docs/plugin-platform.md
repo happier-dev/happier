@@ -122,6 +122,9 @@ contribution identities are rejected by `createResolvedContributionRegistry.ts`;
 superseded durable/development candidates and missing predecessor retirement
 support are rejected by `reload/controller.ts`. A single optional activation
 diagnostic does not reject its peers.
+Development preparation returns its target diagnostic without rejecting the
+registry composition. The daemon author-change owner consumes that diagnostic
+before committing the reviewed update, retaining its working incumbent on failure.
 
 ### Health setup client activation (0.3 development source)
 

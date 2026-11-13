@@ -1,3 +1,4 @@
+import { PluginDiagnosticError } from '@/plugins/runtime/moduleFailure';
 import { realpath } from 'node:fs/promises';
 import { createDaemonArchivePluginChangePreparer } from '@/plugins/daemon/archiveChangePreparer';
 import type { PluginPendingChangeEntry } from './changeContract';
@@ -499,6 +500,9 @@ export function createDaemonPluginRuntimeOwner(params: Readonly<{
       }
       const prepared = await runtimeLifecycle.prepareDevelopment(candidate);
       try {
+        // An author update retains its incumbent on failure; registry composition
+        // itself still publishes healthy peers through partial adoption.
+        if (prepared.diagnostic) throw new PluginDiagnosticError(prepared.diagnostic);
         {
           if (
             candidate.registryRevision === undefined
