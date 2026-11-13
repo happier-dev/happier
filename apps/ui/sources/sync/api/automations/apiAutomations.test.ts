@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import {
     clearAutomationRunHistory,
+    previewAutomationSchedule,
     getAutomationSettings,
     deleteAutomationDefinition,
     getAutomationDefinition,
@@ -28,6 +29,18 @@ vi.mock('@/sync/domains/server/serverRuntime', async (importOriginal) => ({
 }));
 
 const credentials: AuthCredentials = { token: 'token-1', secret: 'secret-1' };
+
+it.each([
+    { status: 'ready', nextRunAt: Date.parse('2026-03-08T13:00:00Z') },
+    { status: 'invalid_schedule' },
+])('preserves the proposed schedule owner result: $status', async result => {
+    // Network boundary: the browser consumes the server's result without evaluating cron.
+    const request = vi.fn(async (_path: string, _init?: RequestInit) => Response.json(result));
+    const schedule = { kind: 'cron', scheduleExpr: '0 9 * * *', everyMs: null, timezone: 'America/New_York' };
+    await expect(previewAutomationSchedule(credentials, schedule, { serverId: 'test', request })).resolves.toEqual(result);
+    expect(request.mock.calls[0]?.[0]).toBe('/v3/automations/query');
+    expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toEqual({ proposedSchedule: schedule });
+});
 
 it.each([
     { managedTarget: { homeId: 'home-one', managedId: 'managed-one' }, includeUnindexedManagedTargets: true as const },

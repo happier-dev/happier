@@ -73,6 +73,7 @@ import { buildSimpleScheduleCron, formatClockTimeInput, resolveOnceSchedule, SIM
 import { LocalDateTimeEditor } from '@/components/ui/dateTime/LocalDateTimeEditor';
 import { parseHappierLocalDateTime } from '@happier-dev/plugin-ui/presentation';
 import { useTriggerScheduleCommands } from './useTriggerScheduleCommands';
+import { useProposedScheduleOccurrence } from './useProposedScheduleOccurrence';
 import { useNotifyMeChannelOptions, useTriggerWorkflowDefinition } from './useTriggerThenOptions';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { SessionTriggerPullRequestPicker } from './SessionTriggerPullRequestPicker';
@@ -405,8 +406,10 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
             ? { ...next, input: { ...actionDefault.input, ...next.input } } : next);
     };
 
-    const trigger = props.manual || props.creatingSession ? null : buildTriggerDefinition({ when, enabled, sessionId: props.sessionId });
-    const initialTrigger = props.creatingSession ? buildInitialTriggerDefinition({ when, enabled }) : null;
+    const trigger = React.useMemo(() => props.manual || props.creatingSession ? null
+        : buildTriggerDefinition({ when, enabled, sessionId: props.sessionId }), [props.manual, props.creatingSession, props.sessionId, when, enabled]);
+    const initialTrigger = React.useMemo(() => props.creatingSession ? buildInitialTriggerDefinition({ when, enabled }) : null,
+        [props.creatingSession, when, enabled]);
     const displayedTrigger = props.creatingSession ? initialTrigger : trigger;
     const sessionScoped = triggerScope === 'session';
     const showThen = props.showThen ?? true;
@@ -470,10 +473,15 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
         && when.expression === savedWhen.expression && when.timezone === savedWhen.timezone && when.everyMs === savedWhen.everyMs
         && when.once?.scheduledAt === savedWhen.once?.scheduledAt && when.once?.date === savedWhen.once?.date
         && when.once?.time === savedWhen.once?.time && when.once?.relative === savedWhen.once?.relative;
-    const nextRunAt = enabled && scheduleUnchanged ? props.savedNextRunAt ?? null : null;
+    const preview = useProposedScheduleOccurrence(enabled && !scheduleUnchanged && props.pushedPage === undefined
+        && displayedTrigger?.kind === 'schedule' ? displayedTrigger.schedule : null, props.accountLifetime);
+    const nextRunAt = enabled && scheduleUnchanged ? props.savedNextRunAt ?? null
+        : preview?.status === 'ready' ? preview.nextRunAt : null;
     const readNextRefresh = React.useCallback((nowMs: number) => readNextScheduledRunRefreshAtMs(nextRunAt, nowMs), [nextRunAt]);
     const nowMs = useSessionListRuntimeDeadlineNowMs(readNextRefresh, nextRunAt !== null && props.pushedPage === undefined);
-    const subtitle = nextRunAt === null ? props.subtitle : t('workflows.triggers.popover.nextOccurrence', {
+    const subtitle = nextRunAt === null ? preview?.status === 'invalid_schedule' ? t('workflows.triggers.popover.invalidSchedule')
+        : preview?.status === 'failed' ? preview.message
+            : preview?.status === 'loading' ? t('common.loading') : props.subtitle : t('workflows.triggers.popover.nextOccurrence', {
         time: formatNextScheduledRunTime(nextRunAt, enabled, nowMs),
     });
     const failureMessage = props.submitRefusal ?? (failure === null ? null : failure.code === 'legacy_conversion_unsupported'

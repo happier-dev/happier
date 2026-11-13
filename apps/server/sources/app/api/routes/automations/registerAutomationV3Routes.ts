@@ -1,4 +1,6 @@
 import { z } from "zod/mini";
+import { AutomationSchedulePreviewRequestSchema } from '@happier-dev/protocol/automations/automationSchedule';
+import { previewAutomationSchedule } from '@/app/automations/automationSchedulePreview';
 import type { FastifyReply } from "fastify";
 import { AutomationDefinitionDetailsRequestSchema, AutomationDefinitionDetailsResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 
@@ -164,7 +166,7 @@ const AutomationRunNowHeadersSchema = z.looseObject({
 });
 
 const AutomationDefinitionQueryRequestSchema = z.union([
-    AutomationDefinitionListRequestSchema, AutomationDefinitionDetailsRequestSchema,
+    AutomationDefinitionListRequestSchema, AutomationDefinitionDetailsRequestSchema, AutomationSchedulePreviewRequestSchema,
 ]);
 
 export function registerAutomationV3Routes(
@@ -174,6 +176,7 @@ export function registerAutomationV3Routes(
     const readDefinitions = async (accountId: string, input: unknown, reply: FastifyReply) => {
         try {
             const query = AutomationDefinitionQueryRequestSchema.parse(input);
+            if ('proposedSchedule' in query) return previewAutomationSchedule(query.proposedSchedule);
             const page = await listAutomationDefinitionsPage({
                 accountId,
                 limit: query.limit,

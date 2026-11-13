@@ -260,6 +260,7 @@ export const en = {
         cancel: 'Cancel',
         done: 'Done',
         nextOccurrence: ({ time }: { time: string }) => `Next: ${time}`,
+        invalidSchedule: 'Enter a valid schedule to see its next occurrence.',
         turnOff: 'Turn off',
         turnOn: 'Turn on',
         deleteTrigger: 'Delete trigger',

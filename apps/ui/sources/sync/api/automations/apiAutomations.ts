@@ -1,4 +1,5 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { AutomationSchedulePreviewResultSchema } from '@happier-dev/protocol/automations/automationSchedule';
 import { serverFetch } from '@/sync/http/client';
 import { automationOccurrenceRequest, type AutomationOccurrenceActionId, type AutomationOccurrenceInput } from '@happier-dev/protocol/automations/occurrenceActions';
 import { readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
@@ -52,6 +53,14 @@ export type AutomationAssignmentInput = Readonly<{
     enabled?: boolean;
     priority?: number;
 }>;
+
+/** Read-only evaluation at the saved schedule's server owner. */
+export async function previewAutomationSchedule(credentials: AuthCredentials, proposedSchedule: unknown, context: AutomationRequestContext, signal?: AbortSignal) {
+    return AutomationSchedulePreviewResultSchema.parse(await readAutomationApiJson('/v3/automations/query', {
+        method: 'POST', headers: getAutomationAuthHeaders(credentials, { includeJsonContentType: true }),
+        body: JSON.stringify({ proposedSchedule }), signal,
+    }, { includeAuth: false }, context, context.request, credentials));
+}
 
 function requestAutomation(
     credentials: AuthCredentials,
