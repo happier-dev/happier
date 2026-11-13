@@ -333,6 +333,8 @@ export function createCliActionInventoryDeps(params: Readonly<{
   localMachineId?: string;
   token: string;
   serverId?: string;
+  /** Portable Home identity: the server id published to Action outputs that other Machines consume. */
+  serverIdentityId?: string;
   serverHttpBaseUrl?: string;
   credentials?: StoredCredentials;
   savedSecretOperationContext?: SavedSecretOperationContextV1;
@@ -567,7 +569,9 @@ export function createCliActionInventoryDeps(params: Readonly<{
     },
     machinesList: async (args) => {
       const [{ configuration }, { listCurrentAccountMachines }] = await Promise.all([import("@/configuration"), import("@/api/machine/resolveCurrentAccountMachineTarget")]);
-      const serverId = args.serverId ?? params.serverId ?? configuration.activeServerId;
+      // The listed Machines belong to this credential's Home. Publish its portable identity, not this
+      // CLI home's profile id, which another Machine on the same Home spells differently.
+      const serverId = params.serverIdentityId ?? args.serverId ?? params.serverId ?? configuration.activeServerId;
       const items = (await listCurrentAccountMachines({ token: params.token, credentials: params.credentials,
         serverHttpBaseUrl: params.serverHttpBaseUrl })).map((machine) => ({
         serverId, id: machine.id, value: machine.id, label: machine.label, machineId: machine.id,
@@ -589,7 +593,10 @@ export function createCliActionInventoryDeps(params: Readonly<{
       const items = profiles
         .map((profile) => ({
           id: profile.id,
-          value: profile.id,
+          // The option value lands in cross-Machine inputs (`executionTarget.serverId`): use the Home
+          // identity an exact descriptor proved; the local profile id stays as `id`.
+          value: (profile.homeConnectionDescriptorAuthority === 'exact'
+            ? profile.homeConnectionDescriptor?.homeServerIdentityId : undefined) ?? profile.id,
           label: profile.name,
           serverUrl: profile.serverUrl,
           ...(profile.localServerUrl ? { localServerUrl: profile.localServerUrl } : {}),
