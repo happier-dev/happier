@@ -1,25 +1,34 @@
 diff --git a/dist/client.mjs b/dist/client.mjs
-index 8f2bc623dba855f95bc728f60aa08b82d1d0e167..50dcf8e9b28f559c5ddf956d3b201942f515659b 100644
 --- a/dist/client.mjs
 +++ b/dist/client.mjs
-@@ -176,6 +176,20 @@ class ViteNodeRunner {
- 		if (callstack.includes(fsPath) || Array.from(imports.values()).some((i) => importers.has(i))) {
+@@ -169,12 +169,27 @@
+ 	async cachedRequest(id, fsPath, callstack) {
+ 		const importee = callstack[callstack.length - 1];
+ 		const mod = this.moduleCache.get(fsPath);
+-		const { imports, importers } = mod;
++		const { importers } = mod;
+ 		if (importee) importers.add(importee);
+ 		const getStack = () => `stack:\n${[...callstack, fsPath].reverse().map((p) => `  - ${p}`).join("\n")}`;
+-		// check circular dependency
+-		if (callstack.includes(fsPath) || Array.from(imports.values()).some((i) => importers.has(i))) {
++		// Historical reciprocal edges do not make a later import circular.
++		if (callstack.includes(fsPath)) {
  			if (mod.exports) return mod.exports;
- 		}
++		}
 +		// Concurrent entrypoints can close a longer cycle outside either callstack.
-+		// Match the existing circular-import behavior only along pending modules.
++		// Only pending evaluations can close that cycle.
 +		if (mod.exports && mod.promise && !mod.evaluated && importee) {
 +			const pending = [this.moduleCache.normalizePath(fsPath)];
 +			const seen = new Set();
 +			while (pending.length) {
 +				const dependency = pending.pop();
-+				if (dependency === importee) return mod.exports;
 +				if (seen.has(dependency)) continue;
 +				seen.add(dependency);
 +				const entry = this.moduleCache.getByModuleId(dependency);
-+				if (entry.promise && !entry.evaluated) pending.push(...entry.imports);
++				if (!entry.promise || entry.evaluated) continue;
++				if (dependency === importee) return mod.exports;
++				pending.push(...entry.imports);
 +			}
-+		}
+ 		}
  		let debugTimer;
  		if (this.debug) debugTimer = setTimeout(() => console.warn(`[vite-node] module ${fsPath} takes over 2s to load.\n${getStack()}`), 2e3);
- 		try {
