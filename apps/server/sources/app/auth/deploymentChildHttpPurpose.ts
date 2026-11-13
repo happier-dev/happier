@@ -120,7 +120,8 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
         for (const { actionId, value } of metadata) {
             const spec = getActionSpec(actionId);
             if (spec.serverTransport && (proof.routeInput === undefined || sameStrictJsonValue(proof.routeInput, value))
-                && bindHomeDomainHttpRequestV1({ transport: spec.serverTransport, inputSchema: spec.inputSchema, input: value }).path === proof.path) return true;
+                && bindHomeDomainHttpRequestV1({ transport: spec.serverTransport, inputSchema: spec.inputSchema, input: value }).path === proof.path)
+                return { metadataRead: { environmentId: input.environmentId, contentCustody: true } };
         }
         if (!artifactId) return false;
         const content = routing.kind === 'domain' ? routing.capture.content : routing.kind === 'domainDiscover' ? routing.input : undefined;
@@ -182,7 +183,8 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
     if (!native && environmentRead.success && environmentRead.data.serverId === input.serverId && environmentRead.data.environmentId === input.environmentId) {
         const spec = getActionSpec(deploymentActionIds.DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1);
         const transport = spec.serverTransport;
-        if (transport && bindHomeDomainHttpRequestV1({ transport, inputSchema: spec.inputSchema, input: environmentRead.data }).path === proof.path) return true;
+        if (transport && bindHomeDomainHttpRequestV1({ transport, inputSchema: spec.inputSchema, input: environmentRead.data }).path === proof.path)
+            return { metadataRead: { environmentId: input.environmentId, contentCustody: true } };
     }
     const environment = await tx.deploymentEnvironment.findUnique({ where: { id: input.environmentId },
         select: { projectSourceId: true, contentArtifactId: true, controllerMachineId: true, buildMachineId: true } });
@@ -212,7 +214,9 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
         if (!metadata && !artifactId) return false;
         const receipt = await tx.deployment.findFirst({ where: { id: deploymentId, environmentId: input.environmentId,
             targetLinkId: { in: [...(await getLineage()).lineage] } }, select: { contentArtifactId: true } });
-        return !!receipt && (metadata || artifactId === receipt.contentArtifactId);
+        if (!receipt) return false;
+        return metadata ? { metadataRead: { environmentId: input.environmentId, deploymentId, contentCustody: true } }
+            : artifactId === receipt.contentArtifactId;
     }
     const parent = routing.kind === 'review' || routing.kind === 'prepare' ? null : await tx.deployment.findUnique({ where: { id: routing.deploymentId } });
     const promotedFromDeploymentId = parent && 'promotedFromDeploymentId' in parent && typeof parent.promotedFromDeploymentId === 'string'
@@ -230,7 +234,8 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
         && environmentRead.data.environmentId === promotionReceipt.environmentId) {
         const spec = getActionSpec(deploymentActionIds.DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1);
         if (spec.serverTransport && bindHomeDomainHttpRequestV1({ transport: spec.serverTransport,
-            inputSchema: spec.inputSchema, input: environmentRead.data }).path === proof.path) return true;
+            inputSchema: spec.inputSchema, input: environmentRead.data }).path === proof.path)
+            return { metadataRead: { environmentId: promotionReceipt.environmentId, contentCustody: true } };
     }
     // Preparation reconstructs member versions from the same runtime history
     // that execution and retention consume. Passive review needs only the selected
@@ -242,7 +247,8 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
         if (list.success && list.data.serverId === input.serverId && list.data.environmentId === input.environmentId) {
             const spec = getActionSpec(deploymentActionIds.DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1);
             if (spec.serverTransport && bindHomeDomainHttpRequestV1({ transport: spec.serverTransport, inputSchema: spec.inputSchema,
-                input: list.data }).path === proof.path) return true;
+                input: list.data }).path === proof.path)
+                return { metadataRead: { environmentId: input.environmentId, contentCustody: true } };
         }
     }
     const reviewScope = routing.kind === 'review' ? await getLineage() : null;
@@ -263,7 +269,10 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
                 id: receiptRead.data.deploymentId, ...reviewReceiptScope }, select: { id: true } }) !== null))) {
         const spec = getActionSpec(deploymentActionIds.DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1);
         const transport = spec.serverTransport;
-        if (transport && bindHomeDomainHttpRequestV1({ transport, inputSchema: spec.inputSchema, input: receiptRead.data }).path === proof.path) return true;
+        if (transport && bindHomeDomainHttpRequestV1({ transport, inputSchema: spec.inputSchema, input: receiptRead.data }).path === proof.path)
+            return { metadataRead: { environmentId: promotionReceipt?.id === receiptRead.data.deploymentId
+                ? promotionReceipt.environmentId : input.environmentId,
+                deploymentId: receiptRead.data.deploymentId, contentCustody: true } };
     }
     const artifactId = readArtifactId(proof.path);
     if (!artifactId) return false;

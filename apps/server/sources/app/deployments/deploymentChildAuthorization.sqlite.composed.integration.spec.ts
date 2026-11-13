@@ -83,7 +83,9 @@ import { signMachineInstallationProof } from '@happier-dev/protocol/machines/ide
 import type { DeploymentBackupRestoreInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupRestoreV1';
 import type { DeploymentBackupConfigureInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
 import { DEPLOYMENT_ACTION_IDS_V1, DEPLOYMENT_BACKUP_ACTION_IDS_V1, DEPLOYMENT_DATA_QUERY_ACTION_ID_V1,
-    DEPLOYMENT_DRIFT_READ_ACTION_ID_V1, DEPLOYMENT_HEALTH_READ_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+    DEPLOYMENT_DRIFT_READ_ACTION_ID_V1, DEPLOYMENT_HEALTH_READ_ACTION_ID_V1,
+    DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1,
+    DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { buildDeploymentBackupActionInputV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -1448,6 +1450,52 @@ describe('deployment children retain their controller Action authority', () => {
                     }, [authorization.token]);
                 }
             }
+        }, { authentication: 'real' });
+    });
+
+    it('continues admitted member HTTP metadata after Team withdrawal', async () => {
+        const f = await fixture('team', 'account', { separateMemberCustodian: true });
+        const packet = f.rpc();
+        const reads = [
+            [DEPLOYMENT_ENVIRONMENT_GET_ACTION_ID_V1, { serverId, environmentId: f.environment.id }],
+            [DEPLOYMENT_RECEIPT_GET_ACTION_ID_V1, { serverId, environmentId: f.environment.id, deploymentId: f.receipt.id }],
+            [DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1, { serverId, environmentId: f.environment.id }],
+        ] as const;
+        const paths = reads.map(([actionId, input]) => {
+            const spec = getActionSpec(actionId);
+            if (!spec.serverTransport) throw new Error('Expected metadata HTTP transport');
+            return bindHomeDomainHttpRequestV1({ transport: spec.serverTransport, inputSchema: spec.inputSchema, input }).path;
+        });
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const read = (path: string) => app.inject({ method: 'GET', url: path, headers: {
+                [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: f.authorization.token,
+                [EXTERNAL_ACTION_EFFECT_ACTION_HEADER]: 'deployments.deploy',
+                [EXTERNAL_ACTION_RESOLVED_TARGET_HEADER]: encodeExternalActionResolvedTargetV1(f.authorization.binding.target),
+                [EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER]: encodeDeploymentChildExecutionV1(packet),
+                [EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]: signExternalActionMachineRequestV1({
+                    authorizationToken: f.authorization.token, effectActionId: 'deployments.deploy',
+                    target: f.authorization.binding.target, installationId: f.member.installationId,
+                    requestId: f.authorization.binding.requestId, method: 'GET', path,
+                    deploymentChildExecution: packet, privateKey: f.member.keys.secretKey }),
+            } });
+            for (const path of paths) {
+                const before = await read(path);
+                expect(before.statusCode, before.body).toBe(200);
+            }
+            await db.teamMembership.delete({ where: { teamId_accountId: { teamId: f.team!.id, accountId: f.account.id } } });
+            const permissionReads: string[] = [];
+            const stop = observeSqliteRequests({ before: query => {
+                if (query.model && ['TeamMembership', 'MachineTeamGrant', 'MachineAccountGrant'].includes(query.model))
+                    permissionReads.push(query.model);
+            } });
+            try {
+                for (const path of paths) {
+                    const after = await read(path);
+                    expect.soft(after.statusCode, `${path}: ${after.body}`).toBe(200);
+                }
+            } finally { stop(); }
+            expect(permissionReads).toEqual([]);
+            expect((await read(`/v1/deployments/environments/${crypto.randomUUID()}?serverId=${serverId}`)).statusCode).toBe(401);
         }, { authentication: 'real' });
     });
 
