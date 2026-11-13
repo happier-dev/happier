@@ -257,13 +257,17 @@ describe('editor workflow composer', () => {
             throw new Error('Expected the real Workflow input suggestion');
         }
         const reference = suggestion.structuredInput;
+        const { resolveComposerSuggestionKind } = await import('@/components/autocomplete/composerSuggestionKinds');
         // Reference selection and the portable document publication happen before React renders
         // the newly appended input. Both writes must read the current draft, not the rendered one.
         await act(async () => {
-            const selected = suggestion.selectionEffect?.();
+            // AgentInput dispatches through the kind; invoking selectionEffect directly would
+            // hide a missing composerReference registration and pass while the real picker fails.
+            await resolveComposerSuggestionKind(suggestion.kind).applySelection?.({
+                suggestion, inputText: 'Summarize @', selection: { start: 11, end: 11 }, activeWord: null,
+            });
             composer.props.onChangeDocument?.({ text: `Summarize ${suggestion.text} `,
                 references: [{ ...reference, token: suggestion.text }], attachments: [] });
-            await selected;
         });
         const draft = screen.root.findByType(WorkflowEditorBody).props.draftStore.get();
         expect(draft.blocks[0]).toMatchObject({ kind: 'step', input: [{ kind: 'input', name: 'subject' }],

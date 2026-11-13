@@ -757,8 +757,8 @@ async function resolveSkillSuggestions(
     return context.signal?.aborted ? first : currentRows;
 }
 
-/** A library pick turns the skill on for this Session (or draft) before its token is inserted. */
-async function applySkillSelection(
+/** Run the producing owner's write before inserting its token, preserving input on refusal. */
+async function applySelectionEffect(
     args: ComposerSuggestionApplySelectionArgs,
 ): Promise<ComposerSuggestionSelectionResult> {
     const effect = args.suggestion.selectionEffect;
@@ -952,6 +952,7 @@ const COMPOSER_SUGGESTION_KIND_DEFINITIONS = {
         sectionTitleKey: 'agentInput.suggestionGroups.references',
         icon: () => React.createElement(Icon, { name: 'link', size: 16 }),
         resolve: resolveComposerReferenceSuggestions,
+        applySelection: applySelectionEffect,
     },
     skill: {
         id: 'skill',
@@ -962,7 +963,7 @@ const COMPOSER_SUGGESTION_KIND_DEFINITIONS = {
         sectionTitleKey: 'agentInput.suggestionGroups.skills',
         icon: () => React.createElement(Icon, { name: 'sparkle', size: 16 }),
         resolve: resolveSkillSuggestions,
-        applySelection: applySkillSelection,
+        applySelection: applySelectionEffect,
     },
     slashCommand: {
         id: 'slashCommand',
