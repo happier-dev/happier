@@ -82,6 +82,7 @@ type DeploymentEditorsTranslations = Readonly<{
   zonesNeedDomain: string;
   zonesNeedAccount: string;
   addNeeds: (params: { field: string }) => string;
+  domainAddFailedTitle: string;
   addReference: string;
   addReferenceHint: string;
   addReferenceTitle: string;
@@ -192,6 +193,7 @@ export const deploymentEditorsTranslations = {
     zonesNeedDomain: 'Enter the domain above to find its zone.',
     zonesNeedAccount: 'Choose a Cloudflare account to find zones.',
     addNeeds: ({ field }) => `Fill in “${field}” to add this domain.`,
+    domainAddFailedTitle: 'Couldn’t add the domain',
   },
   ru: {
     definitionServices: "Сервисы",
@@ -289,6 +291,7 @@ export const deploymentEditorsTranslations = {
     zonesNeedDomain: 'Введите домен выше, чтобы найти его зону.',
     zonesNeedAccount: 'Выберите аккаунт Cloudflare, чтобы найти зоны.',
     addNeeds: ({ field }) => `Заполните «${field}», чтобы добавить этот домен.`,
+    domainAddFailedTitle: 'Не удалось добавить домен',
   },
   pl: {
     definitionServices: "Usługi",
@@ -385,6 +388,7 @@ export const deploymentEditorsTranslations = {
     zonesNeedDomain: 'Wpisz domenę powyżej, aby znaleźć jej strefę.',
     zonesNeedAccount: 'Wybierz konto Cloudflare, aby znaleźć strefy.',
     addNeeds: ({ field }) => `Wypełnij „${field}”, aby dodać tę domenę.`,
+    domainAddFailedTitle: 'Nie udało się dodać domeny',
   },
   es: {
     definitionServices: "Servicios",
@@ -482,6 +486,7 @@ export const deploymentEditorsTranslations = {
     zonesNeedDomain: 'Escribe el dominio arriba para encontrar su zona.',
     zonesNeedAccount: 'Elige una cuenta de Cloudflare para buscar zonas.',
     addNeeds: ({ field }) => `Completa «${field}» para añadir este dominio.`,
+    domainAddFailedTitle: 'No se pudo añadir el dominio',
   },
   fr: {
     definitionServices: "Services",
@@ -579,6 +584,7 @@ export const deploymentEditorsTranslations = {
     zonesNeedDomain: 'Saisissez le domaine ci-dessus pour trouver sa zone.',
     zonesNeedAccount: 'Choisissez un compte Cloudflare pour trouver les zones.',
     addNeeds: ({ field }) => `Renseignez « ${field} » pour ajouter ce domaine.`,
+    domainAddFailedTitle: 'Impossible d’ajouter le domaine',
   },
   it: {
     definitionServices: "Servizi",
@@ -676,6 +682,7 @@ export const deploymentEditorsTranslations = {
     zonesNeedDomain: 'Inserisci il dominio qui sopra per trovarne la zona.',
     zonesNeedAccount: 'Scegli un account Cloudflare per trovare le zone.',
     addNeeds: ({ field }) => `Compila «${field}» per aggiungere questo dominio.`,
+    domainAddFailedTitle: 'Impossibile aggiungere il dominio',
   },
   pt: {
     definitionServices: "Serviços",
@@ -772,6 +779,7 @@ export const deploymentEditorsTranslations = {
     zonesNeedDomain: 'Escreva o domínio acima para encontrar a sua zona.',
     zonesNeedAccount: 'Escolha uma conta Cloudflare para procurar zonas.',
     addNeeds: ({ field }) => `Preencha «${field}» para adicionar este domínio.`,
+    domainAddFailedTitle: 'Não foi possível adicionar o domínio',
   },
   ca: {
     definitionServices: "Serveis",
@@ -869,6 +877,7 @@ export const deploymentEditorsTranslations = {
     zonesNeedDomain: 'Escriu el domini a dalt per trobar-ne la zona.',
     zonesNeedAccount: 'Tria un compte de Cloudflare per cercar zones.',
     addNeeds: ({ field }) => `Omple «${field}» per afegir aquest domini.`,
+    domainAddFailedTitle: 'No s’ha pogut afegir el domini',
   },
   de: {
     definitionServices: "Dienste",
@@ -965,6 +974,7 @@ export const deploymentEditorsTranslations = {
     zonesNeedDomain: 'Gib oben die Domain ein, um ihre Zone zu finden.',
     zonesNeedAccount: 'Wähle ein Cloudflare-Konto, um Zonen zu finden.',
     addNeeds: ({ field }) => `Fülle „${field}“ aus, um diese Domain hinzuzufügen.`,
+    domainAddFailedTitle: 'Die Domain konnte nicht hinzugefügt werden',
   },
   'zh-Hans': {
     definitionServices: "服务",
@@ -1061,6 +1071,7 @@ export const deploymentEditorsTranslations = {
     zonesNeedDomain: '在上方输入域名以查找其区域。',
     zonesNeedAccount: '选择一个 Cloudflare 账号以查找区域。',
     addNeeds: ({ field }) => `填写“${field}”后即可添加此域名。`,
+    domainAddFailedTitle: '无法添加域名',
   },
   'zh-Hant': {
     definitionServices: "服務",
@@ -1157,6 +1168,7 @@ export const deploymentEditorsTranslations = {
     zonesNeedDomain: '在上方輸入網域以尋找其區域。',
     zonesNeedAccount: '選擇一個 Cloudflare 帳號以尋找區域。',
     addNeeds: ({ field }) => `填寫「${field}」後即可新增此網域。`,
+    domainAddFailedTitle: '無法新增網域',
   },
   ja: {
     definitionServices: "サービス",
@@ -1253,5 +1265,6 @@ export const deploymentEditorsTranslations = {
     zonesNeedDomain: '上でドメインを入力するとゾーンを検索できます。',
     zonesNeedAccount: 'ゾーンを検索するには Cloudflare アカウントを選んでください。',
     addNeeds: ({ field }) => `このドメインを追加するには「${field}」を入力してください。`,
+    domainAddFailedTitle: 'ドメインを追加できませんでした',
   },
 } satisfies Record<SupportedLanguage, DeploymentEditorsTranslations>;

@@ -179,7 +179,7 @@ export function DeploymentDomainsPanel(
           routeExports={routeExports}
           credentials={setBindings !== undefined}
           notice={addOutcome && outcome ? (
-            <DeployOutcomeBanner controller={change.banner} machine={editing.machine} copy="domain" />
+            <DeployOutcomeBanner controller={change.banner} machine={editing.machine} copy="domainAdd" placement="inline" />
           ) : null}
           onCancel={() => setAdding(false)}
           onAdd={async (content) => {
@@ -433,7 +433,7 @@ function DomainAddForm(
         <View style={props.phone ? styles.stack : styles.route}>
           <FieldItem label={t('projects.deployments.domainFieldService')} style={props.phone ? undefined : styles.routeService}>
             {props.services.length > 0 ? (
-              <ValueFieldSelect testID="project-deployments.environment.domains.add.service"
+              <ValueFieldSelect testID="project-deployments.environment.domains.add.service" fill
                 label={t('projects.deployments.domainFieldService')}
                 items={props.services.map(name => ({ id: name, title: name }))}
                 selectedId={service || null}

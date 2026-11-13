@@ -827,6 +827,12 @@ describe('Environment → Domains: Add domain never looks dead (UI-DOMAIN-VIEWER
       expect(actions.addDomain).toHaveBeenCalledOnce();
       const atForm = await settle(`${id}.outcome`);
       expect(atForm, 'the refusal renders inside the open form, beside Add domain').not.toBeNull();
+      const { AttentionBanner } = await import('@/components/ui/lists/AttentionBanner');
+      const banner = screen.findAllByType(AttentionBanner)
+        .find(node => String(node.props.testID).startsWith('project-deployments.outcome.refused'));
+      // An add that failed says so (DEPLOY-ACCEPT-143 B1), and sits in the form's own gutter like the fields (B2).
+      expect(banner?.props.title).toBe(t('projects.deployments.editors.domainAddFailedTitle'));
+      expect(banner?.props.placement).toBe('inline');
       expect(screen.findByTestId(`${id}.host`), 'the form stays open with what was typed').not.toBeNull();
     } finally { await screen.unmount(); controller.retire(); }
   });

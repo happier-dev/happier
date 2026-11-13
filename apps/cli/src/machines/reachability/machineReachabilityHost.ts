@@ -704,7 +704,7 @@ export async function settleMachineCaddyFirewallForHost(input: Pick<RetainedSshT
   const state = await readMachineReachabilityMetadata(input.port);
   if (!state.posture) return refuse('machine_reachability_posture_unavailable', {
     requiredFact: 'reachabilityPosture',
-    remedy: 'Review and apply this Machine’s Network posture before retrying the Domain action. Use machines.reachability.inspect to review it, then machines.reachability.configure to apply the reviewed plan. If native firewall facts are unavailable, use administrator or provider-console access to inspect and reconcile the saved rules, effective Happier table and firewall service first. Do not replay an uncertain firewall change.',
+    remedy: 'This Machine’s network setup hasn’t been reviewed yet. Review and apply it, then add the domain again.',
   });
   const transitioned = await executeRetainedSshTransition({ ...input,
     expectedMetadataVersion: state.metadataVersion, current: state.posture, desired: state.posture,

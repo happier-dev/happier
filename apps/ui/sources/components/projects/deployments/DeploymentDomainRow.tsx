@@ -164,7 +164,7 @@ function DomainRowMenu(
         category: 'check',
         testID: `${id}.configure-checks`,
         title: t('projects.deployments.settingsSections.addCheck'),
-        icon: <Icon name="heartbeat" size={16} color={theme.colors.text.secondary} />,
+        icon: <Icon name="pulse" size={16} color={theme.colors.text.secondary} />,
       }] : []),
       {
         id: 'remove',

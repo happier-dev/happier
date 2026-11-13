@@ -1329,7 +1329,7 @@ export function DeployOutcomeBanner(
     machine: string | null;
     /** The Machine a Machine-scoped remedy opens (its Setup), when the refusal concerns one runtime Machine. */
     machineId?: string | null;
-    copy?: 'deploy' | 'rollback' | 'cancel' | 'domain' | 'setting';
+    copy?: 'deploy' | 'rollback' | 'cancel' | 'domain' | 'domainAdd' | 'setting';
     placement?: 'inline';
   }>,
 ) {
@@ -1338,7 +1338,7 @@ export function DeployOutcomeBanner(
   if (!outcome) return null;
   const rollback = props.copy === 'rollback';
   const cancel = props.copy === 'cancel';
-  const domain = props.copy === 'domain' || props.copy === 'setting';
+  const domain = props.copy === 'domain' || props.copy === 'domainAdd' || props.copy === 'setting';
   const setting = props.copy === 'setting';
   if (outcome.kind === 'receipt') return null;
   if (outcome.kind === 'approval') {
@@ -1421,6 +1421,8 @@ export function DeployOutcomeBanner(
               ? t('projects.deployments.cancelFailedTitle')
               : setting
                 ? t('projects.deployments.settingChangeFailedTitle')
+                : props.copy === 'domainAdd'
+                  ? t('projects.deployments.editors.domainAddFailedTitle')
                 : domain
                   ? t('projects.deployments.domainChangeFailedTitle')
                 : t('projects.deployments.deployFailedTitle')
