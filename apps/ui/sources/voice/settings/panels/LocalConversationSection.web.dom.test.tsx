@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { waitForTestEvent } from '@/dev/testkit';
 import { createProviderModelProjectionFixture, createProviderModelProjectionGroupFixture, createProviderSettingsAccountHarness,
     createProviderSettingsHarness, installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
-import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -24,7 +23,6 @@ import { PROFILE_ROWS_ROUTE_V1, PROFILE_REFERENCE_GUARD_ROUTE_V1 } from '@happie
 import { PROFILE_TRANSFER_ROUTE_V1 } from '@happier-dev/protocol/profiles/profileTransferV1';
 import { REMOTE_HOST_ROWS_ROUTE_V1 } from '@happier-dev/protocol/remoteHosts/remoteHostRecordV1';
 import { NOTIFICATION_CHANNELS_ROUTE_V1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
-import { StoredApprovalRequestSchema} from '@happier-dev/protocol/approvals/approvalRequestV1';
 import {
     tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
 
@@ -284,48 +282,32 @@ describe('imported Voice Chat Agent selection through the real settings gesture'
             await waitForTestEvent(subscribeDom, () => expect(document.querySelector('[data-testid="dropdown-option-opencode"]')).not.toBeNull());
             await act(async () => press(document.querySelector<HTMLElement>('[data-testid="dropdown-option-opencode"]')!));
             if (usesPersonalApproval) {
-                const artifacts = account.home.artifacts(scope.serverId);
-                await waitForTestEvent(subscribeHomeOrDom, () => artifacts.list().length > 0
-                    || document.body.textContent?.includes(t('common.saveError')), Boolean);
-                expect(artifacts.list().length > 0 || document.body.textContent?.includes(t('common.saveError'))).toBe(true);
-                expect(artifacts.list(), JSON.stringify({
-                    paths: account.home.requests.map(request => request.path),
-                    ui: document.body.textContent,
-                })).toHaveLength(1);
-                await act(async () => {});
+                // Own UI Ask is answered in place; the Action owner does not create an Inbox item.
+                const approve = '[data-testid="actions.confirmation-review.decision-approve"]';
+                const cancel = '[data-testid="actions.confirmation-review.decision-reject"]';
+                await waitForTestEvent(subscribeDom, () => expect(document.querySelector(approve)).not.toBeNull());
+                expect(account.home.artifacts(scope.serverId).list()).toHaveLength(0);
                 expect(stored).toEqual(original);
                 expect(providerWrites).toBe(0);
                 expect(account.home.requestsFor('/v1/account/saved-secrets/resources/promote')).toEqual([]);
-                expect(document.body.textContent).not.toContain(t('common.saveError'));
-                const artifact = artifacts.list()[0]!;
-                const request = StoredApprovalRequestSchema.parse(JSON.parse(artifacts.readPlainBody(artifact.id)!));
-                if (request.v !== 2) throw new Error('Expected the original result-bearing approval');
-                const input = SharedSavedSecretPromoteInputV1Schema.parse(request.actionArgs);
                 if (outcome === 'personal-approval-unmounted') {
                     const editor = mounted;
                     await act(async () => editor.root.unmount());
                     editor.container.remove();
                     mounted = null;
-                }
-                const canceled = outcome === 'personal-approval-canceled';
-                await act(async () => {
-                    await expect(decideApprovalAsInbox(scope.serverId, artifact.id, canceled ? 'cancel' : 'approve'))
-                        .resolves.toMatchObject({ ok: true, result: { status: canceled ? 'canceled' : 'executed' } });
-                });
-                expect(StoredApprovalRequestSchema.parse(JSON.parse(artifacts.readPlainBody(artifact.id)!)))
-                    .toMatchObject({ status: canceled ? 'canceled' : 'executed',
-                        ...(canceled ? {} : { execution: { ok: true, result: { resourceId: input.resourceId, settingsVersion: 2 } } }) });
-                expect(account.home.requestsFor('/v1/account/saved-secrets/resources/promote')).toHaveLength(canceled ? 0 : 1);
-                if (outcome === 'personal-approval-unmounted') {
+                    expect(account.home.requestsFor('/v1/account/saved-secrets/resources/promote')).toEqual([]);
                     expect(providerWrites).toBe(0);
-                    expect(stored.voice).toEqual(original.voice);
+                    expect(stored).toEqual(original);
                     return;
                 }
-                if (outcome === 'personal-approval-canceled') {
+                const canceled = outcome === 'personal-approval-canceled';
+                await act(async () => press(document.querySelector<HTMLElement>(canceled ? cancel : approve)!));
+                if (canceled) {
                     await waitForSaveError();
+                    expect(account.home.requestsFor('/v1/account/saved-secrets/resources/promote')).toEqual([]);
                     expect(stored).toEqual(original);
                     expect(providerWrites).toBe(0);
-                    expect(artifacts.list()).toHaveLength(1);
+                    expect(account.home.artifacts(scope.serverId).list()).toHaveLength(0);
                     return;
                 }
             }
@@ -335,7 +317,12 @@ describe('imported Voice Chat Agent selection through the real settings gesture'
                 .some(request => request.input !== undefined) || document.body.textContent?.includes(t('common.saveError'))).toBe(true);
             expect(account.home.requestsFor(PROVIDER_CONNECTIONS_ROWS_ROUTE_V1)
                 .some(request => request.input !== undefined)).toBe(true);
-            expect(stored).toEqual(original);
+            if (usesPersonalApproval) {
+                expect(account.home.requestsFor('/v1/account/saved-secrets/resources/promote')).toHaveLength(1);
+                expect(account.home.artifacts(scope.serverId).list()).toHaveLength(0);
+                expect(readLocalConversationVoiceSettings(settingsParse(stored).voice).agent.providerChat)
+                    .toMatchObject({ status: 'migration_required' });
+            } else expect(stored).toEqual(original);
             if (outcome === 'settings-conflict') {
                 stored = { ...original, assistantLanguage: 'fr' };
                 settingsVersion += 1;
