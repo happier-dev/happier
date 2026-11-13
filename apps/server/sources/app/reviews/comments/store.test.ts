@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import tweetnacl from "tweetnacl";
 import {
@@ -11,7 +12,7 @@ import {
     type ReviewCommentV1,
 } from "@happier-dev/protocol";
 
-import { createDbTransactionMock, installDbModuleMock } from "@/app/api/testkit/dbMocks";
+import { createDbTransactionMock, inTxPostgresControlStatementMock, installDbModuleMock } from "@/app/api/testkit/dbMocks";
 
 const signing = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
 const contentKey = tweetnacl.box.keyPair.fromSecretKey(new Uint8Array(32).fill(18));
@@ -26,10 +27,12 @@ const currentAccount = { ...binding, encryptionMode: "e2ee", seq: 2, settings: n
 // Only the persistent database adapter is substituted. Transaction, fence,
 // Account admission, record/event encoding, and client opening remain real.
 const tx = {
+    ...inTxPostgresControlStatementMock,
     account: { findUnique: vi.fn(async () => currentAccount) },
     reviewComment: { create: vi.fn(async () => ({})) },
     $queryRawUnsafe: vi.fn(async () => [{ id: "account-1" }]),
-    $queryRaw: vi.fn(async () => []),
+    $queryRaw: vi.fn(async (query: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) =>
+        "raw" in query ? await inTxPostgresControlStatementMock.$queryRaw(query, ...values) : []),
     $executeRaw: vi.fn(async () => 1),
 };
 const transactions = createDbTransactionMock(() => tx);

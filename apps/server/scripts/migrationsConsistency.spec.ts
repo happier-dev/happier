@@ -472,7 +472,7 @@ describe("migrations (released set and provider parity)", () => {
         }
     });
 
-    it("mirrors every unreleased PostgreSQL migration into the MySQL and SQLite trees by name", () => {
+    it("mirrors every unreleased PostgreSQL migration or verifies its provider-specific equivalent", () => {
         const releasedPostgresNames = new Set(Object.keys(released.providers.postgres));
         const unreleasedPostgresNames = listMigrationNames(join(root, ...MIGRATION_PROVIDER_DIRS.postgres))
             .filter((name) => !releasedPostgresNames.has(name));
@@ -480,7 +480,34 @@ describe("migrations (released set and provider parity)", () => {
 
         for (const provider of ["mysql", "sqlite"] as const) {
             const providerNames = new Set(listMigrationNames(join(root, ...MIGRATION_PROVIDER_DIRS[provider])));
-            const missing = unreleasedPostgresNames.filter((name) => !providerNames.has(name));
+            const missing = unreleasedPostgresNames.filter((name) => {
+                if (providerNames.has(name)) return false;
+                if (name === "20261021200000_shorten_overlong_index_names") {
+                    // SQLite retains these valid long names. MySQL created the short names
+                    // originally because its identifier limit forbids the PostgreSQL originals.
+                    if (provider === "mysql") {
+                        const managed = readText(join(root, ...MIGRATION_PROVIDER_DIRS.mysql, "20261008143000_add_managed_machine_authority", "migration.sql"));
+                        const follow = readText(join(root, ...MIGRATION_PROVIDER_DIRS.mysql, "20261019150100_session_follow_run_sources", "migration.sql"));
+                        expect(managed).toContain("CREATE INDEX `ManagedMachine_home_custodian_archived_idx` ON `ManagedMachine`(`homeId`, `custodianAccountId`, `archivedAt`, `createdAt`)");
+                        expect(follow).toContain("ADD INDEX `SessionFollowEdge_executionRunSource_idx` (`sourceExecutionRunSessionId`, `sourceExecutionRunId`)");
+                    }
+                    return false;
+                }
+                if (provider === "mysql" && name === "20261023233000_account_follow_source_identity_required") {
+                    // MySQL enforces this CHECK equivalent in the original INSERT/UPDATE
+                    // triggers; SQL NULL must not bypass any non-session source branch.
+                    const sql = readText(join(root, ...MIGRATION_PROVIDER_DIRS.mysql, "20261019150000_account_follow_generic_sources", "migration.sql"));
+                    for (const operation of ["insert", "update"]) {
+                        const trigger = sql.split("CREATE TRIGGER `AccountSessionFollow_source_identity_" + operation + "`")[1]?.split("END;")[0];
+                        expect(trigger).toBeDefined();
+                        expect(trigger).toContain("NEW.`sourceKey` IS NOT NULL AND BINARY NEW.`sourceKey` = BINARY CONCAT('discussion:', NEW.`sourceDiscussionId`)");
+                        expect(trigger).toContain("NEW.`sourceKey` IS NOT NULL AND BINARY LEFT(NEW.`sourceKey`, 14) = BINARY 'execution_run:'");
+                        expect(trigger).toContain("NEW.`sourceKey` IS NOT NULL AND BINARY LEFT(NEW.`sourceKey`, 13) = BINARY 'workflow_run:'");
+                    }
+                    return false;
+                }
+                return true;
+            });
             expect(missing, `${provider} tree is missing PostgreSQL migrations`).toEqual([]);
         }
     });
@@ -500,19 +527,23 @@ describe("migrations (released set and provider parity)", () => {
         },
     ];
 
-    it("keeps every PostgreSQL migration identifier within the 63-character NAMEDATALEN limit", () => {
+    it("leaves no uncorrected PostgreSQL identifier beyond the 63-character NAMEDATALEN limit", () => {
         const postgresMigrationsDir = join(root, ...MIGRATION_PROVIDER_DIRS.postgres);
-        const overLength: string[] = [];
+        const overLength = new Map<string, string>();
         for (const name of listMigrationNames(postgresMigrationsDir)) {
             const sqlPath = join(postgresMigrationsDir, name, "migration.sql");
-            for (const match of readText(sqlPath).matchAll(/"([A-Za-z0-9_]{64,})"/gu)) {
-                const identifier = match[1]!;
+            // Applied history is immutable: an explicit forward rename repairs a truncated index.
+            // Consume the old reference with the rename so it is not treated as a new declaration.
+            for (const match of readText(sqlPath).matchAll(/ALTER\s+INDEX\s+"([A-Za-z0-9_]+)"\s+RENAME\s+TO\s+"([A-Za-z0-9_]+)"|"([A-Za-z0-9_]{64,})"/giu)) {
+                if (match[1]) overLength.delete(match[1]);
+                const identifier = match[2] ?? match[3]!;
+                if (identifier.length <= 63) continue;
                 if (KNOWN_OVER_LENGTH_POSTGRES_IDENTIFIERS.some((known) => known.migration === name && known.identifier === identifier)) {
                     continue;
                 }
-                overLength.push(`${name}: ${identifier}`);
+                overLength.set(identifier, `${name}: ${identifier}`);
             }
         }
-        expect(overLength, "PostgreSQL truncates these identifiers, so the stored name never matches the migration").toEqual([]);
+        expect([...overLength.values()], "PostgreSQL truncates these identifiers without a later corrective rename").toEqual([]);
     });
 });

@@ -1,20 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const mocks = vi.hoisted(() => ({
+import { createDbTransactionMock, inTxPostgresControlStatementMock, installDbModuleMock } from "@/app/api/testkit/dbMocks";
+
+const mocks = {
     findAccount: vi.fn(),
     listPets: vi.fn(),
     findPet: vi.fn(),
-}));
+};
 
 // Only the persistent database boundary is replaced; Account mode, runtime,
 // domain service and persistence mapping stay real beneath it.
-vi.mock("@/storage/db", () => {
-    const reader = {
-        account: { findUnique: mocks.findAccount },
-        accountPetPackage: { findMany: mocks.listPets, findFirst: mocks.findPet },
-    };
-    return { db: { ...reader, $transaction: async (read: (tx: typeof reader) => Promise<unknown>) => await read(reader) } };
-});
+const reader = {
+    ...inTxPostgresControlStatementMock,
+    account: { findUnique: mocks.findAccount },
+    accountPetPackage: { findMany: mocks.listPets, findFirst: mocks.findPet },
+};
+const transactions = createDbTransactionMock(() => reader);
+installDbModuleMock(() => ({ db: transactions.wrapDb(reader) }));
+const { listAccountPetsForAccount, readAccountPetAssetForAccount } = await import(
+    "./accountPetLibraryReadService"
+);
 
 describe("accountPetLibraryReadService", () => {
     beforeEach(() => {
@@ -33,10 +38,6 @@ describe("accountPetLibraryReadService", () => {
             encryptionMode,
             publicKey: null,
         });
-        const { listAccountPetsForAccount, readAccountPetAssetForAccount } = await import(
-            "./accountPetLibraryReadService"
-        );
-
         await expect(listAccountPetsForAccount({
             accountId: "account-1",
         })).resolves.toEqual({
@@ -59,10 +60,6 @@ describe("accountPetLibraryReadService", () => {
 
     it("returns typed unavailable for a missing Account instead of an empty list or not found asset", async () => {
         mocks.findAccount.mockResolvedValue(null);
-        const { listAccountPetsForAccount, readAccountPetAssetForAccount } = await import(
-            "./accountPetLibraryReadService"
-        );
-
         await expect(listAccountPetsForAccount({
             accountId: "missing-account",
         })).resolves.toMatchObject({
@@ -84,10 +81,6 @@ describe("accountPetLibraryReadService", () => {
             encryptionMode: "plain",
             publicKey: "retained-public-key",
         });
-        const { listAccountPetsForAccount } = await import(
-            "./accountPetLibraryReadService"
-        );
-
         await expect(listAccountPetsForAccount({
             accountId: "account-1",
         })).resolves.toEqual({ ok: true, pets: [] });

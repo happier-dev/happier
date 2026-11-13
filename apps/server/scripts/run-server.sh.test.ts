@@ -108,6 +108,36 @@ describe('run-server.sh', () => {
     expect(yarnLines.join('\n')).toContain('PNPM --dir apps/server run start:light');
   });
 
+  it('starts the prebuilt source bundle of the selected flavor when HAPPIER_SERVER_BUNDLE_DIR is set', async () => {
+    // A fake `node` on PATH records the entry the image would execute.
+    await writeFile(join(binDir, 'node'), `#!/bin/sh\necho "NODE $@" >> "${logPath}"\n`, { mode: 0o755 });
+    // The image runs from the repository root (WORKDIR /repo).
+    await (await import('node:fs/promises')).mkdir(join(tmpDir, 'apps', 'server'), { recursive: true });
+    for (const flavor of ['full', 'light'] as const) {
+      const res = spawnSync('sh', [getScriptPath()], {
+        cwd: tmpDir,
+        env: {
+          ...process.env,
+          PATH: `${binDir}:${process.env.PATH ?? ''}`,
+          HAPPIER_SERVER_FLAVOR: flavor,
+          HAPPIER_DB_PROVIDER: 'postgres',
+          HAPPIER_SERVER_BUNDLE_DIR: '/repo/.server-runtime/',
+          RUN_MIGRATIONS: '1',
+          MIGRATIONS_MAX_ATTEMPTS: '1',
+        },
+        stdio: 'pipe',
+        encoding: 'utf8',
+      });
+      expect(res.status).toBe(0);
+    }
+    const lines = await readLogLines(logPath);
+    expect(lines.filter((l) => l.startsWith('NODE /'))).toEqual([
+      'NODE /repo/.server-runtime/full/apps/server/sources/main.mjs',
+      'NODE /repo/.server-runtime/light/apps/server/sources/main.mjs',
+    ]);
+    expect(lines.filter((l) => l.startsWith('PNPM ')).every((l) => l.includes('migrate:deploy'))).toBe(true);
+  });
+
   it('runs the canonical full migration deploy for postgres then starts full flavor by default', async () => {
     const res = spawnSync('sh', [getScriptPath()], {
       env: {
@@ -190,7 +220,7 @@ describe('run-server.sh', () => {
     const lines = await readLogLines(logPath);
     const yarnLines = lines.filter((l) => l.startsWith('PNPM '));
     expect(yarnLines[0]).toContain('PNPM --dir apps/server run migrate:deploy');
-    expect(lines.join('\n')).toContain('ENV DATABASE_URL=file:///data/server-light/happier-server-light.sqlite?socket_timeout=30&connection_limit=1');
+    expect(lines.join('\n')).toContain('ENV DATABASE_URL=file:///data/server-light/happier-server-light.sqlite?socket_timeout=30&connection_limit=4');
     expect(yarnLines[yarnLines.length - 1]).toContain('PNPM --dir apps/server run start:light');
   });
 

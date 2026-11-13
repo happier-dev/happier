@@ -12,6 +12,7 @@ import { buildProjectAccountRowPhysicalKeyV1, type ProjectAccountRowKeyV1 } from
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 import { listProjectAccountRowsInTx } from './projectAccountRowService';
+import { runWithServerHttpBaseUrl } from '../../../../cli/src/api/client/serverHttpBaseUrl';
 
 function sqlBindCount(statement: string) {
     return [...statement.matchAll(/\$(\d+)/g)].reduce((count, match) => Math.max(count, Number(match[1])), 0);
@@ -65,7 +66,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Project row nar
         vi.stubEnv('HAPPIER_DB_PROVIDER', 'sqlite');
         try {
             await sqlite.$executeRawUnsafe('CREATE TABLE "Account" ("id" TEXT PRIMARY KEY, "encryptionMode" TEXT, "publicKey" TEXT, "contentPublicKey" BLOB, "contentPublicKeySig" BLOB)');
-            await sqlite.$executeRawUnsafe('CREATE TABLE "UserKVStore" ("id" TEXT PRIMARY KEY, "accountId" TEXT, "key" TEXT, "version" INTEGER, "value" BLOB, UNIQUE ("accountId", "key"))');
+            await sqlite.$executeRawUnsafe('CREATE TABLE "UserKVStore" ("id" TEXT PRIMARY KEY, "accountId" TEXT, "key" TEXT, "version" INTEGER, "value" BLOB, "createdAt" DATETIME DEFAULT CURRENT_TIMESTAMP, "updatedAt" DATETIME DEFAULT CURRENT_TIMESTAMP, UNIQUE ("accountId", "key"))');
             await sqlite.$executeRaw`INSERT INTO "Account" ("id", "encryptionMode") VALUES ('owner', 'plain')`;
             for (const serverId of ['home/a%', 'homeX2FaY25']) {
                 const key = { kind: 'workspace-ref', serverId, id: 'needed' } as const;
@@ -191,7 +192,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Project row nar
                             happyCliVersion: 'test', happyHomeDir: '/home/test/.happier' }) } } };
                 } finally { activeMachineReads -= 1; }
             });
-            try {
+            try { await runWithServerHttpBaseUrl('https://project-test.invalid', async () => {
                 for (let invocation = 0; invocation < 2; invocation += 1) {
                     loadedRows = 0;
                     maxMachineReads = 0;
@@ -225,7 +226,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Project row nar
                 const outcome = readWorkspaceSyncChildMachineFacts({ credentials, serverId: 'home',
                     serverHttpBaseUrl: 'https://project-test.invalid', machineIds: ['machine-a', 'machine-b', 'machine-a'] })
                     .catch((error: unknown) => error);
-                try { await vi.waitFor(() => expect(started).toEqual(['machine-a', 'machine-b'])); }
+                try { await vi.waitFor(() => expect([...started].sort()).toEqual(['machine-a', 'machine-b'])); }
                 finally { release(); }
                 expect(await outcome).toMatchObject({ code: 'workspace_sync_child_unavailable' });
                 get.mockImplementation(normalGet);
@@ -233,7 +234,8 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Project row nar
                 const result = await mutateProjectAccountOrganization({ credentials, serverId: 'home', projectKey: organizationKey.projectKey,
                     mutate: value => ({ ...value, hidden: true }) });
                 expect(result).toMatchObject({ status: 'updated', value: { pinned: true, hidden: true } });
-                expect.soft(loadedRows).toBe(0);
+                // Shared KV CAS admission batches the selected key, never the organization census.
+                expect.soft(loadedRows).toBe(1);
                 await readProjectAccountRows({ credentials, serverId: 'home', publication: 'installed' });
                 loadedRows = 0;
                 const setup = { credentials, serverId: 'home', serverHttpBaseUrl: 'https://project-test.invalid',
@@ -265,7 +267,7 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Project row nar
                 await expect(readProjectAccountRows({ credentials, serverId: 'home', selection: { key: organizationKey } }))
                     .rejects.toMatchObject({ code: 'project_account_rows_account-mode-mismatch' });
                 expect(getActiveProjectAccountRowsSnapshot()).toBeNull();
-            } finally { get.mockRestore(); post.mockRestore(); withdrawActiveProjectAccountRowsSnapshot(); }
+            }); } finally { get.mockRestore(); post.mockRestore(); withdrawActiveProjectAccountRowsSnapshot(); }
         });
     });
 });

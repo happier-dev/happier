@@ -119,7 +119,7 @@ describe("plugin webhook ingress persistence contract", () => {
         expect(endpoint).toMatch(/^\s*account\s+Account\?\s+@relation\(fields: \[accountId\], references: \[id\], onDelete: Restrict, onUpdate: Restrict\)\s*$/m);
         expect(endpoint).toContain("@@unique([accountId, ensureIdempotencyKey])");
         expect(endpoint).toContain(
-            "@@unique([accountId, pluginId, webhookContributionId, sourceInstanceId], map: \"plugin_webhook_endpoint_account_contribution_source_key\")",
+            "@@unique([accountId, pluginId, webhookContributionId, sourceInstanceId, checkIdDigest], map: \"plugin_webhook_endpoint_account_contribution_source_key\")",
         );
         expect(endpoint).toContain("@@unique([routeId, providerInstallationId])");
         expect(endpoint).toContain("@@index([tombstoneExpiresAt])");

@@ -30,12 +30,26 @@ function relationLoops(plan: PlanNode, relation: string): number {
 describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("Session listing PostgreSQL query work", () => {
     const queries: Prisma.QueryEvent[] = [];
     const client = new PrismaClient({ log: [{ emit: "event", level: "query" }] });
+    let resolveQueryBarrier: (() => void) | undefined;
+
+    async function drainQueryEvents() {
+        const observed = new Promise<void>(resolve => { resolveQueryBarrier = resolve; });
+        try {
+            // Engine query events can arrive after the query promise. As in
+            // the hot-read cost fixtures, settle the event stream before counting.
+            await Promise.all([client.$queryRaw`SELECT 1 AS "session_list_cost_barrier"`, observed]);
+        } finally { resolveQueryBarrier = undefined; }
+    }
+
     beforeAll(async () => {
         if (!process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL
             || process.env.DATABASE_URL !== process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL) {
             throw new Error("Use the disposable PostgreSQL DB-contract harness");
         }
-        client.$on("query", query => { queries.push(query); });
+        client.$on("query", query => {
+            if (query.query.includes('"session_list_cost_barrier"')) resolveQueryBarrier?.();
+            else queries.push(query);
+        });
         initDbPostgres();
         await client.$connect();
     });
@@ -61,9 +75,11 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
                 return { accountId, key: buildSessionFollowRulePhysicalKeyV1(`rule-${index}`), version: 0, value: decodeBase64(encoded) };
             }) });
             const rows = await client.session.findMany({ where: { accountId }, select: { id: true, ...SESSION_TRANSCRIPT_PUBLICATION_SELECT } });
+            await drainQueryEvents();
             queries.length = 0;
             const projected = await loadSessionRuleReadStatesInTx(client, { accountId,
                 authentication: createPresentUserSessionAccessAuthentication(), rows });
+            await drainQueryEvents();
             expect(projected.size).toBe(1_000);
             const first = projected.get(sessionIds[0]);
             expect(first).toHaveLength(20);
@@ -100,8 +116,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
             ]) });
             const rows = await client.session.findMany({ where: { accountId },
                 select: { id: true, latestTurnId: true, latestTurnStatus: true } });
+            await drainQueryEvents();
             queries.length = 0;
             const sequences = await loadSessionLatestFailureSequencesInTx(client, rows);
+            await drainQueryEvents();
             expect(sequences.size).toBe(sessionIds.length);
             expect([...sequences.values()].every(seq => seq === 12)).toBe(true);
             const anchorReads = queries.filter(query => query.query.startsWith("SELECT"));
@@ -164,6 +182,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
                     tx: reader, accountId, capability: "readTranscript", mode: "effective_access_v1",
                     authentication: createPresentUserSessionAccessAuthentication(),
                 });
+                await drainQueryEvents();
                 queries.length = 0;
                 const read = async (kind: "baseline" | "snapshot" | "legacy") => {
                     const started = performance.now();
@@ -174,7 +193,9 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("S
                             qualifiedTeamIds: access.qualifiedTeamIds,
                             ...(kind === "baseline" ? {} : { collectiveAccessSnapshot: access.collectiveAccessSnapshot }) },
                     });
-                    return { kind, rows, elapsedMs: performance.now() - started, queries: queries.splice(0) };
+                    const elapsedMs = performance.now() - started;
+                    await drainQueryEvents();
+                    return { kind, rows, elapsedMs, queries: queries.splice(0) };
                 };
                 return [await read("baseline"), await read("snapshot"), await read("legacy")];
             }, { isolationLevel: "RepeatableRead", timeout: 120_000 });

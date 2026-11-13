@@ -1,4 +1,5 @@
 import { pathToFileURL } from "node:url";
+import { readFileSync, readdirSync } from "node:fs";
 
 import { createDbMaintenanceClient } from "../sources/storage/db";
 import {
@@ -15,13 +16,11 @@ import { runPluginCollectionUsageMigrationDeployment } from '../sources/app/plug
 export const MYSQL_VOICE_GRANT_PROVENANCE_MIGRATION =
     "20260729102000_add_voice_conversation_grant_provenance";
 
-const MYSQL_VOICE_GRANT_PROVENANCE_TRIGGER =
-    "VoiceSessionLease_preserve_conversation_grant";
 const MYSQL_MIGRATION_APPROVAL_ENV = "HAPPIER_DB_MIGRATION_APPROVAL";
 
 type MysqlTriggerExpectation = Readonly<{
     name: string;
-    timing: "BEFORE";
+    timing: "BEFORE" | "AFTER";
     event: "DELETE" | "INSERT" | "UPDATE";
     tableName: string;
 }>;
@@ -32,112 +31,53 @@ type MysqlTriggerMigration = Readonly<{
     triggers: ReadonlyArray<MysqlTriggerExpectation>;
 }>;
 
-export const MYSQL_TRIGGER_MIGRATIONS: ReadonlyArray<MysqlTriggerMigration> = [
-    {
-        migrationName: MYSQL_VOICE_GRANT_PROVENANCE_MIGRATION,
-        requiredPrivileges: [
-            { privilege: "ALTER", tableName: "VoiceConversation" },
-            { privilege: "UPDATE", tableName: "VoiceConversation" },
-            { privilege: "TRIGGER", tableName: "VoiceSessionLease" },
-        ],
-        triggers: [{
-            name: MYSQL_VOICE_GRANT_PROVENANCE_TRIGGER,
-            timing: "BEFORE",
-            event: "DELETE",
-            tableName: "VoiceSessionLease",
-        }],
-    },
-    {
-        migrationName: "20260905230000_add_session_follow_edges",
-        requiredPrivileges: [{ privilege: "TRIGGER", tableName: "SessionFollowEdge" }],
-        triggers: [
-            {
-                name: "SessionFollowEdge_distinct_sessions_insert",
-                timing: "BEFORE",
-                event: "INSERT",
-                tableName: "SessionFollowEdge",
-            },
-            {
-                name: "SessionFollowEdge_distinct_sessions_update",
-                timing: "BEFORE",
-                event: "UPDATE",
-                tableName: "SessionFollowEdge",
-            },
-        ],
-    },
-    {
-        migrationName: "20260906210000_add_managed_identity_providers",
-        requiredPrivileges: [{ privilege: "TRIGGER", tableName: "TeamProvisionedIdentity" }],
-        triggers: [
-            {
-                name: "TeamProvisionedIdentity_membership_team_insert",
-                timing: "BEFORE",
-                event: "INSERT",
-                tableName: "TeamProvisionedIdentity",
-            },
-            {
-                name: "TeamProvisionedIdentity_membership_team_update",
-                timing: "BEFORE",
-                event: "UPDATE",
-                tableName: "TeamProvisionedIdentity",
-            },
-        ],
-    },
-    {
-        migrationName: "20260908120000_add_workflow_run_invocations",
-        requiredPrivileges: [{ privilege: "TRIGGER", tableName: "AutomationRun" }],
-        triggers: [
-            {
-                name: "AutomationRun_origin_kind_insert",
-                timing: "BEFORE",
-                event: "INSERT",
-                tableName: "AutomationRun",
-            },
-            {
-                name: "AutomationRun_origin_kind_update",
-                timing: "BEFORE",
-                event: "UPDATE",
-                tableName: "AutomationRun",
-            },
-        ],
-    },
-    {
-        migrationName: "20261002200000_stored_content_public_shares",
-        requiredPrivileges: [{ privilege: "TRIGGER", tableName: "PublicSessionShare" }],
-        triggers: [
-            {
-                name: "PublicSessionShare_subject_insert",
-                timing: "BEFORE",
-                event: "INSERT",
-                tableName: "PublicSessionShare",
-            },
-            {
-                name: "PublicSessionShare_subject_update",
-                timing: "BEFORE",
-                event: "UPDATE",
-                tableName: "PublicSessionShare",
-            },
-        ],
-    },
-    {
-        migrationName: "20261008143000_add_managed_machine_authority",
-        requiredPrivileges: [{ privilege: "TRIGGER", tableName: "ManagedMachinePreset" }],
-        triggers: [
-            {
-                name: "ManagedMachinePreset_owner_insert",
-                timing: "BEFORE",
-                event: "INSERT",
-                tableName: "ManagedMachinePreset",
-            },
-            {
-                name: "ManagedMachinePreset_owner_update",
-                timing: "BEFORE",
-                event: "UPDATE",
-                tableName: "ManagedMachinePreset",
-            },
-        ],
-    },
-];
+function readMysqlTriggerMigrations(): ReadonlyArray<MysqlTriggerMigration> {
+    const migrationsDir = join(resolveServerWorkspaceRoot(import.meta.url), "prisma", "mysql", "migrations");
+    const migrations: MysqlTriggerMigration[] = [];
+    const currentDefinitions = new Map<string, { migrationName: string; trigger: MysqlTriggerExpectation }>();
+    for (const entry of readdirSync(migrationsDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+        if (!entry.isDirectory() || !/^\d{14}_/u.test(entry.name)) continue;
+        const sql = readFileSync(join(migrationsDir, entry.name, "migration.sql"), "utf8");
+        const triggerTables = new Set<string>();
+        for (const match of sql.matchAll(/^CREATE\s+TRIGGER\s+`([^`]+)`\s+(BEFORE|AFTER)\s+(INSERT|UPDATE|DELETE)\s+ON\s+`([^`]+)`|^DROP\s+TRIGGER\s+(?:IF\s+EXISTS\s+)?`([^`]+)`/gimu)) {
+            if (match[5]) {
+                currentDefinitions.delete(match[5]);
+                continue;
+            }
+            const trigger: MysqlTriggerExpectation = {
+                name: match[1]!,
+                // The SQL header expression restricts these values to the MySQL trigger vocabulary.
+                timing: match[2]!.toUpperCase() as MysqlTriggerExpectation["timing"],
+                event: match[3]!.toUpperCase() as MysqlTriggerExpectation["event"],
+                tableName: match[4]!,
+            };
+            triggerTables.add(trigger.tableName);
+            currentDefinitions.set(trigger.name, { migrationName: entry.name, trigger });
+        }
+        if (triggerTables.size === 0) continue;
+        migrations.push({
+            migrationName: entry.name,
+            requiredPrivileges: [
+                ...(entry.name === MYSQL_VOICE_GRANT_PROVENANCE_MIGRATION ? [
+                    { privilege: "ALTER", tableName: "VoiceConversation" },
+                    { privilege: "UPDATE", tableName: "VoiceConversation" },
+                ] : []),
+                ...Array.from(triggerTables, (tableName) => ({ privilege: "TRIGGER", tableName })),
+            ],
+            triggers: [],
+        });
+    }
+    // Admission covers every CREATE, including temporary triggers; postflight checks final definitions.
+    const currentTriggers = [...currentDefinitions.values()];
+    return migrations.map((migration) => ({
+        ...migration,
+        triggers: currentTriggers
+            .filter(({ migrationName }) => migrationName === migration.migrationName)
+            .map(({ trigger }) => trigger),
+    }));
+}
+
+export const MYSQL_TRIGGER_MIGRATIONS = readMysqlTriggerMigrations();
 
 type QueryRows = ReadonlyArray<Record<string, unknown>>;
 
@@ -376,6 +316,7 @@ async function verifyTriggerPostflight(
     }
 
     const expectedTriggers = pendingMigrations.flatMap(({ triggers }) => triggers);
+    if (expectedTriggers.length === 0) return;
     const triggerRows = await database.query(
         "SELECT TRIGGER_NAME AS trigger_name, DEFINER AS definer, ACTION_TIMING AS action_timing, " +
         "EVENT_MANIPULATION AS event_manipulation, EVENT_OBJECT_TABLE AS event_object_table " +

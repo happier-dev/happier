@@ -17,7 +17,7 @@ type QueryResult = ReadonlyArray<Record<string, unknown>>;
 function createDatabase(results: QueryResult[]): MysqlMigrationAdmissionDatabase & {
     query: ReturnType<typeof vi.fn>;
 } {
-    const query = vi.fn(async () => {
+    const query = vi.fn(async (_sql: string, ..._values: unknown[]) => {
         const next = results.shift();
         if (!next) throw new Error("Unexpected query");
         return next;
@@ -82,16 +82,25 @@ describe("MySQL migration deploy admission", () => {
         }
     });
 
-    it("catalogs every current MySQL trigger migration and trigger", () => {
+    it("catalogs every MySQL trigger migration with only its surviving trigger definitions", () => {
         const migrationsRoot = join(import.meta.dirname, "../prisma/mysql/migrations");
+        const currentDefinitions = new Map<string, string>();
         const migrationTriggers = readdirSync(migrationsRoot, { withFileTypes: true })
             .filter((entry) => entry.isDirectory())
+            .sort((a, b) => a.name.localeCompare(b.name))
             .flatMap((entry) => {
                 const sql = readFileSync(join(migrationsRoot, entry.name, "migration.sql"), "utf8");
+                for (const match of sql.matchAll(/\b(CREATE|DROP)\s+TRIGGER\s+(?:IF\s+EXISTS\s+)?`([^`]+)`/giu)) {
+                    if (match[1]!.toUpperCase() === "CREATE") currentDefinitions.set(match[2]!, entry.name);
+                    else currentDefinitions.delete(match[2]!);
+                }
                 const triggers = Array.from(sql.matchAll(/CREATE\s+TRIGGER\s+`([^`]+)`/giu), (match) => match[1]!);
                 return triggers.length > 0 ? [{ migrationName: entry.name, triggers: triggers.sort() }] : [];
             })
-            .sort((a, b) => a.migrationName.localeCompare(b.migrationName));
+            .map(({ migrationName, triggers }) => ({
+                migrationName,
+                triggers: triggers.filter((name) => currentDefinitions.get(name) === migrationName),
+            }));
         const catalogTriggers = MYSQL_TRIGGER_MIGRATIONS
             .map(({ migrationName, triggers }) => ({
                 migrationName,
@@ -110,6 +119,22 @@ describe("MySQL migration deploy admission", () => {
 
         expect(deploy).toHaveBeenCalledOnce();
         expect(database.query).toHaveBeenCalledTimes(2);
+    });
+
+    it("requires trigger authority before deploying a pending generic Follow source migration", async () => {
+        const pendingMigration = "20261024200000_execution_run_follow_machine_source";
+        const database = createDatabase([
+            [{ table_count: 1n }],
+            appliedMigrationRows().filter((row) => row.migration_name !== pendingMigration),
+            capableIdentityQueries[0]!,
+            [{ "Grants for migrator@%": "GRANT SELECT ON `happier`.* TO `migrator`@`%`" }],
+        ]);
+        const deploy = vi.fn(async () => {});
+
+        await expect(runMysqlMigrationDeploy({ database, env: {}, deploy }))
+            .rejects.toThrow("TRIGGER on AccountSessionFollow");
+
+        expect(deploy).not.toHaveBeenCalled();
     });
 
     it("preserves the one-time Voice operator admission when its migration is pending", async () => {
@@ -252,6 +277,27 @@ describe("MySQL migration deploy admission", () => {
 
         expect(deploy).toHaveBeenCalledOnce();
         expect(database.query).toHaveBeenCalledTimes(6);
+    });
+
+    it("settles a pending historical migration whose temporary triggers have been replaced", async () => {
+        const historicalMigration = "20261018213000_merge_manager_follow_relation";
+        const database = createDatabase([
+            [{ table_count: 1n }],
+            appliedMigrationRows().filter((row) => row.migration_name !== historicalMigration),
+            ...capableIdentityQueries,
+            appliedMigrationRows(),
+        ]);
+        const query = database.query.getMockImplementation()!;
+        database.query.mockImplementation(async (sql: string) => {
+            // MySQL rejects an empty IN list at the persistent-database boundary.
+            if (/\bIN\s*\(\s*\)/u.test(sql)) throw new Error("MySQL syntax error: empty IN list");
+            return query(sql);
+        });
+        const deploy = vi.fn(async () => {});
+
+        await expect(runMysqlMigrationDeploy({ database, env: {}, deploy })).resolves.toBeUndefined();
+
+        expect(deploy).toHaveBeenCalledOnce();
     });
 
     it("deploys only after admission and verifies every pending migration and trigger", async () => {
