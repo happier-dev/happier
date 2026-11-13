@@ -6,6 +6,7 @@ import formatsImport, { type FormatName, type FormatsPlugin } from 'ajv-formats'
 import { containsEquivalentPluginJsonValue, hasUniquePluginJsonValues, pluginJsonValuesEqual, scalarPluginJsonValueKey } from '../contributions/jsonSchemaValues.js';
 import { assertStrictPluginJsonValue, measurePluginJsonUtf8Bytes, measureSerializedValidatedStrictPluginJsonUtf8Bytes } from '../contributions/strictJsonValue.js';
 import { HAPPIER_MAX_SERIALIZED_UTF8_BYTES_KEYWORD, HAPPIER_MAX_UTF8_BYTES_KEYWORD, type PluginJsonSchemaValidator } from './protocolComposableSchema.js';
+import { readPaddedBase64DecodedLength } from '../../crypto/base64.js';
 
 const SUPPORTED_PLUGIN_JSON_SCHEMA_FORMATS = Object.freeze([
   'date-time',
@@ -63,6 +64,9 @@ function createAjv(dialect: 'draft-07' | 'draft-2020-12'): Ajv {
   };
   const ajv = dialect === 'draft-2020-12' ? new Ajv2020(options) : new Ajv(options);
   addFormats(ajv, [...SUPPORTED_PLUGIN_JSON_SCHEMA_FORMATS]);
+  // ajv-formats' repeated-group byte regexp also refuses large valid input in
+  // Bun. Share the executable schema's structural byte grammar instead.
+  ajv.addFormat('byte', { type: 'string', validate: value => readPaddedBase64DecodedLength(value) !== null });
   // Compile the dialect's own meta-schema with its native vocabulary before
   // replacing value-equality keywords. Keyword meta-schemas use this validator.
   if (dialect === 'draft-2020-12') ajv.getSchema('https://json-schema.org/draft/2020-12/schema');

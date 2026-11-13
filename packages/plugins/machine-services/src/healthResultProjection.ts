@@ -1,12 +1,13 @@
 import { HealthCheckResultV1ProtocolSchema, createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
-import { defineProtocolArray, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolArray, defineProtocolLiteral, defineProtocolObject, defineProtocolString,
+    ProtocolAutomationTriggerRevisionV1Schema } from '@happier-dev/plugin-sdk/protocol';
 
 /** A presentation of the observer's retained checkpoint, inside the existing encrypted Account KV row. */
 export const HEALTH_RESULT_CHECKPOINT_PREFIX = 'health:';
 export const healthResultProjectionSchema = defineProtocolObject({
     v: defineProtocolLiteral(1),
     members: defineProtocolArray(defineProtocolObject({ automationId: defineProtocolString(), triggerId: defineProtocolString(),
-        triggerRevision: defineProtocolNumber({ integer: true, minimum: 1 }), sourceSelectorId: defineProtocolString(),
+        triggerRevision: ProtocolAutomationTriggerRevisionV1Schema, sourceSelectorId: defineProtocolString(),
     }, { policy: 'closed' })),
     checks: defineProtocolArray(defineProtocolObject({ checkId: defineProtocolString(), result: HealthCheckResultV1ProtocolSchema }, { policy: 'closed' })),
 }, { policy: 'closed' });

@@ -4,6 +4,7 @@ import { runRepositoryPushObserver } from '../../examples/automation-event-sourc
 import type { BackgroundServiceContext } from '../backgroundServices.js';
 import type { HostEventEnvelope } from '../events.js';
 import { PluginError } from '../errors.js';
+import { ProtocolValidationError } from '../protocol/index.js';
 import { readCheckpointedPluginEventSourcesV1, runCheckpointedPluginEventObserverV1, type PluginCheckpointedEventAttemptContextV1, type PluginCheckpointedEventAttemptResultV1, type PluginCheckpointedEventSourceAdapterV1, type PluginCheckpointedEventSourceDefinitionV1 } from '../background-services/index.js';
 
 const materialization = { pluginId: 'com.example.events', machineId: 'machine-1', materializationId: 'installation-1' };
@@ -377,7 +378,22 @@ describe('checkpointed observer ownership', () => {
         await runCheckpointedPluginEventObserverV1({ context: f.context, source: f.source, mode: 'once' });
         const statuses = f.execute.mock.calls.filter(([id, value]) => id === 'automation.event.source.status.report' && value.kind === 'source')
             .map(([, value]) => value);
-        expect(statuses.at(-1)).toMatchObject({ state: 'attention', code: 'admissionUnavailable', nextRetryAt: null });
+        expect(statuses.at(-1)).toMatchObject({ state: 'attention', code: 'ZodError', nextRetryAt: null });
+        expect(f.save).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        { error: new TypeError('private source content'), code: 'TypeError' },
+        { error: new ProtocolValidationError([{ path: ['private source content'], code: 'invalid_number',
+            message: 'private source content' }]), code: 'protocol_validation_failed' },
+    ])('reports an observation failure as $code without disclosing private content', async ({ error, code }) => {
+        const f = fixture();
+        f.observe.mockRejectedValue(error);
+        await runCheckpointedPluginEventObserverV1({ context: f.context, source: f.source, mode: 'once', now: () => 1000 });
+        const statuses = f.execute.mock.calls.filter(([id, value]) => id === 'automation.event.source.status.report' && value.kind === 'source')
+            .map(([, value]) => value);
+        expect(statuses.at(-1)).toMatchObject({ state: 'backingOff', code, nextRetryAt: 2000 });
+        expect(JSON.stringify(statuses)).not.toContain('private source content');
         expect(f.save).not.toHaveBeenCalled();
     });
 

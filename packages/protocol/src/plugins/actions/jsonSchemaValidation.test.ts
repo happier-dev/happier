@@ -596,6 +596,24 @@ describe('plugin JSON Schema validation policy', () => {
     expect(isValidPluginJsonSchemaValue(objectValidator, Object.create({ inherited: true }))).toBe(false);
   });
 
+  it('preserves padded native byte validation across executable, portable and rehydrated strings', () => {
+    for (const schema of [defineProtocolString({ format: 'byte' }), defineProtocolUtf8String({ format: 'byte', maxUtf8Bytes: 8 })]) {
+      const portable = compilePluginJsonSchema(schema.jsonSchema);
+      const rehydrated = rehydrateCanonicalProtocolComposableSchema(schema.jsonSchema);
+      expect(rehydrated).not.toBeNull();
+      for (const valid of ['', 'AQID', 'AA==', 'AAA=', 'AB==']) {
+        expect(schema.safeParse(valid).success).toBe(true);
+        expect(portable(valid)).toBe(true);
+        expect(rehydrated?.safeParse(valid).success).toBe(true);
+      }
+      for (const invalid of ['A', 'AAA', 'A===', 'AA=A', 'AA==\n', ' AA==', 'AA-_']) {
+        expect(schema.safeParse(invalid).success).toBe(false);
+        expect(portable(invalid)).toBe(false);
+        expect(rehydrated?.safeParse(invalid).success).toBe(false);
+      }
+    }
+  });
+
   it('normalizes the supported draft marker and validates the common format vocabulary', () => {
     expect(normalizePluginJsonSchema({
       $schema: 'https://json-schema.org/draft-07/schema',

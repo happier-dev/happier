@@ -164,8 +164,9 @@ it.each(['admitted', 'rejoined', 'rejected', 'inbox', 'default'] as const)(
         kind: 'source', state: 'observing', code: 'none', observedDelta: 1, admittedDelta: 0, skippedDelta: 1,
         lastDispositionAt: now, nextRetryAt: null,
     }));
-    expect(notices.rows.size).toBe(1);
-    expect(notices.writes).toHaveBeenCalledTimes(1);
+    const accepted = mode !== 'rejected';
+    expect(notices.rows.size).toBe(accepted ? 1 : 0);
+    expect(notices.writes).toHaveBeenCalledTimes(accepted ? 1 : 0);
     const starts = mode === 'admitted' || mode === 'rejoined';
     expect(handoffs).toEqual(starts ? [expect.objectContaining({ handoff: expect.objectContaining({
         task: 'investigate', context: expect.objectContaining({ kind: 'healthAlert' }),
@@ -186,18 +187,18 @@ it.each(['admitted', 'rejoined', 'rejected', 'inbox', 'default'] as const)(
     expect(restarted.owner.readPublicProjection()).toMatchObject({ kind: 'available', revision: '1' });
     expect(reads).toContain('restarted-occurrence');
     expect(admissions.map(value => value.eventRef.localId)).toEqual(['health-check-failed']);
-    expect(notices.rows.size).toBe(1);
-    expect(notices.writes).toHaveBeenCalledTimes(1);
+    expect(notices.rows.size).toBe(accepted ? 1 : 0);
+    expect(notices.writes).toHaveBeenCalledTimes(accepted ? 1 : 0);
     expect(statuses).toContainEqual(expect.objectContaining({ kind: 'catalogReconciliation', state: 'current', adoptedRevision: '1' }));
     httpStatus = 200; now += 1000;
     await restarted.cycle();
     await restarted.cycle();
     expect(admissions.map(value => value.eventRef.localId)).toEqual(['health-check-failed', 'health-check-recovered']);
     expect(admissions[1]?.payload).toMatchObject({ transition: 'recovered' });
-    expect(notices.rows.size).toBe(1);
-    expect(notices.writes).toHaveBeenCalledTimes(2);
+    expect(notices.rows.size).toBe(accepted ? 1 : 0);
+    expect(notices.writes).toHaveBeenCalledTimes(accepted ? 2 : 0);
     expect(handoffs).toHaveLength(starts ? 1 : 0);
-    expect(decodePlainArtifactStoredContent([...notices.rows.values()][0]!.header)).toMatchObject({
+    if (accepted) expect(decodePlainArtifactStoredContent([...notices.rows.values()][0]!.header)).toMatchObject({
         healthPhase: 'recovered', source: { subject: { kind: 'healthCheck', subject: sourceConfig.subject, checkId: 'http' } },
     });
     restarted.abort.abort();

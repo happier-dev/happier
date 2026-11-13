@@ -1,5 +1,6 @@
 import { AutomationEventAdmitResultV1Schema, AutomationEventSourcesListResultV1Schema, isAutomationEventSourcesListPageProgressingV1 } from '@happier-dev/protocol/automations/automationActionSpecsV1';
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionErrorClassV1';
+import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isPluginError } from '@happier-dev/protocol/plugins/errors';
 import type { PluginActionInputById, PluginActionResultById } from './actions/index.js';
 import type { JsonValue, PluginContributionRef } from './identity.js';
@@ -14,6 +15,13 @@ import { projectProtocolValue } from './protocol/projectProtocolValue.js';
  * canonical owner instead of restating the check locally.
  */
 export { isAutomationEventSourcesListPageProgressingV1 };
+
+/** Keep only producer codes or the canonical content-free exception class. */
+export function readPluginEventFailureV1(error: unknown): NonNullable<PluginEventDispositionV1['failure']> {
+    return { code: readActionErrorCodeV1(error)
+        ?? readUnexpectedActionErrorDiagnosticV1(error).errorClass.replace(/^\$/u, ''),
+        ...(isPluginError(error) ? { retryable: error.retryable } : {}) };
+}
 
 type SourcesListResult = PluginActionResultById['automation.event.sources.list'];
 type SourceDefinition = Extract<SourcesListResult, Readonly<{ kind: 'page' }>>['definitions'][number];
@@ -312,6 +320,15 @@ export async function projectPluginEventSourceConnectionStatusV1(
     });
 }
 
+/** Admit one host-verified durable delivery through the same source/admission owner. */
+export function admitDurablePushPluginEventObservationV1(
+    observation: PluginEventObservationV1,
+    context: PluginInvocationContext,
+    webhookEndpointId: Extract<PluginEventAdmissionScope, { kind: 'durablePush' }>['webhookEndpointId'],
+): Promise<PluginEventDispositionV1> {
+    return admitPluginEventObservationUnderScopeV1(observation, context, { kind: 'durablePush', webhookEndpointId });
+}
+
 /**
  * Shared admission core: resolves one observation against a complete,
  * revision-stable source scan under one observation-transport scope and
@@ -368,10 +385,10 @@ export async function admitPluginEventObservationUnderScopeV1(
         context.signal.throwIfAborted();
         const parsed = AutomationEventAdmitResultV1Schema.safeParse(result);
         if (parsed.success) admitted = projectProtocolValue<PluginActionResultById['automation.event.admit']>(parsed.data);
+        else failure = readPluginEventFailureV1(parsed.error);
     } catch (error) {
         if (context.signal.aborted) throw error;
-        failure = { code: readActionErrorCodeV1(error) ?? 'admissionUnavailable',
-            ...(isPluginError(error) ? { retryable: error.retryable } : {}) };
+        failure = readPluginEventFailureV1(error);
     }
     if (admitted === null) {
         failure ??= { code: 'admissionUnavailable' };

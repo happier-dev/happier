@@ -1,3 +1,4 @@
+import v8 from 'node:v8';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -82,6 +83,30 @@ describe('cloneStrictPluginJsonValue', () => {
       expect(() => cloneStrictPluginJsonValueWithTraversalLimits(normalized, 'bounded', { maxDepth: 100, maxValues: 1 }))
         .toThrow('values limit');
     } finally { descriptors.mockRestore(); }
+  });
+
+  it('stores equal-shape snapshots under one shared hidden class instead of one dictionary per object', () => {
+    // Daemons and runners retain tens of thousands of these snapshots (plugin manifests, JSON
+    // schemas). A frozen dictionary-mode object costs its own hash table plus its own map;
+    // a fast-mode object shares one map per shape (P03-MEM-DAEMON).
+    v8.setFlagsFromString('--allow-natives-syntax');
+    const sameMap = new Function('a', 'b', 'return %HaveSameMap(a, b)') as (a: unknown, b: unknown) => boolean;
+    const fast = new Function('o', 'return %HasFastProperties(o)') as (o: unknown) => boolean;
+    const clones = Array.from({ length: 200 }, (_, index) => cloneStrictPluginJsonValue(
+      { type: 'object', description: `field ${index}`, required: ['a'], additionalProperties: false },
+      'schema',
+    ) as Record<string, unknown>);
+    const maps: unknown[] = [];
+    for (const clone of clones) if (!maps.some(seen => sameMap(seen, clone))) maps.push(clone);
+
+    expect(maps.length).toBe(1);
+    expect(clones.filter(clone => !fast(clone)).length).toBe(0);
+    // The shape change keeps the security contract: no prototype, frozen, `__proto__` stays an own key.
+    const hostile = cloneStrictPluginJsonValue(JSON.parse('{"__proto__":{"polluted":true},"a":1}'), 'value') as Record<string, unknown>;
+    expect(Object.getPrototypeOf(hostile)).toBe(null);
+    expect(Object.isFrozen(hostile)).toBe(true);
+    expect(Object.keys(hostile)).toEqual(['__proto__', 'a']);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 
   it('accepts valid deep JSON without imposing a traversal-depth quota', () => {

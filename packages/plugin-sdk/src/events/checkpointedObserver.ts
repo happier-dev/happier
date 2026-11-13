@@ -1,13 +1,12 @@
 /** @moduleRealm daemon */
 import type { PluginActionInputById, PluginActionResultById } from '../actions/index.js';
 import type { BackgroundServiceContext } from '../backgroundServices.js';
-import { admitPluginEventObservationUnderScopeV1, readCurrentSourceDefinitions, reportPluginEventSourceCatalogStatus, reportPluginEventSourceStatus, type CurrentSourceCatalog, type PluginEventAdmissionScope, type PluginEventDispositionV1, type PluginEventObservationV1 } from '../eventAutomation.js';
+import { admitPluginEventObservationUnderScopeV1, readCurrentSourceDefinitions, readPluginEventFailureV1, reportPluginEventSourceCatalogStatus, reportPluginEventSourceStatus, type CurrentSourceCatalog, type PluginEventAdmissionScope, type PluginEventDispositionV1, type PluginEventObservationV1 } from '../eventAutomation.js';
 import { arePluginMachineMaterializationRefsEqual } from '../executionOrigin.js';
 import { createCanonicalJsonSigningInput } from '../identity.js';
 import type { PluginInvocationContext } from '../invocation.js';
 import type { Disposable } from '../lifecycle.js';
 import type { HostEventEnvelope } from '../events.js';
-import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionErrorClassV1';
 
 export type PluginCheckpointedEventSourceDefinitionV1 = Extract<
     PluginActionResultById['automation.event.sources.list'], { kind: 'page' }
@@ -422,7 +421,7 @@ export async function runCheckpointedPluginEventObserverV1<TSource, TCheckpoint>
                         if (cycleContext.signal.aborted) throw error;
                         const nextEligibleAt = eligibility(source.retryAt({ error, now: now(), definition }));
                         state.nextEligibleAt.set(key, nextEligibleAt);
-                        await reportSource({ state: nextEligibleAt === null ? 'attention' : 'backingOff', code: readActionErrorCodeV1(error) ?? 'admissionUnavailable' }, nextEligibleAt);
+                        await reportSource({ state: nextEligibleAt === null ? 'attention' : 'backingOff', code: readPluginEventFailureV1(error).code }, nextEligibleAt);
                     }
                 }
                 for (const next of state.nextEligibleAt.values()) if (next !== null && (wakeAt === null || next < wakeAt)) wakeAt = next;

@@ -1,6 +1,16 @@
+import { readDeferredDeclarationDescriptor } from './deferredDeclarationFields.js';
 // Only snapshots created and recursively frozen by this owner are proofs of
 // strict JSON. A caller's Object.freeze is shallow and cannot provide that proof.
 const normalizedStrictJsonObjects = new WeakSet<object>();
+
+// `Object.create(null)` puts an object in V8 dictionary mode, and freezing a dictionary
+// object gives it its own map. Snapshots are retained by the tens of thousands, so build
+// them from a literal: they stay fast and share one map per shape, still without a prototype.
+function createNullPrototypeSnapshotRecord(): Record<string, unknown> {
+  const record: Record<string, unknown> = {};
+  Object.setPrototypeOf(record, null);
+  return record;
+}
 
 /** The one Protocol owner for raw, well-formed UTF-8 string measurement. */
 export function measurePluginJsonUtf8Bytes(value: string, path: string): number {
@@ -70,26 +80,18 @@ export function measurePluginJsonUtf8Bytes(value: string, path: string): number 
  * overflowing Hermes. Boundary owners catch the refusal where they actually
  * serialize and report it as a typed permanent failure instead.
  */
-type StrictJsonWalkTask =
-  | Readonly<{
-    kind: 'visit';
-    input: unknown;
-    path: string;
-    depth: number;
-    assign?: (value: unknown) => void;
-  }>
-  | Readonly<{
-    kind: 'finish-array';
-    input: object;
-    output?: unknown[];
-    assign?: (value: unknown) => void;
-  }>
-  | Readonly<{
-    kind: 'finish-object';
-    input: object;
-    output?: Record<string, unknown>;
-    assign?: (value: unknown) => void;
-  }>;
+// One task shape for the explicit work stack. A visited value is written to
+// `target[key]` (or becomes the root when `target` is undefined); a finish task
+// freezes and publishes its `output` container the same way. No per-value closures.
+type StrictJsonWalkTask = {
+  kind: 'visit' | 'finish';
+  input: unknown;
+  path: string;
+  depth: number;
+  target: Record<string, unknown> | unknown[] | undefined;
+  key: string | number;
+  output: Record<string, unknown> | unknown[] | undefined;
+};
 
 type StrictJsonObjectDescriptors = Readonly<{
   descriptors: Readonly<Record<string, PropertyDescriptor>>;
@@ -116,11 +118,23 @@ function strictJsonObjectDescriptors(input: object, path: string): StrictJsonObj
   if (prototype !== Object.prototype && prototype !== null) {
     throw new Error(`${path} must contain only plain objects`);
   }
+  // One descriptor read per member. Every listed own key must still describe a
+  // property: a reflective object that lists a key it cannot describe is refused.
   const descriptors = Object.getOwnPropertyDescriptors(input);
+  const ownKeys = Reflect.ownKeys(descriptors);
+  if (ownKeys.length !== Reflect.ownKeys(input).length) throw new Error(`${path} must contain stable own properties`);
   const keys: string[] = [];
-  for (const key of Reflect.ownKeys(input)) {
-    const descriptor = Object.getOwnPropertyDescriptor(input, key);
-    if (!descriptor) throw new Error(`${path} must contain stable own properties`);
+  for (const key of ownKeys) {
+    let descriptor = descriptors[key as string]!;
+    // A host-deferred declaration field (bundled Action schemas) is data that
+    // has not been read yet: read it here, the one strict JSON owner. Any other
+    // accessor is still refused below.
+    const deferred = typeof key === 'string' && descriptor.enumerable === true
+      ? readDeferredDeclarationDescriptor(input, descriptor) : null;
+    if (deferred) {
+      descriptor = { value: deferred.value, writable: false, enumerable: true, configurable: true };
+      (descriptors as Record<string, PropertyDescriptor>)[key as string] = descriptor;
+    }
     if (typeof key === 'symbol') {
       // Host-only brands are deliberately non-enumerable because they are
       // process-local sidecars, not JSON members. Drop those exactly as
@@ -190,44 +204,41 @@ function walkStrictPluginJsonValue(
   )) {
     throw new TypeError('Strict JSON traversal limits must be positive safe integers');
   }
+  // A scalar or an already admitted snapshot is its own result. Composed schemas
+  // walk every member again, so this path must not build traversal state.
+  if (!limits) {
+    if (value === null || typeof value === 'boolean' || typeof value === 'string') return copiesValue ? value : undefined;
+    if (typeof value === 'number') {
+      if (!Number.isFinite(value)) throw new Error(`${path} must contain finite JSON numbers`);
+      return copiesValue ? value : undefined;
+    }
+    if (typeof value !== 'object') throw new Error(`${path} must contain strict JSON data`);
+    if (normalizedStrictJsonObjects.has(value)) return copiesValue ? value : undefined;
+  }
   let root: unknown;
   let scheduledValues = 1;
   if (limits && scheduledValues > limits.maxValues) {
     throw new StrictPluginJsonTraversalLimitError('values');
   }
   const ancestors = new WeakSet<object>();
-  const rootAssign = copiesValue
-    ? (cloned: unknown) => {
-      root = cloned;
-    }
-    : undefined;
+  const publish = (task: StrictJsonWalkTask, value: unknown): void => {
+    if (!copiesValue) return;
+    if (task.target === undefined) root = value;
+    else (task.target as Record<string | number, unknown>)[task.key] = value;
+  };
   const tasks: StrictJsonWalkTask[] = [{
-    kind: 'visit',
-    input: value,
-    path,
-    depth: 1,
-    ...(rootAssign === undefined ? {} : { assign: rootAssign }),
+    kind: 'visit', input: value, path, depth: 1, target: undefined, key: '', output: undefined,
   }];
 
   while (tasks.length > 0) {
-    const task = tasks.pop();
-    if (!task) continue;
+    const task = tasks.pop()!;
 
-    if (task.kind === 'finish-array') {
-      ancestors.delete(task.input);
-      if (task.assign !== undefined && task.output !== undefined) {
+    if (task.kind === 'finish') {
+      ancestors.delete(task.input as object);
+      if (task.output !== undefined) {
         Object.freeze(task.output);
         normalizedStrictJsonObjects.add(task.output);
-        task.assign(task.output);
-      }
-      continue;
-    }
-    if (task.kind === 'finish-object') {
-      ancestors.delete(task.input);
-      if (task.assign !== undefined && task.output !== undefined) {
-        Object.freeze(task.output);
-        normalizedStrictJsonObjects.add(task.output);
-        task.assign(task.output);
+        publish(task, task.output);
       }
       continue;
     }
@@ -237,23 +248,19 @@ function walkStrictPluginJsonValue(
     if (limits && task.depth > limits.maxDepth) {
       throw new StrictPluginJsonTraversalLimitError('depth');
     }
-    if (input === null || typeof input === 'boolean') {
-      task.assign?.(input);
-      continue;
-    }
-    if (typeof input === 'string') {
-      task.assign?.(input);
+    if (input === null || typeof input === 'boolean' || typeof input === 'string') {
+      publish(task, input);
       continue;
     }
     if (typeof input === 'number') {
       if (!Number.isFinite(input)) throw new Error(`${path} must contain finite JSON numbers`);
-      task.assign?.(input);
+      publish(task, input);
       continue;
     }
     if (typeof input !== 'object') throw new Error(`${path} must contain strict JSON data`);
     // Bounded walks must still count every value and depth at their own boundary.
     if (!limits && normalizedStrictJsonObjects.has(input)) {
-      task.assign?.(input);
+      publish(task, input);
       continue;
     }
     if (ancestors.has(input)) throw new Error(`${path} must not contain cyclic data`);
@@ -265,25 +272,16 @@ function walkStrictPluginJsonValue(
         throw new StrictPluginJsonTraversalLimitError('values');
       }
       scheduledValues += length;
-      const output = task.assign === undefined ? undefined : new Array<unknown>(length);
-      tasks.push({
-        kind: 'finish-array',
-        input,
-        ...(output === undefined || task.assign === undefined ? {} : { output, assign: task.assign }),
-      });
+      const output = copiesValue ? new Array<unknown>(length) : undefined;
+      tasks.push({ kind: 'finish', input, path, depth: task.depth, target: task.target, key: task.key, output });
       for (let index = length - 1; index >= 0; index -= 1) {
         const descriptor = descriptors[String(index)];
         if (!descriptor || !('value' in descriptor)) {
           throw new Error(`${path} must contain dense JSON array values`);
         }
         tasks.push({
-          kind: 'visit',
-          input: descriptor.value,
-          path: `${path}[${index}]`,
-          depth: task.depth + 1,
-          ...(output === undefined ? {} : { assign: (cloned: unknown) => {
-            output[index] = cloned;
-          } }),
+          kind: 'visit', input: descriptor.value, path: `${path}[${index}]`, depth: task.depth + 1,
+          target: output, key: index, output: undefined,
         });
       }
       continue;
@@ -294,14 +292,10 @@ function walkStrictPluginJsonValue(
       throw new StrictPluginJsonTraversalLimitError('values');
     }
     scheduledValues += keys.length;
-    const output = task.assign === undefined
-      ? undefined
-      : Object.create(null) as Record<string, unknown>;
-    tasks.push({
-      kind: 'finish-object',
-      input,
-      ...(output === undefined || task.assign === undefined ? {} : { output, assign: task.assign }),
-    });
+    // Members are written in order before the record is frozen; the null
+    // prototype keeps `__proto__` an ordinary own key.
+    const output = copiesValue ? createNullPrototypeSnapshotRecord() : undefined;
+    tasks.push({ kind: 'finish', input, path, depth: task.depth, target: task.target, key: task.key, output });
     for (let index = keys.length - 1; index >= 0; index -= 1) {
       const key = keys[index]!;
       const descriptor = descriptors[key];
@@ -310,23 +304,35 @@ function walkStrictPluginJsonValue(
       }
       if (omitUndefinedObjectMembers && descriptor.value === undefined) continue;
       tasks.push({
-        kind: 'visit',
-        input: descriptor.value,
-        path: `${path}.${key}`,
-        depth: task.depth + 1,
-        ...(output === undefined ? {} : { assign: (cloned: unknown) => {
-          Object.defineProperty(output, key, {
-            value: cloned,
-            enumerable: true,
-            writable: false,
-            configurable: false,
-          });
-        } }),
+        kind: 'visit', input: descriptor.value, path: `${path}.${key}`, depth: task.depth + 1,
+        target: output, key, output: undefined,
       });
     }
   }
 
   return root;
+}
+
+/**
+ * @internal For Protocol composers: a record the composer just built whose members are
+ * scalars or admitted snapshots becomes an admitted snapshot without walking it again.
+ * Returns undefined when any member lacks that proof, and the caller walks it as usual.
+ */
+export function sealComposedStrictJsonRecord(members: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> | undefined {
+  const snapshot = createNullPrototypeSnapshotRecord();
+  for (const key of Object.keys(members)) {
+    const value = members[key];
+    if (value === null || typeof value === 'boolean' || typeof value === 'string'
+      || (typeof value === 'number' && Number.isFinite(value))
+      || (typeof value === 'object' && normalizedStrictJsonObjects.has(value))) {
+      snapshot[key] = value;
+      continue;
+    }
+    return undefined;
+  }
+  Object.freeze(snapshot);
+  normalizedStrictJsonObjects.add(snapshot);
+  return snapshot;
 }
 
 export function cloneStrictPluginJsonValue(
@@ -484,4 +490,65 @@ export function isStrictPluginJsonValue(
   } catch {
     return false;
   }
+}
+
+type StrictJsonAdoptTask = Readonly<{ kind: 'visit' | 'finish'; input: unknown; path: string }>;
+
+/**
+ * @internal Admits a graph its caller has just produced and that no other owner
+ * retains (a schema parse output) as an immutable snapshot in place, instead of
+ * copying it. The strict rules are the cloning walk's: plain objects or ordinary
+ * dense arrays, enumerable data members, finite numbers, no cycles; undefined
+ * object members are omitted as at the JSON transport boundary. Every container
+ * is frozen and becomes an admitted snapshot, so later transport projections share
+ * it by identity. Already admitted subgraphs (and repeated references inside the
+ * graph) are kept. Objects keep their prototype: adopted values are read by
+ * consumers that already hold them, and nothing is constructed from keys here.
+ */
+export function adoptParsedNativeJsonValueForTransport<T>(value: T, path: string): T {
+  const tasks: StrictJsonAdoptTask[] = [{ kind: 'visit', input: value, path }];
+  const ancestors = new WeakSet<object>();
+  while (tasks.length > 0) {
+    const task = tasks.pop()!;
+    const input = task.input;
+    if (task.kind === 'finish') {
+      ancestors.delete(input as object);
+      Object.freeze(input);
+      normalizedStrictJsonObjects.add(input as object);
+      continue;
+    }
+    if (input === null || typeof input === 'boolean' || typeof input === 'string') continue;
+    if (typeof input === 'number') {
+      if (!Number.isFinite(input)) throw new Error(`${task.path} must contain finite JSON numbers`);
+      continue;
+    }
+    if (typeof input !== 'object') throw new Error(`${task.path} must contain strict JSON data`);
+    if (normalizedStrictJsonObjects.has(input)) continue;
+    if (ancestors.has(input)) throw new Error(`${task.path} must not contain cyclic data`);
+    ancestors.add(input);
+    tasks.push({ kind: 'finish', input, path: task.path });
+    if (Array.isArray(input)) {
+      const { descriptors, length } = strictJsonArrayDescriptors(input, task.path);
+      for (let index = length - 1; index >= 0; index -= 1) {
+        tasks.push({ kind: 'visit', input: descriptors[String(index)]!.value, path: `${task.path}[${index}]` });
+      }
+      continue;
+    }
+    const { descriptors, keys } = strictJsonObjectDescriptors(input, task.path);
+    const record = input as Record<string, unknown>;
+    for (let index = keys.length - 1; index >= 0; index -= 1) {
+      const key = keys[index]!;
+      const member = descriptors[key]!.value;
+      if (member === undefined) {
+        delete record[key];
+        continue;
+      }
+      // A host-deferred field the descriptor owner just read becomes plain data.
+      if (!('value' in (Object.getOwnPropertyDescriptor(record, key) ?? {}))) {
+        Object.defineProperty(record, key, { value: member, enumerable: true, writable: true, configurable: true });
+      }
+      tasks.push({ kind: 'visit', input: member, path: `${task.path}.${key}` });
+    }
+  }
+  return value;
 }

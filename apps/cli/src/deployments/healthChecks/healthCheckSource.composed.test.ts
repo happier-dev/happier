@@ -28,7 +28,7 @@ const definition: PluginCheckpointedEventSourceDefinitionV1 = {
 const result = (status: HealthCheckResultV1['status'], observedAt: number): HealthCheckResultV1 => ({ status, observedAt,
     evidence: { v: 1, items: [{ source: { kind: 'alert', label: 'http' }, author: { kind: 'process' }, text: '{"reason":"http_status"}' }] } });
 
-function fixture(healthSource: HealthCheckSourceConfigV1 = source, events = ['health-status']) {
+function fixture(healthSource: HealthCheckSourceConfigV1 = source, events = ['health-status'], triggerRevision = definition.triggerRevision) {
     let configuredSource = healthSource;
     let now = 1000;
     let status: HealthCheckResultV1['status'] = 'down';
@@ -55,7 +55,7 @@ function fixture(healthSource: HealthCheckSourceConfigV1 = source, events = ['he
     const read = vi.fn(async () => [{ checkId: 'http', result: result(status, now) }]);
     const execute = vi.fn(async (id: string, input: unknown) => {
         if (id === 'automation.event.sources.list') return { kind: 'page', revision: String(revision),
-            definitions: active ? events.map((localId, index) => ({ ...definition, triggerId: `health-trigger-${index}`,
+            definitions: active ? events.map((localId, index) => ({ ...definition, triggerId: `health-trigger-${index}`, triggerRevision,
                 eventRef: { ...definition.eventRef, localId }, sourceConfig: configuredSource,
                 observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: watcher } })) : [], nextCursor: null };
         if (id === 'automation.event.source.status.report') {
@@ -118,6 +118,33 @@ function fixture(healthSource: HealthCheckSourceConfigV1 = source, events = ['he
 }
 
 describe('saved health source registration and finite cycles', () => {
+    it('admits a revision-zero health trigger through failure Notice and recovery', async () => {
+        const artifacts = createPlainAccountArtifactHttpBoundary();
+        const environment = createDeploymentEnvironmentDetailV1();
+        const configured: HealthCheckSourceConfigV1 = { ...source,
+            subject: { kind: 'environment', environmentId: environment.environment.id },
+            checks: source.checks.map(check => ({ ...check, consecutiveFailuresBeforeAlerting: 1 })) };
+        const f = fixture(configured, ['health-check-failed', 'health-check-recovered'], 0);
+        const noticeDefinition = AutomationEventSourceDefinitionV1Schema.parse({ ...definition, triggerRevision: 0,
+            sourceConfig: configured, observationOnly: { kind: 'observationOnly' } });
+        const publish = createConfiguredHealthCheckNotices({ credentials: artifacts.credentials,
+            serverId: environment.environment.serverId, serverHttpBaseUrl: 'https://health-notices.test',
+            machineId: materialization.machineId, readService: async () => null, readEnvironment: async () => environment });
+        await f.cycle();
+        expect(f.errors).toEqual([]);
+        expect(f.admissions).toHaveLength(1);
+        await publish({ caller: materialization, definition: noticeDefinition, admitted: false,
+            signal: f.context.signal, observation: f.admissions[0]! });
+        expect([...artifacts.rows.values()].map(row => decodePlainArtifactStoredContent(String(row.header))))
+            .toEqual([expect.objectContaining({ healthPhase: 'open' })]);
+        f.tick('up'); await f.cycle();
+        expect(f.errors).toEqual([]);
+        expect(f.admissions).toHaveLength(2);
+        await publish({ caller: materialization, definition: noticeDefinition, admitted: false,
+            signal: f.context.signal, observation: f.admissions[1]! });
+        expect([...artifacts.rows.values()].map(row => decodePlainArtifactStoredContent(String(row.header))))
+            .toEqual([expect.objectContaining({ healthPhase: 'recovered' })]);
+    });
     it('adopts an alert-only Environment source without probes, occurrences or a next check deadline', async () => {
         const f = fixture({ v: 1, subject: { kind: 'environment', environmentId: 'production' }, checks: [],
             alerts: { channels: [{ channelId: 'slack' }], phases: ['open', 'recovered'] } });

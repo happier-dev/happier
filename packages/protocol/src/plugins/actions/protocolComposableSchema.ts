@@ -23,10 +23,12 @@ import {
   cloneStrictPluginJsonValue,
   measurePluginJsonUtf8Bytes,
   measureSerializedValidatedStrictPluginJsonUtf8Bytes,
+  sealComposedStrictJsonRecord,
 } from '../contributions/strictJsonValue.js';
 import type { JsonValue as StrictRuntimeJsonValue } from '../../json/strictJsonValue.js';
 import { forEachJsonSchemaChild, jsonSchemaContainsReference } from '../../actions/actionInputJsonSchema.js';
 import { getResolvedLazyDefinitionValue } from '../../lazyZodSchema.js';
+import { readPaddedBase64DecodedLength } from '../../crypto/base64.js';
 
 export {
   containsEquivalentPluginJsonValue,
@@ -192,6 +194,7 @@ export type ProtocolValidationIssue = Readonly<{
 }>;
 
 export class ProtocolValidationError extends Error {
+  readonly code = 'protocol_validation_failed';
   readonly issues: readonly ProtocolValidationIssue[];
 
   constructor(issues: readonly ProtocolValidationIssue[]) {
@@ -340,13 +343,11 @@ export type ProtocolStringOptions = Readonly<{
   minLength?: number;
   maxLength?: number;
   pattern?: string;
+  format?: 'byte';
 }>;
 
-export type ProtocolUtf8StringOptions = Readonly<{
+export type ProtocolUtf8StringOptions = ProtocolStringOptions & Readonly<{
   maxUtf8Bytes: number;
-  minLength?: number;
-  maxLength?: number;
-  pattern?: string;
 }>;
 
 export type ProtocolNumberOptions = Readonly<{
@@ -726,6 +727,7 @@ function protocolStringProjection(options: ProtocolStringOptions): PluginJsonSch
   if (options.minLength !== undefined) projection.minLength = options.minLength;
   if (options.maxLength !== undefined) projection.maxLength = options.maxLength;
   if (options.pattern !== undefined) projection.pattern = options.pattern;
+  if (options.format !== undefined) projection.format = options.format;
   return projection;
 }
 
@@ -739,7 +741,8 @@ function readProtocolStringConstraint(options: ProtocolStringOptions): (value: s
     }
   }
   return (value: string): boolean => {
-    const length = codePointLength(value);
+    if (options.format === 'byte' && readPaddedBase64DecodedLength(value) === null) return false;
+    const length = options.format === 'byte' ? value.length : codePointLength(value);
     return !((options.minLength !== undefined && length < options.minLength)
       || (options.maxLength !== undefined && length > options.maxLength)
       || (pattern !== undefined && !pattern.test(value)));
@@ -776,10 +779,12 @@ export function defineProtocolString(
   if (options.pattern !== undefined && typeof options.pattern !== 'string') {
     throw new TypeError('Protocol string pattern must be a string');
   }
+  if (options.format !== undefined && options.format !== 'byte') throw new TypeError('Unsupported protocol string format');
   const normalized = Object.freeze({
     ...(minLength === undefined ? {} : { minLength }),
     ...(maxLength === undefined ? {} : { maxLength }),
     ...(options.pattern === undefined ? {} : { pattern: options.pattern }),
+    ...(options.format === undefined ? {} : { format: options.format }),
   });
   const matches = readProtocolStringConstraint(normalized);
   return createProtocolComposableSchemaForPurpose<string, string>(
@@ -802,10 +807,12 @@ export function defineProtocolUtf8String(
   if (options.pattern !== undefined && typeof options.pattern !== 'string') {
     throw new TypeError('Protocol UTF-8 string pattern must be a string');
   }
+  if (options.format !== undefined && options.format !== 'byte') throw new TypeError('Unsupported protocol UTF-8 string format');
   const normalized = Object.freeze({
     ...(minLength === undefined ? {} : { minLength }),
     ...(maxLength === undefined ? {} : { maxLength }),
     ...(options.pattern === undefined ? {} : { pattern: options.pattern }),
+    ...(options.format === undefined ? {} : { format: options.format }),
   });
   const matches = readProtocolStringConstraint(normalized);
   const projection = protocolStringProjection(normalized);
@@ -1003,7 +1010,8 @@ export function defineProtocolObject<
         output[key] = value;
       }
     }
-    return { success: true, data: output as ProtocolObjectOutput<TShape, TOptions> };
+    // Members are already admitted snapshots or scalars; seal the record rather than re-walk it.
+    return { success: true, data: (sealComposedStrictJsonRecord(output) ?? output) as ProtocolObjectOutput<TShape, TOptions> };
   });
   const requiredRejections = required.flatMap(key => {
     const reject = unionMemberRejections.get(children[key]);
@@ -1301,12 +1309,15 @@ function readCanonicalComposableSchemaProjection(
         'minLength',
         'maxLength',
         'pattern',
+        'format',
         HAPPIER_MAX_UTF8_BYTES_KEYWORD,
       ])) return null;
+      if (value.format !== undefined && value.format !== 'byte') return null;
       const options = Object.freeze({
         ...(typeof value.minLength === 'number' ? { minLength: value.minLength } : {}),
         ...(typeof value.maxLength === 'number' ? { maxLength: value.maxLength } : {}),
         ...(typeof value.pattern === 'string' ? { pattern: value.pattern } : {}),
+        ...(value.format === 'byte' ? { format: value.format } : {}),
       });
       const maxUtf8Bytes = value[HAPPIER_MAX_UTF8_BYTES_KEYWORD];
       return maxUtf8Bytes === undefined
