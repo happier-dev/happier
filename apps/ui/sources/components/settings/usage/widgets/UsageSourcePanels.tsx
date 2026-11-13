@@ -7,6 +7,7 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { t } from '@/text';
 import { formatTokenCount } from '@/utils/format/usageNumbers';
+import { resolveUsageMeasuredTokens } from '@/sync/api/account/usageMeasuredTokens';
 import { UsageModelPricesLine } from './UsageModelPrices';
 import { useUsageRetryCommand } from './usageMountedControls';
 import { UsageBodyInsufficient, UsageBodyNoUsage, UsageCoverageLine, UsageShowAllRows, leadingUsageRows, readUsageCoverageGaps,
@@ -92,12 +93,14 @@ export function UsageUnpricedWidget(props: UsageBodyProps) {
   useWidgetFrameBodyCaption(usagePeriodPhrase(props.query));
   if (!props.slice.accounting) return <UsageBodyNoUsage slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />;
   const facts = props.slice.costFactTotals?.filter(fact => fact.kind === 'unpriced');
-  const total = facts?.reduce<number | null>((sum, fact) => addUsageMeasurements(sum, fact.tokens.total), facts.length === 0 ? 0 : null);
+  const measured = facts?.map(fact => resolveUsageMeasuredTokens(fact.tokens));
+  const total = measured?.reduce<number | null>((sum, tokens) => addUsageMeasurements(sum, tokens.total), measured.length === 0 ? 0 : null);
   return <View testID={`${props.testID}.facts`}>
     <HappierDataMetric theme={theme} testID={`${props.testID}.tokens`} size="stat" showLabel
       label={t('usage.board.sources.unpricedPurpose')} value={total ?? '—'} unit={t('usage.board.page.tokensUnit')}
       valueFormatter={formatTokenCount} caption={total === undefined ? t('usage.board.page.notMeasuredYet')
-        : [t('usage.board.page.unpricedCaption'), facts?.some(fact => !fact.complete) ? t('usage.board.page.factIncomplete') : null].filter(Boolean).join(' · ')} />
+        : [t('usage.board.page.unpricedCaption'), measured?.some(tokens => tokens.fromParts) ? t('usage.board.page.tokensFromParts') : null,
+          facts?.some(fact => !fact.complete) ? t('usage.board.page.factIncomplete') : null].filter(Boolean).join(' · ')} />
     <UsageModelPricesLine slice={props.slice} serverId={props.serverId} testID={`${props.testID}.prices`} />
     <UsageCoverageLine slice={props.slice} sources={['accounting']} onRetry={props.model.refresh} testID={`${props.testID}.coverage`} />
   </View>;

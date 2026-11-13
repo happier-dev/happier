@@ -46,11 +46,26 @@ function composed(
 }
 
 describe('private stat card model', () => {
+  it('shows measured token parts and their provenance without inventing a cache share', async () => {
+    const { buildUsageStatCardModel } = await import('./usageStatCardModel');
+    const { formatTokenCount } = await import('@/utils/format/usageNumbers');
+    const { t } = await import('@/text');
+    const parts = { input: 1710, output: 3, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
+    const model = buildUsageStatCardModel(composed(['tokens', 'cache', 'dollars'], {
+      tokens: parts, cache: { readTokens: 5, writeTokens: null },
+      dollars: { basis: 'auto', selected: null, facts: [{ kind: 'unpriced', amountUsd: null,
+        currency: 'USD', tokens: parts, eventCount: 1, asOfMs: periodEnd, complete: false }] },
+    }));
+    expect(model.headline).toMatchObject({ value: formatTokenCount(1713) });
+    expect(model.headline?.unit).toContain(t('usage.board.page.tokensFromParts'));
+    expect(model.stats.find(stat => stat.id === 'dollars')?.value).toContain(formatTokenCount(1713));
+    expect(model.stats.filter(stat => stat.id === 'cacheShare')).toEqual([]);
+  });
   it('shows unknown cache measurements without inventing their share or mix volume', async () => {
     const { buildUsageStatCardModel } = await import('./usageStatCardModel');
     const model = buildUsageStatCardModel(composed(['tokens', 'cache', 'agentMix'], {
       tokens: { ...tokens, total: 100 }, cache: { readTokens: null, writeTokens: null },
-      agentMix: [{ tokens: null, agentId: 'codex' }],
+      agentMix: [{ tokens: null, events: 1, agentId: 'codex' }],
     }));
     expect(model.stats.filter(stat => stat.id === 'cacheShare')).toEqual([]);
     expect(model.stats.filter(stat => stat.id === 'cacheReadTokens' || stat.id === 'cacheWriteTokens').map(stat => stat.value)).toEqual(['—', '—']);

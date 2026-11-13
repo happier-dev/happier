@@ -34,6 +34,20 @@ if (composed.kind !== 'composed') throw new Error('The canonical recap producer 
 const FORMATS = ['square', 'story', 'link-preview'] as const;
 
 describe('private stat card renderer', () => {
+    it('renders measured token parts from the canonical recap composer with their qualifier', async () => {
+        const parts = { input: 1710, output: 3, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
+        const value = UsageAnalyticsQueryResponseSchema.parse({ ...accounting, totals: { ...accounting.totals, tokens: parts } });
+        const result = composeUsageRecap({ input: UsageRecapPrivateComposeInputSchema.parse({ query, selectedFields: ['tokens'] }),
+            snapshot: resolveUsagePageAggregation({ queries: [query], accounting: [{ query, value, status: 'available' }] }).results[0]! });
+        if (result.kind !== 'composed') throw new Error('Expected admitted measured-parts recap');
+        const model = buildUsageStatCardModel(result);
+        const screen = await renderScreen(<UsageStatCard model={model} tone="dark" testID="measured-parts" />);
+        try {
+            const { formatTokenCount } = await import('@/utils/format/usageNumbers');
+            expect(screen.getTextContent()).toContain(formatTokenCount(1713));
+            expect(screen.findByTestId('measured-parts')!.props.accessibilityLabel).toContain(t('usage.board.page.tokensFromParts'));
+        } finally { standardCleanup(); }
+    });
     it('renders observed All days while retaining the admitted private artifact period', async () => {
         const endMs = Date.UTC(2026, 8, 4);
         const firstMs = Date.UTC(2026, 8, 1, 12);

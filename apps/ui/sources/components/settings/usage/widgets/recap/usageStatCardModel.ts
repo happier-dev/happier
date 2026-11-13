@@ -7,6 +7,7 @@ import { t } from '@/text';
 import { formatTokenCount, formatUsageCost } from '@/utils/format/usageNumbers';
 import { formatUsageCalendarPeriod } from '@/sync/domains/usage/usageCalendarPresentation';
 import { usageAgentTitle } from '@/sync/domains/usage/usageLabels';
+import { resolveUsageMeasuredTokens } from '@/sync/api/account/usageMeasuredTokens';
 
 export type UsageRecapComposed = Extract<
   UsageRecapComposeResult,
@@ -230,14 +231,15 @@ export function buildUsageStatCardModel(
       for (const fact of facts.dollars.facts.filter(
         (row) => row.kind === kind && !(money?.kind === kind && money.currency === row.currency),
       )) {
+        const tokens = resolveUsageMeasuredTokens(fact.tokens);
         moneyStats.push({
           id: 'dollars',
           tier: 'comparison',
-          label: `${moneyLabel(kind)} · ${fact.currency}`,
+          label: [moneyLabel(kind), fact.currency, fact.amountUsd === null && tokens.fromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · '),
           value:
             fact.amountUsd === null
               ? t('usage.board.recap.tokensValue', {
-                  value: formatTokenCount(fact.tokens.total),
+                  value: formatTokenCount(tokens.total),
                 })
               : formatUsageCost(fact.amountUsd, fact.currency),
         });
@@ -249,15 +251,16 @@ export function buildUsageStatCardModel(
     return rows ? [mixGroup(kind, rows, selected.has('names'))] : [];
   });
   const days = facts.rhythm?.calendarDays.map((day) => day.eventCount) ?? [];
+  const tokens = facts.tokens ? resolveUsageMeasuredTokens(facts.tokens) : null;
   return {
     style: result.style,
     format: result.format,
     manifest: result.selectedFields,
     unavailable: result.unavailableFields,
-    headline: facts.tokens
+    headline: tokens
       ? {
-          value: formatTokenCount(facts.tokens.total),
-          unit: t('usage.board.recap.tokensUnit'),
+          value: formatTokenCount(tokens.total),
+          unit: [t('usage.board.recap.tokensUnit'), tokens.fromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · '),
         }
       : null,
     mixGroups,

@@ -20,6 +20,7 @@ import {
 } from './usageBodyKit';
 import { UsageModelPricesLine } from './UsageModelPrices';
 import { usagePageCostCaption } from '../usageCostPresentation';
+import { resolveUsageMeasuredTokens } from '@/sync/api/account/usageMeasuredTokens';
 
 /** Each kind of money is its own fact; they are never summed into one figure. */
 const KIND_ORDER: readonly UsageAnalyticsCostFactKind[] = [
@@ -60,7 +61,7 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
   useWidgetFrameBodyCaption(usagePeriodPhrase(props.query));
   const facts = KIND_ORDER.flatMap((kind) => (props.slice.costFactTotals ?? []).filter((fact) => fact.kind === kind &&
       (fact.kind === 'unpriced'
-        ? fact.eventCount > 0 || fact.tokens.total !== null && fact.tokens.total > 0
+        ? fact.eventCount > 0 || (resolveUsageMeasuredTokens(fact.tokens).total ?? 0) > 0
         : fact.eventCount > 0 || fact.amountUsd !== null && fact.amountUsd > 0)
   ));
   // One qualifier, said once: when every fact is partial the band says so once, not under each figure (R9).
@@ -98,9 +99,10 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
       {lead}
       <View style={styles.grid}>
         {facts.map((fact) => {
-          const exactTokens = formatHappierDataValue(fact.tokens.total, getPreferredLanguage());
+          const tokens = resolveUsageMeasuredTokens(fact.tokens);
+          const exactTokens = formatHappierDataValue(tokens.total, getPreferredLanguage());
           const exactAmount = fact.amountUsd === null ? null : formatHappierDataValue(fact.amountUsd, getPreferredLanguage());
-          const hiddenPrecision = !formatTokenCount(fact.tokens.total).includes(exactTokens)
+          const hiddenPrecision = !formatTokenCount(tokens.total).includes(exactTokens)
             || exactAmount !== null && !formatUsageCost(fact.amountUsd!, fact.currency).includes(exactAmount);
           const figure = <HappierDataMetric
               testID={`${props.testID}.fact.${fact.kind}`}
@@ -108,7 +110,7 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
               size="stat"
               showLabel
               label={t(KIND_TITLE[fact.kind])}
-              value={fact.amountUsd ?? fact.tokens.total ?? '—'}
+              value={fact.amountUsd ?? tokens.total ?? '—'}
               {...(fact.amountUsd === null
                 ? { unit: t('usage.board.page.tokensUnit') }
                 : {})}
@@ -121,12 +123,13 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
                 fact.amountUsd === null
                   ? t('usage.board.page.factUnpricedOverlap')
                   // Money with no counted tokens (an Agent that reports cost only) has no token line, never "— tokens".
-                  : fact.tokens.total === null ? null
+                  : tokens.total === null ? null
                   : fact.kind === 'api_equivalent'
-                    ? t('usage.board.page.factApiTokens', { tokens: formatTokenCount(fact.tokens.total) })
+                    ? t('usage.board.page.factApiTokens', { tokens: formatTokenCount(tokens.total) })
                     : t('usage.board.page.factTokens', {
-                      tokens: formatTokenCount(fact.tokens.total),
+                      tokens: formatTokenCount(tokens.total),
                     }),
+                tokens.fromParts ? t('usage.board.page.tokensFromParts') : null,
                 fact.complete || partialOnce ? null : t('usage.board.page.factIncomplete'),
               ]
                 .filter(Boolean)
@@ -136,7 +139,7 @@ export function UsageCostFactsWidget(props: UsageBodyProps) {
             {hiddenPrecision ? <ChartDatum testID={`${props.testID}.fact.${fact.kind}.detail`}
               datum={{ label: t(KIND_TITLE[fact.kind]),
                 value: exactAmount === null ? `${exactTokens} ${t('usage.board.page.tokensUnit')}` : `${fact.currency} ${exactAmount}`,
-                subtitle: [t('usage.board.page.factTokens', { tokens: exactTokens }),
+                subtitle: [t('usage.board.page.factTokens', { tokens: exactTokens }), tokens.fromParts ? t('usage.board.page.tokensFromParts') : null,
                   fact.complete ? null : t('usage.board.page.factIncomplete')].filter(Boolean).join(' · ') }}>
               {figure}
             </ChartDatum> : figure}

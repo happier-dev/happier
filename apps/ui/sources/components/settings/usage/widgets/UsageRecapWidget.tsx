@@ -133,13 +133,13 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
       .map((highlight): UsageRecapHighlight => {
         const base = { id: highlight.id, testID: highlight.testID, label: highlight.label,
           value: formatIdentifierLabel(highlight.value), detail: highlight.subtitle };
-        const tokens = formatHappierDataValue(viewModel.overview.totalTokens, getPreferredLanguage());
+        const tokens = formatHappierDataValue(viewModel.hero.totalTokens, getPreferredLanguage());
         const amount = viewModel.pageCost?.amountUsd;
         if (highlight.id === 'usage') {
           const money = amount === null || amount === undefined ? null : formatHappierDataValue(amount, getPreferredLanguage());
           const value = filters.metric === 'cost' && money !== null ? `${viewModel.pageCost!.selection?.currency ?? viewModel.costPresentation.currency} ${money}`
             : `${tokens} ${t('usage.tokens')}`;
-          const subtitle = `${tokens} ${t('usage.tokens')}`;
+          const subtitle = [`${tokens} ${t('usage.tokens')}`, viewModel.hero.totalTokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · ');
           return (!`${highlight.value} ${highlight.subtitle}`.includes(tokens) || money !== null && !`${highlight.value} ${highlight.subtitle}`.includes(money))
             ? { ...base, datum: { label: highlight.label, value, subtitle } } : base;
         }

@@ -6,6 +6,8 @@ import { UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/u
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 
 import { buildUsageRecapCardModels } from './buildUsageRecapCardModels';
+import { buildRecapStorySlides } from './buildRecapStorySlides';
+import { formatTokenCount } from '@/utils/format/usageNumbers';
 import { t } from '@/text';
 import { usageAgentTitle, usageDimensionLabel } from '../usageLabels';
 
@@ -88,6 +90,23 @@ const response = UsageAnalyticsQueryResponseSchema.parse({
 });
 
 describe('buildUsageRecapCardModels', () => {
+    it('carries measured parts into recap cards, cost captions, redacted shares and story animation', () => {
+        const filters = { period: '7days', metric: 'tokens', focus: null, costMode: 'auto' } as const;
+        const viewModel = buildUsageAnalyticsViewModel({ ...response, totals: { ...response.totals,
+            tokens: { input: 1710, output: 3, reasoning: null, cacheRead: null, cacheWrite: null, total: null } } }, filters);
+        const qualifier = t('usage.board.page.tokensFromParts');
+        const card = buildUsageRecapCardModels({ viewModel, filters }).find(card => card.id === 'usage');
+        expect(card?.value).toBe(formatTokenCount(1713));
+        expect(card?.subtitle).toContain(qualifier);
+        const cost = buildUsageRecapCardModels({ viewModel, filters: { ...filters, metric: 'cost' } }).find(card => card.id === 'usage');
+        expect(cost?.subtitle).toContain(formatTokenCount(1713));
+        expect(cost?.subtitle).toContain(qualifier);
+        const share = buildUsageRecapCardModels({ viewModel, filters, shareFields: { names: false, dollars: false } }).find(card => card.id === 'usage');
+        expect(share?.value).toBe(formatTokenCount(1713));
+        expect(share?.subtitle).toContain(qualifier);
+        expect(buildRecapStorySlides({ viewModel, filters, cacheSavings: null }).find(slide => slide.id === 'usage'))
+            .toMatchObject({ value: formatTokenCount(1713), numericValue: 1713 });
+    });
     it('uses observed All calendar days and keeps an empty All recap empty', () => {
         const filters = { period: 'all', metric: 'tokens', focus: null, costMode: 'auto' } as const;
         const query = normalizeUsageQuery({ period: { relative: 'all' }, timeZoneOffsetMinutes: 0 });

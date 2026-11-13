@@ -2,7 +2,7 @@ import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import { resolveUsageCostForSelection } from '@happier-dev/protocol/usage/usageCostFacts';
 import { compareUsageMeasurementsDescending } from '@happier-dev/protocol/usage/usageAggregation';
-import { type UsageAnalyticsBreakdownDimension, type UsageAnalyticsBreakdownEntry } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { type UsageAnalyticsBreakdownDimension } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import {
   HappierPressable,
   UsageBreakdownsBody,
@@ -32,6 +32,7 @@ import { useAllMachines } from '@/sync/domains/state/storage';
 import { resolveMachineDisplayNames } from '@/utils/sessions/machineDisplayNames';
 import { usagePageCostRow } from '../usageCostPresentation';
 import { UsageCrewBody } from './UsageChartStyleBodies';
+import { resolveUsageMeasuredTokens } from '@/sync/api/account/usageMeasuredTokens';
 
 const DEFAULT_DIMENSIONS: readonly UsageAnalyticsBreakdownDimension[] = [
   'agent',
@@ -85,34 +86,36 @@ function UsageBreakdownsWidgetOriginal(props: UsageBodyProps) {
   const accounting = metric === 'cost' ? view?.pageCost.accounting : props.slice.accounting;
   const selection = view?.pageCost.selection ?? null;
   const currency = selection?.currency ?? 'USD';
-  const valueOf = React.useCallback(
-    (entry: UsageAnalyticsBreakdownEntry) =>
-      metric === 'cost'
-        ? resolveUsageCostForSelection(entry.cost, selection)
-        : entry.tokens.total,
-    [metric, selection],
-  );
   const total = accounting
     ? metric === 'cost'
       ? view?.pageCost.amountUsd ?? null
-      : accounting.totals.tokens.total
+      : resolveUsageMeasuredTokens(accounting.totals.tokens).total
     : null;
   // One ranked dimension is the card's own title (`readUsageBreakdownsInstanceTitle`); a heading would say it twice.
   const namedByCard = props.query.breakdown.length === 1;
   const blocks = dimensions.flatMap((dimension) => {
     const entries = accounting?.breakdowns?.[dimension];
     if (!entries?.length) return [];
-    const rows = [...entries]
-      .filter((entry) => dimension !== 'model' || valueOf(entry) !== null)
-      .sort((left, right) => compareUsageMeasurementsDescending(valueOf(left), valueOf(right)))
-      .map((entry) => ({
-        id: entry.key,
-        value: valueOf(entry),
-        label: usageDimensionLabel(dimension, entry.key, entry.label, machineNames),
-        annotation:
-          // Unknown tokens leave no "—" ahead of the basis (sweep 1110 N5); the basis still says why money is missing.
-          metric === 'cost' ? [entry.tokens.total === null ? null : formatTokenCount(entry.tokens.total), usagePageCostRow(entry.cost, selection)?.label].filter(Boolean).join(' · ') : undefined,
-      }));
+    const rows = entries.map(entry => {
+        const tokens = resolveUsageMeasuredTokens(entry.tokens);
+        return { entry, tokens, value: metric === 'cost' ? resolveUsageCostForSelection(entry.cost, selection) : tokens.total };
+      })
+      .filter(({ value }) => dimension !== 'model' || value !== null)
+      .sort((left, right) => compareUsageMeasurementsDescending(left.value, right.value))
+      .map(({ entry, tokens, value }) => {
+        return {
+          id: entry.key,
+          value,
+          label: usageDimensionLabel(dimension, entry.key, entry.label, machineNames),
+          annotation:
+            // Unknown tokens leave no "—" ahead of the basis (sweep 1110 N5); the basis still says why money is missing.
+            metric === 'cost'
+              ? [tokens.total === null ? null : formatTokenCount(tokens.total),
+                tokens.fromParts ? t('usage.board.page.tokensFromParts') : null,
+                usagePageCostRow(entry.cost, selection)?.label].filter(Boolean).join(' · ')
+              : tokens.fromParts ? t('usage.board.page.tokensFromParts') : undefined,
+        };
+      });
     if (rows.length === 0) return [];
     const ranked = accounting?.coverage?.ranked.find(
       (row) => row.dimension === dimension,

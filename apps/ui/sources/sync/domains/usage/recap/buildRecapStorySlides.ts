@@ -57,7 +57,7 @@ export function buildRecapStorySlides(input: Parameters<typeof buildUsageRecapCa
     if (usage) {
         slides.push(toSlide(usage, input.filters.metric === 'cost' && input.shareFields?.dollars !== false
             ? input.viewModel.overview.totalCost
-            : input.viewModel.overview.totalTokens));
+            : input.viewModel.hero.totalTokens));
     }
     const streak = byId.get('streak');
     if (streak) {

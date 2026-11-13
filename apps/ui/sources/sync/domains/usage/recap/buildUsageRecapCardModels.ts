@@ -69,7 +69,7 @@ function formatPeriodUsageValue(viewModel: UsageAnalyticsViewModel, filters: Usa
         return formatUsageRecapCost(viewModel);
     }
 
-    return formatTokenCount(viewModel.overview.totalTokens);
+    return formatTokenCount(viewModel.hero.totalTokens);
 }
 
 function formatUsageRecapCost(viewModel: UsageAnalyticsViewModel): string {
@@ -85,16 +85,17 @@ function formatUsageRecapCost(viewModel: UsageAnalyticsViewModel): string {
 }
 
 function buildPeriodUsageSubtitle(viewModel: UsageAnalyticsViewModel, filters: UsageFilterState): string {
+    const tokensQualifier = viewModel.hero.totalTokensFromParts ? t('usage.board.page.tokensFromParts') : null;
     if (filters.metric === 'cost') {
-        return `${formatTokenCount(viewModel.overview.totalTokens)} ${t('usage.tokens')}`;
+        return [`${formatTokenCount(viewModel.hero.totalTokens)} ${t('usage.tokens')}`, tokensQualifier].filter(Boolean).join(' · ');
     }
 
     // Under a token total, missing money says what is missing ("Cost not priced"), never a bare "Unavailable".
     if (viewModel.pageCost ? viewModel.pageCost.amountUsd === null : viewModel.costPresentation.source === 'none')
-        return t('usage.board.recap.costNotPriced');
+        return [t('usage.board.recap.costNotPriced'), tokensQualifier].filter(Boolean).join(' · ');
     const amount = formatUsageRecapCost(viewModel);
     const kind = viewModel.pageCost ? viewModel.pageCost.selection?.kind : viewModel.costPresentation.source;
-    return kind ? `${amount} · ${usageCostKindPhrase(kind)}` : amount;
+    return [kind ? `${amount} · ${usageCostKindPhrase(kind)}` : amount, tokensQualifier].filter(Boolean).join(' · ');
 }
 
 function buildRecentActivity(viewModel: UsageAnalyticsViewModel, timeZoneOffsetMinutes: number): UsageSummaryActivityPoint[] {
@@ -128,10 +129,10 @@ function buildSummaryViewModel(viewModel: UsageAnalyticsViewModel, timeZoneOffse
     return {
         activeDays: viewModel.insights.activeDays,
         currentStreakDays: viewModel.insights.currentStreakDays,
-        totalTokens: viewModel.overview.totalTokens,
+        totalTokens: viewModel.hero.totalTokens,
         totalCost: viewModel.overview.totalCost,
         currency: viewModel.costPresentation.currency || 'USD',
-        weekTokens: viewModel.overview.totalTokens,
+        weekTokens: viewModel.hero.totalTokens,
         weekCost: viewModel.overview.totalCost,
         topModel,
         topEngine,
@@ -221,7 +222,9 @@ export function buildUsageRecapCardModels(input: Readonly<{
             shareTestID: 'usage-recap-share-usage',
             label: selectedPeriod,
             value: formatPeriodUsageValue(viewModel, filters),
-            subtitle: input.shareFields?.dollars === false ? t('usage.tokens') : buildPeriodUsageSubtitle(viewModel, filters),
+            subtitle: input.shareFields?.dollars === false
+                ? [t('usage.tokens'), viewModel.hero.totalTokensFromParts ? t('usage.board.page.tokensFromParts') : null].filter(Boolean).join(' · ')
+                : buildPeriodUsageSubtitle(viewModel, filters),
             valueTone: 'numeric',
             accentTone: 'blue',
             visual: summary.activeDays === null ? null : {

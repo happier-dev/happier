@@ -4,7 +4,7 @@ import {
   type UsageWorkContribution,
   type UsageWorkEvidence,
 } from '@happier-dev/protocol/usage/usageOutcomeAllocation';
-import { projectUsageSessionValuePlots, summarizeUsageWork, summarizeUsageWorkSession } from './usageWorkPresentation';
+import { projectUsageSessionValuePlots, summarizeUsageWork, summarizeUsageWorkSession, usageWorkContributionAmount } from './usageWorkPresentation';
 
 const tokens = {
   input: 10,
@@ -73,6 +73,15 @@ function evidence(
 }
 
 describe('Work display grouping of the canonical allocation', () => {
+  it('uses measured parts in Work amounts and grouped totals', () => {
+    const measured = { ...contribution('parts', 'session', 'turn'),
+      tokens: { input: 1710, output: 3, reasoning: null, cacheRead: null, cacheWrite: null, total: null } };
+    const work = allocateUsageOutcomes({ contributions: [measured], evidence: [] });
+    const summary = summarizeUsageWork(work, { metric: 'tokens', costBasis: 'auto' });
+    expect(summary.total).toBe(1713);
+    expect(summary.sessions[0]?.amount).toBe(1713);
+    expect(usageWorkContributionAmount({ contribution: measured }, { metric: 'tokens', costBasis: 'auto' })).toBe(1713);
+  });
   it('visits allocations in proportion to contributions, without multiplying by Project count', () => {
     // Reload 145's Account has over 3,800 Sessions; each Project must not re-scan that inventory.
     const measure = (projectCount: number) => {

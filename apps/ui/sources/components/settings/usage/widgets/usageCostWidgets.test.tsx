@@ -77,6 +77,29 @@ function mountedCosts(unpriced: boolean | 'all' = false, tokenCount = 10) {
 }
 
 describe('one selected money basis across Usage bodies', () => {
+  it('renders measured parts across breakdowns, cost facts and unpriced usage', async () => {
+    const base = mountedCosts('all');
+    const query = normalizeUsageQuery({ ...base.query, metric: 'tokens', breakdown: ['model'] });
+    const parts = { input: 1710, output: 3, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
+    const source = base.slice.accounting!;
+    const accounting = repriceUsageAnalyticsResponse({ ...source,
+      totals: { ...source.totals, tokens: parts },
+      contributions: source.contributions!.slice(0, 1).map(row => ({ ...row, modelId: 'parts-model', tokens: parts })),
+      breakdowns: { model: [{ key: 'parts-model', eventCount: 1, tokens: parts, cost: source.contributions![0]!.cost }] },
+    });
+    const slice = resolveUsagePageAggregation({ queries: [query], accounting: [{ query, status: 'available', value: accounting }] }).results[0]!;
+    const screen = await renderScreen(<>
+      <UsageBreakdownsWidget {...base} query={query} slice={slice} id="usage_breakdowns" testID="parts-breakdown" />
+      <UsageCostFactsWidget {...base} query={query} slice={slice} id="usage_cost_facts" testID="parts-facts" />
+      <UsageUnpricedWidget {...base} query={query} slice={slice} id="usage_unpriced" testID="parts-unpriced" />
+    </>);
+    expect.soft(screen.findAllByType(RankedRows)[0]?.props.rows ?? []).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'parts-model', value: 1713 }),
+    ]));
+    const metrics = screen.findAllByType(HappierDataMetric);
+    expect.soft(metrics.find(row => row.props.testID === 'parts-facts.fact.unpriced')?.props.value).toBe(1713);
+    expect.soft(metrics.find(row => row.props.testID === 'parts-unpriced.tokens')?.props.value).toBe(1713);
+  });
   it('omits unmeasured model rows while retaining measured zero and known model amounts', async () => {
     const base = mountedCosts();
     const query = normalizeUsageQuery({ ...base.query, metric: 'tokens', breakdown: ['model'] });
@@ -89,7 +112,7 @@ describe('one selected money basis across Usage bodies', () => {
     ];
     const slice = { ...base.slice, accounting: { ...base.slice.accounting!, breakdowns: { model: entries } } };
     const screen = await renderScreen(<UsageBreakdownsWidget {...base} query={query} slice={slice}
-      model={{ ...base.model, slice }} id="usage_breakdowns" testID="model-measurements" />);
+      id="usage_breakdowns" testID="model-measurements" />);
     const rows = screen.findByType(RankedRows).props.rows;
     expect(rows.map((row: { id: string; value: number | null }) => ({ id: row.id, value: row.value }))).toEqual([
       { id: 'measured-model', value: 10 }, { id: 'measured-zero', value: 0 },
@@ -98,7 +121,7 @@ describe('one selected money basis across Usage bodies', () => {
       { ...entries[0]!, tokens: { ...tokens, input: 0, total: 0 } }, entries[2]!,
     ] } } };
     await screen.update(<UsageBreakdownsWidget {...base} query={query} slice={measuredUnknown}
-      model={{ ...base.model, slice: measuredUnknown }} id="usage_breakdowns" testID="model-measurements" />);
+      id="usage_breakdowns" testID="model-measurements" />);
     expect(screen.findByType(RankedRows).props.rows).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: 'unknown', value: 0 }), expect.objectContaining({ id: 'measured-model', value: 10 }),
     ]));
@@ -110,10 +133,10 @@ describe('one selected money basis across Usage bodies', () => {
     const accounting = base.slice.accounting!;
     const unmeasured = { input: null, output: null, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
     const slice = { ...base.slice, accounting: { ...accounting, breakdowns: { agent: [
-      ...accounting.breakdowns.agent!, { key: 'codex', eventCount: 1, tokens: unmeasured, cost: accounting.totals.cost },
+      ...accounting.breakdowns!.agent!, { key: 'codex', eventCount: 1, tokens: unmeasured, cost: accounting.totals.cost },
     ] } } };
     const screen = await renderScreen(<UsageBreakdownsWidget {...base} query={query} slice={slice}
-      model={{ ...base.model, slice }} id="usage_breakdowns" testID="unmeasured-agents" />);
+      id="usage_breakdowns" testID="unmeasured-agents" />);
     expect(screen.getTextContent()).not.toContain(t('usage.board.plans.cellUnknown'));
     expect(screen.getTextContent()).toContain('—');
   });
@@ -124,17 +147,17 @@ describe('one selected money basis across Usage bodies', () => {
     const accounting = base.slice.accounting!;
     const slice = { ...base.slice, accounting: { ...accounting, totals: { ...accounting.totals, eventCount: 0 }, breakdowns: { model: [] } } };
     const screen = await renderScreen(<UsageBreakdownsWidget {...base} query={query} slice={slice}
-      model={{ ...base.model, slice }} id="usage_breakdowns" testID="first-models" />);
+      id="usage_breakdowns" testID="first-models" />);
     expect(screen.getTextContent()).not.toContain(t('usage.board.page.breakdownEmptyReason'));
     expect(screen.findHostByTestId('first-models.empty')).not.toBeNull();
     // The daily bars say the same once, instead of a plot of unrecorded days on a 0-to-0 axis.
     const daily = await renderScreen(<UsageDailyWidget {...base} query={query} slice={slice}
-      model={{ ...base.model, slice }} id="usage_daily" testID="first-daily" />);
+      id="usage_daily" testID="first-daily" />);
     expect(daily.findHostByTestId('first-daily.drawn')).toBeNull();
     expect(daily.findHostByTestId('first-daily.empty')).not.toBeNull();
     // And the flow says no usage, not that it needs more history.
     const flow = await renderScreen(<UsageFlowWidget {...base} query={query} slice={slice}
-      model={{ ...base.model, slice }} id="usage_flow" testID="first-flow" />);
+      id="usage_flow" testID="first-flow" />);
     expect(flow.getTextContent()).toContain(t('usage.board.page.noUsageTitle'));
     expect(flow.getTextContent()).not.toContain(t('usage.board.page.flowEmptyTitle'));
   });
@@ -152,7 +175,8 @@ describe('one selected money basis across Usage bodies', () => {
     const query = normalizeUsageQuery({ ...base.query, metric: 'tokens' });
     const slice = { ...base.slice, accounting: { ...base.slice.accounting!,
       totals: { ...base.slice.accounting!.totals, tokens: unknownTokens } }, costFactTotals: [
-        { kind: 'unpriced' as const, eventCount: 1, currency: 'USD', amountUsd: null, tokens: unknownTokens, complete: false },
+        { kind: 'unpriced' as const, eventCount: 1, currency: 'USD', amountUsd: null, tokens: unknownTokens, complete: false,
+          sources: ['runtime'], asOfMs: 1 },
       ] };
     const props = { ...base, query, slice, model: { ...base.model, slice } };
     const screen = await renderScreen(<>
@@ -178,7 +202,7 @@ describe('one selected money basis across Usage bodies', () => {
     const query = normalizeUsageQuery({ ...base.query, metric: 'tokens' });
     const slice = { ...base.slice, accounting: { ...base.slice.accounting!,
       totals: { ...base.slice.accounting!.totals, tokens: partTokens } } };
-    const screen = await renderScreen(<UsagePeriodSummaryWidget {...base} query={query} slice={slice} model={{ ...base.model, slice }}
+    const screen = await renderScreen(<UsagePeriodSummaryWidget {...base} query={query} slice={slice}
       id="usage_period_summary" testID="parts-summary" />);
     const hero = screen.findAllByType(HappierDataMetric).find(node => node.props.testID === 'parts-summary.hero')!;
     expect(hero.props.value).toBe(6916);
@@ -358,8 +382,8 @@ describe('one selected money basis across Usage bodies', () => {
     expect(reads).toBe(0);
     expect(metrics().map(metric => metric.props.comparison?.value)).toEqual(['▲ 0%', '▲ 0%']);
     const changedPrevious = repriceUsageAnalyticsResponse({ ...previous,
-      totals: { ...previous.totals, cost: { ...previous.totals.cost, reportedUsd: previous.totals.cost.reportedUsd * 2 } },
-      contributions: previous.contributions.map(row => ({ ...row, cost: { ...row.cost, reportedUsd: row.cost.reportedUsd * 2 } })),
+      totals: { ...previous.totals, cost: { ...previous.totals.cost, reportedUsd: (previous.totals.cost.reportedUsd ?? 0) * 2 } },
+      contributions: previous.contributions.map(row => ({ ...row, cost: { ...row.cost, reportedUsd: (row.cost.reportedUsd ?? 0) * 2 } })),
     });
     const changed = resolveUsagePageAggregation({ queries: [query], accounting: [
       { query, status: 'available', value: props.slice.accounting! },
@@ -382,7 +406,7 @@ describe('one selected money basis across Usage bodies', () => {
 
   it('renders unpriced tokens from the canonical cost facts, never as money or a fabricated model estimate', async () => {
     const props = mountedCosts(true);
-    const expected = props.slice.costFactTotals!.filter(fact => fact.kind === 'unpriced').reduce((sum, fact) => sum + fact.tokens.total, 0);
+    const expected = props.slice.costFactTotals!.filter(fact => fact.kind === 'unpriced').reduce((sum, fact) => sum + (fact.tokens.total ?? 0), 0);
     expect(expected).toBeGreaterThan(0);
     const screen = await renderScreen(<UsageUnpricedWidget {...props} id="usage_unpriced" testID="unpriced" />);
     const metric = screen.findAllByType(HappierDataMetric).find(row => row.props.testID === 'unpriced.tokens');
@@ -424,8 +448,9 @@ describe('one selected money basis across Usage bodies', () => {
   });
   it('lists source coverage as a short led list: identical captures across machines say so once with a count, distinct ones fold behind Show all', async () => {
     const props = mountedCosts();
-    const source = { path: 'native' as const, status: 'unknown' as const, eventCount: 0, captureKind: 'measured' as const, asOfMs: 100 };
-    const coverageOf = (sources: readonly (typeof source & { source: string })[]) => resolveUsagePageAggregation({ queries: [props.query],
+    type CoverageSource = NonNullable<NonNullable<typeof props.slice.accounting>['coverage']>['sources'][number];
+    const source: Omit<CoverageSource, 'source'> = { path: 'native', status: 'unknown', eventCount: 0, captureKind: 'measured', asOfMs: 100 };
+    const coverageOf = (sources: readonly CoverageSource[]) => resolveUsagePageAggregation({ queries: [props.query],
       accounting: [{ query: props.query, status: 'available', value: { ...props.slice.accounting!, coverage: { status: 'partial' as const,
         reasons: [], missingDimensions: [], range: { startMs: 0, endMs: day, complete: false }, ranked: [], sources: [...sources] } } }] }).results[0]!;
     const twins = await renderScreen(<UsageSourceCoverageWidget {...props} id="usage_source_coverage" testID="coverage"
@@ -658,15 +683,15 @@ describe('one selected money basis across Usage bodies', () => {
     });
     const rows = accounting.contributions!;
     const claudeCost = rows.filter(row => row.agentId === 'claude')
-      .reduce((sum, row) => sum + (row.cost.apiEquivalentUsd ?? row.cost.estimatedUsd), 0);
-    const reportedCost = captured.totals.cost.reportedUsd;
+      .reduce((sum, row) => sum + (row.cost.apiEquivalentUsd ?? row.cost.estimatedUsd ?? 0), 0);
+    const reportedCost = captured.totals.cost.reportedUsd ?? 0;
     const total = claudeCost + reportedCost;
     const page = projectUsagePageCost(accounting, 'auto');
     expect(page.amountUsd).toBeCloseTo(total);
     expect(page.selection).toMatchObject({ kind: 'mixed', currency: 'USD' });
     expect(usagePageCostTrend(page).reduce((sum, point) => sum + (point.cost ?? 0), 0)).toBeCloseTo(total);
     const expectedRowCost = (agentId: string) => rows.filter(row => (row.agentId ?? 'unknown') === agentId)
-      .reduce((sum, row) => sum + (row.cost.reportedUsd || row.cost.apiEquivalentUsd || row.cost.estimatedUsd), 0);
+      .reduce((sum, row) => sum + (row.cost.reportedUsd || row.cost.apiEquivalentUsd || row.cost.estimatedUsd || 0), 0);
     for (const entries of [page.accounting.breakdowns!.agent!, page.accounting.leaders!.agents!]) {
       for (const row of entries) expect(resolveUsageCostForSelection(row.cost!, page.selection)).toBeCloseTo(expectedRowCost(row.key));
     }
@@ -693,7 +718,7 @@ describe('one selected money basis across Usage bodies', () => {
     expect(screen.findByType(RankedRows).props.rows.find((row: { id: string }) => row.id === 'claude').annotation)
       .toContain(t('usage.board.page.kindMixed'));
     expect(screen.findAllByType(HappierDataMetric).find(metric => metric.props.testID === 'qa-cost-efficiency.perMtok')?.props.value)
-      .toBeCloseTo(total / captured.totals.tokens.total * 1e6);
+      .toBeCloseTo(total / captured.totals.tokens.total! * 1e6);
   });
   it('groups the real QA Haiku aliases once, conserves their tokens, and keeps Haiku 5.5 distinct', async () => {
     const query = normalizeUsageQuery({ breakdown: ['model'], metric: 'tokens' });
@@ -813,7 +838,7 @@ describe('one selected money basis across Usage bodies', () => {
       const slice = resolveUsagePageAggregation({ queries: [query],
         accounting: [{ query, status: 'available', value: repriceUsageAnalyticsResponse(empty) }] }).results[0]!;
       const screen = await renderScreen(<UsagePeriodSummaryWidget {...base} query={query} slice={slice}
-        model={{ ...base.model, slice }} id="usage_period_summary" testID="empty" />);
+        id="usage_period_summary" testID="empty" />);
       const figure = screen.findAllByType(HappierDataMetric)
         .find(node => metric === 'cost' ? node.props.testID === 'empty.hero' : node.props.label === t('usage.cost'));
       expect([metric, figure?.props.value, figure?.props.caption]).toEqual([metric, 0, undefined]);

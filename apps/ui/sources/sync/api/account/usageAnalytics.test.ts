@@ -95,10 +95,13 @@ describe('buildUsageAnalyticsViewModel', () => {
         const response: UsageAnalyticsQueryResponse = UsageAnalyticsQueryResponseSchema.parse({ v: 1,
             totals: { eventCount: 2, tokens: parts, cost },
             series: [{ bucketStartMs: 0, bucketEndMs: 86_400_000, eventCount: 2, tokens: parts, cost }],
+            breakdowns: { model: [{ key: 'parts-model', eventCount: 2, tokens: parts, cost }] },
             engineTimeline: [{ bucketStartMs: 0, bucketEndMs: 86_400_000, leaders: [{ key: 'opencode', eventCount: 2, tokens: parts, cost }] }],
         });
         const view = buildUsageAnalyticsViewModel(response, baseState);
         expect(view.hero).toMatchObject({ totalTokens: 6916, totalTokensFromParts: true });
+        expect(view.breakdowns.models[0]?.totalTokens).toBe(6916);
+        expect(view.breakdowns.buckets.find(row => row.key === 'total')?.totalTokens).toBe(6916);
         expect(view.trend.map(point => point.tokens)).toEqual([6916]);
         expect(view.agentMix.keys.map(key => key.totalTokens)).toEqual([6916]);
         expect(view.agentMix.buckets.map(bucket => bucket.tokens)).toEqual([[6916]]);

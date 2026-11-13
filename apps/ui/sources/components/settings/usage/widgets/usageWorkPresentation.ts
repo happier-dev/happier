@@ -3,6 +3,7 @@ import { resolveUsageCostBasis } from '@happier-dev/protocol/usage/usageCostFact
 import type { RepositoryCheckpointCommitEvidence } from '@happier-dev/protocol/sessions/changes/types';
 import type { UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { ScmPullRequestSummary } from '@happier-dev/protocol/scm';
+import { resolveUsageMeasuredTokens } from '@/sync/api/account/usageMeasuredTokens';
 import type {
   UsageWorkAllocation,
   UsageWorkProjection,
@@ -32,7 +33,7 @@ export function usageWorkContributionAmount(
   const contribution = allocation.contribution;
   return basis.metric === 'cost'
     ? resolveUsageCostBasis(contribution.cost, basis.costBasis)?.amountUsd ?? null
-    : contribution.tokens.total;
+    : resolveUsageMeasuredTokens(contribution.tokens).total;
 }
 
 export type UsageWorkProvider = Readonly<{ providerId: string; machineId: string | null }>;
@@ -186,7 +187,7 @@ function finishAmounts(amounts: Iterable<AmountAccumulator>, basis: UsageWorkAmo
   for (const target of amounts) {
     if (!target.contributions?.length) continue;
     if (basis.metric !== 'cost') {
-      target.amount = target.contributions.reduce<number | null>((sum, contribution) => addUsageMeasurements(sum, contribution.tokens.total), null);
+      target.amount = target.contributions.reduce<number | null>((sum, contribution) => addUsageMeasurements(sum, resolveUsageMeasuredTokens(contribution.tokens).total), null);
       continue;
     }
     const cost = aggregateUsageContributionCosts(target.contributions, basis.costBasis);
