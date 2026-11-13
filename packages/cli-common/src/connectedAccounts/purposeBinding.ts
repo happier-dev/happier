@@ -5,7 +5,7 @@ import { readInputOptionValue } from '@happier-dev/protocol/inputs/inputFields';
 import { readInputPath } from '@happier-dev/protocol/inputs/inputPredicates';
 import { isQualifiedConnectedAccountProfileUsableV4, resolveQualifiedConnectedAccountGroupActiveAccountV4 } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
-import { QualifiedConnectedAccountPurposeBindingsV1Schema, qualifiedPurposeKey, type QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
+import { ConnectedAccountActionFormTeamSelectionV1Schema, type ConnectedAccountActionFormSelectionV1, QualifiedConnectedAccountPurposeBindingsV1Schema, qualifiedPurposeKey, type QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { QualifiedConnectedAccountPurposeV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposeIdentity';
 import type { ConnectedAccountMaterializationRequest, QualifiedConnectedAccountPurposeV1 } from '@happier-dev/protocol/connect/connected-account-purposes';
 import type { ConnectedAccountInvocationPurposeBinding, PluginActionConnectedAccountPurposeBindingV2 } from '@happier-dev/protocol';
@@ -95,7 +95,7 @@ export function captureConnectedAccountInvocationPurposeBinding(
   }
   const purposeBindings = QualifiedConnectedAccountPurposeBindingsV1Schema.parse(input.purposeBindings);
   const bindingKeys = new Set<string>();
-  for (const binding of purposeBindings.bindings) {
+  for (const binding of [...purposeBindings.bindings, ...(purposeBindings.teamResourceSelections ?? [])]) {
     const key = qualifiedPurposeKey(binding.purpose);
     if (!purposeKeys.has(key) || bindingKeys.has(key)) {
       throw new Error('managed_provider_operation_authority_binding_invalid');
@@ -104,6 +104,7 @@ export function captureConnectedAccountInvocationPurposeBinding(
   }
   Object.freeze(purposeBindings.bindings);
   return Object.freeze({ identity, operationId, purposes, purposeBindings: Object.freeze(purposeBindings), isCurrent,
+    ...(input.actionOperation ? { actionOperation: Object.freeze({ ...input.actionOperation }) } : {}),
     ...(managedOperation === undefined ? {} : { managedOperation }),
   });
 }
@@ -118,7 +119,8 @@ export function readDeclaredConnectedAccountActionSelection(
   mapping: PluginActionConnectedAccountPurposeBindingV2,
   serviceRefs: readonly QualifiedConnectedAccountRef['service'][],
 ): Readonly<{ kind: 'invalid' }> | Readonly<{ kind: 'inherit' }> | Readonly<{ kind: 'native' }>
-  | Readonly<{ kind: 'account'; account: QualifiedConnectedAccountRef }> {
+  | Readonly<{ kind: 'account'; account: QualifiedConnectedAccountRef }>
+  | Readonly<{ kind: 'team_resource'; teamId: string; selection: Extract<ConnectedAccountActionFormSelectionV1, { teamId: string }>['selection'] }> {
   const accounts = [mapping.path, ...(mapping.alternativePaths ?? [])].map(path => readInputPath(value, path))
     .filter(account => account !== undefined && account !== null);
   if (accounts.length > 1) return { kind: 'invalid' };
@@ -133,7 +135,10 @@ export function readDeclaredConnectedAccountActionSelection(
     }
   }
   if (!hasAccount) return { kind: mapping.alternativePaths?.length ? 'invalid' : 'inherit' };
-  const account = QualifiedConnectedAccountRefSchema.safeParse(readInputOptionValue(accounts[0]));
+  const selected = readInputOptionValue(accounts[0]);
+  const team = ConnectedAccountActionFormTeamSelectionV1Schema.safeParse(selected);
+  if (team.success) return { kind: 'team_resource', ...team.data };
+  const account = QualifiedConnectedAccountRefSchema.safeParse(selected);
   return account.success ? { kind: 'account', account: account.data } : { kind: 'invalid' };
 }
 
@@ -222,7 +227,7 @@ export function createConnectedAccountPurposePort<TMaterial>(source: ConnectedAc
       });
     },
     async listActionFormConnectedAccountOptions(input: Readonly<{ serviceRefs: readonly QualifiedConnectedAccountRef['service'][];
-      signal: AbortSignal }>): Promise<readonly Readonly<{ value: QualifiedConnectedAccountRef; label: string }>[]> {
+      signal: AbortSignal }>): Promise<readonly Readonly<{ value: ConnectedAccountActionFormSelectionV1; label: string }>[]> {
       return listConnectedAccountActionFormOptions(source, input);
     },
   });

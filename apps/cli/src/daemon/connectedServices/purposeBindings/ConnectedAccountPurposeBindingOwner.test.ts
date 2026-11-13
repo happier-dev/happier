@@ -151,7 +151,9 @@ const authorized = {
 describe('ConnectedAccountPurposeBindingOwner', () => {
   it('reads the recorded group and profile revisions without selecting or materializing credentials', async () => {
     const profiles = accountProfiles(['alpha', 'beta']);
-    profiles[1] = { ...profiles[1], credentialRevision: 'csr_1123456789ABCDEFGHJKMNPQRS',
+    const beta = profiles[1];
+    if (beta?.revisionSemantics !== 'revisioned') throw new Error('Fixture profiles are revisioned');
+    profiles[1] = { ...beta, credentialRevision: 'csr_1123456789ABCDEFGHJKMNPQRS',
       configurationRevision: 'configuration-beta' };
     const group: QualifiedConnectedAccountGroupV4 = { v: 1, ref: { service, groupId: 'observed' },
       incarnation: 'group-row', displayName: 'Observed', policy: DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V2,
@@ -252,12 +254,13 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
           signal, publish: () => { published = true; } });
       await writing;
       let completedReads = 0;
+      const counted = async <T>(read: Promise<T>): Promise<T> => { const result = await read; completedReads++; return result; };
       const reads = Promise.all([
-        owner.getBinding(retained),
-        owner.materialize({ ...retained, nativeService: service, request: { kind: 'environment', keys: ['TOKEN'] } }),
-        owner.resolveCurrentSessionPurposeBindingSnapshot({ authorizedPurposes: [authorized], signal }),
-        owner.resolveCurrentRequestAuthBinding({ subjectId: lease.subjectId, binding, signal }),
-      ].map(async read => { const result = await read; completedReads++; return result; }));
+        counted(owner.getBinding(retained)),
+        counted(owner.materialize({ ...retained, nativeService: service, request: { kind: 'environment', keys: ['TOKEN'] } })),
+        counted(owner.resolveCurrentSessionPurposeBindingSnapshot({ authorizedPurposes: [authorized], signal })),
+        counted(owner.resolveCurrentRequestAuthBinding({ subjectId: lease.subjectId, binding, signal })),
+      ]);
       try {
         await new Promise<void>(resolve => setImmediate(resolve));
         // Four reads, zero mutation-tail releases: no read may depend on the writer's I/O.
@@ -377,6 +380,30 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
     });
     expect(store.current()).toEqual(durable);
     expect(materializeAccount).not.toHaveBeenCalled();
+  });
+
+  it('refuses a snapshot when a retained direct Team choice leaves the declared service scope', async () => {
+    const { owner, store } = createOwner({ resolveTarget: accountTargetResolver(['personal']) });
+    const selection = { source: 'team_resource' as const, resourceId: 'company-credential', deliveryMode: 'direct' as const,
+      disclosedMember: { service, accountId: 'shared-account' } };
+    const durable: QualifiedConnectedAccountPurposeBindingsV1 = { v: 1, bindings: [], teamResourceSelections: [{
+      purpose, teamId: 'compute-team', selection,
+    }] };
+    await store.update(() => durable);
+    const signal = new AbortController().signal;
+    await expect(owner.resolveCurrentSessionPurposeBindingSnapshot({
+      authorizedPurposes: [{ purpose, serviceRefs: [otherService] }], signal,
+    })).rejects.toMatchObject({ code: 'plugin_connected_account_team_resource_unavailable',
+      details: { reason: 'scope_unauthorized' } });
+    expect(store.current()).toEqual(durable);
+    await expect(owner.resolveCurrentSessionPurposeBindingSnapshot({
+      authorizedPurposes: [{ purpose, serviceRefs: [service] }], signal,
+    })).resolves.toMatchObject({
+      bindings: [{ purpose, target: { kind: 'account', account: selection.disclosedMember } }],
+      directMaterialOrigins: [{ purpose, teamId: 'compute-team', resourceId: selection.resourceId,
+        disclosedMember: selection.disclosedMember }],
+      teamResourceSelections: [{ purpose, teamId: 'compute-team', selection }],
+    });
   });
 
   it.each(['subject_absent', 'subject_retired', 'purpose_unauthorized', 'scope_unauthorized', 'target_unavailable', 'unselected'] as const)(
@@ -536,7 +563,7 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
       materializeNative,
       materializeAccount: async ({ account }) => ({ kind: 'httpHeaders', headers: { authorization: `Bearer ${account.accountId}` } }),
     });
-    const input = { ...authorized, nativeService: service, request: { kind: 'httpHeaders' as const, origins: ['https://api.example.test'], headerNames: ['authorization'] }, signal: new AbortController().signal };
+    const input = { ...authorized, nativeService: service, request: { kind: 'httpHeaders' as const, origin: 'https://api.example.test', headerNames: ['authorization'] }, signal: new AbortController().signal };
     await expect(owner.materialize(input)).resolves.toEqual({ kind: 'httpHeaders', headers: { authorization: 'Bearer native-secret' } });
     expect(store.current()).toEqual({ v: 1, bindings: [] });
     await owner.requestSelection({ ...authorized, reason: 'explicit', signal: input.signal });
@@ -559,7 +586,7 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
       },
     });
     const input = { ...authorized, nativeService: service,
-      request: { kind: 'httpHeaders' as const, origins: ['https://api.example.test'], headerNames: ['authorization'] },
+      request: { kind: 'httpHeaders' as const, origin: 'https://api.example.test', headerNames: ['authorization'] },
       signal: new AbortController().signal };
     const listener = vi.fn();
     const subscription = owner.watch({ ...authorized, listener });
@@ -972,13 +999,13 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
       resolved: resolved!,
       materialization: {
         kind: 'httpHeaders',
-        origins: ['https://api.example.test'],
+        origin: 'https://api.example.test',
         headerNames: ['authorization', 'x-account'],
       },
       signal,
     })).resolves.toEqual({
-      accessToken: `external-account-${revision}`,
-      requiredHeaders: { 'x-account': 'external-account' },
+      headers: { authorization: `Bearer external-account-${revision}`, 'x-account': 'external-account' },
+      facts: {},
     });
     expect(materializeAccount).toHaveBeenCalledWith(expect.objectContaining({
       account: externalBinding.target.account,
@@ -989,14 +1016,14 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
     lease.dispose();
   });
 
-  it.each(['current', 'revision_changed', 'invalid_bearer'] as const)('records request-auth use only after final admission and bearer parsing: %s', async outcome => {
+  it.each(['current', 'revision_changed', 'invalid_headers'] as const)('records request-auth use only after final admission and header validation: %s', async outcome => {
     const revision = 'csr_0123456789ABCDEFGHJKMNPQRS';
     let reads = 0;
     const { owner } = createOwner({
       resolveCredentialRevision: async () => outcome === 'revision_changed' && ++reads >= 3 ? 'csr_abcdefghijklmnopqrstuv' : revision,
       materializeAccount: async ({ credentialRevisionBasis }) => {
         credentialRevisionBasis?.captureCredentialRevision(revision);
-        return { kind: 'httpHeaders', headers: { authorization: outcome === 'invalid_bearer' ? 'invalid' : 'Bearer private-token' } };
+        return { kind: 'httpHeaders', headers: { authorization: outcome === 'invalid_headers' ? 'Bearer private-token\r\nInjected: invalid' : 'Bearer private-token' } };
       },
     });
     const recordOperationCredentialUse = vi.fn();
@@ -1009,9 +1036,9 @@ describe('ConnectedAccountPurposeBindingOwner', () => {
     const resolved = await owner.resolveCurrentRequestAuthBinding({ subjectId: lease.subjectId, binding, signal });
     expect(resolved).not.toBeNull();
     const pending = owner.materializeRequestAuthBearer({ subjectId: lease.subjectId, binding, resolved: resolved!,
-      materialization: { kind: 'httpHeaders', origins: ['https://api.example.test'], headerNames: ['authorization'] }, signal });
+      materialization: { kind: 'httpHeaders', origin: 'https://api.example.test', headerNames: ['authorization'] }, signal });
     if (outcome === 'current') {
-      await expect(pending).resolves.toMatchObject({ accessToken: 'private-token' });
+      await expect(pending).resolves.toEqual({ headers: { authorization: 'Bearer private-token' }, facts: {} });
       expect(recordOperationCredentialUse.mock.calls).toEqual([[{
         v: 1, kind: 'connected_account', label: 'Account selected', owner: null, service,
         why: { kind: 'purpose_binding', purpose, target: 'account' }, currentness: { kind: 'current_at_materialization' },

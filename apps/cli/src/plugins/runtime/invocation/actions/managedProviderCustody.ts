@@ -1,3 +1,4 @@
+import type { ActionPurposeBindingAdmission } from '@/daemon/connectedServices/purposeBindings/teamDirectMaterialAdmission';
 import type { ManagedNativeCredentialInvocationBinding } from '@/plugins/runtime/invocation/services/types';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { MACHINE_PROVISIONER_EFFECT_ROLES_V1, readMachineProvisionerActionRolesV1, type MachineProvisionerRoleV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -5,14 +6,14 @@ import { readAccessProviderActionRolesV1 } from '@happier-dev/protocol/plugins/c
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import { readHostReviewedChildOperationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import type { PluginProcessOutput } from '@happier-dev/plugin-sdk/exec';
+import type { PluginProcessHandle, PluginProcessOutput } from '@happier-dev/plugin-sdk/exec';
 import type { ResolvedActionContribution, ResolvedContributionRegistry } from '@/plugins/projection/registry/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { resolveRegistryConnectedAccountActionPurposeAuthorizations } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
 import type { PluginActionExecutorResult } from './executeContributedAction';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { ConnectedAccountInvocationPurposeBinding } from '@happier-dev/cli-common/connectedAccounts';
-import { bindManagedMachineRoleCredentials } from '@happier-dev/cli-common/machines/managed';
+import { bindManagedMachineRoleCredentials, projectManagedMachineRolePurposeBindingsV1 } from '@happier-dev/cli-common/machines/managed';
 import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 
 /** Managed-resource custody supplied only by the authenticated host operation owner. */
@@ -34,8 +35,12 @@ export type AdmittedManagedProviderOperationExecutionRequest = Readonly<{
   managedNativeCredentials?: ManagedNativeCredentialInvocationBinding;
   /** Existing purpose lease; the operation owner retains its cleanup lifetime. */
   exactPurposeBindingSubjectId?: string;
-  /** Host-only live output delivery while the native Exec Action is pending. */
+  /** Captured Team route; execution follows the same custody admission as a local lease. */
+  executeBrokeredAction?: Extract<ActionPurposeBindingAdmission, { kind: 'brokered' }>['execute'];
+  /** Host-only live output delivery while the native Exec or Stream Action is pending. */
   onProcessOutput?: (output: PluginProcessOutput) => void;
+  /** Host-only input of the native Stream channel while its Action is pending. */
+  bindProcessInput?: (process: Pick<PluginProcessHandle, 'write' | 'closeStdin'>) => () => void;
   /** Installer/task-owned budget for the explicitly selected native Exec process. */
   execTimeoutMs?: number | null;
   /** Rechecks the retained row/native reference, controller, intent and credential lease. */
@@ -44,7 +49,8 @@ export type AdmittedManagedProviderOperationExecutionRequest = Readonly<{
 
 /** Exact host-owned launch credential lease before a managed row exists. */
 export type AdmittedConnectedAccountPurposeBindingExecutionRequest = Readonly<{
-  exactPurposeBindingSubjectId: string;
+  exactPurposeBindingSubjectId?: string;
+  executeBrokeredAction?: Extract<ActionPurposeBindingAdmission, { kind: 'brokered' }>['execute'];
   isCurrent(): boolean | Promise<boolean>;
 }>;
 
@@ -135,7 +141,7 @@ export async function checkManagedProviderOperationCustody(params: Readonly<{
     const expectedOccurrenceId = pluginId ? params.contributes.occurrenceIdsByPluginId?.[pluginId] : undefined;
     if (params.operation !== undefined || requiresManagedCustody || !params.runtimeRegistry
       || !pluginId || expectedOccurrenceId === undefined
-      || !probe.exactPurposeBindingSubjectId.trim()
+      || (!probe.exactPurposeBindingSubjectId?.trim() && !probe.executeBrokeredAction)
       || !matches.some(({ role }) => role === 'check' || role === 'options')) return invalid();
     return await isAdmittedManagedProviderCustodyCurrent(params) ? null : invalid();
   }
@@ -159,11 +165,17 @@ export async function checkManagedProviderOperationCustody(params: Readonly<{
         credentials: machine.launch.credentials, qualification: {
           descriptor: matches.find(candidate => candidate.role === operation.role)!.contribution.definition, launch: machine.launch.choices,
         } });
-      if (selected.length !== binding.purposes.length || selected.length !== binding.purposeBindings.bindings.length
-        || selected.some(({ purpose, credential }) => !binding.purposeBindings.bindings.some(candidate =>
-          pluginJsonValuesEqual(candidate.purpose, purpose) && candidate.target.kind === 'account'
-          && pluginJsonValuesEqual(candidate.target.account, credential.account)))
-        || selected.length > 0 && !operation.exactPurposeBindingSubjectId) return invalid();
+      const expected = projectManagedMachineRolePurposeBindingsV1(selected);
+      const teamSelections = binding.purposeBindings.teamResourceSelections ?? [];
+      const expectedTeamSelections = expected.teamResourceSelections ?? [];
+      if (selected.length !== binding.purposes.length
+        || expected.bindings.length !== binding.purposeBindings.bindings.length
+        || expectedTeamSelections.length !== teamSelections.length
+        || expected.bindings.some(expectedBinding => !binding.purposeBindings.bindings.some(candidate =>
+          pluginJsonValuesEqual(candidate, expectedBinding)))
+        || expectedTeamSelections.some(expectedSelection => !teamSelections.some(candidate =>
+          pluginJsonValuesEqual(candidate, expectedSelection)))
+        || selected.length > 0 && !operation.exactPurposeBindingSubjectId && !operation.executeBrokeredAction) return invalid();
     } catch { return invalid(); }
     return await isAdmittedManagedProviderCustodyCurrent(params) ? null : invalid();
   }
@@ -172,7 +184,8 @@ export async function checkManagedProviderOperationCustody(params: Readonly<{
     || !operation.controller?.machineId.trim() || !operation.controller.installationId.trim()
     || !Number.isSafeInteger(operation.intentRevision) || operation.intentRevision < 0
     || operation.exactPurposeBindingSubjectId?.trim() === ''
-    || (operation.onProcessOutput !== undefined && operation.role !== 'exec')
+    || (operation.onProcessOutput !== undefined && operation.role !== 'exec' && operation.role !== 'stream')
+    || (operation.bindProcessInput !== undefined && operation.role !== 'stream')
     || (operation.execTimeoutMs !== undefined && operation.role !== 'exec')
     || !matches.some(({ contribution, role }) => (
       role === operation.role
@@ -180,7 +193,7 @@ export async function checkManagedProviderOperationCustody(params: Readonly<{
       && contribution.identity.localId === operation.contribution.localId
       && contribution.definition.id === operation.contribution.localId
     ))) return invalid();
-  if (operation.exactPurposeBindingSubjectId === undefined) {
+  if (operation.exactPurposeBindingSubjectId === undefined && operation.executeBrokeredAction === undefined) {
     const purposes = resolveRegistryConnectedAccountActionPurposeAuthorizations({
       registry: params.contributes,
       qualifiedActionId: buildQualifiedPluginContributionKey({ pluginId: operation.contribution.pluginId, localId: params.action.definition.id }),

@@ -5,6 +5,7 @@ import type {
   QualifiedConnectedAccountPurposeBindingV1,
   QualifiedConnectedAccountPurposeBindingTargetV1,
   QualifiedConnectedAccountPurposeV1,
+  QualifiedConnectedAccountPurposeTeamResourceSelectionV1,
 } from '@happier-dev/protocol';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { PluginEventAutomationHistoryGapResetActionInputV1Schema } from '@happier-dev/protocol/automations/event-history-gap-reset-action';
@@ -118,6 +119,7 @@ export type RegistryConnectedAccountActionPurposeBindingSnapshot = Readonly<{
   purposes: readonly QualifiedConnectedAccountPurposeV1[];
   bindings: readonly QualifiedConnectedAccountPurposeBindingV1[];
   directMaterialOrigins?: readonly ConnectedAccountTeamDirectMaterialOrigin[];
+  teamResourceSelections?: readonly QualifiedConnectedAccountPurposeTeamResourceSelectionV1[];
   bindingSelections?: readonly Awaited<ReturnType<ConnectedAccountPurposeBindingOwner['resolveBindingIntentSelection']>>[];
 }>;
 
@@ -386,7 +388,7 @@ export async function revalidateRegistryConnectedAccountActionFormInput(input: R
     const selected = readDeclaredConnectedAccountActionSelection(input.value, mapping, authorization.serviceRefs);
     if (selected.kind === 'invalid') return actionFormUnavailable();
     if (selected.kind === 'inherit') return actionFormUnavailable();
-    if (selected.kind === 'native') continue;
+    if (selected.kind === 'native' || selected.kind === 'team_resource') continue;
     try {
       if (mapping.path === 'credentialRef' && input.admittedTeamPrincipal) continue;
       if (mapping.path === 'credentialRef' && input.admittedPurposeTarget?.kind === 'group') {
@@ -465,6 +467,7 @@ export async function resolveRegistryConnectedAccountActionPurposeBindingSnapsho
   const purposes: QualifiedConnectedAccountPurposeV1[] = [];
   const bindings: QualifiedConnectedAccountPurposeBindingV1[] = [];
   const directMaterialOrigins: ConnectedAccountTeamDirectMaterialOrigin[] = [];
+  const teamResourceSelections: QualifiedConnectedAccountPurposeTeamResourceSelectionV1[] = [];
   const bindingSelections: Awaited<ReturnType<ConnectedAccountPurposeBindingOwner['resolveBindingIntentSelection']>>[] = [];
   const purposeKeys = new Set<string>();
   for (const mapping of mappings) {
@@ -494,6 +497,10 @@ export async function resolveRegistryConnectedAccountActionPurposeBindingSnapsho
     purposes.push(authorization.purpose);
 
     if (selected.kind === 'native') continue;
+    if (selected.kind === 'team_resource') {
+      teamResourceSelections.push({ purpose: authorization.purpose, teamId: selected.teamId, selection: selected.selection });
+      continue;
+    }
     try {
       if (mapping.path === 'credentialRef' && input.admittedTeamPrincipal) {
         const projected = projectTeamResourceSelectionToSessionPurposeBinding({ purpose: authorization.purpose,
@@ -581,6 +588,10 @@ export async function resolveRegistryConnectedAccountActionPurposeBindingSnapsho
 
       const selected = readDeclaredConnectedAccountActionSelection(currentSource.sourceConfig, mapping, authorization.serviceRefs);
       if (selected.kind === 'invalid') return historyGapSourceUnavailable();
+      if (selected.kind === 'team_resource') {
+        teamResourceSelections.push({ purpose: authorization.purpose, teamId: selected.teamId, selection: selected.selection });
+        continue;
+      }
       if (selected.kind !== 'account') continue;
       try {
         bindings.push(await actionFormConnectedAccounts.resolveBindingIntent({
@@ -605,6 +616,7 @@ export async function resolveRegistryConnectedAccountActionPurposeBindingSnapsho
     purposes: Object.freeze(purposes),
     bindings: Object.freeze(bindings),
     ...(directMaterialOrigins.length ? { directMaterialOrigins: Object.freeze(directMaterialOrigins) } : {}),
+    ...(teamResourceSelections.length ? { teamResourceSelections: Object.freeze(teamResourceSelections) } : {}),
     ...(bindingSelections.length ? { bindingSelections: Object.freeze(bindingSelections) } : {}),
   });
 }

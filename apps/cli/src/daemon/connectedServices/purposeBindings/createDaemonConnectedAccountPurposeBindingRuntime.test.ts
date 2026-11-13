@@ -853,7 +853,9 @@ describe('createDaemonConnectedAccountPurposeBindingRuntime', () => {
     expect(inventoryReads).not.toHaveBeenCalled();
 
     const revision = 'csr_zyxwvutsrqponmlkjihgfe';
-    const changedProfile = { ...profiles[8]!, credentialRevision: revision };
+    const original = profiles[8];
+    if (original?.revisionSemantics !== 'revisioned') throw new Error('Fixture profiles are revisioned');
+    const changedProfile = { ...original, credentialRevision: revision };
     qualifiedApi.listAccounts.mockResolvedValue({ service: openAiService, accounts: [...profiles.slice(0, 8), changedProfile, ...profiles.slice(9)] });
     groups[0] = { ...groups[0]!, generation: 2, members: [
       { ...groups[0]!.members[0]!, connectedAccountId: changedProfile.ref.accountId },

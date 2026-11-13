@@ -1,3 +1,4 @@
+import type { TeamCredentialDirectMaterialClient } from '../directMaterial/teamCredentialDirectMaterialClient';
 import type { TeamCredentialDirectMaterialConsumerV1 } from '@happier-dev/protocol/teams';
 import { isDeepStrictEqual } from 'node:util';
 import { readConnectedAccountPurposeProfileLabel, type ConnectedAccountPurposeResolvedTarget,
@@ -95,6 +96,8 @@ export type ConnectedAccountTeamDirectMaterialOrigin = Readonly<{
   purpose: QualifiedConnectedAccountPurposeV1;
   resourceId: string;
   disclosedMember: QualifiedConnectedAccountRef;
+  /** Host-private finite admission; released with the existing operation lease. */
+  admittedActionMaterial?: Extract<Awaited<ReturnType<TeamCredentialDirectMaterialClient['open']>>, { ok: true }>;
 }>;
 // The runtime adapter supplies the worker Machine for execution Runs.
 type TeamDirectMaterialConsumer =
@@ -195,6 +198,10 @@ export type ConnectedAccountPurposeAuthorizationScope = Readonly<{
 type ManagedCredentialConfigurations = NonNullable<ConnectedAccountInvocationPurposeBinding['managedOperation']>['credentialConfigurations'];
 
 export type ConnectedAccountPurposeBindingSubject =
+  | Readonly<Omit<Extract<TeamCredentialDirectMaterialConsumerV1, { kind: 'action_operation' }>, 'purpose'> & {
+      consumer: PluginContributionIdentityV1;
+      isCurrent(): boolean;
+    }>
   | Readonly<Extract<TeamCredentialDirectMaterialConsumerV1, { kind: 'platform_operation' }> & {
       /** One finite host operation spends its accepted Deployment receipt. */
       consumer: PluginContributionIdentityV1;
@@ -562,16 +569,16 @@ function resourceNotSelected(purpose: QualifiedConnectedAccountPurposeV1): Plugi
 }
 
 /**
- * Typed refusal for a purpose whose durable default is a Team resource
- * selection, used outside a Session: no Home admits a Team binding for it.
- * The default is the user's standing intent and is never erased here (lane 10
- * child 02 §11.6 "no silent native fallback").
+ * A retained Team choice is standing intent even when its binding is unavailable.
+ * Refuse at the purpose owner without erasing it or substituting personal/native access.
  */
-function teamResourceUnavailable(): PluginError {
+function teamResourceUnavailable(reason: 'session_required' | 'scope_unauthorized' = 'session_required'): PluginError {
   return new PluginError({
     code: 'plugin_connected_account_team_resource_unavailable',
-    message: 'A Team credential is used only inside a Session whose Team binding the Home admitted',
-    details: { reason: 'session_required' },
+    message: reason === 'scope_unauthorized'
+      ? 'The selected Team credential is outside the declared service scope'
+      : 'The selected Team credential requires an admitted Session or Action binding',
+    details: { reason },
   });
 }
 
@@ -942,7 +949,7 @@ export function createConnectedAccountPurposeBindingOwner(
           directMaterialConsumer: null,
         };
       }
-      if (subject.kind === 'operation' || subject.kind === 'platform_operation') {
+      if (subject.kind === 'operation' || subject.kind === 'platform_operation' || subject.kind === 'action_operation') {
         const operationId = subject.operationId.trim();
         const consumer = PluginContributionIdentityV1Schema.parse(subject.consumer);
         if (!operationId) {
@@ -959,7 +966,9 @@ export function createConnectedAccountPurposeBindingOwner(
           sessionId: null,
           errorPrefix: 'connected_account_operation_binding',
           expectedConsumer: Object.freeze({ ...consumer }),
-          directMaterialConsumer: subject.kind === 'platform_operation'
+          directMaterialConsumer: subject.kind === 'action_operation'
+            ? { kind: 'action_operation' as const, actionId: subject.actionId, pluginVersion: subject.pluginVersion, operationId }
+            : subject.kind === 'platform_operation'
             ? { kind: 'platform_operation' as const, deploymentId: subject.deploymentId,
                 environmentId: subject.environmentId, operationId }
             : launchSessionId
@@ -1080,7 +1089,8 @@ export function createConnectedAccountPurposeBindingOwner(
           service: Object.freeze({ ...origin.disclosedMember.service }),
           accountId: origin.disclosedMember.accountId,
         }),
-        consumer: normalized.directMaterialConsumer,
+        consumer: normalized.directMaterialConsumer.kind === 'action_operation'
+          ? { ...normalized.directMaterialConsumer, purpose } : normalized.directMaterialConsumer,
       }));
     }
     const bindingSelectionByPurposeKey = new Map<string, ConnectedAccountPurposeBindingIntentSelection>();
@@ -1346,7 +1356,7 @@ export function createConnectedAccountPurposeBindingOwner(
                 selection,
               })
             : null;
-          if (!projected) continue;
+          if (!projected) throw teamResourceUnavailable('scope_unauthorized');
           bindings.push(projected.binding);
           directMaterialOrigins.push(projected.origin);
         }

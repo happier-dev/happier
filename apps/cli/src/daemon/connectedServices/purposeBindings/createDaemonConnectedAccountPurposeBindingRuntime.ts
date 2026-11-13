@@ -1,6 +1,6 @@
 import { ConnectedAccountUiProjectionEntryV1Schema } from '@happier-dev/protocol/connect/connectedAccountUiProjectionV1';
 import { createConnectedAccountPurposeMaterializer, readConnectedAccountPurposeInventory, readConnectedAccountPurposeTargetInventory,
-  projectConnectedAccountPurposeTargetInventory,
+  projectConnectedAccountPurposeTargetInventory, projectConnectedAccountActionFormOptions,
   createConnectedAccountPurposeTargetAccountListing, connectedAccountListedAccountOutOfScope as listedAccountOutOfScope,
   CONNECTED_ACCOUNT_AUTHORIZED_INVENTORY_BOUND, type ConnectedAccountPurposeInventoryEntry } from '@happier-dev/cli-common/connectedAccounts';
 import type { DaemonPluginActionFormConnectedAccountOption } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -36,6 +36,7 @@ import type { PluginAccessSelection } from '@/plugins/store/install/accessScopeR
 import { logger } from '@/ui/logger';
 import { createPurposeTargetResolver } from './resolveTarget';
 import { createCoordinatorInventory } from './coordinatorInventory';
+import { createActionPurposeBindingAdmission, teamDirectMaterialFailure, teamDirectMaterialOperationFailure, type ExecuteTeamCredentialBrokerAction } from './teamDirectMaterialAdmission';
 
 import {
   createActiveAccountSettingsConnectedAccountPurposeBindingStore,
@@ -56,8 +57,6 @@ import type {
 } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
 import type {
   TeamCredentialDirectMaterialClient,
-  TeamCredentialDirectMaterialOperationFailure,
-  TeamCredentialDirectMaterialUnavailableReason,
 } from '../directMaterial/teamCredentialDirectMaterialClient';
 import type { ConnectedServiceSwitchTarget } from '../sessionAuthSwitch/connectedServiceSwitchDeferralQueue';
 
@@ -108,6 +107,7 @@ export type DaemonConnectedAccountPurposeBindingRuntime = Readonly<{
   readCredentialConfigurationRevision: ConnectedAccountPurposeBindingOwner['readCredentialConfigurationRevision'];
   activatePurposeBindings:
     ConnectedAccountPurposeBindingOwner['activatePurposeBindings'];
+  admitActionPurposeBindings: ReturnType<typeof createActionPurposeBindingAdmission>;
   activateSessionPurposeBindings:
     ConnectedAccountPurposeBindingOwner['activateSessionPurposeBindings'];
   resolveCurrentSessionPurposeBindingSnapshot:
@@ -241,7 +241,11 @@ function createRuntimeRegistryAccess(
             })];
           })]);
         },
-        materializeNative: input => lease.registry.connectedAccountRuntimeInvoker.invokeNative(input),
+        materializeNative: input => {
+          const invoker = lease.registry.connectedAccountRuntimeInvoker;
+          if (!invoker) throw new Error('Connected Account runtime invoker is unavailable');
+          return invoker.invokeNative(input);
+        },
         release: lease.release,
       });
     },
@@ -254,83 +258,6 @@ type DaemonConnectedAccountInventoryEntry = ConnectedAccountPurposeInventoryEntr
 type DaemonConnectedAccountInventory = Readonly<{
   entries: readonly DaemonConnectedAccountInventoryEntry[];
 }>;
-
-function teamDirectMaterialFailure(
-  reason: TeamCredentialDirectMaterialUnavailableReason,
-  service: QualifiedConnectedAccountRef['service'],
-): PluginError {
-  switch (reason) {
-    case 'preparing':
-      return new PluginError({
-        code: 'plugin_connected_account_direct_material_preparing',
-        message: 'Shared Connected Account access is still being prepared',
-        retryable: true,
-        remediation: { kind: 'retry' },
-      });
-    case 'temporarily_unavailable':
-      return new PluginError({
-        code: 'plugin_connected_account_direct_material_temporarily_unavailable',
-        message: 'Shared Connected Account access is temporarily unavailable',
-        retryable: true,
-        remediation: { kind: 'retry' },
-      });
-    case 'source_changed':
-      return new PluginError({
-        code: 'plugin_connected_account_direct_material_source_changed',
-        message: 'The shared Connected Account source changed and is being updated',
-        retryable: true,
-        remediation: { kind: 'retry' },
-      });
-    case 'recipient_binding_changed':
-      return new PluginError({
-        code: 'plugin_connected_account_direct_material_recipient_binding_changed',
-        message: 'This device needs current Account encryption material before using the shared Connected Account',
-        remediation: { kind: 'openSettings', path: '/settings/account/security' },
-      });
-    case 'access_removed':
-      return new PluginError({
-        code: 'plugin_connected_account_direct_access_removed',
-        message: 'Access to the shared Connected Account was removed',
-        remediation: { kind: 'selectAccount', service },
-      });
-    case 'disabled':
-      return new PluginError({
-        code: 'plugin_connected_account_direct_material_disabled',
-        message: 'Direct access to the shared Connected Account is disabled',
-        remediation: { kind: 'selectAccount', service },
-      });
-    case 'unsupported_direct_source':
-      return new PluginError({
-        code: 'plugin_connected_account_direct_material_unsupported',
-        message: 'This client cannot use the shared Connected Account directly',
-        remediation: { kind: 'selectAccount', service },
-      });
-    case 'invalid_material':
-      return new PluginError({
-        code: 'plugin_connected_account_direct_material_invalid',
-        message: 'The shared Connected Account material must be repaired before it can be used',
-      });
-    case 'resource_corrupt':
-      return new PluginError({
-        code: 'plugin_connected_account_direct_resource_corrupt',
-        message: 'The shared Connected Account resource must be repaired before it can be used',
-      });
-  }
-}
-
-function teamDirectMaterialOperationFailure(
-  error: TeamCredentialDirectMaterialOperationFailure,
-): PluginError {
-  const remediation = error.error === 'team_authentication_required'
-    || error.error === 'team_authentication_policy_unavailable'
-    ? { kind: 'openSettings' as const, path: '/settings/teams/authentication' }
-    : undefined;
-  return new PluginError({
-    code: error.error,
-    message: error.error,
-    ...(remediation ? { remediation } : {}),
-  });
-}
 
 function unavailableSelection(): never {
   throw new PluginError({
@@ -352,7 +279,9 @@ function assertCurrentRegistry(
 export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readonly<{
   credentialOwnerAccountId?: string;
   establishedRuntimeOwner: QualifiedConnectedAccountMaterializationOwner;
+  listTeamResources?: (signal: AbortSignal) => Promise<readonly import('@happier-dev/protocol/teams/credentials/resourceV1').TeamCredentialResourceCatalogEntryV1[]>;
   openTeamDirect?: TeamCredentialDirectMaterialClient['open'];
+  executeTeamCredentialBrokerAction?: ExecuteTeamCredentialBrokerAction;
   workerMachineId?: string;
   resolveQualifiedConnectedAccountV4Support(): QualifiedConnectedAccountV4Support | Promise<QualifiedConnectedAccountV4Support>;
   /** Root Account changes/reconnect invalidate this projection; requester contexts without that observer retain only in-flight reads. */
@@ -362,6 +291,8 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
     'acquireRuntimeRegistry' | 'isRuntimeRegistryCurrent' | 'subscribe'
   >;
   runtimeRegistry?: DaemonConnectedAccountRuntimeRegistry;
+  /** The containing Machine operation retains native sign-in independently of Account services. */
+  nativeReloadController?: Pick<PluginReloadController, 'acquireRuntimeRegistry' | 'isRuntimeRegistryCurrent' | 'subscribe'>;
   store?: ConnectedAccountPurposeBindingStore;
   /** A foreign requester cannot borrow the host custodian's native sign-in. */
   allowNativeAccountCredentials?: boolean;
@@ -426,6 +357,8 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
   }
   const runtimeRegistry = params.runtimeRegistry
     ?? createRuntimeRegistryAccess(params.reloadController!);
+  const nativeRuntimeRegistry = params.nativeReloadController
+    ? createRuntimeRegistryAccess(params.nativeReloadController) : runtimeRegistry;
   const invalidationListeners = new Set<(event?: RequesterConnectedAccountObservation) => void>();
   const bindingInvalidationListeners = new Map<() => void, readonly PluginContributionRef[]>();
   let sessionRestartOwner: DaemonConnectedAccountPurposeSessionRestartOwner | null = null;
@@ -734,7 +667,8 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
         serviceRefs: input.serviceRefs,
         signal: input.signal,
       });
-      const selectable = inventory.entries.filter((entry) => entry.state === 'connected');
+      const selectable = projectConnectedAccountActionFormOptions({ inventory: inventory.entries, serviceRefs: input.serviceRefs,
+        teamResources: await params.listTeamResources?.(input.signal) });
       const nativeOptions: DaemonConnectedAccountActionFormOption[] = [];
       if (input.nativeServicePath && params.allowNativeAccountCredentials !== false) {
         for (const serviceRef of input.serviceRefs) {
@@ -752,10 +686,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
           message: 'Connected Account Action-form selection is unavailable because the authorized account inventory is too large',
         });
       }
-      return Object.freeze([...selectable.map((entry) => Object.freeze({
-        value: entry.account,
-        label: entry.displayName,
-      })), ...nativeOptions]);
+      return Object.freeze([...selectable, ...nativeOptions]);
     } finally {
       await lease.release();
     }
@@ -821,7 +752,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
         message: 'The selected service does not provide native authentication',
         remediation: { kind: 'selectAccount', service: input.service },
       });
-      const lease = await runtimeRegistry.acquire();
+      const lease = await nativeRuntimeRegistry.acquire();
       try {
         assertCurrentRegistry(lease, input.signal);
         const service = lease.resolveService(input.service);
@@ -841,8 +772,11 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
       }
     },
     async materializeTeamDirect(input) {
-      if (!params.openTeamDirect) throw listedAccountOutOfScope();
-      const open = async () => await params.openTeamDirect!({
+      if (input.consumer.kind === 'action_operation' && !input.origin.admittedActionMaterial) throw listedAccountOutOfScope();
+      if (!params.openTeamDirect && input.consumer.kind !== 'action_operation') throw listedAccountOutOfScope();
+      const open = async () => input.consumer.kind === 'action_operation'
+        ? input.origin.admittedActionMaterial!
+        : await params.openTeamDirect!({
         ...(input.origin.teamId ? { teamId: input.origin.teamId } : {}),
         resourceId: input.origin.resourceId,
         consumer: input.consumer.kind !== 'execution_run'
@@ -877,7 +811,7 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
           ...(input.existingFiles ? { existingFiles: input.existingFiles } : {}) }),
         isCurrent: async () => {
           // Finite platform work keeps its admission until completion or local cancel.
-          if (input.consumer.kind === 'platform_operation') {
+          if (input.consumer.kind === 'platform_operation' || input.consumer.kind === 'action_operation') {
             input.signal.throwIfAborted();
             return true;
           }
@@ -976,6 +910,10 @@ export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readon
     readBindingObservation: bindingOwner.readBindingObservation,
     readCredentialConfigurationRevision: bindingOwner.readCredentialConfigurationRevision,
     activatePurposeBindings: bindingOwner.activatePurposeBindings,
+    admitActionPurposeBindings: createActionPurposeBindingAdmission({
+      activatePurposeBindings: bindingOwner.activatePurposeBindings, openTeamDirect: params.openTeamDirect,
+      executeTeamCredentialBrokerAction: params.executeTeamCredentialBrokerAction,
+    }),
     activateSessionPurposeBindings: bindingOwner.activateSessionPurposeBindings,
     resolveCurrentSessionPurposeBindingSnapshot:
       bindingOwner.resolveCurrentSessionPurposeBindingSnapshot,

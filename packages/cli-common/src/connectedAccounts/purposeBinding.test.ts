@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { PluginConnectedAccountAuthenticationV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import { listConnectedAccountActionFormOptions } from './purposeInventory.js';
 import { captureConnectedAccountInvocationPurposeBinding, createConnectedAccountPurposePort, readDeclaredConnectedAccountActionSelection,
   assertConnectedAccountPurposeTargetAuthorized,
   type ConnectedAccountInvocationPurposeBinding } from './purposeBinding.js';
@@ -18,6 +20,28 @@ const profile = QualifiedConnectedAccountProfileV4Schema.parse({ ref: account, a
   configurationReady: true, configurationRevision: null, kind: 'token', expiresAt: null, displayName: 'Cloud', scopes: [] });
 
 describe('Account purpose selection through the shared Credentials owner', () => {
+  it('projects entitled Team delivery choices beside personal accounts without opening material', async () => {
+    const direct = { source: 'team_resource' as const, resourceId: 'shared-cloud', deliveryMode: 'direct' as const,
+      disclosedMember: { service, accountId: 'sharer-account' } };
+    const brokered = { source: 'team_resource' as const, resourceId: 'shared-cloud', deliveryMode: 'brokered' as const };
+    const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
+      id: 'shared-cloud', teamId: 'team-a', displayName: 'Shared cloud', resourceRevision: 1,
+      readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: true,
+      directMaterialState: 'current', sessionUsePolicy: 'personal_allowed', providerModels: [],
+      connectedServiceSelections: [direct, brokered], sourcePresentation: { kind: 'connected_service', service },
+    });
+    let catalogReads = 0;
+    const options = await listConnectedAccountActionFormOptions({ available: true,
+      resolveService: async () => ({ service, authentication }), listAccounts: async () => [profile],
+      listTeamResources: async () => { catalogReads++; return [resource, { ...resource, id: 'unrelated',
+        sourcePresentation: { kind: 'connected_service', service: { ...service, localId: 'other-service' } } }]; },
+    }, { serviceRefs: [service], signal: new AbortController().signal });
+    expect(options).toEqual([{ value: account, label: 'Cloud' },
+      { value: { teamId: 'team-a', selection: direct }, label: 'Shared cloud' },
+      { value: { teamId: 'team-a', selection: brokered }, label: 'Shared cloud' }]);
+    expect(catalogReads).toBe(1);
+  });
+
   it('selects the one declared credential operand across ordinary source and configured-instance inputs', () => {
     const mapping = { path: 'instance.binding.account', alternativePaths: ['sourceConfig.credentialRef'],
       nativeServicePath: 'instance.binding.service', purpose: 'cloud-api' };
@@ -38,6 +62,19 @@ describe('Account purpose selection through the shared Credentials owner', () =>
     expect(() => assertConnectedAccountPurposeTargetAuthorized(foreign, [service]))
       .toThrow(expect.objectContaining({ code: 'plugin_connected_account_binding_out_of_scope' }));
   });
+  it('retains Team delivery choices in the declared Action credential operand', () => {
+    for (const deliveryMode of ['direct', 'brokered'] as const) {
+      const selection = { source: 'team_resource' as const, resourceId: 'shared-cloud', deliveryMode,
+        ...(deliveryMode === 'direct' ? { disclosedMember: account } : {}) };
+      const value = { teamId: 'team-a', selection };
+      expect(readDeclaredConnectedAccountActionSelection({ credential: value }, { path: 'credential', purpose: 'cloud-api' }, [service]))
+        .toEqual({ kind: 'team_resource', ...value });
+    }
+    expect(readDeclaredConnectedAccountActionSelection({ credential: {
+      teamId: 'team-a', selection: { source: 'team_resource', resourceId: 'shared-cloud', deliveryMode: 'direct' },
+    } }, { path: 'credential', purpose: 'cloud-api' }, [service])).toEqual({ kind: 'invalid' });
+  });
+
   it('captures the exact invocation receiver and launch binding without admitting a foreign consumer', () => {
     let current = true;
     let managedCurrent = true;

@@ -1,3 +1,5 @@
+import { createConnectedAccountActionTeamResourceCatalogReader } from './actionTeamResourceCatalog';
+import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { createRequesterTeamCredentialDirectMaterialClient } from '../directMaterial/teamCredentialDirectMaterialClient';
 import { listQualifiedConnectedAccountsV4, listQualifiedConnectedAccountGroupsV4, readQualifiedConnectedAccountGroupV4 } from '@/api/client/qualifiedConnectedAccountApi';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -17,12 +19,14 @@ export function createRequesterConnectedAccountPurposeBindingRuntime(input: Read
   accountId: string;
   machineId?: string;
   reloadController: Pick<PluginReloadController, 'acquireRuntimeRegistry' | 'tryAcquireRuntimeRegistry' | 'isRuntimeRegistryCurrent' | 'subscribe'>;
+  nativeReloadController?: Parameters<typeof createDaemonConnectedAccountPurposeBindingRuntime>[0]['nativeReloadController'];
   getAccountEncryptionMode: ApiClient['getAccountEncryptionMode'];
   isCurrent(signal?: AbortSignal): Promise<boolean>;
   signal?: AbortSignal;
   resolveQualifiedConnectedAccountV4Support: Parameters<typeof createDaemonConnectedAccountPurposeBindingRuntime>[0]['resolveQualifiedConnectedAccountV4Support'];
   allowNativeAccountCredentials: boolean;
   openTeamDirect?: Parameters<typeof createDaemonConnectedAccountPurposeBindingRuntime>[0]['openTeamDirect'];
+  executeTeamCredentialBrokerAction?: Parameters<typeof createDaemonConnectedAccountPurposeBindingRuntime>[0]['executeTeamCredentialBrokerAction'];
   resolvePlatformOperationRequestHeaders?: Parameters<typeof createRequesterTeamCredentialDirectMaterialClient>[0]['resolvePlatformOperationRequestHeaders'];
 }>) {
   const operationContext = input.operationContext;
@@ -69,8 +73,14 @@ export function createRequesterConnectedAccountPurposeBindingRuntime(input: Read
   });
   const purposes = createDaemonConnectedAccountPurposeBindingRuntime({ establishedRuntimeOwner: established,
     credentialOwnerAccountId: input.accountId, workerMachineId: input.machineId, store, reloadController: input.reloadController,
+    nativeReloadController: input.nativeReloadController,
+    listTeamResources: createConnectedAccountActionTeamResourceCatalogReader({
+      homeDomainAction: (...args) => createAccountServerActionDeps({ token: credentials.token, credentials,
+        serverHttpBaseUrl: operationContext.serverHttpBaseUrl }).homeDomainAction!(...args),
+    }),
     allowNativeAccountCredentials: input.allowNativeAccountCredentials,
     openTeamDirect: input.openTeamDirect ?? (request => directMaterial.open(request)),
+    executeTeamCredentialBrokerAction: input.executeTeamCredentialBrokerAction,
     resolveQualifiedConnectedAccountV4Support: input.resolveQualifiedConnectedAccountV4Support,
     resolveConnectedAccountEndpoints: async request => await withHome(() => established.readConfiguredEndpoints(request)),
     qualifiedApi: {

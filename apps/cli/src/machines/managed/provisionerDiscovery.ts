@@ -1,3 +1,4 @@
+import { createConnectedAccountActionTeamResourceCatalogReader } from '@/daemon/connectedServices/purposeBindings/actionTeamResourceCatalog';
 import { executeManagedProvisionerDiscovery, projectAccountManagedProvisioners, type ManagedProvisionerDiscoveryEntry } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { listConnectedAccountActionFormOptions, projectConnectedAccountHostAccessScopes } from '@happier-dev/cli-common/connectedAccounts';
 import type { ManagedMachineActionInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -6,11 +7,13 @@ import { readCurrentAccountPluginExecutionDeclarations } from '@/plugins/runtime
 import { listQualifiedConnectedAccountsV4 } from '@/api/client/qualifiedConnectedAccountApi';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { StoredCredentials } from '@/persistence';
+import type { ActionExecutorDeps } from '@happier-dev/protocol';
 
 /** Account discovery shares the UI's declaration and metadata owners; it never activates providers. */
 export async function executeCliManagedProvisionerList(input: Readonly<{
     value: ManagedMachineActionInputV1<'machines.provisioners.list'>;
     credentials: StoredCredentials; serverUrl: string; signal?: AbortSignal;
+    homeDomainAction: NonNullable<ActionExecutorDeps['homeDomainAction']>;
 }>) {
     const selected = await readCurrentAccountPluginExecutionDeclarations({ ...input,
         family: 'machineProvisioners', pluginId: input.value.contribution?.pluginId });
@@ -27,6 +30,7 @@ export async function executeCliManagedProvisionerList(input: Readonly<{
             const signal = input.signal ?? new AbortController().signal;
             return Promise.all(scopes.map(async scope => ({ purpose: { consumer: entry.contribution, purpose: scope.purpose },
                 options: [...await listConnectedAccountActionFormOptions({ available: true,
+                    listTeamResources: createConnectedAccountActionTeamResourceCatalogReader({ homeDomainAction: input.homeDomainAction }),
                     resolveService: async (service, requestSignal) => {
                         let manifest = selection.manifest;
                         if (service.pluginId !== manifest.id) {

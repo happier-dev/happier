@@ -145,6 +145,33 @@ function actionAndHookManifest(options: Readonly<{ omitConnectedAccountOptionsFi
   return parsed;
 }
 
+it('retains Team Action selections for the selected-purpose admission owner', async () => {
+  const base = actionAndHookManifest();
+  // The form operand accepts a JSON reference; its canonical selection owner parses it.
+  const manifest = { ...base, contributes: { ...base.contributes, actions: base.contributes.actions.map(action => action.id === 'run'
+    ? { ...action, inputSchema: { type: 'object' as const, properties: { credentialRef: {} }, required: ['credentialRef'], additionalProperties: false } }
+    : action) } };
+  const registry = projection({ activationTargets: [{ pluginId: manifest.id, manifest }] });
+  const unavailable = async (): Promise<never> => { throw new Error('Team choice must not read a personal account'); };
+  const owner = createConnectedAccountPurposeBindingOwner({
+    store: { read: async () => ({ v: 1, bindings: [] }), update: unavailable, subscribe: () => ({ dispose() {} }) },
+    selectTarget: unavailable, resolveTarget: unavailable, materializeAccount: unavailable,
+    projectTargetAccounts: unavailable, assertTargetAccountMaterializable: unavailable,
+  });
+  const purpose = { consumer: { pluginId: manifest.id, localId: 'run' }, purpose: 'action-account' };
+  for (const deliveryMode of ['direct', 'brokered'] as const) {
+    const selection = { source: 'team_resource' as const, resourceId: 'resource-a', deliveryMode,
+      ...(deliveryMode === 'direct' ? { disclosedMember: { service: { pluginId: manifest.id, localId: 'account' }, accountId: 'sharer-private' } } : {}) };
+    const value = { credentialRef: { teamId: 'team-a', selection } };
+    const input = { registry, qualifiedActionId: `${manifest.id}/run`, value, actionFormConnectedAccounts: owner,
+      signal: new AbortController().signal, isCurrent: () => true };
+    await expect(revalidateRegistryConnectedAccountActionFormInput(input)).resolves.toBeNull();
+    await expect(resolveRegistryConnectedAccountActionPurposeBindingSnapshot(input)).resolves.toEqual({
+      purposes: [purpose], bindings: [], teamResourceSelections: [{ purpose, teamId: 'team-a', selection }],
+    });
+  }
+});
+
 it('derives a retained native credential scope from the actual Action declaration without a form field', () => {
   const manifest = actionAndHookManifest({ omitConnectedAccountOptionsField: true });
   const registry = projection({ activationTargets: [{ pluginId: manifest.id, manifest }] });
