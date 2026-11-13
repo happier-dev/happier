@@ -17,7 +17,7 @@ function unsupportedProviderLiterals(value: unknown, path = '#'): string[] {
     const schema = value as Record<string, unknown>;
     return [
         ...(Array.isArray(schema.enum) && schema.enum.some(item => typeof item !== 'string') ? [`${path}/enum`] : []),
-        ...(Object.hasOwn(schema, 'const') && typeof schema.const !== 'string' ? [`${path}/const`] : []),
+        ...(Object.hasOwn(schema, 'const') && (schema.const === null || typeof schema.const === 'boolean' || typeof schema.const === 'number') ? [`${path}/const`] : []),
         ...Object.entries(schema).filter(([key]) => !['enum', 'const', 'default', 'examples'].includes(key))
             .flatMap(([key, child]) => unsupportedProviderLiterals(child, `${path}/${key}`)),
     ];
@@ -97,7 +97,7 @@ describe('MCP provider input projection', () => {
         const schema = { ...source, properties: { ...source.properties as Record<string, unknown>,
             flags: { type: 'array', items: { type: 'boolean', enum: [true, false] } },
             count: { type: 'integer', enum: [1, 2] },
-            choice: { type: ['string', 'number'], enum: ['auto', 1] },
+            choice: { anyOf: [{ type: 'string' }, { type: 'number' }], enum: ['auto', 1] },
             color: { type: 'string', enum: ['red', 'blue'] },
         }, default: { enum: [true, 1], const: false } };
         const advertised = zodSchemaToJsonSchemaObject(toMcpToolObjectSchema(schema, 'inputSchema'));
