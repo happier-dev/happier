@@ -8,6 +8,7 @@ import { collectCodexSessionRolloutFiles } from './collectCodexSessionRolloutFil
 import { pageCodexRolloutStreams, readAfterCodexRolloutStreams } from './codexDirectTranscriptStreamPaging';
 import { decodeCodexNativeTranscriptCursor, pageCodexNativeTranscript } from './pageCodexNativeTranscript';
 import { resolveCodexHomesForDirectSessionsSource } from './resolveCodexHomesForDirectSessionsSource';
+import { logger } from '@/utils/logger';
 
 /** One source decision for browse, import and follow. Native cursors retain their selected home. */
 export async function readCodexDirectTranscript(params: Readonly<{
@@ -29,6 +30,8 @@ export async function readCodexDirectTranscript(params: Readonly<{
   }
   let selectedNativeHome: string | undefined;
   let hasPaginatedRollout = false;
+  let readLocalRollout: (() => Promise<DirectSessionTranscriptPage>) | null = null;
+  let localRolloutIsComplete = false;
   if (!nativeCursor) {
     const perHome = await Promise.all(homes.map(async home => ({ home,
       files: await collectCodexSessionRolloutFiles({ codexHome: home, remoteSessionId: params.remoteSessionId }) })));
@@ -36,18 +39,22 @@ export async function readCodexDirectTranscript(params: Readonly<{
       Math.max(...right.files.map(file => file.mtimeMs)) - Math.max(...left.files.map(file => file.mtimeMs)))[0];
     // A paginated rollout can be only a local segment with an inherited history_base.
     // Codex owns replaying that lineage; the legacy JSONL projection cannot prove completeness.
-    hasPaginatedRollout = Boolean(best && (await Promise.all(best.files.map(file => readCodexSessionMetaFromRollout(file.filePath))))
-      .some(metadata => metadata?.history_mode === 'paginated'));
+    const metadata = best ? await Promise.all(best.files.map(file => readCodexSessionMetaFromRollout(file.filePath))) : [];
+    hasPaginatedRollout = metadata.some(entry => entry?.history_mode === 'paginated');
+    localRolloutIsComplete = metadata.every(entry => entry?.history_base == null);
     selectedNativeHome = best?.home;
-    if (best && !hasPaginatedRollout) {
+    if (best) {
       const input = { ...params, codexHome: best.home, initialRolloutFiles: best.files };
-      if (params.follow) {
-        const page = await readAfterCodexRolloutStreams({ ...input, cursor: params.cursor! });
-        return { ...page, tailCursor: null, hasMore: page.truncationReason === 'page_limit' };
-      }
-      const page = await pageCodexRolloutStreams(input);
-      return { ...page, truncated: page.truncated === true };
+      readLocalRollout = async () => {
+        if (params.follow) {
+          const page = await readAfterCodexRolloutStreams({ ...input, cursor: params.cursor! });
+          return { ...page, tailCursor: null, hasMore: page.truncationReason === 'page_limit' };
+        }
+        const page = await pageCodexRolloutStreams(input);
+        return { ...page, truncated: page.truncated === true };
+      };
     }
+    if (readLocalRollout && !hasPaginatedRollout) return await readLocalRollout();
   }
   let failure: unknown = new DirectSessionsProviderUnavailableError('Codex transcript source is unavailable');
   for (const home of nativeCursor ? [nativeCursor.home] : selectedNativeHome ? [selectedNativeHome] : homes) {
@@ -61,6 +68,16 @@ export async function readCodexDirectTranscript(params: Readonly<{
       }) });
       return reset ? { ...page, items: [], truncated: true, truncationReason: 'source_discontinuity' } : page;
     } catch (error) { failure = error; }
+  }
+  // Codex refuses to replay a thread whose state row names a rollout path that no longer exists
+  // (e.g. history copied from Windows). A paginated rollout with no inherited history_base holds
+  // its whole history, so the local file is complete without Codex's lineage replay.
+  if (readLocalRollout && localRolloutIsComplete) {
+    logger.warn('[codex.directTranscript] native history unavailable; reading the self-contained local rollout', {
+      remoteSessionId: params.remoteSessionId,
+      error: failure instanceof Error ? failure.message : String(failure),
+    });
+    return await readLocalRollout();
   }
   throw failure;
 }

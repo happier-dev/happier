@@ -338,6 +338,45 @@ describe('Codex native paginated direct history (0.162.1 contract)', () => {
     await expect(pageCodexTranscript({ ...f.params, direction: 'older' })).rejects.toBeInstanceOf(DirectSessionsProviderUnavailableError);
   });
 
+  it('reads a self-contained paginated rollout locally when Codex cannot replay its lineage', async () => {
+    // Shape of a Codex Desktop 0.159.2 rollout copied from Windows: Codex's state row still names the
+    // Windows rollout path, so thread/items/list fails, but the local file holds the whole history.
+    const f = await fixture(null);
+    const sessions = join(f.codexHome, 'sessions');
+    await mkdir(sessions);
+    const line = (ordinal: number, type: string, payload: Record<string, unknown>) =>
+      JSON.stringify({ timestamp: `2026-10-05T00:55:${String(20 + ordinal).padStart(2, '0')}.000Z`, ordinal, type, payload });
+    await writeFile(join(sessions, 'rollout-2026-10-05T01-54-18-thread-native.jsonl'), [
+      line(0, 'session_meta', { id: 'thread-native', cwd: 'C:\\Secure Documents\\Project', originator: 'Codex Desktop',
+        cli_version: '0.159.2', source: 'vscode', history_mode: 'paginated' }),
+      line(1, 'world_state', { cwd: 'C:\\Secure Documents\\Project' }),
+      line(2, 'response_item', { type: 'message', role: 'user', content: [{ type: 'input_text', text: 'imported question' }] }),
+      line(3, 'token_usage_record', { total_tokens: 10 }),
+      line(4, 'response_item', { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'imported answer' }] }),
+    ].join('\n') + '\n');
+    const items = await loadDirectSessionTranscriptItems({ readPage: cursor => pageCodexTranscript({
+      ...f.params, direction: 'older', cursor,
+    }) });
+    expect(items.map(item => item.raw.content)).toMatchObject([
+      { type: 'text', text: 'imported question' },
+      { data: { type: 'message', message: 'imported answer' } },
+    ]);
+    const follow = await readAfterCodexTranscript({ ...f.params, cursor: 'tail' });
+    expect(follow.items).toEqual([]);
+  });
+
+  it('keeps rejecting an unreadable paginated segment that inherits history', async () => {
+    const f = await fixture(null);
+    const sessions = join(f.codexHome, 'sessions');
+    await mkdir(sessions);
+    await writeFile(join(sessions, 'rollout-2026-01-02T00-00-00-thread-native.jsonl'), [
+      JSON.stringify({ type: 'session_meta', payload: { id: 'thread-native', history_mode: 'paginated',
+        history_base: { thread_id: 'ancestor-thread', end_byte_offset: 100, end_ordinal_exclusive: 2 } } }),
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'local tail only' }] } }),
+    ].join('\n') + '\n');
+    await expect(pageCodexTranscript({ ...f.params, direction: 'older' })).rejects.toBeInstanceOf(DirectSessionsProviderUnavailableError);
+  });
+
   it('keeps a native cursor on its source when a legacy rollout appears later', async () => {
     const f = await fixture([message('original', 'native original', 'user')]);
     const page = await pageCodexTranscript({ ...f.params, direction: 'older' });
