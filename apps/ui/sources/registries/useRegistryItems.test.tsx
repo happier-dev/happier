@@ -116,6 +116,35 @@ describe('registry item last-known reads through the Account and HTTP owners', (
         await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
         expect(hook.getCurrent().items).toBe(held);
     });
+    it.each(['current', 'establishing'] as const)('reads a known catalog while other plugin members are still establishing (J51, %s)', async phase => {
+        const serverUrl = `https://registry-partial-plugin-members-${phase}.test`;
+        const sourceUrl = serverUrl + '/catalog.json';
+        const sourceId = deriveMarketplaceSourceId(sourceUrl);
+        const unavailableUrl = serverUrl + '/unavailable.json';
+        const unavailableId = deriveMarketplaceSourceId(unavailableUrl);
+        const catalog = createRegistryPluginCatalogFixture({ sourceUrl });
+        const fixture = await createPlainPromptLibraryCatalogHomeFixture(serverUrl, {
+            key: 'registry-sources', value: { v: 2, disabledSourceIds: [], sources: [
+                { id: sourceId, title: 'Ready catalog', format: 'happier-catalog', kinds: ['plugin'], url: sourceUrl, enabled: true, addedAt: 1 },
+                { id: unavailableId, title: 'Unavailable catalog', format: 'happier-catalog', kinds: ['plugin'], url: unavailableUrl, enabled: true, addedAt: 1 },
+            ] },
+        }, 'updated', { handleRequest: async path => path === '/catalog.json' ? Response.json(catalog)
+            : path === '/unavailable.json' ? new Response(null, { status: 503 }) : null });
+        onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+        const shell: ShellValue = { pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null,
+            phase, hasEstablishingMembers: true, interactionEnabled: phase === 'current',
+            machineId: null, serverId: null, platform: 'web', accountLifetime: null,
+            reloadConnectedAccountProjection() {}, clientExecutableActivation: { status: 'ready' }, reloadClientExecutables() {} };
+        const wrapper = ({ children }: React.PropsWithChildren) => React.createElement(AppShellPluginUiProjectionValueProvider, { value: shell, children });
+        const hook = await renderHook(() => useRegistryItems({ kind: 'plugin', sourceIds: [sourceId, unavailableId] }), { wrapper });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().loading).toBe(false));
+        expect(hook.getCurrent().error).toBeNull();
+        expect(hook.getCurrent().pages).toContainEqual(expect.objectContaining({ sourceId, status: expect.objectContaining({ state: 'ok' }) }));
+        expect(hook.getCurrent().items).toContainEqual(expect.objectContaining({ itemId: 'sample.plugin', version: '1.2.3' }));
+        expect(hook.getCurrent().sourceFailures).toEqual([expect.objectContaining({ sourceId: unavailableId,
+            status: expect.objectContaining({ state: 'unreachable' }), message: expect.any(String) })]);
+    });
+
     it('never reads as settled before a demanded read has answered', async () => {
         const { sourceId } = await setupHome('not-started');
         // A held page reads the render where demand turns on: settled-looking there is a false empty state.
@@ -160,7 +189,7 @@ describe('registry item last-known reads through the Account and HTTP owners', (
 
     it.each(['', 'wordpress'])('spends one compose listing fetch across views and local queries (initial query: %s), and nothing on idle', async initialQuery => {
         vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-        onTestFinished(() => vi.useRealTimers());
+        onTestFinished(() => { vi.useRealTimers(); });
         const requests: string[] = [];
         const commit = 'a'.repeat(40);
         let refreshed = false;
@@ -445,11 +474,11 @@ describe('registry item last-known reads through the Account and HTTP owners', (
         const requests = fixture.requests.length;
         // Opening the existing shared picker, then selecting its actual option, updates only route state.
         async function pickScope(id: string) {
-            const chipProps: React.ComponentProps<typeof SelectionListFilterChip> = screen.findByType(SelectionListFilterChip).props;
+            const chipProps: React.ComponentProps<typeof SelectionListFilterChip> = screen.findByType<typeof SelectionListFilterChip>(SelectionListFilterChip).props;
             const renderPicker = chipProps.filter.renderPopoverContent;
             if (!renderPicker) throw new Error('Project chip must use the shared picker');
             await screen.update(tree(<><Scope />{renderPicker({ close: () => {}, maxHeight: 600 })}</>));
-            const pickerProps: React.ComponentProps<typeof SelectionList> = screen.findByType(SelectionList).props;
+            const pickerProps: React.ComponentProps<typeof SelectionList> = screen.findByType<typeof SelectionList>(SelectionList).props;
             const option = pickerProps.rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : [])
                 .find(option => option.id === id);
             if (!option) throw new Error('Expected an admitted Project picker option');
@@ -819,7 +848,7 @@ describe('registry item last-known reads through the Account and HTTP owners', (
             return Object.assign((...invocation: Parameters<typeof execute>) => {
                 if (invocation[0] === 'registries.sources.list') loads++;
                 return execute(...invocation);
-            }, { prepare: execute.prepare });
+            }, { prepare: execute.prepare, confirmed: execute.confirmed });
         });
         onTestFinished(() => observation.mockRestore());
         let shell: ShellValue = { pluginUiProjection: EMPTY_PLUGIN_UI_PROJECTION, pluginBrowserProjection: null,

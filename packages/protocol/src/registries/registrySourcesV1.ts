@@ -81,6 +81,10 @@ export const RegistrySourceDescriptorV1Schema = lazyZodSchema(() => z.union([
   RegistryRemoteSourceDescriptorV1Schema, RegistryPackagedSourceDescriptorV1Schema,
 ]));
 export type RegistrySourceDescriptorV1 = RegistryRemoteSourceDescriptorV1 | RegistryPackagedSourceDescriptorV1;
+/** Kind membership over every descriptor shape (packaged sources narrow `kinds` to app/starter). */
+export function registrySourceSupportsKindV1(source: Readonly<{ kinds: readonly RegistryKindV1[] }>, kind: RegistryKindV1): boolean {
+  return source.kinds.includes(kind);
+}
 export const RegistrySourcesRecordV1Schema = lazyZodSchema(() => z.strictObject({ v: z.literal(2),
   sources: z.array(RegistrySourceV1Schema), disabledSourceIds: z.array(z.string().check(z.minLength(1))),
 }));

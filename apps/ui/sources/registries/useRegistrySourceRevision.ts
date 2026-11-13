@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { listRegistrySourcesV1, type RegistryKindV1 } from '@happier-dev/protocol/registries';
+import { listRegistrySourcesV1, registrySourceSupportsKindV1, type RegistryKindV1 } from '@happier-dev/protocol/registries';
 import { usePromptLibraryCatalogSelection } from '@/sync/store/usePromptLibraryCatalog';
 import type { PromptLibraryCatalogValueSnapshot } from '@/sync/store/settings/promptLibraryCatalogSnapshot';
 import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
@@ -23,7 +23,7 @@ export function useRegistryListSourceSelection(kind: RegistryKindV1 | undefined,
 
 function useRegistrySourceSelection(enabled: boolean, sourceIds?: readonly string[], kind?: RegistryKindV1, scope?: ServerAccountScope) {
     const presented = useLayoutPresentationActive();
-    const pluginsResolving = useAppShellPluginUiProjection(value => value.phase === 'establishing' || value.hasEstablishingMembers === true);
+    const pluginsResolving = useAppShellPluginUiProjection(value => value.phase === 'establishing');
     const activeSources = useAppShellPluginUiProjection(value => scope === undefined ? value.pluginUiProjection?.registrySourcesById : undefined);
     const readSources = React.useCallback(() => scope ? readCurrentAppShellPluginUiProjection({ scope, declarationsOnly: true })?.registrySourcesById : undefined,
         [scope?.serverId, scope?.accountId]);
@@ -39,9 +39,15 @@ function useRegistrySourceSelection(enabled: boolean, sourceIds?: readonly strin
         const sources = listRegistrySourcesV1({ record: snapshot.value ?? { v: 2, sources: [], disabledSourceIds: [] }, pluginSources });
         const fingerprint = (ids: readonly string[] | undefined) => ids === undefined
             ? JSON.stringify([snapshot.revision, pluginSources]) : registrySourceRevision(sources, ids);
-        const consumedIds = kind === undefined ? selectedIds : sources.filter(source => source.enabled
-            && source.kinds.includes(kind) && (selectedIds === undefined || selectedIds.includes(source.id))).map(source => source.id);
-        return JSON.stringify([fingerprint(consumedIds), fingerprint(priorIds), consumedIds ?? null, pluginsResolving || snapshot.value === null && snapshot.status === 'loading']);
+        const matchingIds = sources.filter(source => source.enabled
+            && (kind === undefined || registrySourceSupportsKindV1(source, kind))
+            && (selectedIds === undefined || selectedIds.includes(source.id))).map(source => source.id);
+        const consumedIds = kind === undefined ? selectedIds : matchingIds;
+        // Partial plugin membership cannot veto known catalogs. Only an unanswered
+        // selection waits for the first declarations; each admitted source reports its own failure.
+        const selectionKnown = selectedIds?.length === 0 || matchingIds.length > 0;
+        const resolving = snapshot.value === null && snapshot.status === 'loading' || pluginsResolving && !selectionKnown;
+        return JSON.stringify([fingerprint(consumedIds), fingerprint(priorIds), consumedIds ?? null, resolving]);
     }, [selectedIds, priorIds, pluginSources, kind, pluginsResolving]);
     const selection = usePromptLibraryCatalogSelection('registry-sources', select, scope, { enabled: enabled && presented });
     const [fingerprint, priorFingerprint, consumedIds, resolving] = React.useMemo(
