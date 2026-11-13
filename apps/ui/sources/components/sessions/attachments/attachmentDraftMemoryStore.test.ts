@@ -13,6 +13,26 @@ vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).creat
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('shared attachment source custody', () => {
+    it('reports a failed local save with its typed cause while preserving the picked source', async () => {
+        vi.stubGlobal('__TAURI_INTERNALS__', { invoke: createDesktopSecureStorageBoundary().invoke });
+        const records = await import('@/sync/domains/state/browserRecordStorage');
+        vi.spyOn(records, 'writeBrowserRecord').mockRejectedValue(Object.assign(new Error('private storage detail'), { code: 'QuotaExceededError' }));
+        const key = 'failed-source-save';
+        const selected: AttachmentDraft = { id: 'chosen', status: 'pending', source: {
+            kind: 'memory', name: 'chosen.txt', bytes: new Uint8Array([1]),
+        } };
+        bindAttachmentDraftPersistence(key, { serverId: 'save-home', accountId: 'save-member' });
+        writeAttachmentDraftsForKey(key, [selected]);
+        await expect(flushAttachmentDraftsForKey(key)).rejects.toMatchObject({
+            code: 'attachment_persistence_failed',
+            failureCause: { phase: 'attachment.draft.persist', errorCode: 'QuotaExceededError' },
+        });
+        const failed = readAttachmentDraftsForKey(key)[0]!;
+        expect(failed.source).toBe(selected.source);
+        expect(failed).toMatchObject({ status: 'error', errorCode: 'attachment_persistence_failed', error: expect.any(String) });
+        expect(failed.error?.trim()).toBeTruthy();
+        expect(failed.error).not.toContain('private storage detail');
+    });
     it('preserves the immutable environment handle across memory snapshots', () => {
         const source = { kind: 'memory' as const, name: 'chosen.txt', bytes: new Uint8Array([1]) };
         writeAttachmentDraftsForKey('source-custody', [{ id: 'chosen', source, status: 'pending' }]);
