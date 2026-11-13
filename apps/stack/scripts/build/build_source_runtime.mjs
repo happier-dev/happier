@@ -199,17 +199,19 @@ export async function publishSourceBundleCandidate({ bundleRoot, candidateKey, o
     candidateKey: `capture-${candidate.outputName}` }), candidate);
 }
 
-async function readReusableSourceBundle({ outputDir, record, repoDir, component, serverComponent, dbProvider, sharedSourceInputs, env, newestCompleted = false, sourceCapturedAfter, allowOlderSourceWhenInputsMatch = false }) {
+async function readReusableSourceBundle({ outputDir, record, repoDir, component, serverComponent, dbProvider, sharedSourceInputs, env, newestCompleted = false, sourceCapturedAfter }) {
   if (!record.sourceInputDigests) return null;
   if (component === 'server'
       && (record.serverComponent !== serverComponent || record.dbProvider !== (dbProvider ?? (serverComponent === 'happier-server-light' ? 'sqlite' : 'postgres')))) return null;
-  if (sourceCapturedAfter != null && !(Date.parse(record.sourceCapture?.capturedAt) >= sourceCapturedAfter)
-      && (!allowOlderSourceWhenInputsMatch || newestCompleted || sourceCapturedAfter > Date.now())) return null;
+  // A capture older than an explicit boundary is adopted only when its consumed inputs are still
+  // byte-identical (checked below): identical bytes already satisfy the boundary. A future boundary waits.
+  const predatesBoundary = sourceCapturedAfter != null && !(Date.parse(record.sourceCapture?.capturedAt) >= sourceCapturedAfter);
+  if (predatesBoundary && sourceCapturedAfter > Date.now()) return null;
   const sharedManifest = await readSharedSourceInputManifest(sharedSourceInputs);
   const sharedFiles = sharedManifest && new Set(sharedManifest.filesByComponent[component]);
   const dependencyPublication = await readBuildInputDependencies({ sourceDir: repoDir, env });
   if (!sourceRuntimeDependencyIdentityMatches(record.dependencyPublication, dependencyPublication, component)) return null;
-  if (newestCompleted) {
+  if (newestCompleted && !predatesBoundary) {
     const { reuseFingerprint, sourceInputDigests, inputIdentity, ...built } = record;
     return { outputDir, built: { ...built, dependencyPublication: { ...record.dependencyPublication, ...dependencyPublication } } };
   }
@@ -745,7 +747,7 @@ export function sourceRuntimeProducerUnavailable(cause, context) {
 
 async function readCompletedProducerComponents({ repoDir, stackBaseDir, components, env, signal,
   sourceCapturedAfter, pending, reuseSelected, requireCurrentSource = false, captureFingerprints,
-  requireLastGreen = false, loadSentinelPasses, allowOlderSourceWhenInputsMatch = true }) {
+  requireLastGreen = false, loadSentinelPasses }) {
   const bundleRoot = join(dirname(stackBaseDir), 'source-bundles');
   const keys = components.map((component, index) => captureFingerprints
     ? sourceRuntimeCaptureCandidateKey(captureFingerprints[index])
@@ -770,10 +772,8 @@ async function readCompletedProducerComponents({ repoDir, stackBaseDir, componen
         () => readOptionalJson(join(outputDir, 'source-bundle.json')));
       if (record?.inputIdentity !== candidate.inputIdentity || record?.reuseFingerprint !== candidate.reuseFingerprint) break;
       const reusable = await readReusableSourceBundle({ outputDir, record, repoDir, env, serverComponent: 'happier-server-light',
-        ...descriptor, newestCompleted: !requireCurrentSource
-          && !(allowOlderSourceWhenInputsMatch && components.length === 1 && descriptor.component === 'daemon' && sourceCapturedAfter != null),
-        sourceCapturedAfter,
-        allowOlderSourceWhenInputsMatch: allowOlderSourceWhenInputsMatch && components.length === 1 && descriptor.component === 'daemon' });
+        // Every component, single or paired (Systemic ruling 2026-11-13 12:43Z).
+        ...descriptor, newestCompleted: !requireCurrentSource, sourceCapturedAfter });
       if (!reusable) break;
       await probePreparedSourceRuntimeBundle({ built: reusable.built, component: descriptor.component, repoDir, env, signal });
       prepared[descriptor.component] = reusable.built;
@@ -813,7 +813,7 @@ async function withSourceRuntimeWorkerResult(run) {
 /** QA adopts completed products. Only this repository producer request enters
  * the compiler owner, under the execution host's shared admission locks. */
 export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, components, env = process.env,
-  signal, sourceCapturedAfter, pending, reuseSelected, requireLastGreen = false, loadSentinelPasses, allowOlderSourceWhenInputsMatch = true, logger = console, stderrStream = process.stderr }) {
+  signal, sourceCapturedAfter, pending, reuseSelected, requireLastGreen = false, loadSentinelPasses, logger = console, stderrStream = process.stderr }) {
   repoDir = resolve(repoDir);
   stackBaseDir = resolve(stackBaseDir);
   signal ??= pending?.signal;
@@ -823,7 +823,7 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
   const context = resolveSourceRuntimeProducerContext({ repoDir, stackBaseDir, env });
   const requireCurrentSource = context.consumerStackName === context.producerStackName;
   const adopt = () => readCompletedProducerComponents({ repoDir, stackBaseDir, components, env: context.env,
-    signal, sourceCapturedAfter, pending, reuseSelected, requireCurrentSource, requireLastGreen, loadSentinelPasses, allowOlderSourceWhenInputsMatch });
+    signal, sourceCapturedAfter, pending, reuseSelected, requireCurrentSource, requireLastGreen, loadSentinelPasses });
   const report = prepared => {
     for (const [component, built] of Object.entries(prepared)) logger.error(`[source-bundle] adopted component=${component} producer=${context.producerStackName} capturedAt=${built.sourceCapture?.capturedAt} inputIdentity=${built.sourceCapture?.inputIdentity}`);
     return prepared;
@@ -839,7 +839,7 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
           launcherPath: fileURLToPath(new URL('../../bin/hstack-exec', import.meta.url)), command: process.execPath,
           args: sourceBuildNodeArgs({ repoDir, scriptPath: fileURLToPath(import.meta.url), args: [JSON.stringify({ repoDir,
             stackBaseDir: context.producerStackBaseDir, consumerStackBaseDir: stackBaseDir, pendingRequestId: pending?.requestId,
-            producerComponents: components, sourceCapturedAfter, reuseSelected, requireCurrentSource, allowOlderSourceWhenInputsMatch, resultPath })] }),
+            producerComponents: components, sourceCapturedAfter, reuseSelected, requireCurrentSource, resultPath })] }),
           locks: [{ path: sourceRuntimeProducerBuildLockPath(context.producerStackBaseDir), kind: 'workspace', timeoutMs: null,
             errorLabel: 'source runtime producer lock' }],
           cwd: repoDir, env: context.env, signal, devStartup: true, admissionClass: 'source-bundle', stdio: ['ignore', 'pipe', 'pipe'],
@@ -865,16 +865,16 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
 }
 
 async function prepareSourceRuntimeProducerInProcess({ repoDir, stackBaseDir, consumerStackBaseDir, pendingRequestId,
-  producerComponents: components, sourceCapturedAfter, reuseSelected, requireCurrentSource, allowOlderSourceWhenInputsMatch, env = process.env, signal }) {
+  producerComponents: components, sourceCapturedAfter, reuseSelected, requireCurrentSource, env = process.env, signal }) {
   if (pendingRequestId) await updatePendingSourcePreparationPhase({ stackBaseDir: consumerStackBaseDir,
     requestId: pendingRequestId, phase: 'building',
     ...(components.length === 1 ? { component: components[0].component } : {}), signal });
   const completed = await readCompletedProducerComponents({ repoDir, stackBaseDir: consumerStackBaseDir, components, env,
-    signal, sourceCapturedAfter, reuseSelected, requireCurrentSource, allowOlderSourceWhenInputsMatch, pending: { requestId: pendingRequestId } });
+    signal, sourceCapturedAfter, reuseSelected, requireCurrentSource, pending: { requestId: pendingRequestId } });
   if (completed) return completed;
   const fingerprints = await Promise.all(components.map(component => sourceBundleFingerprint({ repoDir, ...component, env })));
   const historical = await readCompletedProducerComponents({ repoDir, stackBaseDir: consumerStackBaseDir, components, env,
-    signal, sourceCapturedAfter, reuseSelected, requireCurrentSource: true, captureFingerprints: fingerprints, allowOlderSourceWhenInputsMatch, pending: { requestId: pendingRequestId } });
+    signal, sourceCapturedAfter, reuseSelected, requireCurrentSource: true, captureFingerprints: fingerprints, pending: { requestId: pendingRequestId } });
   if (historical) return historical;
   const bundleRoot = join(dirname(stackBaseDir), 'source-bundles');
   const locks = [...new Set(fingerprints)].sort().map(fingerprint => sourceBundleBuildLockPath(bundleRoot, fingerprint));

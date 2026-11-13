@@ -231,7 +231,7 @@ test('last-green reload selection uses the post-producer sentinel verdict and re
     'the worker adopts the newest producer from the forwarded sentinel verdict without a local HISTORY file');
 });
 
-test('an explicit daemon-only reload boundary captures unchanged source again', { skip: process.platform !== 'linux' }, async t => {
+test('an explicit daemon-only reload boundary adopts an unchanged capture without compiling', { skip: process.platform !== 'linux' }, async t => {
   const { native, repoDir, compilers, env, stacks } = await createProducerFixture(t);
   const first = await native.build({ repoDir, stackBaseDir: stacks[1], component: 'daemon', env });
   const history = join(repoDir, '.project/tmp/load-sentinel/HISTORY.txt');
@@ -244,12 +244,11 @@ test('an explicit daemon-only reload boundary captures unchanged source again', 
     args: ['--no-ui', '--no-server', `--source-after=${new Date(sourceCapturedAfter).toISOString()}`],
     env: { ...env, HAPPIER_STACK_DAEMON: '1', HAPPIER_SERVER_URL: 'http://127.0.0.1:45454' },
     onPrepared({ sourceCaptures }) { capture = sourceCaptures.daemon; } });
-  assert.ok(Date.parse(capture.capturedAt) >= sourceCapturedAfter,
-    'an explicit reload boundary requests a new capture even when the daemon authored identity is unchanged');
-  assert.notEqual(JSON.parse(await readFile(join(stacks[0], 'source-runtime/selected-daemon.json'), 'utf8')).entrypoint, first.entrypoint);
-  const lastGreen = await native.build({ repoDir, stackBaseDir: stacks[1], component: 'daemon', env, requireLastGreen: true });
-  assert.equal(lastGreen.entrypoint, first.entrypoint, 'a newer unverified capture of unchanged inputs must retain the prior green capture');
-  assert.deepEqual((await readFile(compilers, 'utf8')).trim().split('\n'), ['repo-producer', 'repo-producer']);
+  // Identical consumed input identity means identical bytes: the boundary is already satisfied (Systemic 12:43Z ruling).
+  assert.equal(capture.capturedAt, first.sourceCapture.capturedAt,
+    'an explicit reload boundary adopts the completed capture whose consumed inputs are unchanged');
+  assert.equal(JSON.parse(await readFile(join(stacks[0], 'source-runtime/selected-daemon.json'), 'utf8')).entrypoint, first.entrypoint);
+  assert.deepEqual((await readFile(compilers, 'utf8')).trim().split('\n'), ['repo-producer'], 'an unchanged daemon reload compiles nothing');
 });
 
 test('an explicit-cutoff remote server start prepares without a last-green capture', { skip: process.platform !== 'linux' }, async t => {
@@ -335,7 +334,9 @@ test('real source reload adopts a coherent producer pair and waits for activatio
   const newerUnverifiedPair = await prepareSourceRuntimeProducer({ repoDir, stackBaseDir: stacks[1], components: [
     { component: 'server', serverComponent: 'happier-server-light', dbProvider: 'sqlite' }, { component: 'daemon' },
   ], env, sourceCapturedAfter: Date.now(), signal: t.signal });
-  assert.notEqual(newerUnverifiedPair.daemon.sourceCapture.capturedAt, capture.daemon.capturedAt);
+  for (const component of ['server', 'daemon']) assert.equal(newerUnverifiedPair[component].sourceCapture.capturedAt, capture[component].capturedAt,
+    `a paired boundary request adopts the unchanged ${component} capture`);
+  assert.deepEqual((await readFile(compilers, 'utf8')).trim().split('\n'), ['repo-producer'], 'an unchanged pair compiles nothing');
   await native.prepareReload({ repoDir, stackName: 'qa-one', stackBaseDir: stacks[0], args: ['--no-ui'], onHost: true,
     env: { ...env, HAPPIER_STACK_DAEMON: '1', HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light' },
     onPrepared({ sourceCaptures }) {
@@ -350,7 +351,7 @@ test('real source reload adopts a coherent producer pair and waits for activatio
       for (const component of ['server', 'daemon']) assert.equal(sourceCaptures[component].capturedAt, capture[component].capturedAt,
         `plain reload adopts the last-green ${component} capture across authored source movement`);
     } });
-  assert.deepEqual((await readFile(compilers, 'utf8')).trim().split('\n'), ['repo-producer', 'repo-producer']);
+  assert.deepEqual((await readFile(compilers, 'utf8')).trim().split('\n'), ['repo-producer']);
   await native.prepareReload({ repoDir, stackName: 'qa-one', stackBaseDir: stacks[0],
     args: ['--no-ui', `--source-after=${new Date(reloadRequestedAt).toISOString()}`], onHost: true,
     env: { ...env, HAPPIER_STACK_DAEMON: '1', HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light' } });
