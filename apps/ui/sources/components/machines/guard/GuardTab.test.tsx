@@ -10,6 +10,7 @@ import { createDeferred, renderScreen } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createMachineGuardViewFixture } from '@/sync/domains/machines/guard/guardViewFixtures';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
@@ -65,7 +66,7 @@ async function mount(options: Readonly<{ params?: React.ComponentProps<typeof Gu
     const serverId = await home.addHome({ name: 'Guard Home', serverUrl: `https://guard-tab-${Math.random().toString(36).slice(2)}.test`,
         serverIdentityId: 'srv_guard_tab', accountId: 'owner' });
     home.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: {} }, version: 1 } });
-    storage.setState({ machines: {}, machineListByServerId: { [serverId]: [machine(options.overrides)] }, machineListStatusByServerId: { [serverId]: 'idle' } });
+    await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, [machine(options.overrides)]);
     transport.rpc.mockImplementation(async ({ method, payload }: { method: string; payload: Record<string, unknown> }) => {
         const answer = options.rpc?.(method, payload);
         if (answer !== undefined) return answer;
