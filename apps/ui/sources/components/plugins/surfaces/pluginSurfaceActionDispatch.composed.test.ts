@@ -10024,10 +10024,15 @@ describe('external author Doc collaboration through physical SDK carriers', () =
 });
 
 it('preserves GitHub Settings caller and admitted source for Account Triage create without source id', async () => {
-    const [{ PLUGIN_MANIFEST: triage }, { PLUGIN_MANIFEST: github }, { resolveTriageCallerSource }] = await Promise.all([
+    const { createTriageAdministerSourceInstanceActionHandler } = await import('../../../../../../packages/plugins/triage/src/actions/administerSourceInstanceAction');
+    const { createTestkitCorpusCollections } = await import('../../../../../../packages/plugins/triage/src/corpus/testkit/corpusCollections.test-support');
+    const { GITHUB_CONNECTED_ACCOUNT_PURPOSE, GITHUB_CONNECTED_ACCOUNT_ID } = await import('../../../../../../packages/plugins/scm-github/src/observations/githubProviderContracts');
+    const { encodeGithubTriageConfiguration } = await import('../../../../../../packages/plugins/scm-github/src/triage/configuration');
+    const { collections } = createTestkitCorpusCollections();
+    const administer = createTriageAdministerSourceInstanceActionHandler({ mintSourceInstanceId: () => '11111111-1111-4111-8111-111111111111', nowMs: () => 1 });
+    const [{ PLUGIN_MANIFEST: triage }, { PLUGIN_MANIFEST: github }] = await Promise.all([
         import('../../../../../../packages/plugins/triage/src/manifest'),
         import('../../../../../../packages/plugins/scm-github/src/manifest'),
-        import('../../../../../../packages/plugins/triage/src/actions/callerSource'),
     ]);
     const accountLifetime = clientAccountLifetime(rpcHomes.get('server-client-action')!.id);
     const manifests = [triage, github].map(manifest => {
@@ -10051,7 +10056,6 @@ it('preserves GitHub Settings caller and admitted source for Account Triage crea
     const source = availability.readCurrentAccountExecution(github.id);
     if (target.kind !== 'available' || source.kind !== 'available') throw new Error('Expected admitted Account releases');
     let receivedCaller: unknown;
-    let resolution: unknown;
     let receivedRequestId: string | undefined;
     const normalizedTarget = manifests[0]!;
     const declaration = normalizedTarget.contributes.actions.find(action => action.id === 'sources/administer-v1')!;
@@ -10064,12 +10068,18 @@ it('preserves GitHub Settings caller and admitted source for Account Triage crea
             artifactId: declaration.execution.account.artifactId, executable: { exports: [declaration.execution.account.exportName] },
             entry: `react-native/${declaration.execution.account.artifactId}/entry.cjs.bundle`,
             files: CLIENT_ACTION_ARTIFACT_GRAPH.files.map(file => ({ ...file, relativePath: `react-native/${declaration.execution.account.artifactId}/entry.cjs.bundle` })) }),
-        accountHandler: async (_value, context) => {
+        accountHandler: async (value, context) => {
             receivedCaller = context.caller;
             receivedRequestId = context.requestId;
-            const resolved = await resolveTriageCallerSource(context);
-            resolution = resolved.kind === 'source' ? { kind: 'source', source: resolved.caller.source } : resolved;
-            return { kind: 'invalidCaller' };
+            const { TriageSourceAdministrationActionInputV1Schema } = await import('@happier-dev/triage-protocol/v1');
+            return administer(TriageSourceAdministrationActionInputV1Schema.parse(value), { ...context, services: {
+                ...context.services, storage: { account: { collection: definition => {
+                    if (definition.id === 'source-instances') return collections.sourceInstances;
+                    if (definition.id === 'session-links') return collections.sessionLinks;
+                    if (definition.id === 'user-marks') return collections.userMarks;
+                    throw new Error(`Unexpected collection: ${definition.id}`);
+                } } },
+            } });
         } });
     await activation.composition.unload();
     nestedActionConfirmation.onShow = approve => approve();
@@ -10088,16 +10098,16 @@ it('preserves GitHub Settings caller and admitted source for Account Triage crea
             requestId: 'source-caller-create', surface: controller.surfaceContext,
             payload: { action: { pluginId: triage.id, localId: activation.action.id },
             input: { v: 1, kind: 'create', draft: { v: 1,
-                binding: { purpose: 'triage-source', account: { service: { pluginId: github.id, localId: 'github' }, accountId: 'cli-login' } },
-                localInstanceKey: 'happier-dev/triage-qa-sandbox', keyStability: 'stable',
-                configuration: { v: 1, token: 'routing-token' }, locator: { v: 1, displayLabel: 'happier-dev/triage-qa-sandbox' } } },
+                binding: { purpose: GITHUB_CONNECTED_ACCOUNT_PURPOSE, source: 'native', service: { pluginId: github.id, localId: GITHUB_CONNECTED_ACCOUNT_ID } },
+                localInstanceKey: 'github.com', keyStability: 'locatorDerived',
+                configuration: { v: 1, token: encodeGithubTriageConfiguration({ v: 1,
+                    selection: { kind: 'selected', unitIds: ['leeroybrun/test-happier-scm'] } }) },
+                locator: { v: 1, displayLabel: 'Use this machine’s GitHub CLI login' } } },
             },
         });
-        expect(outcome).toEqual({ kind: 'invalidCaller' });
+        expect(outcome).toEqual({ kind: 'active', sourceInstanceId: '11111111-1111-4111-8111-111111111111' });
         expect(receivedCaller).toMatchObject({ kind: 'plugin', pluginId: github.id, contribution: { id: 'triage-sources' } });
-        expect(resolution).toEqual({ kind: 'source', source: { pluginId: github.id, localId: 'github-forge' } });
         expect(receivedRequestId).toBe('source-caller-create');
-        expect(outcome).toEqual({ kind: 'invalidCaller' });
     } finally {
         nestedActionConfirmation.onShow = null;
         await activation.composition.unload(); accountLifetime.retire(); clearPluginAccountAvailabilityProjection();

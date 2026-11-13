@@ -1,13 +1,14 @@
 import {
     defineProtocolArray,
     defineProtocolLiteral,
+    defineProtocolNumber,
     defineProtocolObject,
     defineProtocolUnion,
 } from '@happier-dev/plugin-sdk/protocol';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';
 
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from './bounds.js';
-import { TriageSourceInstanceIdV1Schema, TriageTextV1ProtocolSchema } from './identity.js';
+import { TriageIdentifierV1ProtocolSchema, TriageSourceInstanceIdV1Schema, TriageTextV1ProtocolSchema } from './identity.js';
 import { TriageSourceInstanceDraftV1Schema } from './instances.js';
 import { TriageSourceFailureV1Schema } from './diagnostics.js';
 import type { TriageSourceDescriptorV1 } from './descriptor.js';
@@ -126,6 +127,18 @@ export const TriageSourceAdministrationActionResultV1Schema = defineProtocolUnio
     defineProtocolObject({
         kind: defineProtocolLiteral('invalidCaller'),
         failure: TriageSourceFailureV1Schema.optional(),
+        /** Secret-free operands from the single caller/source resolution. */
+        admission: defineProtocolObject({
+            caller: defineProtocolUnion([
+                defineProtocolObject({ kind: defineProtocolLiteral('absent') }, { policy: 'closed' }),
+                defineProtocolObject({ kind: defineProtocolLiteral('host') }, { policy: 'closed' }),
+                defineProtocolObject({ kind: defineProtocolLiteral('automationRun') }, { policy: 'closed' }),
+                defineProtocolObject({ kind: defineProtocolLiteral('plugin'), pluginId: TriageIdentifierV1ProtocolSchema,
+                    contributionId: TriageIdentifierV1ProtocolSchema.optional() }, { policy: 'closed' }),
+            ]),
+            surface: TriageIdentifierV1ProtocolSchema,
+            candidateCount: defineProtocolNumber({ integer: true, minimum: 0 }),
+        }, { policy: 'closed' }).optional(),
     }, { policy: 'closed' }),
     defineProtocolObject({
         kind: defineProtocolLiteral('currentnessConflict'),

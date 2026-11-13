@@ -4,6 +4,7 @@ import {
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_VERSION_V1,
     TriageSourceInstanceDraftV1Schema,
+    TriageSourceAdministrationActionResultV1Schema,
     type TriageGetResultV1,
     type TriageScanResultV1,
     type TriageSourceInstanceDraftV1,
@@ -174,6 +175,17 @@ async function readRows(
 }
 
 describe('the source administration Action handler', () => {
+    it('returns secret-free caller admission operands and leaves storage unchanged', async () => {
+        const { collections } = createTestkitCorpusCollections();
+        const handler = createTriageAdministerSourceInstanceActionHandler({ mintSourceInstanceId: () => INSTANCE_ID, nowMs: () => 1 });
+        const result = await handler({ v: 1, kind: 'create', draft: draft() },
+            createContext({ collections, caller: pluginCaller(SOURCE.pluginId), surface: 'ui', admitted: [] }));
+        expect(result).toMatchObject({ kind: 'invalidCaller', admission: {
+            caller: { kind: 'plugin', pluginId: SOURCE.pluginId }, surface: 'ui', candidateCount: 0,
+        } });
+        expect(TriageSourceAdministrationActionResultV1Schema.parse(result)).toEqual(result);
+        expect(await readRows(collections)).toHaveLength(0);
+    });
     it('lets an agent configure native service metadata and persists no account or credential', async () => {
         const { collections } = createTestkitCorpusCollections();
         const handler = createTriageAdministerSourceInstanceActionHandler({
