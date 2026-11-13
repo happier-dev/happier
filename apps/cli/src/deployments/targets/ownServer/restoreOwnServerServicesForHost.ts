@@ -19,7 +19,7 @@ import { decodeBase64 } from '@/api/encryption';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
 import { configuration } from '@/configuration';
 
-const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
+const refuse = (code: string, stage = 'service.restoration'): never => { throw Object.assign(new Error(code), { code, stage }); };
 
 /** Finite installed-Account inventory on first service use. The managed-services
  * owner owns dedupe and native observation custody, including failed attempts. */
@@ -36,7 +36,7 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
     input.signal.throwIfAborted();
     const runtime = await input.resolveRuntime(input.signal);
     if (!runtime || runtime.machineId !== input.machineId || !input.isCurrent()
-        || runtime.isCurrent && !await runtime.isCurrent()) return refuse('admission_unavailable');
+        || runtime.isCurrent && !await runtime.isCurrent()) return refuse('admission_unavailable', 'service.account.admission');
     const context: ActionExecutorContext = { signal: input.signal };
     const assertCurrent = async () => {
         input.signal.throwIfAborted();
@@ -72,7 +72,7 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
         if (!page.ok) return refuse(page.error);
         // An older/incomplete inventory cannot establish that there is nothing
         // to restore. Leave the owner's attempt retryable on the next use.
-        if (!page.runtimeTargetLinks || page.coverage === 'partial') return refuse('admission_unavailable');
+        if (!page.runtimeTargetLinks || page.coverage === 'partial') return refuse('admission_unavailable', 'service.environment_inventory');
         for (const environment of page.items) {
             const selected = page.runtimeTargetLinks.find(link => link.id === environment.runtimeTargetLinkId
                 && link.environmentId === environment.id && link.targetKind === 'ownServer'
@@ -117,7 +117,7 @@ export async function restoreOwnServerServicesForHost(input: Readonly<{
                     };
                     const host = { credentials: runtime.credentials, serverId: input.serverId,
                         serverHttpBaseUrl: runtime.serverHttpBaseUrl, machineId: input.machineId,
-                        resolveRequesterIdentity: async () => ({ kind: 'unknown' as const, reason: 'requester_authority_unavailable' }),
+                        resolveRequesterIdentity: async () => ({ kind: 'unknown' as const, reason: 'requester_authority_unavailable' as const }),
                         acquirePluginRuntimeRegistryLease, acquireServiceExportForward: input.acquireServiceExportForward };
                     const dependencies = createDaemonDeploymentActionDeps({ ...host, runtime: createOwnServerDeploymentRuntimeForHost(host) });
                     const lease = await acquirePluginRuntimeRegistryLease();

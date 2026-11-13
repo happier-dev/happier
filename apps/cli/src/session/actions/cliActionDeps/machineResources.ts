@@ -23,6 +23,7 @@ import type { CliProjectAdmission, CliProjectAdmissionFailure } from './projectA
 import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
 import { createMachineServiceControlAction } from './machineServiceControl';
 import { createMachineServiceExecAction } from './machineServiceExec';
+import { machineServiceAdmissionFailure } from '@/daemon/local/services/launch/machineServiceFailure';
 import { projectVerifiedExternalActionRequesterContext, selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAttribution';
 import type { MachineAccessRoleV1 } from '@happier-dev/protocol/machines/machineAccessV1';
@@ -333,7 +334,7 @@ export function createCliMachineResourceActionDeps(
                 ?? (params.credentials ? readAccountIdFromToken(params.credentials.token) : null),
               canReadEnvironments: environmentIds => canReadServiceEnvironments(input.serverId, environmentIds, context, actionId),
               observeEnvironmentAccessChanges: listener => observeEnvironmentAccessChanges({ serverId: input.serverId }, context, listener) })
-            : { kind: 'unavailable', reason: 'admission_unavailable' };
+            : machineServiceAdmissionFailure('service.runtime.port');
         }
         return callMachineAction({ machineId: input.machineId, serverId: input.serverId,
           method: actionId, request: input, authority: context.authority, context, effectActionId: actionId, exactMachine: true,

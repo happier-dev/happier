@@ -11,7 +11,7 @@ import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/f
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { MachineServicesListResultV1Schema, ManagedServiceNativeLogResultV1Schema,
     DeploymentEnvironmentAccessInputV1Schema, DeploymentEnvironmentAccessResultV1Schema,
-    DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema } from '@happier-dev/protocol';
+    DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentListResultV1Schema, DeploymentReceiptGetResultV1Schema } from '@happier-dev/protocol';
 import { configuration } from '@/configuration';
 import { addServerProfile, adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
@@ -105,9 +105,10 @@ it('serves Machine service Actions and accepted Project Starts through the insta
                 machineServiceAction: request => installed.executeMachineServiceAction(request),
                 invoke: async () => { throw new Error('Service Action must not re-enter Machine RPC'); } },
         });
+        let currentExecutor = executor;
         client.registerLocalServicesRoutes({ machineId: target.machineId, serverId: profile.id, accountId: 'owner',
             projectManagedServices: owner, localServicesLauncher: services.launcherRoutes,
-            localServicesInventory: services.inventoryRoutes, resolveLauncherActionExecutor: async () => executor });
+            localServicesInventory: services.inventoryRoutes, resolveLauncherActionExecutor: async () => currentExecutor });
         let enter!: () => void;
         let release!: () => void;
         const entered = new Promise<void>(resolve => { enter = resolve; });
@@ -140,23 +141,113 @@ it('serves Machine service Actions and accepted Project Starts through the insta
         const listed = MachineServicesListResultV1Schema.parse(received);
         expect(listed).toMatchObject({ kind: 'snapshot', services: [{ serviceId: watch.watchId, authority: 'machine',
             state: 'unknown', lifecyclePurpose: 'deployment' }] });
+        const memberToken = `e30.${Buffer.from(JSON.stringify({ sub: 'member' })).toString('base64url')}.signature`;
+        const memberExecutor = createCliActionExecutor({ token: memberToken, credentials: { token: memberToken, encryption: null },
+            mode: 'plain', ctx: null, sessionId: 'member-cli', serverId: target.serverId, serverHttpBaseUrl: profile.serverUrl,
+            machineActionDirectTargetTransport: { machineId: target.machineId,
+                machineServiceAction: request => installed.executeMachineServiceAction(request),
+                invoke: async () => { throw new Error('Service Action must not re-enter Machine RPC'); } },
+        });
+        currentExecutor = memberExecutor;
+        const sharedList = await client.invokeLocalMachineAction(method, target, { rpcContext: {
+            machineAdmission: { actorAccountId: 'member', custodianAccountId: 'owner', machineId: target.machineId,
+                installationId: 'installation', role: 'use', encryptionMode: 'plain' },
+            verifyMachineAdmissionCurrent: async () => true,
+        } });
+        expect(sharedList).toMatchObject({ kind: 'snapshot', services: [{ serviceId: watch.watchId }] });
+        currentExecutor = executor;
         if (listed.kind !== 'snapshot' || !listed.services[0]?.watchRevision) throw new Error('Expected retained watch revision');
         const unwatchMethod = getActionSpec('machines.services.unwatch').bindings?.rpcMethod;
         if (!unwatchMethod) throw new Error('Missing canonical Unwatch RPC binding');
         expect(await client.invokeLocalMachineAction(unwatchMethod, { ...target, watchId: watch.watchId,
-            expectedRevision: listed.services[0].watchRevision })).toMatchObject({ kind: 'applied' });
+            expectedRevision: listed.services[0].watchRevision }, { rpcContext: {
+            machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: target.machineId,
+                installationId: 'installation', role: 'manage', encryptionMode: 'plain' },
+            verifyMachineAdmissionCurrent: async () => true,
+        } })).toMatchObject({ kind: 'applied' });
         expect(writes).toBe(1);
         expect(client.getMachineMetadataSnapshot()).toMatchObject({ status: 'ready', metadata: {
             displayName: 'Preserved', serviceWatchesV1: { v: 1, watches: [] } } });
         await client.shutdown();
         expect(await client.executeMachineServiceAction({ actionId: 'machines.services.list', input: target,
             context: { surface: 'cli', authority: 'present_user' }, canReadEnvironment: async () => false, requesterAccountId: 'owner' }))
-            .toEqual({ kind: 'unavailable', reason: 'admission_unavailable' });
+            .toMatchObject({ ok: false, errorCode: 'admission_unavailable',
+                failureCause: { phase: 'service.runtime.closed', errorCode: 'admission_unavailable' } });
         client = undefined;
     } finally {
         await client?.shutdown();
         await services.stop();
         await owner.dispose();
+        Object.assign(configuration, previous);
+        await rm(home, { recursive: true, force: true });
+    }
+});
+
+it('preserves the public service failure cause and retries an incomplete installed Home inventory', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'happier-api-service-inventory-'));
+    const previous = { happyHomeDir: configuration.happyHomeDir, settingsFile: configuration.settingsFile,
+        activeServerId: configuration.activeServerId, serversDir: configuration.serversDir,
+        installationIdentityFile: configuration.installationIdentityFile };
+    Object.assign(configuration, { happyHomeDir: home, settingsFile: join(home, 'settings.json'),
+        serversDir: join(home, 'servers'), installationIdentityFile: join(home, 'installation-identity.json') });
+    let client: ApiMachineClient | undefined;
+    let fixture: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
+    const inventory = (complete: boolean) => DeploymentEnvironmentListResultV1Schema.parse({ ok: true,
+        items: [], nextCursor: null, ...(complete ? { coverage: 'complete', runtimeTargetLinks: [] } : {}) });
+    let complete = false;
+    try {
+        const profile = await addServerProfile({ name: 'service-inventory', serverUrl: 'https://service-inventory.invalid',
+            webappUrl: 'https://service-inventory.invalid' });
+        const target = { serverId: 'srv_service_inventory', machineId: 'machine' };
+        configuration.activeServerId = profile.id;
+        await installationStore.readOrCreateInstallationIdentity();
+        const token = `e30.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+        const credentials = { token, encryption: null };
+        await credentialStore.writeStoredCredentialsForServerId(profile.id, credentials);
+        const respond = (url: string) => {
+            const path = new URL(url).pathname;
+            if (path === '/v1/account/profile') return { status: 200, data: AccountProfileSchema.parse({ id: 'owner' }) };
+            if (path === '/v1/account/encryption') return { status: 200,
+                data: AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 1 }) };
+            if (path === '/v1/deployments/environments') return { status: 200, data: inventory(complete) };
+            throw new Error(`Unexpected service inventory HTTP request: ${path}`);
+        };
+        // HTTP and the socket are genuine external boundaries. The installed
+        // identity, credential store, restoration, RPC and Action owners stay real.
+        vi.spyOn(axios, 'request').mockImplementation(async request => respond(request.url!));
+        vi.spyOn(axios, 'get').mockImplementation(async url => respond(String(url)));
+        fixture = await createAdmittedPluginRuntimeFixture({ happyHomeDir: home, controller: pluginReloadController,
+            runtimeOptions: { pluginIds: [] } });
+        const machine: Machine = { id: target.machineId, encryptionMode: 'plain', metadataVersion: 1,
+            daemonState: null, daemonStateVersion: 0, metadata: { host: 'worker', platform: 'linux', happyCliVersion: 'dev',
+                homeDir: home, happyHomeDir: home, serviceWatchesV1: { v: 1, watches: [] } } };
+        client = await runWithServerHttpBaseUrl(profile.serverUrl, () => new ApiMachineClient(token, machine));
+        Reflect.set(client, 'socket', createApiSessionSocketStub({ connected: true }));
+        const installed = client;
+        const executor = createCliActionExecutor({ token, credentials, mode: 'plain', ctx: null,
+            sessionId: 'cli-global', serverId: target.serverId, serverHttpBaseUrl: profile.serverUrl,
+            machineActionDirectTargetTransport: { machineId: target.machineId,
+                machineServiceAction: request => installed.executeMachineServiceAction(request),
+                invoke: async () => { throw new Error('Service Action must use its installed owner'); } },
+        });
+        client.registerLocalServicesRoutes({ machineId: target.machineId, serverId: profile.id, accountId: 'owner',
+            projectManagedServices: fixture.registry.projectManagedServices, resolveLauncherActionExecutor: async () => executor });
+        const method = getActionSpec('machines.services.list').bindings?.rpcMethod;
+        if (!method) throw new Error('Missing canonical Machine-service RPC binding');
+        expect(await client.invokeLocalMachineAction(method, target)).toMatchObject({ ok: false,
+            failureCause: { phase: 'service.home_identity', errorClass: 'Error', errorCode: 'admission_unavailable' } });
+        await adoptServerProfileHomeConnectionDescriptor({ expectedProfileId: profile.id, observation: 'exact', descriptor: {
+            v: 1, homeServerIdentityId: target.serverId, canonicalServerUrl: profile.serverUrl, revision: 1,
+            endpoints: [{ kind: 'https', url: profile.serverUrl }],
+        } });
+        expect(await client.invokeLocalMachineAction(method, target)).toMatchObject({ ok: false,
+            failureCause: { phase: 'service.environment_inventory', errorClass: 'Error', errorCode: 'admission_unavailable' } });
+        complete = true;
+        expect(await client.invokeLocalMachineAction(method, target)).toMatchObject({ kind: 'snapshot', services: [] });
+    } finally {
+        await client?.shutdown();
+        await fixture?.dispose();
+        vi.restoreAllMocks();
         Object.assign(configuration, previous);
         await rm(home, { recursive: true, force: true });
     }

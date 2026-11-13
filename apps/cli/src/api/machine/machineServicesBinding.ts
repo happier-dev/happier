@@ -1,5 +1,6 @@
 import type { MachineMetadataFieldPortV1, MachineMetadataFieldReadV1 } from '@happier-dev/protocol';
 import { createMachineServicesRuntime } from '@/daemon/local/services/launch/machineServices';
+import { machineServiceAdmissionFailure } from '@/daemon/local/services/launch/machineServiceFailure';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import type { MachineServiceActionDirectTargetInvocation } from '@/session/actions/createCliActionDeps';
@@ -58,7 +59,8 @@ export function createApiMachineServicesBinding(input: Readonly<{
         async execute(request: MachineServiceActionDirectTargetInvocation) {
             start();
             const runtime = await acquire();
-            return !disposed && runtime ? runtime.execute(request) : { kind: 'unavailable' as const, reason: 'admission_unavailable' as const };
+            return !disposed && runtime ? runtime.execute(request)
+                : machineServiceAdmissionFailure(disposed ? 'service.runtime.closed' : 'service.home_identity');
         },
         async ensureEnvironmentServices() {
             const runtime = await acquire();

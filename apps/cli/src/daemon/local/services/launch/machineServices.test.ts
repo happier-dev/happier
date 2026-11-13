@@ -182,10 +182,12 @@ describe('Machine service watch front door', () => {
             expect(snapshot).toMatchObject({ metadata: { displayName: 'Retained name', serviceWatchesV1: { v: 1, watches: [] } } });
             snapshot = { status: 'locked' };
             expect(await runtime.execute({ actionId: 'machines.services.list', context, input: target }))
-                .toEqual({ kind: 'unavailable', reason: 'admission_unavailable' });
+                .toMatchObject({ ok: false, errorCode: 'admission_unavailable',
+                    failureCause: { phase: 'service.metadata.read', errorCode: 'admission_unavailable' } });
             expect(await runtime.execute({ actionId: 'machines.services.unwatch', context, input: {
                 ...target, watchId: watch.watchId, expectedRevision: revision,
-            } })).toEqual({ kind: 'unavailable', reason: 'admission_unavailable' });
+            } })).toMatchObject({ ok: false, errorCode: 'admission_unavailable',
+                failureCause: { phase: 'service.metadata.read', errorCode: 'admission_unavailable' } });
             expect(writes).toBe(1);
         } finally { await runtime.dispose(); }
     });
@@ -493,7 +495,8 @@ describe('Machine service watch front door', () => {
             await pausedDiscovery;
             metadataBasis++;
             releaseDiscovery();
-            expect(await changingBasis).toEqual({ kind: 'unavailable', reason: 'admission_unavailable' });
+            expect(await changingBasis).toMatchObject({ ok: false, errorCode: 'admission_unavailable',
+                failureCause: { phase: 'service.metadata.read', errorCode: 'admission_unavailable' } });
             expect(writes).toBe(0);
             const nativeAfterPause = JSON.parse(await readFile(nativeState, 'utf8'));
             delete nativeAfterPause.discoveryPauseUrl;
@@ -552,7 +555,15 @@ describe('Machine service watch front door', () => {
             }, observeOperations ? { runActionOperation: operations.runActionOperation } : {}).executor;
             const serviceController = createServiceController(true);
             let activeServiceController = serviceController;
-            const personControl = { surface: 'ui' as const, authority: 'present_user' as const, serverId: target.serverId };
+            // Home transport admitted this host's custodian; Environment control
+            // still consumes its independent access response below.
+            const controlIngress = {
+                machineAdmission: SocketRpcMachineAdmissionContextV1Schema.parse({ actorAccountId: 'environment-reader',
+                    custodianAccountId: 'environment-reader', machineId: target.machineId,
+                    installationId: 'installation', role: 'manage', encryptionMode: 'plain' }),
+                verifyMachineAdmissionCurrent: async () => true,
+            };
+            const personControl = { ...controlIngress, surface: 'ui' as const, authority: 'present_user' as const, serverId: target.serverId };
             const refusedControl = await serviceController.execute('machines.services.control', { ...controlInput, expectedGeneration: 'retired-generation' }, personControl);
             expect(refusedControl).toMatchObject({ ok: false, errorCode: 'service_generation_changed' });
             expect(JSON.parse(await readFile(nativeState, 'utf8')).controls).toEqual([]);
@@ -585,7 +596,7 @@ describe('Machine service watch front door', () => {
             const waivedControl = ActionsSettingsV1Schema.parse({ v: 1,
                 approvalWaivedSurfaces: { [controlAction]: ['ui', 'agent', 'cli'] } });
             for (const surface of ['ui', 'agent', 'cli'] as const) {
-                const invocation = { surface, authority: surface === 'agent' ? 'account_automation' as const : 'present_user' as const,
+                const invocation = { ...controlIngress, surface, authority: surface === 'agent' ? 'account_automation' as const : 'present_user' as const,
                     serverId: target.serverId, interactivePresentation: 'unavailable' as const };
                 const machineScope = { kind: 'machine' as const, machineId: target.machineId };
                 const environmentScope = { kind: 'environment' as const, environmentId: release.environmentId };
@@ -622,7 +633,7 @@ describe('Machine service watch front door', () => {
             expect(controlRpc).toBeDefined();
             if (!controlRpc) throw new Error('Expected canonical service control RPC');
             activeServiceController = createServiceController(false);
-            expect(await controlRpc(controlInput, { signal: new AbortController().signal,
+            expect(await controlRpc(controlInput, { ...controlIngress, signal: new AbortController().signal,
                 localActionContext: { surface: 'ui', authority: 'present_user' } })).toMatchObject({
                 ok: false, errorCode: 'service_operation_unavailable',
                 details: { reason: 'service_operation_admission_unavailable', remedy: 'reconnect_machine', retryable: true },
@@ -636,7 +647,7 @@ describe('Machine service watch front door', () => {
                 ['termination_incomplete', { kind: 'outcome_unknown', operation: { operationId: expect.any(String) } }],
             ] as const) {
                 await writeFile(nativeState, JSON.stringify({ ...JSON.parse(await readFile(nativeState, 'utf8')), stopStatus: status }));
-                expect.soft(await controlRpc(controlInput, { signal: new AbortController().signal,
+                expect.soft(await controlRpc(controlInput, { ...controlIngress, signal: new AbortController().signal,
                     localActionContext: { surface: 'ui', authority: 'present_user' } })).toMatchObject(expected);
                 expect(JSON.parse(await readFile(nativeState, 'utf8')).phase).not.toBe('stopped');
                 const retained = MachineServicesListResultV1Schema.parse(await runtime.execute({
@@ -649,7 +660,7 @@ describe('Machine service watch front door', () => {
             const beforeSettledStop = JSON.parse(await readFile(nativeState, 'utf8'));
             delete beforeSettledStop.stopStatus;
             await writeFile(nativeState, JSON.stringify(beforeSettledStop));
-            const controlled = await controlRpc(controlInput, { signal: new AbortController().signal,
+            const controlled = await controlRpc(controlInput, { ...controlIngress, signal: new AbortController().signal,
                 localActionContext: { surface: 'ui', authority: 'present_user' } });
             expect(controlled).toMatchObject({ kind: 'observed', serviceId: service.serviceId,
                 generation: service.generation, state: 'stopped', operation: { operationId: expect.any(String) } });
@@ -966,7 +977,7 @@ describe('Machine service watch front door', () => {
             } })) });
             await writeFile(nativeState, JSON.stringify({ ...JSON.parse(await readFile(nativeState, 'utf8')),
                 stopPauseUrl: `http://127.0.0.1:${address.port}/native-stop` }));
-            const retiringControl = Promise.resolve(controlRpc(controlInput, { signal: new AbortController().signal,
+            const retiringControl = Promise.resolve(controlRpc(controlInput, { ...controlIngress, signal: new AbortController().signal,
                 localActionContext: { surface: 'ui', authority: 'present_user' } })).catch((error: unknown) => error);
             await pausedNativeStop;
             controllerCredentialsCurrent = false;

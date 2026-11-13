@@ -1,5 +1,6 @@
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { createHash, randomUUID } from 'node:crypto';
 import {
     MACHINE_SERVICE_ACTION_INPUT_SCHEMAS, MACHINE_SERVICE_ACTION_OUTPUT_SCHEMAS,
@@ -21,6 +22,7 @@ import { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from 
 import { createMachineServiceRowProjection, projectMachineServiceName } from './machineServiceRowProjection';
 import { createMachineServicePreflightMatcher } from './machineServicePreflightSelection';
 import { selectVisibleMachineProjectServices, type MachineServiceDisclosureRequest } from './machineServiceDisclosure';
+import { machineServiceAdmissionFailure } from './machineServiceFailure';
 
 type Invocation = Parameters<NonNullable<ActionExecutorDeps['machineServiceAction']>>[0] & MachineServiceDisclosureRequest;
 type ServiceHandle = ProjectManagedServiceHandle | MachineManagedServiceHandle;
@@ -175,7 +177,7 @@ export function createMachineServicesRuntime(input: Readonly<{
     }
     async function projectServices(request: Invocation, serviceId?: string, selection: ServiceSelection = {}): Promise<Readonly<{
         rows: MachineServiceRowV1[]; handles: ServiceHandle[];
-    }> | null> {
+    }>> {
         const { environmentId } = selection;
         const matchesPreflight = createMachineServicePreflightMatcher(selection.preflight);
         // Advisory selection consumes retained observations; it never restores an inventory or establishes saved watches.
@@ -184,12 +186,16 @@ export function createMachineServicesRuntime(input: Readonly<{
             if (!environmentId) await reconcile(serviceId);
         }
         const intent = environmentId ? null : readIntent();
-        if (!environmentId && !intent) return null;
+        if (!environmentId && !intent) throw machineServiceAdmissionFailure('service.metadata.read');
         const selected = serviceId ? intent?.byId.get(serviceId) : undefined;
         const watches = environmentId ? [] : serviceId ? selected ? [selected] : [] : intent!.watches.watches;
         const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
-        if (!lease && selection.preflight) return null;
-        if (!lease) return intent?.watches.watches.length ? { rows: watches.map(watch => rows.unknown(watch, target.machineId)), handles: [] } : null;
+        if (!lease) {
+            if (!selection.preflight && intent?.watches.watches.length) return {
+                rows: watches.map(watch => rows.unknown(watch, target.machineId)), handles: [],
+            };
+            throw machineServiceAdmissionFailure('service.registry');
+        }
         try {
             const owner = lease.registry.projectManagedServices;
             const handles: ServiceHandle[] = [];
@@ -208,7 +214,7 @@ export function createMachineServicesRuntime(input: Readonly<{
             const projectedRows = await Promise.all(handles.map(readRow));
             if (environmentId) return { rows: projectedRows, handles };
             const current = readIntent();
-            if (!current) return null;
+            if (!current) throw machineServiceAdmissionFailure('service.metadata.read');
             const demanded = serviceId ? current.byId.get(serviceId) : undefined;
             const retainedPreflightHandles = selection.preflight ? new Map(owner.listMachineServices()
                 .filter(exact).map(handle => [handle.watch.watchId, handle])) : null;
@@ -293,7 +299,7 @@ export function createMachineServicesRuntime(input: Readonly<{
     async function execute(request: Invocation): Promise<MachineServiceActionOutput | ActionExecuteFailure> {
         // Adoption is prepared by the daemon's reviewed deployment owner, never this observation runtime.
         if (request.actionId === 'machines.services.adopt') return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
-        if (disposed) return unavailable();
+        if (disposed) return machineServiceAdmissionFailure('service.runtime.closed');
         const parsed = MACHINE_SERVICE_ACTION_INPUT_SCHEMAS[request.actionId].safeParse(request.input);
         if (!parsed.success) return unavailable('denied');
         try {
@@ -313,7 +319,8 @@ export function createMachineServicesRuntime(input: Readonly<{
                 const observation = request.actionId === 'machines.services.list' ? request.context.machineServicesListResource?.observation : undefined;
                 if (observation) {
                     const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
-                    if (!lease || observation.signal.aborted) { await lease?.release(); return unavailable(); }
+                    if (!lease || observation.signal.aborted) { await lease?.release();
+                        return machineServiceAdmissionFailure(!lease ? 'service.registry' : 'service.observation.closed'); }
                     try {
                         const owner = lease.registry.projectManagedServices;
                         const homeServerIdentityId = await resolveServerProfileHomeIdentityId(target.serverId);
@@ -378,11 +385,10 @@ export function createMachineServicesRuntime(input: Readonly<{
                             accessSubscription = access;
                             if (released) await access.dispose();
                         }
-                        if (observation.signal.aborted) { await dispose(); return unavailable(); }
+                        if (observation.signal.aborted) { await dispose(); return machineServiceAdmissionFailure('service.observation.closed'); }
                     } finally { await lease.release(); }
                 }
                 const projection = await projectServices(request, serviceId, selection);
-                if (!projection) return unavailable();
                 if (request.actionId === 'machines.services.list') result = { kind: 'snapshot', services: projection.rows,
                     ...(preflight ? { coverage: 'managed_services' as const } : {}) };
                 else {
@@ -396,9 +402,9 @@ export function createMachineServicesRuntime(input: Readonly<{
                 }
             } else if (request.actionId === 'machines.services.unwatch' && 'watchId' in parsed.data) {
                 const port = metadataPort;
-                if (!port) return unavailable();
+                if (!port) return machineServiceAdmissionFailure('service.metadata.port');
                 const current = await getMachineServiceWatchesV1(port);
-                if (current.status !== 'ready') return unavailable();
+                if (current.status !== 'ready') return machineServiceAdmissionFailure('service.metadata.read');
                 const unwatchInput = parsed.data;
                 const watch = current.policy.watches.find(watch => watch.watchId === unwatchInput.watchId);
                 if (!watch) { await reconcile(); return { kind: 'unchanged', revision: revision(current.policy) }; }
@@ -406,12 +412,12 @@ export function createMachineServicesRuntime(input: Readonly<{
                 const mutation = await mutateMachineServiceWatchesV1({ expectedMetadataVersion: current.metadataVersion, expectedWatches: current.policy,
                     watches: { v: 1, watches: current.policy.watches.filter(candidate => candidate.watchId !== watch.watchId) } }, port,
                 request.signal ? { signal: request.signal } : undefined);
-                if (!('policy' in mutation)) return unavailable(mutation.status === 'cancelled' ? 'cancelled' : 'admission_unavailable');
+                if (!('policy' in mutation)) return mutation.status === 'cancelled' ? unavailable('cancelled') : machineServiceAdmissionFailure('service.metadata.write');
                 result = { kind: mutation.status === 'conflict' ? 'conflict' : mutation.status === 'applied' ? 'applied' : 'unchanged', revision: revision(mutation.policy) };
                 await reconcile();
             } else {
                 const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
-                if (!lease) return unavailable();
+                if (!lease) return machineServiceAdmissionFailure('service.registry');
                 try {
                     if (request.actionId === 'machines.services.discovery') result = await discover(lease.registry,
                         'adapter' in parsed.data ? parsed.data.adapter : undefined, request.signal);
@@ -430,9 +436,9 @@ export function createMachineServicesRuntime(input: Readonly<{
                         if (!candidate) return unavailable('unavailable');
                         if (candidate.revision !== watchInput.expectedRevision) return { kind: 'conflict', revision: candidate.revision };
                         const port = metadataPort;
-                        if (!port) return unavailable();
+                        if (!port) return machineServiceAdmissionFailure('service.metadata.port');
                         const current = await getMachineServiceWatchesV1(port);
-                        if (current.status !== 'ready') return unavailable();
+                        if (current.status !== 'ready') return machineServiceAdmissionFailure('service.metadata.read');
                         const incumbent = lease.registry.projectManagedServices.resolveNativeService(instance, target);
                         if (incumbent && incumbent.authority !== 'machine') return unavailable('denied');
                         const existing = current.policy.watches.find(watch => machineServiceNativeIdentityKeyV1(watch) === candidate.candidateId);
@@ -443,7 +449,7 @@ export function createMachineServicesRuntime(input: Readonly<{
                         const mutation = await mutateMachineServiceWatchesV1({ expectedMetadataVersion: current.metadataVersion,
                             expectedWatches: current.policy, watches: { v: 1, watches: [...current.policy.watches, watch] } }, port,
                         request.signal ? { signal: request.signal } : undefined);
-                        if (!('policy' in mutation)) return unavailable(mutation.status === 'cancelled' ? 'cancelled' : 'admission_unavailable');
+                        if (!('policy' in mutation)) return mutation.status === 'cancelled' ? unavailable('cancelled') : machineServiceAdmissionFailure('service.metadata.write');
                         const actual = mutation.policy.watches.find(candidate => machineServiceNativeIdentityKeyV1(candidate) === watchInput.candidateId);
                         result = { kind: mutation.status === 'conflict' ? 'conflict' : mutation.status === 'applied' ? 'applied' : 'unchanged',
                             revision: actual ? revision(actual) : revision(mutation.policy), ...(actual ? { watch: actual } : {}) };
@@ -458,7 +464,8 @@ export function createMachineServicesRuntime(input: Readonly<{
             preserveUnconfirmedNativeProcess(error);
             const failure = ActionExecuteFailureSchema.safeParse(error);
             if (failure.success) return failure.data;
-            return unavailable(request.signal?.aborted ? 'cancelled' : 'admission_unavailable');
+            return request.signal?.aborted ? unavailable('cancelled')
+                : { ok: false, ...normalizeActionExecutorThrownError(error) };
         }
     }
     async function ensureEnvironmentServices(): Promise<void> {
