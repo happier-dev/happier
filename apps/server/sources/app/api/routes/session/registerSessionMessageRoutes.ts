@@ -12,7 +12,7 @@ import { SessionMessageAccountActorV1Schema } from '@happier-dev/protocol/sessio
 import { SessionInputAdmissionReceiptV1Schema, SessionInputRefusalDispositionV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { SessionTurnV1Schema } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import { SESSION_TRANSCRIPT_MAX_PAGE_ROWS_V1 } from '@happier-dev/protocol/sessions/messages/sessionTranscriptPageLimits';
-import { SessionStoredMessageContentSchema, type SessionStoredMessageContent } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
+import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { SessionTranscriptObservationProvenanceV1Schema } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { isSessionAgentTransitionDividerLocalId } from '@happier-dev/protocol/sessions/agentTransitionDivider';
 import { parseSessionMessageRole } from "@/app/session/messageRole/resolveSessionMessageRole";
@@ -44,6 +44,7 @@ import { SessionMessageReplyReadResultV1Schema, SessionMessageReplyMutationResul
 import { readSessionMessagePage } from './readSessionMessagePage';
 export { readSessionMessagePage } from './readSessionMessagePage';
 import { SessionTranscriptMessagePageResponseSchema, SessionTranscriptStoredContentUnavailableResponseSchema } from './sessionMessagePageProjection';
+import { admitResponse } from '@/app/api/utils/enableSchemaValidation';
 
 export function registerSessionMessageRoutes(app: Fastify) {
     app.post('/v1/sessions/:sessionId/messages/action-reference/resolve', {
@@ -115,7 +116,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
         const access = await readCurrentSessionAccessForOperation({ accountId: request.userId, sessionId: request.params.sessionId,
             authentication: readSessionAccessAuthenticationFromRequest(request), capability: 'readTranscript' });
         if (access.status !== 'allowed') return reply.code(404).send({ error: 'Session not found' });
-        return reply.send(SessionMessageReplyCapabilityV1Schema.parse({ v: 1, protocolVersions: [1] }));
+        return reply.send(admitResponse(SessionMessageReplyCapabilityV1Schema, { v: 1, protocolVersions: [1] }));
     });
 
     app.post('/v2/sessions/messages/replies/read-batch', {
@@ -468,13 +469,7 @@ export function registerSessionMessageRoutes(app: Fastify) {
     }, async (request, reply) => {
         const userId = request.userId;
         const { sessionId } = request.params;
-        const body = request.body as Readonly<{
-            localId?: string;
-            sidechainId?: string | null;
-            messageRole?: unknown;
-            sessionEventType?: "ready";
-            transcriptOnly?: boolean;
-        } & ({ ciphertext: string } | { content: SessionStoredMessageContent })>;
+        const body = request.body;
         const trustedSessionEventType = body.sessionEventType === "ready" ? "ready" : undefined;
         const localId = typeof body.localId === "string" ? body.localId : undefined;
         const parsedSidechainId = parseSessionMessageSidechainId(body.sidechainId, { emptyString: "invalid" });

@@ -107,14 +107,14 @@ export function registerPublicProfileReadRoutes(app: Fastify, deps: PublicProfil
         reply.header('X-Content-Type-Options', 'nosniff').header('X-Robots-Tag', 'noindex').header('Referrer-Policy', 'no-referrer');
         try {
             const rendered = await readPublicProfileDeliveryRepresentation(request.params.handle,
-                await readRequestHomeEnv(request), deps, async delivery => {
+                await readRequestHomeEnv(request), deps, async (delivery): Promise<PublicProfileDelivery['picture']> => {
                     if (delivery.result.kind !== 'published') return undefined;
                     if ('theme' in request.query) return renderPublicProfileHeroImage(delivery.result.view,
                         { palette: PUBLIC_PROFILE_PALETTES, ...(delivery.picture ? { picture: delivery.picture.bytes } : {}) },
                         { theme: request.query.theme, viewport: request.query.viewport, density: request.query.density === '2' ? 2 : 1 });
                     return delivery.picture;
                 }, { ifNoneMatch: request.headers['if-none-match'], variant: { kind: 'background',
-                    ...('theme' in request.query ? { selection: request.query } : {}) } });
+                    ...('theme' in request.query ? { selection: { theme: request.query.theme, viewport: request.query.viewport, density: request.query.density } } : {}) } });
             if (rendered.kind === 'not_modified') return reply.header('Cache-Control', 'public, no-cache, must-revalidate')
                 .header('ETag', rendered.etag).type('image/png').code(304).send();
             const { result, representation: image } = rendered;

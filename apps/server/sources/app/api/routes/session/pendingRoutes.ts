@@ -156,7 +156,7 @@ export function sessionPendingRoutes(app: Fastify) {
             body: SessionPendingTemplateOnboardingRequestV1Schema,
             response: { 200: SessionPendingEnqueueByMachineResponseV1Schema,
                 403: z.union([z.strictObject({ error: z.string() }), AccountRouteAuthenticationForbiddenResponseSchema]) } },
-        config: { allowApiToken: true, allowScopedApiToken: false,
+        config: { allowApiToken: true,
             rateLimit: resolveApiHotEndpointRateLimit(process.env, 'session.pending') },
     }, async (request, reply) => {
         if (request.params.sessionId !== request.body.request.sessionId) {

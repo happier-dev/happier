@@ -97,7 +97,8 @@ export function publicProfileUsageLabels(view: PublicProfileViewV1): HappierPubl
             values: { ...values, agentColumn: charts.agentColumn, agentTimeColumn: original.page.agentTime, spansColumn: charts.spansColumn,
                 formatSpan: (from, to) => `${formatUsageChartClock(from)}–${formatUsageChartClock(to)}` },
         },
-        orbit: { percent: formatUsageSharePercent, unknown: names => charts.shareUnknown({ names }), unknownAgent: charts.unknownAgent },
+        orbit: { percent: formatUsageSharePercent, unknown: names => charts.shareUnknown({ names }), unknownAgent: charts.unknownAgent,
+            values: { ...values, agentColumn: charts.agentColumn, shareColumn: planet.shareColumn } },
         crew: { percent: formatUsageSharePercent, days, unknownAgent: charts.unknownAgent },
         river: {
             week: shortDate, inline: (name, share) => `${name} ${formatUsageSharePercent(share)}`,
@@ -106,12 +107,14 @@ export function publicProfileUsageLabels(view: PublicProfileViewV1): HappierPubl
             values: { ...values, weekColumn: planet.weekColumn, totalColumn: 'Total not shared', formatTotal: () => '—', percent: formatUsageSharePercent },
         },
         shipped: { week: shortDate, noDate: charts.noDate, countLine: total => charts.shippedCount({ count: count(total) }),
-            mixed: charts.mixed, noMergeDate: charts.noMergeDate, colourBy: 'accent' },
+            mixed: charts.mixed, noMergeDate: charts.noMergeDate, colourBy: 'accent',
+            values: { ...values, weekColumn: planet.weekColumn, countColumn: planet.countColumn } },
         constellation: {
             kinds: { session: charts.edgeSession, run: charts.edgeRun, native: charts.edgeNative },
             arrowNote: charts.edgeNote,
             unknownStarts: total => charts.unknownStarts({ count: count(total) }),
             nodesOnly: 'Collaboration details are not shared; each planet is an agent sized by its share.', unknownAgent: charts.unknownAgent,
+            values: { ...values, agentColumn: charts.agentColumn, shareColumn: planet.shareColumn, kindColumn: 'Kind', countColumn: planet.countColumn },
         },
         planet: {
             rows: { light: charts.planetLight, halo: charts.planetHalo, trail: charts.planetTrail },

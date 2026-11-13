@@ -1185,7 +1185,13 @@ export async function readActorSessionSystemRecordsV1(
         return failed({ ok: false, code: 'plugin_session_record_invalid_query' });
     }
     try {
-        const targets = [];
+        const targets: Array<Readonly<{
+            address: SessionSystemRecordAddress;
+            policy: ReturnType<typeof resolveV1HostPolicy>;
+            expected: PersistedSessionSystemRecordAddress;
+            keys: ReturnType<typeof deriveSessionSystemRecordAddressKeys>;
+            key: string;
+        }>> = [];
         for (const address of params.addresses) {
             const policy = address.owner === 'host' ? resolveV1HostPolicy({ ...address, operation: 'read' }) : null;
             // This set read serves actor-owned projections; owner-scoped records retain their existing reader.

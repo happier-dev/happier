@@ -1201,7 +1201,8 @@ export function machineLiveStreamRelayHandler(
                             const currentAccess = await resolveSessionAccessForOperation(db, {
                                 accountId: sessionBrowserAccess.actorAccountId,
                                 sessionId: sessionBrowserAccess.sessionId,
-                                authentication: viewerSessionAuthentication,
+                                // Captured only after the Session Browser admission above established authentication.
+                                authentication: viewerSessionAuthentication!,
                                 capability: sessionBrowserAccess.effectiveAccess.capabilities.submitAgentInput
                                     ? 'submitAgentInput' : 'readTranscript',
                             });

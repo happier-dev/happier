@@ -31,7 +31,7 @@ export function decodeStoredSessionMessage<T extends StoredSessionMessageContent
 export function decodeStoredSessionMessage<T extends StoredSessionMessageContent>(row: T | null): DecodedSessionMessage<T> | null;
 export function decodeStoredSessionMessage<T extends StoredSessionMessageContent>(row: T | null): DecodedSessionMessage<T> | null {
     if (row === null) return null;
-    const { contentBytes, ...message } = row;
+    const { content, contentBytes, ...message } = row;
     return { ...message, content: decodeSessionMessageContentFromStorage(row) };
 }
 

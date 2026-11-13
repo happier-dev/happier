@@ -269,7 +269,10 @@ export type SessionTranscriptMessageWriteParams = Readonly<{
     /** Authenticated command classification; absent uses the canonical content classifier. */
     attentionImpact?: SessionMessageAttentionImpact;
     createdAt?: Date;
-    meaningfulActivityAt?: Date;
+    /** The message is meaningful Session activity: the sequence write also sets `meaningfulActivityAt` to its `createdAt`. */
+    recordsMeaningfulActivity?: boolean;
+    /** The Session's active followers, when the caller already read them in this transaction. */
+    activelyFollowingAccountIds?: readonly string[];
     sourceCreatedAt?: Date;
     sourceUpdatedAt?: Date;
     transcriptObservationProvenance?: SessionTranscriptObservationProvenanceV1;
@@ -336,7 +339,7 @@ export async function writeSessionTranscriptMessageInTx(
             select: { tag: true, ...SESSION_TRANSCRIPT_PUBLICATION_SELECT },
             data: {
                 seq: { increment: 1 },
-                ...(params.meaningfulActivityAt ? { meaningfulActivityAt: params.meaningfulActivityAt } : {}),
+                ...(params.recordsMeaningfulActivity ? { meaningfulActivityAt: createdAt } : {}),
             },
         });
     } catch (error) {
@@ -357,7 +360,8 @@ export async function writeSessionTranscriptMessageInTx(
             sessionId: params.sessionId,
             seq: next.seq,
             ...storedContent,
-            content: storedContent.content ?? prismaRuntime.JsonNull,
+            // Prisma requires its JSON-null sentinel; the generated custom JSON input omits that sentinel type.
+            content: (storedContent.content ?? prismaRuntime.JsonNull) as PrismaJson.SessionMessageStoredContent,
             usageTimingV1: params.usageTimingV1 ?? prismaRuntime.DbNull,
             localId: params.localId,
             sidechainId: params.sidechainId,
@@ -399,9 +403,11 @@ export async function writeSessionTranscriptMessageInTx(
                 previousVisibleSeq: voiceHistory ? 0 : next.seq - 1,
                 nextVisibleSeq: next.seq,
                 ownerAccountId: next.accountId,
+                activelyFollowingAccountIds: params.activelyFollowingAccountIds,
             });
         } else {
-            await stampViewerUnreadEntryInTx(tx, { sessionId: params.sessionId, visibleSessionSeq: next.seq, at: createdAt, ownerAccountId: next.accountId });
+            await stampViewerUnreadEntryInTx(tx, { sessionId: params.sessionId, visibleSessionSeq: next.seq, at: createdAt,
+                ownerAccountId: next.accountId, activelyFollowingAccountIds: params.activelyFollowingAccountIds });
         }
     }
 
@@ -516,7 +522,7 @@ async function writeHistoricalSessionMessageBatchWithModeInTx(
     const orderedItems = [...itemByLocalId.values()];
     const existing = await tx.sessionMessage.findMany({
         where: { sessionId: params.sessionId, localId: { in: orderedItems.map((item) => item.localId) } },
-        select: { contentBytes: true, ...SESSION_TRANSCRIPT_WRITE_SELECT, surfaceItemReference: true, rowRevision: true },
+        select: { ...SESSION_TRANSCRIPT_WRITE_SELECT, surfaceItemReference: true, rowRevision: true },
     }).then(row => decodeStoredSessionMessages(row));
     const existingByLocalId = new Map(
         existing.flatMap((message) => message.localId ? [[message.localId, message] as const] : []),

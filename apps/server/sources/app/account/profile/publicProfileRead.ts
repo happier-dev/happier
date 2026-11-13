@@ -96,7 +96,7 @@ async function readCurrentRepresentation<T>(handle: string, env: NodeJS.ProcessE
     const captured = await resolvePublicProfile(handle, env, deps);
     const etag = representationEtag(captured.result, condition.variant);
     if (etag && matchesPublicProfileEtag(condition.ifNoneMatch, etag)) return { kind: 'not_modified', result: captured.result, etag };
-    const delivery = includePicture ? await materializePublicProfileDelivery(captured) : captured;
+    const delivery: ResolvedPublicProfileDelivery = includePicture ? await materializePublicProfileDelivery(captured) : captured;
     const representation = await materialize({ result: delivery.result, ...(delivery.picture ? { picture: delivery.picture } : {}) });
     return { kind: 'rendered', result: delivery.result, representation, etag: representationEtag(delivery.result, condition.variant) };
 }
