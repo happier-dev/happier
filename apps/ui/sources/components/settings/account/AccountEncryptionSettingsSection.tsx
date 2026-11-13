@@ -121,6 +121,9 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
             error: unknown,
         ): Promise<void> => {
             if (cancelled) return;
+            // The mode owner withdrew this read. Keep its response refused;
+            // retirement does not represent a failed user operation.
+            if (error instanceof HappyError && error.code === 'account-encryption-mode-read-retired') return;
             if (isAccountModeDowngradeUnverifiedError(error)) {
                 publishAccountEncryptionPresentation(presentationScope, null, false, true);
                 return;

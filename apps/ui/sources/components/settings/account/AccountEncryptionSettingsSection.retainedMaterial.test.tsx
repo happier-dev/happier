@@ -122,6 +122,7 @@ async function mount(params: Readonly<{
     runs?: RunRow[];
     failInventory?: boolean; conflict?: boolean; beforeInventory?: () => Promise<void>; waitForControls?: boolean;
     initialMode?: 'plain' | 'e2ee';
+    modeReadResponse?: (mode: 'plain' | 'e2ee') => Response | undefined;
     /** This device's custody of its keys; a plain fixture defaults to retained history. */
     initialCustody?: 'active' | 'historical';
     currentnessOverride?: () => ReturnType<typeof createPlainAccountEncryptionCurrentnessFixture> | null;
@@ -177,7 +178,7 @@ async function mount(params: Readonly<{
             if (target.pathname === '/v1/features' || target.pathname === '/v1/features/authenticated') return json(createRootLayoutFeaturesResponse({
                 features: { encryption: { accountOptOut: { enabled: true }, plaintextStorage: { enabled: true } } },
             }));
-            if (target.pathname === '/v1/account/encryption') return json({ mode, updatedAt: 1 });
+            if (target.pathname === '/v1/account/encryption') return params.modeReadResponse?.(mode) ?? json({ mode, updatedAt: 1 });
             if (target.pathname === '/v1/account/encryption/currentness') {
                 const overridden = params.currentnessOverride?.();
                 if (overridden) return json(overridden);
@@ -898,6 +899,32 @@ describe('Account encryption historical material custody', () => {
             expect(auth.loginWithCredentials.mock.calls[0]![0]).toEqual({ token: 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.signature',
                 secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url'), custody: 'historical' });
             expect(h.migrations).toEqual([]);
+        } finally { await h.screen.unmount(); await h.restored.dispose(); }
+    });
+
+    it.each(['retired', 'denied'] as const)('settles a %s post-conversion mode read through its typed presentation', async refusal => {
+        let readAfterConversion = false;
+        const h = await mount({ initialMode: 'e2ee', modeReadResponse: mode => {
+            if (mode !== 'plain') return undefined;
+            readAfterConversion = true;
+            if (refusal === 'denied') return json({ error: 'forbidden' }, 403);
+            // A mode push withdraws an incumbent read. The real readiness owner
+            // must refuse its otherwise valid response without disclosing it.
+            invalidateAccountEncryptionModeCache();
+            return json({ mode: 'plain', updatedAt: 2 });
+        } });
+        try {
+            await convertWithReview(h.screen, false);
+            await vi.waitFor(() => expect(readAfterConversion).toBe(true));
+            expect(h.migrations).toHaveLength(1);
+            expect(h.migrations[0]?.toMode).toBe('plain');
+            if (refusal === 'retired') {
+                expect(Modal.alertAsync).not.toHaveBeenCalled();
+                expect(h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
+                    && node.props.value === false && node.props.disabled === false).length).toBeGreaterThan(0);
+            } else {
+                await vi.waitFor(() => expect(Modal.alertAsync).toHaveBeenCalled());
+            }
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 
