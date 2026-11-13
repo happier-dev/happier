@@ -6390,6 +6390,7 @@ const machineDetailPageTranslations = { fr: translated({
                 saveFailed: "Impossible de changer les rôles",
                 changed: "Les rôles ont changé ailleurs. Voici les rôles actuels.",
                 sessionsOffNote: "Les sessions en cours continuent jusqu’à leur fin. Les nouvelles démarrent ailleurs.",
+                pluginParts: ({ parts }: { parts: string }) => `Comprend ${parts}.`,
                 sessions: { title: "Sessions", description: "Lance et héberge les sessions, workflows et exécutions déléguées." },
                 broker: { title: "Courtier d’identifiants", description: "Prête les comptes fournisseurs connectés à tes autres machines." },
                 intake: { title: "Entrée de travail", description: "Exécute les canaux, webhooks et déclencheurs qui lancent du travail." },

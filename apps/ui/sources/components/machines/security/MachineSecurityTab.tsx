@@ -9,6 +9,7 @@ import { describeMachineSetupRowSummary, describeMachineSharingSummary } from '@
 import { MachineNetworkSection } from '@/components/machines/security/network/MachineNetworkSection';
 import { describeNetworkRowSummary, useMachineNetworkLead, useMachineNetworkRowFacts } from '@/components/machines/security/network/useMachineNetworkLead';
 import { MachineSecuritySection } from '@/components/machines/security/MachineSecuritySection';
+import { MachineRolesSection } from '@/components/machines/security/MachineRolesSection';
 import { MachineSharingSection } from '@/components/sharing/machines/MachineSharingSection';
 import { MachineWorkSummaryReader } from '@/components/sharing/machines/MachineWorkSummaryReader';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -99,6 +100,7 @@ export function MachineSecurityTab(props: MachinePageTabBodyProps) {
             needsManage={needsManage} onOpen={open} />
         }
       />
+      <MachineRolesSection serverId={target.serverId} machine={machine} machineName={machineName} online={props.online} />
       <MachineSecuritySetupRow serverId={target.serverId} machineId={machine.id} onOpen={openSetup} />
     </View>
   );

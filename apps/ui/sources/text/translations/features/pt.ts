@@ -6392,6 +6392,7 @@ const machineDetailPageTranslations = { pt: translated({
                 saveFailed: "Não foi possível mudar as funções",
                 changed: "As funções mudaram noutro lugar. Estas são as atuais.",
                 sessionsOffNote: "As sessões em curso continuam até terminarem. As novas começam noutro lugar.",
+                pluginParts: ({ parts }: { parts: string }) => `Inclui ${parts}.`,
                 sessions: { title: "Sessões", description: "Inicia e hospeda sessões, fluxos e execuções delegadas." },
                 broker: { title: "Intermediário de credenciais", description: "Empresta contas de fornecedor ligadas às suas outras máquinas." },
                 intake: { title: "Entrada de trabalho", description: "Executa canais, webhooks e gatilhos que iniciam trabalho." },

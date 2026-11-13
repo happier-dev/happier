@@ -6387,6 +6387,7 @@ const machineDetailPageTranslations = { ja: translated({
                 saveFailed: "ロールを変更できませんでした",
                 changed: "ロールが別の場所で変更されました。現在のロールを表示しています。",
                 sessionsOffNote: "実行中のセッションは終了するまで続きます。新しいセッションは別の場所で始まります。",
+                pluginParts: ({ parts }: { parts: string }) => `${parts} を含みます。`,
                 sessions: { title: "セッション", description: "セッション、ワークフロー、委任された実行を開始・ホストします。" },
                 broker: { title: "認証情報ブローカー", description: "接続済みのプロバイダーアカウントを他のマシンに貸し出します。" },
                 intake: { title: "作業の受付", description: "作業を開始するチャネル、Webhook、トリガーを実行します。" },

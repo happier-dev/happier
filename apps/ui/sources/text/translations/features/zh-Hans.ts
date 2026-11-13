@@ -6382,6 +6382,7 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
                 saveFailed: "无法更改角色",
                 changed: "角色已在其他地方更改。这些是当前角色。",
                 sessionsOffNote: "正在运行的会话会持续到结束。新会话会在其他地方开始。",
+                pluginParts: ({ parts }: { parts: string }) => `包括 ${parts}。`,
                 sessions: { title: "会话", description: "启动并托管会话、工作流和委派运行。" },
                 broker: { title: "凭据代理", description: "将已连接的提供商账号借给你的其他机器。" },
                 intake: { title: "工作接收", description: "运行启动工作的频道、Webhook 和触发器。" },

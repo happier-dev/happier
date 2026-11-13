@@ -6392,6 +6392,7 @@ const machineDetailPageTranslations = { ca: translated({
                 saveFailed: "No s’han pogut canviar els rols",
                 changed: "Els rols han canviat en un altre lloc. Aquests són els actuals.",
                 sessionsOffNote: "Les sessions en curs continuen fins que s’aturen. Les noves comencen en un altre lloc.",
+                pluginParts: ({ parts }: { parts: string }) => `Inclou ${parts}.`,
                 sessions: { title: "Sessions", description: "Inicia i allotja sessions, fluxos i execucions delegades." },
                 broker: { title: "Intermediari de credencials", description: "Presta comptes de proveïdor connectats a les altres màquines." },
                 intake: { title: "Entrada de feina", description: "Executa canals, webhooks i activadors que inicien feina." },

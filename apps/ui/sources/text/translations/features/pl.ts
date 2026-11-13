@@ -6410,6 +6410,7 @@ const machineDetailPageTranslations = { pl: translated({
                 saveFailed: "Nie udało się zmienić ról",
                 changed: "Role zmieniono gdzie indziej. To są aktualne.",
                 sessionsOffNote: "Trwające sesje działają, dopóki się nie zakończą. Nowe startują gdzie indziej.",
+                pluginParts: ({ parts }: { parts: string }) => `Obejmuje: ${parts}.`,
                 sessions: { title: "Sesje", description: "Uruchamia i hostuje sesje, przepływy i delegowane uruchomienia." },
                 broker: { title: "Pośrednik poświadczeń", description: "Udostępnia połączone konta dostawców innym maszynom." },
                 intake: { title: "Przyjmowanie pracy", description: "Uruchamia kanały, webhooki i wyzwalacze, które zaczynają pracę." },

@@ -6382,6 +6382,7 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
                 saveFailed: "無法變更角色",
                 changed: "角色已在其他地方變更。這些是目前的角色。",
                 sessionsOffNote: "執行中的工作階段會持續到結束。新的工作階段會在其他地方開始。",
+                pluginParts: ({ parts }: { parts: string }) => `包括 ${parts}。`,
                 sessions: { title: "工作階段", description: "啟動並託管工作階段、工作流程和委派執行。" },
                 broker: { title: "憑證代理", description: "將已連結的提供者帳號借給你的其他機器。" },
                 intake: { title: "工作接收", description: "執行啟動工作的頻道、Webhook 和觸發器。" },

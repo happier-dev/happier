@@ -6384,6 +6384,7 @@ const machineDetailPageTranslations = { de: translated({
                 saveFailed: "Rollen konnten nicht geändert werden",
                 changed: "Die Rollen wurden anderswo geändert. Das sind die aktuellen.",
                 sessionsOffNote: "Laufende Sitzungen laufen weiter, bis sie enden. Neue starten anderswo.",
+                pluginParts: ({ parts }: { parts: string }) => `Umfasst ${parts}.`,
                 sessions: { title: "Sitzungen", description: "Startet und hostet Sitzungen, Workflows und delegierte Läufe." },
                 broker: { title: "Zugangsvermittler", description: "Leiht verbundene Anbieterkonten an deine anderen Rechner." },
                 intake: { title: "Arbeitseingang", description: "Führt Kanäle, Webhooks und Auslöser aus, die Arbeit starten." },
