@@ -152,6 +152,7 @@ import {
 import type { CodexChatGptTokensRefreshBridgeResponse } from '../connectedServices/refreshCodexChatGptTokensForBridge';
 import type { CodexConnectedServiceAppliedIdentity } from '../connectedServices/runtimeAppliedIdentity';
 import { applyCodexConnectedServiceAuthGeneration } from '../connectedServices/applyCodexConnectedServiceAuthGeneration';
+import { reconcileNativeCodexResumeRolloutPath } from '../connectedServices/reconcileCodexResumeRolloutPath';
 import { applyCodexAppServerChatGptAuthTokens } from '../connectedServices/authApplication/liveAppServerApply';
 import { isCodexAuthStoreProjectionCurrent } from '../connectedServices/writeCodexAuthStoreFile';
 import { resolveConnectedServiceSelectionHomeDir } from '@/daemon/connectedServices/homes/resolveConnectedServiceHomeDir';
@@ -4255,6 +4256,13 @@ export function createCodexAppServerRuntime(params: Readonly<{
             persistExtendedHistory: true,
             excludeTurns: options.includeTurns === true ? false : true,
         };
+        // Codex resolves thread/resume through its state row; history copied from another machine
+        // keeps that machine's rollout path there, so point it at this home's identical rollout first.
+        if (!await reconcileNativeCodexResumeRolloutPath({ env: runtimeEnv, vendorResumeId: requestedThreadId, cwd: params.directory })) {
+            logger.warn('[codex-app-server] Codex thread row names a missing rollout and no local rollout replaces it', {
+                threadId: requestedThreadId,
+            });
+        }
         let response: unknown;
         try {
             response = await requestWithManagedPermissionFallback(client, 'thread/resume', 'thread', requestParams, resumeRequestOptions);

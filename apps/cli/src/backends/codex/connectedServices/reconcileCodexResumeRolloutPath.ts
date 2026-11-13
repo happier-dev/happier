@@ -2,7 +2,11 @@ import { stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 import { resolveConfiguredCodexHome } from '@/backends/codex/utils/resolveConfiguredCodexHome';
-import { resolveCodexLogicalRolloutPath, resolveExistingCodexRolloutPath } from '@/backends/codex/utils/codexSessionFiles';
+import {
+  findCodexRolloutFileById,
+  resolveCodexLogicalRolloutPath,
+  resolveExistingCodexRolloutPath,
+} from '@/backends/codex/utils/codexSessionFiles';
 import { openSqliteDatabaseSync, type SqliteDatabaseSync } from '@/utils/sqlite/sqliteSync';
 import { resolveConfiguredCodexSqliteHome } from './codexStateFileNames';
 
@@ -90,18 +94,64 @@ export async function reconcileCodexResumeRolloutPath(params: Readonly<{
       .get();
     if (!table) return true;
 
+    return await replaceMissingRolloutPath(database, params.vendorResumeId, params.resolvedRolloutPath);
+  } catch {
+    return false;
+  } finally {
+    database?.close();
+  }
+}
+
+async function replaceMissingRolloutPath(
+  database: SqliteDatabaseSync,
+  vendorResumeId: string,
+  resolvedRolloutPath: string,
+): Promise<boolean> {
+  const indexedPath = readRolloutPath(database, vendorResumeId);
+  if (!indexedPath || indexedPath === resolvedRolloutPath) return true;
+  if (await resolveExistingCodexRolloutPath(indexedPath)) return true;
+
+  database
+    .prepare('UPDATE threads SET rollout_path = ? WHERE id = ? AND rollout_path = ?')
+    .run(resolveCodexLogicalRolloutPath(resolvedRolloutPath), vendorResumeId, indexedPath);
+
+  const settledPath = readRolloutPath(database, vendorResumeId);
+  return settledPath !== null && await resolveExistingCodexRolloutPath(settledPath) !== null;
+}
+
+/**
+ * The same one-row reconciliation for a thread in its own native Codex home.
+ *
+ * Codex history copied from another machine (e.g. Codex Desktop on Windows) keeps rows whose
+ * rollout_path names that machine's file, so Codex refuses `thread/resume` ("no rollout found") even
+ * though the exact rollout sits in this home's session store. Only a row whose recorded path is
+ * missing is touched, and only to point at the same-id rollout found under this home's `sessions/`.
+ * Returns false when the row still cannot be resolved.
+ */
+export async function reconcileNativeCodexResumeRolloutPath(params: Readonly<{
+  env: NodeJS.ProcessEnv;
+  vendorResumeId: string;
+  cwd: string;
+}>): Promise<boolean> {
+  const databasePath = join(resolveConfiguredCodexSqliteHome(params.env, params.cwd), CODEX_STATE_DATABASE_FILE_NAME);
+  if (!await isFile(databasePath)) return true;
+  let database: SqliteDatabaseSync | null = null;
+  try {
+    database = openSqliteDatabaseSync(databasePath, { readOnly: true });
     const indexedPath = readRolloutPath(database, params.vendorResumeId);
-    if (!indexedPath || indexedPath === params.resolvedRolloutPath) return true;
-    if (await resolveExistingCodexRolloutPath(indexedPath)) return true;
+    database.close();
+    database = null;
+    if (!indexedPath || await resolveExistingCodexRolloutPath(indexedPath)) return true;
 
-    const logicalRolloutPath = resolveCodexLogicalRolloutPath(params.resolvedRolloutPath);
+    const localRollout = await findCodexRolloutFileById({
+      sessionsRoot: join(resolve(resolveConfiguredCodexHome(params.env)), 'sessions'),
+      vendorResumeId: params.vendorResumeId,
+    });
+    if (!localRollout) return false;
 
-    database
-      .prepare('UPDATE threads SET rollout_path = ? WHERE id = ? AND rollout_path = ?')
-      .run(logicalRolloutPath, params.vendorResumeId, indexedPath);
-
-    const settledPath = readRolloutPath(database, params.vendorResumeId);
-    return settledPath !== null && await resolveExistingCodexRolloutPath(settledPath) !== null;
+    database = openSqliteDatabaseSync(databasePath);
+    database.exec('PRAGMA busy_timeout = 5000');
+    return await replaceMissingRolloutPath(database, params.vendorResumeId, localRollout);
   } catch {
     return false;
   } finally {
