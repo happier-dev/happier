@@ -21,7 +21,6 @@ import {
 import { resolveScopedPluginSettingsServerIdentity } from '@/sync/domains/plugins/settings/scopedPluginSettingsRuntime';
 import type { ScopedPluginSettingsTarget } from '@/sync/domains/plugins/settings/scopedPluginSettingsAdapter';
 import { captureActiveServerAccountScopeCurrentness } from '@/sync/domains/scope/activeServerAccountScope';
-import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { isActionApprovalDeclinedErrorCode, isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { CapabilitiesInvokeResponse } from '@happier-dev/protocol/capabilities';
@@ -725,7 +724,6 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         runCatalogAction({ method: 'setUpdatePolicy', pluginId, policy });
     }, [runCatalogAction]);
 
-    const executeDevelopmentAction = React.useMemo(() => createFrontDoorActionExecute(), []);
     const invokeDevelopmentAction = React.useCallback(async (
         actionId: PluginDevLoopActionIdV1,
         input: unknown,
@@ -734,9 +732,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
     ): Promise<boolean> => {
         if (!isAuthorityCurrent()) return false;
         try {
-            const response = await executeDevelopmentAction(actionId, input, {
-                surface: 'ui',
-                serverId: target.serverId,
+            const response = await installedExecution.execute(actionId, input, {
                 executionRunTargetMachineId: target.machine.id,
             });
             if (!isAuthorityCurrent()) return false;
@@ -765,7 +761,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
             }
             return false;
         }
-    }, [executeDevelopmentAction]);
+    }, [installedExecution.execute]);
 
     // Keyed by the source root: a source the daemon could not load has no installed plugin.
     // The root also keys its in-flight marker.
@@ -920,7 +916,7 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
         })();
     }, [developmentCreateAvailable, executionTarget, installedExecution.execute, isPluginActionInFlight, markPluginActionFinished, markPluginActionStarted, selectedMachineScopeKey, captureMutationPublication, resolveCurrentExecutionTarget]);
 
-    /** Adopts an explicit source through the same development Action used by the CLI and Agents. */
+    /** Explicit source trust and optional access use the ordinary install approval owner. */
     const runDevelopmentSourceInstall = React.useCallback((sourceRootPath: string) => {
         const trimmedSourceRootPath = sourceRootPath.trim();
         const initialTarget = resolveCurrentExecutionTarget(executionTarget);
@@ -938,8 +934,8 @@ export function usePluginSettingsScreenState(params: Readonly<{ focused?: boolea
             markPluginActionStarted(selectedMachineScopeKey, trimmedSourceRootPath);
             try {
                 const succeeded = await invokeDevelopmentAction(
-                    'plugins.dev.submit',
-                    { projectRoot: trimmedSourceRootPath },
+                    'plugins.install',
+                    { machineId: initialTarget.machine.id, path: trimmedSourceRootPath, dev: true },
                     initialTarget,
                     isAuthorityCurrent,
                 );

@@ -1017,6 +1017,31 @@ describe('development Settings through the real UI Action wiring', () => {
         } });
         expect(requests).toEqual([]);
     });
+    it('presents the daemon development install review and applies nothing when canceled', async () => {
+        const sourceRootPath = '/plugins/example.compute';
+        const { hook, nativeInstallCommitCount, actionRequests } = await renderRemovalOwner('disable', [], {
+            development: true, developmentRoot: sourceRootPath, deferredInstall: true,
+        });
+        const { Modal } = await import('@/modal');
+        await act(async () => { hook.getCurrent().runDevelopmentSourceInstall(sourceRootPath); });
+        await vi.waitFor(() => expect(vi.mocked(Modal.show).mock.calls).toHaveLength(1));
+        const review = vi.mocked(Modal.show).mock.calls[0]![0].props as {
+            actionArgs: unknown; preview: unknown; onAnswer(confirmed: boolean): void;
+        };
+        expect(review.actionArgs).toEqual({ machineId: 'controller-1', path: sourceRootPath, dev: true });
+        expect(review.preview).toMatchObject({ pluginInstall: { pendingReview: { review: {
+            requiredHostAccess: [{ capability: 'storage.account', normalizedScope: { enabled: true } }],
+        } } } });
+        expect(nativeInstallCommitCount()).toBe(0);
+        expect(hook.getCurrent().isPluginActionInFlight(sourceRootPath)).toBe(true);
+        expect(boundary.alert).not.toHaveBeenCalled();
+        await act(async () => { review.onAnswer(false); });
+        await vi.waitFor(() => expect(hook.getCurrent().isPluginActionInFlight(sourceRootPath)).toBe(false));
+        expect(nativeInstallCommitCount()).toBe(0);
+        expect(actionRequests.filter(request => request.actionId === 'plugins.install')).toHaveLength(1);
+        expect(hook.getCurrent().routineOperationSettlement).toBeNull();
+    });
+
     it.each(['/plugins/example.compute', '/plugins/example.compute.mjs'])('submits, tests, packs, and unregisters %s only on the selected machine through Actions', async (sourceRootPath) => {
         const { hook, requests, actionRequests } = await renderRemovalOwner('disable', [], {
             development: true, developmentRoot: sourceRootPath,
@@ -1029,7 +1054,7 @@ describe('development Settings through the real UI Action wiring', () => {
             await vi.waitFor(() => expect(hook.getCurrent().isPluginActionInFlight(sourceRootPath)).toBe(false));
         }
         expect(actionRequests.map(({ actionId, envelope }) => ({ actionId, target: envelope.target, input: envelope.input }))).toEqual([
-            { actionId: 'plugins.dev.submit', target: { kind: 'machine', machineId: 'controller-1' }, input: { projectRoot: sourceRootPath } },
+            { actionId: 'plugins.install', target: { kind: 'machine', machineId: 'controller-1' }, input: { machineId: 'controller-1', path: sourceRootPath, dev: true } },
             { actionId: 'plugins.dev.test', target: { kind: 'machine', machineId: 'controller-1' }, input: { projectRoot: sourceRootPath } },
             { actionId: 'plugins.pack', target: { kind: 'machine', machineId: 'controller-1' }, input: { locator: sourceRootPath } },
             { actionId: 'plugins.dev.unregister', target: { kind: 'machine', machineId: 'controller-1' }, input: { projectRoot: sourceRootPath } },
