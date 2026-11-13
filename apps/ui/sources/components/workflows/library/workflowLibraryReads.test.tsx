@@ -1485,8 +1485,8 @@ describe('Workflow Run windows through real Account storage', () => {
             });
             expect(hook.getCurrent().failure).toBeNull();
             expect(hook.getCurrent().rows[0]?.summary?.state).toBe(occurrence.state);
-            // One materialization, one selected membership read, one changed-window read.
-            expect(home.requestsFor(route).length - before).toBe(3);
+            // One materialization and one selected membership read; the entered Run is placed row-level.
+            expect(home.requestsFor(route).length - before).toBe(2);
             const stopped = createWorkflowRunSummaryFixture({ ...occurrence, state: 'cancelled', revision: occurrence.revision + 1 });
             const stoppedPage = await runPage([stopped]);
             const emptyPage = await runPage([]);
@@ -1505,7 +1505,8 @@ describe('Workflow Run windows through real Account storage', () => {
             });
             expect(hook.getCurrent().failure).toBeNull();
             if (windowId !== 'active') expect(hook.getCurrent().rows[0]?.summary?.state).toBe('cancelled');
-            expect(home.requestsFor(route).length - beforeStop).toBe(windowId === 'active' ? 3 : windowId === 'all' ? 1 : 2);
+            // A stopped Run leaving the active window is removed row-level: materialization + selected read.
+            expect(home.requestsFor(route).length - beforeStop).toBe(windowId === 'all' ? 1 : 2);
         },
     );
 
@@ -1599,6 +1600,51 @@ describe('Workflow Run windows through real Account storage', () => {
             ...(windowId === 'attention' ? { attention: 'required' } : {}) } });
         expect((home.requestsFor(route)[beforeRegrant]?.input as { request: { runIds?: string[] } }).request.runIds).toBeUndefined();
         expect(artifactInventoryReads()).toHaveLength(beforeInventory);
+    });
+
+    it('patches a paged attention window row-level when a Run enters or leaves it, without re-reading the loaded span', async () => {
+        // Newest first: (createdAt desc, id desc). Three loaded pages of two Runs each.
+        const at = (minute: number) => new Date(Date.UTC(2026, 10, 1, 0, minute)).toISOString();
+        const attention = (id: string, minute: number) => createWorkflowRunSummaryFixture({ ...run(id), createdAt: at(minute), attentionRequired: true });
+        let members = [attention('a6', 60), attention('a5', 50), attention('a4', 40), attention('a3', 30), attention('a2', 20), attention('a1', 10)];
+        const pages = new Map<string, Awaited<ReturnType<typeof runPage>>>();
+        const pageOf = async (rows: typeof members, next?: string) => {
+            const key = JSON.stringify([rows.map(row => [row.id, row.revision, row.attentionRequired]), next ?? null]);
+            if (!pages.has(key)) pages.set(key, await runPage(rows, next));
+            return pages.get(key)!;
+        };
+        const answer = async () => {
+            const bodies = { p0: await pageOf(members.slice(0, 2), '2'), p2: await pageOf(members.slice(2, 4), '4'), p4: await pageOf(members.slice(4)) };
+            home.answer(serverId, route, { select: async input => {
+                const request = WorkflowRunListRequestV1Schema.parse((input as { request: unknown }).request);
+                if (request.runIds) return { body: await pageOf(members.filter(row => request.runIds!.includes(row.id))) };
+                return { body: request.cursor === '4' ? bodies.p4 : request.cursor === '2' ? bodies.p2 : bodies.p0 };
+            } });
+        };
+        await answer();
+        const hook = await renderHook(() => useWorkflowRunWindow('attention'));
+        await waitLoaded(hook);
+        await act(async () => { hook.getCurrent().loadMore(); });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().runIds).toHaveLength(4));
+        await act(async () => { hook.getCurrent().loadMore(); });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().runIds).toEqual(['a6', 'a5', 'a4', 'a3', 'a2', 'a1']));
+        const spanReads = (from: number) => home.requestsFor(route).slice(from).filter(read =>
+            WorkflowRunListRequestV1Schema.parse((read.input as { request: unknown }).request).runIds === undefined).length;
+
+        // A newer Run enters attention between loaded rows; an older loaded one leaves it.
+        const entered = attention('a35', 35);
+        members = [...members.slice(0, 3), entered, ...members.slice(3)];
+        await answer();
+        const beforeEnter = home.requestsFor(route).length;
+        await act(async () => publishHomeAccountChange(serverId, [`workflow-run:${entered.id}`]));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().runIds).toEqual(['a6', 'a5', 'a4', 'a35', 'a3', 'a2', 'a1']));
+        const left = { ...members.find(row => row.id === 'a5')!, attentionRequired: false, revision: 9 };
+        members = members.filter(row => row.id !== 'a5');
+        await answer();
+        await act(async () => publishHomeAccountChange(serverId, [`workflow-run:${left.id}`]));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().runIds).toEqual(['a6', 'a4', 'a35', 'a3', 'a2', 'a1']));
+        expect({ spanReads: spanReads(beforeEnter), hasMore: hook.getCurrent().hasMore, entered: hook.getCurrent().rows.some(row => row.id === 'a35') })
+            .toEqual({ spanReads: 0, hasMore: false, entered: true });
     });
 
     it('settles 1,000 complete Runs in one byte-bounded request and keeps a genuine arrival current', async () => {

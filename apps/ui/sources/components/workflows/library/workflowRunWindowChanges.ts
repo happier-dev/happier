@@ -4,7 +4,7 @@ import type { WorkflowRunSummaryV1 } from '@happier-dev/protocol/workflows/workf
 import { isTriggeredWorkflowRun } from '@/components/sessions/work/workflowRunTriggerScope';
 import { buildWorkflowRunListFilter, listWorkflowRuns } from '@/sync/domains/workflows/workflowRunListActions';
 import type { WorkflowRunListInvalidation } from '@/sync/domains/workflows/workflowRunListInvalidation';
-import { isBeyondWorkflowRunListSpan, workflowRunListWindowStoreKey, workflowRunRowFromSummary, workflowRunStoreKey,
+import { isBeyondWorkflowRunListSpan, workflowRunListFrontier, workflowRunListWindowStoreKey, workflowRunRowFromSummary, workflowRunStoreKey,
     type WorkflowRunListWindowId } from '@/sync/store/domains/workflowRuns';
 
 /** Work membership requires the immutable trigger scope carried by the Session list answer. */
@@ -52,6 +52,7 @@ export async function refreshWorkflowRunWindowChanges(
     const previousIds = new Set(window.runIds.filter(id => selectedIds.has(id)
         || sources?.includes(window.sourceArtifactIdsByRunId?.[id] ?? '')));
     const currentIds = new Set<string>();
+    const fetched = new Map<string, ReturnType<typeof workflowRunRowFromSummary>>();
     const selections = [
         ...(change.runIds?.length ? [{ runIds: change.runIds }] : []),
         // The source query discovers newly visible Runs; exact windows retain
@@ -71,10 +72,30 @@ export async function refreshWorkflowRunWindowChanges(
                 page.supportsAnotherRoundByRunId?.[run.id], page.callerAccessByRunId?.[run.id]));
             if (!change.summaryCurrent && projection === undefined) getStorage().getState().upsertWorkflowRuns(rows, lifetime.scope);
             for (const row of rows) {
-                if (previousIds.has(row.id) || !window.nextCursor || !window.frontier || !isBeyondWorkflowRunListSpan(row, window.frontier)) currentIds.add(row.id);
+                if (previousIds.has(row.id) || !window.nextCursor || !window.frontier || !isBeyondWorkflowRunListSpan(row, window.frontier)) {
+                    currentIds.add(row.id);
+                    fetched.set(row.id, row);
+                }
             }
             cursor = page.nextCursor;
         } while (cursor);
     }
-    return previousIds.size !== currentIds.size || [...previousIds].some(id => !currentIds.has(id)) ? 'changed' : 'unchanged';
+    if (previousIds.size === currentIds.size && [...previousIds].every(id => currentIds.has(id))) return 'unchanged';
+    // A known Run entering or leaving the loaded span is a row-level change: restate the window's
+    // membership in its (createdAt desc, id desc) order instead of re-reading every loaded page.
+    // Source discovery and membership-only windows (no bodies to order by) keep the window read.
+    if (sources?.length || projection !== undefined) return 'changed';
+    const after = getStorage().getState();
+    const current = after.workflowRunListWindows[storeId];
+    if (current !== window) return 'changed';
+    const left = new Set([...previousIds].filter(id => !currentIds.has(id)));
+    const entered = [...currentIds].filter(id => !previousIds.has(id) && !window.runIds.includes(id)).map(id => fetched.get(id)!);
+    const kept = window.runIds.filter(id => !left.has(id)).map(id => fetched.get(id) ?? after.workflowRunsById[workflowRunStoreKey(id, lifetime.scope)]);
+    if (kept.some(row => row === undefined || workflowRunListFrontier(row) === undefined)) return 'changed';
+    const ordered = [...(kept as NonNullable<(typeof kept)[number]>[]), ...entered]
+        .sort((a, b) => isBeyondWorkflowRunListSpan(a, b) ? 1 : isBeyondWorkflowRunListSpan(b, a) ? -1 : 0);
+    after.applyWorkflowRunListMembershipPatch({ scope: lifetime.scope, windowId: storeId, runIds: ordered.map(row => row.id),
+        entered, sourceArtifactIdsByRunId: Object.fromEntries(entered.flatMap(row => row.summary?.sourceArtifactId
+            ? [[row.id, row.summary.sourceArtifactId] as const] : [])) });
+    return 'unchanged';
 }

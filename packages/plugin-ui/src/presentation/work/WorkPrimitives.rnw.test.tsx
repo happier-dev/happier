@@ -195,6 +195,40 @@ describe('Work primitives for plugin authors', () => {
     unmount();
   });
 
+  it('commits nothing when a mounted row measures a width that keeps its controls beside the text', async () => {
+    // A long Inbox or Work list mounts many rows at once: a measurement that does not change the
+    // row's arrangement must not re-render it (it only matters when the row has to stack).
+    const { HappierWorkRowShell } = authorBarrel;
+    let commits = 0;
+    const mounted = mountThroughReactNativeWeb(
+      inSurface(
+        <Profiler id="row" onRender={() => { commits += 1; }}>
+          <HappierWorkRowShell testID="work.row" accessibilityLabel="Row" density="page" onPress={() => {}}
+            trailingAccessory={<span>Review</span>} trailingMeta="20m">
+            <span>Row</span>
+          </HappierWorkRowShell>
+        </Profiler>,
+      ),
+    );
+    try {
+      type LayoutNode = HTMLElement & { __reactLayoutHandler?: (event: unknown) => void };
+      const measured = [...mounted.container.querySelectorAll<LayoutNode>('*')].filter(node => typeof node.__reactLayoutHandler === 'function');
+      expect(measured.length).toBeGreaterThanOrEqual(2);
+      const layout = (node: LayoutNode, width: number) => act(() => {
+        node.__reactLayoutHandler!({ nativeEvent: { layout: { x: 0, y: 0, width, height: 40 } } });
+      });
+      commits = 0;
+      for (const node of measured) layout(node, node.contains(byTestId(mounted.container, 'work.row')) ? 1200 : 120);
+      expect(commits).toBe(0);
+      // A narrow row still stacks its controls under the mark's line.
+      const rowNode = measured.find(node => node.contains(byTestId(mounted.container, 'work.row')))!;
+      layout(rowNode, 200);
+      expect(commits).toBe(1);
+    } finally {
+      mounted.unmount();
+    }
+  });
+
   it('keeps the column on a row with no date, so the controls above and below it share an edge', () => {
     const { HappierWorkRowShell } = authorBarrel;
     const { container, unmount } = mountThroughReactNativeWeb(
