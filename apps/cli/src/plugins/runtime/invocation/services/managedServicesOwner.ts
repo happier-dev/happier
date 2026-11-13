@@ -4,7 +4,7 @@ import { createProjectServiceRecoveryStore } from './projectServiceRecoveryStore
 import { createHash, randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { createEnvironmentServiceRecovery } from './environmentServiceRecovery';
-import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, readActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentServiceExportV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import { bindManagedWorkloadsForHost, type ManagedWorkloadAdmissionForHost } from './managedWorkloads';
 import { fetchWithCredentialRedirectRefusal, CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
@@ -368,12 +368,24 @@ function fail(code: string, message: string, options?: ErrorOptions): never {
     throw new PluginError({ code, message }, options);
 }
 
-function translateError(error: unknown): never {
+function sanitizedManagedServiceFailure(error: unknown, phase: string): PluginError {
+    const failureCause = isPluginError(error) && error.data.failureCause
+        ? readActionFailureCauseV1(error.data.failureCause)
+        : projectActionFailureCauseV1(error, phase);
+    // Summarize only classified facts: exception prose, details and environment may contain credentials.
+    const cause = new PluginError({
+        code: isPluginError(error) ? error.code : failureCause.errorCode ?? 'plugin_managed_service_establishment_failed',
+        message: `${failureCause.errorClass}: ${failureCause.errorCode ?? 'Managed service operation failed'}`,
+        ...(isPluginError(error) ? { retryable: error.retryable } : {}),
+        failureCause,
+    });
+    return new PluginError({ code: 'plugin_managed_service_establishment_failed',
+        message: 'Managed service establishment failed', failureCause }, { cause });
+}
+
+function translateError(error: unknown, phase = 'managed_service.establishment'): never {
     if (!isPluginError(error)) {
-        return fail(
-            'plugin_managed_service_establishment_failed',
-            'Managed service establishment failed',
-        );
+        throw sanitizedManagedServiceFailure(error, phase);
     }
     // The canonical requester launch owner supplies a closed no-effect reason
     // and retryability. Establishment presentation must not erase that refusal.
@@ -407,15 +419,15 @@ function translateError(error: unknown): never {
             ? error.details.establishmentFailure : undefined);
         // Repeated presentation keeps the original typed refusal without copying private content.
         const cause = error.code === code && isPluginError(error.cause) ? error.cause : error;
-        throw new PluginError({ code, message: 'Managed service establishment failed',
-            ...(failure.success ? { details: { establishmentFailure: failure.data } } : {}) }, {
-            cause: new PluginError({ code: cause.code, retryable: cause.retryable }),
-        });
+        const sanitized = sanitizedManagedServiceFailure(cause, phase);
+        throw new PluginError({ ...sanitized.data,
+            ...(failure.success ? { details: { establishmentFailure: failure.data } } : {}) }, { cause: sanitized.cause });
     }
     throw new PluginError({
         code,
         message: error.message,
         ...(error.details ? { details: error.details } : {}),
+        failureCause: error.data.failureCause ?? projectActionFailureCauseV1(error, phase),
     }, error.cause === undefined ? undefined : { cause: error.cause });
 }
 
@@ -428,10 +440,7 @@ function flattenManagedServiceCleanupFailures(
             for (const nested of failure.errors) append(nested);
             return;
         }
-        flattened.push(new PluginError({
-            code: 'plugin_managed_service_establishment_failed',
-            message: 'Managed service cleanup failed',
-        }));
+        flattened.push(sanitizedManagedServiceFailure(failure, 'managed_service.cleanup'));
     };
     for (const failure of failures) append(failure);
     return flattened;
@@ -1834,13 +1843,13 @@ function wrapHandle(
             );
         }
         if (observationError !== undefined) {
-            return translateError(observationError);
+            return translateError(observationError, 'managed_service.cleanup');
         }
         if (operationError !== undefined) {
-            return translateError(operationError);
+            return translateError(operationError, 'managed_service.stop');
         }
         if (cleanupError !== undefined) {
-            return translateError(cleanupError);
+            return translateError(cleanupError, 'managed_service.cleanup');
         }
         signal?.removeEventListener('abort', abort);
         markTerminal();
@@ -1904,7 +1913,7 @@ function wrapHandle(
                     }),
                 );
             } catch (error) {
-                return translateError(error);
+                return translateError(error, 'managed_service.health');
             }
         },
         async request(input) {
@@ -1917,7 +1926,7 @@ function wrapHandle(
             try {
                 return await request(input, requestLifetime.signal, explicitStop.signal);
             } catch (error) {
-                return translateError(error);
+                return translateError(error, 'managed_service.request');
             }
         },
         async stop(options) {

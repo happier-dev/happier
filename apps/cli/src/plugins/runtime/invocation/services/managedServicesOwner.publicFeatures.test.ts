@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 import type {
     ManagedExecutableRef,
@@ -352,13 +353,75 @@ describe('managed-services SVC09 public feature completeness', () => {
                     'typed-establishment-cause', { kind: 'fixed', port: 43_131, onCollision: 'fail' }, '127.0.0.1',
                 )).then(handle => handle.waitUntilHealthy()).catch((error: unknown) => error);
                 expect(error).toMatchObject({ code: 'plugin_managed_service_establishment_failed',
-                    cause: { code: 'outside_root', retryable: false } });
+                    cause: { code: 'outside_root', retryable: false },
+                    data: { failureCause: { phase: 'managed_service.establishment', errorClass: 'Error', errorCode: 'outside_root' } } });
                 expect(error).toBeInstanceOf(PluginError);
                 if (!(error instanceof PluginError)) throw error;
                 expect(String(error.cause)).not.toContain('private credential');
                 expect(error.cause).toHaveProperty('details', undefined);
                 expect(JSON.stringify(error.cause)).not.toContain('private credential');
             } finally {
+                await harness.owner.dispose();
+            }
+        });
+
+        it.each(['daemon', 'runner'] as const)('retains a sanitized native start failure for %s custody', async placement => {
+            const harness = createPublicHarness({ placement, exec: createExec({ spawn: async () => {
+                throw Object.assign(new TypeError('PRIVATE_ENV_VALUE'), { code: 'EACCES', details: { token: 'PRIVATE_ENV_VALUE' } });
+            } }) });
+            try {
+                const error: unknown = await harness.services.supervise(portSpec(
+                    'native-start-cause', { kind: 'fixed', port: 43_131, onCollision: 'fail' }, '127.0.0.1',
+                )).catch((error: unknown) => error);
+                expect(error).toMatchObject({ code: 'plugin_managed_service_establishment_failed',
+                    data: { failureCause: { phase: 'managed_service.establishment', errorClass: 'TypeError', errorCode: 'EACCES' } },
+                    cause: { message: expect.stringContaining('EACCES') },
+                });
+                expect(normalizeActionExecutorThrownError(error, 'providers.runtime_start')).toMatchObject({
+                    failureCause: { phase: 'managed_service.establishment', errorClass: 'TypeError', errorCode: 'EACCES' },
+                });
+                expect(JSON.stringify(error)).not.toContain('PRIVATE_ENV_VALUE');
+                expect(String((error as Error).cause)).not.toContain('PRIVATE_ENV_VALUE');
+            } finally {
+                await harness.owner.dispose();
+            }
+        });
+
+        it('reports the health phase after an attached endpoint stays unhealthy', async () => {
+            const harness = createPublicHarness({ fetch: async () => new Response(null, { status: 503 }) });
+            try {
+                const handle = await harness.services.supervise({ id: 'health-cause',
+                    mode: { kind: 'attach', baseUrl: 'http://127.0.0.1:43120' },
+                    healthCheck: { kind: 'http', path: '/health' },
+                });
+                await expect(handle.waitUntilHealthy({ timeoutMs: 1 })).rejects.toMatchObject({
+                    code: 'plugin_managed_service_health_timeout',
+                    data: { failureCause: { phase: 'managed_service.health', errorCode: 'plugin_managed_server_health_timeout' } },
+                });
+            } finally {
+                await harness.owner.dispose();
+            }
+        });
+
+        it('retains a safe stop failure and allows cleanup recovery', async () => {
+            let refuseCleanup = true;
+            const process = createProcess(8_701, async () => {
+                if (refuseCleanup) throw Object.assign(new Error('PRIVATE_STOP_VALUE'), { code: 'EIO' });
+            });
+            const harness = createPublicHarness({ exec: createExec({ spawn: async () => process }) });
+            try {
+                const handle = await harness.services.supervise(portSpec(
+                    'stop-cause', { kind: 'fixed', port: 43_131, onCollision: 'fail' }, '127.0.0.1',
+                ));
+                const failure: unknown = await handle.stop().catch((error: unknown) => error);
+                expect(failure).toMatchObject({ code: 'plugin_managed_server_termination_incomplete',
+                    data: { failureCause: { phase: 'managed_service.stop', errorCode: 'plugin_managed_server_termination_incomplete' } },
+                });
+                expect(JSON.stringify(failure)).not.toContain('PRIVATE_STOP_VALUE');
+                refuseCleanup = false;
+                await expect(handle.dispose()).resolves.toBeUndefined();
+            } finally {
+                refuseCleanup = false;
                 await harness.owner.dispose();
             }
         });
