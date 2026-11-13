@@ -32,7 +32,8 @@ it('keeps Domain probe and certificate conditions independent and recovers only 
     const consume = async (checkId: string, transition: 'failed' | 'recovered', time: number) => createConfiguredHealthCheckNotices({
         credentials: f.credentials, serverId: environment.environment.serverId, serverHttpBaseUrl: 'https://domain-notices.test',
         machineId: caller.machineId, readService: async () => null, readEnvironment: async () => environment,
-    })({ caller, definition, admitted: true, signal: new AbortController().signal,
+    })({ caller, actionCaller: { kind: 'plugin', pluginId: caller.pluginId, materialization: caller },
+        definition, admitted: true, signal: new AbortController().signal,
         observation: AutomationEventAdmitInputV1Schema.parse({ eventRef: definition.eventRef, occurrenceId: `${checkId}-${time}`,
             occurredAt: time, observationReceivedAt: time, definitions: [{ automationId: definition.automationId,
                 triggerId: definition.triggerId, triggerRevision: definition.triggerRevision, sourceSelectorId: definition.sourceSelectorId }],
@@ -79,7 +80,8 @@ it('commits one configured-check condition, keeps equal failures silent, and rec
             sourceSelectorId: definition.sourceSelectorId }], payload: HealthCheckTransitionV1Schema.parse({ sourceInstanceId: definition.sourceInstanceId,
             subject, checkId: 'public-http', transition, observedAt }) });
     const consume = (transition: 'failed' | 'recovered', time: number) => createConfiguredHealthCheckNotices(host)({
-        caller, definition, admitted: true, observation: observation(transition, time), signal: new AbortController().signal });
+        caller, actionCaller: { kind: 'plugin', pluginId: caller.pluginId, materialization: caller },
+        definition, admitted: true, observation: observation(transition, time), signal: new AbortController().signal });
     expect(await consume('failed', 100)).toMatchObject({ kind: 'consumed', changed: true });
     expect(f.rows.size).toBe(1);
     expect(f.writes).toHaveBeenCalledTimes(1);

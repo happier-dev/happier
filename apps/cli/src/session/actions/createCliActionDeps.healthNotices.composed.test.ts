@@ -15,10 +15,18 @@ import * as persistence from '@/persistence';
 import * as installationStore from '@/daemon/identity/store';
 import { healthTransition } from '../../../../../packages/plugins/machine-services/src/healthObserver';
 import { createCliActionDeps } from './createCliActionDeps';
+import { createHostContributedActionInvoker } from '@/plugins/runtime/invocation/actions/hostContributedActionInvoker';
+import { createTargetActionInvocationRegistry } from '@/plugins/runtime/invocation/targetActionRegistry';
+import { createProductionPluginInvocationServiceOwners } from '@/plugins/runtime/invocation/services/production';
+import { createPluginRuntimeOccurrenceId } from '@/plugins/runtime/runtimeSlots';
+import type { InvokeContributedAction } from '@/plugins/runtime/invocation/services/actions';
+import { TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1 } from '@happier-dev/triage-protocol/v1';
+import { TRIAGE_SESSION_HANDOFF_ACTION_REF_V1 } from '@happier-dev/triage-sources/runtime';
 
 afterEach(() => vi.restoreAllMocks());
 
-it('stores the portable Home in a saved health notice produced by the CLI factory', async () => {
+it.each(['inbox', 'auto_start', 'retired_caller'] as const)(
+    'stores the portable Home and preserves admitted caller for %s health investigation', async mode => {
     const artifacts = createPlainAccountArtifactHttpBoundary();
     const serverId = 'daemon-local-profile';
     const serverIdentityId = 'srv_niq7wbpMyJviL4EtO5YlTEd0Us0Ou0nN';
@@ -31,7 +39,8 @@ it('stores the portable Home in a saved health notice produced by the CLI factor
         triggerKind: 'pluginEvent' as const, eventRef, sourceSelectorId: randomUUID() };
     const subject = { kind: 'environment' as const, environmentId: detail.environment.id };
     const sourceInstanceId = 'health:factory';
-    const definition = { v: 1 as const, sourceInstanceId, sourceConfig: { v: 1, subject, checks: [{ checkId: 'tcp',
+    const definition = { v: 1 as const, sourceInstanceId, sourceConfig: { v: 1, subject,
+        ...(mode === 'inbox' ? {} : { investigation: { mode: 'auto_start', configuredActionId: 'investigate' } }), checks: [{ checkId: 'tcp',
         kind: { pluginId: caller.pluginId, localId: 'tcp' }, binding: { kind: 'healthCheck' }, config: { host: 'localhost', port: 80 },
         periodMs: 1000, consecutiveFailuresBeforeAlerting: 1 }] }, displayLabel: 'Health', filter: null, maximumObservationAgeMs: null };
     const retained: AutomationEventStoredDefinitionProjectionV1 = { automationId: binding.automationId, triggerId: binding.triggerId,
@@ -52,9 +61,11 @@ it('stores the portable Home in a saved health notice produced by the CLI factor
         publicKey: Buffer.from(keys.publicKey).toString('base64url'), privateKey: Buffer.from(keys.secretKey).toString('base64url') });
     vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: { ok: true, environment: detail.environment, targetLinks: [] } });
     const writeArtifact = artifacts.writes.getMockImplementation()!;
+    let callerCurrent = true;
     artifacts.writes.mockImplementation(async (url, body, config) => {
         if (new URL(String(url)).pathname === AutomationEventActionHttpPathsV1['automation.event.admit']) {
             AutomationEventAdmitHttpRequestV1Schema.parse(body);
+            if (mode === 'retired_caller') callerCurrent = false;
             return { status: 200, data: { results: [{ kind: 'observed', checkpointSafe: true }],
                 continuation: { kind: 'ready', accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null } } } };
         }
@@ -71,16 +82,54 @@ it('stores the portable Home in a saved health notice produced by the CLI factor
         readStoredDefinitions: async () => ({ kind: 'page', revision: '1', definitions: [retained], nextCursor: null,
             eventDeclarationRelease: { release: { pluginId: caller.pluginId, version: '1.0.0' }, archiveDigestSha256: `sha256:${'a'.repeat(64)}` } }),
     });
+    const handoffs: unknown[] = [];
+    let targets: ReturnType<typeof createTargetActionInvocationRegistry>;
+    const invokeRegistry: InvokeContributedAction = async request => {
+        const result = await targets.invoke({ pluginId: request.action.pluginId, localId: request.action.localId,
+            input: request.input, surface: request.surface, invocationSurface: request.surface,
+            caller: request.caller, signal: request.signal });
+        if (result.status === 'deferred') throw new Error('safe_health_target_deferred');
+        return result;
+    };
+    const invokeContributedAction = createHostContributedActionInvoker({ invokeContributedAction: invokeRegistry,
+        revalidatePluginActionCallerMaterialization: async ref => callerCurrent && ref.materializationId === caller.materializationId,
+        revalidatePluginActionCallerOccurrence: async ref => callerCurrent && ref.occurrenceId === occurrenceId });
     const executor = createActionExecutor(createCliActionDeps({ credentials: artifacts.credentials, token: artifacts.credentials.token,
         sessionId: 'cli-global', mode: 'plain', ctx: null, serverId, serverIdentityId, serverHttpBaseUrl: 'https://health-notices.test',
         resolveAuthenticatedAccountId: async () => 'owner', resolveAutomationEventAdoptedDefinitionSet: () => owner,
+        invokeContributedAction,
         revalidatePluginActionCallerMaterialization: async () => true, revalidatePluginActionCallerOccurrence: async () => true }));
+    const owners = createProductionPluginInvocationServiceOwners({ actionExecutor: executor, invokeContributedAction: invokeRegistry });
+    const targetOccurrenceId = createPluginRuntimeOccurrenceId(TRIAGE_SESSION_HANDOFF_ACTION_REF_V1.pluginId);
+    targets = createTargetActionInvocationRegistry({
+        actions: [TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1, TRIAGE_SESSION_HANDOFF_ACTION_REF_V1].map(action => ({
+            pluginId: action.pluginId, pluginVersion: '1.0.0', occurrenceId: targetOccurrenceId,
+            sourceCustody: { kind: 'development' as const, registeredRootId: 'triage-target' }, localId: action.localId,
+            definition: { id: action.localId, dangerLevel: 'safe' as const, scopes: ['global' as const], surfaces: ['plugin' as const],
+                inputSchema: { type: 'object' }, resultSchema: {} },
+            handler: async input => {
+                if (action.localId === TRIAGE_READ_SESSION_HANDOFF_CHOICES_ACTION_REF_V1.localId) return {
+                    v: 1, kind: 'choices', defaultActionId: 'investigate', actions: [{ label: 'Investigate', selection: {
+                        configuredActionId: 'investigate', sessionChoice: { kind: 'configured' }, agentChoice: { kind: 'configured' }, delivery: 'configured' } }] };
+                handoffs.push(input);
+                return { v: 1, handoff: { kind: 'sendResult', session: { serverId: serverIdentityId, sessionId: 'investigation' },
+                    result: { status: 'accepted', localId: 'health-investigation' } } };
+            },
+        })),
+        resolveAuthorizationFacts: target => ({ generation: { targetGeneration: target.occurrenceId,
+            desiredGeneration: target.occurrenceId, appliedGeneration: target.occurrenceId },
+            resourceSelections: [], scopedGrants: [], operatingSystemAuthorization: [] }),
+        createServices: owners.createServices, resolveHostBinding: owners.resolveHostBinding,
+        readCurrentPluginOccurrenceId: pluginId => pluginId === TRIAGE_SESSION_HANDOFF_ACTION_REF_V1.pluginId ? targetOccurrenceId : null,
+    });
+    try {
     const result = await executor.execute('automation.event.admit', AutomationEventAdmitInputV1Schema.parse({ eventRef, occurrenceId: 'failed-1',
         occurredAt: 1000, observationReceivedAt: 1000, definitions: [{ automationId: binding.automationId, triggerId: binding.triggerId,
             triggerRevision: 1, sourceSelectorId: binding.sourceSelectorId }],
         payload: { sourceInstanceId, subject, checkId: 'tcp', transition: 'failed', observedAt: 1000 } }), {
         surface: 'plugin', signal, serverId, serverIdentityId,
-        actionCaller: { kind: 'plugin', pluginId: caller.pluginId, materialization: caller, occurrenceId, sourceCustody },
+        actionCaller: { kind: 'plugin', pluginId: caller.pluginId, contributionLocalId: 'health-observer',
+            materialization: caller, occurrenceId, sourceCustody },
     });
     expect(result).toMatchObject({ ok: true, result: { results: [{ kind: 'observed', checkpointSafe: true }] } });
     const notices = [...artifacts.rows.values()].filter(row => row.id !== id);
@@ -88,4 +137,11 @@ it('stores the portable Home in a saved health notice produced by the CLI factor
     expect(decodePlainArtifactStoredContent(notices[0]!.header)).toMatchObject({
         page: { page: 'environment', environment: { serverId: serverIdentityId, environmentId: detail.environment.id } },
     });
+    expect(handoffs).toHaveLength(mode === 'auto_start' ? 1 : 0);
+    if (mode === 'auto_start') expect(handoffs[0]).toMatchObject({ handoff: {
+        task: 'investigate', context: { kind: 'healthAlert', target: { environment: { serverId: serverIdentityId } } },
+    } });
+    if (mode === 'retired_caller') expect(JSON.stringify(decodePlainArtifactStoredContent(notices[0]!.body)))
+        .toContain('plugin_action_caller_unavailable');
+    } finally { targets.dispose(); await owners.dispose(); }
 });

@@ -63,6 +63,8 @@ export type CommittedAutomationEventObservationV1 = Readonly<{
   /** Whether the committed occurrence created or rejoined an executable Run. */
   admitted: boolean;
   caller: PluginMachineMaterializationRefV1;
+  /** Original host-stamped caller for subsequent independently admitted Actions. */
+  actionCaller: Parameters<ExecuteAutomationEventAction>[0]['caller'];
   definition: AutomationEventSourceDefinitionV1;
   observation: AutomationEventAdmitInputV1;
   signal: AbortSignal;
@@ -577,7 +579,7 @@ export function createAutomationEventActionExecutor(params: Readonly<{
             if (committedSources.has(sourceKey)) continue;
             committedSources.add(sourceKey);
             await params.onCommittedObservation({ admitted: outcome.kind === 'admitted' || outcome.kind === 'rejoined',
-              caller: materialization.data, definition,
+              caller: materialization.data, actionCaller: args.caller, definition,
               observation: admissionInput.data, signal });
           }
         }

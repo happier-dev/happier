@@ -478,6 +478,11 @@ shown as “may have started” and is not retried automatically. This source-lo
 choice does not change Account investigation defaults or create a second Session
 launcher.
 
+The committed Event retains its original host-stamped plugin caller for the
+configured Triage Action hop. That Action uses the existing caller and target
+admission owners; observing a health transition grants no Session or Machine
+permission and does not reuse a scheduled Workflow Run's consent.
+
 Deploy review compares its already-resolved reference addresses with those recorded
 on the serving receipt it already reads. Reference addresses are captured privately
 when launch resolves them; a changed address is shown in the deploy review.
@@ -4342,7 +4347,7 @@ database locally; selecting the adapter does not turn it into an API/worker spli
     deployment fails closed instead of appearing to work.
   - Changing either value changes the WorkOS runtime fingerprint, which invalidates
     already-started OAuth attempts bound to the previous runtime.
-- Logging format (development source): `HAPPIER_SERVER_LOG_FORMAT=json` opts Node into structured stdout through the server configuration registry and post-Home-overlay logger initialization; unset or invalid values retain pretty output.
+- Logging format: Node (Docker image and source runs) writes JSON stdout on the main thread by default; `HAPPIER_SERVER_LOG_FORMAT=pretty` (Home settings or env) selects the `pino-pretty` transport worker, whose ring-buffer poll wakes about once a second while idle. The server configuration registry owns the default and the post-Home-overlay logger initialization applies it; unset or invalid values use JSON.
 - Sentry native CPU profiling (development source): `SENTRY_PROFILE_SESSION_SAMPLE_RATE` defaults to `0`. A positive rate enables the native integration on Node. Bun-based servers cannot load the V8 profiler; they emit a `profiling-unavailable` warning and retain Sentry error capture. Native profiling is not available in Bun-compiled server binaries.
 - Debug logging: `DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING` (enables file logging + dev log endpoint).
 

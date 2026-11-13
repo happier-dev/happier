@@ -613,7 +613,10 @@ export function createCliActionDeps(params: CliActionDepsParams,
           serverHttpBaseUrl: todoHomeBaseUrl, machineId: observation.caller.machineId,
           executeAction: async (action, input, options) => {
             if (!params.invokeContributedAction) return { ok: false, errorCode: 'target_unavailable', effectAttempted: false };
-            const result = await params.invokeContributedAction({ action, input, context: { signal: options?.signal },
+            const result = await params.invokeContributedAction({ action, input, context: {
+              surface: 'plugin', serverId: projectHomeId, serverIdentityId: noticeHomeIdentity,
+              actionCaller: observation.actionCaller, signal: options?.signal,
+            },
               ...(options?.signal ? { signal: options.signal } : {}) });
             return StrictJsonValueSchema.parse(result);
           },

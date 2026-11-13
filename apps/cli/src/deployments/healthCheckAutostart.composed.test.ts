@@ -43,7 +43,8 @@ it.each([
             return outcome;
         } };
     const consume = (transition: 'failed' | 'recovered', time: number) => createConfiguredHealthCheckNotices(host)({
-        caller, definition, admitted, signal: new AbortController().signal,
+        caller, actionCaller: { kind: 'plugin', pluginId: caller.pluginId, materialization: caller },
+        definition, admitted, signal: new AbortController().signal,
         observation: AutomationEventAdmitInputV1Schema.parse({ eventRef: definition.eventRef, occurrenceId: `${transition}-${time}`,
             occurredAt: time, observationReceivedAt: time, definitions: [{ automationId: definition.automationId,
                 triggerId: definition.triggerId, triggerRevision: definition.triggerRevision, sourceSelectorId: definition.sourceSelectorId }],
