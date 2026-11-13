@@ -13,6 +13,7 @@ import { buildRemoteSelfDownloadFirstPartyInstallCommand, resolveRemoteSelfDownl
 import { createHash, randomBytes } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { createCliPayloadFixture as createPayloadRootFixture } from '../testkit/createCliPayloadFixture.js';
+import { DEFAULT_COMMAND_CAPTURE_MAX_BYTES } from '../../process/commandCaptureBudget.js';
 
 // Filesystem IO is the system boundary; all payload/archive logic stays real.
 vi.mock('node:fs/promises', async (importOriginal) => {
@@ -485,7 +486,7 @@ exec "${nativeRm}" "$@"
     { phase: 'staging', stderr: 'private-path: [Errno 28]', code: 'remote_storage_full' },
     { phase: 'promotion', stderr: 'private-path: errno 28', code: 'remote_storage_full' },
     { phase: 'staging', stderr: 'private-path: [Errno 128] permission denied', code: 'remote_command_failed' },
-  ] as const)('classifies $phase failure ($stderr) without disclosing remote stderr', async ({ phase, stderr, code }) => {
+  ] as const)('classifies $phase failure ($stderr)', async ({ phase, stderr, code }) => {
     const fixture = await createPayloadRootFixture();
     let uploads = 0;
     let promotions = 0;
@@ -502,11 +503,30 @@ exec "${nativeRm}" "$@"
         preparePayload: async () => ({ componentId: 'happier-cli', channel: 'stable', versionId: '1.2.3', payloadRoot: fixture.payloadRoot, source: null, cleanup: async () => {} }),
       }).catch((error: unknown) => error);
       expect(failure).toBeInstanceOf(Error);
-      expect(failure).toMatchObject({ message: expect.not.stringContaining('private-path') });
+      if (code === 'remote_storage_full') expect(failure).toMatchObject({ message: expect.not.stringContaining('private-path') });
       if (code) expect(failure).toMatchObject({ code });
       else expect(failure).not.toHaveProperty('code');
       expect(uploads).toBe(phase === 'staging' ? 0 : 1);
       expect(promotions).toBe(phase === 'staging' ? 0 : 1);
+    } finally { await fixture.cleanup(); }
+  });
+
+  it('retains the promotion exit and redacted stderr tail in a typed command failure', async () => {
+    const fixture = await createPayloadRootFixture();
+    try {
+      const failure = await installRemoteFirstPartyComponentPayload({ componentId: 'happier-cli' }, {
+        resolveRemoteReleaseTarget: async () => ({ os: 'linux', arch: 'x64' }),
+        runRemoteText: async ({ remoteCommand }) => remoteCommand.includes('tar -xf')
+          ? { status: 126, stdout: '', stderr: 'discarded-head-marker' + 'x'.repeat(DEFAULT_COMMAND_CAPTURE_MAX_BYTES)
+            + '\nBearer private-token_123+/=; promotion: Permission denied\n' }
+          : { status: 0, stdout: 'current=\nprevious=\n', stderr: '' },
+        copyLocalDirectoryToRemote: async () => {},
+        preparePayload: async () => ({ componentId: 'happier-cli', channel: 'stable', versionId: '1.2.3', payloadRoot: fixture.payloadRoot, source: null, cleanup: async () => {} }),
+      }).catch((error: unknown) => error);
+      expect(failure).toMatchObject({ code: 'remote_command_failed', message: expect.stringContaining('exit 126') });
+      expect(failure).toMatchObject({ message: expect.stringContaining('promotion: Permission denied') });
+      expect(failure).toMatchObject({ message: expect.not.stringContaining('private-token_123') });
+      expect(failure).toMatchObject({ message: expect.not.stringContaining('discarded-head-marker') });
     } finally { await fixture.cleanup(); }
   });
 

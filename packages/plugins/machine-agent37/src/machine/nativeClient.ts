@@ -1,6 +1,6 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { decodeBase64, encodeBase64, defineProtocolLiteral, defineProtocolNumber, defineProtocolUnion, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
-import { buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, projectMachineProvisionerActionFailure, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { assertMachineProvisionerGuestCommandSucceeded, buildMachineProvisionerShellCommand, observeMachineProvisionerNativeRead, projectMachineProvisionerActionFailure, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING, CONTRIBUTION, DISK_GB, SIZES, reference, ROLE_SCHEMAS, RECONCILIATION, type Agent37Launch, type Agent37Resource, type Agent37Operation } from './schemas.js';
 import { KINDS } from './kinds.js';
 
@@ -39,7 +39,8 @@ export function createAgent37NativeClient(request: typeof fetch, signal: AbortSi
   }
   async function checked(resource: Agent37Resource, shell: string) {
     const result = await command(resource, shell);
-    if (result.exit_code !== 0 || result.truncated) throw new PluginError({ code: 'agent37_guest_command_failed' });
+    assertMachineProvisionerGuestCommandSucceeded({ exitCode: result.exit_code, truncated: result.truncated },
+      details => new PluginError({ code: 'agent37_guest_command_failed', details }));
     return result.stdout;
   }
   async function temporary(resource: Agent37Resource) {
@@ -104,7 +105,16 @@ export function createAgent37NativeClient(request: typeof fetch, signal: AbortSi
       shell = `trap ${quote('rm -f -- ' + quote(path))} EXIT; (${shell}) < ${quote(path)}`;
     }
     const result = await command(input.resource, shell);
-    if (result.exit_code !== 0 || result.truncated) throw invalid();
+    // The native shell/runtime can fail before our binary envelope is emitted.
+    // Its exit and text streams are still a valid command result for the host.
+    if (result.exit_code !== 0) return {
+      stdoutBase64: encodeBase64(new TextEncoder().encode(result.stdout)),
+      stderrBase64: encodeBase64(new TextEncoder().encode(result.stderr)),
+      termination: { observed: { kind: 'exit', exitCode: result.exit_code }, requestedBy: { kind: 'none' } },
+      stdoutTruncated: result.truncated, stderrTruncated: result.truncated,
+    };
+    if (result.truncated) throw new PluginError({ code: 'agent37_guest_command_failed',
+      details: { exitCode: result.exit_code, truncated: true } });
     let value: unknown;
     try { value = JSON.parse(result.stdout) as unknown; } catch { throw invalid(); }
     const binary = binaryExecution.safeParse(value);

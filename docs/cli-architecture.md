@@ -47,8 +47,11 @@ enrollment. Account preparation failures retain `dedicated_identity_unconfirmed`
 only observed Home transport failures become `home_not_guest_reachable`.
 
 Agent37 native shell failures retain their exit status and output through the
-shared bootstrap transport. Truncated binary envelopes remain command failures;
-malformed responses retain `agent37_invalid_response`. Payload promotion reports
+shared bootstrap transport. Agent37, E2B and Maritime use the SDK guest-command
+success check before decoding successful prerequisite output, preserving failed
+mktemp/bootstrap exits as command failures. Truncated binary envelopes remain
+command failures; malformed responses retain their provider's `invalid_response`.
+Payload promotion reports
 `remote_command_failed` with the exit status and a redacted stderr tail using the
 existing command capture budget. Storage exhaustion keeps `remote_storage_full`.
 

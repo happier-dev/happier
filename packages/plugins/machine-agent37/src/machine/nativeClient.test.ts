@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { decodeBase64, encodeBase64 } from '@happier-dev/plugin-sdk/protocol';
 import { createAgent37NativeClient } from './nativeClient.js';
+import { MachineProvisionerNativeExecResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
 
 const launch = { kind: 'vm' as const, size: '2-4', region: 'us' as const };
 const resource = { instanceId: 'ab12cd34ef', managedId: 'managed-one', ...launch };
@@ -36,6 +37,12 @@ function vendor(options: { lostCreate?: boolean; startPending?: boolean; truncat
 }
 
 describe('Agent37 native HTTP lifecycle', () => {
+  it.each(['stdin', 'bootstrap'] as const)('retains the failed %s prerequisite exit separately from response validation', async phase => {
+    const request: typeof fetch = async () => Response.json({ exit_code: 28, stdout: '', stderr: 'No space left on device', truncated: false });
+    const client = createAgent37NativeClient(request, new AbortController().signal, 1000);
+    const operation = phase === 'stdin' ? client.exec({ resource, argv: ['cat'], inputBase64: 'YQ==' }) : client.bootstrap(resource);
+    await expect(operation).rejects.toMatchObject({ code: 'agent37_guest_command_failed', details: { exitCode: 28 } });
+  });
   it('retains completed power and delete bodies after late cancellation', async () => {
     for (const effect of ['stop', 'delete'] as const) {
       const abort = new AbortController();
@@ -113,7 +120,31 @@ describe('Agent37 native HTTP lifecycle', () => {
     const result = await vendor().client.exec({ resource, argv: ['printf', '\\000\\377\\200\\n'] });
     expect(result).toMatchObject({ stdoutBase64: encodeBase64(Uint8Array.of(0, 255, 128, 10)), stdoutTruncated: false });
   });
+  it.each([126, 127])('preserves native shell failure %s without requiring a binary envelope', async exitCode => {
+    // Agent37 documents runtime failures outside the wrapped command (exec.md).
+    const request: typeof fetch = async () => Response.json({ exit_code: exitCode,
+      stdout: '', stderr: 'sh: cannot execute guest command\n', truncated: false });
+    const client = createAgent37NativeClient(request, new AbortController().signal, 1000);
+    const result = MachineProvisionerNativeExecResultV1Schema.parse(await client.exec({ resource, argv: ['sh', '-c', 'true'] }));
+    expect(result).toMatchObject({ termination: { observed: { kind: 'exit', exitCode }, requestedBy: { kind: 'none' } },
+      stderrBase64: encodeBase64(new TextEncoder().encode('sh: cannot execute guest command\n')),
+      stdoutTruncated: false, stderrTruncated: false });
+  });
+  it('preserves a failed wrapped command rather than treating its status as an invalid response', async () => {
+    const request: typeof fetch = async () => Response.json({ exit_code: 0, stdout: JSON.stringify({
+      exitCode: 13, stdoutBase64: '', stderrBase64: encodeBase64(new TextEncoder().encode('promotion: Permission denied\n')),
+    }), stderr: '', truncated: false });
+    const result = await createAgent37NativeClient(request, new AbortController().signal, 1000).exec({ resource, argv: ['false'] });
+    expect(result).toMatchObject({ termination: { observed: { kind: 'exit', exitCode: 13 } },
+      stderrBase64: encodeBase64(new TextEncoder().encode('promotion: Permission denied\n')) });
+  });
+  it.each([{}, { exit_code: 0, stdout: 'not an envelope', stderr: '', truncated: false }])('rejects malformed native output', async body => {
+    const request: typeof fetch = async () => Response.json(body);
+    await expect(createAgent37NativeClient(request, new AbortController().signal, 1000).exec({ resource, argv: ['true'] }))
+      .rejects.toMatchObject({ code: 'agent37_invalid_response' });
+  });
   it('refuses a truncated binary envelope instead of reporting corrupted bytes as successful output', async () => {
-    await expect(vendor({ truncated: true }).client.exec({ resource, argv: ['true'] })).rejects.toThrow();
+    await expect(vendor({ truncated: true }).client.exec({ resource, argv: ['true'] }))
+      .rejects.toMatchObject({ code: 'agent37_guest_command_failed', details: { exitCode: 0, truncated: true } });
   });
 });

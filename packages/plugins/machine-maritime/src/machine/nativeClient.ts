@@ -1,6 +1,6 @@
 import { MaritimeNativeError, projectMaritimeNativeFailure } from './nativeFailure.js';
 import { decodeBase64, encodeBase64, defineProtocolLiteral, defineProtocolNumber, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
-import { observeMachineProvisionerNativeRead, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1,
+import { assertMachineProvisionerGuestCommandSucceeded, observeMachineProvisionerNativeRead, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1,
   type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING_BY_KIND, CONTRIBUTION, reference, ROLE_SCHEMAS, RECONCILIATION, type MaritimeLaunch, type MaritimeResource, type MaritimeOperation } from './schemas.js';
 
@@ -169,15 +169,16 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
     } else await awake(input.resource);
     if (input.processConfig) {
       const result = await run(input.resource, ['env', ...Object.entries(input.processConfig.environment).map(([key, value]) => key + '=' + value), ...input.processConfig.detachedDaemonStartArgv], input.timeoutMs);
-      if (result.exitCode !== 0) throw new MaritimeNativeError({ code: 'maritime_process_configuration_failed' });
+      assertMachineProvisionerGuestCommandSucceeded(result, () => new MaritimeNativeError({ code: 'maritime_process_configuration_failed' }));
       return { kind: 'process-configured' };
     }
     let argv = input.argv;
     if (input.inputBase64 !== undefined) {
       const root = input.resource.kind === 'agent-box' ? '/data' : '/home/desk';
       const temporary = await run(input.resource, ['mktemp', '-d', root + '/.happier-input.XXXXXXXXXX'], input.timeoutMs);
+      assertMachineProvisionerGuestCommandSucceeded(temporary, details => new MaritimeNativeError({ code: 'maritime_guest_command_failed', details }));
       const directory = temporary.stdout.trim();
-      if (temporary.exitCode !== 0 || !directory.startsWith(root + '/') || /[\r\n\0]/u.test(directory)) throw invalid();
+      if (!directory.startsWith(root + '/') || /[\r\n\0]/u.test(directory)) throw invalid();
       await upload(input.resource, directory + '/input', decodeBase64(input.inputBase64));
       argv = ['sh', '-c', `trap ${quote('rm -rf -- ' + quote(directory))} EXIT; ${input.argv.map(quote).join(' ')} < ${quote(directory + '/input')}`];
     }
@@ -231,8 +232,9 @@ export function createMaritimeNativeClient(request: typeof fetch, signal: AbortS
         if (!resized.ok || resized.alwaysOn !== (resource.alwaysOn ?? true)) throw new MaritimeNativeError({ code: 'maritime_keep_awake_unconfirmed' });
       }
       const result = await run(resource, ['sh', '-c', 'uname -s; uname -m; printf "%s\\n" "$HOME"']);
+      assertMachineProvisionerGuestCommandSucceeded(result, details => new MaritimeNativeError({ code: 'maritime_guest_command_failed', details }));
       const [platform, architecture, home] = result.stdout.trimEnd().split('\n');
-      if (result.exitCode !== 0 || platform !== 'Linux' || !['x86_64', 'aarch64'].includes(architecture ?? '') || !home?.startsWith('/') || home.includes('\0')) throw invalid();
+      if (platform !== 'Linux' || !['x86_64', 'aarch64'].includes(architecture ?? '') || !home?.startsWith('/') || home.includes('\0')) throw invalid();
       const homeDir = resource.kind === 'agent-box' ? '/data' : home;
       return { kind: 'native', transport: { contributionRef: CONTRIBUTION, schemaVersion: 1 },
         guestHome: { homeDir, happyHomeDir: homeDir.replace(/\/$/u, '') + '/.happier', daemonStartup: 'native-process' } };

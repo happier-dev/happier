@@ -36,6 +36,8 @@ import {
 } from '../ssh/remoteSelfDownloadFirstPartyInstallCommand.js';
 import { normalizeScpRemotePath } from '../ssh/scpRemotePath.js';
 import { buildRemoteFirstPartyStagingCleanupCommand } from '../ssh/remoteFirstPartyStagingCleanup.js';
+import { redactBugReportSensitiveText, trimBugReportTextToMaxBytes } from '@happier-dev/protocol/bugs/reports/redaction';
+import { DEFAULT_COMMAND_CAPTURE_MAX_BYTES } from '../../process/commandCaptureBudget.js';
 
 export {
   normalizeRemoteReleaseArch,
@@ -96,7 +98,8 @@ function assertRemotePayloadCommandSucceeded(result: RemoteFirstPartyCommandResu
     throw new SystemTaskExecutionError('remote_storage_full', 'The remote machine does not have enough free disk space to install Happier.');
   }
   throw new SystemTaskExecutionError('remote_command_failed',
-    `Remote payload ${phase} failed (exit ${result.status}; stdout present ${result.stdout.length > 0}; stderr present ${result.stderr.length > 0}).`);
+    `Remote payload ${phase} failed (exit ${result.status}; stdout present ${result.stdout.length > 0}; stderr present ${result.stderr.length > 0}).`
+      + (result.stderr ? `\n${trimBugReportTextToMaxBytes(redactBugReportSensitiveText(result.stderr), DEFAULT_COMMAND_CAPTURE_MAX_BYTES)}` : ''));
 }
 
 /** Flat payloads remain supported; collections select the guest, never the controller. */

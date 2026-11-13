@@ -37,6 +37,20 @@ function vendor(options: { failCreate?: boolean; duplicate?: boolean; processByt
 }
 
 describe('E2B native REST leaf', () => {
+  it.each(['stdin', 'bootstrap'] as const)('classifies a failed %s guest prerequisite as a command failure', async phase => {
+    const h = vendor({ processBytes: output('', 28) });
+    const operation = phase === 'stdin'
+      ? h.client.exec({ resource, argv: ['cat'], inputBase64: 'YQ==' })
+      : h.client.bootstrap(resource);
+    await expect(operation).rejects.toMatchObject({ code: 'e2b_guest_command_failed', details: { exitCode: 28 } });
+  });
+  it.each(['stdin', 'bootstrap'] as const)('keeps malformed successful %s output distinct from command failure', async phase => {
+    const h = vendor({ processBytes: output('') });
+    const operation = phase === 'stdin'
+      ? h.client.exec({ resource, argv: ['cat'], inputBase64: 'YQ==' })
+      : h.client.bootstrap(resource);
+    await expect(operation).rejects.toMatchObject({ code: 'e2b_invalid_response' });
+  });
   it.each(['headers', 'body'] as const)('retains completed native execution output after late cancellation at %s', async phase => {
     const abort = new AbortController();
     const bytes = output(Buffer.from('completed').toString('base64'), 17);

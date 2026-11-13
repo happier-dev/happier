@@ -1,6 +1,6 @@
 import { E2bNativeError, projectE2bNativeFailure } from './nativeFailure.js';
 import { decodeBase64, encodeBase64, defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
-import { observeMachineProvisionerNativeRead, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { assertMachineProvisionerGuestCommandSucceeded, observeMachineProvisionerNativeRead, type MachineProvisionerBootstrapCarrierV1, type MachineProvisionerCheckResultV1, type MachineProvisionerNativeExecResultV1, type MachineProvisionerObservationV1, type MachineProvisionerPowerResultV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { BILLING, CONTRIBUTION, reference, ROLE_SCHEMAS, RECONCILIATION, type E2bLaunch, type E2bResource, type E2bOperation } from './schemas.js';
 import { executeEnvd, type EnvdSession } from './envd.js';
 
@@ -101,7 +101,7 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
     const run = (argv: readonly string[], environment?: Readonly<Record<string, string>>) => executeEnvd(request, signal, session, argv, environment, input.timeoutMs);
     if (input.processConfig) {
       const result = await run(input.processConfig.detachedDaemonStartArgv, input.processConfig.environment);
-      if (result.exitCode !== 0) throw new E2bNativeError({ code: 'e2b_process_configuration_failed' });
+      assertMachineProvisionerGuestCommandSucceeded(result, () => new E2bNativeError({ code: 'e2b_process_configuration_failed' }));
       return { kind: 'process-configured' };
     }
     let argv = input.argv;
@@ -109,8 +109,9 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
       // Buffered HTTP cannot obtain a running PID to SendInput. Carry stdin in
       // a private guest directory, never command-line arguments.
       const temporary = await run(['mktemp', '-d']);
+      assertMachineProvisionerGuestCommandSucceeded(temporary, details => new E2bNativeError({ code: 'e2b_guest_command_failed', details }));
       const directory = new TextDecoder().decode(temporary.stdout).trim();
-      if (temporary.exitCode !== 0 || !directory.startsWith('/') || /[\r\n\0]/u.test(directory)) throw invalid();
+      if (!directory.startsWith('/') || /[\r\n\0]/u.test(directory)) throw invalid();
       await upload(session, directory + '/input', decodeBase64(input.inputBase64));
       argv = ['sh', '-c', `trap ${quote('rm -rf -- ' + quote(directory))} EXIT; ${input.argv.map(quote).join(' ')} < ${quote(directory + '/input')}`];
     }
@@ -173,8 +174,9 @@ export function createE2bNativeClient(request: typeof fetch, signal: AbortSignal
     recover, inspect, exec, power, destroy,
     async bootstrap(resource: E2bResource): Promise<MachineProvisionerBootstrapCarrierV1> {
       const result = await executeEnvd(request, signal, await guest(resource), ['sh', '-c', 'uname -s; uname -m; printf "%s\\n" "$HOME"']);
+      assertMachineProvisionerGuestCommandSucceeded(result, details => new E2bNativeError({ code: 'e2b_guest_command_failed', details }));
       const [platform, architecture, home] = new TextDecoder().decode(result.stdout).trimEnd().split('\n');
-      if (result.exitCode !== 0 || platform !== 'Linux' || !['x86_64', 'aarch64'].includes(architecture ?? '') || !home?.startsWith('/') || home.includes('\0')) throw invalid();
+      if (platform !== 'Linux' || !['x86_64', 'aarch64'].includes(architecture ?? '') || !home?.startsWith('/') || home.includes('\0')) throw invalid();
       return { kind: 'native', transport: { contributionRef: CONTRIBUTION, schemaVersion: 1 },
         guestHome: { homeDir: home, happyHomeDir: home.replace(/\/$/u, '') + '/.happier', daemonStartup: 'native-process' } };
     },

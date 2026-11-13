@@ -54,6 +54,18 @@ function vendor(options: { lostCreate?: boolean; duplicate?: boolean; asleep?: b
 }
 
 describe('Maritime managed-machine REST leaf', () => {
+  it.each([boxResource, computerResource].flatMap(resource => (['stdin', 'bootstrap'] as const).map(phase => ({ resource, phase }))))(
+    'classifies a failed $phase guest prerequisite for $resource.kind as a command failure', async ({ resource, phase }) => {
+      const request: typeof fetch = async input => {
+        const path = new URL(String(input)).pathname;
+        if (path.endsWith('/resize')) return Response.json({ ok: true, alwaysOn: true });
+        if (path.endsWith('/exec')) return Response.json({ executionId: 'execution-one', status: 'completed', exitCode: 28, stdout: '', stderr: 'No space left on device' });
+        return Response.json(resource.kind === 'agent-box' ? box : computer);
+      };
+      const client = createMaritimeNativeClient(request, new AbortController().signal, 1000);
+      const operation = phase === 'stdin' ? client.exec({ resource, argv: ['cat'], inputBase64: 'YQ==' }) : client.bootstrap(resource);
+      await expect(operation).rejects.toMatchObject({ code: 'maritime_guest_command_failed', details: { exitCode: 28 } });
+    });
   it('retains a completed delete acknowledgement after late cancellation', async () => {
     const abort = new AbortController();
     const request: typeof fetch = async () => { abort.abort(); return new Response(null, { status: 204 }); };

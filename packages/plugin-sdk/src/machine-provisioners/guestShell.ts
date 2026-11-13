@@ -1,6 +1,15 @@
 /** @moduleRealm any */
 const quote = (value: string) => "'" + value.replaceAll("'", "'\\''") + "'";
 
+/** A completed guest prerequisite can fail without making its native response malformed. */
+export function assertMachineProvisionerGuestCommandSucceeded(
+  result: Readonly<{ exitCode: number; truncated?: boolean }>,
+  failure: (details: Readonly<{ exitCode: number; truncated?: boolean }>) => Error,
+): void {
+  if (result.exitCode !== 0 || result.truncated) throw failure({ exitCode: result.exitCode,
+    ...(result.truncated === undefined ? {} : { truncated: result.truncated }) });
+}
+
 /** Preserve binary stdout/stderr and exit status over a native text-only exec API.
  * Omit inputBase64 when the vendor already carries stdin separately. */
 export function buildMachineProvisionerShellCommand(argv: readonly string[], inputBase64?: string): string {

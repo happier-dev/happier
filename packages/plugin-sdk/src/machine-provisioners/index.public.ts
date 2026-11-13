@@ -77,4 +77,4 @@ export {
 } from '../machineProvisioners.js';
 
 export { createMachineProvisionerFetch, createMachineProvisionerMaterializedFetch } from './http.js';
-export { buildMachineProvisionerShellCommand, buildMachineProvisionerDaemonStartScript } from './guestShell.js';
+export { assertMachineProvisionerGuestCommandSucceeded, buildMachineProvisionerShellCommand, buildMachineProvisionerDaemonStartScript } from './guestShell.js';

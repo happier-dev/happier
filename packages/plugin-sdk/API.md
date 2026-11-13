@@ -1912,6 +1912,7 @@
 | `./machine-provisioners` | `MachineProvisionerSnapshotResultV1Schema` | value | any |
 | `./machine-provisioners` | `MachineProvisionerStoredReaderV1` | type | any |
 | `./machine-provisioners` | `ManagedMachineAllocationPresentationV1` | type | any |
+| `./machine-provisioners` | `assertMachineProvisionerGuestCommandSucceeded` | value | any |
 | `./machine-provisioners` | `buildMachineProvisionerCloudInit` | value | any |
 | `./machine-provisioners` | `buildMachineProvisionerDaemonStartScript` | value | any |
 | `./machine-provisioners` | `buildMachineProvisionerPinnedSshBootstrap` | value | any |
