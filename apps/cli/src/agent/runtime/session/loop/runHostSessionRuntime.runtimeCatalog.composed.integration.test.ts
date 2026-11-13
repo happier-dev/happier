@@ -1055,6 +1055,103 @@ async function useShellBridgeRuntimeFixture(config: HostSessionRuntimeConfig) {
 }
 
 describe('runHostSessionRuntime', () => {
+  it('delivers a queued message after terminal resume of a stopped Session and commits the native turn result', async () => {
+    const harness = createHarness('stopped-terminal-resume');
+    const [{ createClaudeNativeSessionRuntimeFromOperations }, { createClaudeAgentSdkTurnOperations }, fixtures,
+      { createNativeAgentSessionOperations }, { createTurnAssistantTextSnapshotStore }] = await Promise.all([
+      import('../../../../../../../packages/plugins/claude/src/agent/runtime/nativeRuntime'),
+      import('../../../../../../../packages/plugins/claude/src/agent/runtime/remote/sdk/session'),
+      import('../../../../../../../packages/plugins/claude/src/agent/runtime/engine.testkit'),
+      import('@/agent/runtime/registry/engineRegistry/nativeAgentSession'),
+      import('@/api/session/turns/assistantTextSnapshotStore'),
+    ]);
+    const stop = { v: 1 as const, cause: 'explicit_stop' as const, requestId: 'terminal-journey-stop', requestedAtMs: 100 };
+    await harness.session.updateMetadata((metadata: Metadata) => ({ ...metadata, sessionExplicitStopV1: stop }));
+    harness.opts.startedBy = 'terminal';
+    harness.opts.existingSessionId = harness.session.sessionId;
+    harness.opts.resume = 'resumed-native-session';
+    harness.queue.pushIsolate({ text: 'Continue the queued request.', localId: 'queued-after-stop' }, { permissionMode: 'default' });
+    const controller = new AbortController();
+    // Only the vendor process and Session transport are substituted. Queue admission,
+    // prompt preparation, native codecs, turn lifecycle and result projection stay real.
+    const exec = fixtures.createSdkExecFixture();
+    const ctx = fixtures.createPluginContextFixture(fixtures.createTerminalHostFixture().service,
+      fixtures.createEventsFixture().service, { exec: exec.service });
+    const publications = createNativeAgentSessionPublications({ agentId: 'claude', session: null,
+      signal: controller.signal, isCurrent: () => !controller.signal.aborted, supportsInFlightSteer: false });
+    const context = { signal: controller.signal, services: { exec: exec.service }, session: { services: publications.services } } as unknown as AgentSessionRuntimeContext;
+    const native = createClaudeNativeSessionRuntimeFromOperations(createClaudeAgentSdkTurnOperations({
+      ctx, directory: '/tmp/workspace', launchEnv: {}, permissionMode: 'default', happierSessionId: harness.session.sessionId,
+      initialProviderSessionId: 'resumed-native-session', initialModelId: 'claude-haiku-4-5', initialEffort: 'low',
+      publishTranscriptMessages: true,
+    }), { kind: 'resume', providerSessionId: 'resumed-native-session', sessionId: harness.session.sessionId, cwd: '/tmp/workspace' }, context);
+    const runtime = createNativeAgentSessionOperations(native, harness.session.sessionId, undefined, undefined, undefined, undefined, undefined, {
+      context, cwd: '/tmp/workspace', connectedAccounts: [], capabilities: { open: ['resume'], delivery: ['newTurn'], cancel: true },
+      cancellation: { declared: true }, configuration: { declared: false }, compaction: { capability: null },
+    }, publications);
+    const snapshot = createTurnAssistantTextSnapshotStore();
+    const mutations: import('@happier-dev/protocol').SessionTurnMutationV1[] = [];
+    const committedAssistant: string[] = [];
+    let observedSeq = 10;
+    Object.assign(harness.session, {
+      hasPendingProviderInput: () => false,
+      getLastObservedMessageSeq: () => observedSeq,
+      getCommittedUserMessageSeq: () => null,
+      getTurnAssistantTextSnapshotStore: () => snapshot,
+      enqueueSessionTurnMutation: async (value: unknown) => { mutations.push(SessionTurnMutationV1Schema.parse(value)); },
+      sendAgentMessageEphemeral: () => ({ accepted: true as const, epoch: 0 }),
+      enqueueAgentMessageCommitted: async (provider: Parameters<ApiSessionClient['enqueueAgentMessageCommitted']>[0],
+        body: import('@/api/session/sessionMessageTypes').ACPMessageData,
+        options: Parameters<ApiSessionClient['enqueueAgentMessageCommitted']>[2]) => {
+        observedSeq += 1;
+        const assistant = extractAssistantTextSnapshotFromAcpMessage(provider, body);
+        if (assistant) {
+          committedAssistant.push(assistant.text);
+          snapshot.observe({ ...assistant, localId: options.localId, seq: observedSeq, source: 'committed' });
+        }
+        return { persisted: true as const, delivered: true as const, committedSequence: observedSeq };
+      },
+    });
+    setSessionRuntimeFactory(harness.config, () => {
+      expect(harness.session.getMetadataSnapshot().sessionExplicitStopV1).toEqual(stop);
+      return { operations: runtime, nativeRuntime: runtime };
+    });
+    let finished = false;
+    let completedSnapshot: ReturnType<typeof snapshot.getCurrentTurnSnapshot> = null;
+    harness.deps.runPermissionModePromptLoopFn = async (params: Parameters<typeof runPermissionModePromptLoop>[0]) => {
+      await runPermissionModePromptLoop({ ...params, getAbortSignal: () => controller.signal,
+        shouldExit: () => finished, sendReady: () => { completedSnapshot = snapshot.getCurrentTurnSnapshot(); finished = true; } });
+    };
+    const running = runHostSessionRuntime(harness.opts, harness.config, harness.deps);
+    let runtimeError: unknown;
+    void running.catch(error => { runtimeError = error; });
+    try {
+      await vi.waitFor(() => expect(JSON.stringify(exec.written), JSON.stringify({ runtimeError: runtimeError instanceof Error ? runtimeError.message : runtimeError, diagnostics: loggerDebugMock.mock.calls.slice(-8) })).toContain('Continue the queued request.'));
+      expect(JSON.stringify(exec.written)).toContain('Continue the queued request.');
+      expect(harness.session.getMetadataSnapshot().sessionExplicitStopV1).toBeUndefined();
+      await exec.emit({ type: 'system', subtype: 'init', session_id: 'resumed-native-session' });
+      await exec.emit({ type: 'assistant', uuid: 'resumed-answer', session_id: 'resumed-native-session',
+        message: { id: 'resumed-message', type: 'message', role: 'assistant', model: 'claude-haiku-4-5',
+          content: [{ type: 'text', text: 'QUEUED_REQUEST_COMPLETE' }], stop_reason: 'end_turn', stop_sequence: null,
+          usage: { input_tokens: 1, output_tokens: 1 } } });
+      await exec.emit({ type: 'result', subtype: 'success', is_error: false, session_id: 'resumed-native-session',
+        result: 'QUEUED_REQUEST_COMPLETE', duration_ms: 1, duration_api_ms: 1, num_turns: 1, total_cost_usd: 0,
+        usage: { input_tokens: 1, output_tokens: 1 } });
+      await exec.resolveExit();
+      await running;
+      expect(committedAssistant).toContain('QUEUED_REQUEST_COMPLETE');
+      expect(completedSnapshot).toMatchObject({ text: 'QUEUED_REQUEST_COMPLETE', source: 'committed' });
+      expect(mutations).toContainEqual(expect.objectContaining({ action: 'complete',
+        transcriptAnchors: expect.objectContaining({ finalAssistantMessageSeq: expect.any(Number) }) }));
+    } finally {
+      finished = true;
+      controller.abort();
+      await exec.resolveExit();
+      await runtime.resetOrDisposeRuntime('session_end');
+      publications.dispose();
+      await running.catch(() => undefined);
+    }
+  });
   it.each(['terminal', 'daemon', 'newer-stop', 'open-fails'] as const)('releases only the observed Stop after standalone native resume opens (%s)', async scenario => {
     const harness = createHarness();
     const stop = { v: 1 as const, cause: 'explicit_stop' as const, requestId: 'original-stop', requestedAtMs: 100 };

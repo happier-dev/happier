@@ -1,4 +1,5 @@
 import { afterEach, expect, it, vi } from 'vitest';
+import { createAgentSessionRuntimeHarness } from '@happier-dev/plugin-sdk/testing';
 import { readFile, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import { resolveAgentCliOverrideEnvKey } from '@happier-dev/cli-common/agents/resolution';
@@ -7,15 +8,19 @@ import { createMuseForegroundConnectedAccountFixture } from '@/daemon/agentRunti
 import { withRealForegroundAdmissionFixture } from '@/daemon/agentRuntime/foregroundAdmission.testkit';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
+import { readMuseRecord } from './events.js';
 import { createAdmittedMuseSessionFixture } from './testkit/admittedSession.test-support.js';
 import { MUSE_MSP_PLAYBACK_SCRIPT, readMuseLoginRecording, readMuseMspProcessAudit } from './testkit/mspProcess.js';
 
 afterEach(() => vi.restoreAllMocks());
 
-it.each(['manual', 'native'] as const)('selects the same keyed Muse Account for contributor models and native launch (%s)', async credentialMode => {
-  const account = await createMuseForegroundConnectedAccountFixture(['work', 'personal'], credentialMode === 'native' ? {
-    credentialMode: 'native', inferenceKey: 'synthetic-selected-muse-key', accountToken: 'synthetic-selected-oauth-token',
+it.each(['manual', 'native-with-key', 'native-oauth-only'] as const)('carries the selected Muse Account through catalog, model launch and first turn (%s)', async credentialMode => {
+  const nativeLogin = credentialMode !== 'manual';
+  const hasInferenceKey = credentialMode !== 'native-oauth-only';
+  const account = await createMuseForegroundConnectedAccountFixture(['work', 'personal'], nativeLogin ? {
+    credentialMode: 'native', ...(hasInferenceKey ? { inferenceKey: 'synthetic-selected-muse-key' } : {}), accountToken: 'synthetic-selected-oauth-token',
     nativeApiBaseUrl: 'https://api.meta.ai/v1', nativeObtainedVia: 'login', nativeMechanism: '"oauth"', nativeSubsActive: 'true',
+    expiresAtMs: String(Date.UTC(2100, 0, 1)),
   } : undefined);
   const overrideKey = resolveAgentCliOverrideEnvKey('muse');
   const env = createEnvKeyScope(['PATH', 'META_API_KEY', overrideKey]);
@@ -34,7 +39,7 @@ it.each(['manual', 'native'] as const)('selects the same keyed Muse Account for 
         // are written by the native process or included in assertion output.
         "const path = require('node:path');",
         "const auth = JSON.parse(fs.readFileSync(path.join(process.env.XDG_CONFIG_HOME, 'muse/auth.json'), 'utf8'));",
-        `fs.appendFileSync(${JSON.stringify(credentialAudit)}, JSON.stringify({ selectedCredentialMatches: auth.providers.meta.api_key === 'synthetic-selected-muse-key', ambientCredentialUsed: process.env.META_API_KEY === 'synthetic-ambient-muse-key', selectedEnvironmentMatches: process.env.META_API_KEY === 'synthetic-selected-muse-key', nativeLoginRetained: auth.providers.meta.mechanism === ${JSON.stringify(credentialMode === 'native' ? 'oauth' : 'api_key')} && ${credentialMode === 'native' ? "auth.providers.meta.access_token === 'synthetic-selected-oauth-token'" : 'true'} }) + '\\n');`,
+        `fs.appendFileSync(${JSON.stringify(credentialAudit)}, JSON.stringify({ selectedCredentialMatches: auth.providers.meta.api_key === ${hasInferenceKey ? "'synthetic-selected-muse-key'" : 'undefined'}, ambientCredentialUsed: process.env.META_API_KEY === 'synthetic-ambient-muse-key', selectedEnvironmentMatches: process.env.META_API_KEY === ${hasInferenceKey ? "'synthetic-selected-muse-key'" : 'undefined'}, nativeLoginRetained: auth.providers.meta.mechanism === ${JSON.stringify(nativeLogin ? 'oauth' : 'api_key')} && ${nativeLogin ? "auth.providers.meta.access_token === 'synthetic-selected-oauth-token'" : 'true'} }) + '\\n');`,
         `const playback = JSON.parse(process.env.MUSE_TEST_RECORDING ?? ${JSON.stringify(JSON.stringify(recording))});`,
         // Native 1.4.15 capture: envKey exposes contributor IDs; accountLogin does not.
         "for (const row of playback.rows) { const models = row.message?.result?.models; if (Array.isArray(models) && process.env.META_API_KEY === 'synthetic-selected-muse-key') { for (const id of ['muse-spark-1.2-contributor', 'muse-spark-1.3-contributor']) { const base = models.find(model => model.modelId === id.replace('-contributor', '')); models.push({ ...base, modelId: id, displayLabel: id, isDefault: false }); } } }",
@@ -72,10 +77,22 @@ it.each(['manual', 'native'] as const)('selects the same keyed Muse Account for 
           expect.objectContaining({ id: 'meta/muse-wonder-1.0' }),
           expect.objectContaining({ id: 'meta/muse-spark-1.3' }),
           expect.objectContaining({ id: 'meta/muse-spark-1.2' }),
-          expect.objectContaining({ id: 'meta/muse-spark-1.2-contributor' }),
-          expect.objectContaining({ id: 'meta/muse-spark-1.3-contributor' }),
+          ...(hasInferenceKey ? [
+            expect.objectContaining({ id: 'meta/muse-spark-1.2-contributor' }),
+            expect.objectContaining({ id: 'meta/muse-spark-1.3-contributor' }),
+          ] : []),
         ]),
       } });
+      if (!models.ok) throw new Error('Expected selected Muse Account catalog');
+      const availableModels = readMuseRecord(models.result).availableModels;
+      if (!Array.isArray(availableModels)) throw new Error('Expected available Muse models');
+      const contributorIds = availableModels.map(readMuseRecord).map(model => model.id)
+        .filter(id => typeof id === 'string' && id.endsWith('-contributor')).sort();
+      expect(contributorIds).toEqual(hasInferenceKey
+        ? ['meta/muse-spark-1.2-contributor', 'meta/muse-spark-1.3-contributor'] : []);
+      const selectedModel = availableModels.map(readMuseRecord).find(model => model.id === (hasInferenceKey
+        ? 'meta/muse-spark-1.3-contributor' : 'meta/muse-spark-1.3'));
+      if (typeof selectedModel?.id !== 'string') throw new Error('Expected selectable Muse catalog model');
       const catalog = await readMuseMspProcessAudit(catalogAudit);
       expect(catalog.methods).toEqual(['initialize', 'initialized', 'model/list']);
       expect(catalog).toMatchObject({ initializeCount: 1, initializedCount: 1, commandCount: 0,
@@ -100,23 +117,38 @@ it.each(['manual', 'native'] as const)('selects the same keyed Muse Account for 
         cwd: foreground.directory, sessionId: 'muse-selected-account', nativeExecutable: executable,
         environment: { PATH: path, ...claimed.environment },
       });
+      const events = createAgentSessionRuntimeHarness();
       try {
-        await session.open({ kind: 'create', sessionId: 'muse-selected-account', cwd: foreground.directory,
+        const opened = await session.open({ kind: 'create', sessionId: 'muse-selected-account', cwd: foreground.directory,
           launchEnvironment: { values: claimed.environment, unset: claimed.unsetEnvironmentVariableNames },
           connectedAccounts: claimed.sessionConnectedAccounts,
+          configuration: { model: { value: selectedModel.id, updatedAtMs: 0, selectionSource: 'explicit' },
+            mode: { value: null, updatedAtMs: 0 }, permissionIntent: { value: null, updatedAtMs: 0 }, options: {} },
         });
+        opened.watch(events.recordRuntimeEvent);
+        expect(await opened.send({ inputIds: ['selected-account-input'],
+          input: { text: 'Reply with exactly PEBBLE. Do not use tools.' },
+          delivery: { kind: 'newTurn', turnId: 'selected-account-turn' } })).toMatchObject({ status: 'admitted' });
+        await events.until('turn-complete');
+        events.expectAllEventsValidated();
+        events.expectExactlyOneTerminalEvent({ turnId: 'selected-account-turn' });
+        expect(events.canonicalEvents().filter(event => event.kind === 'transcript-message-committed' && event.role === 'assistant'))
+          .toMatchObject([{ text: 'PEBBLE', turnId: 'selected-account-turn' }]);
         await session.closeSession();
         const launch = await session.readAudit();
         expect(launch.methods.filter(method => method === 'session/start')).toHaveLength(1);
-        expect(launch.methods).not.toContain('model/list');
-        expect(launch.methods).not.toContain('turn/start');
-        expect(launch.methods).not.toContain('usage/refresh');
+        expect(launch.modelSelections).toEqual([{ providerId: 'meta',
+          modelId: hasInferenceKey ? 'muse-spark-1.3-contributor' : 'muse-spark-1.3' }]);
+        expect(launch.methods.filter(method => method === 'turn/start')).toHaveLength(1);
+        expect(launch.turnInputs).toEqual([[{ type: 'text', text: 'Reply with exactly PEBBLE. Do not use tools.' }]]);
+        if (hasInferenceKey) expect(launch.methods).not.toContain('usage/refresh');
+        else expect(launch.methods.filter(method => method === 'usage/refresh')).toHaveLength(1);
         expect(launch).toMatchObject({ initializeCount: 1, initializedCount: 1, cwd: foreground.directory, autoUpdate: '1' });
         expect(await readEquality()).toEqual([
           { selectedCredentialMatches: true, ambientCredentialUsed: false, selectedEnvironmentMatches: true, nativeLoginRetained: true },
           { selectedCredentialMatches: true, ambientCredentialUsed: false, selectedEnvironmentMatches: true, nativeLoginRetained: true },
         ]);
-      } finally { await session.dispose(); }
+      } finally { events.dispose(); await session.dispose(); }
     });
   } finally {
     env.restore();
