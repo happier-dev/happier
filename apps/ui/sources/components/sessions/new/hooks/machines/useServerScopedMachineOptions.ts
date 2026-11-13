@@ -13,6 +13,8 @@ import { resolveServerScopedMachineInventory } from '@/sync/domains/machines/res
 import { isMachineVisibleForLaunchSelection } from '@/sync/domains/machines/identity/filterVisibleMachines';
 import { linkMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { retainShallow } from '@/sync/domains/state/structuralSharing';
+import { isMachineDisplayHydrating } from '@/utils/sessions/machineDisplayNames';
+import { subscribeHomeCredentialChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 export type ServerScopedMachinePresentation = MachineDisplayRenderable & Readonly<{
     serverId: string;
@@ -123,7 +125,7 @@ export function useServerScopedMachineOptions(params: UseServerScopedMachineOpti
     const demanded = allowedServerIds.length > 0;
     const machineListByServerId = useMachineListByServerId(params.presented, params.inventoryPurpose, demanded);
     const machineListStatusByServerId = useMachineListStatusByServerId(demanded);
-    // This is the current scoped projection, not a cache of older inventories.
+    // Retain the completed projection while its next census is opening content.
     // A new inventory array changes membership, not every retained Machine.
     // Keep the source identity beside the row we produce, qualified by Home;
     // replacing the projection below releases removed rows and retired Homes.
@@ -133,13 +135,22 @@ export function useServerScopedMachineOptions(params: UseServerScopedMachineOpti
     }>>>>(new Map());
     const publishedGroups = React.useRef<ServerScopedMachineGroup[] | undefined>(undefined);
 
+    React.useEffect(() => subscribeHomeCredentialChange((event, change) => {
+        if (!change.accountLeft) return;
+        publishedGroups.current = publishedGroups.current?.filter(group => (
+            !areServerProfileIdentifiersEquivalent(group.serverId, event.serverId)
+        ));
+        scopedRows.current = new Map([...scopedRows.current].filter(([serverId]) => (
+            !areServerProfileIdentifiersEquivalent(serverId, event.serverId)
+        )));
+    }), []);
+
     return React.useMemo(() => {
         const activeServerId = String(params.activeServerId ?? '').trim();
         const nextRows = new Map<string, Map<string, Readonly<{ source: Machine; row: ServerScopedMachine }>>>();
         const groups = allowedServerIds.map((serverId) => {
             const profile = serverProfiles.get(serverId);
             const serverName = resolveHomeDisplayLabel(profile, serverId, activeServerId);
-            const isActive = Boolean(activeServerId) && areServerProfileIdentifiersEquivalent(serverId, activeServerId);
             const inventory = resolveServerScopedMachineInventory({
                 serverId,
                 activeServerId,
@@ -149,12 +160,18 @@ export function useServerScopedMachineOptions(params: UseServerScopedMachineOpti
             });
             const signedOut = inventory.status === 'signedOut';
             const error = inventory.status === 'error';
-            const loading = !isActive && !signedOut && !error && inventory.machines === null;
+            const loading = !signedOut && !error && (inventory.status !== 'idle'
+                || inventory.machines === null || inventory.machines.some(isMachineDisplayHydrating));
             const previousRows = scopedRows.current.get(serverId);
+            const previousGroup = publishedGroups.current?.find(group => group.serverId === serverId);
+            if (loading && previousGroup && !previousGroup.loading && !previousGroup.signedOut && !previousGroup.error) {
+                if (previousRows) nextRows.set(serverId, new Map(previousRows));
+                return { ...previousGroup, serverName };
+            }
             const rows = new Map<string, Readonly<{ source: Machine; row: ServerScopedMachine }>>();
             nextRows.set(serverId, rows);
-            const machines = (inventory.machines ?? [])
-                .filter(isMachineVisibleForLaunchSelection)
+            const machines = (loading ? [] : inventory.machines ?? [])
+                .filter(machine => isMachineVisibleForLaunchSelection(machine) && !isMachineDisplayHydrating(machine))
                 .map((machine) => {
                     const previous = previousRows?.get(machine.id);
                     const projected = previous?.source === machine && previous.row.serverName === serverName

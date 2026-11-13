@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { act } from 'react-test-renderer';
 
 import { renderHook, renderScreen } from '@/dev/testkit';
+import { synthesizeSelectionListRenderPlan } from '@/components/ui/selectionList/SelectionListRenderPlan';
 import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { clearMachineRequestReachabilityForTest, recordMachineRequestFailed, recordMachineRequestSucceeded, resolveMachineReachability } from '@/sync/domains/machines/reachability/machineReachability';
@@ -199,6 +200,20 @@ function firstStaticOption(model: ReturnType<typeof UseMachineSelectionListModel
 }
 
 describe('useMachineSelectionListModel', () => {
+    it.each([1, 2])('shows failed census state rather than an empty Machine roster across %s Homes', async homeCount => {
+        const fixture = { ...createFixture([]), recent: [], favorites: [] };
+        const failed = { ...fixture.groups[0]!, error: true };
+        const groups = homeCount === 1 ? [failed] : [failed,
+            { ...failed, serverId: 'server-b', serverName: 'Server B', error: false }];
+        const rendered = await renderHook(() => useMachineSelectionListModel({
+            ...buildParams({ ...fixture, groups }, makeHandlers()), onConnectMachine: () => {},
+        }));
+        const options = rendered.getCurrent().rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : []);
+        expect(options.find(option => option.id === 'server:server-a:error'))
+            .toMatchObject({ label: 'common.unavailable', disabled: true });
+        expect(options.some(option => option.id === 'server:server-a:empty')).toBe(false);
+        expect(rendered.getCurrent().rootStep.sections.some(section => section.id === 'use-one-you-have')).toBe(false);
+    });
     it.each(['owned', 'shared'] as const)('retains selected metadata outside a closed %s offline fold', async ownership => {
         const machines = ['Selected desktop', 'Other desktop'].map(id => ({ ...createMachine(id), active: false, activeAt: 0,
             ...(ownership === 'shared' ? { isShared: true, access: {
@@ -229,6 +244,12 @@ describe('useMachineSelectionListModel', () => {
             const options = () => (rendered.findByType(SelectionList).props as React.ComponentProps<typeof SelectionList>)
                 .rootStep.sections.flatMap(section => section.kind === 'static' ? section.options : []);
             expect(options().map(option => option.id)).toEqual(['offline:all', 'offline:shared:alice']);
+            const step = (rendered.findByType(SelectionList).props as React.ComponentProps<typeof SelectionList>).rootStep;
+            const search = synthesizeSelectionListRenderPlan({ sections: step.sections, inputValue: 'offline-0',
+                filterQuery: 'offline-0', dynamicSectionStates: new Map() });
+            expect(search.map(section => ({ id: section.id, options: section.options.map(option => option.id) })))
+                .toEqual([{ id: 'all', options: ['offline:all', 'offline-0'] },
+                    { id: 'shared:alice', options: ['offline:shared:alice', 'shared-offline-0'] }]);
             await act(async () => rendered.findByTestId('new-session-machine-list:machine-root:option:offline:shared:alice').props.onPress());
             expect(options().map(option => option.id)).toEqual(['offline:all', 'offline:shared:alice', ...shared.map(machine => machine.id)]);
         } finally { await rendered.unmount(); }
@@ -302,6 +323,7 @@ describe('useMachineSelectionListModel', () => {
         const allowedServerIds = ['server-a'];
         const activeMachines: Machine[] = [];
         storage.getState().applyMachines([machine], true, { sourceServerId: fixtureScope.serverId });
+        storage.getState().markMachineListSettled(fixtureScope.serverId);
         recordMachineRequestSucceeded({ ...fixtureScope, machineId: machine.id, observedAtMs: now - 2_101 });
         const rendered = await renderHook(() => {
             const groups = useServerScopedMachineOptions({ allowedServerIds, activeServerId: 'server-a', activeMachines, inventoryPurpose: 'launch' });

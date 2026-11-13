@@ -313,6 +313,10 @@ export type SelectionListSection = Readonly<{
     /** One quiet destination at the header's trailing edge ("New machine · Presets"); never an option. */
     action?: SelectionListSectionAction;
     options: ReadonlyArray<SelectionListOption>;
+    /** Query projection for grouped rows (for example, matches inside a closed disclosure).
+     * Owns matching and ordering for a nonempty query; empty input keeps `options` as authored.
+     */
+    filterOptions?: (query: string) => ReadonlyArray<SelectionListOption>;
     /** Optional non-activatable status rendered after this static section. */
     resultHint?: string;
     /**

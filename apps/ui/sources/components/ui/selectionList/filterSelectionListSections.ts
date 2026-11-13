@@ -35,7 +35,7 @@ export function filterSelectionListSections(
             result.push(section);
             continue;
         }
-        const matchedOptions = rankOptionsByQuery(
+        const matchedOptions = section.filterOptions?.(normalized) ?? rankOptionsByQuery(
             section.options,
             normalized,
             section.disableSubtitleRanking === true,

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { SelectionListOption, SelectionListSectionDescriptor } from '@/components/ui/selectionList';
 import { foldOfflineWorkers } from './foldOfflineWorkers';
-import { rankOptionsByQuery } from '@/components/ui/selectionList/SelectionListRenderPlan';
+import { synthesizeSelectionListRenderPlan } from '@/components/ui/selectionList/SelectionListRenderPlan';
 
 const option = (id: string, disabled = false): SelectionListOption => ({ id, label: id, disabled, onSelect: () => {} });
 const section = (options: SelectionListOption[]): SelectionListSectionDescriptor => ({ kind: 'static', id: 'workers', title: 'Workers', options });
@@ -12,10 +12,20 @@ const optionsOf = (result: SelectionListSectionDescriptor[]) =>
   result.flatMap((s) => (s.kind === 'static' ? s.options : []));
 
 describe('foldOfflineWorkers', () => {
-  it('keeps a folded group discoverable by the names the SelectionList search hides', () => {
-    const input = [section([option('studio', true), option('server', true)])];
-    expect(rankOptionsByQuery(optionsOf(foldOfflineWorkers(input, offline('studio', 'server'), copy())), 'studio')
-      .map(row => row.id)).toEqual(['offline:workers']);
+  it.each([false, true])('shows matching offline rows beneath their own fold in each section while open=%s', open => {
+    const input = [section([option('studio', true), option('server', true)]), {
+      ...section([option('shared studio', true), option('shared server', true)]), id: 'shared', title: 'Shared',
+    }];
+    const folded = foldOfflineWorkers(input, offline('studio', 'server', 'shared studio', 'shared server'), copy(open));
+    const search = (query: string) => synthesizeSelectionListRenderPlan({ sections: folded,
+      inputValue: query, filterQuery: query, dynamicSectionStates: new Map() });
+    expect(search('studio').map(row => ({ id: row.id, options: row.options.map(option => option.id) })))
+      .toEqual([{ id: 'workers', options: ['offline:workers', 'studio'] },
+        { id: 'shared', options: ['offline:shared', 'shared studio'] }]);
+    expect(search('no match')).toEqual([]);
+    expect(search('').flatMap(row => row.options.map(option => option.id)))
+      .toEqual(open ? ['offline:workers', 'studio', 'server', 'offline:shared', 'shared studio', 'shared server']
+        : ['offline:workers', 'offline:shared']);
   });
   it('folds several offline workers into one row that lists them in place when open, keeping reachable workers in place', () => {
     const input = [section([option('a', true), option('free'), option('b', true), option('c', true)])];

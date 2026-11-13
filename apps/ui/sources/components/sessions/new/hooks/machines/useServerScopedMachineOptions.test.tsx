@@ -6,9 +6,13 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { storage } from '@/sync/domains/state/storageStore';
 import { renderScreen } from '@/dev/testkit';
-import { adoptHomeProfile } from '@/sync/domains/server/serverProfiles';
+import { adoptHomeProfile, removeServerProfile } from '@/sync/domains/server/serverProfiles';
 import { isMachineOnline } from '@/utils/sessions/machineUtils';
 import { readMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { buildMachineDestinationModel } from '@/components/sessions/new/components/machineSelection/buildMachineDestinationModel';
+import { resolveMachinePickerPresence } from '@/sync/domains/machines/identity/resolveMachinePickerPresence';
+import { publishMachineActivityForTest } from '@/dev/testkit/harness/machinePresence';
+import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -67,6 +71,104 @@ function createMachine(id: string): Machine {
 }
 
 describe('useServerScopedMachineOptions', () => {
+    it('keeps unopened shells out of destinations after a failed first census', async () => {
+        const shell = { ...createMachine('failed-cold-shell'), metadata: null };
+        act(() => storage.setState({ machineListByServerId: { 'failed-home': [shell] },
+            machineListStatusByServerId: { 'failed-home': 'error' } }));
+        let current: ReturnType<typeof useServerScopedMachineOptions> = [];
+        const screen = await renderScreen(<Probe allowedServerIds={['failed-home']} activeServerId="other-home"
+            activeMachines={[]} onGroups={groups => { current = groups; }} />);
+        try {
+            expect(current[0]).toMatchObject({ loading: false, error: true, machines: [] });
+            expect(buildMachineDestinationModel({ groups: current,
+                managedMachineProjection: { state: 'unavailable', rowCount: 0 } }))
+                .toMatchObject({ machineRowCount: 0, destinationSetSettled: false, soleSelectableDestination: null });
+        } finally {
+            await screen.unmount();
+        }
+    });
+    it('keeps cold census shells out of destinations until completion and retains the ready roster during refresh', async () => {
+        const network = await installSessionOpsNetworkBoundary();
+        const home = await network.addHome('https://picker-cold.example.test', 'account-a');
+        const scope = { serverId: home.id, accountId: 'account-a' };
+        const named = [createMachine('known-online'), createMachine('known-offline')];
+        const shells = named.map(machine => ({ ...machine, metadata: null }));
+        const allowedServerIds = [home.id];
+        let current: ReturnType<typeof useServerScopedMachineOptions> = [];
+        act(() => storage.setState({ machineListByServerId: { [home.id]: shells },
+            machineListStatusByServerId: { [home.id]: 'loading' } }));
+        const screen = await renderScreen(<Probe allowedServerIds={allowedServerIds} activeServerId={home.id}
+            activeMachines={shells} onGroups={groups => { current = groups; }} />);
+        const destinations = () => buildMachineDestinationModel({ groups: current,
+            scopesByServerId: new Map([[scope.serverId, scope]]),
+            managedMachineProjection: { state: 'unavailable', rowCount: 0 } });
+        try {
+            expect(resolveMachinePickerPresence(shells[0]!, undefined, scope))
+                .toEqual({ status: 'unknown', selectable: false });
+            expect(current[0]?.loading).toBe(true);
+            expect(current[0]?.machines).toEqual([]);
+            expect(destinations()).toMatchObject({ machineRowCount: 0, destinationSetSettled: false, soleSelectableDestination: null });
+
+            // Name arrivals are not census completion: no temporary Recent roster is exposed.
+            await act(async () => storage.setState({ machineListByServerId: { [home.id]: [named[0]!, shells[1]!] } }));
+            expect(current[0]?.loading).toBe(true);
+            expect(destinations().machineRowCount).toBe(0);
+
+            publishMachineActivityForTest([named[0]!]);
+            publishMachineActivityForTest([named[1]!], { active: false, activeAt: 0 });
+            await act(async () => {
+                storage.setState({ machineListByServerId: { [home.id]: named } });
+                storage.getState().markMachineListSettled(home.id);
+            });
+            expect(current[0]?.loading).toBe(false);
+            expect(destinations()).toMatchObject({ machineRowCount: 2, destinationSetSettled: true, soleSelectableDestination: null });
+            expect(current[0]?.machines.map(machine => machine.id)).toEqual(named.map(machine => machine.id));
+            const ready = current;
+
+            // Refreshes may preserve idle while publishing a new encrypted content shell.
+            await act(async () => storage.setState({ machineListByServerId: { [home.id]: shells } }));
+            expect(current).toBe(ready);
+            await act(async () => storage.setState({ machineListByServerId: { [home.id]: shells },
+                machineListStatusByServerId: { [home.id]: 'loading' } }));
+            expect(current).toBe(ready);
+            expect(current[0]?.machines.map(machine => machine.metadata?.displayName)).toEqual(named.map(machine => machine.id));
+
+            const renamed = { ...named[0]!, metadata: { ...named[0]!.metadata!, displayName: 'Renamed machine' } };
+            await act(async () => {
+                storage.setState({ machineListByServerId: { [home.id]: [renamed, named[1]!] } });
+                storage.getState().markMachineListSettled(home.id);
+            });
+            expect(current[0]?.machines.map(machine => machine.id)).toEqual(named.map(machine => machine.id));
+            expect(current[0]?.machines[0]?.metadata?.displayName).toBe('Renamed machine');
+
+            // A credential transition retires retained names before the next Account's census settles.
+            await act(async () => {
+                await network.setAccount(home.serverUrl, 'account-b');
+                storage.setState({ machineListByServerId: { [home.id]: [] },
+                    machineListStatusByServerId: { [home.id]: 'loading' } });
+                await screen.update(<Probe allowedServerIds={allowedServerIds} activeServerId={home.id}
+                    activeMachines={[]} onGroups={groups => { current = groups; }} />);
+            });
+            expect(current[0]?.loading).toBe(true);
+            expect(current[0]?.machines).toEqual([]);
+            expect(destinations().machineRowCount).toBe(0);
+        } finally {
+            await screen.unmount();
+            await network.dispose();
+        }
+    });
+    it('names the picker active Home independently of the global selection', async () => {
+        const profile = await adoptHomeProfile({ descriptor: { serverUrl: 'https://picker-unnamed.example.test' }, source: 'manual' });
+        let groups: ReturnType<typeof useServerScopedMachineOptions> = [];
+        const screen = await renderScreen(<Probe allowedServerIds={[profile.id]} activeServerId={profile.id}
+            activeMachines={[]} onGroups={value => { groups = value; }} />);
+        try {
+            expect(groups[0]?.serverName).toBe('This Home');
+        } finally {
+            await screen.unmount();
+            await removeServerProfile(profile.id);
+        }
+    });
     it('keeps a retained scoped picker row on its admitted Machine clock after continuing heartbeats', async () => {
         vi.stubEnv('EXPO_PUBLIC_HAPPIER_MACHINE_ONLINE_GRACE_MS', '60000');
         const initialState = storage.getState();
@@ -163,6 +265,7 @@ describe('useServerScopedMachineOptions', () => {
     });
 
     it('publishes changed launch metadata without a consumer-owned field signature', async () => {
+        act(() => storage.setState({ machineListStatusByServerId: { 'server-a': 'idle' } }));
         const captured: Array<ReturnType<typeof useServerScopedMachineOptions>> = [];
         const row = createMachine('inventory-change');
         const screen = await renderScreen(<Probe allowedServerIds={['server-a']} activeServerId="server-a"
@@ -267,6 +370,7 @@ describe('useServerScopedMachineOptions', () => {
     });
 
     it('refreshes groups when active machine freshness changes', async () => {
+        act(() => storage.setState({ machineListStatusByServerId: { 'server-a': 'idle' } }));
         const captured: Array<ReturnType<typeof useServerScopedMachineOptions>> = [];
         const activeMachine = createMachine('machine-a');
 
@@ -342,6 +446,7 @@ describe('useServerScopedMachineOptions', () => {
     });
 
     it('keeps active server machines and uses server-scoped machine cache for non-active servers', async () => {
+        act(() => storage.setState({ machineListStatusByServerId: { 'server-a': 'idle' } }));
         const captured: Array<ReturnType<typeof useServerScopedMachineOptions>> = [];
         const activeMachine = createMachine('machine-a');
         const remoteCachedMachine = createMachine('machine-cache');
@@ -437,6 +542,7 @@ describe('useServerScopedMachineOptions', () => {
     });
 
     it('filters revoked machines out of all groups', async () => {
+        act(() => storage.setState({ machineListStatusByServerId: { 'server-a': 'idle' } }));
         const captured: Array<ReturnType<typeof useServerScopedMachineOptions>> = [];
 
         const activeRevoked = { ...createMachine('machine-a'), revokedAt: 123 } as Machine;
@@ -471,6 +577,7 @@ describe('useServerScopedMachineOptions', () => {
     });
 
     it('filters replaced machines out of all groups', async () => {
+        act(() => storage.setState({ machineListStatusByServerId: { 'server-a': 'idle' } }));
         const captured: Array<ReturnType<typeof useServerScopedMachineOptions>> = [];
 
         const activeReplaced = {

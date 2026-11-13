@@ -743,7 +743,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
         // No machine yet (58d AF1): the picker asks where to run in two groups, creating one in the cloud and
         // using one you have; once a machine exists, New machine closes with "Connect a machine…" (lab m-pick).
         const noMachineYet = purpose === 'session' && !hasPools
-            && params.groups.every((group) => !group.loading && !group.signedOut && group.machines.length === 0);
+            && params.groups.every((group) => !group.loading && !group.signedOut && !group.error && group.machines.length === 0);
         const managedMachineSection: SelectionListSectionDescriptor | null = managedMachines.length > 0 || (connectMachineOption && !noMachineYet)
             ? {
                 kind: 'static',
@@ -968,7 +968,8 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
             };
         }
 
-        if (params.groups.length === 1 && !params.groups[0]!.loading && !params.groups[0]!.signedOut) {
+        if (params.groups.length === 1 && !params.groups[0]!.loading && !params.groups[0]!.signedOut
+            && !(params.groups[0]!.error && params.groups[0]!.machines.length === 0)) {
             const group = params.groups[0]!;
             const machineNames = resolveMachineDisplayNames(group.machines);
             const bucketModel = buildMachineSelectionBuckets<TMachine>({
@@ -1081,6 +1082,12 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                 options = [{
                     id: `server:${group.serverId}:signed-out`,
                     label: t('server.signedOut'),
+                    disabled: true,
+                }];
+            } else if (group.error && group.machines.length === 0) {
+                options = [{
+                    id: `server:${group.serverId}:error`,
+                    label: t('common.unavailable'),
                     disabled: true,
                 }];
             } else if (group.machines.length === 0) {
@@ -1281,7 +1288,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
         const offlineIds = new Set(Object.entries(offlineOnlyMachineIdsByServerId).flatMap(([serverId, ids]) =>
             ids.flatMap(id => [id, `${serverId}::${id}`])));
         return { ...model.rootStep, sections: foldOfflineWorkers(model.rootStep.sections,
-            option => offlineIds.has(option.id), sectionId => {
+            option => offlineIds.has(option.id), (sectionId, forceOpen) => {
                 const state = offlineStateForSection(sectionId);
                 return {
                     ...state,
@@ -1289,7 +1296,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                         ? 'projectWorkers.offlineWorkers' : 'projectWorkers.offlineMachines', { count }),
                     detail: t('projectWorkers.offlineWorkersDetail'),
                     icon: <Icon name="wifi-slash" size={18} color={theme.colors.text.secondary} />,
-                    accessory: <Icon name={state.open ? 'caret-up' : 'caret-down'} size={14} color={theme.colors.text.tertiary} />,
+                    accessory: <Icon name={state.open || forceOpen ? 'caret-up' : 'caret-down'} size={14} color={theme.colors.text.tertiary} />,
                 };
             }) };
     }, [model.rootStep, offlineOnlyMachineIdsByServerId, offlineStateForSection, purpose, theme, language]);

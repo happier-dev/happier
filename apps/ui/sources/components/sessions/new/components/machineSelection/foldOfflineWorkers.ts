@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { SelectionListOption, SelectionListSectionDescriptor } from '@/components/ui/selectionList';
+import { rankOptionsByQuery } from '@/components/ui/selectionList/SelectionListRenderPlan';
 
 type OfflineFoldCopy = Readonly<{
   label: (count: number) => string;
@@ -14,7 +15,7 @@ type OfflineFoldCopy = Readonly<{
 export function foldOfflineWorkers(
   sections: ReadonlyArray<SelectionListSectionDescriptor>,
   isOffline: (option: SelectionListOption) => boolean,
-  copyForSection: (sectionId: string) => OfflineFoldCopy,
+  copyForSection: (sectionId: string, forceOpen?: boolean) => OfflineFoldCopy,
 ): SelectionListSectionDescriptor[] {
   return sections.map((section) => {
     if (section.kind !== 'static') return section;
@@ -26,13 +27,24 @@ export function foldOfflineWorkers(
       id: `offline:${section.id}`,
       label: copy.label(folded.length),
       subtitle: copy.detail,
-      searchText: folded.flatMap(option => [option.label, option.subtitle, option.searchText].filter(Boolean)).join('\n'),
       icon: copy.icon,
       rightAccessory: copy.accessory,
       onSelect: copy.onToggle,
     };
     return {
       ...section,
+      filterOptions: (query: string) => {
+        const matches = section.filterOptions?.(query)
+          ?? rankOptionsByQuery(section.options, query, section.disableSubtitleRanking);
+        const offlineMatches = matches.filter(option => foldedIds.has(option.id));
+        return [
+          ...matches.filter(option => !foldedIds.has(option.id)),
+          ...(offlineMatches.length > 0 ? [
+            { ...fold, rightAccessory: copyForSection(section.id, true).accessory },
+            ...offlineMatches,
+          ] : []),
+        ];
+      },
       options: [
         ...section.options.filter((option) => !foldedIds.has(option.id)),
         fold,
