@@ -47,6 +47,33 @@ describe('exact model-mix amounts', () => {
 });
 
 describe('buildUsageAnalyticsViewModel', () => {
+    it('uses measured parts throughout the summary without comparing them against prior reported totals', () => {
+        const nowMs = Date.now();
+        const parts = { input: 1710, output: 3, reasoning: null, cacheRead: null, cacheWrite: null, total: null };
+        const cost = { reportedUsd: null, estimatedUsd: null, currency: 'USD' };
+        const response = UsageAnalyticsQueryResponseSchema.parse({ v: 1,
+            totals: { eventCount: 2, tokens: parts, cost },
+            series: [
+                { bucketStartMs: nowMs - 172_800_000, bucketEndMs: nowMs - 86_400_000, eventCount: 1, tokens: { ...parts, total: 2000 }, cost },
+                { bucketStartMs: nowMs - 86_400_000, bucketEndMs: nowMs, eventCount: 1, tokens: parts, cost },
+            ],
+            leaders: { engines: [{ key: 'opencode', eventCount: 2 }] },
+            breakdowns: { backendMode: [{ key: 'opencode', eventCount: 2, tokens: parts, cost }] },
+        });
+        const summary = buildUsageAnalyticsSummaryViewModel(response);
+        expect.soft(summary.totalTokens).toBe(1713);
+        expect.soft(summary.weekTokens).toBe(3713);
+        expect.soft(summary.recentActivity.map(point => point.tokens)).toEqual([2000, 1713]);
+        expect.soft(summary.topEngine?.totalTokens).toBe(1713);
+        const view = buildUsageAnalyticsViewModel(response, baseState);
+        expect(view.heroTrend.sparkline).toEqual([2000, 1713]);
+        expect(view.heroTrend.delta).toEqual({ deltaPct: null, direction: 'flat' });
+        const reported = buildUsageAnalyticsViewModel({ ...response,
+            series: response.series!.map(bucket => ({ ...bucket, tokens: { ...bucket.tokens, total: 2000 } })),
+        }, baseState);
+        expect(reported.heroTrend.delta.deltaPct).toBe(0);
+    });
+
     it('preserves unknown measurements and does not invent cache ratios or category totals', () => {
         const response: UsageAnalyticsQueryResponse = { v: 1,
             totals: { eventCount: 1,

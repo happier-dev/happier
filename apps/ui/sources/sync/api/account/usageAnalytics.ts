@@ -51,6 +51,8 @@ export interface UsageFilterState {
 export interface UsageTrendPoint {
     timestamp: number;
     tokens: number | null;
+    /** A measured floor cannot be compared with a reported total. Legacy points report totals. */
+    tokensFromParts?: boolean;
     cost: number | null;
     reportCount: number;
 }
@@ -896,12 +898,16 @@ function buildTrendFromResponse(
 ): UsageTrendPoint[] {
     return [...(series ?? [])]
         .sort((left, right) => left.bucketStartMs - right.bucketStartMs)
-        .map((bucket) => ({
-            timestamp: Math.floor(bucket.bucketStartMs / 1000),
-            tokens: resolveUsageMeasuredTokens(bucket.tokens).total,
-            cost: resolveAnalyticsCost(bucket.cost, costMode),
-            reportCount: bucket.eventCount,
-        }));
+        .map((bucket) => {
+            const tokens = resolveUsageMeasuredTokens(bucket.tokens);
+            return {
+                timestamp: Math.floor(bucket.bucketStartMs / 1000),
+                tokens: tokens.total,
+                tokensFromParts: tokens.fromParts,
+                cost: resolveAnalyticsCost(bucket.cost, costMode),
+                reportCount: bucket.eventCount,
+            };
+        });
 }
 
 function isUsageAnalyticsQueryResponse(source: UsageAnalyticsSource): source is UsageAnalyticsQueryResponse {
@@ -934,7 +940,7 @@ function buildSummaryFromResponse(response: UsageAnalyticsQueryResponse, timeZon
     const recentActivity = series.slice(-14).map((bucket) => ({
         timestamp: Math.floor(bucket.bucketStartMs / 1000),
         active: bucket.eventCount > 0,
-        tokens: bucket.tokens.total,
+        tokens: resolveUsageMeasuredTokens(bucket.tokens).total,
         cost: resolveAnalyticsCost(bucket.cost, costPresentation),
     }));
     const weekBuckets = series.filter((bucket) => isSeriesBucketWithinWindow(bucket, recentWindowStartMs, nowMs));
@@ -944,10 +950,10 @@ function buildSummaryFromResponse(response: UsageAnalyticsQueryResponse, timeZon
     return {
         activeDays,
         currentStreakDays,
-        totalTokens: response.totals.tokens.total,
+        totalTokens: resolveUsageMeasuredTokens(response.totals.tokens).total,
         totalCost: resolveAnalyticsCost(response.totals.cost, costPresentation),
         currency: response.totals.cost.currency,
-        weekTokens: weekBuckets.reduce<number | null>((sum, bucket) => addUsageMeasurements(sum, bucket.tokens.total), weekBuckets.length === 0 ? 0 : null),
+        weekTokens: weekBuckets.reduce<number | null>((sum, bucket) => addUsageMeasurements(sum, resolveUsageMeasuredTokens(bucket.tokens).total), weekBuckets.length === 0 ? 0 : null),
         weekCost: weekBuckets.reduce<number | null>((sum, bucket) => addUsageMeasurements(sum, resolveAnalyticsCost(bucket.cost, costPresentation)), weekBuckets.length === 0 ? 0 : null),
         topModel: response.breakdowns?.model?.[0] ? mapBreakdownEntry(response.breakdowns.model[0], 'model', costMode) : null,
         topEngine: topEngineLeader
@@ -955,7 +961,7 @@ function buildSummaryFromResponse(response: UsageAnalyticsQueryResponse, timeZon
                 dimension: 'backendMode',
                 key: topEngineLeader.key,
                 label: formatUsageDimensionLabel('backendMode', topEngineLeader.key, topEngineLeader.label ?? topEngineLeader.key),
-                totalTokens: matchingEngineBreakdown?.tokens.total ?? null,
+                totalTokens: matchingEngineBreakdown ? resolveUsageMeasuredTokens(matchingEngineBreakdown.tokens).total : null,
                 totalCost: matchingEngineBreakdown ? resolveAnalyticsCost(matchingEngineBreakdown.cost, costMode) : null,
                 reportCount: topEngineLeader.eventCount,
                 firstSeenAt: 0,
@@ -1121,7 +1127,7 @@ export function buildUsageCacheSavings(
  */
 export function buildUsageTrendDelta(trend: readonly UsageTrendPoint[]): UsageTrendDelta {
     const half = Math.floor(trend.length / 2);
-    if (half < 1 || trend.some(point => point.tokens === null)) {
+    if (half < 1 || trend.some(point => point.tokens === null || point.tokensFromParts)) {
         return { deltaPct: null, direction: 'flat' };
     }
     const sum = (points: readonly UsageTrendPoint[]): number =>
