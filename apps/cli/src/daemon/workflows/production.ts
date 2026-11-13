@@ -2223,6 +2223,8 @@ export function createProductionWorkflowRunCoordinator(params: Readonly<{
     });
     claim.registerReviewHoldRefresh?.(coordinator.refreshReviewHolds);
     const runCoordinator = async () => {
+      logger.infoFile('[WORKFLOW] Run phase', { event: 'workflow_run_phase', runId: claim.runId,
+        phase: 'coordinator_dispatch', timestamp: new Date().toISOString() });
       const releaseActivity = claim.registerLiveWorkProducer?.(coordinator.liveWorkProducer);
       try {
         return await coordinator.run({ runId: claim.runId, definition: accepted.definition, inputs,

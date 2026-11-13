@@ -315,22 +315,33 @@ export function startAutomationWorker(params: {
     return next;
   }
 
-  function hasExecutionCapacity(): boolean {
+  function countActiveStartRuns(): number {
     let ordinaryActiveRuns = 0;
     for (const active of activeExecutions.values()) {
       if (active.consumesStartCapacity) ordinaryActiveRuns += 1;
     }
-    return ordinaryActiveRuns < maxActiveRunsPerMachine;
+    return ordinaryActiveRuns;
+  }
+
+  function hasExecutionCapacity(): boolean {
+    return countActiveStartRuns() < maxActiveRunsPerMachine;
   }
 
   async function acquireMachineStartCapacity(runId: string, controller: AbortController, signal?: AbortSignal): Promise<void> {
+    const logPhase = (status: 'started' | 'completed') => logger.infoFile('[WORKFLOW] Run phase', {
+      event: 'workflow_run_phase', runId, phase: 'machine_start_capacity', status,
+      activeRuns: countActiveStartRuns(), maxActiveRunsPerMachine, paused,
+      draining: params.admissionDrain?.isQuiescing() ?? false, timestamp: new Date().toISOString(),
+    });
+    logPhase('started');
     while (true) {
       signal?.throwIfAborted();
       const active = activeExecutions.get(runId);
       if (!active || active.controller !== controller) throw new Error('automation_claim_not_current');
-      if (active.consumesStartCapacity) return;
+      if (active.consumesStartCapacity) { logPhase('completed'); return; }
       if (!paused && !params.admissionDrain?.isQuiescing() && hasExecutionCapacity()) {
         active.consumesStartCapacity = true;
+        logPhase('completed');
         return;
       }
       await new Promise<void>((resolve, reject) => {

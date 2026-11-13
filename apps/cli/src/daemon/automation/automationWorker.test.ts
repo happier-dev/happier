@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, onTestFailed, vi } from 'vitest';
 import os from 'node:os';
 import { realpathSync } from 'node:fs';
 import { join } from 'node:path';
@@ -17,6 +17,7 @@ import type { StoredCredentials } from '@/persistence';
 import { AutomationV3WorkerClaimResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { AUTOMATION_TEMPLATE_V02_PLAIN, AUTOMATION_TEMPLATE_V02_EXISTING_ENCRYPTED } from '../../../../../packages/protocol/src/automations/automationTemplateV02.testFixtures';
 import { createProductionWorkflowRunCoordinator } from '@/daemon/workflows/production';
+import { createAdmittedWorkflowSessionHost } from '@/daemon/workflows/workflowSessionStartup.testkit';
 import { createWorkflowRunStorageTestkit, createPlainWorkflowRunKeyCensusFixture } from '@/daemon/workflows/workflowRunStorage.testkit';
 import type { Update } from '@/api/types';
 import { reloadConfiguration as reloadCapacityConfiguration } from '@/configuration';
@@ -219,6 +220,22 @@ describe('automationWorker', () => {
         const decoded = await socketRpcCodec.decodeRequestParams({ mode: 'plain' }, Reflect.get(payload, 'params'), method);
         const request = decoded.params;
         if (!request || typeof request !== 'object') throw new Error('Missing Machine RPC request');
+        // Native Agent readiness is observed through the Machine's network
+        // boundary; keep the real startup/admission owners beneath it.
+        if (method.endsWith(`:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`)) {
+          const result = { protocolVersion: 1, projection: { v: 2, generation: 1, familiesById: {}, agentsById: {
+            codex: { id: 'codex', title: 'Codex', capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true } } },
+          } } };
+          return { ok: true, result: await socketRpcCodec.encodeResponse({ mode: 'plain' }, result, decoded.callId) };
+        }
+        if (method.endsWith(`:${RPC_METHODS.CAPABILITIES_DETECT}`)) {
+          const result = { protocolVersion: 1, results: { 'cli.codex': { ok: true, checkedAt: 1, data: {
+            installed: true, version: null, latestVersion: null, update: { supported: false, command: null },
+            signIn: { status: 'signedIn', loginSupport: 'unsupported' }, platform: { supported: true },
+            install: { available: false, mode: 'none', sizeBytes: null, guideUrl: null }, dependencies: [],
+          } } } };
+          return { ok: true, result: await socketRpcCodec.encodeResponse({ mode: 'plain' }, result, decoded.callId) };
+        }
         if (mockExecutionRunRpc.getMockImplementation() && (method.endsWith(`:${RPC_METHODS.CAPABILITIES_DESCRIBE}`)
           || method.endsWith(`:${SESSION_RPC_METHODS.EXECUTION_RUN_WAIT}`))) {
           const result = await mockExecutionRunRpc(method, request);
@@ -938,7 +955,7 @@ describe('automationWorker', () => {
     reloadCapacityConfiguration();
     const credentials = migrationBoundary.credentials;
     if (!credentials) throw new Error('Expected worker credentials');
-    const worker = startAutomationWorker({ credentials, machineId: 'machine-1', env: { NODE_ENV: 'test' } });
+    const worker = startAutomationWorker({ token: credentials.token, credentials, machineId: 'machine-1', env: { NODE_ENV: 'test' } });
     try {
       await worker.refreshAssignments();
       await worker.catchUp();
@@ -1848,6 +1865,7 @@ describe('automationWorker', () => {
     { ending: 'settle', budget: 1 }, { ending: 'cancel_waiter', budget: 1 },
     { ending: 'settle', budget: DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE },
   ] as const)('admits Account and Session destination writes at full start capacity ($ending, budget $budget)', async ({ ending, budget }) => {
+    const phaseLog = vi.spyOn(logger, 'infoFile').mockImplementation(() => {});
     const now = Date.now();
     const directory = realpathSync(process.cwd());
     process.env.HAPPIER_SERVER_URL = 'https://api.example.test';
@@ -1911,7 +1929,7 @@ describe('automationWorker', () => {
       if (url.endsWith(`/v1/machines/${machineId}`)) return { status: 200,
         data: { machine: { ...createAvailableSessionSpawnMachineSnapshot(machineId), storageMode: 'plain' } } };
       if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: now } };
-      if (holdSettledAssignmentRefresh) {
+      if (holdSettledAssignmentRefresh && url.endsWith('/v3/automations/worker/assignments')) {
         settledAssignmentRefreshHeld = true;
         await new Promise<void>(resolve => releaseSettledAssignmentRefreshes.push(resolve));
       }
@@ -1969,6 +1987,9 @@ describe('automationWorker', () => {
       workspaceScm: { realizeWorktree: async () => { throw new Error('unexpected_worktree'); },
         inspectLocation: async () => null, verifyRecordedWorkspace: async () => 'available' },
       execution: { credentials: { token: 'token', encryption: null }, serverId: 'server-1',
+        ...createAdmittedWorkflowSessionHost({ credentials: { token: 'token', encryption: null }, serverId: 'server-1',
+          machineId, workDepth: 0, originRunId: ids[index]!,
+          machineAdmissionTransport: async () => { throw new Error('unexpected_message_admission'); } }),
         machineAdmissionTransport: async () => { throw new Error('unexpected_message_admission'); },
         resolveExistingSessionConversation: async () => ({ sessionId: 'destination', machineId, directory }),
         sessionInput: { enqueue: async request => ({ status: 'accepted', localId: deriveWorkflowSessionInputLocalIdV2(request.workflow) }),
@@ -1980,9 +2001,25 @@ describe('automationWorker', () => {
     }));
     const worker = startCapacityAutomationWorker({ token: 'token', credentials: { token: 'token', encryption: null }, machineId,
       coordinateWorkflowRun: async claim => {
-        try { const result = await coordinators[ids.indexOf(claim.runId)]!(claim); coordinationResults.push(result); return result; }
+        try {
+          const index = ids.indexOf(claim.runId);
+          const result = await coordinators[index]!(claim);
+          coordinationResults.push(result);
+          if (index < budget && starts.length < budget) {
+            rejectFreshStartup(new Error(JSON.stringify({ state: result.state, reason: result.reason })));
+          }
+          return result;
+        }
         catch (error) { coordinationErrors.push({ runId: claim.runId, error }); rejectFreshStartup(error); throw error; }
       },
+    });
+    let replacementObservation: ReturnType<typeof stores[number]['observeChanges']> | undefined;
+    onTestFailed(() => {
+      console.error(JSON.stringify({ diagnostic: 'capacity_release',
+        phases: phaseLog.mock.calls.flatMap(([, event]) => event && typeof event === 'object'
+          && 'runId' in event && event.runId === ids[waiterIndex] ? [event] : []),
+        httpObservations, operations: stores[waiterIndex]!.operations(),
+      }));
     });
     try {
       await worker.refreshAssignments();
@@ -2008,11 +2045,25 @@ describe('automationWorker', () => {
       expect(stores[destinationIndex]!.run().state).toBe('succeeded');
       expect(stores[destinationIndex + 1]!.run().state).toBe('succeeded');
       expect(stores[waiterIndex]!.rows()).toHaveLength(1); // Accepted root, no Agent leaf admitted while full.
+      const capacityPhases = () => phaseLog.mock.calls.flatMap(([, event]) =>
+        event && typeof event === 'object' && 'runId' in event && event.runId === ids[waiterIndex]
+          && 'phase' in event && event.phase === 'machine_start_capacity' ? [event] : []);
+      expect(capacityPhases()).toEqual([expect.objectContaining({ status: 'started',
+        activeRuns: budget, maxActiveRunsPerMachine: budget, paused: false, draining: false })]);
       if (ending === 'settle') {
+        const replacementAdmitted = new Promise<void>((resolve, reject) => {
+          replacementObservation = stores[waiterIndex]!.observeChanges(ids[waiterIndex]!, () => {
+            if (stores[waiterIndex]!.rows().length > 1) resolve();
+          }, reject);
+        });
         holdSettledAssignmentRefresh = budget === 1;
         starts[0]!();
         if (holdSettledAssignmentRefresh) await waitForCondition(() => settledAssignmentRefreshHeld);
-        await waitForCondition(() => stores[waiterIndex]!.rows().length > 1);
+        await replacementAdmitted;
+        expect(capacityPhases()).toEqual([
+          expect.objectContaining({ status: 'started', activeRuns: budget }),
+          expect.objectContaining({ status: 'completed', activeRuns: budget }),
+        ]);
         holdSettledAssignmentRefresh = false;
         for (const release of releaseSettledAssignmentRefreshes) release();
         if (budget === DEFAULT_AUTOMATION_V3_MAX_ACTIVE_RUNS_PER_MACHINE) {
@@ -2033,6 +2084,7 @@ describe('automationWorker', () => {
       }
     } finally {
       worker.stop();
+      await replacementObservation?.dispose();
       holdSettledAssignmentRefresh = false;
       for (const release of releaseSettledAssignmentRefreshes) release();
       for (const release of starts) release();
