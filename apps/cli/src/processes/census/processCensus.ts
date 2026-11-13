@@ -10,6 +10,7 @@ import { ancestorsOf, descendantsOf, indexCensus } from '../tree/processTree';
 export type ProcessCensusFreshness = 'shared' | 'fresh';
 export type ProcessCensusField = 'argv' | 'cwd' | 'executablePath' | 'ownershipEnvironment' | 'cgroup' | 'memory' | 'cpuTimeUs';
 export type ProcessStartIdentity = Readonly<{ startTimeMs: number; native?: string }>;
+export { ProcessStartIdentitySchema } from './decodeHelperCensus';
 export type ProcessPrincipal = Readonly<{ kind: 'uid' | 'sid'; value: string }>;
 export { DAEMON_OWNERSHIP_ENVIRONMENT_VARIABLE_KEYS };
 export type DaemonOwnershipEnvironment = Partial<Record<typeof DAEMON_OWNERSHIP_ENVIRONMENT_VARIABLE_KEYS[number], string>>;

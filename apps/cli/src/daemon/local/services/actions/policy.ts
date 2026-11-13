@@ -84,7 +84,7 @@ export function resolveLocalServiceActionEligibility(
         }
         const snapshot = input.target.handle.snapshot();
         if (input.action === 'stop_managed') return snapshot.state === 'stopped'
-            ? deniedDecision(input.action, 'managed_service_stopped')
+            ? enabledDecision(input.action)
             : enabledDecision(input.action, { requiresConfirmation: true, auditRequired: true });
         // Exact retained resource cleanup is independent of serving/new-effect authority.
         if (!input.target.handle.isCurrent()) return deniedDecision(input.action, 'managed_service_not_current');

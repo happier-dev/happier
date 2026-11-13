@@ -8813,16 +8813,16 @@ export async function startDaemonSessionControlRuntime(
   const projectManagedServices: Pick<
     ReturnType<typeof createManagedServicesOwner>,
     'listProjectServices' | 'resolveProjectService' | 'readProcessRoots'
-  > & Partial<Pick<ReturnType<typeof createManagedServicesOwner>, 'activity' | 'readLastKnownProjectServices'>> = {
+  > & Partial<Pick<ReturnType<typeof createManagedServicesOwner>, 'activity' | 'restoreProjectServices'>> = {
     ...(params.projectManagedServiceActivity ? { activity: params.projectManagedServiceActivity } : {}),
     readProcessRoots: () =>
       pluginRuntimeController.getState().activeRegistry
         ?.projectManagedServices.readProcessRoots() ?? [],
     listProjectServices,
-    readLastKnownProjectServices: async () => {
+    restoreProjectServices: async () => {
       const owner = pluginRuntimeController.getState().activeRegistry?.projectManagedServices;
       if (!owner) throw Object.assign(new Error('Project service native owner is unavailable'), { code: 'project_service_bindings_unavailable' });
-      return await owner.readLastKnownProjectServices();
+      return await owner.restoreProjectServices();
     },
     resolveProjectService: (target) =>
       pluginRuntimeController
@@ -11690,6 +11690,7 @@ export async function startDaemonSessionControlRuntime(
           const credentials = requesterRuntime?.bootstrap.credentials ?? params.credentials;
           const serverHttpBaseUrl = requesterRuntime?.bootstrap.serverHttpBaseUrl ?? params.serverBaseUrl;
           const execute = createDaemonSessionAccountActionExecutor({
+            getMachineClient: () => params.getApiMachineForSessions(),
             serverId: params.serverId,
             serverHttpBaseUrl,
             token: credentials.token,
@@ -12535,10 +12536,13 @@ export async function startDaemonSessionControlRuntime(
                 if (error instanceof SessionRpcTransportUnavailableError) return false;
                 throw error;
               }
-              return isCurrentTrackedSession(params.trackedSessionsByKey, trackedSession)
+              const authorized = isCurrentTrackedSession(params.trackedSessionsByKey, trackedSession)
                 && current.status === 'current' && current.parentSessionId === sessionId
                 && current.executionRunId === child.runId && current.occurrenceId === child.occurrenceId
                 && current.runtimeState === 'active_turn' && current.activeTurnId === operation.witness.turnId;
+              if (!authorized) return false;
+              return current.status === 'current' && current.actionInvocation
+                ? { actionInvocation: current.actionInvocation } : true;
             });
           }, undefined, signal);
         },

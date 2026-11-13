@@ -1,8 +1,10 @@
 import { compareNumericProcessGenerationIdentities, processGenerationMatches, processGenerationProvesReuse } from '@happier-dev/cli-common/processInstance';
+import { z } from 'zod/mini';
 
 import { parseProcessCustodyStartIdentity } from '@/subprocess/supervision/processCustody';
-import { createProcessCensusReader, readProcessCensus, type ProcessCensusDependencies } from '@/processes/census/processCensus';
+import { createProcessCensusReader, ProcessStartIdentitySchema, readProcessCensus, type ProcessCensusDependencies, type ProcessCensusSnapshot, type ProcessStartIdentity } from '@/processes/census/processCensus';
 import { censusRowToProcessFact } from '@/processes/census/processFacts';
+import { equalProcessStart } from './processes/ownership/types';
 import type { LocalServiceProcessFact } from './local/services/inventory/provenance';
 import { readProcessRunState, type ProcessRunState } from './processRunState';
 import type { DaemonSessionMarker } from './sessionRegistry';
@@ -42,6 +44,60 @@ type SupportedProcessIdentityPlatform = 'darwin' | 'linux' | 'win32';
 
 export type ReadProcessIdentityByPidDependencies = Pick<ProcessCensusDependencies,
     'platform' | 'linuxBoundary' | 'execFile' | 'helperExecutablePath'>;
+
+export const ProcessBirthWitnessSchema = z.strictObject({
+    pid: z.number().check(z.int(), z.positive()),
+    start: ProcessStartIdentitySchema,
+});
+export type ProcessBirthWitness = Readonly<{ pid: number; start: ProcessStartIdentity }>;
+export type ProcessBirthInspection =
+    | Readonly<{ status: 'same'; witness: ProcessBirthWitness }>
+    | Readonly<{ status: 'reused' | 'absent' }>
+    | Readonly<{ status: 'unknown'; reason: Extract<ProcessCensusSnapshot, { status: 'unavailable' }>['reason']
+        | 'birth_unreadable' | 'native_birth_missing' }>;
+
+/** Native birth evidence is shared unchanged with the process-tree terminator. */
+async function observeProcessBirth(
+    pid: number,
+    dependencies: ReadProcessIdentityByPidDependencies,
+): Promise<ProcessBirthInspection> {
+    const platform = dependencies.platform ?? process.platform;
+    try {
+        const read = Object.keys(dependencies).length ? createProcessCensusReader(dependencies) : readProcessCensus;
+        const snapshot = await read({ freshness: 'fresh', pids: [pid], scope: 'all', fields: [] });
+        if (snapshot.status !== 'ok') return { status: 'unknown', reason: snapshot.reason };
+        const row = snapshot.rows.find(candidate => candidate.pid === pid);
+        if (!row) return snapshot.partial?.some(partial => partial.pid === pid && partial.missing.includes('start'))
+            ? { status: 'unknown', reason: 'birth_unreadable' } : { status: 'absent' };
+        if (row.state === 'zombie') return { status: 'absent' };
+        if (platform === 'darwin' && !row.start.native) return { status: 'unknown', reason: 'native_birth_missing' };
+        return { status: 'same', witness: { pid, start: row.start } };
+    } catch { return { status: 'unknown', reason: 'read_failed' }; }
+}
+
+/** Capture once at launch; a Windows Job name remains separate containment evidence. */
+export async function captureProcessBirthWitness(
+    pid: number,
+    dependencies: ReadProcessIdentityByPidDependencies = {},
+): Promise<ProcessBirthWitness | null> {
+    const observation = await observeProcessBirth(pid, dependencies);
+    return observation.status === 'same' ? observation.witness : null;
+}
+
+/** One fresh native observation decides whether a retained PID still names its captured generation. */
+export async function inspectProcessBirthWitness(
+    witness: ProcessBirthWitness,
+    dependencies: ReadProcessIdentityByPidDependencies = {},
+): Promise<ProcessBirthInspection> {
+    const observation = await observeProcessBirth(witness.pid, dependencies);
+    if (observation.status !== 'same') return observation;
+    if (!equalProcessStart(witness.start, observation.witness.start)) return { status: 'reused' };
+    if ((witness.start.native && !observation.witness.start.native)
+        || ((dependencies.platform ?? process.platform) === 'darwin' && !witness.start.native)) {
+        return { status: 'unknown', reason: 'native_birth_missing' };
+    }
+    return observation;
+}
 
 function isSupportedPlatform(platform: NodeJS.Platform): platform is SupportedProcessIdentityPlatform {
     return platform === 'darwin' || platform === 'linux' || platform === 'win32';

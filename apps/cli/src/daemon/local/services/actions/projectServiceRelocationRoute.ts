@@ -33,7 +33,8 @@ function refusal(reasonCode: string, error?: string) {
 export function createProjectServiceRelocationRoute(input: Readonly<{
     serverBaseUrl: string;
     credentials: StoredCredentials;
-    projectManagedServices: Pick<ReturnType<typeof createManagedServicesOwner>, 'resolveProjectService'>;
+    projectManagedServices: Pick<ReturnType<typeof createManagedServicesOwner>, 'resolveProjectService'>
+        & Partial<Pick<ReturnType<typeof createManagedServicesOwner>, 'restoreProjectServices'>>;
     resolveWorkspaceSyncHandoffAdapter(): WorkspaceSyncHandoffAdapter | null;
 }>) {
     return async (
@@ -47,6 +48,7 @@ export function createProjectServiceRelocationRoute(input: Readonly<{
             return { ok: true as const, result: refusal('project_requester_authority_unavailable') };
         }
         const credentials = requester?.credentials ?? input.credentials;
+        await input.projectManagedServices.restoreProjectServices?.();
         const execute: CanonicalChildAction | undefined = context.hostReviewedChild
             ? (action, childInput) => {
                 const normalized = projectNativeJsonValueForTransport(getActionSpec(action).inputSchema.parse(childInput));

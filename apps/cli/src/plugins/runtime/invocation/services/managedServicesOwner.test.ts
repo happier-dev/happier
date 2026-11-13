@@ -4848,7 +4848,7 @@ describe('managed-services SVC09 owner', () => {
         }) satisfies ManagedServiceProcessHandle;
         const supervise = vi.fn(async () => legacyHandle);
         const processSupervisorHost = Object.freeze({
-            custodyOwner: 'daemon' as const,
+            ...createManagedServiceProcessSupervisorHost({}),
             bind: vi.fn(() => Object.freeze({ supervise })),
         }) satisfies ManagedServiceProcessSupervisorHost;
         const owner = createManagedServicesOwner({

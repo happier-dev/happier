@@ -105,7 +105,7 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
     ): Promise<ResolvedPluginExecutable>;
     /** Host-private service supervision/control; the SDK remains plugin-scoped. */
     projectManagedServices: Pick<ReturnType<typeof createManagedServicesOwner>,
-        'superviseProject' | 'resolveProjectService' | 'listProjectServices' | 'resolveEnvironmentService' | 'readEnvironmentServiceLogRedactionLease' | 'machineServiceRows' | 'bindWorkloads'
+        'superviseProject' | 'resolveProjectService' | 'listProjectServices' | 'restoreProjectServices' | 'resolveEnvironmentService' | 'readEnvironmentServiceLogRedactionLease' | 'machineServiceRows' | 'bindWorkloads'
         | 'superviseMachine' | 'listMachineServices' | 'retireMachineServices' | 'resolveNativeService'
         | 'activity' | 'readProcessRoots' | 'readResourceTargets' | 'readNativeContainerSources' | 'readMachineRebootServices' | 'resolveSetupScriptServiceEffects'>;
     /** Reads the retained daemon custody owner without activating a contribution. */

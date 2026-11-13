@@ -1,5 +1,6 @@
 import { readDecodedFetchResponseHeaders } from '@happier-dev/cli-common/plugins/http';
 import { resolveProjectManagedService } from './projectServiceResolution';
+import { createProjectServiceRecoveryStore } from './projectServiceRecoveryStore';
 import { createHash, randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { createEnvironmentServiceRecovery } from './environmentServiceRecovery';
@@ -2921,6 +2922,8 @@ function sharedProviderGatewayOperationId(gateway: SharedManagedProviderGatewayI
 
 export type ManagedServicesOwnerInput = Readonly<{
     processSupervisorHost: ManagedServiceProcessSupervisorHost;
+    /** Private Project process identities retained across daemon restarts. */
+    projectServiceStateDirectory?: string;
     sharedGatewayAccessDirectory?: string;
     resolveManagedExecutable?(scope: ManagedServicesScope, executable: ManagedExecutableRef, isCurrent: () => boolean): Promise<ResolvedPluginExecutable>;
     /** Resolves only the currently admitted manifest-declared native service role. */
@@ -2998,6 +3001,8 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
         generation: Readonly<{ deploymentId: string; containerIds: readonly string[] }>): ReturnType<NonNullable<ProjectBuiltinNativeLifecycle['readLogRedactionLease']>>;
     listProjectServices(): readonly ProjectManagedServiceHandle[];
     listProjectServices(options: Readonly<{ requireComplete: true; workspaceRoot?: string }>): Promise<readonly ProjectManagedServiceHandle[]>;
+    /** Joins this owner's one restart reconciliation; consumers never inspect PIDs. */
+    restoreProjectServices(): Promise<void>;
     /** First requested read joins retained deployment observation recovery. */
     restoreEnvironmentServices(target: Readonly<{ serverId: string; machineId: string }>, restore: () => Promise<void>, signal?: AbortSignal): Promise<void>;
     resolveSetupScriptServiceEffects(input: SetupScriptServiceEffectsInput): Promise<readonly MachineNativeEffectKey[]>;
@@ -3060,6 +3065,8 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
         ) => Promise<Readonly<Record<string, string>>>
     >();
     const restoreEnvironmentServices = createEnvironmentServiceRecovery();
+    const projectServiceRecovery = createProjectServiceRecoveryStore(input.projectServiceStateDirectory);
+    let projectServiceRestoration: Promise<void> | undefined;
     const semanticEntries = new Map<
         string,
         ManagedServicesSemanticEntry
@@ -3079,7 +3086,11 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
     };
     const observeServiceProcess = (entry: ManagedServiceSemanticEntry, process: ManagedServiceProcessHandle): void => {
         entry.activityObservation?.dispose();
-        entry.activityObservation = process.observe?.(() => { publishServiceRow(entry); notifyActivity(); });
+        entry.activityObservation = process.observe?.(snapshot => {
+            if (entry.authority === 'project' && entry.project.kind === 'workspace'
+                && snapshot.mode === 'managedSpawn' && snapshot.state === 'stopped') entry.terminal = true;
+            publishServiceRow(entry); notifyActivity();
+        });
         notifyActivity();
     };
     const activity: LiveWorkProducerV1 = Object.freeze({
@@ -4364,12 +4375,29 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
             || entry.project.identity.serviceId !== identity.serviceId) return null;
         return entry;
     };
+    function restoreProjectServices(): Promise<void> {
+        return projectServiceRestoration ??= (async () => {
+            const records = await projectServiceRecovery.read();
+            await Promise.all(records.map(async record => {
+                const process = await input.processSupervisorHost.restoreProjectProcess(record.process);
+                await establishProject({ kind: 'workspace', workspace: record.workspace, declaration: record.declaration,
+                    requester: record.requester, cwd: record.cwd, specIdentity: record.specIdentity,
+                    serviceId: record.process.snapshot.id, ...(record.execution ? { execution: record.execution } : {}),
+                    isCurrent: () => true,
+                    // Re-adoption has no launch authority, executable or credential lease.
+                    authorizeLaunch: async () => fail('plugin_managed_service_unavailable', 'Recovered service cannot replay Start'),
+                    processSpec: { mode: { kind: 'managedSpawn', ...(record.endpointNone ? { endpointNone: true } : {}) } },
+                }, process);
+            }));
+        })();
+    }
     function listProjectServices(): readonly ProjectManagedServiceHandle[];
     function listProjectServices(options: Readonly<{ requireComplete: true; workspaceRoot?: string }>): Promise<readonly ProjectManagedServiceHandle[]>;
     function listProjectServices(options?: Readonly<{ requireComplete: true; workspaceRoot?: string }>):
         readonly ProjectManagedServiceHandle[] | Promise<readonly ProjectManagedServiceHandle[]> {
         if (!options) return Object.freeze(projectEntries().flatMap(entry => entry.project.handle ? [entry.project.handle] : []));
         return (async () => {
+            await restoreProjectServices();
             for (;;) {
                 const matching = projectEntries().filter(entry => !options.workspaceRoot
                     || entry.project.kind === 'workspace' && isWorkspacePathWithin(options.workspaceRoot, entry.project.cwd));
@@ -4396,6 +4424,14 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
     function superviseProject(request: ProjectManagedServiceSupervisionInput): Promise<ProjectManagedServiceHandle>;
     async function superviseProject(
         request: ProjectManagedServiceSupervisionInput,
+    ): Promise<ProjectManagedServiceHandle> {
+        // Owners without retained daemon state keep synchronous preparation publication.
+        if (input.projectServiceStateDirectory !== undefined) await restoreProjectServices();
+        return establishProject(request);
+    }
+    async function establishProject(
+        request: ProjectManagedServiceSupervisionInput,
+        restoredProcess?: ManagedServiceProcessHandle,
     ): Promise<ProjectManagedServiceHandle> {
         let observationTransferred = false;
         let observationRelease: Promise<void> | undefined;
@@ -4477,7 +4513,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 || request.kind === 'environment' && existing.specIdentity !== request.specIdentity) {
                 await retireEntry(existing);
                 observationTransferred = true;
-                return await superviseProject(request);
+                return await establishProject(request, restoredProcess);
             }
             if (existing.specIdentity !== request.specIdentity) {
                 return fail('plugin_managed_service_spec_conflict', 'A different reviewed service effect owns this Project declaration');
@@ -4571,12 +4607,11 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                     ? { ...launchSpec, mode: request.processSpec.mode }
                     : { ...launchSpec, mode: request.processSpec.mode };
             }
-            const processSupervisor = input.processSupervisorHost.bind({
+            const process = restoredProcess ?? await input.processSupervisorHost.bind({
                 kind: 'project',
                 ...(witness.kind === 'workspace' ? { projectRoot: witness.workspace.rootPath } : {}),
                 isOccurrenceCurrent: isCurrent,
-            });
-            const process = await processSupervisor.supervise(processSpec, {
+            }).supervise(processSpec, {
                 signal: lifetime.signal,
                 registerEstablishmentCleanup(cleanup, observation) {
                     entry.establishmentCleanup = cleanup;
@@ -4602,9 +4637,16 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 throw error;
             }
             let failedSnapshot: ManagedServiceSnapshot | undefined;
+            const retainStoppedProcess = input.projectServiceStateDirectory !== undefined
+                && witness.kind === 'workspace' && request.processSpec.mode.kind === 'managedSpawn';
             const clearFailedAttempt = () => {
                 if (!failedSnapshot) return;
                 failedSnapshot = undefined;
+                if (retainStoppedProcess) {
+                    publishServiceRow(entry);
+                    notifyActivity();
+                    return;
+                }
                 lifetime.abort('Project service custody settled');
                 removeSemanticEntry(entry);
             };
@@ -4661,13 +4703,18 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                         invalidateProcessLaunchDiscovery();
                         return;
                     }
+                    if (retainStoppedProcess) {
+                        notifyActivity();
+                        invalidateProcessLaunchDiscovery();
+                        return;
+                    }
                     lifetime.abort('Project service custody settled');
                     removeSemanticEntry(entry);
                 },
                 // Serving retires with the Project lifetime; admitted background
                 // work stops only through the existing explicit lifecycle owner.
                 false,
-                witness.kind === 'environment',
+                witness.kind === 'environment' || retainStoppedProcess,
             );
             let dependencyFailure: ActionExecuteFailure | undefined;
             const withDependencyFailure = (snapshot: ManagedServiceSnapshot): ManagedServiceSnapshot => dependencyFailure
@@ -4864,6 +4911,19 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
                 retirementSignal: lifetime.signal,
                 isCurrent,
             });
+            if (!restoredProcess && retainStoppedProcess && witness.kind === 'workspace') {
+                try {
+                    const recovery = await input.processSupervisorHost.captureProjectProcess(process);
+                    if (!recovery) return fail('plugin_managed_server_process_identity_unavailable', 'Project service process witness is unavailable');
+                    await projectServiceRecovery.record({ v: 1, workspace: witness.workspace, declaration: witness.declaration,
+                        requester: witness.requester, cwd: witness.cwd, specIdentity: request.specIdentity,
+                        ...(request.processSpec.mode.kind === 'managedSpawn' && request.processSpec.mode.endpointNone ? { endpointNone: true } : {}),
+                        ...(witness.execution ? { execution: witness.execution } : {}), process: recovery });
+                } catch (error) {
+                    await releaseEntryProcessHandle(entry, true);
+                    throw error;
+                }
+            }
             entry.project.handle = handle;
             handle.retirementSignal.addEventListener('abort', () => machineServiceRows.retire(handle), { once: true });
             machineServiceRows.publish(handle);
@@ -5026,6 +5086,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
     return Object.freeze({
         activity,
         async readMachineRebootServices(request) {
+            await restoreProjectServices();
             const services: Array<Readonly<{ serviceId: string;
                 phase: NonNullable<ManagedServiceProcessSnapshot['nativePhase']>;
                 readiness: NonNullable<ManagedServiceProcessSnapshot['readiness']> }>> = [];
@@ -5071,6 +5132,7 @@ export function createManagedServicesOwner(input: ManagedServicesOwnerInput): Ma
         superviseProject,
         bindWorkloads: admission => bindManagedWorkloadsForHost({ listProjectServices, machineServiceRows }, admission),
         listProjectServices,
+        restoreProjectServices,
         restoreEnvironmentServices,
         machineServiceRows,
         resolveEnvironmentService(serverId, identity) {

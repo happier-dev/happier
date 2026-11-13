@@ -82,6 +82,11 @@ import type { MachineServiceNativeRuntimeFactsV1 } from '@happier-dev/protocol';
 import type { AdmittedServiceExecContextV1, ServiceCommandV1 } from '@/daemon/local/services/launch/serviceCommand';
 import type { MachineNativeEffectContext, MachineNativeEffectKey } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import type { ProviderRedactionLease } from '@/providers/spawn/redaction';
+import { captureProcessBirthWitness, type ProcessBirthWitness } from '@/daemon/processIdentity';
+import { captureManagedServiceProcessRecoveryRecord, restoreManagedServiceProcess,
+    type ManagedServiceProcessRecoveryRecord } from './managedProcessRecovery';
+
+export type { ManagedServiceProcessRecoveryRecord } from './managedProcessRecovery';
 
 export type ManagedServiceProcessCredential =
     | Readonly<{
@@ -423,6 +428,8 @@ type RunnerManagedServiceSupervisionAuthorization =
 export interface ManagedServiceProcessSupervisorHost {
     readonly custodyOwner: 'daemon' | 'sessionRunner';
     bind(scope: ManagedServiceProcessScope): ManagedServiceProcessSupervisor;
+    captureProjectProcess(handle: ManagedServiceProcessHandle): Promise<ManagedServiceProcessRecoveryRecord | null>;
+    restoreProjectProcess(record: ManagedServiceProcessRecoveryRecord): Promise<ManagedServiceProcessHandle>;
 }
 
 type ManagedServiceProcessEndpoint = Readonly<{
@@ -1016,6 +1023,10 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
     // The establish scope shadows `process` with the supervised handle, so the host platform is
     // captured once here where the global is still visible.
     const hostPlatform: NodeJS.Platform = params.platform ?? process.platform;
+    const projectRecovery = new WeakMap<ManagedServiceProcessHandle, Readonly<{
+        process: ProcessBirthWitness;
+        windowsJobName?: string;
+    }>>();
     function resolveInitialEndpoint(spec: ManagedServiceProcessSpec): ManagedServiceProcessEndpoint | null {
         if (spec.mode.kind === 'externalAttach') {
             return parseManagedServiceEndpointUrl(spec.mode.baseUrl, 'userDeclaredAttach');
@@ -1102,6 +1113,8 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         };
         let portReservation: LoopbackPortReservation | null = null;
         let processStartIdentity: string | null = null;
+        let projectBirthWitness: ProcessBirthWitness | null = null;
+        let projectWindowsJobName: string | undefined;
         let supervisionLaunch: ResolvedPluginExecutable | null = null;
         let endpointProjectionToken: string | null = null;
         let endpointProjectionPublication: Promise<void> | null = null;
@@ -2464,6 +2477,15 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             const processId = custodyFacts
                 ? custodyFacts.targetPid
                 : readSupervisedPluginProcessIdForHost(process);
+            if (scope.kind === 'project') {
+                projectBirthWitness = processId === null ? null : await captureProcessBirthWitness(processId);
+                if (!projectBirthWitness) {
+                    await assertProcessRunning();
+                    return fail('plugin_managed_server_process_identity_unavailable',
+                        'Managed service process birth could not be observed');
+                }
+                projectWindowsJobName = custodyFacts?.jobName;
+            }
             if (entry.lifecycle.signal.aborted) {
                 return fail('plugin_managed_server_aborted', 'Managed server operation was aborted');
             }
@@ -2510,24 +2532,26 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
             if (params.durability) {
                 try {
                     const pid = processId;
-                    if (custodyFacts) {
-                        // Windows job custody IS the process identity: the
-                        // projection persists the occurrenceId-unique job name,
-                        // and recovery acts on the job. A pid-birth comparison
-                        // could never be as exact as the containment itself.
-                        processStartIdentity = formatWindowsJobCustodyStartIdentity(
-                            custodyFacts.jobName,
-                        );
-                    } else {
-                        processStartIdentity = pid === null || !params.captureProcessStartIdentity
-                            ? null
-                            : await params.captureProcessStartIdentity(pid);
-                    }
-                    if (pid === null || !processStartIdentity) {
-                        fail(
-                            'plugin_managed_server_custody_failed',
-                            'Managed server process identity could not be captured safely',
-                        );
+                    // Project recovery already captured its native birth. Only plugin
+                    // endpoint projections consume this separate legacy string identity.
+                    if (scope.kind !== 'project') {
+                        if (custodyFacts) {
+                            // Windows job custody IS the projection identity, separate
+                            // from the target's birth witness retained for Project recovery.
+                            processStartIdentity = formatWindowsJobCustodyStartIdentity(
+                                custodyFacts.jobName,
+                            );
+                        } else {
+                            processStartIdentity = pid === null || !params.captureProcessStartIdentity
+                                ? null
+                                : await params.captureProcessStartIdentity(pid);
+                        }
+                        if (pid === null || !processStartIdentity) {
+                            fail(
+                                'plugin_managed_server_custody_failed',
+                                'Managed server process identity could not be captured safely',
+                            );
+                        }
                     }
                     if (spec.durableLog?.enabled) {
                         durableLog = await params.durability.openLog({
@@ -2795,6 +2819,8 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
                 await cleanup();
             },
         });
+        if (projectBirthWitness) projectRecovery.set(handle, { process: projectBirthWitness,
+            ...(projectWindowsJobName ? { windowsJobName: projectWindowsJobName } : {}) });
 
         if (!spec.healthCheck && spec.mode.kind !== 'native') {
             // The no-health readiness commit fences through the same
@@ -2896,5 +2922,16 @@ export function createManagedServiceProcessSupervisorHost(params: Readonly<{
         });
     }
 
-    return Object.freeze({ custodyOwner, bind });
+    return Object.freeze({ custodyOwner, bind,
+        async captureProjectProcess(handle: ManagedServiceProcessHandle) {
+            const retained = projectRecovery.get(handle);
+            return retained ? captureManagedServiceProcessRecoveryRecord(handle.snapshot(), retained.process, retained.windowsJobName) : null;
+        },
+        async restoreProjectProcess(record: ManagedServiceProcessRecoveryRecord) {
+            const handle = await restoreManagedServiceProcess(record);
+            projectRecovery.set(handle, { process: record.process,
+                ...(record.windowsJobName ? { windowsJobName: record.windowsJobName } : {}) });
+            return handle;
+        },
+    });
 }

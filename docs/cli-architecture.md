@@ -2499,6 +2499,18 @@ The host binds the reviewed root and environment, retains the invocation until
 native settlement, and reacquires only the lifecycle role for recovery: it never
 replays command resolution or Start to obtain inspection/Stop services.
 
+For owned Project processes, the daemon retains private instance and requester
+identity, the reported endpoint, and a PID with its native process birth witness.
+After daemon restart, the same Services owner reconciles each retained instance
+once through the process/platform owner. A matching live process is re-adopted as
+Running with Open and Stop available; a gone or replaced process settles Stopped,
+with its exit cause unknown. Stop on a settled-stopped instance succeeds without
+an effect; a truly unknown instance retains the visible `unknown_managed_service`
+refusal. The UI consumes this reported state without deriving process liveness.
+This development-only recovery stores no launch command, environment, credential,
+or permission to replay Start, and does not apply to plugin-scoped services or
+replace native-resource lifecycle recovery.
+
 Development-source Service controls resolve a published managed-instance selection
 through the retained service owner. Omitted `cwd` and declaration operands use that
 instance's authoritative Project binding; explicit qualifiers must match it. Agent
@@ -5631,7 +5643,13 @@ native isolation probe place their private socket directories under `/tmp`,
 independent of a custodian-private `TMPDIR`. The existing ACL admits only the
 selected shared Agent or member UID to that Session leaf and socket; the Session
 bearer and tool authority remain unchanged. No custodian ancestor permissions or
-daemon group membership are widened. Standard MCP source metadata is
+daemon group membership are widened. Every host-owned local MCP listener admits
+only its per-endpoint bearer (`mcp/runtime/localMcpBearer.ts`, timing-safe): the
+Session MCP Unix socket; where no socket transport exists (Windows), the
+127.0.0.1 Session MCP endpoint, whose bearer reaches the launched bridge through
+the same private context file; and plugin-hosted loopback MCP servers, whose
+bearer rides the private remote-bridge config written by the MCP materializer.
+No bearer is placed on argv, in MCP config env or in logs. Standard MCP source metadata is
 handled by the existing tool-handler decoration owner and delegates selected
 custom profiles to `resolveRunnerMcpServers` and its permission/currentness
 adapters. Native advertisements remain separate from explicit custom discovery.
@@ -6234,7 +6252,7 @@ bootstrap `cli.update.v1` (`updateManagedLocalFirstPartyComponent`) and the daem
    this download (admission, `onAdmitted`), so a concurrent update is refused before it downloads.
 2. **Smoke.** The staged executable's `--version` must equal the target, or nothing is activated
    (`cli_update_smoke_failed`).
-3. **Capture, then activate without pruning,** under two locks of the one lock owner
+3. **Capture, reclaim superseded versions, then activate,** under two locks of the one lock owner
    (`withFirstPartyPayloadMutationLock.ts`, `proper-lockfile`): the install root's
    (`<installRoot>.mutation.lock`) and the home-wide activation lock
    (`<home>/first-party-activation.lock`), always in that order, because launchers (`<home>/bin`) and
@@ -6262,12 +6280,16 @@ bootstrap `cli.update.v1` (`updateManagedLocalFirstPartyComponent`) and the daem
    no release could be resolved). A record that cannot be written never blocks recovery; it is
    reported on stderr.
 
-In current development source, remote payload installation applies the same retention policy
-before staging and after successful activation. Retention keeps the named current and previous
+In current development source, local and remote payload installation apply the same retention policy
+before staging and after successful activation. An existing incoming version is preserved until
+promotion verifies its immutable bytes. Retention keeps the named current and previous
 versions (the update transaction uses the latter for rollback), without reserving an arbitrary
 extra version when no previous version exists. POSIX deletion additionally requires a native
-PID observation without a command referring to the immutable version root, plus a diagnostic-free
-`lsof` observation with no open files anywhere in the payload. This also protects JavaScript
+PID observation without a command referring to the immutable version root, plus a complete
+`lsof` observation with no open files anywhere in the payload. Warnings about inaccessible mounts
+outside the payload tree do not invalidate that observation; warnings affecting the tree or its
+containing filesystem, unknown diagnostics and unavailable observations still retain candidates.
+This also protects JavaScript
 hosted by a separate Node payload after its module file closes. Open files, unavailable native
 observations, or inconclusive results retain that version until a later install can
 prove it unused. Local activation and remote pruning share this file-use rule; Windows retains
@@ -8236,9 +8258,34 @@ Roles come in two kinds:
   only while the role is active, and turning it off withdraws the advertisement
   and closes the application, so the server stops placing brokered requests
   there. Its application code stays with the daemon's provider-broker owner
-  (about 0.2 MiB exclusive, not worth a second seam). `sessions` is the next
-  load-split role; it is still loaded by machine core in current source. `machineRoles.importGraph.test.ts` keeps each
-  split role out of the core start graph and out of the other roles.
+  (about 0.2 MiB exclusive, not worth a second seam). `sessions` activates
+  through the same runtime (entry `roles/sessions/entry.ts`) and registers the
+  new-Session Machine RPC family (`api/machine/rpcHandlers.sessions.ts`: creation
+  preparation, spawn, spawn-new, server start, fork, continue-with-replay and
+  continuation reads). Stop and running-Session control stay in machine core, so
+  turning `sessions` off refuses new Sessions while running ones finish. While it
+  is off, the Machine reports running without that family (it is refused, not
+  missing) and does not advertise `sessionSpawn`. The refusal every start path
+  shares lives at the Session spawn admission owner
+  (`spawnSessionWithAdmission` in the session control runtime): Machine RPC,
+  control routes and the CLI, workflow starts, host Action ingress and internal
+  resume all return `machine_role_inactive` there while `sessions` is off;
+  completing a running Session's planned restart and Stop are not refused. The
+  RPC namespaces and control-route pre-handler answer earlier from the same role
+  set. Loading the session control runtime only behind `sessions` is deferred
+  (import-only gain about 1.5 MiB heap / 15 MiB USS on Node, 0.85 MiB on Bun): it
+  is still composed by machine core: it also builds core owners (the control
+  server, managed-policy adapter, external Action ingress), broker, devices,
+  relay and deployments owners, which must move to their own owners before it
+  can load only behind the `sessions` entry. `machineRoles.importGraph.test.ts`
+  keeps each split role out of the core start graph and out of the other roles.
+- **Control routes.** The local control socket is the other half of the same
+  seam. Routes owned by a split role are listed in
+  `MACHINE_ROLE_CONTROL_ROUTES` (`sessions`: `/spawn-session`,
+  `/continue-with-replay`). Fastify fixes its route table at listen, so each
+  such route gets one extra pre-handler after its own authentication: while the
+  role is inactive in the role-set owner it answers `503` with the same
+  `machine_role_inactive {roleId}` refusal as the role's RPC namespaces.
 - **Who activates a role.** One activation owner per role, through the same
   runtime: `memory` and `voice` follow the Machine connection (machine bootstrap
   activates them, with the connection's RPC dispatcher, which also owns the

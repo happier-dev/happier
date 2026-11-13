@@ -15,7 +15,8 @@ import type { createManagedServicesOwner, ProjectManagedServiceHandle } from '@/
 import { selectManagedOwnedTreeEndpoint } from '@/plugins/runtime/invocation/services/managedOwnedTreeEndpoint';
 import { projectStartingServiceTargets } from './starting';
 
-type ProjectManagedServicesFeed = Pick<ReturnType<typeof createManagedServicesOwner>, 'listProjectServices' | 'readProcessRoots'>;
+type ProjectManagedServicesFeed = Pick<ReturnType<typeof createManagedServicesOwner>, 'listProjectServices' | 'readProcessRoots'>
+    & Partial<Pick<ReturnType<typeof createManagedServicesOwner>, 'restoreProjectServices'>>;
 
 export type LocalServiceLauncherFeedSnapshotRequest = Readonly<{
     /** Host-only lifetime of the requesting launcher observation. */
@@ -295,6 +296,7 @@ export function createLocalServiceLauncherFeed(
                 previewResources,
                 terminateDetectedEnabled: input.terminateDetectedEnabled?.() === true,
             });
+            await input.projectManagedServices?.restoreProjectServices?.();
             const processRoots = request?.requesterManagedServices ? [] : input.projectManagedServices?.readProcessRoots() ?? [];
             const inventoryTargets = new Map(snapshot.targets.flatMap(target => target.sourceClass?.kind === 'inventory_entry'
                 ? [[target.sourceClass.inventoryEntryId, target] as const] : []));

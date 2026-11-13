@@ -193,6 +193,7 @@ export function createMachineServicesRuntime(input: Readonly<{
         try {
             const owner = lease.registry.projectManagedServices;
             const handles: ServiceHandle[] = [];
+            await owner.restoreProjectServices();
             const projects = owner.listProjectServices();
             handles.push(...await selectVisibleMachineProjectServices(target,
                 projects.filter(handle => matchesServiceSelection(handle, selection)

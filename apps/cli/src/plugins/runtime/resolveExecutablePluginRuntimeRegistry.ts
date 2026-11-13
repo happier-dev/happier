@@ -1,3 +1,4 @@
+import { deploymentUnavailableDiagnostic } from '@/deployments/deploymentFailure';
 import { createAccountMachineSourceDeclarationReader } from './invocation/actions/accountMachineSourceDeclarations';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { createProductionPluginSettingsHostFactory } from './invocation/services/settingsHost';
@@ -237,7 +238,7 @@ import type {
 import { createStablePluginComposerContentOwner } from './invocation/services/composerContent';
 import { projectContributedActionExecuteResult, type InvokeContributedAction } from './invocation/services/actions';
 import type { StableTargetedContributionsOwner } from './invocation/services/targetedContributions';
-import { createManifestTargetedContributionsService, mergeTargetedContributionManifestDeclarations, type TargetedContributionManifestDeclaration } from '@happier-dev/cli-common/plugins/registration';
+import { createManifestTargetedContributionsService, mergeTargetedContributionManifestDeclarations, type TargetedContributionManifestSnapshot } from '@happier-dev/cli-common/plugins/registration';
 import { createCredentialedTargetActionCurrentIntent } from '@/session/actions/approvals/credentialedTargetActionCurrentIntent';
 import { invokeAccountMachineSourceAction, resolveAccountMachineSourceActionMachine } from './invocation/actions/accountMachineActionTransport';
 import {
@@ -3053,6 +3054,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
     const daemonManagedServicesOwner = createManagedServicesOwner({
         ...daemonManagedServicesHostBindings,
         processSupervisorHost: daemonManagedServiceProcessSupervisorHost,
+        projectServiceStateDirectory: join(pluginStorePaths.storageDir, 'project-services'),
         sharedGatewayAccessDirectory: join(pluginStorePaths.storageDir, 'managed-provider-consumers'),
     });
     let projectManagedServicesOwner: ReturnType<NonNullable<
@@ -3152,13 +3154,13 @@ export async function resolveExecutablePluginRuntimeRegistry(
     const readAccountMachineSourceDeclarations = params?.accountExecution
         ? createAccountMachineSourceDeclarationReader(params.accountExecution) : undefined;
     const readCurrentAccountTargetedDeclarations = async (targetPluginId: string, signal?: AbortSignal,
-        resolveMachine?: PluginInvocationServicesSeed['resolveAccountSourceMachine']): Promise<readonly TargetedContributionManifestDeclaration[]> => {
+        resolveMachine?: PluginInvocationServicesSeed['resolveAccountSourceMachine']): Promise<TargetedContributionManifestSnapshot> => {
         const accountDeclarations = (authoritativeContributes.pluginDeclarations ?? []).flatMap(declaration => {
             const occurrenceId = readCurrentPluginOccurrenceId(declaration.pluginId);
             const sourceCustody = readCurrentPluginSourceCustody(declaration.pluginId);
             return occurrenceId && sourceCustody ? [{ manifest: declaration.manifest, occurrenceId, sourceCustody }] : [];
         });
-        let machineDeclarations: readonly TargetedContributionManifestDeclaration[] = [];
+        let machineSnapshot: TargetedContributionManifestSnapshot = { declarations: [] };
         let machineId: string | undefined;
         try {
             // Missing Session placement removes Machine sources only. Account
@@ -3170,10 +3172,13 @@ export async function resolveExecutablePluginRuntimeRegistry(
         } catch { signal?.throwIfAborted(); }
         if (machineId && params?.accountExecution) {
             try {
-                machineDeclarations = await readAccountMachineSourceDeclarations!({ machineId, targetPluginId, ...(signal ? { signal } : {}) });
+                machineSnapshot = await readAccountMachineSourceDeclarations!({ machineId, targetPluginId, ...(signal ? { signal } : {}) });
             } catch { signal?.throwIfAborted(); }
         }
-        return mergeTargetedContributionManifestDeclarations({ targetPluginId, accountDeclarations, machineDeclarations });
+        return {
+            declarations: mergeTargetedContributionManifestDeclarations({ targetPluginId, accountDeclarations, machineDeclarations: machineSnapshot.declarations }),
+            unavailablePlugins: [...(authoritativeContributes.unavailablePlugins ?? []), ...(machineSnapshot.unavailablePlugins ?? [])],
+        };
     };
     const invokeContributedActionInRegistry = async (
         request: Parameters<InvokeContributedAction>[0],
@@ -3207,11 +3212,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
                     || !pluginSourceCustodyEqual(callerSourceCustody, request.caller.sourceCustody)) return {
                     status: 'unavailable' as const, code: 'plugin_action_generation_retired', message: 'The Account caller is retired',
                     actionHandlerInvocation: 'notStarted' as const };
-                let sources: readonly TargetedContributionManifestDeclaration[];
-                try { sources = await readAccountMachineSourceDeclarations!({ machineId,
-                    targetPluginId: request.caller.pluginId, sourcePluginId: request.action.pluginId, signal: request.signal }); }
-                catch { return { status: 'unavailable' as const, code: 'plugin_action_execution_origin_unavailable',
-                    message: 'Current Machine source declarations are unavailable', actionHandlerInvocation: 'notStarted' as const }; }
+                const { declarations: sources } = await readAccountMachineSourceDeclarations!({ machineId,
+                    targetPluginId: request.caller.pluginId, sourcePluginId: request.action.pluginId, signal: request.signal });
                 const source = sources.find(row => row.manifest.id === request.action.pluginId
                     && (request.expectedContributorOccurrenceId === undefined || row.occurrenceId === request.expectedContributorOccurrenceId)
                     && (request.admittedTargetedOperation === undefined
@@ -3499,7 +3501,6 @@ export async function resolveExecutablePluginRuntimeRegistry(
     const accountTargetedContributions: StableTargetedContributionsOwner | undefined = params?.accountExecution
         ? { bind(binding) { return createManifestTargetedContributionsService({
             readCurrentDeclarations: () => readCurrentAccountTargetedDeclarations(binding.pluginId, binding.signal),
-            readUnavailablePlugins: () => authoritativeContributes.unavailablePlugins ?? [],
             // A finite CLI invocation does not replace its admitted source set;
             // release/Account retirement is enforced by the captured binding.
             subscribeToCatalogChanges: () => () => {},
@@ -4434,7 +4435,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
         async resolveEnvironmentApprovalScope(request) {
             const host = await readDeploymentTargetRoleAdmissionHost(request.context);
             return host?.resolveEnvironmentApprovalScope?.(request)
-                ?? { ok: false, errorCode: 'deployment_unavailable', error: 'deployment_unavailable' };
+                ?? deploymentUnavailableDiagnostic({ ok: false as const, errorCode: 'deployment_unavailable', error: 'deployment_unavailable' },
+                    'deployment.target_role.approval_scope.host', 'client_required');
         },
         async readAccountScope(signal) {
             const authority = params?.accountExecution;
@@ -4445,7 +4447,6 @@ export async function resolveExecutablePluginRuntimeRegistry(
             return Object.freeze({ serverId: authority.serverId, accountId });
         },
         ...(params?.accountExecution ? { readCurrentTargetedDeclarations: readCurrentAccountTargetedDeclarations,
-            readUnavailableTargetedPlugins: () => authoritativeContributes.unavailablePlugins ?? [],
             createAccountSourceMachineResolver } : {}),
         ...(accountActivationSources ? { executionRealm: 'account' as const } : {}),
         contributes: authoritativeContributes,
@@ -6524,6 +6525,11 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 projectManagedServicesOwner = owner;
             }
             projectManagedServicesOwner.configureHostBindings(daemonManagedServicesHostBindings);
+            // Start recovery only after selecting the retained owner. Registry reload
+            // must not make a temporary replacement adopt the same processes twice.
+            void projectManagedServicesOwner.restoreProjectServices().catch(error => {
+                logger.infoFile('[ProjectServices] Restart reconciliation unavailable', error);
+            });
             isRetainedPhysicalSourceCurrent = isPhysicalSourceCurrent;
             preserveProjectServicesOnRegistryRetirement = projectManagedServicesOwner === daemonManagedServicesOwner;
             return projectManagedServicesOwner;
@@ -6990,6 +6996,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                                         transport: Object.freeze({
                                             kind: 'http',
                                             url: handle.endpoint.url,
+                                            headers: handle.endpoint.headers,
                                         }),
                                         scope: Object.freeze({
                                             ...(hostSession.sessionId ? { sessionId: hostSession.sessionId } : { executionRunId: hostSession.executionRunId }),

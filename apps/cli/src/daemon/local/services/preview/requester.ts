@@ -13,12 +13,14 @@ export async function admitLocalServicePreviewRequest(input: Readonly<{
     serverId?: string;
     accountId?: string;
     server?: LocalServicePreviewServerInput;
-    projectManagedServices?: Pick<ReturnType<typeof createManagedServicesOwner>, 'resolveProjectService'>;
+    projectManagedServices?: Pick<ReturnType<typeof createManagedServicesOwner>, 'resolveProjectService'>
+        & Partial<Pick<ReturnType<typeof createManagedServicesOwner>, 'restoreProjectServices'>>;
     context?: RpcHandlerContext;
     effect: boolean;
 }>) {
     const scope = { accountId: input.accountId, machineId: input.machineId, context: input.context };
     const requesterAccountId = await assertLocalServiceReadCustody(scope, 'requester_managed_services');
+    await input.projectManagedServices?.restoreProjectServices?.();
     const authorization = input.context?.callerInputAuthorization;
     const admission = input.context?.machineAdmission;
     const requester = readRequesterAccountActionContext(authorization);

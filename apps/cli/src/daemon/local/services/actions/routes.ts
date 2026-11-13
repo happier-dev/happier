@@ -112,7 +112,7 @@ async function resolveActionTarget(input: Readonly<{
     request: LocalServiceActionRequestV1;
     machineId: string;
     inventoryRegistry: LocalServiceInventoryRegistry;
-    projectManagedServices?: Pick<ManagedServicesOwner, 'resolveProjectService'>;
+    projectManagedServices?: Pick<ManagedServicesOwner, 'resolveProjectService'> & Partial<Pick<ManagedServicesOwner, 'restoreProjectServices'>>;
     execution?: LocalServiceActionExecutionContext;
 }>): Promise<ResolvedLocalServiceActionTarget | Readonly<{ kind: 'undo_forget'; undoKey: string }> | Readonly<{ reasonCode: string }>> {
     const target = input.request.target;
@@ -137,6 +137,7 @@ async function resolveActionTarget(input: Readonly<{
             : { reasonCode: 'unknown_inventory_entry' };
     }
 
+    await input.projectManagedServices?.restoreProjectServices?.();
     const resolved = input.projectManagedServices?.resolveProjectService(target);
     if (resolved?.status !== 'found') return {
         reasonCode: resolved?.status === 'mismatch' ? 'managed_service_target_mismatch' : 'unknown_managed_service',
@@ -154,7 +155,7 @@ async function resolveActionTarget(input: Readonly<{
 export function createLocalServiceActionRoutes(input: Readonly<{
     machineId: string;
     inventoryRegistry: LocalServiceInventoryRegistry;
-    projectManagedServices?: Pick<ManagedServicesOwner, 'resolveProjectService'>;
+    projectManagedServices?: Pick<ManagedServicesOwner, 'resolveProjectService'> & Partial<Pick<ManagedServicesOwner, 'restoreProjectServices'>>;
     launcherHistory?: LocalServiceLauncherHistoryStore;
     restartManagedService?: RestartProjectManagedService;
     prepareRestartManagedService?: PrepareRestartProjectManagedService;

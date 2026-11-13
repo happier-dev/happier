@@ -8,9 +8,10 @@ const ownershipEnvironment = z.strictObject({
     HAPPIER_DAEMON_LIFECYCLE_SCOPE_ID: z.optional(z.string()), HAPPIER_SERVER_URL: z.optional(z.string()),
     HAPPIER_WEBAPP_URL: z.optional(z.string()), HAPPIER_PUBLIC_SERVER_URL: z.optional(z.string()),
 });
+export const ProcessStartIdentitySchema = z.strictObject({ startTimeMs: unsigned, native: z.optional(z.string()) });
 const rowSchema = z.strictObject({
     pid: unsigned.check(z.positive()), ppid: z.nullable(unsigned), pgid: z.optional(z.number().check(z.int(), z.int())), sessionId: z.optional(unsigned.check(z.positive())),
-    start: z.strictObject({ startTimeMs: unsigned, native: z.optional(z.string()) }),
+    start: ProcessStartIdentitySchema,
     principal: z.nullable(principal), name: z.string(),
     executablePath: z.optional(z.string()), argv: z.optional(z.array(z.string())), commandLine: z.optional(z.string()),
     cwd: z.optional(z.string()), ownerTag: z.optional(z.string()), ownershipEnvironment: z.optional(ownershipEnvironment),

@@ -18,7 +18,8 @@ import { logger } from '@/ui/logger';
 // public-preview create/revoke handlers expose their owner over machine RPC.
 export type DaemonLocalServicePreviewSnapshotHandlerOptions = Readonly<{
     /** The current daemon owner; a forwarding resolver may dereference the live registry. */
-    projectManagedServices?: Pick<ReturnType<typeof createManagedServicesOwner>, 'resolveProjectService'> | null;
+    projectManagedServices?: (Pick<ReturnType<typeof createManagedServicesOwner>, 'resolveProjectService'>
+        & Partial<Pick<ReturnType<typeof createManagedServicesOwner>, 'restoreProjectServices'>>) | null;
     /** Exact Machine and Home bound to the authenticated registration connection. */
     machineId?: string;
     serverId?: string;
@@ -52,6 +53,7 @@ export function registerDaemonLocalServicePreviewSnapshotHandler(
             || !isSocketRpcLocalServicesPreviewAdmissionServerOriginAuthorizationContext(context?.authorization)
             || !context?.verifyMachineAdmissionCurrent || context.signal.aborted
             || admission.machineId !== options.machineId || request.target.machineId !== options.machineId) return reply(refused, 'machine_admission_unavailable');
+        await options.projectManagedServices.restoreProjectServices?.();
         const resolved = options.projectManagedServices.resolveProjectService(request.target);
         if (resolved.status !== 'found') return reply(refused, 'service_target_unresolved');
         const handle = resolved.handle;

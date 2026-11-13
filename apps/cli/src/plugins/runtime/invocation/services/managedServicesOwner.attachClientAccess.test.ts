@@ -64,6 +64,7 @@ function createAttachHarness(input: Readonly<{
     );
     const owner = createManagedServicesOwner({
         processSupervisorHost: Object.freeze({
+            ...createManagedServiceProcessSupervisorHost({}),
             custodyOwner: input.custodyOwner ?? 'daemon',
             bind: vi.fn(() => Object.freeze({ supervise })),
         }) satisfies ManagedServiceProcessSupervisorHost,
