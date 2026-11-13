@@ -95,7 +95,7 @@ import {
   readCodexAppServerResumeRecoveryTimeoutMs,
   readCodexAppServerRpcTimeoutMs,
 } from './client/timeout.js';
-import { assignInjectedServerKeys, buildCodexAppServerConfigOverrides, resolveCodexHostFunctionNamespace, listCodexAppServerMcpServerNames } from './config/overrides.js';
+import { assignInjectedServerKeys, buildCodexAppServerConfigOverrides, buildCodexPromptProfileConfig, resolveCodexHostFunctionNamespace, listCodexAppServerMcpServerNames } from './config/overrides.js';
 import {
   CODEX_APP_SERVER_REASONING_EFFORT_CONFIG_OPTION_ID,
   CODEX_APP_SERVER_SERVICE_TIER_CONFIG_OPTION_ID,
@@ -351,6 +351,7 @@ type CodexAppServerRuntimeParams = CodexAppServerRuntimeTarget & Readonly<{
   mcpServers?: unknown;
   mcpToolPolicy?: AgentSessionOpenRequest['mcpToolPolicy'];
   functionTools?: AgentSessionOpenRequest['functionTools'];
+  promptProfile?: AgentSessionOpenRequest['promptProfile'];
   skills?: AgentSessionSkillDelivery;
   toolRestriction?: Pick<AgentSessionConfigurationSnapshot, 'allowedTools' | 'unlistedTools'>;
   resolveCurrentPolicy?: () => CodexAppServerPolicy | null;
@@ -2480,6 +2481,7 @@ export function createCodexAppServerRuntime(
           processEnv,
           ...params.toolRestriction,
           functionTools: params.functionTools,
+          promptProfile: params.promptProfile,
           mcpToolPolicy: params.mcpToolPolicy,
           ...(params.appServerTransport !== 'daemonProxy' ? { skills: params.skills } : {}),
         }),
@@ -2687,6 +2689,7 @@ export function createCodexAppServerRuntime(
     const threadConfig = {
       ...reasoningConfig,
       ...providerConfig,
+      ...buildCodexPromptProfileConfig(params.promptProfile),
       // Codex 0.162.1/0.163.0 bypasses its stream retry budget for connection
       // failures by default (responses_retry.rs). Finite Runs use that native
       // budget and still retain the turn until Codex emits its terminal event.

@@ -743,6 +743,9 @@ export type AgentSessionOpenRequest =
     cwd: string;
     /** Informational host directory classification; absence means path, not filesystem authority. */
     sessionDirectoryKind?: 'path' | 'managed';
+    /** Conversation carriers omit project instructions and automatic skill catalogs.
+     * Advisory prompt delivery only; omission preserves the Agent's coding defaults. */
+    promptProfile?: 'conversation';
     launchEnvironment?: AgentLaunchEnvironment;
     /** Agent-owned runtime identity, interpreted only by the target Agent. */
     runtimeDescriptorV1?: RuntimeDescriptorV1;

@@ -18,6 +18,15 @@ export type CodexAppServerMcpServerConfig = Readonly<{
 
 type CodexToolRestrictionConfiguration = Pick<AgentSessionConfigurationSnapshot, 'allowedTools' | 'unlistedTools'>;
 
+export function buildCodexPromptProfileConfig(
+    promptProfile: AgentSessionOpenRequest['promptProfile'],
+): Readonly<Record<string, number | boolean>> {
+    // Codex 0.162.1 supports both controls independently of host dynamic tools.
+    return promptProfile === 'conversation'
+        ? { project_doc_max_bytes: 0, 'skills.include_instructions': false }
+        : {};
+}
+
 export function resolveCodexHostFunctionNamespace(configuration?: CodexToolRestrictionConfiguration): string | null {
     // Restricted recipes exclude native `functions` (including MCP resource readers).
     // Otherwise advertise flat functions: OpenAI-compatible providers can flatten a
@@ -133,12 +142,16 @@ export function buildCodexAppServerConfigOverrides(
         processEnv?: Readonly<Record<string, string | undefined>>;
         skills?: AgentSessionSkillDelivery;
         functionTools?: AgentSessionOpenRequest['functionTools'];
+        promptProfile?: AgentSessionOpenRequest['promptProfile'];
         mcpToolPolicy?: Readonly<Record<string, AgentSessionMcpToolPolicy>>;
     }> & CodexToolRestrictionConfiguration = {},
 ): string[] {
     const serverNames = listCodexAppServerMcpServerNames(mcpServers, options);
     const injectedKeys = assignInjectedServerKeys(serverNames);
     const overrides = buildCodexUnlistedToolConfigOverrides(options);
+    for (const [key, value] of Object.entries(buildCodexPromptProfileConfig(options.promptProfile))) {
+        overrides.push(`${key}=${JSON.stringify(value)}`);
+    }
     // Code-mode-only models hide ordinary dynamic functions from the direct
     // catalog. Host callbacks must stay callable independently of native policy.
     if (options.functionTools?.length || options.unlistedTools === 'deny') {

@@ -8384,6 +8384,17 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 in-process `AgentSessionOpenRequest` adds optional
+`promptProfile: 'conversation'`. Local Voice selects it for its retained carrier;
+the Codex adapter omits native project instructions and automatic skill
+instructions at process launch and thread start/resume. Omission preserves coding
+Session defaults. This is an advisory prompt-cost input, safely ignorable by
+other Agent adapters, with no permission, routing, persistence or credential
+meaning. The open request remains closed to known SDK fields; the profile is a
+single literal with no nested object or unknown-field preservation. Matching
+host and Codex source reload together under the unpublished 0.3 direct cut;
+there is no wire epoch, package version, capability or persisted-format change.
+
 Unreleased 0.3 in-process `ExecService` adds optional `readEnvironment(keys)`.
 The invocation factory captures the existing Session environment reference;
 the method returns only requested inherited values, independently of the narrow

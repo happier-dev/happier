@@ -74,6 +74,7 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
   mcpServers?: AgentSessionOpenRequest['mcpServers'];
   mcpToolPolicy?: AgentSessionOpenRequest['mcpToolPolicy'];
   functionTools?: AgentSessionOpenRequest['functionTools'];
+  promptProfile?: AgentSessionOpenRequest['promptProfile'];
   permissionMode?: AgentSessionConfigurationSnapshot['permissionIntent']['value'];
   interactions?: CodexAppServerRuntimeHost['ui'];
   models?: AgentSessionRuntimeContext['session']['services']['models'];
@@ -494,6 +495,7 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
         ...(options.mcpToolPolicy ? { mcpToolPolicy: options.mcpToolPolicy } : {}),
         ...(options.skills ? { skills: options.skills } : {}),
         ...(options.functionTools ? { functionTools: options.functionTools } : {}),
+        ...(options.promptProfile ? { promptProfile: options.promptProfile } : {}),
         ...(options.startupInstructions === null ? {} : {
           startupInstructions: options.startupInstructions ?? { v: 1, id: 'fixture.startup', revision: 1, instructions: 'Actual startup instructions.' },
         }),

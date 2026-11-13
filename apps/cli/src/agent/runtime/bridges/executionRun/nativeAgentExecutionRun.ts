@@ -2090,6 +2090,7 @@ export function createNativeAgentSessionInteractionHostRuntime(params: Readonly<
             disposeSessionContext = async () => { unsubscribeMcpToolPolicy?.(); await sessionContext.dispose(); };
             const common = {
                 sessionId: context.session.id,
+                ...(params.options.start?.intent === 'voice_agent' ? { promptProfile: 'conversation' as const } : {}),
                 ...(params.options.functionTools ? { functionTools: params.options.functionTools } : {}),
                 cwd: params.options.cwd,
                 ...(sessionContext.mcpServers ? { mcpServers: sessionContext.mcpServers } : {}),
