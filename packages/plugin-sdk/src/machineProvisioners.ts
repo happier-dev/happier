@@ -36,7 +36,7 @@ export type MachineProvisionerContributionV1 = Readonly<{
   nativeDurationInput?: Readonly<{ path: string; unit: 'milliseconds' | 'seconds' }>;
   /** Where the provider's own id lives in the resource value (the id its console shows); display only. */
   resourceIdPath?: string;
-  bootstrapTransport?: Readonly<{ kind: 'native'; exec: string; putFile: string }>;
+  bootstrapTransport?: canonical.MachineProvisionerContributionV1['bootstrapTransport'];
   bootstrapCredential?: Readonly<{ kind: 'ssh' | 'native-token' }>;
   nativeCredentialDelivery?: Readonly<{ apply: string; transports: readonly ['https_headers'];
     preservesEndpoint: true; perBindingMatching: true }>;
