@@ -64,6 +64,26 @@ export function matchesUsageSourceAccountingScope(source: Pick<UsageSourceV1, 'a
     && selected.some(id => source.accountingSources?.includes(id));
 }
 export const UsageSourcesListV1Schema = lazyZodSchema(() => z.strictObject({ sources: z.array(UsageSourceV1Schema) }));
+/** Agent delivery only; opaque source ids retain the existing exact-detail selector. */
+export const UsageSourcesActionListV1Schema = lazyZodSchema(() => z.strictObject({
+  sources: UsageSourcesListV1Schema.shape.sources,
+  summary: z.optional(z.strictObject({
+    sourceCount: UsageSourceV1Schema.shape.pendingCount,
+    groups: z.array(z.strictObject({
+      agent: UsageSourceV1Schema.shape.agent,
+      consent: UsageSourceV1Schema.shape.consent,
+      status: UsageSourceV1Schema.shape.status,
+      coverage: UsageSourceV1Schema.shape.coverage,
+      sourceCount: UsageSourceV1Schema.shape.pendingCount,
+      pendingCount: UsageSourceV1Schema.shape.pendingCount,
+      sources: z.array(z.strictObject({
+        sourceId: UsageSourceV1Schema.shape.sourceId,
+        discoveredFileCount: UsageSourceV1Schema.shape.discoveredFileCount,
+      })),
+    })),
+  })),
+}));
+export type UsageSourcesActionListV1 = z.infer<typeof UsageSourcesActionListV1Schema>;
 export const UsageSourceResultV1Schema = lazyZodSchema(() => z.strictObject({ source: UsageSourceV1Schema }));
 export const UsageSourceDeleteResultV1Schema = lazyZodSchema(() => z.strictObject({
   success: z.literal(true), deletedEventCount: z.number().check(z.int(), z.nonnegative()),
@@ -81,7 +101,7 @@ export const USAGE_SOURCE_ACTION_INPUT_SCHEMAS = {
   'usage.sources.root.set': lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(sourceTarget, { root: z.nullable(id) }))),
   'usage.sources.history.delete': lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(sourceTarget, { dateRange: z.optional(UsageSourceDateRangeV1Schema) }))),
 } as const;
-export const USAGE_SOURCE_ACTION_OUTPUT_SCHEMAS = {
+const nativeSourceOutputSchemas = {
   'usage.sources.discover': UsageSourcesListV1Schema,
   'usage.sources.get': UsageSourcesListV1Schema,
   'usage.sources.dismiss': UsageSourceDismissResultV1Schema,
@@ -89,6 +109,11 @@ export const USAGE_SOURCE_ACTION_OUTPUT_SCHEMAS = {
   'usage.sources.stop': UsageSourceResultV1Schema,
   'usage.sources.root.set': UsageSourceResultV1Schema,
   'usage.sources.history.delete': UsageSourceDeleteResultV1Schema,
+} as const;
+export const USAGE_SOURCE_ACTION_OUTPUT_SCHEMAS = {
+  ...nativeSourceOutputSchemas,
+  'usage.sources.discover': UsageSourcesActionListV1Schema,
+  'usage.sources.get': UsageSourcesActionListV1Schema,
 } as const;
 export type UsageSourceActionInputById = { readonly [K in UsageSourceActionId]: z.infer<(typeof USAGE_SOURCE_ACTION_INPUT_SCHEMAS)[K]> };
 export type UsageSourceActionOutputById = { readonly [K in UsageSourceActionId]: z.infer<(typeof USAGE_SOURCE_ACTION_OUTPUT_SCHEMAS)[K]> };
@@ -98,7 +123,9 @@ export function parseUsageSourceActionResult(actionId: UsageSourceActionId,
   target: Readonly<{ serverId: string; machineId: string; sourceId?: string }>,
   raw: unknown,
 ): UsageSourceActionOutputById[UsageSourceActionId] | null {
-  const parsed = USAGE_SOURCE_ACTION_OUTPUT_SCHEMAS[actionId].safeParse(raw);
+  // Machine inventory is always complete. Only the Action delivery owner may
+  // replace it with a summary after target identity has been validated here.
+  const parsed = nativeSourceOutputSchemas[actionId].safeParse(raw);
   if (!parsed.success) return null;
   const result = parsed.data;
   const sources = 'sources' in result ? result.sources : 'source' in result ? [result.source] : [];

@@ -64,7 +64,7 @@ import type { SessionMessageSendAdmission } from './executor/callerContext.js';
 import { resolveExecutionRunLaunchOrigin, buildExecutionRunCallOptions, checkDetachedExecutionRunProtocolV2, normalizeExecutionBackendOptionValue, normalizeExecutionBackendTargetValue, resolveFanoutTeamCredentialModel, resolveFanoutConnectedServicesSelections, buildAvailableExecutionBackendOptionKeys, readReviewRunActionPayload, readFanoutStartError, fanoutStarts, readCompleteExecutionRunStartIdentity, hasExecutionRunStartIdentityEvidence, classifyExecutionRunStartFailure, classifyExecutionRunStartPreDispatchFailure, parseExecutionRunWaitResult, isExecutionRunWaitCancellation } from './executor/executionRuns.js';
 import type { ExecutionRunCallOptions } from './executor/executionRuns.js';
 import { normalizeId, readNullableString, readOptionalString } from './executor/inputReading.js';
-import { normalizeActionExecutorThrownError, completeActionResult, completeSessionHandoffActionResult, completeExecutionRunServiceActionResult, completeSpawnActionResult, settleActionOutput as projectTerminalActionOutput, invalidActionOutputFailure, isDeferredApprovalResult } from './executor/resultProjection.js';
+import { normalizeActionExecutorThrownError, completeActionResult, completeSessionHandoffActionResult, completeExecutionRunServiceActionResult, completeSpawnActionResult, settleActionOutput as projectTerminalActionOutput, invalidActionOutputFailure, isDeferredApprovalResult, carryActionFailureDiagnostic } from './executor/resultProjection.js';
 export { settleActionOutput, completeActionResult } from './executor/resultProjection.js';
 import { MachineServiceLogsReadInputV1Schema, MachineServiceActionIdSchema,
   MACHINE_SERVICE_ACTION_INPUT_SCHEMAS, MACHINE_SERVICE_ACTION_OUTPUT_SCHEMAS } from './specs/machine/services.js';
@@ -194,6 +194,7 @@ import { projectNativeJsonValueForTransport, sameStrictJsonValue, type JsonValue
 import { resolveActionOriginationPreferenceFailureV1 } from './executor/actionOriginationPreferences.js';
 import { UsageSourceActionIdSchema, USAGE_SOURCE_ACTION_INPUT_SCHEMAS } from '../usage/usageSources.js';
 import type { UsageSourceActionRequest } from './executor/usageSourceActions.js';
+import { projectUsageSourcesDelivery } from '../usage/projectUsageSourcesDelivery.js';
 import { ManagedDeleteOutputV1Schema, ManagedMachineActionIdV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1 } from '../machines/managed/actionsV1.js';
 import { MachineReferenceCensusV1Schema, type MachineReferenceCensusV1 } from '../machines/machineReferenceCensusV1.js';
 import { ManagedRefusalCodeV1Schema } from '../machines/managed/providerFactsV1.js';
@@ -685,6 +686,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         return;
       }
       for (const item of page.items) {
+        // The listed Action already rules out every other request: an Account's open approvals are read back only
+        // when they could belong to this subject, so its unrelated queue never delays the confirmed removal.
+        if (subject.kind === 'deploymentEnvironment' && !isDeploymentActionIdV1(item.actionId)) continue;
         let stored: Awaited<ReturnType<NonNullable<ActionExecutorDeps['approvalsGet']>>>;
         try {
           stored = await deps.approvalsGet({ artifactId: item.artifactId,
@@ -5033,7 +5037,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           : { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         const request = { actionId: id, input } as UsageSourceActionRequest;
         const result = await deps.usageSourceAction(request, ctx);
-        return readActionFailureEnvelope(result) ?? { ok: true, result };
+        return readActionFailureEnvelope(result) ?? { ok: true, result: 'sources' in result
+          ? projectUsageSourcesDelivery(result, 'sourceId' in input ? input.sourceId : undefined, ctx.surface)
+          : result };
       }
       const connectedServiceActionId = isActionFamilyId(actionId, ConnectedServiceConfigurationActionIdV1Schema) ? actionId : null;
       if (connectedServiceActionId !== null) {
@@ -5376,7 +5382,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         const result = await deps.filesystemActionExecute({ actionId, input: parsed.data, context: ctx });
         // Native filename capability failures are declared domain results. Keep
         // them distinct from Action refusals so only the former can fall back.
-        if (actionId === FILESYSTEM_BROWSER_ACTION_IDS_V1.listFiles) {
+        // A success already settles as a result and is validated once by settleActionOutput.
+        if (actionId === FILESYSTEM_BROWSER_ACTION_IDS_V1.listFiles && readRecord(result).ok === false) {
           const native = DaemonWorkspaceFileListResponseSchema.safeParse(result);
           if (native.success) return { ok: true, result: native.data };
         }
@@ -7215,7 +7222,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         };
       }
       const normalized = normalizeActionExecutorThrownError(error);
-      const failure: ActionExecuteFailure = {
+      const failure: ActionExecuteFailure = carryActionFailureDiagnostic({
         ok: false,
         errorCode: normalized.errorCode,
         error: normalized.error,
@@ -7223,7 +7230,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
         ...(normalized.requestId === undefined ? {} : { requestId: normalized.requestId }),
         ...(normalized.details !== undefined ? { details: normalized.details } : {}),
         ...(normalized.effectAttempted === false ? { effectAttempted: false } : {}),
-      };
+      }, normalized);
       return actionId === 'execution.run.start'
         ? classifyExecutionRunStartFailure(failure, dispatchFacts.executionRunStartDispatched ? 'outcomeUnknown' : 'noRunCreated', error)
         : failure;
@@ -7273,7 +7280,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       // Only this invocation's host observer may stamp the annotation. An
       // arbitrary dependency/plugin result cannot assert a credential identity.
       const { operationCredentialUses: _untrustedAnnotation, ...unannotated } = result;
-      const settled = settleActionOutput(actionId, unannotated, context?.actionRequestId ?? undefined);
+      const settled = settleActionOutput(actionId, carryActionFailureDiagnostic(unannotated, result), context?.actionRequestId ?? undefined);
       return operationCredentialUses.length ? { ...settled, operationCredentialUses } : settled;
     } finally {
       observing = false;

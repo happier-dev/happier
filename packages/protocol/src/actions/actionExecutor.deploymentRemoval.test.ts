@@ -48,3 +48,38 @@ it.each(['delete', 'teardown', 'stop-only', 'failed'] as const)(
     expect(stored.get('other-environment')?.status).toBe('open');
     expect(stored.get('other-home')?.status).toBe('open');
   });
+
+it('reads only the open deployment approvals when it settles a removed Environment, not every open approval of the Account', async () => {
+  // Live #142: an Account with 942 open approvals kept Stop and remove waiting minutes after the removal landed,
+  // because every open approval was read back one by one before the result returned.
+  const deploy = ApprovalRequestV1Schema.parse({
+    v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1, createdBy: { surface: 'agent' }, requestedSurface: 'agent',
+    actionId: 'deployments.deploy', actionArgs: { serverId: 'home', environmentId: 'environment', expectedRevision: 2,
+      targetLinkId: 'link', expectedTargetLinkRevision: 1, requestKey: 'pending',
+      contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1 }, summary: 'Deploy',
+  });
+  const unrelated = Array.from({ length: 40 }, (_, index) => [`plugin-${index}`, ApprovalRequestV1Schema.parse({
+    v: 1, status: 'open', createdAtMs: 1, updatedAtMs: 1, createdBy: { surface: 'agent' }, requestedSurface: 'agent',
+    actionId: 'machines.managed.delete', actionArgs: { homeId: 'home', managedId: `managed-${index}` }, summary: 'Delete managed machine',
+  })] as const);
+  const stored = new Map<string, ApprovalRequest>([['pending', deploy], ...unrelated]);
+  const reads: string[] = [];
+  const transport: NonNullable<ActionExecutorDeps['deploymentAction']> = async () => ({ ok: true, environmentId: 'environment',
+    revision: 4, deploymentId: 'receipt', deploymentRevision: 5, state: 'succeeded', environmentRemoved: true });
+  const executor = createActionExecutor({ deploymentAction: transport, isActionApprovalRequired: () => false,
+    resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(transport, async () => ({ ok: true,
+      environment: { id: 'environment', projectSourceId: 'project', purpose: 'standard' } })),
+    // Home transport and Artifact persistence are the only substituted boundaries.
+    approvalsList: async () => ({ items: [...stored].map(([artifactId, request]) => ({ artifactId,
+      status: request.status, actionId: request.actionId, summary: request.summary, serverId: 'home', updatedAtMs: request.updatedAtMs })),
+      nextCursor: null, queryPlan: { kind: 'approval_artifact_header_scan', hydratedTranscripts: false } }),
+    approvalsGet: async ({ artifactId }) => { reads.push(artifactId); return stored.get(artifactId) ?? null; },
+    approvalsUpdate: async ({ artifactId, request }) => { stored.set(artifactId, request); return { ok: true }; },
+  });
+  const result = await executor.execute('deployments.teardown', { serverId: 'home', environmentId: 'environment',
+    targetLinkId: 'link', reason: 'manual', removeEnvironment: true, volumes: [], requestKey: 'remove' },
+  { serverId: 'home', surface: 'ui', authority: 'present_user', presentUserConfirmation: { actionId: 'deployments.teardown' } });
+  expect(result).toMatchObject({ ok: true });
+  expect(stored.get('pending')?.status).toBe('canceled');
+  expect(reads).toEqual(['pending']);
+});
