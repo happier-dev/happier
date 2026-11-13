@@ -45,7 +45,7 @@ import {
     buildClaudeHookPluginManifest,
 } from '../../../hooks/settings.js';
 import { buildDefaultPermissionHookResponse } from '../../../hooks/protocol.js';
-import { resolveClaudePermissionHookCeilingMs } from '../../../hooks/permissionHookTimeout.js';
+import { resolveClaudePermissionHookCeilingMs, resolveClaudePermissionHookTimeoutSeconds } from '../../../hooks/permissionHookTimeout.js';
 import {
     createClaudeSdkNoResultError,
     queryWithContext,
@@ -78,7 +78,6 @@ import type {
 } from '../../../usage/types.js';
 import { resolveClaudePermissionModeFromRuntimeMode } from '../../permissionMode.js';
 import { isClaudeUltracodeSupportedModelId } from '../../reasoningEffort.js';
-import { resolveClaudeConfigDirOverride } from '../../../environment.js';
 import { getClaudeProjectPath } from '../../../surfaces/sessions/handoff/path.js';
 import type {
     ClaudeProviderPromptDeliveryOutcomeCallback,
@@ -183,6 +182,8 @@ type ClaudeAgentSdkContextBase = Readonly<{
 export type ClaudeAgentSdkSessionContext = ClaudeAgentSdkContextBase & Readonly<{
     agentRuntime: ClaudeAgentSdkContextBase['agentRuntime'] & Readonly<{
         awaitTurnPublication?: (turnId: string, signal?: AbortSignal) => Promise<void>;
+        /** The host's `adoptsHeldAgent`: this runner adopts the Agent its crashed predecessor left running. */
+        adoptsHeldAgent?: boolean;
         modes?: ClaudeUnifiedTerminalContext['agentRuntime']['modes'];
         sessionHooks: ClaudeUnifiedTerminalContext['agentRuntime']['sessionHooks'];
         transcripts: ClaudeUnifiedTerminalContext['agentRuntime']['transcripts'];
@@ -809,6 +810,8 @@ export type ClaudeAgentSdkNativeOperations = ClaudeRuntimeTurnOperations & Reado
     subscribeEffectiveModel: ClaudeEffectiveModelEvidenceSubscription;
     subscribeUsageObservation: ClaudeUsageObservationSubscription;
     setOnPromptDeliveryOutcome(handler: ClaudeProviderPromptDeliveryOutcomeCallback | null): void;
+    /** Once the runtime is watched: adopt a held Agent when the host handed one over (no-op otherwise). */
+    startHeldAgentAdoption(): void;
 }>;
 
 function isClaudeAgentSdkSessionContext(
@@ -841,6 +844,12 @@ export function createClaudeAgentSdkTurnOperations(
     let resumableProviderSessionId: string | null = null;
     let pendingResumeProviderSessionId: string | null = readClaudeProviderIdentityValue(params.initialProviderSessionId);
     let activeQuery: ClaudeSdkQuery | null = null;
+    // Held-Agent adoption (`adoptHeldAgent`): `adopting` while `heldAgentAdoption` is
+    // pending, then `adopted` (its turn runs as the active query, or the idle Agent is
+    // retained for the next prompt) or `none`. Prompts and control requests wait for it.
+    let heldAgentAdoption: Promise<void> | null = null;
+    // The adopted Agent's query until a turn or a prompt claims it.
+    let adoptedQuery: ClaudeSdkQuery | null = null;
     let disposeQuery: ClaudeSdkQuery | null = null;
     let retainedInterruptedQuery: Readonly<{ query: ClaudeSdkQuery; unpublishedLaunchEffort: string | null }> | null = null;
     let activeProviderTask: Readonly<{ taskId: string; ownerScope?: object }> | null = null;
@@ -863,6 +872,7 @@ export function createClaudeAgentSdkTurnOperations(
     let currentUltracode = supportsEffort && params.initialUltracode === true;
 
     async function invalidateInterruptedQueryReuse(): Promise<void> {
+        if (adoptedQuery && adoptedQuery === retainedInterruptedQuery?.query) adoptedQuery = null;
         // disposeQuery is also the existing eligibility witness for a trailing cancellation
         // result. Clear it so an old query cannot become reusable after this setting change.
         disposeQuery = null;
@@ -1060,7 +1070,8 @@ export function createClaudeAgentSdkTurnOperations(
                 ? join(
                     getClaudeProjectPath(
                         params.directory,
-                        resolveClaudeConfigDirOverride({ ...params.launchEnv }),
+                        undefined,
+                        params.launchEnv,
                     ),
                     `${providerSessionId}.jsonl`,
                 )
@@ -1230,14 +1241,13 @@ export function createClaudeAgentSdkTurnOperations(
             throw new Error('Claude Session hooks are unavailable for a Session-bound runtime.');
         }
         return await (async () => {
-            const sessionHookSecret = randomUUID();
+            const permissionHookTimeoutSeconds = resolveClaudePermissionHookTimeoutSeconds({ env: params.launchEnv });
             const handlePermissionHook = permissionHooksEnabled ? createClaudePermissionHookHandler({
                 agentRuntime: params.ctx.agentRuntime,
                 permissionEngine: { canCallTool: resolvePermissionAfterInterception },
             }) : null;
             const hookRequest: AgentSessionHookServerStartRequest = {
                 ...(readOwnerScope ? { lifetime: 'invocation' as const } : {}),
-                sessionHookSecret,
                 onSessionHook: async (providerSessionId, payload) => {
                     const ownerScope = readOwnerScope?.();
                     if (readOwnerScope && !ownerScope) return;
@@ -1246,8 +1256,7 @@ export function createClaudeAgentSdkTurnOperations(
                 ...(handlePermissionHook ? {
                     onPermissionHook: handlePermissionHook,
                     defaultPermissionHookResponse: data => buildDefaultPermissionHookResponse(data, params.unlistedTools),
-                    permissionHookSecret: sessionHookSecret,
-                    permissionRequestTimeoutMs: resolveClaudePermissionHookCeilingMs({ env: params.launchEnv }),
+                    permissionRequestTimeoutMs: resolveClaudePermissionHookCeilingMs({ explicitSeconds: permissionHookTimeoutSeconds }),
                 } : {}),
             };
             const server = sessionHooks && happierSessionId
@@ -1257,6 +1266,7 @@ export function createClaudeAgentSdkTurnOperations(
             try {
                 const assets = await hooks.resolveForwarderAssets();
                 const hooksJson = buildClaudeHookPluginHooks({
+                    permissionHookTimeoutSeconds,
                     transport: readOwnerScope ? 'terminal' : 'sdk',
                     port: server.port,
                     nodeExecutable: assets.nodeExecutable,
@@ -1386,7 +1396,9 @@ export function createClaudeAgentSdkTurnOperations(
     }
 
     async function withControlQuery<T>(operation: (query: ClaudeSdkQuery) => Promise<T>): Promise<T | null> {
-        const reusableQuery = activeQuery ?? compactionControl.readQuery();
+        // A second Agent launch would replace the held one the host keeps for the next runner.
+        if (heldAgentAdoption) await heldAgentAdoption;
+        const reusableQuery = activeQuery ?? compactionControl.readQuery() ?? adoptedQuery;
         if (reusableQuery) return await operation(reusableQuery);
         const contextUsageProviderSessionId = params.enableSessionResumability === true
             ? resumableProviderSessionId ?? pendingResumeProviderSessionId
@@ -2236,6 +2248,57 @@ export function createClaudeAgentSdkTurnOperations(
         }
     }
 
+    /**
+     * Runner respawn after a crash (`agentRuntime.adoptsHeldAgent`): the Agent the crashed
+     * runner started still runs in the Session holder, maybe mid-turn. Its query starts now,
+     * so this runner's first Agent launch is the one that adopts it. Whether a turn is still
+     * running comes from the holder's stored state (`readHeldAgentTurn`), never from output
+     * or time:
+     * - `turn`: the rest of that turn is read outside a prompt as a provider-started turn
+     *   (the host maps it onto the Session turn the crashed runner admitted);
+     * - otherwise the live Agent is retained, and the next prompt reuses it.
+     */
+    async function adoptHeldAgent(): Promise<void> {
+        const hookPluginDir = await ensureSessionHookPluginDir();
+        if (runtimeDisposed) return;
+        const resume = readCurrentResumeProviderSessionId();
+        const { options, launchEffort } = buildQueryLaunchOptions(hookPluginDir);
+        const idle = new AbortController();
+        const query = createOwnedQuery({
+            prompt: createIdlePromptStream(idle.signal),
+            options: { ...options, ...(resume ? { resume } : {}) },
+            onObservationLost: () => {
+                idle.abort();
+                if (adoptedQuery === query) adoptedQuery = null;
+            },
+        }, () => currentTurnId);
+        adoptedQuery = query;
+        disposeQuery = query;
+        const held = await query.readHeldAgentTurn();
+        if (runtimeDisposed || adoptedQuery !== query) return;
+        if (held !== 'turn') {
+            retainedInterruptedQuery = { query, unpublishedLaunchEffort: launchEffort };
+            return;
+        }
+        adoptedQuery = null;
+        turnSequence += 1;
+        currentTurnId = `claude-agent-sdk-turn-${turnSequence}`;
+        publishRuntimeEvent(ClaudeProviderEventSchema.parse({
+            sessionId: readRuntimeEventSessionId(),
+            emittedAtMs: Date.now(),
+            kind: 'turn-start',
+            turnId: currentTurnId,
+            startedBy: 'provider',
+        }));
+        turnInFlight = true;
+        lastTurnCompletionFailure = null;
+        const completion = createDeferred();
+        completion.promise.catch(() => undefined);
+        activeCompletion = completion;
+        activeQuery = query;
+        void consumeTurnMessages(query, completion, currentTurnId, launchEffort);
+    }
+
     let onPromptDeliveryOutcome: ClaudeProviderPromptDeliveryOutcomeCallback | null = null;
     async function reserveHostPromptEcho(): Promise<string> {
         // Claude stream-json preserves the supplied UUID in its native user row.
@@ -2442,6 +2505,12 @@ export function createClaudeAgentSdkTurnOperations(
             usageObservationListeners.add(listener);
             return () => usageObservationListeners.delete(listener);
         },
+        startHeldAgentAdoption() {
+            if (heldAgentAdoption || sessionContext?.agentRuntime.adoptsHeldAgent !== true) return;
+            heldAgentAdoption = adoptHeldAgent().catch((error: unknown) => {
+                params.ctx.logger.warn('[ClaudeAgentSdk] Held Agent adoption failed', { error });
+            });
+        },
         beginProviderTurn(turnId) {
             currentTurnId = readString(turnId);
             if (!currentTurnId) {
@@ -2462,6 +2531,8 @@ export function createClaudeAgentSdkTurnOperations(
             return providerSessionId;
         },
         async sendProviderTurnPrompt(prompt, meta, publishTurnTerminal: boolean = true) {
+            // While adopting, a held turn may still be running: decide after the holder said.
+            if (heldAgentAdoption) await heldAgentAdoption;
             const compactionCompletion = compactionControl.readCompletion();
             if (compactionCompletion) await compactionCompletion;
             if (runtimeDisposed) {
@@ -2577,6 +2648,7 @@ export function createClaudeAgentSdkTurnOperations(
                 }
                 const interrupted = retainedInterruptedQuery;
                 if (interrupted) {
+                    if (adoptedQuery === interrupted.query) adoptedQuery = null;
                     const interruptedQuery = interrupted.query;
                     const transportOutcome = await interruptedQuery.sendUserMessage(promptContent, nativeUserMessageId);
                     const outcome = projectPromptTransportOutcome(transportOutcome);
@@ -2864,6 +2936,7 @@ export function createClaudeAgentSdkTurnOperations(
                         queriesToDispose.add(queryToDispose);
                     }
                     activeQuery = null;
+                    adoptedQuery = null;
                     disposeQuery = null;
                     retainedInterruptedQuery = null;
                     activeProviderTask = null;

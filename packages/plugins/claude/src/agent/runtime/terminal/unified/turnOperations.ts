@@ -49,7 +49,7 @@ import {
   buildClaudeHookPluginManifest,
 } from '../../../hooks/settings.js';
 import { buildDefaultPermissionHookResponse } from '../../../hooks/protocol.js';
-import { resolveClaudePermissionHookCeilingMs } from '../../../hooks/permissionHookTimeout.js';
+import { resolveClaudePermissionHookCeilingMs, resolveClaudePermissionHookTimeoutSeconds } from '../../../hooks/permissionHookTimeout.js';
 import { createClaudeStatuslineApplier, type ClaudeStatuslineRuntimeTruth } from '../../../statusline/apply.js';
 import {
   readClaudeAssistantModelId,
@@ -1079,7 +1079,6 @@ export function createClaudeUnifiedTerminalTurnOperations(
     ClaudeUnifiedProviderUnavailablePromptDeliveryWindow | null = null;
   let sessionHookServer: ClaudeUnifiedSessionHookServer | null = null;
   let hookPluginDir: string | null = null;
-  let hookSecret: string | null = null;
   let statuslineOverlaySettings: ClaudeStatuslineOverlaySettings | null = null;
   let statuslineTranscriptPath: string | null = null;
   // Transcript path containing a matching primary native row for this id.
@@ -2055,8 +2054,8 @@ export function createClaudeUnifiedTerminalTurnOperations(
 
   async function ensureSessionHookPluginDir(): Promise<string | null> {
     if (hookPluginDir) return hookPluginDir;
+    const permissionHookTimeoutSeconds = resolveClaudePermissionHookTimeoutSeconds({ env: params.launchEnv });
     if (!sessionHookServer) {
-      hookSecret = randomUUID();
       const handlePermissionHook = createClaudePermissionHookHandler(params.ctx, {
         unifiedTerminalActive: true,
         responseLocations: params.responseLocations ?? resolveClaudeUnifiedTerminalResponseLocations({}),
@@ -2228,7 +2227,6 @@ export function createClaudeUnifiedTerminalTurnOperations(
         providerId: CLAUDE_UNIFIED_TERMINAL_PROVIDER_ID,
         sessionId: params.happierSessionId,
         lifecycle: { kind: 'session', sessionId: params.happierSessionId },
-        sessionHookSecret: hookSecret,
         onSessionHook,
         onStatuslineUpdate: async (payload) => {
           const parsed = parseClaudeStatuslinePayload(payload);
@@ -2297,7 +2295,6 @@ export function createClaudeUnifiedTerminalTurnOperations(
           }
         },
         defaultPermissionHookResponse: data => buildDefaultPermissionHookResponse(data, params.unlistedTools),
-        permissionHookSecret: hookSecret,
         // Host response ceiling aligned with the installed Claude permission-hook `timeout`
         // (effectively-unlimited 7d, env-overridable via the shared resolver). The ceiling is
         // FINITE and >= the installed hook timeout, so a late answer that arrives after Claude
@@ -2306,7 +2303,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
         // invariant). Interactive tools (AskUserQuestion / ExitPlanMode) inherit the SAME finite
         // ceiling: a `null` (unbounded) host wait would outlive Claude's installed hook timeout
         // and let a late answer resolve into a dead forwarder socket instead of honestly expiring.
-        permissionRequestTimeoutMs: resolveClaudePermissionHookCeilingMs({ env: params.launchEnv }),
+        permissionRequestTimeoutMs: resolveClaudePermissionHookCeilingMs({ explicitSeconds: permissionHookTimeoutSeconds }),
       }) as ClaudeUnifiedSessionHookServer;
     }
 
@@ -2333,6 +2330,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
       }
     }
     const hooks = buildClaudeHookPluginHooks({
+      permissionHookTimeoutSeconds,
       port: sessionHookServer.port,
       nodeExecutable: assets.nodeExecutable,
       sessionForwarderScript: assets.sessionForwarderScript,
@@ -4174,7 +4172,6 @@ export function createClaudeUnifiedTerminalTurnOperations(
         } finally {
           sessionHookServer = null;
           hookPluginDir = null;
-          hookSecret = null;
           sessionStartObservedForReadiness = false;
           nativeResumeTurnBarrier?.dispose();
           pendingTaskNotificationReaction = null;

@@ -6,6 +6,8 @@ import { join } from 'node:path';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { waitForProcessExit } from '@/testkit/process/spawn';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
 
@@ -66,6 +68,32 @@ describe('zellij actions', () => {
     spawnMock.mockReset();
     spawnMock.mockImplementation(() => mockChild());
     vi.useRealTimers();
+  });
+
+  it('keeps admitted Session removals and explicit overrides at both Zellij launch boundaries', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'physical-host-key');
+    try {
+      const { attachCreateBackground, runCommand, sendEnter } = await import('./actions');
+      for (const sessionName of ['removed', 'selected']) {
+        const environment = buildScopedProcessEnv({ baseEnv: process.env,
+          explicitEnv: { TERM: `session-${sessionName}`, ...(sessionName === 'selected' ? { OPENAI_API_KEY: 'selected-account-key' } : {}) },
+          unsetEnvKeys: sessionName === 'removed' ? ['OPENAI_API_KEY'] : [] });
+        await runAddedHostedSession({ environment, workingDirectory: '/workspace', end() {} }, async () => {
+          const params = { zellijBinary: '/tools/zellij', sessionName, cwd: '/workspace',
+            env: { ...environment, TERM: `explicit-${sessionName}` } };
+          await attachCreateBackground(params);
+          await runCommand({ ...params, command: ['/tools/native-agent'] });
+        });
+        for (const call of spawnMock.mock.calls.slice(-2)) {
+          const options = call[2] as SpawnOptions;
+          expect(options.env?.TERM).toBe(`explicit-${sessionName}`);
+          expect(options.env?.OPENAI_API_KEY).toBe(sessionName === 'selected' ? 'selected-account-key' : undefined);
+        }
+      }
+      await sendEnter({ zellijBinary: '/tools/zellij', paneId: 'terminal_1', env: {} });
+      const controlOptions = spawnMock.mock.calls.at(-1)?.[2] as SpawnOptions;
+      expect(controlOptions.env?.OPENAI_API_KEY).toBe('physical-host-key');
+    } finally { vi.unstubAllEnvs(); }
   });
 
   it('writes byte chunks and Enter to the explicit pane without shell interpolation', async () => {

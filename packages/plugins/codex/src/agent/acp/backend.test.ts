@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { resolve } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
+import { delimiter, resolve } from 'node:path';
 
 import { CODEX_ACP_TOOL_PATTERNS } from './transport';
 import {
@@ -8,6 +8,25 @@ import {
 } from './backend';
 
 describe('buildCodexNativeAcpRuntimeOptions', () => {
+  it('preserves each admitted Session PATH, including an explicitly empty value', () => {
+    vi.stubEnv('PATH', '/ambient-host-bin');
+    try {
+      const sessions = [
+        { sessionId: 'empty-path', cwd: '/workspace/empty-path', path: '' },
+        { sessionId: 'authored-path', cwd: '/workspace/authored-path', path: '/session-bin' },
+      ];
+      const paths = sessions.map(session => buildCodexNativeAcpRuntimeOptions({
+        kind: 'create', sessionId: session.sessionId, cwd: session.cwd,
+        launchEnvironment: { values: { PATH: session.path }, unset: [] },
+      }).transport.env?.PATH);
+
+      expect(paths).toEqual(sessions.map(session => {
+        const shims = resolve(session.cwd, 'scripts', 'shims');
+        return session.path ? `${shims}${delimiter}${session.path}` : shims;
+      }));
+    } finally { vi.unstubAllEnvs(); }
+  });
+
   it('refuses MCP tool policy when ACP cannot apply the native knob', () => {
     expect(() => buildCodexNativeAcpRuntimeOptions({ kind: 'create', sessionId: 'policy', cwd: '/workspace',
       mcpToolPolicy: { docs: { unlisted: 'ask', tools: { write: 'off' } } },

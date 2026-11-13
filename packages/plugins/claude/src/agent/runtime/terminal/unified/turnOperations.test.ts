@@ -1769,10 +1769,10 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
         expect(b64Match).not.toBeNull();
         expect(Buffer.from(b64Match![1]!, 'base64').toString('utf8')).toBe('my-status --fancy');
 
-        // S7 hardening carry-over: the hook secret must never appear in Claude's argv.
-        const secret = sessionHooks.startServerOptions[0]?.sessionHookSecret as string;
-        expect(secret).toBeTruthy();
-        expect(launchArgs.join(' ')).not.toContain(secret);
+        // S7 hardening carry-over: the plugin never holds the hook secret (the host generates it and
+        // hands back only a file path), so it cannot reach Claude's argv.
+        expect(sessionHooks.startServerOptions[0]).not.toHaveProperty('sessionHookSecret');
+        expect(sessionHooks.startServerOptions[0]).not.toHaveProperty('permissionHookSecret');
       } finally {
         await runtime.resetOrDisposeRuntime().catch(() => undefined);
       }
@@ -2219,26 +2219,30 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
       }
     });
 
-    it('honors the env override for the permission ceiling', async () => {
+    it.each([90, 180])('aligns terminal permission hooks with the admitted Session ceiling (%s seconds)', async seconds => {
       const terminalHost = createTerminalHostFixture();
       const events = createEventsFixture();
-      const sessionHooks = createStatuslineSessionHooksFixture();
+      const sessionHooks = createSessionHooksFixture();
       const ctx = createPluginContextFixture(terminalHost.service, events.service, {
         sessionHooks: sessionHooks.service,
       });
       const runtime = expectRuntimeEnvelope(createClaudeUnifiedTerminalTurnOperations({
         ctx,
         directory: '/tmp/claude-project',
-        happierSessionId: 'happy-session-ceiling-env',
+        happierSessionId: `happy-session-ceiling-env-${seconds}`,
         hostPreference: 'zellij',
-        launchEnv: { HAPPIER_CLAUDE_PERMISSION_HOOK_TIMEOUT_SECONDS: '90' },
+        launchEnv: { HAPPIER_CLAUDE_PERMISSION_HOOK_TIMEOUT_SECONDS: String(seconds) },
         permissionMode: 'default',
       })).operations;
 
       try {
         await runtime.startProviderSession();
-        const options = sessionHooks.startServerOptions[0] as { permissionRequestTimeoutMs?: number | null };
-        expect(options.permissionRequestTimeoutMs).toBe(90_000);
+        const options = sessionHooks.service.startServer.mock.calls[0]?.[0];
+        const pluginFiles = sessionHooks.service.createPluginDir.mock.calls[0]?.[0].files ?? [];
+        const installedHooks = pluginFiles.find((file: { path: string }) => file.path === 'hooks/hooks.json')?.json;
+        expect(options.permissionRequestTimeoutMs).toBe(seconds * 1000);
+        expect(installedHooks.hooks.PermissionRequest[0].hooks[0].timeout).toBe(seconds);
+        expect(installedHooks.hooks.PreToolUse[0].hooks[0].timeout).toBe(seconds);
       } finally {
         await runtime.resetOrDisposeRuntime().catch(() => undefined);
       }

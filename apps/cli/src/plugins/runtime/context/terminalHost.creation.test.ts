@@ -138,6 +138,7 @@ import { acquireSessionRunnerLock } from '@/daemon/sessionRunnerLock';
 import { withSessionRunnerOwnership } from '@/daemon/sessionRunnerLock';
 import { initializeBackendRunSession } from '@/agent/runtime/initializeBackendRunSession';
 import { configuration } from '@/configuration';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { ApiSessionClient } from '@/api/session/sessionClient';
 import { createTestApiSessionClient } from '@/testkit/backends/createTestApiSessionClient';
 import { createApiSessionSocketStub, bindApiSessionSocketPairMock } from '@/testkit/backends/apiSessionSocketHarness';
@@ -165,6 +166,53 @@ import { buildPosixShellCommand } from '@happier-dev/agents/process/shellCommand
 import { parseTmuxSessionIdentifier } from '@/integrations/tmux/identifiers';
 
 describe('plugin terminal-host creation rollback', () => {
+    it.skipIf(process.platform === 'win32').each(['native', 'javascript'] as const)(
+        'resolves %s terminal executables from each admitted Session environment', async kind => {
+            await withTempDir('terminal-session-env-', async happyHomeDir => await withHerdrApi(async api => {
+                inventory.socketPath = api.socketPath;
+                vi.stubEnv('HAPPIER_CLAUDE_PATH', join(happyHomeDir, 'missing-ambient-claude'));
+                vi.stubEnv('HAPPIER_NODE_PATH', process.execPath);
+                vi.stubEnv('HAPPIER_JS_RUNTIME_PATH', undefined);
+                vi.stubEnv('HAPPIER_MANAGED_NODE_BIN', undefined);
+                try {
+                    for (const sessionId of ['session-a', 'session-b']) {
+                        const nativePath = join(happyHomeDir, `${sessionId}-native`);
+                        const scriptPath = join(happyHomeDir, `${sessionId}-claude.js`);
+                        await writeFile(nativePath, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+                        await writeFile(scriptPath, 'process.exit(0);\n');
+                        const environment = { ...process.env, HAPPIER_JS_RUNTIME_PATH: undefined,
+                            HAPPIER_MANAGED_NODE_BIN: undefined,
+                            ...(kind === 'native' ? { HAPPIER_CLAUDE_PATH: nativePath } : { HAPPIER_NODE_PATH: nativePath }) };
+                        await runAddedHostedSession({ environment, workingDirectory: happyHomeDir, end() {} }, async () => {
+                            const service = createDefaultPluginTerminalHostService({ happyHomeDir,
+                                hasCapability: capability => capability === 'terminalHost', readSessionId: () => sessionId });
+                            let handle: Awaited<ReturnType<typeof service.createOrAttachHost>> | undefined;
+                            let specPath: string | undefined;
+                            try {
+                                handle = await service.createOrAttachHost({ preference: 'herdr', sessionName: 'default',
+                                    workingDirectory: happyHomeDir, isolatedEnv: true,
+                                    launch: { kind: 'agent-cli', agentId: 'claude', args: ['--version'],
+                                        env: kind === 'javascript' ? { HAPPIER_CLAUDE_PATH: scriptPath } : {} } });
+                                const layouts = api.requests.filter(request => request.method === 'layout.apply');
+                                const root = layouts.at(-1)?.params.root as { command: string[] };
+                                specPath = root.command[2]!;
+                                const spec: unknown = JSON.parse(await readFile(specPath, 'utf8'));
+                                expect(spec).toMatchObject({ command: nativePath,
+                                    args: kind === 'javascript' ? [scriptPath, '--version'] : ['--version'] });
+                            } finally {
+                                if (handle) await service.dispose(handle, { kind: 'destroy_owned_host', reason: 'session_closed' });
+                                if (specPath) {
+                                    await unlink(specPath).catch(() => {});
+                                    await rmdir(dirname(specPath)).catch(() => {});
+                                }
+                            }
+                        });
+                    }
+                } finally { vi.unstubAllEnvs(); }
+            }));
+        },
+    );
+
     it.skipIf(process.platform === 'win32')('retains the startup wrapper when a prepared tmux host finalizes native material', async () => {
         await withTempDir('prepared-tmux-wrapper-', async happyHomeDir => {
             inventory.tmuxEnabled = true;
@@ -634,8 +682,8 @@ describe('plugin terminal-host creation rollback', () => {
             if (!lock.ok) throw new Error('Could not admit the fixture controller');
             const hooks = createSessionHooksService({ happyHomeDir, hasCapability: capability => capability === 'sessionHooks' });
             const oldEndpoint = await hooks.startServer({ providerId: 'claude', sessionId,
-                lifecycle: { kind: 'session', sessionId }, sessionHookSecret: 'retained-session-secret',
-                permissionHookSecret: 'retained-permission-secret' });
+                lifecycle: { kind: 'session', sessionId } });
+            const retainedSessionSecret = await readFile(oldEndpoint.sessionHookSecretFile!, 'utf8');
             await oldEndpoint.dispose();
             const hostParams = {
                 happyHomeDir, hasCapability: (capability: string) => capability === 'terminalHost', readSessionId: () => sessionId,
@@ -672,7 +720,7 @@ describe('plugin terminal-host creation rollback', () => {
                 // Its authenticated primary observation, not the pane, proves the native ID.
                 expect(operations.readProviderIdentity()).toEqual({ sessionId: null });
                 const response = await fetch(`http://127.0.0.1:${oldEndpoint.port}/hook/${observation === 'statusline' ? 'statusline' : 'session-start'}`, {
-                    method: 'POST', headers: { 'Content-Type': 'application/json', 'x-happier-hook-secret': 'retained-session-secret' },
+                    method: 'POST', headers: { 'Content-Type': 'application/json', 'x-happier-hook-secret': retainedSessionSecret },
                     body: JSON.stringify({
                         session_id: observation === 'foreign_hook' ? 'foreign-native-id' : 'same-native-provider-id',
                         hook_event_name: 'PostToolUse', transcript_path: transcriptPath,

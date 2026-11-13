@@ -7,7 +7,7 @@ import {
   openClaudeNativeUnifiedTerminalSession,
   resolveClaudeNativeUnifiedResume,
 } from './nativeSession.js';
-import { getClaudeProjectPath } from '../../../surfaces/sessions/handoff/path.js';
+import { getClaudeProjectPath, resolveClaudeProjectId } from '../../../surfaces/sessions/handoff/path.js';
 import { createClaudeNativeAgentSdkContext } from '../../nativeServices.js';
 
 function createContext(): AgentSessionRuntimeContext {
@@ -46,6 +46,20 @@ function createContext(): AgentSessionRuntimeContext {
 }
 
 describe('openClaudeNativeUnifiedTerminalSession', () => {
+  it('keeps resumed transcript paths in each admitted Session home', () => {
+    const cwd = '/tmp/claude-native-resume';
+    const projectId = resolveClaudeProjectId(cwd);
+    const homes = ['/tmp/claude-session-home-a', '/tmp/claude-session-home-b'];
+    const resumes = homes.map((home, index) => resolveClaudeNativeUnifiedResume({
+      request: { kind: 'resume', sessionId: `hosted-${index}`, cwd, providerSessionId: `native-${index}` },
+      launchEnv: { HOME: home, USERPROFILE: home },
+    }));
+
+    expect(resumes.map(resume => resume.knownProviderSession?.transcriptPath)).toEqual(
+      homes.map((home, index) => join(home, '.claude', 'projects', projectId, `native-${index}.jsonl`)),
+    );
+  });
+
   it('acknowledges an accepted native permission decision before resolving it', async () => {
     const requestDecision = createClaudeNativeAgentSdkContext(createContext())
       .sessions.current.permissions.requestDecision as SessionPermissionsService['requestDecision'];

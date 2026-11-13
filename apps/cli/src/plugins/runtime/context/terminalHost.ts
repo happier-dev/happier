@@ -16,6 +16,7 @@ import {
 } from '@happier-dev/agents';
 
 import type { CatalogAgentLookupId } from '@/agent/catalog/ids';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { resolveTerminalHost } from '@/integrations/terminal/host/resolveTerminalHost';
 import type { TerminalHostResolution } from '@/integrations/terminal/host/_types';
 import type { TerminalHostAdapter } from '@/integrations/terminal/host/_types';
@@ -742,7 +743,7 @@ async function resolveDefaultTerminalHost(
 
 function buildProviderCliProcessEnv(input: AgentTerminalHostLaunchInput): NodeJS.ProcessEnv {
     return buildScopedProcessEnv({
-        baseEnv: process.env,
+        baseEnv: sessionProcessEnvironment(),
         explicitEnv: input.env,
         unsetEnvKeys: input.unsetEnvKeys,
     });

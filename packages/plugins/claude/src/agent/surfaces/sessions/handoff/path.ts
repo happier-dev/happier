@@ -29,8 +29,12 @@ export function resolveClaudeProjectId(workingDirectory: string): string {
     return `${projectId.slice(0, CLAUDE_PROJECT_ID_MAX_LENGTH)}-${Math.abs(hash).toString(36)}`;
 }
 
-export function getClaudeProjectPath(workingDirectory: string, claudeConfigDirOverride?: string | null): string {
+export function getClaudeProjectPath(
+    workingDirectory: string,
+    claudeConfigDirOverride?: string | null,
+    env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
     const claudeConfigDirTrimmed = claudeConfigDirOverride?.trim();
-    const claudeConfigDir = claudeConfigDirTrimmed || resolveClaudeConfigDir(process.env);
+    const claudeConfigDir = claudeConfigDirTrimmed || resolveClaudeConfigDir(env);
     return join(claudeConfigDir, 'projects', resolveClaudeProjectId(workingDirectory));
 }

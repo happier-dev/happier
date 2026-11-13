@@ -6,9 +6,7 @@ export function buildCodexAcpEnvOverrides(params?: Readonly<{
 }>): Record<string, string> {
   const projectDir = params?.projectDir ?? process.cwd();
   const shimsDir = resolve(projectDir, 'scripts', 'shims');
-  const explicitBasePath = typeof params?.baseEnv?.PATH === 'string' ? params.baseEnv.PATH : '';
-  const inheritedPath = typeof process.env.PATH === 'string' ? process.env.PATH : '';
-  const basePath = (explicitBasePath || inheritedPath).trim();
+  const basePath = (params?.baseEnv?.PATH ?? process.env.PATH ?? '').trim();
 
   const PATH = !basePath ? shimsDir : `${shimsDir}${delimiter}${basePath}`;
   const env: Record<string, string> = {};

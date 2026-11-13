@@ -57,6 +57,25 @@ type SessionParamsWithCredentials =
   }>;
 
 describe('bindClaudeAgentSdkFallbackSession', () => {
+  it.each([90, 180])('aligns SDK permission hooks with the admitted Session ceiling (%s seconds)', async seconds => {
+    const exec = createSdkExecFixture();
+    const hooks = createSessionHooksFixture();
+    const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service,
+      { exec: exec.service, sessionHooks: hooks.service });
+    const operations = createClaudeAgentSdkProviderOperations({ ctx, directory: '/tmp/claude-project',
+      launchEnv: { HAPPIER_CLAUDE_PERMISSION_HOOK_TIMEOUT_SECONDS: String(seconds) },
+      happierSessionId: `sdk-permission-ceiling-${seconds}`, permissionMode: 'default', unlistedTools: 'deny' });
+    try {
+      await operations.sendProviderTurnPrompt('hello');
+      const server = hooks.service.startServer.mock.calls[0]?.[0];
+      const pluginFiles = hooks.service.createPluginDir.mock.calls[0]?.[0].files ?? [];
+      const installedHooks = pluginFiles.find((file: { path: string }) => file.path === 'hooks/hooks.json')?.json;
+      expect(server.permissionRequestTimeoutMs).toBe(seconds * 1000);
+      expect(installedHooks.hooks.PermissionRequest[0].hooks[0].timeout).toBe(seconds);
+      expect(installedHooks.hooks.PreToolUse[0].hooks[0].timeout).toBe(seconds);
+    } finally { await operations.disposeProviderSession(); }
+  });
+
   it('holds UserPromptSubmit until the accepted host Turn has been published', async () => {
     const exec = createSdkExecFixture();
     const publication = createDeferred<void>();

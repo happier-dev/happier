@@ -5,6 +5,7 @@ import {
   remainingTerminalHostDeadlineMs,
 } from '../terminalHost/deadline';
 import { buildScopedProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 import { acquireZellijActionSlot } from './actionLimiter';
 
@@ -88,7 +89,7 @@ const DEFAULT_ZELLIJ_ACTION_MAX_CONCURRENCY = 4;
 
 function buildZellijEnv(params: ZellijActionParams): NodeJS.ProcessEnv {
   return buildScopedProcessEnv({
-    baseEnv: process.env,
+    baseEnv: sessionProcessEnvironment(),
     explicitEnv: params.env,
     unsetEnvKeys: params.unsetEnvKeys,
   });

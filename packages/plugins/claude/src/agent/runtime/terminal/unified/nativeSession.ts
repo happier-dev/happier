@@ -15,7 +15,6 @@ import {
 } from '../../../../protocol/remoteSettings.js';
 
 import { isolateClaudeRuntimeAuthEnv } from '../../../auth/services/runtime/env.js';
-import { resolveClaudeConfigDirOverride } from '../../../environment.js';
 import { getClaudeProjectPath } from '../../../surfaces/sessions/handoff/path.js';
 import {
   createClaudeNativeAgentSdkContext,
@@ -134,7 +133,8 @@ export function resolveClaudeNativeUnifiedResume(input: Readonly<{
       transcriptPath: join(
         getClaudeProjectPath(
           input.request.cwd,
-          resolveClaudeConfigDirOverride({ ...input.launchEnv }),
+          undefined,
+          input.launchEnv,
         ),
         `${providerSessionId}.jsonl`,
       ),
