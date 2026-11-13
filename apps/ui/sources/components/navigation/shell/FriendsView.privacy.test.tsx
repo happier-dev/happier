@@ -46,8 +46,8 @@ it('withdraws private shared Sessions from People and restores them after sharin
     const serverId = await homes.addHome({ name: 'People', serverUrl: 'https://people-privacy.test', accountId: 'viewer' });
     await homes.selectHomes([serverId]);
     storage.setState({ isDataReady: true, profile: { ...previous.profile, id: 'viewer' }, sessions: {
-        private: createSessionFixture({ id: 'private', serverId, owner: 'friend', metadata: { name: 'Secret launch', path: '/secret' } }),
-        public: createSessionFixture({ id: 'public', serverId, owner: 'friend', metadata: { name: 'Public plan', path: '/public' } }),
+        private: createSessionFixture({ id: 'private', serverId, owner: 'friend', metadata: { name: 'Secret launch', path: '/secret', host: 'tester.local' } }),
+        public: createSessionFixture({ id: 'public', serverId, owner: 'friend', metadata: { name: 'Public plan', path: '/public', host: 'tester.local' } }),
     } });
     const screen = await renderScreen(<InjectedAuthProvider credentials={null}><FriendsView /></InjectedAuthProvider>);
     expect(screen.getTextContent()).toContain('Secret launch');

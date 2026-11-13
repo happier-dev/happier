@@ -1,7 +1,7 @@
 import type { SocketRpcAuthorizationContext } from '@happier-dev/protocol/rpc';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import type { Encryption, EncryptionGenerationScopeAuthority, EncryptionScopeInput } from '@/sync/encryption/encryption';
+import type { Encryption, EncryptionGenerationScope, EncryptionGenerationScopeAuthority, EncryptionScopeInput } from '@/sync/encryption/encryption';
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import type { Metadata } from '@happier-dev/session-core/state';
 import type { CapturedServerReadTransport } from './capturedServerReadTransport';
@@ -83,7 +83,8 @@ export type ScopedServerRpcContext = Readonly<{
     /** Borrow-safe HTTP reads from this captured Home/credential selection. */
     readTransport?: CapturedServerReadTransport;
     accountEncryptionObservation?: AccountEncryptionObservationBinding;
-    encryption: ScopedRpcEncryptionContext | null;
+    /** The Account encryption owner: Machine material plus the Session reader a Session-scoped stream opens. */
+    encryption: (ScopedRpcEncryptionContext & ScopedRpcSessionEncryptionContext) | null;
 }>;
 
 export type ResolvedServerRpcContext = ActiveServerRpcContext | ScopedServerRpcContext;
@@ -118,7 +119,7 @@ export type ScopedRpcSessionEncryptionContext = Readonly<{
     initializeSessions: (
         keys: Map<string, Uint8Array | null>,
         scope?: EncryptionScopeInput,
-    ) => Promise<void>;
+    ) => Promise<EncryptionGenerationScope | null | void>;
     getSessionEncryption: (sessionId: string) => ScopedSessionEncryption | null | undefined;
 }> & EncryptionGenerationScopeAuthority;
 

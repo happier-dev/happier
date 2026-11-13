@@ -12,6 +12,7 @@ import {
     computePluginUiArtifactFileSetSha256DigestV1,
     computePluginUiArtifactSha256DigestV1,
     PluginUiArtifactDigestV1Schema,
+    type PluginUiExecutableArtifactV2,
 } from '@happier-dev/protocol/plugins/ui';
 import { DaemonPluginUiArtifactBytesReadResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
@@ -88,13 +89,13 @@ function fixture(input: Readonly<{
     const artifactId = 'native-preview-artifact';
     const entryPath = `react-native/${artifactId}/entry.cjs.bundle`;
     const entryBytes = input.entryBytes ?? new TextEncoder().encode('// entry bundle bytes');
-    const files = [
+    const files: PluginUiExecutableArtifactV2['files'] = [
         {
             relativePath: entryPath,
             digest: computePluginUiArtifactSha256DigestV1(entryBytes),
             byteSize: entryBytes.byteLength,
         },
-    ] as const;
+    ];
     const artifactDigest = computePluginUiArtifactFileSetSha256DigestV1([
         { relativePath: entryPath, bytes: entryBytes },
     ]);
@@ -188,7 +189,7 @@ function fixture(input: Readonly<{
         files,
         digest: artifactDigest,
         builtWith: { bundler: 'esbuild' as const, version: '0.25.0' },
-        executable: { exports: ['renderSurface'] as const },
+        executable: { exports: ['renderSurface'] },
         hostUiApiRange: '^1.0.0',
     };
     const origin = {

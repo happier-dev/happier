@@ -291,10 +291,11 @@ async function answerApprovalSessionPublication(writer: ReturnType<typeof requir
     // Terminal publication is external Session IO too; keep its real requester
     // crypto and advertised input contract instead of replacing sessionSendMessage.
     const published = new Set<string>();
+    if (!writer.serverIdentityId) throw new Error('Expected Home identity');
     for (const notificationActionId of ['action.spec.get', 'session.message.send'] as const) {
         const notificationBoundary = await createExternalActionAccountHttpBoundary({ serverUrl: writer.endpointUrl,
             serverIdentityId: writer.serverIdentityId, accountId: writer.accountId,
-            machineId: boundary.machine.id, installationId: boundary.machine.installationId,
+            machineId: boundary.machine.id, installationId: boundary.machine.installationId ?? undefined,
             actionId: notificationActionId, tokenEpoch: 0, requesterInvocation: 'required',
             ...(encryption ? { encryption } : {}), execute: (notificationInput, transport) => {
                 expect(transport.invocation).toMatchObject({ surface: 'mcp', authority: 'account_automation', caller: { kind: 'host' } });
@@ -511,11 +512,12 @@ it.each(['add', 'remove', 'verify', 'invalid target'] as const)(
     const detail = createDeploymentEnvironmentDetailV1();
     const actionId = scenario === 'remove' ? 'deployments.domains.remove'
         : scenario === 'verify' ? 'deployments.domains.verify' : 'deployments.domains.add';
+    const domainId = 'local-domain';
     const input = DeploymentActionInputSchemasV1[actionId].parse({ serverId, environmentId: detail.environment.id,
-        domainId: 'local-domain', expectedRevision: detail.environment.revision, requestKey: 'local-domain-request',
+        domainId, expectedRevision: detail.environment.revision, requestKey: 'local-domain-request',
         ...(actionId === 'deployments.domains.add' ? { targetLinkId: scenario === 'invalid target' ? 'missing-target' : detail.targetLinks[0]!.targetLink.id,
             expectedTargetLinkRevision: 1, ...content } : { expectedDomainRevision: 1 }) });
-    const domain = { v: 1 as const, id: input.domainId, environmentId: detail.environment.id,
+    const domain = { v: 1 as const, id: domainId, environmentId: detail.environment.id,
         targetLinkId: detail.targetLinks[0]!.targetLink.id, revision: 1, state: 'active' as const,
         ...content, createdByAccountId: 'owner', createdAtMs: 1, updatedAtMs: 1 };
     const success = DeploymentActionOutputSchemasV1[actionId].parse({ ok: true,
@@ -1144,7 +1146,7 @@ it.each(['historical own UI', 'web terminal Session'] as const)('consumes one ap
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'create-agent-source', binding: {
         accountId: writer.accountId, authentication: { kind: 'terminal', tokenEpoch: 0 }, accountEncryptionMode: encryption ? 'e2ee' : 'plain',
         serverIdentityId: writer.serverIdentityId, machineId: target.machineId, custodianAccountId: writer.accountId,
-        installationId: boundary.machine.installationId, actionId, requestId: envelope.requestId, target,
+        installationId: boundary.machine.installationId ?? undefined, actionId, requestId: envelope.requestId, target,
         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
         sessionActionOrigin: { v: 1, caller, sourceTurnId: 'create-agent-turn', callerPermissionMode: 'default', requestId: envelope.requestId },
         sessionActionSource: { machineId: target.machineId, installationId: boundary.machine.installationId },
@@ -1200,7 +1202,7 @@ it('saves a person’s own UI Variables under Account Ask without a self-approva
         set: [{ purpose: 'variable', phase: 'runtime', name: 'PORT', source: { kind: 'value', value: '3000' } }], remove: [] });
     const effects: unknown[] = [];
     const boundaryObservations: unknown[] = [];
-    const result = { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1 };
+    const result = DeploymentActionOutputSchemasV1[actionId].parse({ ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1 });
     const { createApprovalArtifact } = await import('@/sync/ops/actions/approvalArtifactWriter');
     const { createActionExecutorBoundaryFixture } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
     const receiver = createActionExecutor(createActionExecutorBoundaryFixture({
@@ -1227,7 +1229,7 @@ it('saves a person’s own UI Variables under Account Ask without a self-approva
                 actionCaller: transport.invocation.caller, presentUserConfirmation: transport.invocation.presentUserConfirmation,
                 serverId, serverIdentityId: writer.serverIdentityId, runtimeAccountId: writer.accountId,
                 externalActionTarget: transport.target, externalActionExecutionAuthorization: receivingRequest.executionAuthorization,
-                signExternalActionApprovalInput: input => boundary.signApprovalInput(input),
+                signExternalActionApprovalInput: ({ authorization, ...signed }) => boundary.signApprovalInput({ ...signed, authorizationToken: authorization.token }),
                 actionRequestId: transport.requestId, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
                     actions: { [actionId]: { approvalRequiredSurfaces: ['ui', 'agent'] } } }) });
             expect(executed, JSON.stringify({ receiverOk: executed.ok,
@@ -1343,7 +1345,7 @@ it.each(['plain value', 'Saved Secret selection', 'Saved Secret selection with p
     const receiverResults: { ok: boolean; errorCode?: string }[] = [];
     const { resolveApprovalExecutor } = await import('@happier-dev/protocol/approvals/resolveApprovalExecutor');
     let approvalPlacement: ReturnType<typeof resolveApprovalExecutor> | undefined;
-    const result = { ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1 };
+    const result = DeploymentActionOutputSchemasV1[actionId].parse({ ok: true, environmentId: detail.environment.id, revision: detail.environment.revision + 1 });
     const approvalsCreate: NonNullable<ActionExecutorDeps['approvalsCreate']> = ({ request }) => {
         approvalPlacement = resolveApprovalExecutor(request);
         return createApprovalArtifact({ request, accountId: writer.accountId,
@@ -1397,7 +1399,7 @@ it.each(['plain value', 'Saved Secret selection', 'Saved Secret selection with p
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'binding-agent-source', binding: {
         accountId: writer.accountId, authentication: { kind: terminalProposal ? 'terminal' : 'account', tokenEpoch: 0 }, accountEncryptionMode: encryption ? 'e2ee' : 'plain',
         serverIdentityId: writer.serverIdentityId, machineId: target.machineId, custodianAccountId: writer.accountId,
-        installationId: boundary.machine.installationId, actionId: proposalActionId, requestId, target,
+        installationId: boundary.machine.installationId ?? undefined, actionId: proposalActionId, requestId, target,
         ...(!publicProposal ? { environmentId: detail.environment.id } : {}),
         requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
         sessionActionOrigin: { v: 1, caller, sourceTurnId: 'binding-agent-turn', callerPermissionMode: null, requestId },

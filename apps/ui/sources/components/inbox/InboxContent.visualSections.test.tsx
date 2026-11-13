@@ -886,7 +886,7 @@ describe('InboxContent renders the canonical item model in three views (C1 L10, 
     it('tells a partial source against the view it is in: an empty tab is unavailable, never "nothing here"', async () => {
         const { InboxContent } = await import('./InboxContent');
         const retry = vi.fn();
-        const model = { ...createModel(), artifactSource: { phase: 'partial' as const, retry } };
+        const model = { ...createModel(), artifactSource: { scope: null, phase: 'partial' as const, retry } };
 
         // Mentions holds nothing retained: the state replaces it, with its own retry and no calm empty state.
         const mentions = await renderScreen(<InboxContent model={model} view="mentions" />, { wrapper: PagePresentation });
@@ -926,7 +926,7 @@ describe('InboxContent renders the canonical item model in three views (C1 L10, 
 
     it('shows a first read in Mentions and Updates as loading, not as a blank page', async () => {
         const { InboxContent } = await import('./InboxContent');
-        const model = { ...createModel(), isLoading: true, hasPrimaryAttention: true, artifactSource: { phase: 'loading' as const, retry: () => undefined } };
+        const model = { ...createModel(), isLoading: true, hasPrimaryAttention: true, artifactSource: { scope: null, phase: 'loading' as const, retry: () => undefined } };
         for (const view of ['mentions', 'updates'] as const) {
             const screen = await renderScreen(<InboxContent model={{ ...model, items: [], friendRequests: [], openUsageNotices: [] }} view={view} />, { wrapper: PagePresentation });
             expect(screen.tree.findAllByType(ActivitySpinner)).toHaveLength(1);

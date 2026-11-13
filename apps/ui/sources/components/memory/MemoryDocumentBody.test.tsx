@@ -598,6 +598,7 @@ it.each(['private', 'grant', 'public', 'unknown'] as const)(
 it('invites a first decision on an empty Memory page and opens the existing draft', async () => {
   await settleInitialArtifactInventory();
   const ref = await seedDocument({ v: 1, index: [], topics: [] });
+  if (!connection) throw new Error('Expected the Memory Home connection fixture');
   const screen = await renderScreen(<InjectedAuthProvider credentials={connection.credentials}>
     <MemoryDocumentScreen artifactId={ref.artifactId} serverId={serverId} />
   </InjectedAuthProvider>);
@@ -612,6 +613,7 @@ it('explains an unknown audience, keeps saving unavailable and retries the admit
   const ref = await seedDocument({ v: 1, index: [fact('one', 'Keep this decision.')], topics: [] });
   const grantsPath = `/v1/artifacts/${ref.artifactId}/access/grants`;
   homes.answer(serverId, grantsPath, { status: 503, body: { error: 'database_connection_unavailable' } });
+  if (!connection) throw new Error('Expected the Memory Home connection fixture');
   const screen = await renderScreen(<InjectedAuthProvider credentials={connection.credentials}>
     <MemoryDocumentScreen artifactId={ref.artifactId} serverId={serverId} />
   </InjectedAuthProvider>);

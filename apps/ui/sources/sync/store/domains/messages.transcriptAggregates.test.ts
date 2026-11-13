@@ -8,10 +8,12 @@ import type { Session } from '../../domains/state/storageTypes';
 import type { StoreGet, StoreSet } from './_shared';
 import type { MessagesDomain } from './messages';
 import type { SessionPending } from './pending';
+import type { SessionListRenderableDelta } from './sessionListIndexFinalization';
 
 type HarnessState = MessagesDomain & {
     sessions: Record<string, Session>;
     sessionPending: Record<string, SessionPending>;
+    sessionListRenderableDelta: SessionListRenderableDelta;
     sessionListRowsByServerId: Readonly<Record<string, Readonly<Record<string, SessionListRenderableSession>>>>;
     ordinarySessionListMembershipByServerId: Readonly<Record<string, readonly string[] | undefined>>;
     sessionListIndexByServerId: Readonly<Record<string, SessionListIndexItem[] | null | undefined>>;
@@ -125,6 +127,7 @@ async function createHarness() {
         ...domain,
         sessions: { s1: createSession() },
         sessionPending: {},
+        sessionListRenderableDelta: { revision: 0, changedSessionIds: [], removedSessionIds: [], rebuiltSessionListIndex: false },
         sessionListRowsByServerId: { server_1: { s1: renderable } },
         ordinarySessionListMembershipByServerId: { server_1: ['s1'] },
         sessionListIndexByServerId: { server_1: null },

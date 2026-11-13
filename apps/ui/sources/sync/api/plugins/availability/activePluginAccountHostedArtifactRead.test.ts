@@ -65,11 +65,11 @@ const artifactGraph = Object.freeze({
     artifactId: slot.artifactId,
     tier: slot.tier,
     entry: entryPath,
-    files: Object.freeze([{
+    files: [{
         relativePath: entryPath,
         digest: entryDigest,
         byteSize: entryBytes.byteLength,
-    }]),
+    }],
     digest: artifactDigest,
     builtWith: Object.freeze({ staging: 'staticDirectory' as const }),
     hostUiApiRange: '^1.0.0',
@@ -374,11 +374,11 @@ describe('active Account-hosted plugin Artifact reader', () => {
                 mode: 'plain',
                 graph: Object.freeze({
                     ...artifactGraph,
-                    files: Object.freeze([{
+                    files: [{
                         relativePath: entryPath,
                         digest: computePluginUiArtifactSha256DigestV1(otherBytes),
                         byteSize: otherBytes.byteLength,
-                    }]),
+                    }],
                 }),
             });
 

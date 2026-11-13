@@ -56,6 +56,7 @@ import { DiscussionReadResponseV1Schema } from '@happier-dev/protocol/discussion
 import { readRegisteredDiscussionRepository } from '@/sync/ops/discussions/discussionRepositoryRegistry';
 
 import { InboxModelProvider, useInboxModel, type InboxModel } from './useInboxModel';
+import { useInboxExecutionRunCount } from './useInboxExecutionRunSource';
 import { useInboxDiscussionSource } from './useInboxDiscussionSource';
 import { AppShellPluginUiProjectionValueProvider, type AppShellPluginUiProjectionValue } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { EMPTY_PLUGIN_UI_PROJECTION } from '@/sync/domains/plugins/ui/projection';
@@ -130,6 +131,7 @@ function page(runs: ReturnType<typeof createWorkflowRunSummaryFixture>[]): Workf
 }
 
 let model: InboxModel | null = null;
+let executionRunCount: number | null = null;
 let managedMachines: ManagedMachineV1[] = [];
 let managedMachineReads = 0;
 const readExecutor = createActionExecutor(createActionExecutorBoundaryFixture({ appShellAction: invokeMountedWorkRead }));
@@ -139,6 +141,7 @@ function readInbox(accountId = 'account-a') {
 }
 function Probe(): null {
     model = useInboxModel();
+    executionRunCount = useInboxExecutionRunCount();
     return null;
 }
 
@@ -999,6 +1002,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         appliedSnapshot = runtime.getActiveServerSnapshot;
         (await import('@/components/workflows/library/workflowLibraryReads')).resetWorkflowLibraryReadsForTests();
         model = null;
+        executionRunCount = null;
         executed.length = 0;
         listRuns.mockReset();
         automationBoundary.request.mockReset();
@@ -1390,7 +1394,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         expect(model!.showCaughtUp).toBe(!sourceFailed);
         expect(model!.items.filter(item => item.focus.id === run.runId)).toEqual([]);
         expect(cold.findByTestId(`inbox.run.${run.runId}`)).toBeNull();
-        expect(model!.executionRunAttention.count).toBe(0);
+        expect(executionRunCount).toBe(0);
         const followReads = executionRunBoundary.follows.mock.calls.length;
         const sourceReads = executionRunBoundary.get.mock.calls.length;
         executionRunBoundary.get.mockResolvedValue({ run });
@@ -1680,7 +1684,9 @@ describe('useInboxModel work groups (ORC R-10)', () => {
     it.each([undefined, 'Design review'])('keeps serialized Artifact content out of notice details (%s)', async body => {
         const { InboxItemDetail } = await import('@/components/inbox/detail/InboxItemDetail');
         const fixture = createAccountNoticeArtifactFixture({ header: { page: undefined, body } });
-        const header = { ...fixture.header, excerpt: typeof fixture.body === 'string' ? fixture.body : undefined };
+        // The stored header carries the notice's page/body facts beyond the generic Artifact header shape.
+        const header: NonNullable<typeof fixture.header> & { excerpt?: string; page?: unknown; body?: unknown } =
+            { ...fixture.header!, excerpt: typeof fixture.body === 'string' ? fixture.body : undefined };
         delete header.page;
         if (body === undefined) delete header.body;
         const artifact = { ...fixture, header, rawHeader: header };
@@ -1699,7 +1705,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         const serverId = appliedSnapshot().serverId;
         function notice(id: string, resolved = false) {
             const fixture = createAccountNoticeArtifactFixture({ id, header: { type: 'decision', page: undefined, body: 'Last known detail', resolved } });
-            const header = { ...fixture.header };
+            const header = { ...fixture.header! };
             delete header.page;
             return { ...fixture, header, rawHeader: header };
         }
@@ -1860,16 +1866,17 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         const origin = { v: 1, authority: 'present_user', surface: 'ui', caller: { kind: 'host' },
             serverId, accountId: 'account-a', machineId: 'controller-a', target: { kind: 'machine', machineId: 'controller-a' },
             actionId: 'machines.managed.delete', requestId: 'delete-request' } as const;
+        const deleteArgs = { homeId: serverId, managedId: 'managed-a', when: 'now', expectedRevision: 3,
+            intent: 'delete', reviewedDependencies: true };
         const deleteRequest = ApprovalRequestV2Schema.parse({
             v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1, createdBy: { surface: 'cli' }, requestedSurface: 'ui',
             actionId: 'machines.managed.delete',
-            actionArgs: { homeId: serverId, managedId: 'managed-a', when: 'now', expectedRevision: 3,
-                intent: 'delete', reviewedDependencies: true },
+            actionArgs: deleteArgs,
             summary: 'Delete managed machine', executionOriginV1: origin,
         });
         // An Automation Run's Ask groups under its Automation; the origin travels in the header.
         const automationRequest = ApprovalRequestV2Schema.parse({ ...deleteRequest, summary: 'Delete for automation',
-            actionArgs: { ...deleteRequest.actionArgs, managedId: 'managed-b' },
+            actionArgs: { ...deleteArgs, managedId: 'managed-b' },
             executionOriginV1: { ...origin, authority: 'account_automation', requestId: 'automation-request', runId: 'automation-run-1',
                 caller: { kind: 'automationRun', runId: 'automation-run-1', automationId: 'automation-1', cause: { kind: 'manual', invokedAt: 1 } } } });
         const row = (id: string, request: typeof deleteRequest, at: number): DecryptedArtifact => {

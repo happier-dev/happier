@@ -113,13 +113,13 @@ describe('separate users reviewed setup', () => {
         { setup: { outcome: 'not_applied', reasonCode: 'native_effect_failed', failure: {
             kind: 'native_effect_failed', reason: 'required_fact_unavailable', requiredFact: 'commandExecutable',
             remedy: 'Install the acl package on this Machine, then try again.' } },
-            message: () => 'Install the acl package on this Machine, then try again.' },
+            message: (): string => 'Install the acl package on this Machine, then try again.' },
         { setup: { outcome: 'not_applied', reasonCode: 'mode_none' },
-            message: () => t('machines.sharing.fallback.adminDisabled') },
+            message: (): string => t('machines.sharing.fallback.adminDisabled') },
         { setup: { outcome: 'not_applied', reasonCode: 'not_preauthorized' },
-            message: () => t('machines.sharing.fallback.adminCheckRequired') },
+            message: (): string => t('machines.sharing.fallback.adminCheckRequired') },
         { setup: { outcome: 'not_applied', reasonCode: 'managed_cli_unavailable' },
-            message: () => t('machines.sharing.fallback.managedCliRequired') },
+            message: (): string => t('machines.sharing.fallback.managedCliRequired') },
     ] as const)('explains the setup prerequisite when the reviewed Apply is refused: $setup.reasonCode', async ({ setup, message }) => {
         const preview = { kind: 'ready', policy: { enabled: false }, metadataVersion: 1, status: { kind: 'disabled' },
             plan: { roots: [], ancestorAcls: [], sessionsToReplace: 0, requiresAdmin: true, planDigest: 'reviewed' } } as const;
@@ -184,19 +184,19 @@ describe('separate users reviewed setup', () => {
         { result: { ...unavailable, setup: { outcome: 'not_applied', reasonCode: 'native_check_unavailable',
             failure: { kind: 'native_check_unavailable', reason: 'required_fact_unavailable', requiredFact: 'commandExecutable',
                 remedy: 'Install the acl package on this Machine, then try again.' } } },
-            message: () => 'Install the acl package on this Machine, then try again.' },
+            message: (): string => 'Install the acl package on this Machine, then try again.' },
         { result: { ...unavailable, setup: { outcome: 'not_applied', reasonCode: 'native_protocol_invalid' } },
-            message: () => t('errors.machineNativeProtocolInvalid') },
+            message: (): string => t('errors.machineNativeProtocolInvalid') },
         { result: { ...unavailable, setup: { outcome: 'not_applied', reasonCode: 'mode_none',
             recovery: { kind: 'configure_admin_access', mode: 'preauthorized' } } },
-            message: () => t('machines.sharing.fallback.adminDisabled') },
+            message: (): string => t('machines.sharing.fallback.adminDisabled') },
         { result: { ...unavailable, setup: { outcome: 'not_applied', reasonCode: 'not_preauthorized' } },
-            message: () => t('machines.sharing.fallback.adminCheckRequired') },
+            message: (): string => t('machines.sharing.fallback.adminCheckRequired') },
         { result: { ...unavailable, setup: { outcome: 'not_applied', reasonCode: 'managed_cli_unavailable',
             recovery: { kind: 'install_managed_cli', executablePath: '/opt/happier/current/happier' } } },
-            message: () => t('machines.sharing.fallback.managedCliRequired') },
+            message: (): string => t('machines.sharing.fallback.managedCliRequired') },
         { result: { kind: 'unavailable', status: { kind: 'unavailable', code: 'payload_not_accessible' } },
-            message: () => t('machines.sharing.fallback.prerequisites.payload_not_accessible') },
+            message: (): string => t('machines.sharing.fallback.prerequisites.payload_not_accessible') },
     ] satisfies Array<{ result: MachineAgentIsolationPreviewResultV1; message: () => string }>;
 
     it.each(refusals)('shows the daemon prerequisite and remedy for $result and permits a read-only recheck', async ({ result, message }) => {

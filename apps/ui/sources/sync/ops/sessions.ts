@@ -1090,12 +1090,16 @@ export async function sessionAbort(sessionId: string, options?: Readonly<{ serve
     applySessionThinkingDecisionRecovery(sessionId, recoveryScope, serverId);
 }
 
+/** Omits per approval variant, so `approved` keeps its discriminant instead of collapsing to `boolean | undefined`. */
+export type SessionPermissionResponseParams<Omitted extends string> = SessionPermissionRespondRpcParamsV1 extends infer Params
+    ? Params extends unknown ? Omit<Params, Omitted> : never : never;
+
 /**
  * Respond to one Session permission request, including the composed Stop action.
  */
 export async function sessionRespondToPermission(
     sessionId: string,
-    params: Omit<SessionPermissionRespondRpcParamsV1, 'answers'>,
+    params: SessionPermissionResponseParams<'answers'>,
     options?: Readonly<{ serverId?: string; signal?: AbortSignal; onIssued?: () => void }>,
 ): Promise<void> {
     if (params.decision !== 'abort') {
@@ -1129,7 +1133,7 @@ type ScopedSessionPermissionResponseOptions = Readonly<{
 /** Respond to an exact notification request without rebinding its turn to mounted UI state. */
 export async function sessionRespondToPermissionWithServerAccountScope(
     sessionId: string,
-    params: Omit<SessionPermissionRespondRpcParamsV1, 'answers' | 'decision' | 'turnId'> & Readonly<{
+    params: SessionPermissionResponseParams<'answers' | 'decision' | 'turnId'> & Readonly<{
         turnId: string;
         decision?: Exclude<SessionPermissionRespondRpcParamsV1['decision'], 'abort'>;
     }>,
@@ -1161,7 +1165,7 @@ function assertSessionInteractionResponseApplied(result: unknown): void {
 
 async function sendSessionPermissionResponse(
     sessionId: string,
-    params: Omit<SessionPermissionRespondRpcParamsV1, 'answers'>,
+    params: SessionPermissionResponseParams<'answers'>,
     options?: Readonly<{ serverId?: string; signal?: AbortSignal; onIssued?: () => void }> | ScopedSessionPermissionResponseOptions,
 ): Promise<void> {
     const exactScope = options && 'scope' in options ? options : null;

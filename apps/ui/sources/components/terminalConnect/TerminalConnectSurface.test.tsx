@@ -126,7 +126,8 @@ describe('terminal link problems', () => {
     it('names each problem by its own cause', async () => {
         const titles = await Promise.all((['invalid', 'expired', 'update_required'] as const).map(async (linkState) => {
             const { terminalLinkProblemMessage } = await import('./terminalLinkProblem');
-            return terminalLinkProblemMessage({ linkState, signedIn: false, navigate: vi.fn() }).title;
+            const state = terminalLinkProblemMessage({ linkState, signedIn: false, navigate: vi.fn() });
+            return state.kind === 'message' ? state.title : null;
         }));
         expect(titles).toEqual(['terminal.invalidConnectionLink', 'modals.authRequestExpired', 'connect.updateRequiredTitle']);
     });

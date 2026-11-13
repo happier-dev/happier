@@ -10,14 +10,16 @@ const getCredentialsForServerUrlMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => {
     const actual = await importOriginal<typeof import('@/utils/system/runtimeFetch')>();
-    return {
+    // Named first so the getter's `this` is this object, not vi.mock's Partial<unknown> factory type.
+    const mocked = {
         ...actual,
         runtimeFetch: async (input: Parameters<typeof actual.runtimeFetch>[0], init?: RequestInit) => {
             if (new URL(String(input)).pathname === '/v1/auth/ping') return Response.json({});
             return await runtimeFetchMock({ url: input, init });
         },
-        get runtimeFetchManualResponse() { return this.runtimeFetch; },
+        get runtimeFetchManualResponse(): typeof import('@/utils/system/runtimeFetch').runtimeFetchManualResponse { return this.runtimeFetch; },
     };
+    return mocked;
 });
 
 vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {

@@ -6,6 +6,7 @@ import { bindContextualActionToolInput } from '@happier-dev/protocol/actions/act
 import type { OpenApprovalArtifactForSession } from '@/sync/domains/artifacts/approvalArtifacts';
 import type { DeclinedApprovalDisposition } from '@/components/tools/shell/presentation/resolveToolStatusIndicatorKind';
 import type { PermissionToolCallMessageLocation } from '@/utils/sessions/permissions/permissionToolCallLocationTypes';
+import { isHistoricalPublishApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 
 function stableSerialize(value: unknown): string | null {
     if (typeof value === 'undefined') return null;
@@ -34,7 +35,7 @@ const primitiveToolInputs = new WeakMap<ToolCall, Readonly<{ input: unknown; val
 function approvalInputContext(request: OpenApprovalArtifactForSession): InputContext {
     const { approval } = request;
     const declared = approval.origin?.toolInput;
-    const binding = approval.v === 2 ? approval.executionOriginV1.externalActionExecutionAuthorization?.binding : undefined;
+    const binding = approval.v === 2 && !isHistoricalPublishApprovalRequestV2(approval) ? approval.executionOriginV1.externalActionExecutionAuthorization?.binding : undefined;
     // Execution placement can target another Machine; only admitted originating Session custody
     // establishes its contextual Machine. Never infer that default from the approved operand.
     const machineId = binding && 'sessionActionSource' in binding

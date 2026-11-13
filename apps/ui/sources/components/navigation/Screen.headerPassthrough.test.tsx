@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import * as React from 'react';
-import { NavigationContainer, useNavigation } from '@react-navigation/native';
+import { NavigationContainer, useNavigation, type NavigationProp, type ParamListBase } from '@react-navigation/native';
 import { SafeAreaProviderCompat, Screen } from '@react-navigation/elements';
 import { Pressable, View } from 'react-native';
 import { describe, expect, it, vi } from 'vitest';
@@ -10,7 +10,8 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 vi.unmock('@react-navigation/native');
 
 function Subject({ transparent }: { transparent: boolean }) {
-    const navigation = useNavigation();
+    // The elements Screen takes a navigator's navigation object; name that view through the library's typed hook.
+    const navigation = useNavigation<NavigationProp<ParamListBase>>();
     return (
         <SafeAreaProviderCompat>
             <Screen

@@ -66,7 +66,7 @@ async function renderTranscriptMarkdown(markdown: string) {
 }
 
 /** Marks the math block and every leaf glyph run of each array cell, so the browser reports their boxes. */
-function tagMath(host: HTMLElement): string[][] {
+function tagMath(host: HTMLElement): string[][][] {
     host.querySelector('[role="math"]')?.setAttribute('data-testid', 'math-block');
     [...host.querySelectorAll('p')].find(p => p.textContent?.includes('/an/extremely/'))?.setAttribute('data-testid', 'long-path');
     return [...host.querySelectorAll('mtable > mtr')].map((row, r) => [...row.children].map((cell, c) => {

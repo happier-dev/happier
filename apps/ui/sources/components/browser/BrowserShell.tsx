@@ -825,9 +825,9 @@ export function BrowserShell(props: Readonly<{
             spread={phone}
             onSelect={(emulation) => props.onCommand({
                 kind: 'setViewport',
-                commandId: createCommandId('setViewport', activeView.viewId),
-                browserSessionId: activeView.browserSessionId,
-                viewId: activeView.viewId,
+                commandId: createCommandId('setViewport', viewportView.viewId),
+                browserSessionId: viewportView.browserSessionId,
+                viewId: viewportView.viewId,
                 emulation,
             })}
         />

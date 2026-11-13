@@ -6,7 +6,7 @@ import { discussionSessionLabel, discussionWaitingSessionName } from './discussi
 
 it('suppresses incidental Discussion Session identities while retaining the addressed Session', async () => {
     const previous = storage.getState();
-    const session = createSessionFixture({ id: 'discussion-private', serverId: 'home-private', metadata: { name: 'Confidential launch', path: '/secret' } });
+    const session = createSessionFixture({ id: 'discussion-private', serverId: 'home-private', metadata: { name: 'Confidential launch', path: '/secret', host: 'tester.local' } });
     storage.setState({ sessions: { [session.id]: session } });
     try {
         expect(discussionSessionLabel(session)).toBe('Confidential launch');

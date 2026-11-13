@@ -396,7 +396,7 @@ describe('ApprovalPromptCard', () => {
     });
 
     describe('a first Computer click at Ask (lab computer CS)', () => {
-        function computerClickApproval(captureMedia: boolean): ApprovalRequest {
+        function computerClickApproval(captureMedia: boolean): ApprovalRequestV1 {
             return {
                 ...approvalRequest(),
                 actionId: 'computer.input',

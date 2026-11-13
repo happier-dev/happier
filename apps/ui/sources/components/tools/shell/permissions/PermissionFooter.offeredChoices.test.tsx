@@ -128,9 +128,11 @@ async function layOut(
 ) {
   // The footer and its choices each measure their own column; a phone column is narrow for both.
   const columns = screen.findAll(
-    (node) =>
-      node.type === 'View' &&
-      typeof node.props.onLayout === 'function',
+    (node) => {
+      // Host components carry their RN name as a string type at runtime; React's ElementType omits it.
+      const hostType: unknown = node.type;
+      return hostType === 'View' && typeof node.props.onLayout === 'function';
+    },
   );
   await act(async () => {
     for (const column of columns) column.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width, height: 40 } } });

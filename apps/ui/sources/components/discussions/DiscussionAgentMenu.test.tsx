@@ -35,7 +35,7 @@ describe('Discussion agent row menu (P2)', () => {
   afterEach(() => { menus.clear(); storage.setState(previous); });
 
   async function renderAgents(management: DiscussionParticipantManagement | null) {
-    const session = createSessionFixture({ id: 'reviewer', serverId: 'roster-home', metadata: { name: 'Reviewer', path: '/repo', flavor: 'codex' } });
+    const session = createSessionFixture({ id: 'reviewer', serverId: 'roster-home', metadata: { name: 'Reviewer', path: '/repo', flavor: 'codex', host: 'tester.local' } });
     storage.setState({ sessions: { [session.id]: session } });
     const roster = DiscussionParticipantsListResponseV1Schema.parse({ discussionId: 'thread', ownerAccountId: 'owner', access: management ? 'owner' : 'view', grants: [],
       participants: [{ participant: { kind: 'session', sessionId: session.id }, answerPolicy: 'when_addressed', createdAt: 1 }] });

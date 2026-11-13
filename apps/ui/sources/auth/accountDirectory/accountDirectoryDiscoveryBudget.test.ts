@@ -5,11 +5,15 @@ import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage
 installTokenStorageWebPlatformMocks();
 const boundary = vi.hoisted(() => ({ request: vi.fn() }));
 // The network is the boundary; feature decoding, cache and HTTP lifecycle stay real.
-vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => ({
+vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => {
+    // Named first so the getter's `this` is this object, not vi.mock's Partial<unknown> factory type.
+    const mocked = {
     ...await importOriginal<typeof import('@/utils/system/runtimeFetch')>(),
     runtimeFetch: boundary.request,
-    get runtimeFetchManualResponse() { return this.runtimeFetch; },
-}));
+    get runtimeFetchManualResponse(): typeof import('@/utils/system/runtimeFetch').runtimeFetchManualResponse { return this.runtimeFetch; },
+};
+    return mocked;
+});
 
 import { accountDirectoryAuthClient } from './accountDirectoryAuthClient';
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';

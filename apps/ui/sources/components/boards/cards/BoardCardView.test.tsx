@@ -49,7 +49,7 @@ describe('Board body facts', () => {
         const card = buildBoardCards([{ key: 'task', ref: { kind: 'task', pluginId: 'com.acme.tasks', qualifiedId: { serverId: 'home-a', id: 'task' } }, picked: true, sourced: false, available: true }], {
             nowMs: Date.now(), session: () => row, machine: () => null, workflow: () => null, workflowRun: () => null,
             machineSessionCounts: new Map(), accountScopedHome: () => true,
-            task: () => ({ title: 'Task', category: 'started', categoryLabel: 'In progress', parentItemId: null, parentTitle: null,
+            task: () => ({ title: 'Task', category: 'started', categoryLabel: 'In progress',
                 linkedSessions: [{ serverId: 'home-a', sessionId: row.id }] }),
         })[0]!;
         const screen = await renderScreen(<BoardCardView card={card} />);

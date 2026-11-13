@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import type { ExtendedStackNavigationOptions } from 'expo-router/build/layouts/StackClient';
 import { t } from '@/text';
+import type { NewSessionPresentationModeV1 } from '@/sync/domains/settings/registry/account/accountSessionCreationSettingDefinitions';
 import { createFriendsStackScreenOptions, createInboxStackScreenOptions } from '@/utils/navigation/createSocialStackScreenOptions';
 import { resolveNewSessionPickerRoutePresentation, resolveNewSessionPickerWebModalStyle, resolveNewSessionSecretRequirementRoutePresentation } from '@/components/sessions/new/navigation/newSessionPresentation';
 import { createSessionPageScreenOptions } from '@/components/navigation/sessionRouteScreenOptions';
@@ -9,7 +10,7 @@ type StackScreenOptions = ExtendedStackNavigationOptions;
 const MAIN_TAB_STACK_SCREEN_OPTIONS = { animation: 'none' } as const;
 
 /** Canonical root declarations, consumed by Expo and retained workspace destinations. */
-export function createRootStackRouteOptions(newSessionPresentationMode: 'auto' | 'screen' | 'modal'): Readonly<Record<string, StackScreenOptions>> {
+export function createRootStackRouteOptions(newSessionPresentationMode: NewSessionPresentationModeV1): Readonly<Record<string, StackScreenOptions>> {
     const options = (() => {
         const back = t('common.back');
         const cancel = t('common.cancel');

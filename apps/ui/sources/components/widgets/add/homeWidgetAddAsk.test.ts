@@ -12,7 +12,7 @@ describe('Ask the agent from Add to Home', () => {
     it('drafts the request into a new Session through the New Session seed owner and sends nothing', () => {
         const scope = { serverId: 'home', accountId: 'me' };
         const draftId = '00000000-0000-4000-8000-0000000000a4';
-        const navigate = vi.fn(() => readNewSessionDraftFromRepository({ scope, draftId }));
+        const navigate = vi.fn((_request: unknown) => readNewSessionDraftFromRepository({ scope, draftId }));
         const ask = buildHomeWidgetAddAsk({ scope, isCurrent: () => true, createDraftId: () => draftId, navigateToNewSession: navigate });
         expect(ask.draft.length).toBeGreaterThan(0);
         expect(navigate).not.toHaveBeenCalled();

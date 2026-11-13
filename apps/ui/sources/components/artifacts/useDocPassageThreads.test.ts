@@ -416,7 +416,7 @@ describe('Doc passage thread demand', () => {
         clearDiscussionRepositoryRegistryForTests();
         homes.answer(scope.serverId, 'GET /v1/discussions', { status: 503, body: { error: 'server_error' } });
         const count = () => homes.requests.filter(request => request.path.includes('anchorDocArtifactId=doc-a')).length;
-        const hook = await renderHook(({ value }: { value: DecryptedArtifact }) => useDocCollaboration(value, true), {
+        const hook = await renderHook<ReturnType<typeof useDocCollaboration>, { value: DecryptedArtifact }>(({ value }) => useDocCollaboration(value, true), {
             initialProps: { value: { ...artifact, body: undefined, bodyVersion: undefined } },
         });
         await waitForHomeGovernance(() => expect(hook.getCurrent()?.commentCountStatus).toBe('unavailable'));
@@ -443,7 +443,7 @@ describe('Doc passage thread demand', () => {
     it('reads audience only when its identity or sharing facts change, while content revisions stay live', async () => {
         const { scope, hook: seeded, artifact } = await mountedDoc(0);
         await seeded.unmount();
-        const hook = await renderHook(({ value }: { value: DecryptedArtifact }) => useDocCollaboration(value, true), {
+        const hook = await renderHook<ReturnType<typeof useDocCollaboration>, { value: DecryptedArtifact }>(({ value }) => useDocCollaboration(value, true), {
             initialProps: { value: artifact },
         });
         await waitForHomeGovernance(() => expect(hook.getCurrent()?.audience?.shared).toBe(false));
@@ -464,7 +464,7 @@ describe('Doc passage thread demand', () => {
     it('keeps an empty markdown Doc and its existing threads admitted after deleting all prose', async () => {
         const { scope, hook: seeded, artifact } = await mountedDoc(1);
         await seeded.unmount();
-        const hook = await renderHook(({ value }: { value: DecryptedArtifact }) => useDocCollaboration(value, true), {
+        const hook = await renderHook<ReturnType<typeof useDocCollaboration>, { value: DecryptedArtifact }>(({ value }) => useDocCollaboration(value, true), {
             initialProps: { value: artifact },
         });
         await waitForHomeGovernance(() => expect(hook.getCurrent()?.openCommentCount).toBe(1));

@@ -548,7 +548,7 @@ export function widgetAreaStockLayoutNameV1(
 export function buildWidgetSurfaceArtifactHeaderV1(
   layout: WidgetAreaLayoutV1,
   sortKey = 'a0',
-): Readonly<Record<string, unknown>> {
+): Readonly<Record<string, unknown> & { title: string }> {
   return {
     kind: WIDGET_SURFACE_ARTIFACT_KIND_V1,
     v: 1,

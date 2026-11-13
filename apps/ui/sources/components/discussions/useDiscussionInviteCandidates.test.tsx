@@ -52,7 +52,8 @@ describe('Discussion Invite source composition', () => {
         }
         const recentActivityAt = Date.now() - 180_000;
         const record = createPlainSessionCurrentProjectionRecordFixture({ id: 'uncached-reviewer',
-            meaningfulActivityAt: recentActivityAt,
+            // The wire record carries no separate activity stamp; list rows fall back to creation time.
+            createdAt: recentActivityAt,
             metadata: { name: 'Review the opening plan', path: '/shared-folder', host: 'review-box' } });
         boundary.http.answer(home, '/v2/sessions/query', { body: createSessionListSourceFixture({
             sessions: [{ ...record, viewer: createSessionOwnerViewerFixture(createSessionFixture({ id: record.id })) }],

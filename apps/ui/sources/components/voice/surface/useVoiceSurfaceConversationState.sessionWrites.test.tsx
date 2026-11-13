@@ -134,9 +134,11 @@ describe('useVoiceSurfaceConversationState session-store subscription', () => {
             expect(renders).toBeGreaterThan(rendersAfterMount);
 
             const carrier = getStorage().getState().sessions[carrierId]!;
+            const carrierMetadata = carrier.metadata;
+            if (!carrierMetadata) throw new Error('Expected the voice carrier metadata');
             const changeControl = async (controlSessionId: string, updatedAt: number) => act(async () => {
                 getStorage().setState(state => ({ sessions: { ...state.sessions, [carrierId]: {
-                    ...carrier, metadata: writeVoiceConversationBindingMetadata(carrier.metadata,
+                    ...carrier, metadata: writeVoiceConversationBindingMetadata(carrierMetadata,
                         { ...binding, controlSessionId, updatedAt }),
                 } } }));
             });

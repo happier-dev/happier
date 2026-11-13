@@ -64,11 +64,13 @@ describe('Save as decision from a Discussion message', () => {
       expect(screen.findByTestId('save-memory-decision.duplicate')).toBeTruthy();
       const row = f.home.boundary.list()[0];
       if (!row) throw new Error('Missing saved memory');
+      const bodyVersion = row.bodyVersion;
+      if (bodyVersion === undefined) throw new Error('Missing saved memory body revision');
       const body = MemoryDocBodyV1Schema.parse(JSON.parse(f.home.boundary.readPlainBody(row.id)!));
       f.home.boundary.beforeNextUpdate(async () => {
         expect(await memoryDocumentActions.update({ ref: { kind: 'doc', serverId: f.serverId, artifactId: row.id },
           serverId: f.serverId, accountId: row.ownerAccountId, isCurrent: () => true,
-          expectedRevision: { headerVersion: row.headerVersion, bodyVersion: row.bodyVersion } },
+          expectedRevision: { headerVersion: row.headerVersion, bodyVersion } },
         { factId: body.index[0]!.id, text: 'Concurrent decision' })).toMatchObject({ ok: true });
       });
       await save(screen);

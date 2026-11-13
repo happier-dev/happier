@@ -385,6 +385,13 @@ function expectApprovalGuidance(message: string | undefined, canApproveRequests 
     expect(message).toContain(expected.slice(1, -1));
 }
 
+/** An owner by-ID record always carries its access; the current-projection boundary requires it. */
+function withEffectiveAccess<T extends Readonly<{ effectiveAccess?: unknown }>>(record: T): T & { effectiveAccess: NonNullable<T['effectiveAccess']> } {
+    const effectiveAccess = record.effectiveAccess;
+    if (effectiveAccess === undefined || effectiveAccess === null) throw new Error('Expected the Session record access');
+    return { ...record, effectiveAccess };
+}
+
 describe('mounted Voice Brief request', () => {
     it(SIDEBAR_BRIEF_TEST, async () => {
         const serverId = account!.home.id;
@@ -451,7 +458,7 @@ describe('mounted Voice Brief request', () => {
             });
             return { ...session, viewer: createSessionOwnerViewerFixture(session) };
         });
-        const records = sessions.map(session => ({
+        const records = sessions.map(session => withEffectiveAccess({
             ...createPlainSessionByIdResponseFixture(session).session, viewer: session.viewer,
         }));
         for (const record of records) sessionHttp.replaceSession(record.id, record);
@@ -668,7 +675,7 @@ describe('mounted Voice Brief request', () => {
                         req_1: { tool: 'Bash', kind: 'permission' as const, arguments: {}, createdAt: Date.now() },
                     }, completedRequests: {} } };
                 const next = { ...changed, viewer: createSessionOwnerViewerFixture(changed) };
-                const record = { ...createPlainSessionByIdResponseFixture(next).session, viewer: next.viewer };
+                const record = withEffectiveAccess({ ...createPlainSessionByIdResponseFixture(next).session, viewer: next.viewer });
                 sessionHttp.replaceSession(next.id, record);
                 activityQueryRows = activityQueryRows.map(row => row.id === next.id ? createCompactSessionListRowFixture(record) : row);
                 expect((await hydrate(next.id)).ok).toBe(true);
@@ -750,7 +757,7 @@ describe('mounted Voice Brief request', () => {
         screen = await renderScreen(<AuthProvider initialCredentials={account!.credentials}><InboxModelBoundary><Probe /></InboxModelBoundary></AuthProvider>);
         const before = projections.at(-1)!;
         await act(async () => storage.getState().applySettingsLocal({
-            compactSessionView: !storage.getState().settings.compactSessionView,
+            alwaysShowContextSize: !storage.getState().settings.alwaysShowContextSize,
         }));
         expect(projections.at(-1)).toBe(before);
         const approvalBefore = storage.getState().settings.voice.canApproveRequests;

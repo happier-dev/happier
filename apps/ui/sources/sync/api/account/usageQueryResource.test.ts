@@ -217,7 +217,7 @@ describe('usage query captured Resource adapter', () => {
       const id = 'archived-launch';
       const session = createSessionFixture({ id, seq: 0, active: false, createdAt: nowMs - 1_000, updatedAt: nowMs - 100,
         sessionTurns: { v: 1, sessionId: id, updatedAt: nowMs - 100, turns: kind === 'started'
-          ? [{ turnId: 'completed', agentId: null, status: 'completed', startedAt: nowMs - 800,
+          ? [{ turnId: 'completed', status: 'completed', startedAt: nowMs - 800,
             terminalAt: nowMs - 600, updatedAt: nowMs - 100 }] : [] } });
       const records = usageWorkEvidence.createUsageSessionFactRecordsV1(session,
         projectSessionUsageWorkEvidence(session, [], { messagesComplete: true }));
@@ -249,31 +249,31 @@ describe('usage query captured Resource adapter', () => {
     });
 
   it('retains settled allowance rows and states when a replacement revision is partial', () => {
-    const sourceA = { bindingKind: 'account' as const, ref: { service: { pluginId: 'codex', localId: 'openai' }, accountId: 'a' } };
-    const sourceB = { bindingKind: 'account' as const, ref: { service: { pluginId: 'codex', localId: 'openai' }, accountId: 'b' } };
+    const sourceA = { bindingKind: 'account' as const, ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai' }, accountId: 'a' } };
+    const sourceB = { bindingKind: 'account' as const, ref: { service: { pluginId: 'happier.agent.codex', localId: 'openai' }, accountId: 'b' } };
     const sourceKey = (source: typeof sourceA) => `quota:${createCanonicalJsonSigningInput(source)}`;
+    const quotaRead = (source: typeof sourceA, observed: boolean) => {
+      const recordKey = { providerId: 'codex', accountSubjectId: source.ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
+      return ConnectedServiceQuotaGetResultV1Schema.parse({ source, pace: [], targets: [], waitingWork: { status: 'available', entries: [] },
+        current: observed ? { v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey, providerId: 'codex',
+          accountSubject: { kind: 'providerSubject', id: source.ref.accountId }, observedAtMs: 1, fetchedAtMs: 1,
+          staleAfterMs: 600_000, source: 'providerHttp', confidence: 'confirmed', state: 'loaded_empty', meters: [] } : null });
+    };
     const previous = {
-      quota: [
-        { source: sourceA, current: { recordId: 'record-a' } as unknown as ConnectedServiceQuotaGetResultV1['current'],
-        },
-        { source: sourceB, current: { recordId: 'record-b' } as unknown as ConnectedServiceQuotaGetResultV1['current'],
-        },
-      ],
+      quota: [quotaRead(sourceA, true), quotaRead(sourceB, true)],
       sources: [
         { source: sourceKey(sourceA), status: 'available' as const },
         { source: sourceKey(sourceB), status: 'available' as const },
       ],
     };
     const replacement = {
-      quota: [
-        { source: sourceA, current: null },
-      ],
+      quota: [quotaRead(sourceA, false)],
       sources: [
         { source: sourceKey(sourceA), status: 'pending' as const },
       ],
     };
     const merged = mergeRetainedUsageAllowance(previous, replacement);
-    expect(merged.quota.map(read => read.current?.recordId)).toEqual(['record-a', 'record-b']);
+    expect(merged.quota.map(read => read.current?.recordId)).toEqual(previous.quota.map(read => read.current!.recordId));
     expect(merged.sources).toEqual(previous.sources);
   });
 
@@ -977,7 +977,7 @@ describe('usage query captured Resource adapter', () => {
       return Response.json({ requests: input.requests.map(demand => ({ query: demand.query, sessionIds: [id] })),
         results: [{ sessionId: id, ...(input.readWorkFacts ? { workFacts: { session: {
           id, seq: record.seq, createdAt: 0, updatedAt: 900, active: false,
-          metadataVersion: record.metadataVersion, agentStateVersion: record.agentStateVersion, metadataLayoutVersion: 1,
+          metadataVersion: record.metadataVersion, agentStateVersion: record.agentStateVersion!, metadataLayoutVersion: 1,
           encryptionMode: 'plain' as const, dataEncryptionKey: null, viewerRole: 'owner' as const,
           access: ownerSessionAccess.effectiveAccess }, records: [{ kind: 'work', content: { t: 'plain' as const, v: projectNativeJsonValueForTransport(
             status === 'malformed' ? { v: 999 } : { v: 1, kind: 'work', seq: status === 'stale' ? 1 : 2, evidence: { status: 'partial',
@@ -1114,7 +1114,7 @@ describe('usage query captured Resource adapter', () => {
       const response = { requests: input.requests.map(demand => ({ query: demand.query, sessionIds: [id] })), results: [{ sessionId: id,
         ...(input.readWorkFacts ? { workFacts: { session: { id, seq: record.seq, createdAt: baseMs, updatedAt: baseMs + 900,
           encryptionMode: 'e2ee' as const, dataEncryptionKey, viewerRole: 'owner' as const, active: record.active,
-          metadataVersion: record.metadataVersion, agentStateVersion: record.agentStateVersion, metadataLayoutVersion: 0,
+          metadataVersion: record.metadataVersion, agentStateVersion: record.agentStateVersion!, metadataLayoutVersion: 0,
           access: ownerSessionAccess.effectiveAccess },
           records: (input.workFactKinds ?? ['work']).map(kind => ({ kind,
             content: compact ? { t: 'encrypted' as const, c: factCiphertexts.get(kind)! } : null })) } }
@@ -2751,7 +2751,7 @@ describe('usage query captured Resource adapter', () => {
       const retryDemands = home!.requests.filter(request => request.path === USAGE_SESSION_EVIDENCE_PATH)
         .slice(postsBeforeRetry).flatMap(request => UsageSessionEvidenceRequestSchema.parse(request.body).requests)
         .filter(demand => !demand.query.includeTranscriptEvidence);
-      expect(retryDemands.map(demand => demand.sessionIds?.toSorted()), 'Retry hydrates failed inputs through the retained complete cohort')
+      expect(retryDemands.map(demand => demand.sessionIds ? [...demand.sessionIds].sort() : undefined), 'Retry hydrates failed inputs through the retained complete cohort')
         .toEqual(scenario === 'recovery' ? [['retry-turns', 'unread']] : []);
       expect(home!.requests.filter(request => /^\/v[12]\/sessions\/(healthy-turns|retry-turns|empty-turns|unread|healthy-second)(\/|$)/.test(request.path))).toEqual([]);
     } finally { release(); }
@@ -6302,7 +6302,7 @@ describe('usage query captured Resource adapter', () => {
     }, value => published.push(value));
     // Observe rejection immediately so a failed progress callback is also a
     // deciding outcome, rather than an unhandled test-process rejection.
-    const firstOutcome = first.then(value => ({ value }), error => ({ error }));
+    const firstOutcome = Promise.resolve(first).then(value => ({ value }), error => ({ error }));
     try {
       const nextSession = { ...session, seq: 2 };
       storage.setState({ sessions: { streaming: nextSession } });
@@ -7345,7 +7345,7 @@ describe('usage query captured Resource adapter', () => {
         const contributions = ['shared', 'other'].filter(id => !query.filters?.sessionIds || query.filters.sessionIds.includes(id))
           .map(id => ({ ...workContribution, id: `usage-${id}`, sessionId: id, eventCount: 1 }));
         return Response.json({ ...value, contributions, totals: { eventCount: contributions.length,
-          tokens: Object.fromEntries(Object.entries(value.totals.tokens).map(([key, count]) => [key, count * contributions.length])),
+          tokens: Object.fromEntries(Object.entries(value.totals.tokens).map(([key, count]) => [key, count === null ? null : count * contributions.length])),
           cost: { reportedUsd: contributions.length, estimatedUsd: 0, currency: 'USD' } } });
       }
       const sessionId = request.path === '/v2/sessions/shared' ? 'shared'

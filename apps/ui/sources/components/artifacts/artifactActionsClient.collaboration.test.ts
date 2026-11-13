@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, createElement } from 'react';
+import type { AgentInputSendOptions } from '@/components/sessions/agentInput/agentInputSendOptions';
 import type { DiscussionDraftSubmission } from '@/sync/ops/discussions/discussionRepository';
 import { captureDocPassageV1 } from '@happier-dev/protocol/artifacts/artifactPassageV1';
 import { tryWriteServerEnabledBitInPlace } from '@happier-dev/protocol/features/serverEnabledBit';
@@ -120,9 +121,19 @@ describe('Doc collaboration data through the real Actions and Discussion reposit
         const element = createElement(ArtifactNewPassageThread, { scope, comment, onCreated, onOpenDiscussion() {}, onClose() {} });
         let screen = await renderScreen(element);
         const input = () => screen.root.findByType(AgentInput);
+        const changeText = (value: string) => {
+            const onChangeText = input().props.onChangeText;
+            if (!onChangeText) throw new Error('Expected a controlled AgentInput');
+            onChangeText(value);
+        };
+        const send = (value?: AgentInputSendOptions) => {
+            const onSend = input().props.onSend;
+            if (!onSend) throw new Error('Expected an AgentInput send handler');
+            return onSend(value);
+        };
         const text = 'Please review the opening hours.';
-        if (entry === 'controlled') await act(async () => { input().props.onChangeText(text); });
-        await act(async () => { void input().props.onSend(entry === 'send-override' ? { inputTextOverride: text } : undefined); });
+        if (entry === 'controlled') await act(async () => { changeText(text); });
+        await act(async () => { void send(entry === 'send-override' ? { inputTextOverride: text } : undefined); });
         await vi.waitFor(() => expect(homes.requestsFor('/v1/discussions').filter(row => row.method === 'POST')).toHaveLength(1));
         const repository = getDiscussionRepository({ scope, address: { serverId }, client: createDiscussionClient({ scope, availability: 'available' }) });
         const attempt = Object.values(repository.getSnapshot().mutations)[0]!;
@@ -130,7 +141,7 @@ describe('Doc collaboration data through the real Actions and Discussion reposit
         try {
             expect(input().props.isSending).toBe(true);
             // A second activation before settlement cannot become another server write.
-            await act(async () => { void input().props.onSend({ inputTextOverride: text }); });
+            await act(async () => { void send({ inputTextOverride: text }); });
             expect(homes.requestsFor('/v1/discussions').filter(row => row.method === 'POST')).toHaveLength(1);
         } finally {
             await act(async () => { release.resolve(); });
@@ -180,6 +191,7 @@ describe('Doc collaboration data through the real Actions and Discussion reposit
         expect(renders.read()).toEqual({ renders: 0, commits: 0 });
         expect(homes.requests.slice(before).filter(request => request.path === '/v1/artifacts/read')).toHaveLength(1);
         const row = storage.getState().artifacts[artifactId]!;
+        if (!row.isDecrypted) throw new Error('Expected the decrypted Artifact row');
         await act(async () => storage.getState().applyArtifacts([{ ...row, title: 'Published notes', headerVersion: row.headerVersion + 1 }]));
         expect(hook.getCurrent()).toEqual(['Published notes']);
         expect(renders.read()).toEqual({ renders: 1, commits: 1 });

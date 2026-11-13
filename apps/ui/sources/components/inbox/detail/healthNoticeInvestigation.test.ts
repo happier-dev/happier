@@ -6,10 +6,11 @@ import { MachineServiceIdentityV1Schema } from '@happier-dev/protocol';
 import { AgentsBackendsListOutputSchema } from '@happier-dev/protocol/actions/agentBackendInventory';
 import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { TriageSessionHandoffResultV1Schema } from '@happier-dev/triage-protocol/v1';
 import { createTriageRunConfiguredActionHandler } from '@happier-dev/plugins-triage/happier-plugin-ui/triage-configured-action-native';
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
-import type { PluginUiNewSessionSeedV1 } from '@happier-dev/plugin-sdk/ui';
+import type { OpenNewSessionRequest } from '@happier-dev/plugin-sdk/ui';
 import { buildAgentTargetKeyV2, type AgentExecutionTargetV1 } from '@happier-dev/plugin-sdk/agents';
 
 import { renderHook } from '@/dev/testkit';
@@ -27,8 +28,10 @@ installSessionActionRpcBoundary(() => { throw new Error('Unexpected Session RPC'
 const { useBoundFailureInvestigation } = await import('@/hooks/inbox/useInvestigateFailure');
 
 const scope = { serverId: 'server-a', accountId: 'account-a' };
+// Configured Action ids are open strings; a later case offers a different one.
+const investigateActionId: string = 'investigate';
 const investigate = {
-  configuredActionId: 'investigate',
+  configuredActionId: investigateActionId,
   sessionChoice: { kind: 'configured' },
   agentChoice: { kind: 'configured' },
   delivery: 'configured',
@@ -98,7 +101,7 @@ describe('useHealthNoticeInvestigate', () => {
         environment: { serverId: scope.serverId, projectSourceId: 'project', environmentId: 'environment' } },
     } });
     const entry = { artifact, header: readAccountNoticeArtifactHeader(artifact, scope.accountId)! };
-    const seeds: PluginUiNewSessionSeedV1[] = [];
+    const seeds: OpenNewSessionRequest[] = [];
     const hostActions: string[] = [];
     const handoffCalls: unknown[] = [];
     const bundledSchemaAdmissions: Array<{ input: boolean; result: boolean }> = [];
@@ -137,7 +140,7 @@ describe('useHealthNoticeInvestigate', () => {
           ui: {
             version: () => ({ methods: ['openNewSession'] }),
             context: async () => ({ accountScope: scope }),
-            openNewSession: async (seed: PluginUiNewSessionSeedV1) => { seeds.push(seed); },
+            openNewSession: async (seed: OpenNewSessionRequest) => { seeds.push(seed); },
             executeAction: async (action: string | Readonly<{ localId: string }>) => {
               const id = typeof action === 'string' ? action : action.localId;
               hostActions.push(id);
@@ -160,7 +163,7 @@ describe('useHealthNoticeInvestigate', () => {
           },
         // Only the external host API ports exercised by this invocation are installed.
         } as unknown as PluginAccountActionContext;
-        const result = await configured(request.input, context);
+        const result = await configured(normalizeStrictJsonValue(request.input), context);
         bundledSchemaAdmissions.push({ input: acceptsInput, result: acceptsBundledResult(result) });
         return { ok: true, result };
       },

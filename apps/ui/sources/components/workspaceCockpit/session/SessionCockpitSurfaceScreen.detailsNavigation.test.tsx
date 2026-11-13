@@ -109,9 +109,9 @@ afterEach(async () => {
 
 
 /** Closes the phone comparison's one Details tab the way a person does: its header's ⋯, then Close tab. */
-async function closeComparisonTabFromMenu(screen: Readonly<{ tree: import('react-test-renderer').ReactTestInstance }>) {
+async function closeComparisonTabFromMenu(screen: Readonly<{ tree: import('react-test-renderer').ReactTestRenderer }>) {
     const { DropdownMenu } = await import('@/components/ui/forms/dropdown/DropdownMenu');
-    const menu = screen.tree.find((node) => node.type === DropdownMenu && node.props.testID === 'scm-comparison-phone-actions');
+    const menu = screen.tree.root.find((node) => node.type === DropdownMenu && node.props.testID === 'scm-comparison-phone-actions');
     const close = (menu.props.items as { id: string; testID?: string }[]).find((item) => item.testID === 'details-tab-menu-close')!;
     await act(async () => { (menu.props.onSelect as (id: string) => void)(close.id); });
 }

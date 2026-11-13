@@ -192,7 +192,11 @@ export function CockpitTabBarView<TSurface extends string>(props: CockpitTabBarP
                     else anchors.current.delete(tab.id);
                 }}
                 onPress={() => props.onSurfacePress(tab.id)}
-                {...(hold ? { onLongPress: hold, onContextMenu: (event: { preventDefault?: () => void }) => { event.preventDefault?.(); hold(); } } : {})}
+                {...(hold ? { onLongPress: hold, onContextMenu: (event: unknown) => {
+                    // The web context-menu event is untyped at the Pressable boundary.
+                    if (event && typeof event === 'object' && 'preventDefault' in event && typeof event.preventDefault === 'function') event.preventDefault();
+                    hold();
+                }  } : {})}
                 disabled={tab.disabled}
                 style={(state) => [styles.tab, {
                     minWidth: metrics.tabMinWidth,

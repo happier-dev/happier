@@ -172,7 +172,7 @@ describe('MobileBottomChromeHost mounted chrome', () => {
         await screen.update(<Harness />);
         await finishAnimations();
         expect(screen.findByType(MainAppTabBar)).toBeTruthy();
-        expect(screen.findByTestId('tabbar-tab-sessions').props.selected).toBe(false);
+        expect(screen.findByTestId('tabbar-tab-sessions')?.props.selected).toBe(false);
         expect(screen.findHostByTestId('tabbar-start-new-session')).toBeNull();
     });
     it('offers More from the bar itself on Sessions and on a tab with its own route', async () => {

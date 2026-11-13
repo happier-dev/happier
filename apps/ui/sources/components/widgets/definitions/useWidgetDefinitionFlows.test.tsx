@@ -1006,7 +1006,7 @@ describe('widget definition flows', () => {
                 provenance: { source: { kind: 'session', serverId, sessionId: 'shared', itemId: 'shared-copy' } } } },
                 bindings: { session: { kind: 'value', value: { serverId, sessionId: 'shared' } } } } } });
         const screen = await renderScreen(React.createElement(SessionWidgetHost, { serverId, sessionId: 'shared', session,
-            item: { itemId: 'shared-copy', revision: 'r1', state: { kind: 'ready', item } }, host: 'details', primaryHost: 'details', density: 'full',
+            item: { itemId: 'shared-copy', revision: 'r1', state: { kind: 'ready', item } }, host: 'details', density: 'full',
             canEdit: true, executableCurrentness: 'current', heightBounds: { min: 96, max: 520 }, testID: 'sessionCopy' }),
             { createNodeMock: element => ({ testID: element.props.testID ?? null }) });
         try {
@@ -1191,7 +1191,7 @@ describe('widget definition flows', () => {
             height: { mode: 'auto', fallback: 'regular' }, source: { kind: 'hostedHtml', source: bundle,
                 requestedCapabilities: { networkOrigins: ['https://api.example.com'] } } });
         const screen = await renderScreen(React.createElement(SessionWidgetHost, { serverId, sessionId: session.id, session,
-            item: { itemId: 'html', revision: 'r1', state: { kind: 'ready', item } }, host: 'inlineTranscript', primaryHost: null,
+            item: { itemId: 'html', revision: 'r1', state: { kind: 'ready', item } }, host: 'inlineTranscript',
             density: 'compact', canEdit: false, executableCurrentness: 'current', heightBounds: { min: 96, max: 520 }, testID: 'htmlCopy' }));
         try {
             const actions = screen.tree.root.findAllByType(ItemRowActions).flatMap(menu => menu.props.actions);

@@ -655,7 +655,7 @@ describe('SessionCockpitSurfaceScreen navigation surface', () => {
         expect(rightDuringPress).toBe(false);
         expect(cockpitNavigatorState.activeSurface).toBe('companion');
 
-        await act(async () => (chrome as NonNullable<typeof chrome>).switchSurface('terminal'));
+        await act(async () => { await (chrome as NonNullable<typeof chrome>).switchSurface('terminal'); });
         expect(pane().scopeState?.right?.activeTabId).toBe('terminal');
         expect(cockpitNavigatorState.activeSurface).toBe('terminal');
     });

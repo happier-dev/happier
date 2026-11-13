@@ -145,7 +145,7 @@ export function CheckoutUnreachableState(
  * offline glyph, so the bare heading reads as unavailable, not as unfinished. Assistive technology
  * still hears what it waits for.
  */
-function AnnouncedCheckoutWait(
+export function AnnouncedCheckoutWait(
   props: Readonly<{ machineName: string; testID: string }>,
 ) {
   const { theme } = useUnistyles();

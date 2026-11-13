@@ -115,6 +115,7 @@ export const MachineElevatedNotAppliedResultV1Schema = lazyZodSchema(() =>
       z.strictObject({ kind: z.literal('configure_admin_access'), mode: z.literal('preauthorized') }),
     ])),
     restoration: z.optional(MachineFirewallRestorationV1Schema) }));
+export type MachineElevatedNotAppliedResultV1 = z.infer<typeof MachineElevatedNotAppliedResultV1Schema>;
 
 export const MachineElevatedResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('outcome', [
   z.strictObject({ outcome: z.literal('applied'), observation: MachineAdminAccessObservationV1Schema }),

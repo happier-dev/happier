@@ -33,7 +33,7 @@ describe('resolveDiscussionOwnerTransferAvatar', () => {
 
 it('makes the private participant Agent mark neutral in an open Discussion roster', async () => {
   const previous = storage.getState();
-  const session = createSessionFixture({ id: 'private-agent', serverId: 'roster-home', metadata: { name: 'Private reviewer', path: '/secret', flavor: 'codex' } });
+  const session = createSessionFixture({ id: 'private-agent', serverId: 'roster-home', metadata: { name: 'Private reviewer', path: '/secret', flavor: 'codex', host: 'tester.local' } });
   storage.setState({ sessions: { [session.id]: session } });
   const roster = DiscussionParticipantsListResponseV1Schema.parse({ discussionId: 'thread', ownerAccountId: 'viewer', access: 'owner', grants: [],
     participants: [{ participant: { kind: 'session', sessionId: session.id }, answerPolicy: 'when_addressed', createdAt: 1 }] });

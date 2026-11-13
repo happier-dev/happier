@@ -209,11 +209,13 @@ describe('built-in plugin translation bundles', () => {
         const entriesById = {};
         projectPluginUiTranslationsV1({ uiTranslationsV2: declarations.map(definition => ({ pluginId: CHANNELS_PLUGIN_ID, definition })) }, entriesById, 'de');
         const projected = PluginDeclaredUiEntriesV1Schema.parse(entriesById)[`translations:${CHANNELS_PLUGIN_ID}`];
-        if (!projected || projected.contributionKind !== 'translations' || projected.pluginId !== CHANNELS_PLUGIN_ID || !projected.locales) {
+        const locales = projected && Array.isArray(projected.locales)
+            && projected.locales.every((locale): locale is string => typeof locale === 'string') ? projected.locales : null;
+        if (!projected || projected.contributionKind !== 'translations' || projected.pluginId !== CHANNELS_PLUGIN_ID || !locales) {
             throw new Error('Expected Channels translation declarations');
         }
         const projection = { ...EMPTY_PLUGIN_UI_PROJECTION, translationsByPluginId: { [CHANNELS_PLUGIN_ID]: {
-            ...projected, pluginId: projected.pluginId, contributionKind: 'translations' as const, locales: projected.locales,
+            ...projected, pluginId: projected.pluginId, contributionKind: 'translations' as const, locales,
         } } };
         const reads: string[] = [];
         const packageRoot = path.resolve(__dirname, '../../../../packages/plugins/channels');

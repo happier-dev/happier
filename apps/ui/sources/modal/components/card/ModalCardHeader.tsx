@@ -14,7 +14,7 @@ type ModalCardHeaderProps = Readonly<{
     leadingPlacement?: 'above' | null;
     title?: React.ReactNode;
     subtitle?: React.ReactNode;
-    subtitleLines?: 1;
+    subtitleLines?: 1 | 2;
     actions?: React.ReactNode;
     /** A form's completion control (Done) in the close control's place: it keeps the title's row on a phone too. */
     completion?: React.ReactNode;

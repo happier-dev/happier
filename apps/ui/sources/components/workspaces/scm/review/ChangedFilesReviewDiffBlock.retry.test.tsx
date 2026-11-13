@@ -78,8 +78,8 @@ describe('Review diff recovery', () => {
                 snapshotSignature: 'retained-capture', refreshToken, fetchUnifiedDiffForPath,
                 normalizeError: String, fallbackError: 'Unable to read captured diff' });
             const render = useChangedFilesReviewDiffBlockRenderer({ theme: createThemeFixture(), sessionId: 's1',
-                snapshotSignature: 'retained-capture', diffStateSource: loading.diffStateSource, onRetryDiff: loading.retryDiff });
-            return render('a.ts', {});
+                diffStateSource: loading.diffStateSource, onRetryDiff: loading.retryDiff });
+            return render('a.ts', { snapshotSignature: 'retained-capture' });
         }
         const screen = await fixture.render(<Review />);
         await vi.waitFor(() => expect(screen.getTextContent()).toContain('last known content'));

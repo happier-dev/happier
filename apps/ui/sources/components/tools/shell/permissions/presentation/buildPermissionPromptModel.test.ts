@@ -7,7 +7,7 @@ import { resolveSessionPermissionChoices } from '@/sync/ops/sessionPermissionCho
 
 describe('buildPermissionPromptModel', () => {
     it('keeps malformed retained native offers from becoming generic grants in the prompt', async () => {
-        const request: PendingPermissionRequest = { id: 'malformed', kind: 'permission', tool: 'Bash', arguments: {} };
+        const request: PendingPermissionRequest = { id: 'malformed', kind: 'permission', tool: 'Bash', arguments: {}, createdAt: 1 };
         // Retained external content can violate the current schema; presentation owns decoding it.
         Object.assign(request, { nativeChoices: null });
         const model = buildPermissionPromptModel({ request, metadata: null, nowMs: 1 });

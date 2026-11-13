@@ -48,7 +48,6 @@ export function MachineDeleteAudience(
       { serverId: scope.serverId, machineId },
       {
         surface: 'ui',
-        source: 'ui_button',
         authority: 'present_user',
         serverId: scope.serverId,
         expectedAccountId: scope.accountId,

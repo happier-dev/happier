@@ -192,8 +192,11 @@ describe('runNativeRemoteSshBootstrapTask', () => {
         const stdoutListeners = new Set<Parameters<NonNullable<NativeSshModule['addListener']>>[1]>();
         // The native command channel is the OS boundary; task, IPC and interpreter remain real.
         const backend: MachineSetupBackend = {
-            observe: async step => ({ stepId: step.id, status: applied.has(step.id) ? 'satisfied' : 'drifted',
-                facts: step.kind === 'user' ? applied.has(step.id) ? { present: true, username: step.username, uid: 1002 } : { present: false } : {} }),
+            observe: async step => {
+                const facts: Awaited<ReturnType<MachineSetupBackend['observe']>>['facts'] = step.kind === 'user'
+                    ? applied.has(step.id) ? { present: true, username: step.username, uid: 1002 } : { present: false } : {};
+                return { stepId: step.id, status: applied.has(step.id) ? 'satisfied' : 'drifted', facts };
+            },
             apply: async step => {
                 const createdUser = step.kind === 'user' && !applied.has(step.id);
                 applied.add(step.id);

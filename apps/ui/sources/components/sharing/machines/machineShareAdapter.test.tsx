@@ -902,7 +902,7 @@ describe('Machine sharing through the canonical controller and sheet', () => {
             await vi.waitFor(() => expect(Modal.show).toHaveBeenCalledTimes(1));
             const review = vi.mocked(Modal.show).mock.calls[0]![0];
             const title = review.chrome?.title ?? '';
-            const message = review.chrome?.subtitle ?? '';
+            const message = review.chrome?.kind === 'card' ? review.chrome.subtitle ?? '' : '';
             expect(review.props?.confirmLabel).toBe('Share a machine');
             expect(title).toContain('Devbox');
             expect(message).toContain('Bob');

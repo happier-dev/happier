@@ -27,7 +27,7 @@ it('names widget options from each frame title and updates the name without remo
         {[title, 'Costs'].map((name, index) => <WidgetFrame key={index} testID={`named-frame-${index}`}
             frameStyle="card" placement="home" title={name} body={{ kind: 'content', children: 'Rows' }}
             menu={<div><ItemRowActions title="Fallback title" overflowOnly overflowTriggerTestID={`named-options-${index}`}
-                overflowTriggerAccessibilityLabel="Widget options" actions={[{ id: 'rename', title: 'Rename', onPress: () => {} }]} /></div>} />)}
+                overflowTriggerAccessibilityLabel="Widget options" actions={[{ id: 'rename', title: 'Rename', icon: 'pencil', onPress: () => {} }]} /></div>} />)}
     </>;
     try {
         await act(async () => root.render(frames('Daily usage')));

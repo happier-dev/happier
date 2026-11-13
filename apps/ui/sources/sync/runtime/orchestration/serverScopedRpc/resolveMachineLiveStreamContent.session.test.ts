@@ -10,10 +10,14 @@ import { resolveMachineLiveStreamContent } from './resolveMachineLiveStreamConte
 
 // HTTP is the boundary: Session access projection, key admission and cipher stay real.
 const fetchBoundary = vi.hoisted(() => vi.fn());
-vi.mock('@/utils/system/runtimeFetch', () => ({
-    runtimeFetch: (...args: unknown[]) => fetchBoundary(...args),
-    get runtimeFetchManualResponse() { return this.runtimeFetch; },
-}));
+vi.mock('@/utils/system/runtimeFetch', () => {
+    // Named first so the getter's `this` is this object, not vi.mock's Partial<unknown> factory type.
+    const mocked = {
+        runtimeFetch: (...args: unknown[]) => fetchBoundary(...args),
+        get runtimeFetchManualResponse() { return this.runtimeFetch; },
+    };
+    return mocked;
+});
 
 afterEach(() => { fetchBoundary.mockReset(); resetSessionByIdHttpReadsForTests(); });
 const requestUrl = (input: unknown) => input instanceof Request ? input.url : String(input);
@@ -42,14 +46,16 @@ describe('Session Browser live-stream content', () => {
         const content = resolveMachineLiveStreamContent({ machineId: 'owner-machine', targetServerId: 'home',
             targetServerUrl: 'https://session-browser.test', token: 'token',
             credentials: mode === 'plain' ? { token: 'token' } : { token: 'token', secret: encodeBase64(accountSecret, 'base64') },
-            ...(mode === 'plain' ? {} : { encryption }) }, sessionId);
+            encryption: mode === 'plain' ? null : encryption }, sessionId);
         if (mode === 'missing-key') await expect(content).rejects.toMatchObject({ code: 'stream_encryption_material_unavailable' });
         else {
             const resolved = await content;
             expect(resolved.mode).toBe(mode);
             if (resolved.mode === 'e2ee') {
+                const cipher = resolved.cipher;
+                if (!cipher) throw new Error('Expected the Session cipher');
                 const [sealed] = await new AES256Encryption(sessionKey).encrypt([{ frame: 'private browser pixels' }]);
-                expect(await resolved.cipher.decryptRaw(encodeBase64(sealed!, 'base64'))).toEqual({ frame: 'private browser pixels' });
+                expect(await cipher.decryptRaw(encodeBase64(sealed!, 'base64'))).toEqual({ frame: 'private browser pixels' });
             }
         }
         expect(fetchBoundary.mock.calls.some(([url]) => requestUrl(url).includes('/machines'))).toBe(false);

@@ -32,14 +32,18 @@ function routeRequest(endpoint: string, path: string, init?: RequestInit): Promi
     if (!route) throw new Error(`Unexpected request ${endpoint}${path}`);
     return Promise.resolve(route(endpoint, path, init));
 }
-vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => ({
+vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => {
+    // Named first so the getter's `this` is this object, not vi.mock's Partial<unknown> factory type.
+    const mocked = {
     ...await importOriginal<typeof import('@/utils/system/runtimeFetch')>(),
     runtimeFetch: (input: RequestInfo | URL, init?: RequestInit) => {
         const url = new URL(input instanceof Request ? input.url : String(input));
         return routeRequest(url.origin, `${url.pathname}${url.search}`, init);
     },
-    get runtimeFetchManualResponse() { return this.runtimeFetch; },
-}));
+    get runtimeFetchManualResponse(): typeof import('@/utils/system/runtimeFetch').runtimeFetchManualResponse { return this.runtimeFetch; },
+};
+    return mocked;
+});
 
 import { accountDirectoryAuthClient, createVerifiedAccountServiceAuthority } from './accountDirectoryAuthClient';
 

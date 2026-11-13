@@ -37,7 +37,7 @@ export function DiscussionDeliveryNotice(props: Readonly<{
             participant: props.resolveSessionLabel(delivery.participantSessionId) ?? t('session.collaboration.discussion.heldParticipant'),
         })}</Text>)}
         {pending && props.onRetry ? <HappierPressable testID={`session-discussion-delivery-retry-${props.message.id}`}
-            style={props.retryStyle} accessibilityRole="button" disabled={sending} accessibilityState={{ disabled: sending, busy: sending }}
+            style={props.retryStyle} accessibilityRole="button" disabled={sending} busy={sending}
             accessibilityLabel={t('session.collaboration.discussion.retry')} onPress={async () => {
                 if (sending) return;
                 setSending(true);

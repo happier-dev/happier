@@ -40,7 +40,7 @@ describe('AccountPopoverContent pairing entry', () => {
             machineSummary={{ kind: 'unknown' }} showsMachineGuidance={false}
             runtimeOrigin={null} homeCarrier={null}
             switchServer={async () => 'switched'} onRetry={async () => {}} retryBusy={false}
-            onRestore={() => {}} onAddHome={() => {}} onManageHomes={() => {}}
+            onRestore={() => {}} onAddHome={() => {}} onManageHomes={() => {}} onOpenSettings={() => {}}
             onClose={() => {}} renderDetails={() => null}
         />);
         const rows = screen.findAllByType(SelectableRow)
@@ -63,7 +63,7 @@ describe('AccountPopoverContent pairing entry', () => {
             machineSummary={{ kind: 'unknown' }} showsMachineGuidance={false}
             runtimeOrigin={null} homeCarrier={null}
             switchServer={async () => 'switched'} onRetry={async () => {}} retryBusy={false}
-            onRestore={() => {}} onAddHome={() => {}} onManageHomes={() => {}}
+            onRestore={() => {}} onAddHome={() => {}} onManageHomes={() => {}} onOpenSettings={() => {}}
             onClose={onClose} renderDetails={() => null}
         />);
 

@@ -81,7 +81,7 @@ it.each([390, 1440])('gives persisted profiles a visible scroll viewport and usa
         await act(async () => harness.root.render(<div id="virtualized-list-host">
             <BrowserProfileStatus testID="profiles" model={{ profile: null,
                 management: { source: { scope, machineId: 'machine', selection: {
-                    command: { kind: 'openView', browserSessionId: 'session', viewId: 'view', platform: 'web',
+                    command: { kind: 'openView', browserSessionId: 'session', viewId: 'view', platform: 'web', focus: true,
                         target: { kind: 'externalUrl', targetId: 'page', url: 'https://example.test' } }, onSelected,
                 } } } }} />
         </div>));

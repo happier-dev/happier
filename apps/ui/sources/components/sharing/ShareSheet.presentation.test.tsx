@@ -464,7 +464,7 @@ it.each(variants)('captures SHARE source owners ($dark / $width)', async variant
     const sessionActions: SessionAccessEditorActions = { ...actions, retryContent: noop, setPermissionDelegation: noop,
         setContext: noop, confirmContext: noop, cancelContext: noop, clearAccess: noop, prepareAccess: noop,
         toggleAllRecipients: noop, loadMoreRecipients: noop };
-    const sessionAdapter = { ...createSessionShareSheetAdapter({ model: sessionModel, actions: sessionActions, linkPath: '/session/release-review' }),
+    const sessionAdapter = { ...createSessionShareSheetAdapter({ model: sessionModel, actions: sessionActions, readQuery: () => '', linkPath: '/session/release-review' }),
         publicLink: { stateLabel: t('common.off'), onOpen: noop } };
     const session = await renderScreen(<ModalCardFrame title="Share Release workspace" subtitle="Session · Claude · MacBook Pro"
         presentation={capture.width < 600 ? 'sheet' : 'card'} sheetBottomInset={capture.width < 600 ? 24 : 0}

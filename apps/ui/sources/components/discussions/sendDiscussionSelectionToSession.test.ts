@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { sendDiscussionSelectionToSession, sendDiscussionSelectionToSessionNow } from '@/components/discussions/sendDiscussionSelectionToSession';
 
-const SOURCE = { kind: 'discussion', serverId: 'server-a', discussionId: 'discussion-a', messageIds: ['reply-a'] } as const;
+const SOURCE = { kind: 'discussion' as const, serverId: 'server-a', discussionId: 'discussion-a', messageIds: ['reply-a'] };
 
 function sendNow(execute: (...args: any[]) => Promise<unknown>, source: typeof SOURCE | Readonly<Record<string, unknown>> = SOURCE) {
     return sendDiscussionSelectionToSessionNow({

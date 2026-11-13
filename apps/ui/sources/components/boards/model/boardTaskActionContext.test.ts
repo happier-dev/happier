@@ -44,7 +44,7 @@ it('reads linked tasks through the real Board Account Action front door', async 
     const index = createPluginUiClientExecutableRegistrationIndex();
     const scope = index.createScope({ pluginId: PLUGIN_MANIFEST.id, pluginVersion: PLUGIN_MANIFEST.version,
         contributes, occurrenceId, target: { ...definition.client, platform: 'web' }, executionOrigin: null, accountLifetime,
-        authority: { kind: 'account', ...accountLifetime.scope, custodyId: occurrenceId, sourceCustody },
+        authority: { kind: 'account', ...accountLifetime.scope, custodyId: occurrenceId },
         lifecycle: { signal: controller.signal, isCurrent: () => !controller.signal.aborted } });
     let actionFailure: unknown;
     scope.api.workItems.register(definition.id, {
@@ -62,10 +62,12 @@ it('reads linked tasks through the real Board Account Action front door', async 
     scope.commit();
     const disposeLoader = await installRealActionExecutorModuleLoader();
     try {
+        // The projection carries the Account origin stamp as an open field the registration reader decodes.
+        const source = { id: `${PLUGIN_MANIFEST.id}/${definition.id}`, pluginId: PLUGIN_MANIFEST.id,
+            pluginVersion: PLUGIN_MANIFEST.version, definition, occurrenceId,
+            hostAccountOrigin: { ...accountLifetime.scope, custodyId: occurrenceId, sourceCustody } };
         const result = await readBoardTaskItems({ serverId, refs: [], sessions: [{ serverId, sessionId: 'worker' }],
-            sources: [{ id: `${PLUGIN_MANIFEST.id}/${definition.id}`, pluginId: PLUGIN_MANIFEST.id,
-                pluginVersion: PLUGIN_MANIFEST.version, definition, occurrenceId,
-                hostAccountOrigin: { ...accountLifetime.scope, custodyId: occurrenceId, sourceCustody } }],
+            sources: [source],
             platform: 'web', reader: index, signal: controller.signal, accountLifetime });
         expect(actionFailure).toBeUndefined();
         expect(result.complete).toBe(true);

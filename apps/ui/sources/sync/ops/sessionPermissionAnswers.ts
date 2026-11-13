@@ -1,8 +1,9 @@
 import { getPermissionFooterCopy } from '@/agents/catalog/permissionUiCopy';
 import { parseParenIdentifier } from "@happier-dev/session-core/tools";
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import type { NativePermissionChoiceAnswerV1, SessionPermissionRespondRpcParamsV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
+import type { NativePermissionChoiceAnswerV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import { NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE } from '@happier-dev/protocol/sessions/permissions/v1';
+import type { SessionPermissionResponseParams } from '@/sync/ops/sessions';
 
 /** Legacy vocabulary retained only for stored requests. */
 export type SessionPermissionAnswer = 'allowOnce' | 'allowForSession' | 'deny';
@@ -112,7 +113,7 @@ export function resolveSessionPermissionAnswers(input: Readonly<{
 type PermissionAnswerDelivery = Readonly<{
     requestId: string;
     turnId?: string;
-    respondToPermission(params: Omit<SessionPermissionRespondRpcParamsV1, 'answers'>): Promise<void>;
+    respondToPermission(params: SessionPermissionResponseParams<'answers'>): Promise<void>;
 }>;
 
 export type AnswerSessionPermissionInput = PermissionAnswerDelivery & (Readonly<{

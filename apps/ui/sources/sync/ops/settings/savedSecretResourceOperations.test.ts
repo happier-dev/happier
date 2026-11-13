@@ -2148,8 +2148,8 @@ describe('Saved Secret operations through their real Account and Action owners',
         await refreshSavedSecretCatalog(account.scope);
         const { SavedSecretPickerModal } = await import('@/components/ui/forms/valueRefs/SavedSecretPickerModal');
         const onClose = vi.fn();
-        const onSelectId = vi.fn();
-        const pickerProps = { scope: account.scope, onClose, onSelectId, selectedId: null };
+        const onSelect = vi.fn();
+        const pickerProps = { scope: account.scope, onClose, referenceSelection: { selected: null, onSelect } };
         const screen = await renderScreen(React.createElement(SavedSecretPickerModal, pickerProps));
         const capturedCatalog = await renderHook(() => useSavedSecretCatalog({ scope: account.scope }));
         expect(screen.findByTestId('saved-secret:happier:shared-secret:v1:initiating-home-key')).toBeTruthy();
@@ -2165,7 +2165,7 @@ describe('Saved Secret operations through their real Account and Action owners',
             await refreshSavedSecretCatalog(other.scope);
         });
         expect(onClose).not.toHaveBeenCalled();
-        expect(onSelectId).not.toHaveBeenCalled();
+        expect(onSelect).not.toHaveBeenCalled();
         expect(Boolean(screen.findByTestId('saved-secret:happier:shared-secret:v1:other-home-key'))).toBe(false);
         expect(await capturedCatalog.getCurrent().personalMutations.create({ name: 'Retired draft', value: 'old-home-value' })).toBeNull();
         expect(account.writes).toEqual([]);

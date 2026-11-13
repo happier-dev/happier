@@ -226,8 +226,9 @@ describe('useSimulatorRelayIngestion', () => {
             sourceId: 'computer-window-a',
             startProduction: async request => {
                 openedSources.push(request.sourceId);
-                const authorized = { ...startRequest(), sourceId: request.sourceId,
-                    authorization: { ...startRequest().authorization!, payload: { ...startRequest().authorization!.payload, sourceId: request.sourceId } } };
+                const source = request.sourceId === undefined ? {} : { sourceId: request.sourceId };
+                const authorized = { ...startRequest(), ...source,
+                    authorization: { ...startRequest().authorization!, payload: { ...startRequest().authorization!.payload, ...source } } };
                 return { ok: true, routeKind: 'server_relay', startRequest: authorized, relayAuthorization: authorized.authorization! };
             },
         };

@@ -34,11 +34,15 @@ vi.mock('react-native', async () => {
 });
 const boundary = vi.hoisted(() => ({ fetch: vi.fn<(url: unknown, init?: RequestInit) => Promise<Response>>() }));
 // Only the platform network adapter is replaced; profiles, HTTP cancellation and feature sharing stay real.
-vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => ({
+vi.mock('@/utils/system/runtimeFetch', async (importOriginal) => {
+    // Named first so the getter's `this` is this object, not vi.mock's Partial<unknown> factory type.
+    const mocked = {
     ...await importOriginal<typeof import('@/utils/system/runtimeFetch')>(),
     runtimeFetch: boundary.fetch,
-    get runtimeFetchManualResponse() { return this.runtimeFetch; },
-}));
+    get runtimeFetchManualResponse(): typeof import('@/utils/system/runtimeFetch').runtimeFetchManualResponse { return this.runtimeFetch; },
+};
+    return mocked;
+});
 
 // Load the real Settings/Services graph after network installation, outside a timed hook body.
 const { useLocalServicePresentationFeatures } = await import('@/components/sessions/localServices/useLocalServicePublicPreviewFeature');

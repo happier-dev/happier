@@ -51,7 +51,7 @@ export function observeHomeActionOutcome<TValue, TActionId extends ActionId>(inp
     scope: ServerAccountScope;
     signal?: AbortSignal;
     onSucceeded: (value: TValue) => void | Promise<void>;
-    onFailed?: (code: string, failure?: ActionExecuteFailure) => void;
+    onFailed: (code: string, failure?: ActionExecuteFailure) => void;
 }>): Exclude<HomeActionOutcome, { kind: 'approval_pending' }>
     | Readonly<{ kind: 'approval_pending'; approval: ActionApprovalContinuation }> {
     const outcome = classifyHomeActionOutcome(input.result, input.actionId);

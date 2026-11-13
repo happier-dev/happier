@@ -1,4 +1,5 @@
 import { expect, it } from 'vitest';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { ResolvedMcpToolIdentityV1Schema } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import { MCP_SERVER_ACTION_INPUT_SCHEMAS_V1, MCP_SERVER_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/mcp/servers/serverActionsV1';
@@ -23,8 +24,8 @@ it('retains the applied native answer after retirement and retries only its fail
         sessionPermissionRespond: async () => { answers++; pending = false; return { ok: true }; },
         mcpServerAction: createMcpServerActionExecuteV1({
             readCatalog: () => loadMcpServerCatalogV1({ mode: 'plain', material: null,
-                readRow: async () => ({ status: 'present', revision: 1, content: { t: 'plain', v: catalog } }) }),
-            mutate: async change => { if (++saves === 1) return { status: 'conflict' };
+                readRow: async () => ({ status: 'present', revision: 1, content: { t: 'plain', v: projectNativeJsonValueForTransport(catalog) } }) }),
+            mutate: async change => { if (++saves === 1) return { status: 'conflict', revision: 1 };
                 catalog = applyMcpServerCatalogMutationV1(catalog, change); return { status: 'updated', revision: 2, cursor: 2 }; },
             machine: async () => { throw new Error('Catalog consent never starts a process'); },
         }),

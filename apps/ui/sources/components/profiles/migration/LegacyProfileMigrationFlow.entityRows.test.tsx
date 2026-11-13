@@ -671,8 +671,10 @@ describe('Legacy Profile guided source preparation', () => {
         try {
             expect(screen.findAllByType(LaunchProfileEditForm)[0].props.profile).toMatchObject({ profileRecordRevision: 7 });
             await act(async () => { screen.changeTextByTestId(nameField, 'My dirty original-baseline edit'); });
+            const originalDefinition = original.definition;
+            if (originalDefinition.kind === 'artifact') throw new Error('Expected a stored profile definition');
             const competing = ProfileRecordV1Schema.parse({ ...original,
-                definition: { ...original.definition, profile: { ...original.definition.profile, name: 'Competing server edit', updatedAt: 2 } } });
+                definition: { ...originalDefinition, profile: { ...originalDefinition.profile, name: 'Competing server edit', updatedAt: 2 } } });
             durable = { id: original.id, revision: 8, content: { t: 'plain', v: competing } };
             referenceGuardRevision = 4;
             await act(async () => { await refreshProfileCatalog(homeScope); });

@@ -383,7 +383,7 @@ export function createOpenBrowserTargetInWorkspace(
                     machineId: target.machineId, serverId: deps.accountLifetime?.scope.serverId,
                     accountId: deps.accountLifetime?.scope.accountId,
                 }) } : workspaceFacts;
-            const resolved = resolveBrowserViewTargetOpenTab(facts, target, { engineOverride: request.engineOverride });
+            const resolved = resolveBrowserViewTargetOpenTab(facts, target, { engineOverride: request.engineOverride, platform: facts.platform });
             // Launchpad policy/URL options are presentation hints, not authority. UI and Agent
             // resolve the same current workspace facts after approval, at this one selector.
             const openOptions = resolveOpenOptions(facts, target, undefined, resolved.browserSessionId);

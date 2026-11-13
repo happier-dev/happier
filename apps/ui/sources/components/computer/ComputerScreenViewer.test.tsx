@@ -603,7 +603,7 @@ describe('ComputerScreenViewer', () => {
 
   // The menu's popover portal is a platform boundary; its items and selection are this viewer's own.
   const viewMenu = (screen: Awaited<ReturnType<typeof renderScreen>>) =>
-    screen.tree.root.findByType(DropdownMenu).props as { items: Array<{ id: string }>; onSelect: (id: string) => void };
+    screen.tree.root.findByType(DropdownMenu).props;
 
   it('offers Record in the view menu, and while recording shows the capsule and Discard instead', async () => {
     const onStart = vi.fn();

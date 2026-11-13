@@ -224,7 +224,7 @@ it.each(variants)('renders the STATUS source surfaces ($dark / $width)', async v
                             { id: 'mentions', label: t('inbox.work.tabs.mentions') }]} activeTabId="needs_you" onSelectTab={noop} />} />
                     <InboxContent model={inboxModel} presentation="screen" view="needs_you" /></ItemList>
                     <ItemList testID="capture-inbox-updates"><InboxContent model={inboxModel} presentation="screen" view="updates" /></ItemList></div></section>
-                <section id="home"><h2>Home</h2><HubStatusLineView working={0} needsYou={1} home={() => <CaptureText
+                <section id="home"><h2>Home</h2><HubStatusLineView working={0} inbox={1} home={() => <CaptureText
                     style={{ color: (capture.dark ? darkTheme : lightTheme).colors.text.secondary }}>Personal Home</CaptureText>} />
                     <HubAttentionList items={[{ key: 'sessions', mark: null, title: t('homeIndex.sessionsAwaitingResponse', { count: 1 }),
                         actionLabel: t('settingsOverview.review'), onAction: noop }]} /></section>

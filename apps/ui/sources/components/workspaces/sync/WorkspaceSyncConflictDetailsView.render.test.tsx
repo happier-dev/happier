@@ -95,7 +95,7 @@ describe('workspace conflict comparison', () => {
             alphaPath: '/hub', betaPath: '/spoke', mode: 'keep_both_in_sync' as const,
             endpointStates: { alpha: null, beta: null }, conflictCount: 1, lastCycleObservedAtMs: cycle,
         }];
-        machineRpc.mockImplementation(async (input: { method: string; payload: { path?: string; preview?: { workspaceRefId: string } } }) => {
+        machineRpc.mockImplementation(async (input: { machineId: string; method: string; payload: { path?: string; preview?: { workspaceRefId: string } } }) => {
             if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST) return createWorkspaceSyncRelationshipsListFixture(currentStatuses(), input.machineId);
             if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICTS_LIST) return {
                 status: 'page', relationshipId: 'link-1', totalCount: 1, nextCursor: null, conflicts: [conflict(currentPath)],
@@ -470,7 +470,7 @@ describe('workspace conflict comparison', () => {
     it('keeps a failed review visible until an explicit successful reinspection permits a new choice', async () => {
         let holdReinspection = false;
         const reinspectionCompletion: { current?: (value: unknown) => void } = {};
-        machineRpc.mockImplementation(async (input: { method: string; payload: { path?: string; preview?: { workspaceRefId: string } } }) => {
+        machineRpc.mockImplementation(async (input: { machineId: string; method: string; payload: { path?: string; preview?: { workspaceRefId: string } } }) => {
             if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST) return createWorkspaceSyncRelationshipsListFixture([]);
             if (input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_CONFLICTS_LIST) {
                 return { status: 'page', relationshipId: 'link-1', totalCount: 1, nextCursor: null, conflicts: [conflict('first.txt')] };

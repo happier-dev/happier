@@ -105,7 +105,7 @@ export function presentApprovalFailure(
  * A settled request whose approved effect failed. The decision was saved, so a bare machine code never
  * reads as "failed to update approval": it reads as an unrecorded reason, with the code in Technical details.
  */
-export function presentRecordedApprovalFailure(failure: Pick<ApprovalExecutionV1, 'errorCode' | 'error' | 'details' | 'failureCause'>): ReturnType<typeof presentApprovalFailure> {
+export function presentRecordedApprovalFailure(failure: Readonly<{ errorCode?: string; error?: string; details?: unknown; failureCause?: unknown }>): ReturnType<typeof presentApprovalFailure> {
     return presentApprovalFailure(failure, failure.error || failure.errorCode || t('approvals.failureNoReason'), t('approvals.failureNoReason'));
 }
 
@@ -135,7 +135,7 @@ export class ApprovalExecutionError extends HappyError {
         super(execution.error ?? 'approval_execution_failed', false, {
             code: execution.errorCode ?? 'approval_execution_failed',
             details: execution.details,
-            failureCause: execution.failureCause,
+            failureCause: execution.failureCause === undefined ? undefined : readActionFailureCauseV1(execution.failureCause),
         });
         Object.setPrototypeOf(this, ApprovalExecutionError.prototype);
     }

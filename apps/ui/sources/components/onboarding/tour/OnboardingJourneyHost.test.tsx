@@ -234,6 +234,8 @@ function createPreAuthController(overrides: Partial<OnboardingWizardController> 
         title: 'auth',
         subtitle: null,
         footerHint: null,
+        bodyOwnsHeading: false,
+        homeContext: null,
         body: <Text testID="pre-auth-controller-body">Pre-auth controller body</Text>,
         goToStep: vi.fn(),
         ...overrides,

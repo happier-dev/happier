@@ -154,6 +154,8 @@ function createPreAuthController(): OnboardingWizardController {
         title: 'auth',
         subtitle: null,
         footerHint: null,
+        bodyOwnsHeading: false,
+        homeContext: null,
         body: null,
         goToStep: vi.fn(),
     };

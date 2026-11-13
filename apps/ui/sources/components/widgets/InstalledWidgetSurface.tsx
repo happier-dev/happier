@@ -157,7 +157,7 @@ function UnavailableWidgetFact(props: Readonly<{
                 kind="unavailable"
                 size="details"
                 layout="inline"
-                iconName={props.kind === 'plugin' ? 'plug' : 'lock'}
+                iconName="lock"
                 title={props.title}
                 reason={props.reason}
                 diagnosticCode={props.diagnosticCode}

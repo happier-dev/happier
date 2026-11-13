@@ -79,7 +79,7 @@ describe('ArtifactPassageThreadCard re-attachment', () => {
 
   it('keeps the same person avatar identity in the Doc root and latest reply as in the Discussion', async () => {
     const source = thread({ state: 'exact', range: firstPassage.range });
-    const actor = { v: 1 as const, accountId: 'ben', profile: { name: 'Ben', avatarUrl: null } };
+    const actor = { v: 1 as const, accountId: 'ben', profile: { firstName: null, lastName: null, username: null, name: 'Ben', avatarUrl: null } };
     const message = { ...root, accountActor: actor };
     const view = await mount({ thread: { ...source, root: message, replies: [{ ...message, id: 'reply', seq: 2 }] } });
     const expected = resolveAccountActorPresentation({ ...actor, serverId: 'home' }, { serverId: 'home', accountId: 'alice' }).avatar;
@@ -206,7 +206,7 @@ describe('ArtifactPassageThreadCard re-attachment', () => {
 
   it('draws an agent reply with the Agent\'s mark, never the face of the Account that runs it', async () => {
     const source = thread({ state: 'exact', range: { start: 0, end: 11 } });
-    const actor = { v: 1 as const, accountId: 'alice', profile: { name: 'QA owner', avatarUrl: null } };
+    const actor = { v: 1 as const, accountId: 'alice', profile: { firstName: null, lastName: null, username: null, name: 'QA owner', avatarUrl: null } };
     const reply: DiscussionOpenedMessageV1 = {
       ...root, id: 'm2', seq: 2, createdAt: 2, authorAccountId: 'alice', accountActor: actor,
       producerV1: { kind: 'agent', sessionId: 'runbook-agent' } as DiscussionOpenedMessageV1['producerV1'],

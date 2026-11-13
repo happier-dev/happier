@@ -58,7 +58,7 @@ const runtime = installSessionPaneRuntimeTestHarness({
       nextCursor: null, hasNext: false, attentionNextCursor: null, attentionHasNext: false });
     }
     if (path.endsWith('/participants')) return Response.json({ discussionId: 'discussion-1', ownerAccountId: 'account-a', access: 'owner', grants: [], participants: [] });
-    return undefined;
+    return null;
   },
 });
 const { DiscussionComposer } = await import('./DiscussionComposer');

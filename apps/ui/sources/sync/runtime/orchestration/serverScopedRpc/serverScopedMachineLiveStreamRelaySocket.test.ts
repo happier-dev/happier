@@ -5,7 +5,6 @@ import {
 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import type { createEphemeralServerSocketClient as createEphemeralServerSocketClientFn } from './createEphemeralServerSocketClient';
 import type { resolveServerScopedContext as resolveServerScopedContextFn } from './resolveServerScopedContext';
-import type { ScopedRpcEncryptionContext } from './serverScopedRpcTypes';
 import { resolveServerScopedMachineLiveStreamRelaySocket } from './serverScopedMachineLiveStreamRelaySocket';
 import { Encryption } from '@/sync/encryption/encryption';
 
@@ -17,7 +16,7 @@ const apiSocketSendSpy = vi.hoisted(() => vi.fn<(payload: MachineLiveStreamRelay
 const apiSocketOnSpy = vi.hoisted(() => vi.fn<(listener: (payload: MachineLiveStreamRelayEnvelopeV1) => void) => () => void>(() => () => {}));
 const createEphemeralServerSocketClientSpy = vi.hoisted(() => vi.fn<typeof createEphemeralServerSocketClientFn>());
 const resolveServerScopedContextSpy = vi.hoisted(() => vi.fn<typeof resolveServerScopedContextFn>());
-let scopedRpcEncryptionStub: ScopedRpcEncryptionContext;
+let scopedRpcEncryptionStub: Encryption;
 
 vi.mock('@/sync/domains/state/storage', async () => {
     const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
