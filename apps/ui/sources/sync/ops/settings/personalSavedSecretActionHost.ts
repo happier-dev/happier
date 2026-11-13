@@ -8,16 +8,16 @@ import { createSavedSecretResource, updateSavedSecretResource, deleteSavedSecret
 import { formatSharedSavedSecretRefV1, parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { readSavedSecretUsedBy } from '@/sync/store/settings/savedSecretUsedBy';
 import { readProfileTransferSourceInContext } from '@/sync/api/account/apiProfileCatalog';
-import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { listSavedSecretVaultFieldsInContext, linkSavedSecretVaultItemsInContext, exportSavedSecretsToVaultInContext,
     storeSavedSecretValueInVaultInContext } from './savedSecretVaultOperations';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { installedSecretSourceDeclarations, listSavedSecretSources } from '@/sync/api/account/savedSecretCatalogPresentation';
 
 function refusal(reason: string, details?: unknown): never {
-    throw Object.assign(new Error(reason === 'changed' ? 'revision_conflict' : reason), {
-        code: reason === 'changed' ? 'revision_conflict' : reason, ...(details === undefined ? {} : { details }),
-    });
+    const code = reason === 'changed' ? 'revision_conflict' : reason;
+    throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code,
+        ...(details === undefined ? {} : { details }) });
 }
 /** Captured Account resources remain the sole personal secret storage authority. */
 export function createUiPersonalSavedSecretActionExecute(account: LazyActionAccountContext,

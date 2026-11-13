@@ -23,7 +23,7 @@ import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/boot
 import { resolveCliAccountStorageContext } from '@/api/client/accountKvJsonTransport';
 import { runWithServerHttpBaseUrl, resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { getRandomBytes } from '@/api/encryption';
-import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { assertSavedSecretNativeSourceAccessForOperation, readSavedSecretCatalogForOperation, SavedSecretOperationAdmissionError } from "@/settings/secrets/savedSecretCatalogRead";
 import { type SavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import { createSavedSecretMaterializerFromSnapshotV1, type SavedSecretCatalogResourceInputV1, type SavedSecretMaterializerV1 } from './savedSecretCatalog';
@@ -31,7 +31,8 @@ import { createSavedSecretMaterializerFromSnapshotV1, type SavedSecretCatalogRes
 type SharedSavedSecretUpdateInputV1 = ReturnType<typeof SharedSavedSecretUpdateInputV1Schema.parse>;
 
 function refusal(code: string, details?: unknown): never {
-    throw Object.assign(new Error(code), { code, ...(details === undefined ? {} : { details }) });
+    throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code,
+        ...(details === undefined ? {} : { details }) });
 }
 type CliOwnedSavedSecretOperationParams = Readonly<{
     credentials: StoredCredentials; operationContext?: SavedSecretOperationContextV1; serverHttpBaseUrl?: string;

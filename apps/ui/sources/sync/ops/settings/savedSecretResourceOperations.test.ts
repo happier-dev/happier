@@ -248,6 +248,12 @@ async function openAccount(mode: 'plain' | 'e2ee' = 'plain', options: { ask?: bo
             }
             if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(features);
             if (path === '/v1/account/encryption') return Response.json({ mode: persistedMode, updatedAt: 1 });
+            if (path === '/v1/machines/presets/list' && init?.method === 'POST') {
+                return Response.json({ kind: 'listed', presets: [] });
+            }
+            if (path === '/v1/machines/managed/actions/list' && init?.method === 'POST') {
+                return Response.json({ machines: [] });
+            }
             if (path === '/v1/account/encryption/currentness') {
                 if (persistedMode === 'plain') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion }));
                 const material = resolveAccountScopedCryptoMaterialFromCredentials(serverCredentials);
@@ -2941,6 +2947,7 @@ describe('Saved Secret operations through their real Account and Action owners',
                 return Response.json({ error: 'settings_conflict' }, { status: 409 });
             }
             expect(input).toMatchObject({ resourceId, expectedRevision: 1 });
+            expect(input.referenceCensus.opaquePresetReferences).toEqual({ presets: [], snapshots: [] });
             return Response.json({ resourceId });
         });
         const context = await captureLazyActionAccountContext(account.scope.serverId);
@@ -3117,6 +3124,11 @@ describe('Saved Secret operations through their real Account and Action owners',
         expect(result).toMatchObject({ ok: false, reason: 'in_use', references: [
             { owner: 'connectedAccountConfiguration' },
         ] });
+        const context = await captureLazyActionAccountContext(account.scope.serverId);
+        const execute = createUiPersonalSavedSecretActionExecute(context, createHomeDomainActionExecutorForScope(account.scope));
+        await expect(execute({ actionId: 'secrets.delete', input: { secretId: 'referenced-resource', expectedUpdatedAt: 3 },
+            context: { surface: 'ui' } })).resolves.toMatchObject({ ok: false, errorCode: 'in_use',
+            details: { references: [{ owner: 'connectedAccountConfiguration' }] } });
         expect(account.writes).toEqual([]);
     });
     it.each([{ status: 'present', mode: 'plain' }, { status: 'present', mode: 'e2ee' },
@@ -3579,7 +3591,8 @@ describe('Saved Secret operations through their real Account and Action owners',
         expect(input.referenceCensus).toMatchObject({ catalogs: {
             mcp: 'absent', acp: 'absent', providerConnections: 'absent',
             connectedConfigurations: 'absent', connectedPurposes: 'absent',
-        } });
+        }, opaquePresetReferences: { presets: [], snapshots: [] } });
+        expect(input.opaquePresetRewrites).toEqual({ presets: [], snapshots: [] });
         expect(input.nextSettings).toMatchObject({ t: 'plain', v: { secrets: [], futureSibling: { preserve: true } } });
         if (!result.ok) throw new Error('Expected acknowledged promotion');
         expect(input.nextSettings).toMatchObject({ v: { mcpServersSettingsV1: { servers: [{ env: { TOKEN: { secretId: result.resourceRef } } }] } } });
