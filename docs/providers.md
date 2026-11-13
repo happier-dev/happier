@@ -1263,8 +1263,10 @@ replacement path; their plugins do not own a separate restart controller.
 Pi, OpenCode and Codex's qualified-purpose rows own Connected Account delivery in
 0.3 development source. A purpose may declare `managedProviderEndpoint` with an
 exact Provider implementation identity and upstream purpose. Its optional
-`modelIdPrefix` maps an Agent native namespace to the exact Provider catalog id;
-it does not grant models absent from that catalog. Shared Provider
+`modelIdPrefix` maps an Agent native namespace to the exact Provider catalog id.
+CLI callers may also supply a bare catalog model id; shared admission resolves
+it against the selected Connected Account. Neither form grants models absent
+from that catalog. Shared Provider
 launch admission carries the selected Account or resolved Pool member into the
 existing managed endpoint acquisition and Agent Provider adapter for Sessions
 and finite Runs. It does not create a saved Provider connection. Their shared

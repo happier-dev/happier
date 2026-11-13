@@ -25,6 +25,9 @@ export function resolveAgentManagedPurposeSelections(input: Parameters<typeof re
 }>) {
   return resolveAgentPurposeSelections(input).filter(({ declaration }) => {
     const route = declaration.managedProviderEndpoint;
-    return route !== undefined && (!input.selection || !route.modelIdPrefix || input.selection.ref.modelId.startsWith(route.modelIdPrefix));
+    // CLI callers may supply the catalog id directly. Qualified ids still
+    // select only their declared namespace; admission verifies the catalog row.
+    return route !== undefined && (!input.selection || !route.modelIdPrefix
+      || !input.selection.ref.modelId.includes('/') || input.selection.ref.modelId.startsWith(route.modelIdPrefix));
   });
 }

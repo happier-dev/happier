@@ -90,7 +90,9 @@ export async function prepareManagedPurposeLaunch(input: ManagedPurposeLaunchCon
       request: { machineId: input.machineId, agentTargetKey: agentTargetKey,
         connectedAccountTarget: candidate.binding.target, mode: 'management', includeDirectMaterialization: true },
       resolveSelection: input.resolveManagedPurposeBindingIntentSelection, signal });
-    const modelId = route.modelIdPrefix ? canonicalSelection.ref.modelId.slice(route.modelIdPrefix.length) : canonicalSelection.ref.modelId;
+    const selectedModelId = canonicalSelection.ref.modelId;
+    const modelId = route.modelIdPrefix && selectedModelId.startsWith(route.modelIdPrefix)
+      ? selectedModelId.slice(route.modelIdPrefix.length) : selectedModelId;
     for (const group of catalog.groups) {
       if (!adapter.support.acceptsProtocols.includes(group.application.protocol)) continue;
       const row = group.rows.find(row => row.descriptor.id === modelId || row.descriptor.aliases?.includes(modelId));

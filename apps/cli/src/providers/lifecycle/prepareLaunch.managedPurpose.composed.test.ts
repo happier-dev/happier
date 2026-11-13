@@ -36,7 +36,7 @@ describe('Agent managed Connected Account purpose launch', () => {
       } finally { await resources.retire(); await fixture.cleanup(); }
     });
   });
-  it('carries a committed Session source through real daemon admission and late child materialization', async () => {
+  it('carries an explicit bare model through real daemon admission and late child materialization', async () => {
     await withConfiguredDaemonTestHome({ prefix: 'purpose-daemon-' }, async ({ homeDir }) => {
       const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
         controller: pluginReloadController, physicalGateway: true, connectedAccountModels: [{ id: 'example', name: 'Example' }],
@@ -46,7 +46,7 @@ describe('Agent managed Connected Account purpose launch', () => {
       const redaction = createProviderRedactionLease({ values: [] });
       const backendTarget = { kind: 'backend' as const, backendId: fixture.agentId };
       const selection = { v: 1 as const, updatedAt: 1, ref: {
-        agentTargetKey: fixture.agentTargetKey, providerConnectionId: null, modelId: 'native/example' } };
+        agentTargetKey: fixture.agentTargetKey, providerConnectionId: null, modelId: 'example' } };
       try {
         const prepared = await prepareDaemonProviderLaunch({
           options: { directory: homeDir, backendTarget, machineId: fixture.machineId,
