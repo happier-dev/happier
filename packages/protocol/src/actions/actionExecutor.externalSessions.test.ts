@@ -1,7 +1,7 @@
 import { describe, expect, expectTypeOf, it, vi } from 'vitest';
 
 import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
-import { getActionSpec, listActionSpecsForSurface } from './actionSpecs.js';
+import { getActionSpec, isPluginProvenanceOnlyActionId, listActionSpecsForSurface, PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_ACTION_IDS } from './actionSpecs.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import type {
   HostExternalSessionActionId,
@@ -45,12 +45,23 @@ function createDeps(
 }
 
 describe('createActionExecutor (public External Session actions)', () => {
-  it('offers every agent-facing external operation through CLI without exposing viewer leases', () => {
+  it('offers CLI external operations only when their caller provenance is available', () => {
     for (const spec of listActionSpecsForSurface('agent').filter(spec => spec.id.startsWith('sessions.external.'))) {
-      expect(spec.surfaces.cli, spec.id).toBe(true);
+      expect(spec.surfaces.cli, spec.id).toBe(!isPluginProvenanceOnlyActionId(spec.id));
     }
     expect(listActionSpecsForSurface('cli').some(spec => spec.id === 'sessions.external.follow')).toBe(false);
     expect(listActionSpecsForSurface('cli').some(spec => spec.id === 'sessions.external.unfollow')).toBe(false);
+  });
+  it('keeps every plugin-provenance-only Action off standalone CLI discovery', () => {
+    const cliIds = new Set(listActionSpecsForSurface('cli').map(spec => spec.id));
+    for (const id of PLUGIN_PROVENANCE_ONLY_API_EXCLUSION_ACTION_IDS) {
+      const spec = getActionSpec(id);
+      expect(spec.surfaces.cli, id).toBe(false);
+      expect(spec.cli, id).toBeUndefined();
+      expect(cliIds.has(id), id).toBe(false);
+      expect(spec.surfaces.plugin, id).toBe(true);
+    }
+    expect(cliIds.has('machines.list')).toBe(true);
   });
   it('offers semantic history reads and takeover to agents, MCP and CLI with ordinary Ask defaults', async () => {
     const takeover = { request: { v: 1, idempotencyKey: 'takeover-1', sessionId: 'session-1',
