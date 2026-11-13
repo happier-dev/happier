@@ -79,7 +79,6 @@ function remainingIdleDuration(activity: Extract<ManagedActivityBridgeResultV1, 
 
 async function waitForIdle(params: Readonly<{
     machine: ManagedMachineV1; bridge: ManagedGuestActivityTransport; duration: number; signal?: AbortSignal;
-    deferUnavailableTarget?: boolean;
     isCurrent(): Promise<boolean>;
     onActivity(kind: 'busy' | 'unknown' | 'idle' | 'waiting'): void;
     onWait?: (deadlineAt?: number) => Promise<number | undefined>;
@@ -96,16 +95,22 @@ async function waitForIdle(params: Readonly<{
             // Retired idle work settles through its currentness owner before
             // any guest transport failure is classified for that old intent.
             if (!await params.isCurrent()) throw new ManagedMachineControllerError('intent_changed');
-            if (!params.deferUnavailableTarget || !isUnavailableGuestActivity(error)) throw error;
-            // An automatic preparation's ready snapshot can precede guest
-            // registration or socket loss. Keep unknown evidence until its existing Machine
-            // update/reconnect wake; Account currentness alone cannot retry it.
-            activity = { kind: 'unknown', reasons: ['coverage_unknown'] };
+            // Losing coverage cannot retain an idle-shortened native lifetime,
+            // or leave this operation waiting for an optional reconnect wake.
+            await params.onWait?.();
+            throw error;
         }
-        if (activity.kind === 'refused') throw new ManagedMachineControllerError(activity.code);
+        if (activity.kind === 'refused') {
+            await params.onWait?.();
+            throw new ManagedMachineControllerError(activity.code);
+        }
         // The guest read commits evidence under a reversible local probe and
         // releases it before replying. Waiting never retains guest admission.
         params.onActivity(activity.kind === 'idle' ? 'waiting' : activity.kind);
+        if (activity.kind === 'unknown') {
+            await params.onWait?.();
+            throw new ManagedMachineControllerError('activity_unknown');
+        }
         let deadlineAt: number | undefined;
         if (activity.kind === 'idle') {
             const remaining = remainingIdleDuration(activity, params.duration);
@@ -123,10 +128,8 @@ async function waitForIdle(params: Readonly<{
                 await params.bridge.waitForChange(signal);
             } catch (error) {
                 assertLive(signal);
-                if (!params.onWait || !params.deferUnavailableTarget || !isUnavailableGuestActivity(error)) throw error;
-                // Lost idle coverage must immediately restore the native lifetime.
-                // Busy/unknown waits resume at the existing vendor renewal deadline.
-                if (activity.kind !== 'idle') await new Promise<void>(() => {});
+                await params.onWait?.();
+                throw error;
             }
         }, signal: params.signal, remainingMs: wakeAt === undefined ? undefined : Math.max(0, wakeAt - Date.now()) });
     }
@@ -217,7 +220,6 @@ export async function prepareManagedRetentionPolicy(params: Readonly<{
         const duration = machine.retention.afterMs;
         const waitUntilUnusedExpiry = async () => {
             const fresh = await waitForIdle({ machine, bridge, duration, signal: options.signal,
-                deferUnavailableTarget: true,
                 isCurrent, onActivity: kind => publishActivity(options, machine, kind),
                 ...(params.renew ? { onWait: maintainNativeLifetime } : {}) });
             if (!('evidence' in fresh)) throw new ManagedMachineControllerError('admission_unavailable');
@@ -225,7 +227,7 @@ export async function prepareManagedRetentionPolicy(params: Readonly<{
         };
         const fresh = await waitUntilUnusedExpiry();
         // A lost guest channel during delayed native lapse is a coverage change.
-        // The same unused owner re-reads it as unknown and restores the native TTL.
+        // The same unused owner restores the native TTL before settling its failure.
         const observationBridge: ManagedGuestActivityTransport = params.renew ? {
             read: (machine, signal) => bridge.read(machine, signal),
             confirmIdle: (machine, signal) => bridge.confirmIdle(machine, signal),

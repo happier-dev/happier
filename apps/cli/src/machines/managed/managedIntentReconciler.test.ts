@@ -80,7 +80,7 @@ import { createConnectedAccountPluginHttpPurposeHost } from '@/plugins/runtime/f
 import { createDeferred } from '@/testkit/async/deferred';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { logger } from '@/ui/logger';
-import { ManagedMachineNativeEffectGuardRefusal } from './controllerErrors';
+import { ManagedMachineControllerError, ManagedMachineNativeEffectGuardRefusal } from './controllerErrors';
 
 const unavailable = async (): Promise<never> => { throw new Error('Unexpected credential transport'); };
 function signedIdle(machine: ReturnType<typeof ManagedMachineV1Schema.parse>, since: number, confirmedAt: number) {
@@ -254,6 +254,50 @@ it('preserves the authored native failure when controller outcome reporting fail
     expect(warnings).toHaveBeenCalledWith(expect.any(String), {
         phase: 'machines.managed.power.set', errorClass: 'ManagedMachineControllerError', errorCode: 'forbidden', httpStatus: 403,
     });
+});
+
+it.each(['power-refused', 'delete-refused', 'rebuild-refused', 'guest-startup-failed', 'confirmed'] as const)(
+    'preserves a returned native outcome when Home reporting fails (%s)', async outcome => {
+    const startup = outcome === 'guest-startup-failed';
+    const refused = outcome.endsWith('-refused');
+    const intent = outcome === 'delete-refused' ? 'delete' : outcome === 'rebuild-refused' ? 'rebuild' : startup ? 'start' : 'stop';
+    const nativeCause = { httpStatusClass: '4xx' } as const;
+    const refusal = { kind: 'refused', code: 'native_permission_denied', nativeCause } as const;
+    const failureCause = { phase: 'action.invoke', errorClass: 'Error', errorCode: 'EPIPE', httpStatus: null } as const;
+    const test = setup(undefined, refused ? refusal : { kind: 'confirmed' }, intent,
+        startup ? { observedAt: 1, availability: 'present', power: 'running', storage: 'retained' } : undefined,
+        startup ? () => { throw new PluginError({ code: 'native_transport_unavailable',
+            message: 'Reconnect the native provider', failureCause }); } : undefined,
+        outcome === 'rebuild-refused' ? refusal : undefined);
+    if (startup) test.setMachine({ enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } });
+    const transport = test.post.getMockImplementation()!;
+    test.post.mockImplementation(async (url, body, config) => String(url).endsWith('/report-intent')
+        ? { status: 403, data: { code: 'forbidden', message: 'private-home-report-body' } }
+        : await transport(url, body, config));
+    // Console/file output is the external logging boundary.
+    const warnings = vi.spyOn(logger, 'warn').mockImplementation(() => {});
+    const machine = test.readMachine();
+    const work = intent === 'rebuild'
+        ? test.driver.execute('machines.managed.rebuild', { homeId: machine.homeId, managedMachineId: machine.id,
+            kind: 'rebuild', expectedRevision: machine.intentRevision, reviewedEffectDigest: 'reviewed-effects' }, test.options)
+        : test.run();
+    if (refused || startup) {
+        await expect(work).rejects.toMatchObject(startup
+            ? { code: 'native_transport_unavailable', failureCause }
+            : { code: refusal.code, details: { kind: 'managedNative', nativeCause } });
+        expect(warnings).toHaveBeenCalledWith(expect.any(String), {
+            phase: intent === 'delete' ? 'machines.managed.delete' : intent === 'rebuild' ? 'machines.managed.rebuild' : 'machines.managed.power.set',
+            errorClass: 'ManagedMachineControllerError', errorCode: 'forbidden', httpStatus: 403,
+        });
+    } else {
+        // A confirmed native result does not hide failure to report it to Home.
+        await expect(work).resolves.toMatchObject({ ok: false, errorCode: 'action_outcome_unknown',
+            failureCause: { phase: 'managed.controller.report_intent', errorCode: 'forbidden', httpStatus: 403 } });
+        expect(warnings).not.toHaveBeenCalled();
+    }
+    const report = test.post.mock.calls.find(([url]) => String(url).endsWith('/report-intent'));
+    expect(report?.[1]).toMatchObject({ result: refused ? refusal : { kind: 'confirmed' } });
+    expect(JSON.stringify(warnings.mock.calls)).not.toContain('private-home-report-body');
 });
 
 it('preserves the native pre-handler refusal and submitted custody when refusal reporting fails', async () => {
@@ -542,13 +586,11 @@ describe('unused Stop through guest drain and controller operation custody', () 
                 expect(expiry).toBe(Date.now() + 60_000);
                 await vi.advanceTimersByTimeAsync(60_000);
                 await flush();
-                expect(finished).toBe(false);
-                for (let hour = 0; hour < 3; hour++) {
-                    await vi.advanceTimersByTimeAsync(3600_000);
-                    await flush();
-                    expect(finished).toBe(false);
-                    expect(expiry).toBeGreaterThan(Date.now());
-                }
+                expect(finished).toBe(true);
+                expect(await execution).toMatchObject({ error: { rpcErrorCode: RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE } });
+                // Coverage loss restores the normal vendor lifetime once before
+                // this operation fails; it cannot leave an idle-shortened TTL.
+                expect(expiry).toBe(Date.now() + 7200_000);
             } else if (ending === 'renewal-failure') {
                 failRenewal = true;
                 await vi.advanceTimersByTimeAsync(3600_000);
@@ -2150,7 +2192,7 @@ describe('unused Stop through guest drain and controller operation custody', () 
         expect(await operations.handlers.getV2({ operationId: 'already-running-wake' })).toMatchObject({ kind: 'not_found' });
         expect(test.effects).toEqual([]);
     });
-    it.each(['idle', 'configured-stop', 'configured-suspend', 'busy', 'unknown', 'missing-confirmation', 'approval-held', 'approval-approved', 'approval-rejected', 'approval-observation-failed',
+    it.each(['idle', 'configured-stop', 'configured-suspend', 'busy', 'unknown', 'activity-unavailable', 'missing-confirmation', 'approval-held', 'approval-approved', 'approval-rejected', 'approval-observation-failed',
         'within-window', 'refused-reopen', 'lost-probe-reply', 'aborted-probe'] as const)(
         'settles retention power with configured consent or its required review (%s)', async disposition => {
         vi.useFakeTimers({ toFake: ['Date'] });
@@ -2205,6 +2247,7 @@ describe('unused Stop through guest drain and controller operation custody', () 
                 ...(action ? { action } : {}) }, context));
         };
         const bridge = { read: async (current: typeof machine) => {
+                if (disposition === 'activity-unavailable') throw new RpcError('Guest offline', RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE);
                 const result = await call(current, MANAGED_ACTIVITY_READ_RPC_METHOD);
                 if (disposition === 'lost-probe-reply') throw new Error('RPC response lost');
                 if (disposition === 'aborted-probe') await controller.handlers.cancel({ operationId: 'unused-stop' });
@@ -2289,7 +2332,7 @@ describe('unused Stop through guest drain and controller operation custody', () 
                         } : {}) });
                     try { return { ok: true, result: await work }; }
                     catch (error) { return { ok: false, error: 'Drain unavailable', errorCode: operation.signal.aborted ? 'cancelled'
-                        : error instanceof RpcError ? error.rpcErrorCode : 'drain_failed' }; }
+                        : readRpcErrorCode(error) ?? (error instanceof ManagedMachineControllerError ? error.code : 'drain_failed') }; }
                     finally { settled = true; }
                 } });
             while (!settled) {
@@ -2383,9 +2426,15 @@ describe('unused Stop through guest drain and controller operation custody', () 
                 expect(test.effects).toEqual(disposition === 'approval-approved' ? ['power'] : []);
                 // Absolute-deadline effects retain review but do not drain guest work.
                 expect(drain.isQuiescing()).toBe(false);
-            } else if (disposition === 'busy' || disposition === 'unknown') {
+            } else if (disposition === 'unknown' || disposition === 'activity-unavailable') {
                 await expect(controller.handlers.getV2({ operationId: 'unused-stop' })).resolves.toMatchObject({ kind: 'found', operation: {
-                    state: 'running', progress: { phase: disposition === 'busy' ? 'managed.intent.busy' : 'managed.intent.activity-unknown' } } });
+                    state: 'failed', error: { errorCode: disposition === 'unknown' ? 'activity_unknown' : RPC_ERROR_CODES.TRANSPORT_UNAVAILABLE } } });
+                expect(test.effects).toEqual([]);
+                expect(test.post.mock.calls.some(([url]) => String(url).endsWith('/admit-policy'))).toBe(false);
+                await observed;
+            } else if (disposition === 'busy') {
+                await expect(controller.handlers.getV2({ operationId: 'unused-stop' })).resolves.toMatchObject({ kind: 'found', operation: {
+                    state: 'running', progress: { phase: 'managed.intent.busy' } } });
                 expect(test.effects).toEqual([]);
                 expect(test.post.mock.calls.some(([url]) => String(url).endsWith('/admit-policy'))).toBe(false);
                 await controller.handlers.cancel({ operationId: 'unused-stop' });
@@ -3062,7 +3111,7 @@ describe('managed native intent through the accepted Action', () => {
         } });
         expect(test.effects).toEqual([]);
     });
-    it.each(['busy', 'unknown'] as const)('publishes the actual %s guest decision and waits for confirmation before an after-idle native effect', async kind => {
+    it.each(['busy', 'unknown'] as const)('waits for busy work or settles unknown activity before an after-idle native effect (%s)', async kind => {
         const test = setup({ kind, reasons: ['finite'] });
         test.setMachine({ desiredWhen: 'after-idle' });
         const machine = test.readMachine();
@@ -3076,18 +3125,31 @@ describe('managed native intent through the accepted Action', () => {
         let releaseDrain!: () => void;
         const confirming = new Promise<void>(resolve => { releaseDrain = resolve; });
         test.waitForChange.mockImplementation(async () => await changed);
+        let settled = false;
         const observed = operations.observeExecution({ actionId: 'machines.managed.delete', input: {}, actionRequestId: 'control',
             execute: async context => {
                 work = test.driver.execute('machines.managed.delete', { homeId: machine.homeId, managedId: machine.id,
                     when: 'after-idle', intent: 'delete', reviewedDependencies: true },
                     { requestId: 'control', context, signal: context.signal });
-                return { ok: true, result: await work };
+                try { return { ok: true, result: await work }; }
+                finally { settled = true; }
             } });
         try {
-            while (test.waitForChange.mock.calls.length === 0) await new Promise<void>(resolve => setImmediate(resolve));
+            while (test.waitForChange.mock.calls.length === 0 && !settled) await new Promise<void>(resolve => setImmediate(resolve));
+            if (kind === 'unknown') {
+                expect(await operations.handlers.getV2({ operationId: `activity-${kind}` })).toMatchObject({ kind: 'found', operation: {
+                    state: 'failed', error: { errorCode: 'activity_unknown' },
+                    domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller: machine.controller },
+                } });
+                await expect(work).rejects.toMatchObject({ code: 'activity_unknown' });
+                expect(test.effects).toEqual([]);
+                expect(test.confirmIdle).not.toHaveBeenCalled();
+                expect(test.waitForChange).not.toHaveBeenCalled();
+                return;
+            }
             expect(await operations.handlers.getV2({ operationId: `activity-${kind}` })).toMatchObject({ kind: 'found', operation: {
                 state: 'running', domainRef: { kind: 'managedMachine', id: machine.id, resource: machine.resource, controller: machine.controller },
-                progress: { kind: 'phase', phase: kind === 'busy' ? 'managed.intent.busy' : 'managed.intent.activity-unknown' },
+                progress: { kind: 'phase', phase: 'managed.intent.busy' },
             } });
             expect(test.effects).toEqual([]);
             test.readActivity.mockResolvedValue({ kind: 'idle', since: 0 });
@@ -3365,8 +3427,8 @@ describe('managed native intent through the accepted Action', () => {
         expect(test.reports).toEqual([expect.objectContaining({ result: { kind: 'unknown' },
             observation: { observedAt: 0, availability: 'present' } })]);
     });
-    it.each(['busy', 'unknown'] as const)('keeps %s work pending and dispatches nothing when canceled before unused-stop', async kind => {
-        const test = setup({ kind, reasons: ['finite'] });
+    it('keeps busy work pending and dispatches nothing when canceled before unused-stop', async () => {
+        const test = setup({ kind: 'busy', reasons: ['finite'] });
         test.setMachine({ desiredWhen: 'after-idle', desiredAfterMs: 3_600_000 });
         const controller = new AbortController();
         const work = test.run(controller.signal);
@@ -3708,7 +3770,7 @@ describe('managed native intent through the accepted Action', () => {
         expect(test.readMachine().submittedNativeEffect).toBeUndefined();
         expect(test.reopen).toHaveBeenCalled();
     });
-    it.each(['busy', 'unknown', 'interval'] as const)('cancels the admitted FIN scope locally during %s waiting after source withdrawal without native IO', async phase => {
+    it.each(['busy', 'interval'] as const)('cancels the admitted FIN scope locally during %s waiting after source withdrawal without native IO', async phase => {
         if (phase === 'interval') { vi.useFakeTimers(); vi.setSystemTime(0); }
         const test = setup(phase === 'interval' ? { kind: 'idle', since: 0 } : { kind: phase, reasons: ['finite'] });
         test.setMachine({ desiredWhen: 'after-idle', ...(phase === 'interval' ? { desiredAfterMs: 100 } : {}) });
