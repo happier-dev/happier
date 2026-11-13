@@ -2,11 +2,18 @@ import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { describe, expect, it, vi } from 'vitest';
-import { resolveConnectedAccountDirectExportContractV1, CONNECTED_ACCOUNT_ACCESS_ONLY_EXPORT_CONTRACT_V1 } from '@happier-dev/protocol/connect/pluginConnectedAccountAuthenticationV2';
+import { resolveConnectedAccountDirectExportContractV1 } from '@happier-dev/protocol/connect/pluginConnectedAccountAuthenticationV2';
 import { museAccountDescriptor } from './declarations.js';
 import { museConnectedAccountRuntime } from './museAccountNativeRuntime.js';
 
 describe('Muse explicit native import', () => {
+  it('offers brokered sharing only for every Muse authentication mode', () => {
+    for (const mode of museAccountDescriptor.authentication.modes) {
+      for (const kind of ['oauth', 'token'] as const) {
+        expect(resolveConnectedAccountDirectExportContractV1(mode, kind), `${mode.id}/${kind}`).toBeNull();
+      }
+    }
+  });
   it.each([
     { name: 'JWT expiry', token: 'synthetic.' + btoa(JSON.stringify({ exp: 4102444800 })).replaceAll('=', '') + '.synthetic', expected: '4102444800000' },
     { name: 'unknown expiry', token: 'synthetic-opaque-account-token', expected: undefined },
@@ -35,18 +42,19 @@ describe('Muse explicit native import', () => {
       await expect(mode.complete({ fields: { source: 'native' } }, context)).resolves.toMatchObject({ status: 'connected', credentialKind: 'oauth' });
       const declaration = museAccountDescriptor.authentication.modes.find(candidate => candidate.id === 'native-import');
       if (!declaration) throw new Error('Expected native import declaration');
-      expect(resolveConnectedAccountDirectExportContractV1(declaration, 'oauth')).toBe(CONNECTED_ACCOUNT_ACCESS_ONLY_EXPORT_CONTRACT_V1);
+      expect(resolveConnectedAccountDirectExportContractV1(declaration, 'oauth')).toBeNull();
       expect(resolveConnectedAccountDirectExportContractV1(declaration, 'token')).toBeNull();
       expect(values.get('expiresAtMs')).toBe(expected);
       // Pre-declaration accounts retain the original native fields, without expiresAtMs.
       values.delete('expiresAtMs');
       const enrich = museConnectedAccountRuntime.enrichCredentialContext;
-      expect(enrich).toBeTypeOf('function');
-      if (!enrich) throw new Error('Expected native expiry enrichment');
-      const enrichment = await enrich({ ...context, stagedCredentials: credentials,
-        operation: { operationId: 'synthetic-enrich', configurationRevision: 'synthetic-config' } });
-      expect(enrichment).toMatchObject({ status: 'connected', ...(expected === undefined ? { diagnostic: { code: 'access_only_expiry_unavailable' } } : {}) });
-      expect(values.get('expiresAtMs')).toBe(expected);
+      const status = enrich
+        ? await enrich({ ...context, stagedCredentials: credentials,
+          operation: { operationId: 'synthetic-enrich', configurationRevision: 'synthetic-config' } })
+        : await museConnectedAccountRuntime.status(context);
+      expect(status).toMatchObject({ status: 'connected' });
+      expect(status).not.toHaveProperty('diagnostic');
+      expect(values.get('expiresAtMs')).toBeUndefined();
       expect(values.get('accountToken')).toBe(token);
       expect(values.get('inferenceKey')).toBe('synthetic-native-key');
       const result = await museConnectedAccountRuntime.materialize({ kind: 'files', fileIds: ['muse/auth.json'] }, context);

@@ -137,9 +137,9 @@ include `machineId` in the input with the Machine you selected. Importing a logi
 from a Machine does not by itself require that Machine for later tests.
 
 Muse subscription accounts with an inference key use the models endpoint for
-this check. A valid shared Muse login containing only an access token can still
-run native sessions; its connection test reports unsupported with a reason.
-Testing never acquires another credential to enable the check.
+this check. For previously delivered access-only Muse logins, the connection
+test reports unsupported with a reason. Testing never acquires another
+credential to enable the check.
 
 ## GitHub CLI import in 0.3 development
 
@@ -187,12 +187,10 @@ account setting. If credentials expire or are rejected, sign in again explicitly
 Removing the saved account removes its managed native home after active sessions
 release it; it does not log out your original native Muse installation.
 
-In development builds, native Team delivery shares an access token with a known
-future expiry. The member's Muse obtains its own inference key. An imported login
-that does not report its expiry remains available for brokered sharing; use Meta
-sign-in again to share it natively. Existing accounts pick up delivery support
-from their current connection method without reconnecting solely to refresh that
-support declaration.
+In development builds, Muse Team sharing supports brokered delivery only.
+The credential stays on the sharer's Machine. Native delivery is unavailable
+because a rejected delivered token cannot be re-acquired through the existing
+Team delivery path. Signing in again does not enable native sharing.
 
 [Meta's terms](https://dev.meta.ai/legal/terms-of-service) restrict subscription
 credentials to its coding harness. A working key route does not establish

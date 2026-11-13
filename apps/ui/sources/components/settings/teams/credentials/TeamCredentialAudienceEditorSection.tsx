@@ -118,7 +118,7 @@ export const TeamCredentialAudienceEditorSection = React.memo(function TeamCrede
         <>
             <ItemGroup
                 title={t('teams.credentials.audience.title')}
-                description={credentialDirectExportFailureMessage(resource.directExportFailure) ?? (draft.deliveryPolicy.preferredAllowedModes.length === 1 && draft.deliveryPolicy.preferredAllowedModes[0] === 'brokered'
+                description={credentialDirectExportFailureMessage(resource.directExportFailure, resource.directExportSupport) ?? (draft.deliveryPolicy.preferredAllowedModes.length === 1 && draft.deliveryPolicy.preferredAllowedModes[0] === 'brokered'
                     ? t('teams.credentials.audience.ceilingBlocked')
                     : t('teams.credentials.audience.limitsNote'))}
             >

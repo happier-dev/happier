@@ -273,6 +273,9 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
             (candidate) => candidate.candidate.offeredByResourceId === resourceId,
         ) ?? null
         : null);
+    const directExportSupport = selectedSourceCandidate
+        ? selectedSourceCandidate.candidate.directExportSupport
+        : draftSourceIdentity === JSON.stringify(resourceDraft.baseline.source) ? resource.directExportSupport : undefined;
     const directExportFailure = selectedSourceCandidate
         ? selectedSourceCandidate.candidate.directExportFailure
         : draftSourceIdentity === JSON.stringify(resourceDraft.baseline.source) ? resource.directExportFailure : undefined;
@@ -388,7 +391,7 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
                 is confirmed before it is drafted. */}
             {props.section === undefined && resource.capabilities.updateDeliveryPolicy ? <ItemGroup
                 title={t('teams.credentials.edit.ceilingLabel')}
-                description={credentialDirectExportFailureMessage(directExportFailure) ?? t('teams.credentials.edit.ceilingNote')}
+                description={credentialDirectExportFailureMessage(directExportFailure, directExportSupport) ?? t('teams.credentials.edit.ceilingNote')}
                 accessibilityRole="radiogroup"
                 accessibilityLabel={t('teams.credentials.edit.ceilingLabel')}
             >
@@ -402,7 +405,7 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
                     onPress={() => resourceDraft.setDraft(narrowTeamCredentialResourceDraftToBrokeredOnly)}
                     showChevron={false}
                 />
-                <Item
+                {nativeAllowed || directExportSupport !== 'unsupported' ? <Item
                     testID="team-credential-edit-ceiling:direct_allowed"
                     title={t('teams.credentials.edit.ceilingDirectAllowed')}
                     accessibilityRole="radio"
@@ -417,7 +420,7 @@ const CredentialEditor = React.memo(function CredentialEditor(props: Readonly<{
                         })();
                     }}
                     showChevron={false}
-                />
+                /> : null}
             </ItemGroup> : null}
 
             {(props.section === undefined || props.section === 'access') && resource.capabilities.manageAudience ? (

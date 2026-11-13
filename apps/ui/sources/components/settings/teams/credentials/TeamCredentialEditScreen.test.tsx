@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { t } from '@/text';
 import { act, type ReactTestInstance } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -31,14 +32,6 @@ installSettingsViewCommonModuleMocks({
     modal: async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock({
         spies: {
             confirm: modalConfirm,
-            show: (config) => {
-                if (config.chrome?.testID === 'actions.confirmation-review.modal') {
-                    const props = config.props as { onAnswer(confirmed: boolean): void };
-                    // This spy controls the person's choice for either modal host presentation.
-                    queueMicrotask(() => { void modalConfirm('Action review', '').then(props.onAnswer); });
-                }
-                return 'modal-id';
-            },
         },
     }).module,
 });
@@ -405,6 +398,13 @@ describe('TeamCredentialEditScreen broker placement', () => {
         await vi.waitFor(() => expect(harness.requestsFor(CREDENTIAL_UPDATE_PATH)).toHaveLength(1));
         expect(Modal.confirm).toHaveBeenCalledOnce();
         expect(harness.requestsFor(ARTIFACT_CREATE_PATH)).toHaveLength(0);
+    });
+
+    it('keeps an existing unsupported source brokered-only when editing', async () => {
+        const { screen } = await renderEditor({ resourceOverrides: { directExportSupport: 'unsupported' } });
+        expect(screen.findByTestId('team-credential-edit-ceiling:direct_allowed')).toBeNull();
+        expect(screen.findByTestId('team-credential-edit-ceiling:brokered_only')?.props.disabled).not.toBe(true);
+        expect(screen.getTextContent()).toContain(t('teams.credentials.edit.directUnsupported'));
     });
 
     it('renames an existing native resource without restating its disclosure or audience authority', async () => {

@@ -172,21 +172,6 @@ export const museConnectedAccountRuntime: ConnectedAccountRuntime = {
       },
     },
   } },
-  async enrichCredentialContext(context, options) {
-    const [mode, mechanism, token, currentExpiry] = await Promise.all([
-      'credentialMode', 'nativeMechanism', 'accountToken', 'expiresAtMs',
-    ].map(key => read(context.credentials, key, options)));
-    const connected = await museAccountConnectedResult(context.credentials, options);
-    if (mode !== 'native' || mechanism !== '"oauth"') return connected;
-    const expiry = currentExpiry && Number.isFinite(Number(currentExpiry))
-      ? Number(currentExpiry) : resolveMuseNativeAccessExpiryMs(token);
-    if (expiry === null) return { ...connected, diagnostic: {
-      code: 'access_only_expiry_unavailable', severity: 'error' as const,
-      message: "This imported Muse login doesn't report when it expires. Reconnect it with Meta sign-in to share it natively.",
-    } };
-    if (!currentExpiry) await context.stagedCredentials.set('expiresAtMs', String(expiry), options);
-    return connected;
-  },
   async refresh() { return { status: 'reconnectRequired', diagnostic: diagnostic('connected_account_refresh_unsupported', 'explicit_reconnect_required') }; },
   async revoke() { return { status: 'remoteUnsupported' }; },
   async status(context, options) {

@@ -365,7 +365,11 @@ export {
  * limit, a stale revision and a departed Group member with the same non-answer.
  * Codes this domain does not own fall back to the shared Team vocabulary.
  */
-export function credentialDirectExportFailureMessage(failure: TeamCredentialResourceSummaryV1['directExportFailure']): string | undefined {
+export function credentialDirectExportFailureMessage(
+    failure: TeamCredentialResourceSummaryV1['directExportFailure'],
+    support?: TeamCredentialResourceSummaryV1['directExportSupport'],
+): string | undefined {
+    if (support === 'unsupported') return t('teams.credentials.edit.directUnsupported');
     return failure === undefined ? undefined : failure.message ?? t('common.unavailable');
 }
 

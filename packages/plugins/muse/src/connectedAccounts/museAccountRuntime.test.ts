@@ -209,7 +209,7 @@ describe('Muse account runtime', () => {
       expect(f.requests).toHaveLength(5);
       expect(writes).toBe(1);
       expect(storedMetadata).toMatchObject({ includesApiKey: true, accessMode: 'subscription' });
-      expect(storedDirectExportContract).toBe('happier.team-credential-access-only-connected-account-direct.v1');
+      expect(storedDirectExportContract).toBeNull();
       expect(publishedObservation).toMatchObject({ providerId: 'meta', observedAtMs: now, meters: [expect.objectContaining({ used: 20 })] });
       expect(storedContent?.t).toBe(accountMode === 'plain' ? 'plain' : 'encrypted');
       if (!storedContent) throw new Error('Expected settled credential envelope');
@@ -241,7 +241,7 @@ describe('Muse account runtime', () => {
       await expect(owner.beginConnect({ service: MUSE_ACCOUNT_SERVICE, modeId: 'api-key' })).resolves.toMatchObject({ status: 'awaitingManual' });
       await expect(owner.submitManual({ attemptId: 'attempt-5', fields: { apiKey: 'synthetic-manual-key' } })).resolves.toMatchObject({ status: 'connected', accessMode: 'apiKey' });
       expect(storedMetadata).toMatchObject({ accessMode: 'apiKey' });
-      expect(storedDirectExportContract).toBe('happier.team-credential-manual-connected-account-direct.v1');
+      expect(storedDirectExportContract).toBeNull();
       expect(storedMetadata).not.toHaveProperty('includesApiKey');
       expect(promoted).toBe(1);
       expect(writes).toBe(2);
