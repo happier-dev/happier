@@ -22,6 +22,8 @@ import {
   type AgentRuntimeDaemonServiceRequestV1,
   type AgentRuntimeDaemonServiceResponseV1,
 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
+import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
+import { dispatchPluginHookEvent } from '@/plugins/runtime/hooks/execution/dispatchPluginHookEvent';
 
 type ActionOperation = Extract<AgentRuntimeDaemonServiceRequestV1['operation'], { kind: 'action.execute' }>;
 
@@ -36,6 +38,8 @@ export async function createSessionDaemonAuthorityFixture(input: Readonly<{
   actionServiceFailure?: Extract<AgentRuntimeDaemonServiceResponseV1, { ok: false }>;
   /** Explicit policy at the remote daemon boundary; absent never means defaults. */
   agentStartPolicy?: RequesterAgentStartPolicyV1;
+  /** Use the real admitted registry for runner lifecycle observers at the remote daemon boundary. */
+  lifecycleHookRegistry?: Parameters<typeof dispatchPluginHookEvent>[0]['runtimeRegistry'];
   dispatchService?: (request: AgentRuntimeDaemonServiceRequestV1) => Promise<unknown>;
 }>) {
   const command = input.runnerRuntimeRoot
@@ -64,12 +68,20 @@ export async function createSessionDaemonAuthorityFixture(input: Readonly<{
       const parsed = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(Buffer.concat(chunks).toString('utf8')));
       if (parsed.context.sessionId !== input.sessionId || parsed.context.token !== capability) throw new Error('Invalid daemon Action authority');
       if (parsed.operation.kind !== 'action.execute') {
-        if (!input.dispatchService && parsed.operation.kind !== 'agent_start.policy.read') {
+        const lifecycleHook = parsed.operation.kind === 'turn_contributions.resolve'
+          && parsed.operation.request.kind === 'lifecycleHook' ? parsed.operation.request : null;
+        if (!input.dispatchService && parsed.operation.kind !== 'agent_start.policy.read'
+          && !(lifecycleHook && input.lifecycleHookRegistry)) {
           throw new Error(`Unexpected daemon service: ${parsed.operation.kind}`);
         }
         const policy = input.agentStartPolicy;
         const result = AgentRuntimeDaemonServiceResponseV1Schema.parse(input.dispatchService
           ? await input.dispatchService(parsed)
+          : lifecycleHook && input.lifecycleHookRegistry
+            ? { ok: true, result: { kind: 'turn_contributions', status: 'resolved', contributions: {
+              kind: 'lifecycleHook', result: await dispatchPluginHookEvent({ runtimeRegistry: input.lifecycleHookRegistry,
+                event: lifecycleHook.event }),
+            } } }
           : parsed.operation.kind === 'agent_start.policy.read' && policy
             ? { ok: true, result: { kind: 'agent_start.policy', policy: {
               workDepthLimit: policy.workDepthLimit, sessionAgentStartAllowListsV1: policy.sessionAgentStartAllowListsV1,
@@ -113,7 +125,7 @@ export async function createSessionDaemonAuthorityFixture(input: Readonly<{
     get actionRequestCount() { return actionRequestCount; },
     /** The same daemon-owned record consumed by approval Session-currentness. */
     trackedSession: {
-      startedBy: 'daemon', pid: runner.pid, happySessionId: input.sessionId,
+      trackingKey: legacyPidSessionTrackingKey(runner.pid), startedBy: 'daemon', pid: runner.pid, happySessionId: input.sessionId,
       runnerProcessIdentity: { pid: runner.pid, processStartTimeMs: runner.processStartTimeMs,
         processCommandHash: runner.processCommandHash },
       agentRuntimeDaemonServiceAuthorityFilePath: path,

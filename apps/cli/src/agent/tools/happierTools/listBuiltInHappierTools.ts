@@ -12,7 +12,7 @@ import { SESSION_RUN_PROMPT_READ_ACTION_IDS_V1, SessionRunPromptReadActionIdV1Sc
 import type { ActionId, ActionsSettingsV1, FeatureId, SessionRunPromptReadActionIdV1 } from '@happier-dev/protocol';
 import type { HappierBuiltInToolDefinition } from './types';
 
-export type BuiltInHappierToolsSurface = 'mcp' | 'cli' | 'agent';
+export type BuiltInHappierToolsSurface = import('./actionToolCatalog').HappierBuiltInToolSurface;
 
 export type HappierToolInventory = Readonly<{
   tools: readonly HappierBuiltInToolDefinition[];

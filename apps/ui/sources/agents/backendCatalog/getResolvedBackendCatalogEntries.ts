@@ -270,8 +270,9 @@ export function resolveBackendTargetOperationalAgentId(params: Readonly<{
         ? params.selectedEntry.agentId.trim()
         : '';
     if (projectedAgentId) return projectedAgentId;
-    if (params.backendTarget.kind === 'agent') {
-        const identity = params.backendTarget.identity;
+    const agentTarget = resolveAgentExecutionTargetForBackendTarget({ backendTarget: params.backendTarget });
+    if (agentTarget) {
+        const identity = agentTarget.identity;
         const exactProjectedAgentId = Object.entries(params.mergedProviderProjectionById ?? {})
             .find(([, projection]) => (
                 projection.identity?.pluginId === identity.pluginId

@@ -1,5 +1,6 @@
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { ExecutionRunEnsureOrStartRequestSchema, ExecutionRunEnsureRequestSchema, ExecutionRunActionRequestSchema, ExecutionRunSendRequestSchema } from '@happier-dev/protocol/execution/runs/index';
@@ -96,6 +97,16 @@ type ExecutionRunRpcFailure = Readonly<{
   errorCode: string;
   details?: unknown;
 }>;
+
+/** Consume the signed Account-host invocation; neither Run input nor Session origin supplies it. */
+function readAdmittedVoiceRunActionInvocation(context: ActionExecutorContext | undefined, actionId: 'execution.run.start' | 'execution.run.ensure' | 'execution.run.ensure_or_start') {
+  const binding = context?.externalActionExecutionAuthorization?.binding;
+  if (!binding || !('authentication' in binding) || binding.authentication.kind !== 'account'
+    || binding.actionId !== actionId || binding.sessionActionOrigin || binding.sessionActionSource || binding.workflowActionOrigin
+    || context?.surface !== 'voice' || context.actionCaller?.kind !== 'host') return undefined;
+  return { caller: { kind: 'host' as const }, surface: 'voice' as const,
+    authority: context.authority ?? 'account_automation' as const };
+}
 
 function executionRunSetupFailure(error: unknown): ExecutionRunRpcFailure {
   const providerCode = ProviderErrorCodeV1Schema.safeParse(
@@ -340,11 +351,11 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       failure: ExecutionRunRpcFailure,
       runCreation: 'noRunCreated' | 'outcomeUnknown',
       error?: unknown,
-    ): ExecutionRunRpcFailure => ({
+    ): ExecutionRunRpcFailure => carryActionFailureDiagnostic({
       ...failure,
       details: withExecutionRunStartFailureDetails(failure.details, runCreation,
         error === undefined ? undefined : readUnexpectedActionErrorDiagnosticV1(error).errorClass),
-    });
+    }, error ?? failure);
     const beforeStart = (failure: ExecutionRunRpcFailure, error?: unknown) => classifyFailure(failure, 'noRunCreated', error);
 
     if (!isAuthoritativeScope(sessionId)) return beforeStart(executionRunScopeMismatch());
@@ -497,6 +508,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
         projectLaunchContext: _callerProjectLaunchContext,
         projectSetupOperation: _callerProjectSetupOperation,
         runReportPolicy: _callerRunReportPolicy,
+        actionInvocation: _callerActionInvocation,
         ...runStartRequest
       } = parsed.data;
       const requesterWorkAttributionV1 = params.context.sessionId === sessionId
@@ -518,6 +530,9 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       }
       const started = await params.manager.start({
         ...runStartRequest,
+        ...(parsed.data.intent === 'voice_agent' ? {
+          actionInvocation: readAdmittedVoiceRunActionInvocation(actionOptions, 'execution.run.start'),
+        } : {}),
         approvalProfileId: runStartRequest.approvalProfileId === undefined
           ? actionOptions?.approvalProfileId ?? null : runStartRequest.approvalProfileId,
         signal: parsed.data.intent === 'voice_agent' ? actionOptions?.signal : undefined,
@@ -570,7 +585,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       const code = error && typeof error === 'object' ? (error as { code?: unknown }).code : undefined;
       if (typeof code === 'string' && (AGENT_START_REFUSAL_CODES_V1 as readonly string[]).includes(code)) {
         return classifyFailure({ ok: false, errorCode: code, error: code,
-          ...(rawDetails !== undefined ? { details: rawDetails } : {}) }, runCreation);
+          ...(rawDetails !== undefined ? { details: rawDetails } : {}) }, runCreation, error);
       }
 
       if (code === 'execution_run_not_allowed') {
@@ -579,7 +594,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
           error: error instanceof Error ? error.message : 'Execution run is not allowed in this scope',
           errorCode: 'execution_run_not_allowed',
           ...(rawDetails !== undefined ? { details: rawDetails } : {}),
-        }, runCreation);
+        }, runCreation, error);
       }
       const providerErrorCode = ProviderErrorCodeV1Schema.safeParse(code);
       if (providerErrorCode.success) {
@@ -588,7 +603,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
           error: error instanceof Error ? error.message : 'Provider launch failed',
           errorCode: providerErrorCode.data,
           ...(rawDetails !== undefined ? { details: rawDetails } : {}),
-        }, runCreation);
+        }, runCreation, error);
       }
       if (error instanceof VoiceAgentError) {
         return classifyFailure({
@@ -596,7 +611,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
           error: error.message,
           errorCode: error.code,
           ...(rawDetails !== undefined ? { details: rawDetails } : {}),
-        }, runCreation);
+        }, runCreation, error);
       }
       const transportCode = ExecutionRunTransportErrorCodeSchema.safeParse(code);
       const scmErrorCode = ScmDiffSummaryErrorCodeSchema.safeParse(code);
@@ -608,14 +623,14 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
           error: readExecutionRunStartPreparationReason(error) ?? refusalCode,
           errorCode: refusalCode,
           ...(rawDetails !== undefined ? { details: rawDetails } : {}),
-        }, runCreation);
+        }, runCreation, error);
       }
       return classifyFailure({
         ok: false,
         error: error instanceof Error ? error.message : 'Execution failed',
         errorCode: transportCode.success ? transportCode.data : 'execution_run_failed',
         ...(rawDetails !== undefined ? { details: rawDetails } : {}),
-      }, runCreation);
+      }, runCreation, error);
     }
   }
 
@@ -649,6 +664,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
               ? { requestedConfiguration: started.requestedConfiguration }
               : {}),
             ...(started.preparedInstructionsFor ? { preparedInstructionsFor: started.preparedInstructionsFor } : {}),
+            ...(started.actionInvocation ? { actionInvocation: started.actionInvocation } : {}),
           }
         : started;
     },
@@ -756,6 +772,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
       const parsed = ExecutionRunEnsureRequestSchema.parse(request);
       if (!await params.manager.getForRequest(parsed.runId, sessionId, actionOptions?.requesterWorkAttributionV1)) return executionRunNotFound();
       const ensured = await params.manager.ensure(parsed.runId, {
+        actionInvocation: readAdmittedVoiceRunActionInvocation(actionOptions, 'execution.run.ensure'),
         resume: parsed.resume,
         ...(actionOptions?.signal ? { signal: actionOptions.signal } : {}),
         ...(params.context.projectLaunchContext ? { projectLaunchContext: params.context.projectLaunchContext } : {}),
@@ -771,7 +788,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
           ...(ensured.details ? { details: ensured.details } : {}),
         };
       }
-      return { ok: true };
+      return { ok: true, ...(ensured.actionInvocation ? { actionInvocation: ensured.actionInvocation } : {}) };
     },
     executionRunEnsureOrStart: async (sessionId, request, actionOptions) => {
       const disabled = ensureEnabled();
@@ -783,6 +800,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
         await params.manager.recoverRetainedRuns();
         if (!await params.manager.getForRequest(runId, sessionId, actionOptions?.requesterWorkAttributionV1)) return executionRunNotFound();
         const ensured = await params.manager.ensure(runId, {
+          actionInvocation: readAdmittedVoiceRunActionInvocation(actionOptions, 'execution.run.ensure_or_start'),
           resume: parsed.resume,
           ...(actionOptions?.signal ? { signal: actionOptions.signal } : {}),
           ...(params.context.projectLaunchContext ? { projectLaunchContext: params.context.projectLaunchContext } : {}),
@@ -798,7 +816,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
             ...(ensured.details ? { details: ensured.details } : {}),
           };
         }
-        return { ok: true, runId, created: false };
+        return { ok: true, runId, created: false, ...(ensured.actionInvocation ? { actionInvocation: ensured.actionInvocation } : {}) };
       }
 
       const started = await startRun(parsed.start, sessionId, actionOptions);

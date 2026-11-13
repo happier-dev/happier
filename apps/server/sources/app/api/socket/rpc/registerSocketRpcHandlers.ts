@@ -31,7 +31,7 @@ import { SESSION_SERVER_START_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol
 import { SessionFollowSourceKeyPrepareAuthorizationV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceKeyPreparationV1';
 import { resolveEphemeralRunnerMachineRpcAuthority, type EphemeralRunnerMachineRpcAuthority } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { isUiBrowserAutomationDispatchMethod, UI_BROWSER_AUTOMATION_DISPATCH_KEY_MAX_LENGTH } from '@happier-dev/protocol/browser/automation/reverseDispatchV1';
-import { isCurrentUiContextClientRpcMethod, isSessionUiActionClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { isCurrentUiContextClientRpcMethod, isSessionUiActionClientRpcMethod, isVoiceRunActionClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { type MachineAccessRefusalCode, type SocketRpcMachineAdmissionContextV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { MANAGED_FINITE_WAKE_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD,
@@ -137,6 +137,7 @@ function isMachineVisibleClientRpcMethod(method: string): boolean {
         || isWorkflowDraftClientRpcMethod(method)
         || isMountedWorkReadClientRpcMethod(method)
         || isSessionUiActionClientRpcMethod(method)
+        || isVoiceRunActionClientRpcMethod(method)
         || isCurrentUiContextClientRpcMethod(method);
 }
 
@@ -194,13 +195,16 @@ function normalizeRpcMethodName(value: unknown): string | null {
     const separatorIndex = trimmed.indexOf(':');
     if (separatorIndex > 0 && (isWorkflowDraftClientRpcMethod(trimmed.slice(separatorIndex + 1))
         || isMountedWorkReadClientRpcMethod(trimmed.slice(separatorIndex + 1))
-        || isSessionUiActionClientRpcMethod(trimmed.slice(separatorIndex + 1)))) {
+        || isSessionUiActionClientRpcMethod(trimmed.slice(separatorIndex + 1))
+        || isVoiceRunActionClientRpcMethod(trimmed.slice(separatorIndex + 1)))) {
         // Mounted addresses have no schema length ceiling. Their
         // encoded suffix is content carried by this known method family and
         // remains under the existing Socket.IO packet boundary. Retain the
         // ordinary method-name budget for the Machine and fixed method prefix.
         const familyPrefix = isWorkflowDraftClientRpcMethod(trimmed.slice(separatorIndex + 1))
             ? `${RPC_METHODS.UI_ACTION_EXECUTE}.workflow.`
+            : isVoiceRunActionClientRpcMethod(trimmed.slice(separatorIndex + 1))
+                ? `${RPC_METHODS.UI_ACTION_EXECUTE}.voice.`
             : isSessionUiActionClientRpcMethod(trimmed.slice(separatorIndex + 1))
                 ? `${RPC_METHODS.UI_ACTION_EXECUTE}.session.` : `${RPC_METHODS.UI_ACTION_EXECUTE}.work.`;
         return separatorIndex + 1 + familyPrefix.length <= MAX_RPC_METHOD_NAME_LENGTH

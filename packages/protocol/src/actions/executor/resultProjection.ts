@@ -67,7 +67,7 @@ export function settleActionOutput(actionId: ActionId, result: ActionExecuteResu
       || settled.errorCode === 'invalid_action_output' || settled.errorCode === 'result_too_large')) {
       settled = completeUnknownProjectOpenResult(settled.details);
     }
-    const carriedCause = settled.ok ? undefined : readCarriedActionFailureCause(settled);
+    const carriedCause = settled.ok ? undefined : readCarriedActionFailureCause(settled) ?? diagnostic?.failureCause;
     const projected = settled.ok ? settled : projectActionExecuteFailure({ ...settled,
       ...(carriedCause ? { failureCause: carriedCause } : {}) }, requestId);
     return result.operationCredentialUses?.length ? { ...projected, operationCredentialUses: result.operationCredentialUses } : projected;

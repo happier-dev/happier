@@ -48,6 +48,7 @@ import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalTransp
  * rebuilding the profile.
  */
 export type NativeAgentSessionRunToolBindingRequest = Readonly<{
+    actionInvocation?: import('@happier-dev/protocol/sessions/creation/externalActionRequesterInvocationBaseV1').ExternalActionRequesterInvocationBaseV1;
     mcpPermissionHandler?: Pick<ProviderEnforcedPermissionHandler, 'handleToolCall'>;
     runId: string;
     /** The child Run's Agent, independently of the parent's Agent. */
@@ -102,6 +103,7 @@ export type NativeAgentSessionRunTranscriptTarget = Pick<ApiSessionClient,
  * controller occurrence registry and the Run's sidechain identity.
  */
 export type ExecutionRunHostRunScopeBinding = Readonly<{
+    actionInvocation?: NativeAgentSessionRunToolBindingRequest['actionInvocation'];
     runId: string;
     workDepth: number;
     sidechainId: string;

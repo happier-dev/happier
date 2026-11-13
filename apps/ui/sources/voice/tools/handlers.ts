@@ -2,6 +2,8 @@ import { CurrentUiContextCommandInvokeInputSchema, getActionSpec, listVoiceToolA
 import { parseSessionAwarenessListResultV1 } from '@happier-dev/protocol/sessions/awareness/action';
 import { PluginContributionIdentityV1Schema } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
+import type { VoiceAgentHandle } from '@/voice/agent/types';
+import { projectCurrentUiContextActionOutcome, readCurrentUiContextActionReader } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
 import { actionInputIssueFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 import type { SessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import type { SessionExecutionTargetV1 } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
@@ -204,6 +206,8 @@ export function createVoiceToolHandlers(
     /** Start-admitted execution context; explicit tool operands still take precedence. */
     currentExecutionTarget?: SessionExecutionTargetV1 | null;
     currentUiContext?: VoiceCurrentUiToolPort;
+    /** Reads the existing handle after first-turn Run initialization; never starts a Run. */
+    readVoiceAgentHandle?: () => VoiceAgentHandle | undefined;
     /** Undefined uses Local's host-owned tool-result playback. */
     playHostText?: VoiceHostTextPlayback;
     /** Present a setup refusal through the connected attempt's existing recovery owner. */
@@ -329,6 +333,7 @@ export function createVoiceToolHandlers(
   };
 
   const actionExecute = createFrontDoorActionExecute(undefined, {
+    ...(deps.readVoiceAgentHandle ? { readAdmittedVoiceInvocation: () => deps.readVoiceAgentHandle?.()?.actionInvocation } : {}),
     admitSessionMessageTarget: ({ serverId, sessionId }) => {
       return areSessionAddressesEqual(
         carrierAddress,
@@ -356,10 +361,10 @@ export function createVoiceToolHandlers(
     resolveServerIdForSessionId: (sessionId: string) => resolvePreferredServerIdForSessionId(sessionId) ?? null,
     resolveServerNameForSessionId: (sessionId: string) => resolveSessionListLookupSessionServerScopeFromState(storage.getState(), sessionId)?.serverName ?? null,
     listContributedActionDefinitions: selection => (
-      deps.currentUiContext?.listCurrentContributedActionDefinitions?.(undefined, selection) ?? []
+      readInvocationUiContext()?.listCurrentContributedActionDefinitions?.(undefined, selection) ?? []
     ),
     readContributedActionSchemas: async (id, signal) => (
-      await deps.currentUiContext?.readCurrentContributedActionSchemas?.(id, signal) ?? null
+      await readInvocationUiContext()?.readCurrentContributedActionSchemas?.(id, signal) ?? null
     ),
     isActionEnabled: (actionId) => isVoiceActionAvailableInState(storage.getState(), actionId),
   });
@@ -434,6 +439,8 @@ export function createVoiceToolHandlers(
     try {
       res = await executeSpokenAction(actionExecute, actionId, actionInput, {
         surface: 'voice',
+        ...(deps.readVoiceAgentHandle?.()?.accountLifetime.scope.accountId
+          ? { expectedAccountId: deps.readVoiceAgentHandle()?.accountLifetime.scope.accountId } : {}),
         defaultSessionId: boundAddress?.sessionId ?? await deps.resolveSessionId(null),
         ...(serverId ? { serverId } : {}),
         ...(resolveVoiceActionRequestId(ctx)
@@ -580,6 +587,20 @@ export function createVoiceToolHandlers(
     });
   };
 
+  const readInvocationUiContext = (context?: VoiceToolInvocationContext): VoiceCurrentUiToolPort | undefined => {
+    if (!deps.readVoiceAgentHandle) return deps.currentUiContext;
+    const handle = deps.readVoiceAgentHandle();
+    const invocation = handle?.actionInvocation;
+    if (!handle || !invocation) return undefined;
+    const actionContext = { surface: invocation.surface, authority: invocation.authority,
+      actionCaller: invocation.caller, serverId: handle.accountLifetime.scope.serverId,
+      expectedAccountId: handle.accountLifetime.scope.accountId,
+      ...(resolveVoiceActionRequestId(context) ? { actionRequestId: resolveVoiceActionRequestId(context)! } : {}),
+      ...(context?.signal ? { signal: context.signal } : {}),
+    };
+    return readCurrentUiContextActionReader(actionContext, { execute: actionExecute, context: actionContext }) ?? undefined;
+  };
+
   const readCurrentUiContext = async (
     parameters: unknown,
     context?: VoiceToolInvocationContext,
@@ -587,10 +608,11 @@ export function createVoiceToolHandlers(
     const parsed = getActionSpec(CURRENT_UI_CONTEXT_READ_ACTION_ID).inputSchema.safeParse(parameters ?? {});
     if (!parsed.success) return jsonError('invalid_parameters', 'invalid_parameters');
     if (context?.signal?.aborted) return jsonError('tool_cancelled', 'tool_cancelled');
-    if (!deps.currentUiContext || !isVoiceActionAvailableInState(storage.getState(), CURRENT_UI_CONTEXT_READ_ACTION_ID)) {
+    const currentUiContext = readInvocationUiContext(context);
+    if (!currentUiContext || !isVoiceActionAvailableInState(storage.getState(), CURRENT_UI_CONTEXT_READ_ACTION_ID)) {
       return jsonError('current_ui_context_unavailable', 'current_ui_context_unavailable');
     }
-    const snapshot = deps.currentUiContext.readCurrentUiContext();
+    const snapshot = currentUiContext.readCurrentUiContext();
     if (!snapshot) return jsonError('current_ui_context_unavailable', 'current_ui_context_unavailable');
     if (context?.signal?.aborted) return jsonError('tool_cancelled', 'tool_cancelled');
     // The provider owns this descriptor-only DTO. In particular, do not
@@ -606,7 +628,7 @@ export function createVoiceToolHandlers(
     if (!parsed.success) return jsonError('invalid_parameters', 'invalid_parameters');
     const commandInput = parsed.data;
     if (context?.signal?.aborted) return jsonError('tool_cancelled', 'tool_cancelled');
-    const currentUiContext = deps.currentUiContext;
+    const currentUiContext = readInvocationUiContext(context);
     if (
       !currentUiContext
       || typeof currentUiContext.invokeCurrentUiCommand !== 'function'
@@ -632,19 +654,23 @@ export function createVoiceToolHandlers(
   const invokeAction = async (
     parameters: unknown,
     context?: VoiceToolInvocationContext,
+    canonicalResult = false,
   ): Promise<string> => {
+    const refuse = (code: string) => canonicalResult
+      ? serializeVoiceActionExecuteResult(ACTION_INVOKE_ACTION_ID, { ok: false, errorCode: code, error: code }, { canonicalResult })
+      : jsonError(code, code);
     const parsed = getActionSpec(ACTION_INVOKE_ACTION_ID).inputSchema.safeParse(parameters ?? {});
-    if (!parsed.success) return jsonError('invalid_parameters', 'invalid_parameters');
+    if (!parsed.success) return refuse('invalid_parameters');
     const actionInput = readVoiceActionInvocationInput(parsed.data);
-    if (!actionInput) return jsonError('invalid_parameters', 'invalid_parameters');
-    if (context?.signal?.aborted) return jsonError('tool_cancelled', 'tool_cancelled');
-    const currentUiContext = deps.currentUiContext;
+    if (!actionInput) return refuse('invalid_parameters');
+    if (context?.signal?.aborted) return refuse('tool_cancelled');
+    const currentUiContext = readInvocationUiContext(context);
     if (
       !currentUiContext
       || typeof currentUiContext.invokeAction !== 'function'
       || !isVoiceActionAvailableInState(storage.getState(), ACTION_INVOKE_ACTION_ID)
     ) {
-      return jsonError('action_unavailable', 'action_unavailable');
+      return refuse('action_unavailable');
     }
     const outcome = await currentUiContext.invokeAction({
       action: actionInput.action,
@@ -653,6 +679,8 @@ export function createVoiceToolHandlers(
       ...(actionInput.input === undefined ? {} : { input: actionInput.input }),
       ...(context?.signal ? { signal: context.signal } : {}),
     });
+    if (canonicalResult) return serializeVoiceActionExecuteResult(ACTION_INVOKE_ACTION_ID,
+      projectCurrentUiContextActionOutcome(outcome), { canonicalResult });
     // The shared dispatcher owns identity, policy, confirmation, target and
     // settlement. Voice projects only its bounded result, never a target
     // binding, raw Action input, or plugin/host diagnostic.
@@ -674,23 +702,21 @@ export function createVoiceToolHandlers(
 
   if (
     CURRENT_UI_CONTEXT_READ_TOOL_NAME
-    && deps.currentUiContext
+    && (deps.currentUiContext || deps.readVoiceAgentHandle)
     && isVoiceActionAvailableInState(storage.getState(), CURRENT_UI_CONTEXT_READ_ACTION_ID)
   ) {
     handlers[CURRENT_UI_CONTEXT_READ_TOOL_NAME] = readCurrentUiContext;
   }
   if (
     CURRENT_UI_CONTEXT_COMMAND_INVOKE_TOOL_NAME
-    && deps.currentUiContext
-    && typeof deps.currentUiContext.invokeCurrentUiCommand === 'function'
+    && (deps.readVoiceAgentHandle || typeof deps.currentUiContext?.invokeCurrentUiCommand === 'function')
     && isVoiceActionAvailableInState(storage.getState(), CURRENT_UI_CONTEXT_COMMAND_INVOKE_ACTION_ID)
   ) {
     handlers[CURRENT_UI_CONTEXT_COMMAND_INVOKE_TOOL_NAME] = invokeCurrentUiCommand;
   }
   if (
     ACTION_INVOKE_TOOL_NAME
-    && deps.currentUiContext
-    && typeof deps.currentUiContext.invokeAction === 'function'
+    && (deps.readVoiceAgentHandle || typeof deps.currentUiContext?.invokeAction === 'function')
     && isVoiceActionAvailableInState(storage.getState(), ACTION_INVOKE_ACTION_ID)
   ) {
     handlers[ACTION_INVOKE_TOOL_NAME] = invokeAction;
@@ -706,6 +732,7 @@ export function createVoiceToolHandlers(
     if (!handler || !isVoiceActionAvailableInState(storage.getState(), target.spec.id as ActionId)) {
       return JSON.stringify({ ok: false, errorCode: 'action_unavailable', error: 'action_unavailable' });
     }
+    if (target.spec.id === ACTION_INVOKE_ACTION_ID) return invokeAction(target.input, context, true);
     // Reuse the same executor and host-captured turn origin for Voice overrides.
     const isOverride = target.toolName === 'answerUserActionRequest'
       || isCurrentUiContextVoiceAction(target.spec.id as ActionId);

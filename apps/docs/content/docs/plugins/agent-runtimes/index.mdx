@@ -136,12 +136,15 @@ create/resume/fork, delivery, configuration, compaction, rollback, goal,
 catalog, usage-recovery, terminal, or external-session behavior must remain
 absent and fail closed through the host's typed unavailable path.
 
-For dedicated Local Voice Agents in unreleased 0.3, declare
-`capabilities.sessions.functionTools: true` only when creating a native Session
+Local Voice in unreleased 0.3 uses the Agent's existing Happier Action tools
+through its declared MCP, native-extension or shell delivery. No Voice-specific
+ACP bridge or native-function capability is required. The shared Action executor
+owns discovery, admission and results for these calls.
+
+Declare `capabilities.sessions.functionTools: true` only when creating a Session
 delivers every `AgentSessionOpenRequest.functionTools` entry and returns
-`functionToolsDelivered: true`. Local Voice needs those native functions for
-Happier Actions; ordinary coding tools or MCP support do not establish this
-capability. The picker and Start admission consume this same declaration.
+`functionToolsDelivered: true`. This optional native transport, currently used by
+Codex, queues Actions for the Voice UI. It does not determine Voice eligibility.
 
 ## Selected accounts and native homes (unreleased 0.3)
 

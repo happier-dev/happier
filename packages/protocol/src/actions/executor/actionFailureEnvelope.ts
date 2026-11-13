@@ -3,6 +3,7 @@ import { SessionGoalControlFailureV1Schema } from '../../sessions/work/state/ses
 import type { ActionExecuteFailure } from './types.js';
 import { RpcError } from '../../rpc/errors.js';
 import { readActionFailureCauseV1 } from '../actionExecutionResult.js';
+import { carryActionFailureDiagnostic } from './actionFailureDiagnostic.js';
 
 /** A received client refusal proves this write did not admit new work; a lost reply does not. */
 export function isConfirmedActionWriteRefusal(error: unknown): boolean {
@@ -73,8 +74,8 @@ export function readActionFailureEnvelope(
   const details = readFailureEnvelopeDetails(record);
   const goalControlFailure = SessionGoalControlFailureV1Schema.safeParse(record.goalControlFailure);
   const failureCause = record.failureCause === undefined ? undefined : readActionFailureCauseV1(record.failureCause);
-  return { ok: false, errorCode, error, ...(details !== undefined ? { details } : {}),
+  return carryActionFailureDiagnostic({ ok: false, errorCode, error, ...(details !== undefined ? { details } : {}),
     ...(failureCause === undefined ? {} : { failureCause }),
     ...(typeof record.effectAttempted === 'boolean' ? { effectAttempted: record.effectAttempted } : {}),
-    ...(goalControlFailure.success ? { goalControlFailure: goalControlFailure.data } : {}) };
+    ...(goalControlFailure.success ? { goalControlFailure: goalControlFailure.data } : {}) }, result);
 }

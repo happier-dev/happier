@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
+import { ExternalActionRequesterInvocationBaseV1Schema as ExternalActionRequesterInvocationV1Schema } from '../../sessions/creation/externalActionRequesterInvocationBaseV1.js';
 import { ExecutionRunPreparedInstructionsForSchema } from './runPrimitives.js';
 
 import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
@@ -261,7 +262,7 @@ export const ExecutionRunEnsureRequestSchema = lazyZodSchema(() => z.looseObject
 export type ExecutionRunEnsureRequest = z.infer<typeof ExecutionRunEnsureRequestSchema>;
 
 export const ExecutionRunEnsureResponseSchema = lazyZodSchema(() => z.union([
-  z.looseObject({ ok: z.literal(true) }),
+  z.looseObject({ ok: z.literal(true), actionInvocation: z.optional(ExternalActionRequesterInvocationV1Schema) }),
   z.looseObject({ ok: z.literal(false), error: z.string().check(z.minLength(1)), errorCode: z.optional(z.string().check(z.minLength(1))) }),
 ]));
 export type ExecutionRunEnsureResponse = z.infer<typeof ExecutionRunEnsureResponseSchema>;
@@ -282,7 +283,8 @@ export type ExecutionRunEnsureOrStartRequest = z.infer<typeof ExecutionRunEnsure
 
 export const ExecutionRunEnsureOrStartResponseSchema = lazyZodSchema(() => z.union([
   z.looseObject({ ok: z.literal(true), runId: z.string().check(z.minLength(1)), created: z.boolean(),
-    preparedInstructionsFor: z.optional(ExecutionRunPreparedInstructionsForSchema) }),
+    preparedInstructionsFor: z.optional(ExecutionRunPreparedInstructionsForSchema),
+    actionInvocation: z.optional(ExternalActionRequesterInvocationV1Schema) }),
   z.looseObject({ ok: z.literal(false), error: z.string().check(z.minLength(1)), errorCode: z.optional(z.string().check(z.minLength(1))) }),
 ]));
 export type ExecutionRunEnsureOrStartResponse = z.infer<typeof ExecutionRunEnsureOrStartResponseSchema>;

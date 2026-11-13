@@ -1,15 +1,20 @@
 import { beforeEach, afterAll, describe, expect, it, vi } from 'vitest';
-import { RPC_ERROR_CODES, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES, RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ProviderBoundModelRefSchema} from '@happier-dev/protocol/providers/selection/v1';
-import { ExecutionRunEnsureOrStartRequestSchema } from '@happier-dev/protocol/execution/runs/index';
+import { ExecutionRunEnsureOrStartRequestSchema, ExecutionRunEnsureResponseSchema } from '@happier-dev/protocol/execution/runs/index';
+import type { ExternalActionRequesterInvocationBaseV1 } from '@happier-dev/protocol/sessions/creation/externalActionRequesterInvocationBaseV1';
 import { createDeferred, createSessionFixture } from '@/dev/testkit';
 import { createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
+import { EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE } from '@/dev/testkit/fixtures/executionRunCapabilitiesDescribe';
 
 const network = await installSessionOpsNetworkBoundary();
 const { createSocketIoAckTimeoutError } = await import('@happier-dev/sync-client');
 let home: Awaited<ReturnType<typeof network.addHome>>;
+let voiceScope: import('@/sync/domains/scope/serverAccountScope').ServerAccountScope;
 await loadSyncSingletonForTests();
 const { storage } = await import('@/sync/domains/state/storage');
 const { settingsParse } = await import('@/sync/domains/settings/settings');
@@ -25,6 +30,16 @@ const daemonRpc = vi.fn<(request: {
   sessionId: string; method: string; payload: Record<string, unknown>; timeoutMs: number | null;
   scope: { serverId: string; accountId: string };
 }) => Promise<unknown>>();
+const daemonAction = vi.fn<(request: Readonly<{ actionId: 'execution.run.start' | 'execution.run.ensure';
+  input: Record<string, unknown>; signal?: AbortSignal | null }>) => Promise<unknown>>();
+let actionBoundaries: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>>[] = [];
+const admittedRunInvocations = new Map<string, ExternalActionRequesterInvocationBaseV1>();
+function admittedRunStart() {
+  const input = daemonAction.mock.calls[0]?.[0].input;
+  if (!input) throw new Error('Expected a signed Run Start request');
+  const { sessionId: _sessionId, ...start } = input;
+  return ExecutionRunEnsureOrStartRequestSchema.parse({ start }).start;
+}
 
 const settingsState = {
   get current(): ReturnType<typeof settingsParse> { return storage.getState().settings; },
@@ -32,19 +47,28 @@ const settingsState = {
 };
 
 function installDaemonBoundary() {
-  network.setHttpResponder(async input => {
+  network.setHttpResponder(async (input, init) => {
+    for (const boundary of actionBoundaries) {
+      const response = await boundary.handle(new URL(String(input)), init);
+      if (response) return response;
+    }
     const path = new URL(String(input)).pathname;
+    if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse({
+      features: { voice: { enabled: true } }, capabilities: { serverIdentity: { serverIdentityId: 'srv_voice_client' } },
+    }));
     if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
     if (path === '/v2/sessions/read-batch') return null;
     const match = /^\/v2\/sessions\/([^/]+)$/.exec(path);
     if (!match) return null;
-    const session = createSessionFixture({ id: decodeURIComponent(match[1]), serverId: home.id, active: true });
+    const session = createSessionFixture({ id: decodeURIComponent(match[1]), serverId: home.id, active: true,
+      metadata: { machineId: 'machine-1', path: '/workspace', flavor: 'codex' } });
     return Response.json(createPlainSessionByIdResponseFixture(session));
   });
   network.setRpcResponder(async request => {
     if (!request.token || !request.payload || typeof request.payload !== 'object' || Array.isArray(request.payload)) {
       throw new Error('Expected an authenticated daemon RPC with an object payload');
     }
+    if (request.method === RPC_METHODS.CAPABILITIES_DESCRIBE) return EXECUTION_RUN_CAPABILITIES_DESCRIBE_FIXTURE;
     if (request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START
         || request.method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1) {
       // Mirror daemon admission at the public schema, including Profile custody.
@@ -53,7 +77,7 @@ function installDaemonBoundary() {
     }
     return daemonRpc({
       sessionId: request.targetId, method: request.method, payload: request.payload as Record<string, unknown>,
-      timeoutMs: request.timeoutMs, scope: { serverId: home.id, accountId: parseToken(request.token) },
+      timeoutMs: request.timeoutMs, scope: { serverId: voiceScope.serverId, accountId: parseToken(request.token) },
     });
   });
 }
@@ -81,14 +105,14 @@ describe('DaemonVoiceAgentClient', () => {
     const team = { kind: 'team_credential_provider_model', teamId: 'team-1', resourceId: 'muse-resource',
       expectedResourceRevision: 7, deliveryMode: 'brokered',
       agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'muse-fast' } as const;
-    daemonRpc.mockResolvedValueOnce({ ok: true, runId: 'run_team_voice', created: true });
+    daemonAction.mockResolvedValueOnce({ ok: true, runId: 'run_team_voice', created: true });
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    await expect(new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' }).start({
+    await expect(new DaemonVoiceAgentClient(voiceScope).start({
       sessionId: 's1', agentId: 'codex', chatModelId: team.modelId, commitModelId: team.modelId,
       chatTeamCredentialModel: team, commitTeamCredentialModel: team,
       permissionIntent: 'read-only', idleTtlSeconds: 300, initialContext: 'ctx',
-    })).resolves.toEqual({ voiceAgentId: 'run_team_voice' });
-    const request = ExecutionRunEnsureOrStartRequestSchema.parse(daemonRpc.mock.calls[0]?.[0].payload).start;
+    })).resolves.toMatchObject({ voiceAgentId: 'run_team_voice' });
+    const request = admittedRunStart();
     expect(request.teamCredentialModel).toEqual(team);
     expect(request.modelSelection).toBeUndefined();
     expect(request.intentInput).toMatchObject({ commitTeamCredentialModel: team });
@@ -97,23 +121,23 @@ describe('DaemonVoiceAgentClient', () => {
     const uxDiagnostic = { code: 'connected_service_credential_reconnect_required', failurePhase: 'materialization',
       source: 'spawn_resume', serviceId: 'happier.agent.codex/openai-codex', profileId: 'work', retryable: false,
       suggestedActions: ['reconnect_profile', 'open_connected_accounts'] };
-    daemonRpc.mockResolvedValueOnce({ ok: false, error: uxDiagnostic.code, errorCode: uxDiagnostic.code,
+    daemonAction.mockResolvedValueOnce({ ok: false, error: uxDiagnostic.code, errorCode: uxDiagnostic.code,
       details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' }, uxDiagnostic } });
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    await expect(new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' }).start({
+    await expect(new DaemonVoiceAgentClient(voiceScope).start({
       sessionId: 's1', agentId: 'codex', chatModelId: 'fast', commitModelId: 'fast',
       permissionIntent: 'read-only', idleTtlSeconds: 300, initialContext: 'ctx',
     })).rejects.toMatchObject({ rpcErrorCode: uxDiagnostic.code, uxDiagnostic });
   });
   it('preserves a configured ACP Session target and exact model identity at daemon admission', async () => {
-    daemonRpc.mockResolvedValueOnce({ ok: true, runId: 'run_acp', created: true });
+    daemonAction.mockResolvedValueOnce({ ok: true, runId: 'run_acp', created: true });
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    await expect(new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' }).start({
+    await expect(new DaemonVoiceAgentClient(voiceScope).start({
       sessionId: 's1', agentSource: 'session', backendTarget: { kind: 'backend', backendId: 'qa-c-exact-args',
         configuredBackendId: 'qa-c-exact-args', sourceKind: 'configured' }, chatModelId: 'acp-chat', commitModelId: 'acp-commit',
       permissionIntent: 'read-only', idleTtlSeconds: 300, initialContext: 'ctx',
-    })).resolves.toEqual({ voiceAgentId: 'run_acp' });
-    expect(ExecutionRunEnsureOrStartRequestSchema.parse(daemonRpc.mock.calls[0]?.[0].payload).start).toMatchObject({
+    })).resolves.toMatchObject({ voiceAgentId: 'run_acp' });
+    expect(admittedRunStart()).toMatchObject({
       backendTarget: { kind: 'backend', backendId: 'qa-c-exact-args', configuredBackendId: 'qa-c-exact-args', sourceKind: 'configured' },
       modelSelection: { agentTargetKey: 'agent:happier.agent.custom-acp/custom-acp:definition:qa-c-exact-args',
         providerConnectionId: null, modelId: 'acp-chat' },
@@ -122,49 +146,49 @@ describe('DaemonVoiceAgentClient', () => {
     });
   });
   it('admits an Account Launch Profile without claiming plugin execution Profile custody', async () => {
-    daemonRpc.mockResolvedValueOnce({ ok: true, runId: 'run_persona', created: true });
+    daemonAction.mockResolvedValueOnce({ ok: true, runId: 'run_persona', created: true });
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    await expect(new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' }).start({
+    await expect(new DaemonVoiceAgentClient(voiceScope).start({
       sessionId: 's1', agentSource: 'session', agentId: 'codex', launchProfileId: '  account-persona  ',
       permissionIntent: 'read-only', idleTtlSeconds: 300, initialContext: 'ctx',
-    })).resolves.toEqual({ voiceAgentId: 'run_persona' });
-    const startRequest = ExecutionRunEnsureOrStartRequestSchema.parse(daemonRpc.mock.calls[0]?.[0].payload).start;
+    })).resolves.toMatchObject({ voiceAgentId: 'run_persona' });
+    const startRequest = admittedRunStart();
     expect(startRequest?.launchProfileId).toBe('account-persona');
     expect(startRequest?.profileId).toBeUndefined();
     expect(startRequest?.profileSourceCustody).toBeUndefined();
   });
-  it('starts an inherited Voice choice through safe ensure/start without an inheritance capability', async () => {
-    daemonRpc.mockResolvedValue({ ok: true, runId: 'run_inherited', created: true });
+  it('starts an inherited Voice choice through the signed Run Action', async () => {
+    daemonAction.mockResolvedValue({ ok: true, runId: 'run_inherited', created: true });
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    await expect(new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' }).start({
+    await expect(new DaemonVoiceAgentClient(voiceScope).start({
       sessionId: 's1', agentSource: 'session', agentId: 'codex', permissionIntent: 'read-only',
       idleTtlSeconds: 300, initialContext: 'ctx',
-    })).resolves.toEqual({ voiceAgentId: 'run_inherited' });
-    expect(daemonRpc.mock.calls[0]?.[0]).toMatchObject({
-      method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1,
-      payload: { runId: null, resume: true, start: { intent: 'voice_agent' } },
+    })).resolves.toMatchObject({ voiceAgentId: 'run_inherited' });
+    expect(daemonAction.mock.calls[0]?.[0]).toMatchObject({
+      actionId: 'execution.run.start',
+      input: { sessionId: 's1', intent: 'voice_agent' },
     });
   });
   it('carries a custom native Voice chat choice as an exact explicit model tuple', async () => {
-    daemonRpc.mockResolvedValueOnce({ ok: true, runId: 'run_native', created: true });
+    daemonAction.mockResolvedValueOnce({ ok: true, runId: 'run_native', created: true });
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    await new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' }).start({
+    await new DaemonVoiceAgentClient(voiceScope).start({
       sessionId: 's1', agentSource: 'session', agentId: 'codex', chatModelId: 'custom-chat',
       permissionIntent: 'read-only', idleTtlSeconds: 300, initialContext: 'ctx',
     });
-    expect(daemonRpc.mock.calls[0]?.[0].payload).toMatchObject({ start: {
+    expect(admittedRunStart()).toMatchObject({
       modelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'custom-chat' },
-    } });
+    });
   });
 
   it('carries a custom native commit choice as an exact explicit model tuple', async () => {
-    daemonRpc.mockResolvedValueOnce({ ok: true, runId: 'run_native_commit', created: true });
+    daemonAction.mockResolvedValueOnce({ ok: true, runId: 'run_native_commit', created: true });
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    await new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' }).start({
+    await new DaemonVoiceAgentClient(voiceScope).start({
       sessionId: 's1', agentSource: 'agent', agentId: 'codex', chatModelId: 'custom-chat', commitModelId: 'custom-commit',
       permissionIntent: 'read-only', idleTtlSeconds: 300, initialContext: 'ctx',
     });
-    const start = ExecutionRunEnsureOrStartRequestSchema.parse(daemonRpc.mock.calls[0]?.[0].payload).start;
+    const start = admittedRunStart();
     expect(start).toMatchObject({ intentInput: {
       commitModelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'custom-commit' },
     } });
@@ -172,10 +196,45 @@ describe('DaemonVoiceAgentClient', () => {
 
   beforeEach(async () => {
     network.resetRequests();
-    home = await network.addHome('https://voice-client.example.test', 'account-a');
+    actionBoundaries = [];
+    admittedRunInvocations.clear();
+    home = await network.addHome('https://voice-client.example.test', 'account-a', { serverIdentityId: 'srv_voice_client' });
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const account = await captureLazyActionAccountContext(home.id);
+    voiceScope = account.accountLifetime.scope;
+    account.dispose();
+    const session = createSessionFixture({ id: 's1', serverId: voiceScope.serverId, active: true,
+      metadata: { machineId: 'machine-1', path: '/workspace', flavor: 'codex' } });
+    storage.setState({ sessions: { ...storage.getState().sessions, s1: session },
+      sessionListRowsByServerId: { ...storage.getState().sessionListRowsByServerId,
+        [voiceScope.serverId]: { ...storage.getState().sessionListRowsByServerId[voiceScope.serverId], s1: session } } });
     installDaemonBoundary();
     daemonRpc.mockReset();
+    daemonAction.mockReset();
+    actionBoundaries = await Promise.all((['execution.run.start', 'execution.run.ensure'] as const).map(actionId =>
+      createExternalActionAccountHttpBoundary({ serverUrl: home.serverUrl, serverIdentityId: 'srv_voice_client',
+        accountId: 'account-a', machineId: 'machine-1', actionId, tokenEpoch: 0,
+        failure: result => result && typeof result === 'object' && 'ok' in result && result.ok === false
+          && 'error' in result && typeof result.error === 'string'
+          ? { error: result.error, errorCode: 'errorCode' in result && typeof result.errorCode === 'string' ? result.errorCode : 'action_failed',
+              ...('details' in result ? { details: result.details } : {}) } : null,
+        execute: async (input, context) => {
+          if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Expected a Run Action request');
+          const result = await daemonAction({ actionId, input: { ...input }, signal: context.signal });
+          if (!result || typeof result !== 'object' || !('ok' in result) || result.ok !== true) return result;
+          if (actionId === 'execution.run.ensure') {
+            const runId = 'runId' in input && typeof input.runId === 'string' ? input.runId : '';
+            return ExecutionRunEnsureResponseSchema.parse({ ok: true, actionInvocation: admittedRunInvocations.get(runId) });
+          }
+          const { caller, surface, authority } = context.invocation;
+          const actionInvocation = { caller, surface, authority };
+          if ('runId' in result && typeof result.runId === 'string') admittedRunInvocations.set(result.runId, actionInvocation);
+          return { ...result, callId: 'voice-call-1', sidechainId: 'voice-sidechain-1', actionInvocation };
+        },
+      })));
     settingsState.current = {
+      experiments: true,
+      featureToggles: { voice: true, 'voice.agent': true, 'execution.runs': true },
       voice: {
         providerId: 'local_conversation',
         providers: {
@@ -196,18 +255,19 @@ describe('DaemonVoiceAgentClient', () => {
   it.each(['  Greeting.\n ', ' \n ', ''])('keeps explicitly admitted greeting bytes in the daemon request: %j', async welcomeText => {
     daemonRpc.mockResolvedValueOnce({ ok: true, result: { assistantText: 'welcome' } });
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    await new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' })
+    await new DaemonVoiceAgentClient(voiceScope)
       .welcome({ sessionId: 'history', voiceAgentId: 'run', welcomeText });
     expect(daemonRpc.mock.calls[0]?.[0].payload).toMatchObject({
       actionId: 'voice_agent.welcome', input: { welcomeText },
     });
   });
 
-  it('throws RPC errors with rpcErrorCode from ensureOrStart', async () => {
-    daemonRpc.mockResolvedValueOnce({ ok: false, error: 'unsupported', errorCode: 'VOICE_AGENT_UNSUPPORTED' } as any);
+  it('preserves the signed Start failure code', async () => {
+    daemonAction.mockResolvedValueOnce({ ok: false, error: 'unsupported', errorCode: 'VOICE_AGENT_UNSUPPORTED',
+      details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } } });
 
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' });
+    const client = new DaemonVoiceAgentClient(voiceScope);
 
     await expect(
       client.start({
@@ -226,7 +286,7 @@ describe('DaemonVoiceAgentClient', () => {
 
   it.each([undefined, '', '   '])('rejects missing or blank agentId before RPC (%s)', async (agentId) => {
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' });
+    const client = new DaemonVoiceAgentClient(voiceScope);
 
     await expect(
       client.start({
@@ -245,17 +305,14 @@ describe('DaemonVoiceAgentClient', () => {
       code: 'VOICE_AGENT_SELECTION_UNAVAILABLE',
     });
 
-    expect(daemonRpc).not.toHaveBeenCalled();
+    expect(daemonAction).not.toHaveBeenCalled();
   });
 
-  it('uses the exact-selection ensureOrStart method when starting a daemon voice agent', async () => {
-    daemonRpc.mockResolvedValueOnce({ ok: true, runId: 'run_1', created: true } as any);
-
+  it('ensures the exact retained Run without starting a replacement', async () => {
+    daemonAction.mockResolvedValue({ ok: true, runId: 'run_old', created: true });
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' });
-
-    await expect(
-      client.start({
+    const client = new DaemonVoiceAgentClient(voiceScope);
+    const params = {
         sessionId: 's1',
         agentSource: 'agent',
         agentId: 'codex',
@@ -266,35 +323,31 @@ describe('DaemonVoiceAgentClient', () => {
         permissionIntent: 'read-only',
         idleTtlSeconds: 300,
         initialContext: 'ctx',
-        existingRunId: 'run_old',
         retentionPolicy: 'resumable',
-      }),
-    ).resolves.toEqual({ voiceAgentId: 'run_1' });
+    } satisfies import('./types').VoiceAgentStartParams;
+    const admitted = await client.start(params);
+    expect(admitted.actionInvocation).toMatchObject({ caller: { kind: 'host' }, surface: 'voice', authority: 'present_user' });
+    daemonAction.mockClear();
+    await expect(client.start({ ...params, existingRunId: 'run_old' })).resolves.toEqual(admitted);
 
-    expect(daemonRpc).toHaveBeenCalledWith(
+    expect(daemonAction).toHaveBeenCalledWith(
       expect.objectContaining({
-        sessionId: 's1',
-        method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1,
-        payload: expect.objectContaining({
+        actionId: 'execution.run.ensure',
+        input: {
+          sessionId: 's1',
           runId: 'run_old',
           resume: true,
-          start: expect.objectContaining({
-            intent: 'voice_agent',
-              backendTarget: { kind: 'backend', backendId: 'codex', sourceKind: 'built_in' },
-            retentionPolicy: 'resumable',
-            ioMode: 'streaming',
-            commitIsolation: true,
-          }),
-        }),
+        },
       }),
     );
+    expect(daemonAction).toHaveBeenCalledTimes(1);
   });
 
   it('carries independent chat and commit Provider selections without endpoint or secret material', async () => {
-    daemonRpc.mockResolvedValueOnce({ ok: true, runId: 'run_provider', created: true } as any);
+    daemonAction.mockResolvedValueOnce({ ok: true, runId: 'run_provider', created: true } as any);
 
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' });
+    const client = new DaemonVoiceAgentClient(voiceScope);
     const chatModelSelection = ProviderBoundModelRefSchema.parse({
       agentTargetKey: 'agent:happier.agent.opencode/opencode',
       providerConnectionId: 'voice-openai-compatible-chat',
@@ -325,9 +378,9 @@ describe('DaemonVoiceAgentClient', () => {
       initialContext: 'ctx',
     });
 
-    const call = daemonRpc.mock.calls[0]?.[0] as any;
-    expect(call.method).toBe(SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1);
-    expect(call.payload.start).toMatchObject({
+    const call = daemonAction.mock.calls[0]?.[0] as any;
+    expect(call.actionId).toBe('execution.run.start');
+    expect(call.input).toMatchObject({
       modelId: 'chat-model',
       modelSelection: chatModelSelection,
       chatModelId: 'chat-model',
@@ -337,16 +390,16 @@ describe('DaemonVoiceAgentClient', () => {
         overrides: { temperature: { value: 0.2 } },
       },
     });
-    expect(JSON.stringify(call.payload.start)).not.toMatch(/baseUrl|apiKey|secret/i);
+    expect(JSON.stringify(call.input)).not.toMatch(/baseUrl|apiKey|secret/i);
   });
 
   it.each(['chat', 'commit'] as const)(
-    'uses the current-only Provider-safe ensureOrStart method for a Provider-bound %s selection',
+    'admits a Provider-bound %s selection through signed Start',
     async (role) => {
-        daemonRpc.mockResolvedValueOnce({ ok: true, runId: `run_${role}`, created: true } as any);
+        daemonAction.mockResolvedValueOnce({ ok: true, runId: `run_${role}`, created: true } as any);
 
       const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-      const client = new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' });
+      const client = new DaemonVoiceAgentClient(voiceScope);
       const providerSelection = ProviderBoundModelRefSchema.parse({
         agentTargetKey: 'agent:happier.agent.opencode/opencode',
         providerConnectionId: 'voice-openai-compatible-chat',
@@ -368,18 +421,18 @@ describe('DaemonVoiceAgentClient', () => {
         initialContext: 'ctx',
       });
 
-      expect(daemonRpc).toHaveBeenCalledTimes(1);
-      expect(daemonRpc).toHaveBeenCalledWith(expect.objectContaining({
-        method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1,
+      expect(daemonAction).toHaveBeenCalledTimes(1);
+      expect(daemonAction).toHaveBeenCalledWith(expect.objectContaining({
+        actionId: 'execution.run.start',
       }));
     },
   );
 
-  it('protects exact native model selections with the actual Session host method', async () => {
-    daemonRpc.mockResolvedValueOnce({ ok: true, runId: 'run_native', created: true } as any);
+  it('preserves exact native model selections through signed Start', async () => {
+    daemonAction.mockResolvedValueOnce({ ok: true, runId: 'run_native', created: true } as any);
 
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' });
+    const client = new DaemonVoiceAgentClient(voiceScope);
     const chatModelSelection = ProviderBoundModelRefSchema.parse({
       agentTargetKey: buildAgentUniverseBackendTargetKey('codex'),
       providerConnectionId: null,
@@ -405,16 +458,16 @@ describe('DaemonVoiceAgentClient', () => {
       initialContext: 'ctx',
     });
 
-    expect(daemonRpc).toHaveBeenCalledWith(expect.objectContaining({
-      method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1,
+    expect(daemonAction).toHaveBeenCalledWith(expect.objectContaining({
+      actionId: 'execution.run.start',
     }));
   });
 
-  it('forwards replay seed requests through the ensureOrStart start payload', async () => {
-    daemonRpc.mockResolvedValueOnce({ ok: true, runId: 'run_1', created: true } as any);
+  it('forwards replay seed requests through signed Start', async () => {
+    daemonAction.mockResolvedValueOnce({ ok: true, runId: 'run_1', created: true } as any);
 
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' });
+    const client = new DaemonVoiceAgentClient(voiceScope);
 
     await client.start({
       sessionId: 's1',
@@ -441,10 +494,9 @@ describe('DaemonVoiceAgentClient', () => {
       },
     } as any);
 
-    expect(daemonRpc).toHaveBeenCalledWith(
+    expect(daemonAction).toHaveBeenCalledWith(
       expect.objectContaining({
-        payload: expect.objectContaining({
-          start: expect.objectContaining({
+        input: expect.objectContaining({
             replay: expect.objectContaining({
               kind: 'voice_session.v1',
               previousSessionId: 'sys_voice',
@@ -452,19 +504,21 @@ describe('DaemonVoiceAgentClient', () => {
               strategy: 'summary_plus_recent',
               recentMessagesCount: 12,
             }),
-          }),
         }),
       }),
     );
   });
 
-  it('uses an unbounded acknowledgement lifetime for ensureOrStart', async () => {
-    daemonRpc.mockResolvedValueOnce({ ok: true, runId: 'run_1', created: true } as any);
+  it('does not impose a deadline on the signed Start request', async () => {
+    const entered = createDeferred<void>();
+    const response = createDeferred<unknown>();
+    daemonAction.mockImplementationOnce(async () => { entered.resolve(); return await response.promise; });
 
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' });
+    const client = new DaemonVoiceAgentClient(voiceScope);
 
-    await client.start({
+    let settled = false;
+    const starting = client.start({
       sessionId: 's1',
       agentSource: 'agent',
       agentId: 'claude',
@@ -474,20 +528,27 @@ describe('DaemonVoiceAgentClient', () => {
       permissionIntent: 'read-only',
       idleTtlSeconds: 300,
       initialContext: 'ctx',
-    });
-
-    expect(daemonRpc).toHaveBeenCalledWith(
-      expect.objectContaining({
-        timeoutMs: null,
-      }),
-    );
+    }).finally(() => { settled = true; });
+    await entered.promise;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const networkTimeoutMs = readLocalConversationVoiceSettings(settingsState.current.voice).networkTimeoutMs;
+      await vi.advanceTimersByTimeAsync(networkTimeoutMs);
+      expect(settled).toBe(false);
+      response.resolve({ ok: true, runId: 'run_1', created: true });
+      await expect(starting).resolves.toMatchObject({ voiceAgentId: 'run_1' });
+    } finally {
+      vi.useRealTimers();
+      response.resolve({ ok: true, runId: 'run_1', created: true });
+      await starting;
+    }
   });
 
   it('keeps an explicit provider bootstrap budget separate from the acknowledgement lifetime', async () => {
-    daemonRpc.mockResolvedValueOnce({ ok: true, runId: 'run_1', created: true } as any);
+    daemonAction.mockResolvedValueOnce({ ok: true, runId: 'run_1', created: true } as any);
 
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' });
+    const client = new DaemonVoiceAgentClient(voiceScope);
 
     await client.start({
       sessionId: 's1',
@@ -502,12 +563,9 @@ describe('DaemonVoiceAgentClient', () => {
       bootstrapTimeoutMs: 90_000,
     });
 
-    expect(daemonRpc).toHaveBeenCalledWith(
+    expect(daemonAction).toHaveBeenCalledWith(
       expect.objectContaining({
-        timeoutMs: null,
-        payload: expect.objectContaining({
-          start: expect.objectContaining({ bootstrapTimeoutMs: 90_000 }),
-        }),
+        input: expect.objectContaining({ bootstrapTimeoutMs: 90_000 }),
       }),
     );
   });
@@ -526,7 +584,7 @@ describe('DaemonVoiceAgentClient', () => {
     });
 
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' });
+    const client = new DaemonVoiceAgentClient(voiceScope);
     await client.welcome({ sessionId: 's1', voiceAgentId: 'run-1' });
     await client.commit({ sessionId: 's1', voiceAgentId: 'run-1', kind: 'session_instruction' });
     await client.startTurnStream({ sessionId: 's1', voiceAgentId: 'run-1', userText: 'v1' });
@@ -571,17 +629,17 @@ describe('DaemonVoiceAgentClient', () => {
       };
     });
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' });
+    const client = new DaemonVoiceAgentClient(voiceScope);
     await expect(client.sendTurn({ sessionId: 's1', voiceAgentId: 'run-1', userText: 'go' }))
       .resolves.toMatchObject({ assistantText: 'Done.' });
     expect(admittedTarget).toBe(120);
   });
 
   it('keeps default native resets distinct from omitted inherited model choices', async () => {
-    daemonRpc.mockResolvedValueOnce({ ok: true, runId: 'run_1', created: true } as any);
+    daemonAction.mockResolvedValueOnce({ ok: true, runId: 'run_1', created: true } as any);
 
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' });
+    const client = new DaemonVoiceAgentClient(voiceScope);
 
     await client.start({
       sessionId: 's1',
@@ -595,24 +653,18 @@ describe('DaemonVoiceAgentClient', () => {
       initialContext: 'ctx',
     });
 
-    expect(daemonRpc).toHaveBeenCalledWith(
-      expect.objectContaining({
-        payload: expect.objectContaining({
-          start: expect.objectContaining({ modelSelection: null, commitModelId: 'default' }),
-        }),
-      }),
-    );
-    const payload = daemonRpc.mock.calls[0]?.[0].payload;
-    expect(payload).toMatchObject({ start: expect.not.objectContaining({ chatModelId: expect.anything() }) });
+    expect(admittedRunStart()).toMatchObject({ modelSelection: null, commitModelId: 'default' });
+    const payload = daemonAction.mock.calls[0]?.[0].input;
+    expect(payload).not.toHaveProperty('chatModelId');
   });
 
-  it('surfaces an acknowledgement timeout as outcome-unknown without retrying ensureOrStart', async () => {
-    daemonRpc
+  it('surfaces an acknowledgement timeout as outcome-unknown without retrying Start', async () => {
+    daemonAction
       .mockRejectedValueOnce(createSocketIoAckTimeoutError())
       .mockResolvedValueOnce({ ok: true, runId: 'run_retry', created: true } as any);
 
     const { DaemonVoiceAgentClient, VoiceAgentStartOutcomeUnknownError } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' });
+    const client = new DaemonVoiceAgentClient(voiceScope);
 
     const error = await client.start({
       sessionId: 's1',
@@ -626,7 +678,7 @@ describe('DaemonVoiceAgentClient', () => {
       initialContext: 'ctx',
     }).catch((caught: unknown) => caught);
 
-    expect(daemonRpc).toHaveBeenCalledTimes(1);
+    expect(daemonAction).toHaveBeenCalledTimes(1);
     expect(error).toBeInstanceOf(VoiceAgentStartOutcomeUnknownError);
     expect(error).toMatchObject({
       code: 'VOICE_AGENT_START_OUTCOME_UNKNOWN',
@@ -639,7 +691,7 @@ describe('DaemonVoiceAgentClient', () => {
     daemonRpc.mockResolvedValueOnce({ streamId: 'stream-1' } as any);
 
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' });
+    const client = new DaemonVoiceAgentClient(voiceScope);
 
     await expect(
       client.startTurnStream({
@@ -668,7 +720,7 @@ describe('DaemonVoiceAgentClient', () => {
     daemonRpc.mockResolvedValueOnce({ streamId: 'stream-1' } as any);
 
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' });
+    const client = new DaemonVoiceAgentClient(voiceScope);
 
     await client.startTurnStream({
       sessionId: 'session-1',
@@ -694,7 +746,7 @@ describe('DaemonVoiceAgentClient', () => {
     );
 
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' });
+    const client = new DaemonVoiceAgentClient(voiceScope);
 
     await expect(client.startTurnStream({
       sessionId: 'session-1',
@@ -711,7 +763,7 @@ describe('DaemonVoiceAgentClient', () => {
     daemonRpc.mockResolvedValueOnce({ ok: true } as any);
 
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' });
+    const client = new DaemonVoiceAgentClient(voiceScope);
 
     await expect(client.commitUserTranscript({
       sessionId: 'session-1',
@@ -735,13 +787,12 @@ describe('DaemonVoiceAgentClient', () => {
     }));
   });
 
-  it('fails Provider-bound start closed when the current-only method is unavailable without falling back', async () => {
-    daemonRpc.mockRejectedValueOnce(
-      Object.assign(new Error('RPC method not available'), { rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE }),
-    );
+  it('preserves a Provider-bound Start refusal without falling back', async () => {
+    daemonAction.mockResolvedValueOnce({ ok: false, error: 'RPC method not available', errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE,
+      details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } } });
 
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' });
+    const client = new DaemonVoiceAgentClient(voiceScope);
     const chatModelSelection = ProviderBoundModelRefSchema.parse({
       agentTargetKey: 'agent:happier.agent.opencode/opencode',
       providerConnectionId: 'voice-openai-compatible-chat',
@@ -763,17 +814,17 @@ describe('DaemonVoiceAgentClient', () => {
       }),
     ).rejects.toMatchObject({ message: 'RPC method not available', rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
 
-    expect(daemonRpc).toHaveBeenCalledTimes(1);
-    expect(daemonRpc).toHaveBeenCalledWith(expect.objectContaining({
-      method: SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1,
+    expect(daemonAction).toHaveBeenCalledTimes(1);
+    expect(daemonAction).toHaveBeenCalledWith(expect.objectContaining({
+      actionId: 'execution.run.start',
     }));
   });
 
-  it('throws invalid_rpc_response for malformed start payloads', async () => {
-    daemonRpc.mockResolvedValueOnce({ runId: 123 } as any);
+  it('treats malformed Start receipts as outcome-unknown without retrying', async () => {
+    daemonAction.mockResolvedValueOnce({ runId: 123 } as any);
 
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' });
+    const client = new DaemonVoiceAgentClient(voiceScope);
 
     await expect(
       client.start({
@@ -787,14 +838,16 @@ describe('DaemonVoiceAgentClient', () => {
         idleTtlSeconds: 300,
         initialContext: 'ctx',
       }),
-    ).rejects.toThrow('invalid_rpc_response');
+    ).rejects.toMatchObject({ code: 'VOICE_AGENT_START_OUTCOME_UNKNOWN',
+      cause: { message: 'execution_run_invalid_response' } });
+    expect(daemonAction).toHaveBeenCalledTimes(1);
   });
 
   it('returns commitText from execution.run.action result payloads', async () => {
     daemonRpc.mockResolvedValueOnce({ ok: true, result: { commitText: 'c1' } } as any);
 
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' });
+    const client = new DaemonVoiceAgentClient(voiceScope);
     await expect(
       client.commit({ sessionId: 's1', voiceAgentId: 'run_1', kind: 'session_instruction' }),
     ).resolves.toEqual({ commitText: 'c1' });
@@ -804,7 +857,7 @@ describe('DaemonVoiceAgentClient', () => {
     daemonRpc.mockResolvedValueOnce({ streamId: 's1', events: 'bad' as any, nextCursor: 1, done: true } as any);
 
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' });
+    const client = new DaemonVoiceAgentClient(voiceScope);
 
     await expect(
       client.readTurnStream({
@@ -855,7 +908,7 @@ describe('DaemonVoiceAgentClient', () => {
     });
 
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' });
+    const client = new DaemonVoiceAgentClient(voiceScope);
 
     const controller = new AbortController();
     const sendPromise = client.sendTurn({
@@ -924,7 +977,7 @@ describe('DaemonVoiceAgentClient', () => {
     });
 
     const { DaemonVoiceAgentClient } = await import('./daemonVoiceAgentClient');
-    const client = new DaemonVoiceAgentClient({ serverId: home.id, accountId: 'account-a' });
+    const client = new DaemonVoiceAgentClient(voiceScope);
 
     const sendPromise = client.sendTurn({ sessionId: 'session-1', voiceAgentId: 'm1', userText: 'hello' });
 

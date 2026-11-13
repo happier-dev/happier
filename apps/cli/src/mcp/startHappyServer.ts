@@ -4,7 +4,6 @@ import { json } from 'node:stream/consumers';
 import { randomUUID } from 'node:crypto';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { AddressInfo } from "node:net";
 import type { Socket } from 'node:net';
 import { logger } from "@/ui/logger";
 import { createHappierMcpServer } from "@/mcp/createHappierMcpServer";
@@ -42,9 +41,13 @@ import type { SessionClientPort } from '@/api/session/sessionClientPort';
 import { DaemonPluginToolCatalogUnavailableError } from './pluginToolCatalogError';
 import { createSessionMcpToolInventory } from './server/sessionMcpToolInventory';
 import { SessionCapabilityNoticeV1Schema, SESSION_CAPABILITY_NOTICE_SIDECAR_KEY } from '@happier-dev/protocol/sessions/messages/sessionCapabilityNoticeV1';
-import { prepareSessionMcpLocalTransport, type SessionMcpLocalTransportOptions } from './runtime/sessionMcpLocalTransport';
+import { prepareSessionMcpLocalTransport, prepareSessionMcpLoopbackTransport, type SessionMcpLocalTransport,
+    type SessionMcpLocalTransportOptions } from './runtime/sessionMcpLocalTransport';
 import type { SessionMcpCustomToolsBridge } from './runtime/sessionMcpToolsBridge';
-import { createMcpWatchSession } from './resources/watchSubscriptions';
+import { createMcpWatchSession, type McpWatchSession } from './resources/watchSubscriptions';
+import { serveSessionMcpRelayUpgrade } from './runtime/sessionMcpRelayEndpoint';
+import { createSessionMcpAgentPeerAdmission } from './runtime/sessionMcpAgentPeer';
+import { currentSessionHolderScope } from '@/subprocess/supervision/sessionHolder';
 
 const NativeAgentToolCallRequestV1Schema = z.strictObject({
     toolName: z.string().check(z.trim(), z.minLength(1), z.maxLength(256)),
@@ -63,6 +66,8 @@ export type HappyMcpExecutionRunService = Readonly<{
 }>;
 
 export type HappyMcpSessionClient = {
+    /** Immutable context from this exact Run's signed Account Voice admission. */
+    getRunActionInvocation?(): import('@happier-dev/protocol/sessions/creation/externalActionRequesterInvocationBaseV1').ExternalActionRequesterInvocationBaseV1 | undefined;
     getSessionRoleContext?: import('@/mcp/runtime/applyRunnerMcpSessionContext').RunnerMcpSessionContextAccessors['getSessionRoleContext'];
     getCurrentSessionSkillItems?: import('@/mcp/runtime/applyRunnerMcpSessionContext').RunnerMcpSessionContextAccessors['getCurrentSessionSkillItems'];
     getPluginMcpRuntimeRegistry?: import('@/mcp/runtime/applyRunnerMcpSessionContext').RunnerMcpSessionContextAccessors['getPluginMcpRuntimeRegistry'];
@@ -277,6 +282,8 @@ export async function startHappyServer(
     // The bridge survives native runtime replacement. Discovery cannot inherit
     // the retiring incarnation's signal while its successor is still opening.
     const bridgeLifetime = new AbortController();
+    // The Session whose Agent tree may reach this endpoint through relays (captured at start).
+    const holderScope = currentSessionHolderScope();
     // Invocation-only bridges already have a containing Run at construction;
     // ordinary Session bridges are prepared before the first native open.
     const ownerSignal = client.getRuntimeLifetimeSignal?.();
@@ -327,9 +334,14 @@ export async function startHappyServer(
     const toolNamesSnapshot = happierToolsEnabled ? listHappierMcpToolNames(toolsSnapshot.map((tool) => tool.name)) : [];
     const supportedSessionReadActions = listAdmittedSessionRunReadActionIds(toolsSnapshot);
     const keepAliveIntervalMs = configuration.mcpSseKeepAliveIntervalMs;
-    let localTransport: Awaited<ReturnType<typeof prepareSessionMcpLocalTransport>> | undefined;
+    // Every Session MCP listener demands its bearer: the Unix socket where supported, else
+    // (Windows) the 127.0.0.1 endpoint any local process or OS user could otherwise reach.
+    let localTransport: SessionMcpLocalTransport;
+    // MCP notification sessions stay on the socket transport, as before; loopback stays stateless.
+    const notificationSessionsEnabled = Boolean(opts?.localTransport);
     try {
-        if (opts?.localTransport) localTransport = await prepareSessionMcpLocalTransport(opts.localTransport);
+        localTransport = opts?.localTransport ? await prepareSessionMcpLocalTransport(opts.localTransport)
+            : await prepareSessionMcpLoopbackTransport();
     } catch (error) {
         bridgeLifetime.abort();
         readToolInventory.dispose();
@@ -347,6 +359,44 @@ export async function startHappyServer(
         watch: ReturnType<typeof createMcpWatchSession>;
         stream?: ServerResponse;
     }>();
+    // One request server per MCP request, bound to the current executable catalog: shared by
+    // HTTP requests and Agent relay connections (one MCP session per relay connection).
+    const createRequestServer = (request: Readonly<{
+        watchSession?: McpWatchSession;
+        pluginToolCatalog: readonly ProjectedPluginToolCatalogEntry[];
+        toolExecutionSignal?: AbortSignal;
+        toolInventory: ReturnType<typeof readToolInventory>;
+    }>) => createHappierMcpServer(client, {
+        ...(request.watchSession ? { watchSession: request.watchSession } : {}),
+        ...(opts?.sessionToolsBridge ? { sessionToolsBridge: opts.sessionToolsBridge } : {}),
+        mcpToolCallIdMetaKey: opts?.mcpToolCallIdMetaKey,
+        happierToolsEnabled: opts?.happierToolsEnabled,
+        sessionCredentials: opts?.sessionCredentials ?? opts?.credentials ?? null,
+        credentials: opts?.credentials ?? null,
+        isCredentialCurrent: opts?.isCredentialCurrent,
+        authorityScope: opts?.authorityScope ?? 'account',
+        ...(opts?.sessionList ? { sessionList: opts.sessionList } : {}),
+        actionsSettingsProvider: actionSettingsProvider,
+        accountSettings: opts?.accountSettings ?? null,
+        getAccountSettings: opts?.getAccountSettings ?? null,
+        pluginToolCatalog: request.pluginToolCatalog,
+        ...(request.toolExecutionSignal ? { toolExecutionSignal: request.toolExecutionSignal } : {}),
+        toolInventory: request.toolInventory,
+        ...(opts?.pluginRuntimeRegistryLease
+            ? { pluginRuntimeRegistryLease: opts.pluginRuntimeRegistryLease }
+            : {}),
+        requiredDirectActionIds: opts?.requiredDirectActionIds,
+    }).mcp;
+    const createRelayRequestServer = async (request: Readonly<{ kind: 'call' | 'read'; watchSession: McpWatchSession }>) => {
+        // Same per-request binding as an HTTP POST: tool calls inherit turn cancellation.
+        const toolExecutionSignal = request.kind === 'call' ? readMcpToolExecutionSignal(client, bridgeSignal) : bridgeSignal;
+        const pluginToolCatalog = await readCurrentPluginToolCatalog(client, readToolInventory, toolExecutionSignal)
+            .catch(() => { throw new DaemonPluginToolCatalogUnavailableError(); });
+        return createRequestServer({ watchSession: request.watchSession, pluginToolCatalog,
+            ...(toolExecutionSignal ? { toolExecutionSignal } : {}), toolInventory: readToolInventory(pluginToolCatalog) });
+    };
+    const admitRelayPeer = opts?.localTransport
+        ? createSessionMcpAgentPeerAdmission({ holderScope, agentUid: opts.localTransport.agentUid }) : undefined;
     const closeNotificationSession = async (id: string) => {
         const session = notificationSessions.get(id);
         if (!session) return;
@@ -355,7 +405,7 @@ export async function startHappyServer(
         await session.watch.close();
     };
     const server = createServer(async (req, res) => {
-        if (localTransport && !localTransport.authenticate(req.headers.authorization)) {
+        if (!localTransport.authenticate(req.headers.authorization)) {
             res.writeHead(401, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'unauthorized' }));
             return;
         }
@@ -372,9 +422,9 @@ export async function startHappyServer(
         }
         const initializing = req.method === 'POST' && isInitializeRequest(parsedBody);
         const sessionId = req.headers['mcp-session-id'];
-        const notificationSession = localTransport && !initializing && typeof sessionId === 'string'
+        const notificationSession = notificationSessionsEnabled && !initializing && typeof sessionId === 'string'
             ? notificationSessions.get(sessionId) : undefined;
-        if (localTransport && !initializing && sessionId !== undefined && !notificationSession) {
+        if (notificationSessionsEnabled && !initializing && sessionId !== undefined && !notificationSession) {
             res.writeHead(404).end();
             return;
         }
@@ -434,33 +484,18 @@ export async function startHappyServer(
         // passive watch scope is retained across responses.
         // In newer MCP SDK versions, stateless transports are single-use; reusing
         // one transport across requests can surface as client-side "Error POSTing to endpoint".
-        const { mcp } = createHappierMcpServer(client, {
+        const mcp = createRequestServer({
             ...(notificationSession ? { watchSession: notificationSession.watch } : {}),
-            ...(opts?.sessionToolsBridge ? { sessionToolsBridge: opts.sessionToolsBridge } : {}),
-            mcpToolCallIdMetaKey: opts?.mcpToolCallIdMetaKey,
-                happierToolsEnabled: opts?.happierToolsEnabled,
-            sessionCredentials: opts?.sessionCredentials ?? opts?.credentials ?? null,
-            credentials: opts?.credentials ?? null,
-            isCredentialCurrent: opts?.isCredentialCurrent,
-            authorityScope: opts?.authorityScope ?? 'account',
-            ...(opts?.sessionList ? { sessionList: opts.sessionList } : {}),
-            actionsSettingsProvider: actionSettingsProvider,
-            accountSettings: opts?.accountSettings ?? null,
-            getAccountSettings: opts?.getAccountSettings ?? null,
             pluginToolCatalog,
             ...(toolExecutionSignal ? { toolExecutionSignal } : {}),
             toolInventory: req.method === 'GET' ? initialToolInventory : readToolInventory(pluginToolCatalog),
-            ...(opts?.pluginRuntimeRegistryLease
-                ? { pluginRuntimeRegistryLease: opts.pluginRuntimeRegistryLease }
-                : {}),
-            requiredDirectActionIds: opts?.requiredDirectActionIds,
         });
 
         const transport = new StreamableHTTPServerTransport({
             // Local SDK clients retain this standard header for notifications.
-            // Reinitialize still gets a fresh request server; external/Windows
-            // and headerless request/response clients retain the stateless path.
-            sessionIdGenerator: localTransport && initializing ? randomUUID : undefined,
+            // Reinitialize still gets a fresh request server; the loopback
+            // (Windows) transport and headerless clients retain the stateless path.
+            sessionIdGenerator: notificationSessionsEnabled && initializing ? randomUUID : undefined,
             onsessioninitialized: id => { notificationSessions.set(id, { watch: createMcpWatchSession() }); },
         });
 
@@ -468,7 +503,7 @@ export async function startHappyServer(
             notificationSession.stream = res;
             const authorization = req.headers.authorization;
             notificationSession.watch.attachNotificationStream(async uri => {
-                if (!bridgeSignal.aborted && localTransport?.authenticate(authorization)) {
+                if (!bridgeSignal.aborted && localTransport.authenticate(authorization)) {
                     await mcp.server.sendResourceUpdated({ uri });
                 }
             });
@@ -523,6 +558,19 @@ export async function startHappyServer(
         connections.add(socket);
         socket.once('close', () => connections.delete(socket));
     });
+    // Agent relays (`happier-session-holder mcp-relay`) upgrade one connection to an MCP session
+    // served here; every other request stays Streamable HTTP.
+    server.on('upgrade', (request, socket: Socket, head: Buffer) => {
+        void serveSessionMcpRelayUpgrade(request, socket, head, {
+            authenticate: localTransport.authenticate,
+            ...(admitRelayPeer ? { admitPeer: admitRelayPeer } : {}),
+            createRequestServer: createRelayRequestServer,
+            lifetimeSignal: bridgeSignal,
+        }).catch(error => {
+            logger.debug('[happierMCP] Session MCP relay failed', { error: error instanceof Error ? error.message : String(error) });
+            socket.destroy();
+        });
+    });
     let stopPromise: Promise<void> | undefined;
     const stop = (): Promise<void> => {
         if (stopPromise) return stopPromise;
@@ -533,7 +581,7 @@ export async function startHappyServer(
             await Promise.all([...notificationSessions.keys()].map(closeNotificationSession));
             for (const socket of connections) socket.destroy();
             await new Promise<void>(resolve => server.close(() => resolve()));
-            await localTransport?.retire();
+            await localTransport.retire();
         }).catch(error => {
             // Revoked authority stays revoked; a failed physical removal still
             // belongs to this same owner for the next explicit cleanup attempt.
@@ -545,21 +593,9 @@ export async function startHappyServer(
     const onOwnerAbort = () => { void stop(); };
     let baseUrl: URL;
     try {
-        if (localTransport) {
-            await localTransport.listen(server);
-            // The SDK requires an HTTP URL; the dispatcher always uses the Unix socket.
-            baseUrl = new URL('http://localhost/mcp');
-        } else {
-            // Existing non-isolated Windows transport; isolated launches never enter here.
-            baseUrl = await new Promise<URL>((resolve, reject) => {
-                server.once('error', reject);
-                server.listen(0, '127.0.0.1', () => {
-                    server.off('error', reject);
-                    const addr = server.address() as AddressInfo;
-                    resolve(new URL(`http://127.0.0.1:${addr.port}`));
-                });
-            });
-        }
+        await localTransport.listen(server);
+        // Socket transport: the URL is nominal (the SDK requires one); the dispatcher uses the socket.
+        baseUrl = new URL(localTransport.url!);
         bridgeSignal.addEventListener('abort', onOwnerAbort, { once: true });
         bridgeSignal.throwIfAborted();
     } catch (error) {
@@ -569,8 +605,8 @@ export async function startHappyServer(
 
     return {
         url: baseUrl.toString(),
-        get localContext() { return localTransport?.localContext; },
-        ...(localTransport?.contextFilePath ? { contextFilePath: localTransport.contextFilePath } : {}),
+        get localContext() { return localTransport.localContext; },
+        ...(localTransport.contextFilePath ? { contextFilePath: localTransport.contextFilePath } : {}),
         toolNames: toolNamesSnapshot,
         readToolNames: async (signal?: AbortSignal) => {
             const operationSignal = signal ? AbortSignal.any([bridgeSignal, signal]) : bridgeSignal;

@@ -134,8 +134,14 @@ describe('ExecutionRunHostBridge admitted registry integration', () => {
   it('refuses a fresh Run after its authoritative contribution snapshot is retired', async () => {
     await withAdmittedSessionRun({ run: async fixture => {
       await fixture.admittedRuntime.dispose();
-      expect(await rawStart(fixture)).toMatchObject({ ok: false, errorCode: 'execution_run_contribution_snapshot_unavailable',
-        details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } } });
+      const failure = await rawStart(fixture);
+      expect(failure).toMatchObject({ ok: false, errorCode: 'native_agent_privileged_effect_outcome_unknown',
+        details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } },
+        failureCause: { phase: 'execution.run.start', errorClass: 'Error',
+          errorCode: 'native_agent_privileged_effect_outcome_unknown', httpStatus: null } });
+      expect(Object.keys(failure)).toEqual(expect.arrayContaining(['ok', 'error', 'errorCode', 'details', 'failureCause']));
+      expect(failure).not.toHaveProperty('cause');
+      expect(failure).not.toHaveProperty('stack');
       expect(fixture.nativeOpen).not.toHaveBeenCalled();
       expect(await listExecutionRunMarkers()).toEqual([]);
     } });

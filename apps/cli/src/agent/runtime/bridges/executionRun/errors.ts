@@ -13,6 +13,7 @@ import { redactDiagnosticsUrl } from '@happier-dev/protocol/browser/diagnostics/
 import { isSensitiveUrlPathSegment } from '@happier-dev/protocol/browser/diagnostics/egress/url';
 import axios from 'axios';
 import { readConnectedServiceUxDiagnosticFromError } from '@happier-dev/protocol/connect/connectedServiceUxDiagnostics';
+import { withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 
 /**
  * Preparation precedes fresh Run creation. The refusal keeps the error's own typed code; an error with
@@ -29,11 +30,11 @@ export function markExecutionRunStartPreparationFailure(
   const code = typedCode ?? fallbackCode;
   const reason = failure.message.trim() || null;
   logger.warn('[EXECUTION RUN] Start preparation failed', { code, ...(reason ? { reason } : {}) });
-  return Object.assign(failure, {
+  return withActionFailureCauseDiagnostic(Object.assign(failure, {
     rpcErrorCode: code,
     ...(!typedCode && reason ? { executionRunStartPreparationReason: reason } : {}),
     details: withExecutionRunStartFailureDetails(details, 'noRunCreated'),
-  });
+  }), failure, 'execution.run.start');
 }
 
 /** The reason an untyped preparation failure carried, for the Action result's human text. */

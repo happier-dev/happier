@@ -25,7 +25,7 @@ import {
 } from '@happier-dev/agents';
 
 import { projectVoiceDefaultAgentSelection } from '@/voice/agent/projectVoiceAgentSelection';
-import { resolveOperationalBackendTargetForAgentSelection } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { resolveBackendTargetOperationalAgentId, resolveOperationalBackendTargetForAgentSelection } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
 import { resolveAgentCatalogProjection } from '@/agents/backendCatalog/agentCatalogProjection';
 import { loadDaemonMergedProjectionInputs } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
@@ -1234,8 +1234,12 @@ export async function ensureVoiceConversationSessionForSessionRoot(params: Reado
             backendTarget, accountLifetime, signal: params.signal });
     const permissionMode = resolveVoiceConversationPermissionIntent(state);
     const needsRootModel = followsRoot && agentCfg.chatModelSource === 'session';
-    const modelSelection = needsRootModel && rootBackend?.defaultAgentId ? await resolveVoiceSessionModelSelection({
-        sessionAddress: rootAddress, agentId: rootBackend.defaultAgentId, agentTargetKey: buildBackendTargetKeyV2(backendTarget),
+    const rootAgentId = selectedRootAgent ? resolveBackendTargetOperationalAgentId({
+        backendTarget: selectedRootAgent,
+        selectedEntry: rootBackend?.defaultAgentId ? { agentId: rootBackend.defaultAgentId } : null,
+    }) : null;
+    const modelSelection = needsRootModel && rootAgentId ? await resolveVoiceSessionModelSelection({
+        sessionAddress: rootAddress, agentId: rootAgentId, agentTargetKey: buildBackendTargetKeyV2(backendTarget),
         signal: params.signal,
     }) : null;
     assertVoiceConversationAccountCurrent(accountLifetime);

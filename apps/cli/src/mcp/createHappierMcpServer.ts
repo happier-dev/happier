@@ -177,10 +177,8 @@ export function createHappierMcpServer(
     toolCallId?: string;
   }>): Promise<HappierBuiltInToolDispatchResult>;
 } {
-  // This server is the per-session MCP bridge that a running session agent uses.
-  // It must use the `agent` surface so action enablement + approvals can be
-  // configured separately from the external MCP surface (`mcp`).
-  const toolSurface = 'agent' as const;
+  const actionInvocation = client.getRunActionInvocation?.();
+  const toolSurface = actionInvocation?.surface === 'voice' ? 'voice' as const : 'agent' as const;
   const credentials = opts?.authorityScope === 'session' ? null : opts?.credentials ?? null;
   const sessionCredentials = opts?.sessionCredentials ?? opts?.credentials ?? null;
   const { serverId, serverUrl: serverHttpBaseUrl } = client.getServerBinding();
@@ -587,6 +585,7 @@ export function createHappierMcpServer(
   const boundCallerSessionId = client.sessionId.trim();
   const getInitiatingActionCaller = (witness = client.getActiveTurnAdmissionWitness?.()) => {
     if (client.getActiveTurnAdmissionWitness && !witness) return null;
+    if (actionInvocation?.surface === 'voice' && actionInvocation.caller.kind === 'host') return actionInvocation.caller;
     if (witness?.nativeRealtimeAdmission) {
       const admission = NativeRealtimeInputAdmissionV1Schema.safeParse(witness.nativeRealtimeAdmission);
       const caller = AgentStartSessionCallerV1Schema.safeParse(witness.agentStartCaller);
@@ -674,6 +673,7 @@ export function createHappierMcpServer(
       const signal = signals.length > 1 ? AbortSignal.any(signals) : signals[0];
       return accountExecutor.execute(actionId, input, {
         ...context,
+        ...(actionInvocation ? { surface: toolSurface, authority: actionInvocation.authority, actionCaller: actionInvocation.caller } : {}),
         ...(witness?.nativeRealtimeAdmission ? { nativeRealtimeInput: true as const, callerPermissionMode: witness.callerPermissionMode ?? null } : {}),
         ...(signal ? { signal } : {}),
       });

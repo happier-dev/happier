@@ -988,6 +988,15 @@ export function isMachineDeploymentEnvironmentAccessActionIdV1(value: string): b
   return MACHINE_DEPLOYMENT_ENVIRONMENT_ACCESS_ACTION_IDS_V1.includes(value);
 }
 
+/** Roots that prepare Session facts without declaring a selector operand. */
+const SESSION_PREPARATION_ROOT_ACTION_IDS_V1: readonly string[] = [
+  'session.targets.resolve', 'action.invoke', 'execution.run.start', 'execution.run.ensure',
+] as const satisfies readonly ActionFamilyId[];
+
+export function isSessionPreparationRootActionIdV1(value: string): boolean {
+  return SESSION_PREPARATION_ROOT_ACTION_IDS_V1.includes(value);
+}
+
 export const RUNTIME_ACTION_IDS_V1 = [
   ...ACTION_ID_FAMILIES_V1.computer,
   ...ACTION_ID_FAMILIES_V1.browser_control,

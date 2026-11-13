@@ -12,7 +12,7 @@ import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/ma
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { createPlainV2SessionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
-import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { answerExternalActionAccountForHome, createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { flushHookEffects, renderHook } from '@/dev/testkit';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
@@ -66,6 +66,36 @@ const { sessionExecutionRunGet, sessionExecutionRunList, sessionExecutionRunWait
 beforeEach(async () => { await homes.reset(); machineMethods.length = 0;
     attachedReadBoundary.code = 'target_unavailable'; attachedReadBoundary.result = undefined; attachedReadBoundary.beforeReply = undefined; });
 afterEach(() => standardCleanup());
+
+it.each([true, false])('admits attached Voice once through the signed Account front door: approval=%s', async canApproveRequests => {
+    await loadSyncSingletonForTests();
+    const serverId = await homes.addHome({ name: 'Voice admission', serverUrl: 'https://voice-admission.test',
+        serverIdentityId: 'srv_voice_admission', accountId: 'requester', currentAccount: true });
+    const { settingsDefaults } = await import('@/sync/domains/settings/settings');
+    homes.answer(serverId, 'GET /v2/account/settings', { body: { version: 1, content: { t: 'plain',
+        v: { voice: { ...settingsDefaults.voice, canApproveRequests } } } } });
+    const session = createPlainV2SessionRecordFixture({ id: 'voice-session', active: true,
+        metadata: { machineId: 'machine', path: '/repo', host: 'voice.test', homeDir: '/home/test' } });
+    homes.answer(serverId, '/v2/sessions/voice-session', { body: { session } });
+    const invocation = { caller: { kind: 'host' as const }, surface: 'voice' as const,
+        authority: canApproveRequests ? 'present_user' as const : 'account_automation' as const };
+    const boundary = await answerExternalActionAccountForHome(homes, serverId, {
+        machineId: 'machine', actionId: 'execution.run.start', tokenEpoch: 0,
+        execute(input, context) {
+            expect(input).toMatchObject({ sessionId: 'voice-session', intent: 'voice_agent' });
+            expect(context.invocation).toMatchObject(invocation);
+            return { runId: 'voice-run', callId: 'voice-call', sidechainId: 'voice-sidechain', actionInvocation: invocation };
+        },
+    });
+    homes.answer(serverId, 'GET /v1/machines', { body: [boundary.machine] });
+    const { DaemonVoiceAgentClient } = await import('@/voice/agent/daemonVoiceAgentClient');
+    const { resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
+    const started = await new DaemonVoiceAgentClient({ serverId: resolveServerProfileScopeIdForIdentifier(serverId), accountId: 'requester' }).start({
+        sessionId: 'voice-session', agentId: 'codex', permissionIntent: 'read-only', idleTtlSeconds: 300, initialContext: 'Hello',
+    });
+    expect(started).toMatchObject({ voiceAgentId: 'voice-run', actionInvocation: invocation });
+    expect(machineMethods).not.toContain('voice-session:execution.run.ensureOrStart');
+});
 
 it('settles a retained roster HTTP 409 without retrying until a real refresh trigger', async () => {
     await loadSyncSingletonForTests();

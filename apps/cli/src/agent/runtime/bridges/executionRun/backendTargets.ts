@@ -1,11 +1,13 @@
 import { getBackendCatalogDefinition, legacyCustomAcpCompat } from '@happier-dev/agents';
-import { AgentExecutionTargetV1Schema, type AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { AgentExecutionTargetV1Schema, buildConfiguredAcpAgentSelectionV1, type AgentExecutionTargetV1 } from '@happier-dev/protocol/agents/executionTargetV1';
+import { supportsAgentNativeFunctionTools } from '@happier-dev/protocol/plugins/contributions/agentSessionCapabilities';
 import { BackendTargetKeyV2Schema, convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { parseBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { BackendTargetRefV1, BackendTargetRefV2Input } from '@happier-dev/protocol';
 import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
 import { resolveContributedAgentRoutingId } from '@/plugins/projection/registry/agentRoutingIdentity';
+import { readAgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 
 type ExecutionRunAgentCatalog = ReturnType<typeof readAgentCatalogSnapshot>;
 
@@ -88,6 +90,30 @@ export function resolveExecutionRunRuntimeBackendId(
   backendTarget: BackendTargetRefV1 | BackendTargetRefV2Input,
 ): string {
   return resolveExecutionRunPublicBackendId(backendTarget);
+}
+
+/** Selects a fresh Run's Action carrier from its admitted Agent declaration. */
+export function supportsExecutionRunNativeFunctionTools(
+  backendTarget: BackendTargetRefV1 | BackendTargetRefV2Input,
+  catalog: Pick<ExecutionRunAgentCatalog, 'agentDefinitionsById'> = readAgentCatalogSnapshot(),
+): boolean {
+  const target = resolveExecutionRunRuntimeBackendTarget(backendTarget);
+  if (!target) return false;
+  const identity = readRequestedAgentTarget(backendTarget)?.identity
+    ?? (target.kind === 'configuredAcpBackend'
+      ? buildConfiguredAcpAgentSelectionV1(target.backendId).agentTarget.identity : null);
+  let contribution = identity ? undefined : catalog.agentDefinitionsById.get(
+    resolveExecutionRunRuntimeBackendId(backendTarget),
+  );
+  if (identity) {
+    for (const candidate of catalog.agentDefinitionsById.values()) {
+      if (candidate.identity?.pluginId === identity.pluginId && candidate.identity.localId === identity.localId) {
+        contribution = candidate;
+        break;
+      }
+    }
+  }
+  return supportsAgentNativeFunctionTools({ sessions: readAgentSessionCapabilities(contribution?.richDefinition?.definition) });
 }
 
 /** The routing spelling of the one runtime lowering above, including external Agents. */

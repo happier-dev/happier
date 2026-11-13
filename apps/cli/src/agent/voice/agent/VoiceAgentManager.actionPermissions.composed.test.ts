@@ -47,6 +47,28 @@ const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests } = await import
 afterEach(async () => { resetVoiceSessionStoreForTests(); await home.reset(); });
 
 describe('Voice Manager output through canonical client Action approval', () => {
+  it('uses the shared Action surface without requiring native functions for an OpenCode Voice turn', async () => {
+    const native = createNativeSessionBoundary();
+    const manager = new VoiceAgentManager({ createRuntime: options => createVoiceSessionRuntimeThroughNativeFactory({
+      runtime: { sessions: { open: request => native.open(request) } }, modelId: 'mcp-voice',
+      capabilities: { open: ['create'], delivery: ['newTurn'], cancel: true },
+      functionTools: options.functionTools,
+    }) });
+    try {
+      const started = await manager.start({ backendTarget: { kind: 'builtInAgent', agentId: 'opencode' },
+        chatModelId: 'fixture', commitModelId: 'fixture', permissionIntent: 'default', idleTtlSeconds: 60, initialContext: '' },
+      { actionTransport: 'mcp' });
+      expect(native.opens[0]?.functionTools).toBeUndefined();
+      const turn = manager.sendTurn({ voiceAgentId: started.voiceAgentId, userText: 'Read my Inbox' });
+      await native.waitForInputs(1);
+      expect(native.inputs[0]?.input.text).toContain('action_spec_search');
+      expect(native.inputs[0]?.input.text).toContain('action_execute');
+      expect(native.inputs[0]?.input.text).not.toContain('happier_voice_action');
+      native.complete('The Inbox has two requests.');
+      await expect(turn).resolves.toMatchObject({ assistantText: 'The Inbox has two requests.' });
+    } finally { await manager.dispose(); }
+  });
+
   it('starts with ordinary permissions, delivers two native function Actions, and refuses the carrier as a target', async () => {
     await home.reset();
     const serverId = await home.addHome({ name: 'Structured Voice Home', serverUrl: 'https://structured-voice.test',

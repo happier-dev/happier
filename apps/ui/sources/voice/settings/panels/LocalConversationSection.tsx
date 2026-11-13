@@ -7,7 +7,6 @@ import { useUnistyles } from 'react-native-unistyles';
 import { isBundledAgentId } from '@/agents/catalog/catalog';
 import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { resolveAgentCatalogTitle } from '@/agents/backendCatalog/agentCatalogProjection';
-import { isVoiceAgentSupported } from '@/voice/agent/voiceAgentCapabilities';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
@@ -53,7 +52,7 @@ import { resolveVoiceWelcomeSelection } from '@/voice/settings/welcome';
 import { VoiceGreetingItem } from '@/voice/settings/panels/VoiceGreetingItem';
 import { applyVoiceAgentSelection } from '@/voice/settings/voiceAgentSelection';
 import { projectVoiceConfiguredAgentTarget } from '@/voice/agent/projectVoiceConfiguredAgentTarget';
-import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
+import { useProviderActionClient } from '@/providers/actions/useProviderActionClient';
 import { buildAgentUniverseBackendTargetKey } from '@/agents/catalog/agentUniverse';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { Modal } from '@/modal';
@@ -68,7 +67,6 @@ import { resolveProjectedConnectedAccountServiceKeys } from '@/sync/domains/conn
 import { VoiceAgentConnectedServicesSchema } from '@happier-dev/protocol/voice/settings/localConversation';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
 import {
-  LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID,
   importLegacyVoiceOpenAiChatProvider,
 } from '@/voice/adapters/localConversation/migrateLegacyOpenAiChatProvider';
 
@@ -188,13 +186,8 @@ export function LocalConversationSection(props: {
     serverId: voiceSettingsScope?.serverId ?? '',
     onExecuted: () => {},
   });
-  const importedChatModels = useProviderModelProjection({
-    enabled: Boolean(voiceSettingsScope) && cfg.agent.providerChat?.status === 'needs_selection',
-    machineId: preflightMachineId,
-    serverId: voiceSettingsScope?.serverId ?? null,
-    agentTargetKey: buildAgentUniverseBackendTargetKey(LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID),
-    mode: 'picker',
-  });
+  const importedChatModels = useProviderActionClient(needsProviderChatSelection && voiceSettingsScope
+    ? voiceSettingsScope.serverId : []);
   const currentVoiceRef = React.useRef(props.voice);
   currentVoiceRef.current = props.voice;
   const daemonMergedProjection = useDaemonMergedProjectionInputs({
@@ -222,9 +215,7 @@ export function LocalConversationSection(props: {
     settings.backendEnabledByTargetKey,
   ]);
   const resolvedAgentEntries = React.useMemo(() => resolvedBackendEntries
-    .filter(entry => isVoiceAgentSupported(entry.agentId,
-      currentDaemonProjectionInputs?.pluginProjectionV2))
-    .map(entry => entry.agentCatalogEntry), [resolvedBackendEntries, currentDaemonProjectionInputs?.pluginProjectionV2]);
+    .map(entry => entry.agentCatalogEntry), [resolvedBackendEntries]);
   const selectedAgentTarget = React.useMemo(() => cfg.agent.agentSource === 'agent' && !hasConfiguredProviderChat
     ? projectVoiceConfiguredAgentTarget({ selection: cfg.agent, entries: resolvedBackendEntries,
       backendEnabledByTargetKey, mergedProviderProjectionById: currentDaemonProjectionInputs?.mergedProviderProjectionById })
@@ -480,18 +471,15 @@ export function LocalConversationSection(props: {
               title: t('settingsVoice.local.mediatorAgentId'),
               subtitleFormatter: () => t('settingsVoice.local.mediatorAgentIdSubtitle'),
             }}
-            items={[{
-              id: LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID,
-              title: resolveAgentCatalogTitle(LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID),
-              subtitle: t('settingsVoice.local.conversation.agentSource.fixedAgentSubtitle'),
-              icon: <Icon name="person" size={20} color={theme.colors.text.secondary} />,
-            }]}
+            items={agentIdMenuItems.filter(item => item.id !== '__custom__')}
             onSelect={(id) => {
+              const entry = resolveVoiceAgentCatalogSelectionV1(resolvedAgentEntries, String(id));
+              if (!entry) return;
               const capturedVoice = props.voice;
               const origin = legacyChatOrigin.current;
               fireAndForget((async () => {
                 if (cfg.agent.providerChat?.status === 'migration_required') {
-                  if (!voiceSettingsScope || String(id) !== LEGACY_VOICE_OPENAI_CHAT_COMPATIBLE_AGENT_ID) return;
+                  if (!voiceSettingsScope) return;
                   if (!origin || origin.signal.aborted || legacyChatApproval.approvalPending) return;
                   const imported = await importLegacyVoiceOpenAiChatProvider(voiceSettingsScope, {
                     onApprovalPending: legacyChatApproval.requestApproval,
@@ -502,10 +490,15 @@ export function LocalConversationSection(props: {
                   setOpenMenu(null);
                   return;
                 }
-                const projection = await importedChatModels.refreshWithResult(false);
+                const projection = await importedChatModels.describeProviderModels({
+                  serverId: voiceSettingsScope?.serverId ?? null,
+                  ...(preflightMachineId ? { machineId: preflightMachineId } : {}),
+                  agentTargetKey: entry.backendTargetKey ?? buildAgentUniverseBackendTargetKey(entry.agentId),
+                  mode: 'picker',
+                }, origin ? { signal: origin.signal } : {});
                 if (currentVoiceRef.current !== capturedVoice || projection?.status !== 'success') return;
                 const nextVoice = applyVoiceAgentSelection(voice, {
-                  kind: 'legacy_provider_chat', agentId: String(id), modelProjection: projection,
+                  kind: 'legacy_provider_chat', entry, modelProjection: projection,
                 });
                 if (nextVoice === voice) return;
                 props.setVoice(nextVoice);
@@ -578,8 +571,6 @@ export function LocalConversationSection(props: {
               autoFocus
               value={String(cfg.agent.agentId ?? '')}
               onCommit={(draft) => {
-                if (!isVoiceAgentSupported(draft.trim(),
-                  currentDaemonProjectionInputs?.pluginProjectionV2)) return String(cfg.agent.agentId ?? '');
                 setCustomEntry(null);
                 const fixedVoice = withFixedAgentSource();
                 const nextVoice = applyVoiceAgentSelection(fixedVoice, { kind: 'custom', agentId: draft });

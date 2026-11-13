@@ -46,6 +46,35 @@ export function isSessionUiActionClientRpcMethod(method: string): boolean {
   } catch { return false; }
 }
 
+/** The existing reverse Action transport, addressed to the App hosting this Voice Run. */
+export function voiceRunActionClientRpcMethod(runId: string): string {
+  return `${RPC_METHODS.UI_ACTION_EXECUTE}.voice.${encodeURIComponent(JSON.stringify(runId))}`;
+}
+
+export function isVoiceRunActionClientRpcMethod(method: string): boolean {
+  const prefix = `${RPC_METHODS.UI_ACTION_EXECUTE}.voice.`;
+  if (!method.startsWith(prefix)) return false;
+  try {
+    const runId: unknown = JSON.parse(decodeURIComponent(method.slice(prefix.length)));
+    return typeof runId === 'string' && runId.trim().length > 0;
+  } catch { return false; }
+}
+
+/** A live Run's request for its owning App's Action front door; carries no authority claims. */
+export const VoiceRunActionDispatchRequestV1Schema = lazyZodSchema(() => z.strictObject({
+  v: z.literal(1),
+  actionId: ActionIdSchema,
+  input: z.unknown(),
+  voiceRun: z.strictObject({
+    runId: z.string().check(z.trim(), z.minLength(1)),
+    sessionId: z.string().check(z.trim(), z.minLength(1)),
+    occurrenceId: z.string().check(z.trim(), z.minLength(1)),
+    turnId: z.string().check(z.trim(), z.minLength(1)),
+    actionRequestId: z.string().check(z.trim(), z.minLength(1)),
+  }),
+}));
+export type VoiceRunActionDispatchRequestV1 = z.infer<typeof VoiceRunActionDispatchRequestV1Schema>;
+
 /** Existing reverse-RPC rooms select a mounted read owner, rather than an arbitrary App. */
 export function mountedWorkReadClientRpcMethod(actionId: 'session.work.get' | 'inbox.get', sessionId?: string): string {
   return actionId === 'inbox.get' ? `${RPC_METHODS.UI_ACTION_EXECUTE}.inbox`

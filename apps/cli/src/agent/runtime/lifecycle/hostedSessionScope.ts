@@ -23,6 +23,11 @@ export type HostedSessionScope = {
   workingDirectory?: string;
   /** Where this Session's workspace lives; bound by the placement owner (absent = this Machine's disk). */
   workspaceSource?: WorkspaceSource;
+  /**
+   * Ends this Session's command in a process that hosts several Sessions (set by the session host
+   * when it adds the Session). Absent in a one-Session runner: its command ends the process.
+   */
+  readonly end?: (exitCode: number) => void;
 };
 
 const hostedSessionScope = new AsyncLocalStorage<HostedSessionScope>();
@@ -37,6 +42,17 @@ export function runInHostedSessionScope<T>(
 ): T {
   if (hostedSessionScope.getStore()) return run();
   return hostedSessionScope.run({ environment: input.environment ?? process.env, termination: null }, run);
+}
+
+/**
+ * Run one Session added to a session host: always its own scope (never the caller's), with the
+ * host's per-Session end.
+ */
+export function runAddedHostedSession<T>(
+  input: Readonly<{ environment: NodeJS.ProcessEnv; workingDirectory: string; end: (exitCode: number) => void }>,
+  run: () => T,
+): T {
+  return hostedSessionScope.run({ ...input, termination: null }, run);
 }
 
 export function readHostedSessionScope(): HostedSessionScope | undefined {

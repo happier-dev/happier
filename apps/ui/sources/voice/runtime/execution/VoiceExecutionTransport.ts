@@ -18,7 +18,6 @@ import { requireVoiceSessionAgentSelection, resolveVoiceSessionAgentSelection } 
 import { resolveVoiceConversationBackendTarget } from '@/voice/persistence/voiceConversationSession';
 import { isVoiceConversationSystemSessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
 import { resolveVoiceConfiguredAgentTarget } from '@/voice/agent/resolveVoiceConfiguredAgentTarget';
-import { assertVoiceAgentBackendTargetSupported } from '@/voice/agent/voiceAgentCapabilities';
 
 import { createVoiceRunRecovery } from './voiceRunRecovery';
 import { VoiceRunStopUnconfirmedError } from './voiceRunStopReconciliation';
@@ -26,6 +25,7 @@ import { createVoiceTurnStreaming } from './voiceTurnStreaming';
 import { createVoiceWelcomePolicy } from './voiceWelcomePolicy';
 
 export type VoiceExecutionTransport = Readonly<{
+    readVoiceAgentHandle: (sessionId: string) => VoiceAgentHandle | undefined;
     /** Explicit context scoped to the current Voice attempt (QA/manual injection only). */
     appendAttemptContextUpdate: (sessionId: string, update: string) => void;
     appendAutomaticUiContextUpdate: (sessionId: string, update: string) => void;
@@ -114,8 +114,6 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
                 signal,
             ))
             : requireVoiceSessionAgentSelection(resolveVoiceSessionAgentSelection(targetMetadata));
-        await assertVoiceAgentBackendTargetSupported({ target: backendTarget,
-            machineId: targetMetadata?.machineId, serverId: account.scope.serverId, signal });
         // Capture and Send are separate gestures. Keep this admitted choice for
         // their shared attempt, including handle recovery, without starting a model.
         const retirement = account.onRetire(() => clearAgentSelection(sessionId));
@@ -281,6 +279,7 @@ export function createVoiceExecutionTransport(): VoiceExecutionTransport {
     };
 
     return {
+        readVoiceAgentHandle: sessionId => voiceAgentBySessionId.get(sessionId),
         appendAttemptContextUpdate: recovery.appendAttemptContextUpdate,
         appendAutomaticUiContextUpdate: recovery.appendAutomaticUiContextUpdate,
         commitUserTranscript,

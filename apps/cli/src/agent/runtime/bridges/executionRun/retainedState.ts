@@ -78,7 +78,8 @@ export type RetainedExecutionRunRecord = z.infer<typeof RetainedExecutionRunReco
 export function projectRetainedExecutionRunState(run: ExecutionRunState): RetainedExecutionRunRecord['state'] {
   // Materialized auth, transient registrations, Account settings and turn authority
   // are deliberately not restart inputs. Resume re-resolves current material.
-  const { runtimeSettings: _settings, requesterWorkAttributionV1: _attribution, projectSetup: _setup, launch, ...state } = run;
+  const { runtimeSettings: _settings, requesterWorkAttributionV1: _attribution, projectSetup: _setup,
+    actionInvocation: _invocation, launch, ...state } = run;
   const { connectedServicesRegistration: _registration, connectedServicesSelectionAgent: _agent, ...selection } = launch ?? {};
   return RetainedRunStateSchema.parse({ ...state, ...(launch ? { launch: selection } : {}) });
 }

@@ -23,6 +23,7 @@ import type { AccountSettings, ActionExecutorDeps, SessionRunPromptReadActionIdV
 import { readLoadedMcpNativeServerNames, type McpServerIdentity } from './assignMcpWireNames';
 import { detectProviderMcpServers } from '../providerDetection/detectProviderMcpServers';
 import type { ResolvedSessionMcpServer } from '../runtimeTypes';
+import { applyAttachedPluginMcpTransport } from './applyAttachedPluginMcpTransport';
 import { projectResolvedMcpServers } from './projectResolvedMcpServers';
 import type { McpPluginItemV1, McpServersSettingsV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
 import type { ReachContextV1 } from '@happier-dev/protocol/reach/resolveReachV1';
@@ -71,6 +72,7 @@ import { assertMcpStdioExecutionSupported, readMcpExecutionSource, type McpExecu
  * authority without rebuilding the server.
  */
 export type ExecutionRunMcpBinding = Readonly<{
+  actionInvocation?: import('@happier-dev/protocol/sessions/creation/externalActionRequesterInvocationBaseV1').ExternalActionRequesterInvocationBaseV1;
   runId: string;
   /** Trusted absolute depth from this Run's canonical host manager. */
   workDepth: number;
@@ -98,6 +100,7 @@ function createRunScopedMcpSessionView(
   };
   return {
     ...session,
+    getRunActionInvocation: () => run.actionInvocation,
     // Class prototype methods are not preserved by object spread. Forward the
     // admitted Session transport's immutable Home binding explicitly so a
     // Run-scoped MCP view cannot fall back to ambient Home configuration.
@@ -684,12 +687,8 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
         permissionHandler: params.mcpPermissionHandler,
         servers: selected, signal: run?.signal ?? params.session.getRuntimeLifetimeSignal?.() ?? undefined,
         addDisposable: attachment => pluginAttachments.push(attachment) });
-      resolvedSelection = { ...resolvedSelection, selectedServersByName: Object.fromEntries(attached.map(server => {
-        const selectedServer = resolvedSelection!.selectedServersByName[server.name]!;
-        return [server.name, server.transport.kind === 'http' || server.transport.kind === 'sse'
-          ? { ...selectedServer, config: { ...selectedServer.config, remote: { ...selectedServer.config.remote!, url: server.transport.url } } }
-          : selectedServer];
-      })) };
+      resolvedSelection = { ...resolvedSelection, selectedServersByName: Object.fromEntries(attached.map(server => [server.name,
+        applyAttachedPluginMcpTransport(resolvedSelection!.selectedServersByName[server.name]!, server.transport)])) };
     }
     recordStartupPhase('plugin_materialization');
     const authIssuances = await Promise.allSettled(Object.values(resolvedSelection.selectedServersByName).map(async ({ config: server }) => {

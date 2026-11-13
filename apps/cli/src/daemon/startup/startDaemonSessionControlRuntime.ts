@@ -18,7 +18,7 @@ import { persistExplicitSessionStopUsageLimitRecoveryCancellation } from '@/daem
 import { tryReadSessionMetadataRecord, resolvePersistedConnectedServiceSwitchSessionState, resolveInactiveConnectedServiceSessionContext } from '@/daemon/connectedServices/sessionAuthSwitch/persistedState';
 import { resolveConnectedServiceMaterializationIdentityFromTrackedSession, resolveSessionConnectedServiceSwitchContinuity } from '@/daemon/connectedServices/sessionAuthSwitch/continuity';
 import type { SessionTrackingKey, TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
-import { isCurrentTrackedSession, trackedSessionForSingleSessionProcess, trackedSessionOnProcess, trackedSessionsForProcess } from '@/daemon/sessions/sessionTrackingKey';
+import { isCurrentTrackedSession, trackedSessionAfterExit, trackedSessionOnProcess, trackedSessionsForProcess } from '@/daemon/sessions/sessionTrackingKey';
 export { resolveSessionConnectedServiceSwitchContinuity } from '@/daemon/connectedServices/sessionAuthSwitch/continuity';
 import { resolveContinuationResumePromptMode, resolveConnectedServiceContinuationOriginId, readContinuationCustomResumePrompt, createConnectedServiceContinuationHandler, createSelectionPostSwitchRecoveryHandler, resolveConnectedServiceContinuationInterruptionForSwitch } from '@/daemon/connectedServices/continuation/switchRecovery';
 export { resolveContinuationResumePromptMode, resolveConnectedServiceContinuationOriginId, resolveConnectedServiceContinuationInterruptionForSwitch } from '@/daemon/connectedServices/continuation/switchRecovery';
@@ -423,7 +423,7 @@ import {
   type LocalServicesDaemonRuntime,
 } from '../local/services/runtime';
 import { readLocalServiceWorkspaceFacts } from '../local/services/inventory/workspaces';
-import { isPidPlaceholderSessionId, listSessionMarkers } from '../sessionRegistry';
+import { listSessionMarkers } from '../sessionRegistry';
 import {
   fetchServerFeaturesSnapshot,
   type CliServerFeaturesSnapshot,
@@ -7538,9 +7538,6 @@ export async function startDaemonSessionControlRuntime(
       if (candidate) registerDisconnectedTerminalHostCandidate(candidate);
     },
   });
-  // Unready Sessions of one host share no identity: a missing or `PID-<pid>` placeholder id names none.
-  const isKnownSessionId = (sessionId: string | undefined): sessionId is string =>
-    typeof sessionId === 'string' && sessionId.length > 0 && !isPidPlaceholderSessionId(sessionId);
   onChildExited = async (pid, exit) => {
     // A Session-addressed end (one Session of a session host) concerns only that Session.
     const hostedBeforeExit = trackedSessionsForProcess(params.trackedSessionsByKey, pid)
@@ -7580,15 +7577,8 @@ export async function startDaemonSessionControlRuntime(
     for (const { tracked: trackedBeforeExit, connectedServiceRestartWasRequested } of hostedBeforeExit) {
       // A wrapper→runner promotion moves the Session off this pid: like the
       // Session's own exit, it ends this process's custody.
-      const trackedAfterExit = isCurrentTrackedSession(params.trackedSessionsByKey, trackedBeforeExit)
-        && trackedBeforeExit.pid === pid
-        ? trackedBeforeExit
-        // The host's other Sessions are not this Session's replacement; only its own successor is.
-        : exit.trackingKey !== undefined
-          ? trackedSessionsForProcess(params.trackedSessionsByKey, pid)
-            .find(tracked => tracked !== trackedBeforeExit && isKnownSessionId(trackedBeforeExit.happySessionId)
-              && tracked.happySessionId === trackedBeforeExit.happySessionId) ?? null
-          : trackedSessionForSingleSessionProcess(params.trackedSessionsByKey, pid) ?? null;
+      const trackedAfterExit = trackedSessionAfterExit(params.trackedSessionsByKey, pid, trackedBeforeExit,
+        exit.trackingKey !== undefined);
       if (trackedAfterExit === trackedBeforeExit) continue;
       // This Session ended in this process: drop its own target, or its spawn's unadopted bootstrap.
       // Sessions and spawns the process still hosts keep their own targets.

@@ -392,6 +392,7 @@ export class VoiceAgentManager {
     }
     const history = voiceAgent.chatSessionSeeded ? [] : voiceAgent.history;
     const render = (history: readonly VoiceAgentTurn[]) => buildVoiceAgentSeededUserTurnPrompt({
+      actionTransport: voiceAgent.actionTransport,
       verbosity: voiceAgent.verbosity,
       initialContext: voiceAgent.chatSessionSeeded ? '' : voiceAgent.initialContext,
       history,
@@ -555,7 +556,8 @@ export class VoiceAgentManager {
     const replacementGeneration = voiceAgent.chatGeneration + 1;
     try {
       replacementBackend = voiceAgent.createRuntime({
-        functionTools: this.createActionFunctionTools(() => voiceAgent, replacementGeneration),
+        ...(voiceAgent.actionTransport === 'native'
+          ? { functionTools: this.createActionFunctionTools(() => voiceAgent, replacementGeneration) } : {}),
         backendTarget: voiceAgent.backendTarget,
         backendId: voiceAgent.backendId,
         modelId: voiceAgent.chatModelId,
@@ -777,7 +779,13 @@ export class VoiceAgentManager {
 
   async start(
     params: VoiceAgentStartParams,
-    options?: Readonly<{ createRuntime?: BackendFactory; signal?: AbortSignal; readHistoryContextWindowTokens?: VoiceHistoryContextWindowReader }>,
+    options?: Readonly<{
+      createRuntime?: BackendFactory;
+      /** Run admission selects transport from the authored Agent descriptor. */
+      actionTransport?: 'native' | 'mcp';
+      signal?: AbortSignal;
+      readHistoryContextWindowTokens?: VoiceHistoryContextWindowReader;
+    }>,
   ): Promise<VoiceAgentStartResult> {
     if (this.disposed) {
       throw new VoiceAgentError('VOICE_AGENT_START_FAILED', 'Manager is disposed');
@@ -845,6 +853,7 @@ export class VoiceAgentManager {
       }
     };
     const createRuntime = options?.createRuntime ?? this.createRuntime;
+    const actionTransport = options?.actionTransport ?? 'native';
     const backendId = resolveExecutionRunRuntimeBackendId(params.backendTarget);
 
     let chatBackendForCleanup: ExecutionRunHostRuntime | undefined;
@@ -872,7 +881,8 @@ export class VoiceAgentManager {
       })();
 
       const chatBackend = (chatBackendForCleanup = createRuntime({
-        functionTools: this.createActionFunctionTools(() => instanceForCleanup, 0),
+        ...(actionTransport === 'native'
+          ? { functionTools: this.createActionFunctionTools(() => instanceForCleanup, 0) } : {}),
         backendTarget: params.backendTarget,
         backendId,
         modelId: params.chatModelId,
@@ -914,6 +924,7 @@ export class VoiceAgentManager {
       ensureCurrentStart();
 
       const instance: VoiceAgentInstance = {
+        actionTransport,
         id: voiceAgentId,
         backendTarget: params.backendTarget,
         backendId,
@@ -1001,6 +1012,7 @@ export class VoiceAgentManager {
         const shouldDeferInitialContextUntilFirstTurn = params.initialContextMode === 'first_turn';
         instance.clearChatBuffer();
         const prompt = buildVoiceAgentBootstrapPrompt({
+          actionTransport: instance.actionTransport,
           verbosity: instance.verbosity,
           initialContext: shouldDeferInitialContextUntilFirstTurn ? '' : instance.initialContext,
           mode: 'ready_handshake',
@@ -1143,6 +1155,7 @@ export class VoiceAgentManager {
       const { ensureCurrent, preparedInstructionsFor } = await this.prepareSystemAppendBlocks(voiceAgent);
       voiceAgent.clearChatBuffer();
       const prompt = buildVoiceAgentBootstrapPrompt({
+        actionTransport: voiceAgent.actionTransport,
         verbosity: voiceAgent.verbosity,
         initialContext: voiceAgent.initialContext,
         mode: 'welcome',

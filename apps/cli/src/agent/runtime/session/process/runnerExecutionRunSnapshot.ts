@@ -1,4 +1,5 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { configuration } from '@/configuration';
 import { HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY,
@@ -72,7 +73,7 @@ export function createRunnerExecutionRunSnapshotResolver(input: Readonly<{ sessi
   const unavailable = () => { throw new PluginError({ code: 'execution_run_contribution_snapshot_unavailable',
     message: 'Execution Run executable snapshot is unavailable' }); };
   return async backendTarget => {
-    const path = process.env[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY];
+    const path = sessionProcessEnvironment()[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY];
     if (!path) return unavailable();
     const current = await readCurrentRunnerAgentRuntimeDaemonServiceAuthority({
       happyHomeDir: configuration.happyHomeDir, publicReleaseRing: configuration.publicReleaseRing,

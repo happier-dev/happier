@@ -16,6 +16,7 @@ import { normalizeActionExecutorThrownError } from './resultProjection.js';
 import type { ActionExecuteFailure } from './types.js';
 import { readUnexpectedActionErrorDiagnosticV1 } from '../actionExecutionResult.js';
 import { type ActionId } from '../actionIds.js';
+import { carryActionFailureDiagnostic } from './actionFailureDiagnostic.js';
 
 export function resolveExecutionRunLaunchOrigin(ctx: ActionExecutorContext): ExecutionRunLaunchOrigin {
   const mountedOrigin = ExecutionRunLaunchOriginSchema.safeParse(ctx.executionRunLaunchOrigin);
@@ -371,11 +372,11 @@ export function classifyExecutionRunStartFailure(
   runCreation: 'noRunCreated' | 'outcomeUnknown',
   error?: unknown,
 ): ActionExecuteFailure {
-  return {
+  return carryActionFailureDiagnostic({
     ...result,
     details: withExecutionRunStartFailureDetails(result.details, runCreation,
       error === undefined ? undefined : readUnexpectedActionErrorDiagnosticV1(error).errorClass),
-  };
+  }, error ?? result);
 }
 
 export function classifyExecutionRunStartPreDispatchFailure(

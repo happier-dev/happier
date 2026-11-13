@@ -1,12 +1,37 @@
 import { describe, expect, it } from 'vitest';
 
-import { projectExecutionRunError, sanitizeExecutionRunError } from './errors';
+import { markExecutionRunStartPreparationFailure, projectExecutionRunError, sanitizeExecutionRunError } from './errors';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionOutputDiagnostic, withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { createCodexAppServerTurnFailure } from '@happier-dev/plugins-codex/agent/runtime/appServer/turns/failure';
 import { redactBugReportSensitiveText } from '@happier-dev/protocol/bugs/reports/redaction';
 import { createRunnerDaemonPluginServicesPreparationError } from '@/daemon/agentRuntime/runnerDaemonPluginServicesHost';
 import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 
 describe('Run startup failure redaction', () => {
+    it('marks no Run creation with the preparation cause without private exception fields', () => {
+        const error = Object.assign(new TypeError('PRIVATE_PREPARATION_REASON'), {
+            cause: { headers: { authorization: 'PRIVATE_CREDENTIAL' }, body: 'PRIVATE_RESPONSE' },
+        });
+        const failure = markExecutionRunStartPreparationFailure(error, 'execution_run_profile_preparation_failed');
+        expect(failure).toMatchObject({ rpcErrorCode: 'execution_run_profile_preparation_failed',
+            executionRunStartPreparationReason: 'PRIVATE_PREPARATION_REASON',
+            details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } } });
+        const diagnostic = readActionOutputDiagnostic(failure);
+        expect(diagnostic?.failureCause).toEqual({ phase: 'execution.run.start', errorClass: 'TypeError',
+            errorCode: 'execution_run_profile_preparation_failed', httpStatus: null });
+        expect(JSON.stringify(diagnostic)).not.toContain('PRIVATE_');
+    });
+
+    it('preserves a more precise carried preparation cause', () => {
+        const cause = Object.assign(new TypeError('PRIVATE_PROVIDER_RESPONSE'), { code: 'ENOENT' });
+        const error = withActionFailureCauseDiagnostic(new Error('Preparation failed'), cause, 'runner.registry.acquire');
+        const failure = markExecutionRunStartPreparationFailure(error, 'execution_run_contribution_snapshot_unavailable');
+        expect(readActionOutputDiagnostic(failure)?.failureCause)
+            .toEqual(projectActionFailureCauseV1(cause, 'runner.registry.acquire'));
+        expect(JSON.stringify(readActionOutputDiagnostic(failure))).not.toContain('PRIVATE_');
+    });
+
     it('retains the connected account diagnostic through repeated redaction and public Run projection', async () => {
         const { buildConnectedServiceCredentialSpawnErrorResult } = await import('@/daemon/connectedServices/diagnostics/buildConnectedServiceDiagnosticSpawnErrorResult');
         const failure = buildConnectedServiceCredentialSpawnErrorResult({ agentId: 'codex', error: {

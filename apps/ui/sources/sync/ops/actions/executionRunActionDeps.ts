@@ -106,8 +106,8 @@ async function callDetachedExecutionRunRpc(
 
 /**
  * UI transport adapter for the one shared execution.run Action family. Session
- * scope stays on session RPC; detached scope has no fallback and only uses the
- * exact machine selected by V2 preflight or host-stamped invocation context.
+ * reads stay on session RPC. Voice admission and detached mutations use the
+ * signed Account front door and its exact selected Machine.
  */
 export function createUiExecutionRunActionDeps(scope?: ServerAccountScope, account?: LazyActionAccountContext): UiExecutionRunActionDeps {
     const withRunRequestSignal = <T>(opts: ExecutionRunOptions, run: (opts: NonNullable<ExecutionRunOptions>) => Promise<T>) =>
@@ -132,7 +132,8 @@ export function createUiExecutionRunActionDeps(scope?: ServerAccountScope, accou
         const refuse = (code: string) => actionId === 'execution.run.start'
             ? { ...executionRunFailure(code), details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated') }
             : executionRunFailure(code);
-        const machineId = resolveExactExecutionRunMachineId(null, opts);
+        const sessionId = input && typeof input === 'object' && 'sessionId' in input ? normalizeId(input.sessionId) : null;
+        const machineId = resolveExactExecutionRunMachineId(sessionId, opts);
         if (!machineId) return refuse('execution_run_target_not_selected');
         if (!requesterAction || !account) return refuse('admission_unavailable');
         if (opts.serverId && !areServerProfileIdentifiersEquivalent(opts.serverId, account.serverId)
@@ -149,7 +150,7 @@ export function createUiExecutionRunActionDeps(scope?: ServerAccountScope, accou
                 ...(opts.effectiveCallerPermissionMode !== undefined ? { callerPermissionMode: opts.effectiveCallerPermissionMode } : {}),
                 ...(opts.callerInputConstraints ? { callerInputConstraints: opts.callerInputConstraints } : {}),
                 ...(opts.workspaceWrites ? { workspaceWrites: opts.workspaceWrites } : {}),
-                ...(opts.originSessionId ? { defaultSessionId: opts.originSessionId } : {}),
+                ...(opts.originSessionId ?? sessionId ? { defaultSessionId: opts.originSessionId ?? sessionId ?? undefined } : {}),
                 ...(opts.signal ? { signal: opts.signal } : {}),
             } });
         const failure = actionId === 'execution.run.start' && !issued ? ActionExecuteFailureSchema.safeParse(result) : null;
@@ -190,11 +191,11 @@ export function createUiExecutionRunActionDeps(scope?: ServerAccountScope, accou
             return { ok: true as const, exactMachineId: machineId };
         }),
         executionRunStart: (sessionId, request, options) => withRunRequestSignal(options, async opts => {
-            if (sessionId === null) {
+            if (sessionId === null || opts.surface === 'voice' && request.intent === 'voice_agent') {
                 // Launch provenance belongs to the receiving host. The original
                 // Action ingress re-admits the public input for this exact target.
                 const { launchOrigin: _launchOrigin, ...input } = request;
-                return await requesterRunAction('execution.run.start', { ...input, sessionId: null }, opts);
+                return await requesterRunAction('execution.run.start', { ...input, sessionId }, opts);
             }
             return await sessionExecutionRunStart(sessionId, request, {
                 serverId: opts?.serverId,
@@ -223,7 +224,7 @@ export function createUiExecutionRunActionDeps(scope?: ServerAccountScope, accou
             ? await callDetachedExecutionRunRpc(SESSION_RPC_METHODS.EXECUTION_RUN_CANCEL_TURN_V1, request, opts)
             : await sessionExecutionRunCancelTurn(sessionId, request, { serverId: opts?.serverId, ...(scope ? { scope } : {}),
                 ...(opts?.signal ? { signal: opts.signal } : {}) })),
-        executionRunEnsure: (sessionId, request, options) => withRunRequestSignal(options, async opts => sessionId === null
+        executionRunEnsure: (sessionId, request, options) => withRunRequestSignal(options, async opts => sessionId === null || opts.surface === 'voice'
             ? await requesterRunAction('execution.run.ensure', { ...request, sessionId }, opts)
             : await sessionExecutionRunEnsure(sessionId, request, { serverId: opts?.serverId, ...(scope ? { scope } : {}),
                 ...(opts?.signal ? { signal: opts.signal } : {}) })),

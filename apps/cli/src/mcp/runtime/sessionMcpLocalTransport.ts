@@ -1,19 +1,15 @@
-import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { chmod, readFile, writeFile } from 'node:fs/promises';
-import type { Server } from 'node:http';
+import { createLocalMcpBearer } from './localMcpBearer';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import type { AddressInfo, Server } from 'node:net';
+import { tmpdir } from 'node:os';
 import { isAbsolute, join } from 'node:path';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StreamableHTTPClientTransport, StreamableHTTPError } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { Agent, fetch as fetchWithDispatcher } from 'undici';
-import { fetchWithCredentialRedirectRefusal, CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
-import { z } from 'zod/mini';
 import { createSessionNativeDirectory, grantExactUidPathAccess } from '@/utils/fs/unixPathAccess';
-import { SessionMcpLocalContextSchema, SessionMcpUnavailableError, SESSION_MCP_CONTEXT_FILE_ENV,
+import { SessionMcpUnavailableError, SESSION_MCP_CONTEXT_FILE_ENV,
     type SessionMcpLocalContext } from './sessionMcpLocalContext';
 export { SessionMcpLocalContextSchema, SessionMcpUnavailableError, SESSION_MCP_CONTEXT_FILE_ENV,
     type SessionMcpLocalContext } from './sessionMcpLocalContext';
 
-/** Windows retains its existing current-user MCP transport; isolation is unavailable. */
+/** Unix-socket transport (and Agent isolation). Elsewhere (Windows) the bearer-gated loopback transport below applies. */
 export function supportsSessionMcpLocalTransport(): boolean {
     return process.platform !== 'win32';
 }
@@ -22,6 +18,8 @@ export type SessionMcpLocalTransportOptions = Readonly<{ agentUid: number; runti
 export type SessionMcpLocalTransport = Readonly<{
     readonly localContext: SessionMcpLocalContext | undefined;
     contextFilePath?: string;
+    /** HTTP base URL clients use; the socket transport's SDK URL is nominal. */
+    readonly url: string | undefined;
     authenticate: (authorization: string | undefined) => boolean;
     listen: (server: Server) => Promise<void>;
     retire: () => Promise<void>;
@@ -37,28 +35,23 @@ export async function prepareSessionMcpLocalTransport(options: SessionMcpLocalTr
     const directory = await createSessionNativeDirectory({ uid: options.agentUid, prefix: 'happier-mcp-',
         access: '--x', runtimeRoot: options.runtimeRoot })
         .catch(() => { throw new SessionMcpUnavailableError(); });
-    const bearer = randomBytes(32);
-    const localContext: SessionMcpLocalContext = Object.freeze({
-        v: 1, socketPath: join(directory.path, 'mcp.sock'), bearerToken: bearer.toString('base64url'),
+    const bearer = createLocalMcpBearer();
+    const localContext: Extract<SessionMcpLocalContext, Readonly<{ socketPath: string }>> = Object.freeze({
+        v: 1, socketPath: join(directory.path, 'mcp.sock'), bearerToken: bearer.token,
     });
-    const expectedHeader = Buffer.from(`Bearer ${localContext.bearerToken}`, 'utf8');
     let retired = false;
     let contextFilePath: string | undefined;
     const retire = async () => {
         retired = true;
-        bearer.fill(0);
-        expectedHeader.fill(0);
+        bearer.retire();
         await directory.dispose();
     };
     try {
         return {
             get localContext() { return retired ? undefined : localContext; },
             get contextFilePath() { return contextFilePath; },
-            authenticate: (authorization: string | undefined): boolean => {
-                if (retired || typeof authorization !== 'string') return false;
-                const candidate = Buffer.from(authorization, 'utf8');
-                return candidate.length === expectedHeader.length && timingSafeEqual(candidate, expectedHeader);
-            },
+            get url() { return retired ? undefined : 'http://localhost/mcp'; },
+            authenticate: bearer.authenticate,
             listen: async (server: Server) => {
                 try {
                     await new Promise<void>((resolve, reject) => {
@@ -79,7 +72,6 @@ export async function prepareSessionMcpLocalTransport(options: SessionMcpLocalTr
                         await writeFile(contextFilePath, JSON.stringify(localContext), { mode: 0o600, flag: 'wx' });
                     }
                 } catch {
-                    server.closeAllConnections();
                     await new Promise<void>(resolve => server.close(() => resolve()));
                     await retire();
                     throw new SessionMcpUnavailableError();
@@ -93,62 +85,46 @@ export async function prepareSessionMcpLocalTransport(options: SessionMcpLocalTr
     }
 }
 
-export async function readSessionMcpContextFromEnvironment(
-    env: Readonly<Record<string, string | undefined>> = process.env,
-): Promise<SessionMcpLocalContext> {
-    try {
-        const file = env[SESSION_MCP_CONTEXT_FILE_ENV];
-        if (!file || !isAbsolute(file)) throw new SessionMcpUnavailableError();
-        return z.parse(SessionMcpLocalContextSchema, JSON.parse(await readFile(file, 'utf8')));
-    } catch {
-        throw new SessionMcpUnavailableError('mcp_socket_access_unavailable', { phase: 'context_read' });
-    }
-}
-
-/** The SDK owns MCP framing; Undici directs every HTTP/SSE request to the same Unix socket. */
-export async function connectSessionMcpClient(context: SessionMcpLocalContext, signal?: AbortSignal): Promise<Readonly<{
-    client: Client;
-    close: () => Promise<void>;
-}>> {
-    signal?.throwIfAborted();
-    const dispatcher = new Agent({ connect: { socketPath: context.socketPath } });
-    const client = new Client({ name: 'happier-session-bridge', version: '1' });
-    const transport = new StreamableHTTPClientTransport(new URL('http://localhost/mcp'), {
-        requestInit: { headers: { authorization: `Bearer ${context.bearerToken}` } },
-        fetch: (url, init) => fetchWithCredentialRedirectRefusal(url, init, async (url, init) => {
-            // Pair the dispatcher with its own Undici version: Node's bundled
-            // fetch can use a different dispatch ABI. The SDK sends JSON strings.
-            const { body, headers, ...options } = init ?? {};
-            if (body != null && typeof body !== 'string') throw new SessionMcpUnavailableError();
-            const response = await fetchWithDispatcher(url, {
-                ...options, body, headers: Array.from(new Headers(headers).entries()), dispatcher, redirect: 'manual',
-            });
-            // Undici types its body with Node's stream/web declaration. Narrow
-            // the actual standard stream at this external fetch boundary.
-            const responseBody = response.body;
-            if (responseBody !== null && !(responseBody instanceof ReadableStream)) throw new SessionMcpUnavailableError();
-            return new Response(responseBody, {
-                status: response.status, statusText: response.statusText, headers: Array.from(response.headers.entries()),
-            });
-        }),
-    });
-    const close = async () => {
-        signal?.removeEventListener('abort', onAbort);
-        try { await client.close(); } finally { await dispatcher.destroy(); }
+/**
+ * Where no Unix socket transport exists (Windows), the Session MCP listens on 127.0.0.1, which
+ * every local process and OS user can reach. The bearer is the admission; it reaches the
+ * Happier-launched bridge through the same private context file (never argv or MCP config).
+ */
+export async function prepareSessionMcpLoopbackTransport(): Promise<SessionMcpLocalTransport> {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-mcp-')).catch(() => { throw new SessionMcpUnavailableError(); });
+    const bearer = createLocalMcpBearer();
+    let localContext: SessionMcpLocalContext | undefined;
+    let retired = false;
+    let contextFilePath: string | undefined;
+    const retire = async () => {
+        retired = true;
+        bearer.retire();
+        await rm(directory, { recursive: true, force: true });
     };
-    const onAbort = () => { void close().catch(() => undefined); };
-    signal?.addEventListener('abort', onAbort, { once: true });
-    try {
-        await client.connect(transport, signal ? { signal } : undefined);
-        signal?.throwIfAborted();
-        return { client, close };
-    } catch (error) {
-        try { await close(); } finally {
-            if (error instanceof CredentialRequestRedirectError) throw error;
-        }
-        signal?.throwIfAborted();
-        throw new SessionMcpUnavailableError(error instanceof StreamableHTTPError
-            && (error.code === 401 || error.code === 403) ? 'not_authenticated' : 'mcp_socket_access_unavailable',
-        { phase: 'client_connect', ...(error instanceof StreamableHTTPError ? { httpStatus: error.code } : {}) });
-    }
+    return {
+        get localContext() { return retired ? undefined : localContext; },
+        get contextFilePath() { return contextFilePath; },
+        get url() { return retired || !localContext || !('url' in localContext) ? undefined : localContext.url; },
+        authenticate: bearer.authenticate,
+        listen: async (server: Server) => {
+            try {
+                await chmod(directory, 0o700);
+                const port = await new Promise<number>((resolve, reject) => {
+                    server.once('error', reject);
+                    server.listen(0, '127.0.0.1', () => {
+                        server.off('error', reject);
+                        resolve((server.address() as AddressInfo).port);
+                    });
+                });
+                localContext = Object.freeze({ v: 1, url: `http://127.0.0.1:${port}`, bearerToken: bearer.token });
+                contextFilePath = join(directory, 'session-mcp.json');
+                await writeFile(contextFilePath, JSON.stringify(localContext), { mode: 0o600, flag: 'wx' });
+            } catch {
+                await new Promise<void>(resolve => server.close(() => resolve()));
+                await retire();
+                throw new SessionMcpUnavailableError();
+            }
+        },
+        retire,
+    };
 }

@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import { readBackendTargetRefV2 } from '@happier-dev/protocol';
 import { configuration, reloadConfiguration } from '@/configuration';
 import { readOrCreateDeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
-import { gcExecutionRunMarkers, readRetainedExecutionRunRecords, removeExecutionRunMarker } from '@/daemon/executionRunRegistry';
+import { gcExecutionRunMarkers, readRetainedExecutionRunRecords, removeExecutionRunMarker, retainExecutionRunState } from '@/daemon/executionRunRegistry';
 import { ExecutionRunHostBridge } from './ExecutionRunHostBridge';
 import { finishExecutionRun } from './finishExecutionRun';
 import { writeExecutionRunActivityMarker } from './activityMarkers';
@@ -72,6 +72,15 @@ function bridge() {
 }
 
 describe('execution lifecycle restart recovery', () => {
+  it('checkpoints a Voice Run without retaining its live Account invocation authority', async () => {
+    const run: ExecutionRunState = { ...state('parent-session', 'resumable'), intent: 'voice_agent',
+      actionInvocation: { caller: { kind: 'host' }, surface: 'voice', authority: 'present_user' } };
+    await retainExecutionRunState(run);
+    const record = (await readRetainedExecutionRunRecords()).find(value => value.state.runId === run.runId);
+    expect(record?.state).toMatchObject({ runId: run.runId, intent: 'voice_agent', resumeHandle: run.resumeHandle });
+    expect(record?.state).not.toHaveProperty('actionInvocation');
+  });
+
   it('retains an already published review at retirement without repeating comment materialization', async () => {
     const run = { ...state('parent-session', 'resumable'), intent: 'review' as const };
     const structuredMeta = { kind: 'review_findings.v2', payload: buildReviewFindingsV2Payload({

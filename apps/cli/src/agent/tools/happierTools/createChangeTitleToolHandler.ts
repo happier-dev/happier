@@ -12,7 +12,7 @@ type ActionExecutorLike = Readonly<{
     input: unknown,
     ctx: Readonly<{
       defaultSessionId: string;
-      surface: 'mcp' | 'cli' | 'agent';
+      surface: import('./actionToolCatalog').HappierBuiltInToolSurface;
       approvalOrigin?: ApprovalRequestOriginV1 | null;
       callerPermissionMode?: string | null;
       actionRequestId?: string | null;
@@ -33,7 +33,7 @@ function readNonEmptyString(value: unknown): string | null {
 
 export function createChangeTitleToolHandler(params: Readonly<{
   executor: ActionExecutorLike;
-  surface: 'mcp' | 'cli' | 'agent';
+  surface: import('./actionToolCatalog').HappierBuiltInToolSurface;
   resolveCallerPermissionMode?: (() => string | null | undefined) | null;
   afterCommit?: (args: Readonly<{ sessionId: string; title: string }>) => Promise<void> | void;
 }>): (sessionId: string, title: string, options?: Pick<ActionToolExecutionOptions, 'approvalOrigin' | 'actionRequestId' | 'signal'>) => Promise<unknown> {

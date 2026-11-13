@@ -3108,6 +3108,11 @@ does not acquire provider usage; it makes the existing manual Refresh addressabl
 before the first sample. The established runtime admits the selected authentication
 mode and its configuration. A missing configuration sidecar does not disqualify a
 mode that declares no configuration.
+For a service that supplies no provider Account ID, usage belongs to the exact
+qualified connected Account. Its provisional subject includes the service and Account
+address; Home admits that source for writes, reads and Refresh without claiming
+provider-global or organization identity. Proven provider subjects keep their existing
+ownership checks.
 
 ## Node-safe imports (tests)
 

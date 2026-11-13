@@ -12,9 +12,19 @@ import { createAgentRuntimeDaemonServiceAuthorityPath, publishAgentRuntimeDaemon
   removeAgentRuntimeDaemonServiceAuthorityIfOwned } from '@/daemon/agentRuntime/sessionBridgeAuthorization';
 import { createSessionDaemonAuthorityFixture } from './sessionDaemonAuthority.testkit';
 import * as processIdentity from '@/daemon/processIdentity';
+import { Response as UndiciResponse } from 'undici';
+
+const daemonHttpBoundary = vi.hoisted(() => vi.fn<typeof import('undici')['fetch']>());
+// Daemon control deliberately pairs Undici fetch with its own dispatcher ABI.
+// Substitute that external HTTP client, retaining capability and wire parsers.
+vi.mock('undici', async importOriginal => {
+  const actual = await importOriginal<typeof import('undici')>();
+  return { ...actual, fetch: (...args: Parameters<typeof actual.fetch>) =>
+    daemonHttpBoundary.getMockImplementation()?.(...args) ?? actual.fetch(...args) };
+});
 
 // OS process inspection is the boundary; the real command-identity parser is retained.
-afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); });
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.restoreAllMocks(); daemonHttpBoundary.mockReset(); });
 
 const createRestrictedExecutor = () => createCliActionExecutor({
   token: '', sessionId: 'caller-session', mode: 'plain', ctx: null,
@@ -209,13 +219,13 @@ describe('Session MCP Account routing', () => {
       callerPermissionMode: 'yolo' as const,
       causalPermissionAuthority: { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'yolo' as const } };
     const requests: unknown[] = [];
-    vi.stubGlobal('fetch', async (_url: unknown, init?: RequestInit) => {
+    daemonHttpBoundary.mockImplementation(async (_url, init) => {
       const body: unknown = JSON.parse(String(init?.body));
       requests.push(body);
-      if (uncertain) return new Response(JSON.stringify({ ok: false, error: {
+      if (uncertain) return new UndiciResponse(JSON.stringify({ ok: false, error: {
         code: NATIVE_AGENT_SESSION_EFFECT_OUTCOME_UNKNOWN_CODE, message: 'Connection lost after dispatch',
       } }), { status: 200 });
-      return new Response(JSON.stringify({ ok: true, result: { kind: 'action.execution', requestId: 'request-1',
+      return new UndiciResponse(JSON.stringify({ ok: true, result: { kind: 'action.execution', requestId: 'request-1',
         outcome: { ok: true, result: { attemptedChannels: 1, deliveredChannels: 1 } } } }), { status: 200 });
     });
     try {

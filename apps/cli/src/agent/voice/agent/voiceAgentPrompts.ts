@@ -22,6 +22,7 @@ function resolveDisabledVoicePromptActionIds(disabledActionIds?: readonly string
 }
 
 export function buildVoiceAgentBootstrapPrompt(params: Readonly<{
+  actionTransport?: 'native' | 'mcp';
   verbosity: 'short' | 'balanced';
   initialContext: string;
   mode: 'ready_handshake' | 'welcome';
@@ -37,6 +38,7 @@ export function buildVoiceAgentBootstrapPrompt(params: Readonly<{
       id: 'voice.bootstrap.system',
       scope: 'session' as const,
       text: buildLocalVoiceAgentSystemPrompt({
+        actionTransport: params.actionTransport ?? 'native',
         ...params.voicePolicy,
         verbosity: params.verbosity,
         disabledActionIds,
@@ -100,6 +102,7 @@ export function buildVoiceAgentUserTurnPrompt(params: Readonly<{ userText: strin
 }
 
 export function buildVoiceAgentSeededUserTurnPrompt(params: Readonly<{
+  actionTransport?: 'native' | 'mcp';
   verbosity: 'short' | 'balanced';
   initialContext: string;
   userText: string;
@@ -118,6 +121,7 @@ export function buildVoiceAgentSeededUserTurnPrompt(params: Readonly<{
         id: 'voice.seeded.system',
         scope: 'session',
         text: buildLocalVoiceAgentSystemPrompt({
+          actionTransport: params.actionTransport ?? 'native',
           ...params.voicePolicy,
           ...(params.welcomeAlreadyDelivered && params.voicePolicy ? {
             welcome: { ...params.voicePolicy.welcome, enabled: false },

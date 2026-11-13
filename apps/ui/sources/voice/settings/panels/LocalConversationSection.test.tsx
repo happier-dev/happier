@@ -324,6 +324,11 @@ beforeEach(async () => {
             daemonState: encodePlainMachineStoredContent(machine.daemonState) } : {}) });
       };
       if (path === '/v1/machines/read-batch' && init?.method === 'POST') return createMachineReadBatchResponseFixture(init.body, machineRow);
+      if (machineId?.endsWith('/access')) {
+        const machine = machineRow(machineId.slice(0, -'/access'.length));
+        return Response.json({ machineId: machine.id, custodian: machine.access!.custodian,
+          access: machine.access, canManage: true, grants: [], ownDirectGrant: false, ownAccessSources: [] });
+      }
       if (machineId) return Response.json({ machine: machineRow(machineId) });
       if (path === '/v1/machines') return Response.json(Object.keys(storage.getState().machines).map(machineRow));
       if (path === '/v1/account/authoring-memory') return Response.json({ rows: [] });
@@ -514,13 +519,13 @@ describe('LocalConversationSection', () => {
     expect(setVoice).not.toHaveBeenCalled();
   });
 
-  it('omits Agents without native Voice functions, including configured ACP destination rows', async () => {
+  it('offers authored Agents and configured ACP destination rows through the existing Action transport', async () => {
     registryDescribe.mockResolvedValue({ supported: true, projection: PluginProjectionV2Schema.parse({
       v: 2, generation: 7, familiesById: {}, agentsById: Object.fromEntries(
         ['codex', 'opencode', 'claude', 'pi', 'muse'].map(id => {
           const declaration = getBundledAgentDeclaration(id);
           if (!declaration) throw new Error(`Expected bundled Agent ${id}`);
-          return [id, { id, identity: declaration.identity, title: id, capabilities: declaration.capabilities }];
+          return [id, { id, identity: declaration.identity, title: id }];
         }),
       ),
     }) });
@@ -532,11 +537,10 @@ describe('LocalConversationSection', () => {
     const screen = await renderSettingsView(<LocalConversationSection voice={voice} setVoice={vi.fn()} />);
     const picker = findDropdownByItemTriggerTitle(screen, t('settingsVoice.pages.conversations.agentTitle'));
     const choices = picker?.props.items.map((item: { id: string }) => item.id);
-    expect(choices).toContain(buildAgentUniverseBackendTargetKey('codex'));
-    for (const id of ['opencode', 'claude', 'pi', 'muse']) {
-      expect(choices).not.toContain(buildAgentUniverseBackendTargetKey(id));
+    for (const id of ['codex', 'opencode', 'claude', 'pi', 'muse']) {
+      expect(choices).toContain(buildAgentUniverseBackendTargetKey(id));
     }
-    expect(choices).not.toContain('agent:happier.agent.custom-acp/custom-acp:definition:row-review');
+    expect(choices).toContain('agent:happier.agent.custom-acp/custom-acp:definition:row-review');
   });
 
   it('draws the Hands-free timing rows only while Hands-free is on', async () => {
@@ -871,7 +875,7 @@ describe('LocalConversationSection', () => {
     });
   });
 
-  it('clears the previous catalog identity when committing a changed custom Agent id', async () => {
+  it.each(['claude', 'codex'])('clears the previous catalog identity when committing custom Agent %s', async (agentId) => {
     const LocalConversationSection = await loadLocalConversationSection();
     const setVoice = vi.fn();
     const voice = createLocalConversationVoice({
@@ -889,20 +893,18 @@ describe('LocalConversationSection', () => {
     });
     const field = screen.findAll((node) => node.props?.fieldTestID === 'settings.voice.local.agentId.custom.field')[0];
     expect(field).toBeDefined();
-    act(() => { field.props.onCommit('claude'); });
-    expect(setVoice).not.toHaveBeenCalled();
-    act(() => { field.props.onCommit('codex'); });
+    act(() => { field.props.onCommit(agentId); });
 
     const selection = readLocalConversationVoiceSettings(setVoice.mock.calls[0]?.[0]).agent;
     expect(selection).toMatchObject({
-      agentId: 'codex',
+      agentId,
       agentTargetKey: null,
       agentIdentity: null,
     });
     await expect(resolveVoiceConfiguredAgentTarget({ machineId: 'machine-1', selection })).resolves.toMatchObject({
       ok: true,
-      agentId: 'codex',
-      backendTarget: { kind: 'backend', backendId: 'codex' },
+      agentId,
+      backendTarget: { kind: 'backend', backendId: agentId },
     });
   });
 
@@ -970,13 +972,22 @@ describe('LocalConversationSection', () => {
     expect(screen.findAll((node) => node.type === ItemComponent && node.props?.title === t('settingsVoice.local.chatApiKey'))).toHaveLength(0);
   });
 
-  it('asks once for the compatible Agent and commits both Provider tuples together', async () => {
+  it.each(['opencode', 'muse'])('asks once for %s and commits both Provider tuples together', async (agentId) => {
     const LocalConversationSection = await loadLocalConversationSection();
+    const declaration = getBundledAgentDeclaration(agentId);
+    if (!declaration) throw new Error(`Expected bundled Agent ${agentId}`);
+    registryDescribe.mockResolvedValue({ supported: true, projection: PluginProjectionV2Schema.parse({
+      v: 2, generation: 7, familiesById: {}, agentsById: {
+        [agentId]: { id: agentId, identity: declaration.identity, title: agentId },
+      },
+    }) });
     const changed = createDeferred<void>();
     const setVoice = vi.fn<(voice: VoiceSettings) => void>(() => { changed.resolve(); });
     const voice = createLocalConversationVoice({
       conversationMode: 'agent',
       agent: {
+        machineTargetMode: 'fixed',
+        machineTargetId: 'machine-1',
         agentId: 'com.acme.voice.agent',
         agentTargetKey: 'agent:com.acme.voice/agent',
         agentIdentity: { pluginId: 'com.acme.voice', localId: 'agent' },
@@ -988,7 +999,8 @@ describe('LocalConversationSection', () => {
         },
       },
     });
-    const agentTargetKey = 'agent:happier.agent.opencode/opencode';
+    storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice }, storage.getState().settings));
+    const agentTargetKey = buildAgentUniverseBackendTargetKey(agentId);
     const connectionId = 'voice-openai-compatible-chat';
     providerTransport.setResponse(RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION,
       createProviderModelProjectionFixture({ agentTargetKey, groups: [createProviderModelProjectionGroupFixture({ connectionId,
@@ -1010,29 +1022,30 @@ describe('LocalConversationSection', () => {
       && node.props?.selectedId === ''
     ));
     expect(prompts).toHaveLength(1);
-    await waitForTestEvent(providerTransport.subscribe, () => providerTransport.state.requests,
-      requests => requests.some(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION));
-    expect(providerTransport.state.requests.some(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION)).toBe(true);
+    expect(setVoice).not.toHaveBeenCalled();
+    const prompt = () => findDropdownByItemTriggerTitle(screen, t('settingsVoice.local.mediatorAgentId'));
+    await waitForTestEvent(screen.subscribe, () => prompt()?.props.items.some(
+      (item: DropdownMenuItem) => item.id === agentTargetKey), ready => ready === true);
     await act(async () => {
-      prompts[0]!.props.onSelect('opencode');
+      prompt()!.props.onSelect(agentTargetKey);
     });
     await changed.promise;
-    expect(setVoice).toHaveBeenCalled();
+    expect(setVoice).toHaveBeenCalledTimes(1);
     const nextVoice = setVoice.mock.calls[0]?.[0] as VoiceSettings;
     expect(readLocalConversationVoiceSettings(nextVoice).agent).toMatchObject({
       agentSource: 'agent',
-      agentId: 'opencode',
-      agentTargetKey: 'agent:happier.agent.opencode/opencode',
+      agentId,
+      agentTargetKey,
       agentIdentity: null,
       providerChat: {
         status: 'configured',
         chat: {
-          agentTargetKey: 'agent:happier.agent.opencode/opencode',
+          agentTargetKey,
           providerConnectionId: 'voice-openai-compatible-chat',
           modelId: 'qwen-chat',
         },
         commit: {
-          agentTargetKey: 'agent:happier.agent.opencode/opencode',
+          agentTargetKey,
           providerConnectionId: 'voice-openai-compatible-chat',
           modelId: 'qwen-commit',
         },

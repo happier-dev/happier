@@ -144,7 +144,7 @@ describe('Voice Action reference catalog', () => {
         finish(); controller.abort(); await pending.catch(() => {}); resetVoiceSessionStoreForTests();
       }
     });
-  it.each(['voice-on', 'synthetic', 'voice-off', 'coding-agent'] as const)(
+  it.each(['voice-on', 'synthetic', 'voice-off', 'coding-agent', 'admitted-on', 'admitted-off', 'mcp-on', 'mcp-off', 'mcp-synthetic'] as const)(
     'uses the live person Voice request and keeps other requesters inline (%s)', async source => {
       const serverId = await home.addHome({ name: 'Spoken settings', serverUrl: 'https://spoken-settings.test',
         accountId: 'alice', currentAccount: true });
@@ -152,7 +152,8 @@ describe('Voice Action reference catalog', () => {
       expect(tryWriteServerEnabledBitInPlace(features, 'voice', true)).toBe(true);
       home.answer(serverId, '/v1/features', { body: features });
       let content: Extract<AccountSettingsStoredContentEnvelope, { t: 'plain' }> = {
-        t: 'plain', v: { voice: { ...settingsDefaults.voice, canApproveRequests: source !== 'voice-off' } },
+        t: 'plain', v: { voice: { ...settingsDefaults.voice,
+          canApproveRequests: source !== 'voice-off' && source !== 'admitted-on' && source !== 'mcp-on' && source !== 'mcp-synthetic' } },
       };
       let version = 1;
       home.answer(serverId, 'GET /v2/account/settings', { select: () => ({ body: { content, version } }) });
@@ -166,14 +167,33 @@ describe('Voice Action reference catalog', () => {
       const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests } = await import('@/voice/session/voiceSessionStore');
       setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'live-person-call',
         status: 'connected', mode: 'listening', canStop: true });
+      const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+      const admittedAccount = await captureLazyActionAccountContext(serverId);
+      const lifetime = admittedAccount.accountLifetime;
+      const { DaemonVoiceAgentClient } = await import('@/voice/agent/daemonVoiceAgentClient');
+      const admittedHandle: import('@/voice/agent/types').VoiceAgentHandle = {
+        accountLifetime: lifetime, transcriptEpoch: 0, metadataSessionId: null,
+        client: new DaemonVoiceAgentClient(lifetime.scope), voiceAgentId: 'admitted-run', backend: 'daemon',
+        rpcSessionId: 'voice-carrier', agentBackendId: 'codex', toolTurnContext: { current: {
+          turnOrigin: source === 'mcp-synthetic' ? 'synthetic' : 'person', playHostText: async () => ({ status: 'completed' as const }) } },
+        actionInvocation: { caller: { kind: 'host' }, surface: 'voice',
+          authority: source === 'admitted-on' || source === 'mcp-on' || source === 'mcp-synthetic' ? 'present_user' : 'account_automation' },
+      };
       const handlers = createVoiceToolHandlers({ resolveSessionId: () => null, currentServerId: serverId,
+        ...(source === 'admitted-on' || source === 'admitted-off' ? { readVoiceAgentHandle: () => admittedHandle } : {}),
         playHostText: async () => ({ status: 'completed' as const }) });
       let noteApproval!: () => void;
       const approvalCreated = new Promise<void>(resolve => { noteApproval = resolve; });
       home.artifacts(serverId).afterNextCreate(async () => { noteApproval(); });
       const controller = new AbortController();
       const input = { anchor: 'voiceConversations.minSpeechMs', value: 1100 };
-      const pending = source === 'coding-agent'
+      const { createVoiceRunActionReverseHandler } = await import('@/voice/agent/voiceRunActionReverseHandler');
+      const pending = source === 'mcp-on' || source === 'mcp-off' || source === 'mcp-synthetic'
+        ? createVoiceRunActionReverseHandler(admittedHandle, 'live-person-call')({ v: 1, actionId: 'settings.set', input,
+          voiceRun: { runId: 'admitted-run', sessionId: 'voice-carrier', occurrenceId: 'run-occurrence', turnId: 'turn',
+            actionRequestId: 'live-person-request' } },
+        { signal: controller.signal }).then(value => value.execution)
+        : source === 'coding-agent'
         ? createDefaultActionExecutor().execute('settings.set', input, {
           surface: 'agent', serverId, actionRequestId: 'coding-session-request', signal: controller.signal,
         }).then(result => result)
@@ -186,7 +206,7 @@ describe('Voice Action reference catalog', () => {
           pending.then(value => ({ kind: 'settled', value })),
           approvalCreated.then(() => ({ kind: 'approval' })),
         ]);
-        if (source === 'voice-on') {
+        if (source === 'voice-on' || source === 'admitted-on' || source === 'mcp-on') {
           expect(outcome).toMatchObject({ kind: 'settled', value: { ok: true,
             result: { anchor: input.anchor, value: input.value } } });
           expect(home.artifacts(serverId).list()).toEqual([]);
@@ -205,10 +225,42 @@ describe('Voice Action reference catalog', () => {
           expect(home.artifacts(serverId).list()).toHaveLength(1);
         }
       } finally {
+        admittedAccount.dispose();
         controller.abort();
         await pending.catch(() => undefined);
         resetVoiceSessionStoreForTests();
       }
+    },
+  );
+  it.each(['wrong-run', 'wrong-session', 'retired-account', 'ordinary-run', 'invalid-mounted-input'] as const)(
+    'refuses a shared MCP Action outside its admitted Voice handle (%s)', async source => {
+      const serverId = await home.addHome({ name: 'Voice handle binding', serverUrl: 'https://voice-handle-binding.test',
+        accountId: 'alice', currentAccount: true });
+      const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+      const account = await captureLazyActionAccountContext(serverId);
+      const { DaemonVoiceAgentClient } = await import('@/voice/agent/daemonVoiceAgentClient');
+      const handle: import('@/voice/agent/types').VoiceAgentHandle = {
+        accountLifetime: account.accountLifetime, transcriptEpoch: 0, metadataSessionId: null,
+        client: new DaemonVoiceAgentClient(account.accountLifetime.scope), voiceAgentId: 'admitted-run', backend: 'daemon',
+        rpcSessionId: 'voice-carrier', agentBackendId: 'codex',
+        ...(source === 'ordinary-run' ? {} : { actionInvocation: {
+          caller: { kind: 'host' as const }, surface: 'voice' as const, authority: 'present_user' as const } }),
+      };
+      try {
+        if (source === 'retired-account') await home.switchAccount(serverId, 'bob');
+        const { createVoiceRunActionReverseHandler } = await import('@/voice/agent/voiceRunActionReverseHandler');
+        expect(await createVoiceRunActionReverseHandler(handle, 'voice-control')({ v: 1,
+          actionId: source === 'invalid-mounted-input' ? 'action.invoke' : 'settings.set',
+          input: source === 'invalid-mounted-input' ? {} : { anchor: 'voiceConversations.minSpeechMs', value: 1100 },
+          voiceRun: { runId: source === 'wrong-run' ? 'another-run' : 'admitted-run',
+            sessionId: source === 'wrong-session' ? 'another-session' : 'voice-carrier', occurrenceId: 'run-occurrence',
+            turnId: 'turn', actionRequestId: 'effect' } }, { signal: new AbortController().signal }))
+          .toMatchObject({ v: 1, execution: { ok: false,
+            errorCode: source === 'ordinary-run' ? 'admission_unavailable'
+              : source === 'invalid-mounted-input' ? 'invalid_parameters' : 'target_unavailable',
+            ...(source === 'invalid-mounted-input' ? { error: 'invalid_parameters' } : {}) } });
+        expect(home.requests.filter(request => request.method === 'POST' && request.path === '/v2/account/settings')).toEqual([]);
+      } finally { account.dispose(); }
     },
   );
   it.each([

@@ -776,6 +776,15 @@ presentation requires no body read. Legacy `Deployment content` titles remain
 visible unchanged. Matching development strict readers refresh together for this
 additive result field; no persisted format or released predecessor adapter changes.
 
+Own-server runtime projections optionally retain the native member review's
+`engineKind`, using the review schema's existing enum. Receipts that omit it stay
+readable with an unknown engine; the field adds no acquisition or authority.
+This is a matching unpublished 0.3 Protocol/CLI/UI direct cut: older strict
+readers reject the new field, so matching development components refresh together.
+There is no released 0.2 deployment-protocol predecessor or compatibility adapter.
+Domain headers also expose the native owner's optional `routedReplicas` recorded
+apply snapshot. Its names and count do not imply live health or traffic.
+
 Domain health extends the existing current-health read with exact Domain
 selection and typed retained HTTP/certificate facts. Deploy review compares its
 resolved reference addresses with private receipt evidence already read by that
@@ -4205,8 +4214,18 @@ and exclude sets. Follow previews send them only when the existing
 `projectSelectorVersion: 1`; absent, malformed, disabled or unavailable support
 keeps exhaustive paging and the same results on older strict query readers.
 The shared filter projector qualifies each key with its selected Home before
-sending it. The server preselects accepted-key matches plus null-key candidates
-before pagination, preserving access and every other structural predicate.
+sending it. The server preselects accepted-key matches plus unclassified
+null-key candidates before pagination, preserving access and every other
+structural predicate. A Session whose owner published `projectKey: null` ("no
+Project", stored as `projectKeyNone`) is skipped by an include selection through
+`Session_project_selection_idx`; an exclude-only selection still admits it.
+0.2-created rows carry no classification and remain candidates until their owner
+republishes, so 0.2 data keeps its membership. A Session that gains a Project
+later is selected once its owner publishes the key, which replaces the "no
+Project" fact. Owner republication happens on accepted-workspace registration
+(Session start/resume) and native-link metadata writes; an older no-Project
+Session whose folder is later opened as a Project joins that roster on its next
+registration, not before.
 The canonical local Project predicate remains responsible for unpublished
 identities; the server does not derive private Workspace associations. The
 Project Session roster (`useProjectSessions`) sends its Project as this selector
@@ -8271,16 +8290,49 @@ The inspected `../0.2` frontier `57cd3db058af7767335d6d5a4ed44904460c50bb`
 has no tracked source-declaration protocol at this path and no scoped working
 changes. No predecessor adapter, capability bit or persisted format is added.
 
+Full source-declaration replies also retain optional `unavailablePlugins`, the
+admission owner's closed plugin-id/code diagnostics. Conditional revisions include
+these exclusions so an unchanged empty declaration list cannot retain an obsolete
+disabled reason. Account readers retain declarations and diagnostics together;
+older replies without diagnostics stay readable without an invented cause or
+Request ID. Matching development Protocol, daemon and Account runtime readers
+reload together: older strict readers reject the added response field. This
+unpublished 0.3 direct cut changes no SDK wire epoch, authority or persistence.
+The scoped-clean `../0.2` frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf`
+has no tracked source-declaration protocol or Account reader at these paths.
+
 ## SDK protocol evolution
+
+Unreleased 0.3 price Actions accept optional `modelIds` for exact tariff delivery.
+Agent/MCP defaults return a closed count/provenance summary; selected reads return
+the existing closed V1 catalog shape with only matching entries. UI/CLI defaults
+and native HTTP catalog responses remain unchanged. The Action input, both result
+objects, provenance and rate entries are closed; unknown fields are rejected.
+The selector changes delivery and is not safely ignorable. Protocol hosts and
+generated SDK DTOs refresh together under the unpublished 0.3 direct cut, without
+a new wire epoch, persistence or adapter. Older closed development result readers
+reject summaries. The scoped-clean `../0.2` frontier
+`dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no Usage price schema or Action
+contract at the corresponding paths.
 
 Unreleased 0.3 Agent Session declarations add optional `functionTools: true` to
 advertise native host-function delivery on Session creation. The manifest and
-nested Session capability object remain closed; absence means unsupported. This
-is an executable declaration, not an ignorable hint. Protocol, authored Codex
-declaration, bundled projections and daemon/UI readers update together under the
-0.3 direct cut. No persisted Account/Session format or 0.2 wire request changes.
+nested Session capability object remain closed; absence selects the existing
+shared Happier Action tool surface rather than refusing Voice. Protocol, authored
+Codex declaration and daemon transport selection update together under the 0.3
+direct cut. No persisted Account/Session format or 0.2 wire request changes.
 The existing runtime `functionToolsDelivered` acknowledgment remains the actual
 launch-delivery contract.
+
+Local Voice Start and retained-run Ensure use the existing signed Account Action
+carrier. The live Run and its MCP binding retain the admitted caller, surface and
+authority; Start/Ensure replies return those same facts to the hosting App. The
+existing client Action reverse transport adds a per-Voice-Run address and operands
+for the active occurrence, turn and Action request. Requests carry no authority
+claims. Ordinary Session MCP retains agent authority. Matching unpublished 0.3
+Protocol, UI, daemon and Home RPC routing refresh together; older development
+components cannot consume this path. This direct cut adds no persisted format,
+authority type, catalog or compatibility adapter.
 
 
 Unreleased 0.3 agent/MCP Usage delivery adds optional
@@ -8289,12 +8341,24 @@ It is a closed presentation object with total source count and closed groups
 derived from existing source status, path and capture-kind fields. Broad tool
 delivery replaces per-source rows with this summary while retaining coverage
 reasons and Work counts; selecting one Session retains per-source detail.
+Broad agent/MCP accounting also omits retained calendar/repricing operands and
+Session membership lists. Aggregate accounting facts remain available; UI/CLI
+and selected-Session reads retain those Resource operands and membership detail.
 The server accounting schema, query identity and stored data are unchanged.
 Matching Protocol hosts and generated SDK DTOs update together; older closed
 0.3 result readers reject the added field. This direct development cut adds no
 epoch or adapter. The scoped-clean `../0.2` frontier
 `7b0f74960b1393886b994dbda71dcb3439c1ab57` has no Usage delivery or accounting
 contract at the corresponding paths.
+
+Unreleased 0.3 `usage.sources.discover` and unselected `usage.sources.get`
+deliver an inventory summary to agent/MCP callers. Groups retain Agent identity,
+consent, status, coverage and pending counts, with exact source selectors and
+discovery-only file counts. `usage.sources.get` with `sourceId` recovers the full
+source card; UI/CLI inventories remain full. The closed native Machine response
+still requires full cards and rejects Action summaries before identity checks.
+Matching Protocol hosts and generated SDK DTOs refresh together under the same
+development direct cut. No stored data, collection consent or wire epoch changes.
 
 Unreleased 0.3 direct Machine RPC removes `maxCalls` from the closed grant scope.
 Home signs `callerAuthority` on every V2 Machine RPC grant; the requester reuses

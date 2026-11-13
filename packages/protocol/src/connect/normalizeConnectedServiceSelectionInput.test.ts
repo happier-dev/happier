@@ -36,6 +36,13 @@ describe('normalizeConnectedServiceSelectionInput', () => {
         });
     });
 
+    it('preserves explicit canonical empty bindings separately from omitted selection', () => {
+        const native = { v: 2, bindingsByServiceId: {} };
+        expect(normalizeConnectedServiceSelectionInput(native)).toEqual({ ok: true, bindings: native, defaultServiceIds: [] });
+        expect(normalizeConnectedServiceSelectionForRunStart(native)).toEqual({ ok: true, bindings: native });
+        expect(normalizeConnectedServiceSelectionInput(undefined)).toEqual({ ok: true, bindings: undefined, defaultServiceIds: [] });
+    });
+
     it('represents a bare service id as an explicit per-service default (never dropped)', () => {
         // Root-cause fix (RO-F5): the bare token is the NAMED service asking for its account default —
         // it must be represented explicitly, not collapsed into whole-request absence.

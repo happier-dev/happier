@@ -1,6 +1,6 @@
 import { listVoiceActionBlockSpecs, listVoiceSdkSafeToolActionSpecs, listVoiceToolActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { isActionDirectToolExposedOn } from '@happier-dev/protocol/actions/actionToolExposure';
-import { buildMemoryRecallGuidanceBlockV1 } from '@happier-dev/protocol/prompts/memoryRecallGuidanceV1';
+import { buildMemoryRecallGuidanceBlockV1, type MemoryRecallGuidanceVariant } from '@happier-dev/protocol/prompts/memoryRecallGuidanceV1';
 import { buildPromptPlanV1, renderPromptPlanV1 } from '@happier-dev/protocol/prompts/promptPlanV1';
 import { VOICE_ACTION_FUNCTION_NAME } from '@happier-dev/protocol/voice/actions';
 import { VOICE_TOOL_RESULTS_JSON_PREFIX } from '@happier-dev/protocol/voice/toolResultsChannel';
@@ -96,6 +96,7 @@ function buildVoiceAgentBaseText(params?: Readonly<{
   assistantName?: string;
   verbosity?: VoicePromptVerbosity;
   memoryRecallGuidanceEnabled?: boolean;
+  memoryRecallGuidanceVariant?: MemoryRecallGuidanceVariant;
   actionSpecs?: readonly VoicePromptActionSpec[];
   disabledActionIds?: readonly string[];
   welcome?: Readonly<{ enabled: boolean; mode: 'immediate' | 'on_first_turn' }>;
@@ -157,7 +158,8 @@ function buildVoiceAgentBaseText(params?: Readonly<{
     '- Do not repeatedly narrate that you are waiting for the coding assistant. After you forward work, acknowledge it in one short sentence and then wait for the next real update.',
     '- Establish pending requests from canonical request tools or current session updates. Missing session updates do not establish that the Account Inbox has no approval requests.',
     '- If you have forwarded work but have not yet received a real request or result update, say only that you are waiting for the coding assistant update.',
-    ...(params?.memoryRecallGuidanceEnabled === true ? ['', buildMemoryRecallGuidanceBlockV1('voice')] : []),
+    ...(params?.memoryRecallGuidanceEnabled === true
+      ? ['', buildMemoryRecallGuidanceBlockV1(params.memoryRecallGuidanceVariant ?? 'voice')] : []),
     '',
     'Session semantics:',
     ...VOICE_AGENT_SESSION_CREATION_RULES.map(rule => `- ${rule}`),
@@ -180,6 +182,7 @@ function buildVoiceBlocks(params: Readonly<{
     assistantName?: string;
     verbosity?: VoicePromptVerbosity;
     memoryRecallGuidanceEnabled?: boolean;
+    memoryRecallGuidanceVariant?: MemoryRecallGuidanceVariant;
     actionSpecs?: readonly VoicePromptActionSpec[];
     disabledActionIds?: readonly string[];
     assistantLanguage?: string | null;
@@ -341,6 +344,7 @@ export function buildVoiceRealtimeAttemptPolicy(params: Readonly<
 }
 
 export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
+  actionTransport?: 'native' | 'mcp';
   assistantName?: string;
   verbosity?: VoicePromptVerbosity;
   sessionId?: string;
@@ -351,24 +355,27 @@ export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
   welcome?: Readonly<{ enabled: boolean; mode: 'immediate' | 'on_first_turn'; text?: string }>;
 }>): string {
   const sessionId = params?.sessionId?.trim() || '';
+  const nativeActions = params?.actionTransport !== 'mcp';
   const actionSpecs = listVoiceActionBlockSpecs();
-  const discoveryLines = buildVoiceDiscoveryChecklistLines(actionSpecs, {
+  const discoveryLines = nativeActions ? buildVoiceDiscoveryChecklistLines(actionSpecs, {
     disabledActionIds: params?.disabledActionIds,
-  });
+  }) : [];
   // The native function and its instructions share direct-exposure
   // policy. A hot-path-only prompt otherwise hides tools the Agent receives.
-  const actionLines = buildVoiceToolDocumentationLines(actionSpecs, {
+  const actionLines = nativeActions ? buildVoiceToolDocumentationLines(actionSpecs, {
     disabledActionIds: params?.disabledActionIds,
     invocationLabel: `Call ${VOICE_ACTION_FUNCTION_NAME}`,
     functionToolName: VOICE_ACTION_FUNCTION_NAME,
     requiredDirectActionIds: actionSpecs.filter(spec => isActionDirectToolExposedOn(spec, 'agent')).map(spec => spec.id),
-  });
+  }) : [];
 
   return renderPromptPlanV1(buildPromptPlanV1({
     modality: 'voice',
     blocks: buildVoiceBlocks({
       idPrefix: 'voice.local',
-      base: { ...(params ?? {}), actionSpecs },
+      // Shared tools supply their own catalog, rather than Voice client aliases.
+      base: { ...(params ?? {}), actionSpecs: nativeActions ? actionSpecs : [],
+        memoryRecallGuidanceVariant: nativeActions ? 'voice' : 'generic' },
       extraSystemAppendBlocks: params?.extraSystemAppendBlocks,
       bodyBlocks: [
         {
@@ -378,6 +385,7 @@ export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
             ...(sessionId ? [`Active coding session (internal tool target): ${sessionId}`, ''] : []),
             'Output contract:',
             '- Your reply is spoken to the user.',
+            ...(nativeActions ? [
             `- Trigger Actions with the native ${VOICE_ACTION_FUNCTION_NAME} function using {t, args}. Do not emit Action JSON in assistant text.`,
             '- End the turn after queuing Actions. A queued acknowledgement is not execution or success.',
             `- After the UI runs Actions, a follow-up user message starts with "${VOICE_TOOL_RESULTS_JSON_PREFIX}". Parse the JSON after that prefix (next line) as { toolResults: [...] } and report the actual outcome or error.`,
@@ -386,9 +394,14 @@ export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
             `- Names in Available actions and the Discovery checklist are t values for ${VOICE_ACTION_FUNCTION_NAME}, not separate native tool names. Do not look them up with native ToolSearch.`,
             '- The action list below is only the hot path. For anything else, use searchActionSpecs first instead of guessing.',
             '- For a discovered built-in Action, put its bindings.voiceClientToolName in t and its input in args. Read getActionSpec for the input schema when needed. invokeAction is only for contributed plugin Actions; do not invent a plugin identity for a built-in Action.',
+            ] : [
+              '- Use this Session\'s existing Happier Action tools. Discover Actions with action_spec_search, read their schemas with action_spec_get, then use action_execute with {actionId, input}. Follow the runtime\'s injected tool instructions when it delivers these tools through a native extension or shell bridge.',
+              '- These tools return the canonical Action result directly. Report success only after a successful result; approval_request_created is pending approval, not an executed effect. Do not queue Action JSON in assistant text or wait for a separate Voice tool-results message.',
+              '- Always include sessionId internally when the Action accepts it. Preserve the exact identifiers returned by discovery and results.',
+            ]),
             '',
             ...(discoveryLines.length > 0 ? ['Discovery checklist:', ...discoveryLines, ''] : []),
-            'Available actions:',
+            ...(nativeActions ? ['Available actions:'] : []),
             ...actionLines,
             '',
             'Rules:',

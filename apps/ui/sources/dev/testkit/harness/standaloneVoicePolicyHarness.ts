@@ -13,6 +13,11 @@ import { createConnectedPurposeCatalogHttpBoundary } from './connectedAccountCat
 import type { SettingsWriteDelta } from '@/sync/domains/settings/settings';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import { installLocalStorageMock, installWebLockManagerMock } from '@/auth/storage/tokenStorage.web.testHelpers';
+import { createExternalActionAccountHttpBoundary } from './externalActionAccountHttpBoundary';
+import { createAccountTokenForTests } from './homeGovernanceHarness';
+import { ExecutionRunEnsureRequestSchema, ExecutionRunStartRequestSchema } from '@happier-dev/protocol/execution/runs/index';
+import { ExternalActionRequesterInvocationBaseV1Schema } from '@happier-dev/protocol/sessions/creation/externalActionRequesterInvocationBaseV1';
+import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 // Native/OS adapters only: Account, Sync, settings, catalog and launch remain real.
 vi.mock('react-native', async () => {
@@ -123,6 +128,9 @@ export async function createStandaloneVoicePolicyHarness(params: Readonly<{
         let session = createSessionFixture({ id: 'voice-parent', active: true, activeAt: Date.now(),
             metadata: { path: '/voice', host: 'voice.test', flavor: 'claude', agentRuntimeCapabilitiesV1: { localControl: { supported: true } } },
             ...params.existingSession });
+        const machineId = session.metadata?.machineId ?? 'voice-machine';
+        session = { ...session, metadata: { ...session.metadata, machineId } };
+        let actionBoundaries: Awaited<ReturnType<typeof createExternalActionAccountHttpBoundary>>[] = [];
         const { createSessionMetadataHttpBoundary } = await import('./sessionMetadataHttpBoundary');
         const extraSessions = params.sessions ?? [];
         const sessionHttp = createSessionMetadataHttpBoundary(() => Object.fromEntries([session, ...extraSessions].map(value => [value.id, value])));
@@ -134,8 +142,14 @@ export async function createStandaloneVoicePolicyHarness(params: Readonly<{
         const messageRequests: string[] = [];
         const connection = await restoreServerAccountForTest({
             serverUrl: `https://voice-policy-${params.mode}.example.test`,
+            serverIdentityId: `srv_voice-policy-${params.mode}-home`,
+            credentials: { token: createAccountTokenForTests('account-a', { currentAccount: true }) },
             activation: 'switch', credentialScope: 'restored-home',
             request: createCompactSessionListFetchBoundary(async (url, init) => {
+                for (const boundary of actionBoundaries) {
+                    const response = await boundary.handle(new URL(String(url)), init);
+                    if (response) return response;
+                }
               if (new URL(String(url)).pathname === '/v2/sessions/read-batch' && init?.method === 'POST') return undefined;
                 const memoryResponse = await transcriptMemory.handleFetch(url, init);
                 if (memoryResponse) return memoryResponse;
@@ -164,11 +178,13 @@ export async function createStandaloneVoicePolicyHarness(params: Readonly<{
         });
         teardownConnection = connection.dispose;
         const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForIdentifier } = await import('@/sync/domains/server/serverProfiles');
         await new Promise<void>(resolve => {
             let unsubscribe = () => {};
             const observeBootstrap = () => {
                 const lifetime = captureActiveServerAccountScopeLifetime();
-                if (!lifetime?.isCurrent() || lifetime.scope.serverId !== connection.home.id || !storage.getState().isDataReady) return;
+                if (!lifetime?.isCurrent() || !areServerProfileIdentifiersEquivalent(lifetime.scope.serverId, connection.home.id)
+                    || !storage.getState().isDataReady) return;
                 unsubscribe();
                 resolve();
             };
@@ -176,12 +192,46 @@ export async function createStandaloneVoicePolicyHarness(params: Readonly<{
             observeBootstrap();
         });
         session = { ...session, serverId: connection.home.id };
+        const sessionScopeId = resolveServerProfileScopeIdForIdentifier(connection.home.id);
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const account = await captureLazyActionAccountContext(connection.home.id);
+        let admittedInvocation: ReturnType<typeof ExternalActionRequesterInvocationBaseV1Schema.parse> | undefined;
+        try {
+            if (!account.serverIdentityId) throw new Error('Expected the restored Voice Action Home');
+            const serverIdentityId = account.serverIdentityId;
+            actionBoundaries = await Promise.all((['execution.run.start', 'execution.run.ensure'] as const).map(actionId =>
+                createExternalActionAccountHttpBoundary({ serverUrl: account.endpointUrl, serverIdentityId,
+                    accountId: account.accountId, machineId, actionId, tokenEpoch: 0,
+                    failure: value => value && typeof value === 'object' && 'ok' in value && value.ok === false
+                        && 'errorCode' in value && typeof value.errorCode === 'string'
+                        ? { errorCode: value.errorCode, error: 'error' in value && typeof value.error === 'string' ? value.error : value.errorCode,
+                            ...('details' in value ? { details: value.details } : {}) } : null,
+                    execute: async (input, context) => {
+                        // This external daemon fixture exposes its existing Ensure-or-Start bridge
+                        // beneath the genuine signed Action transport, just as the runtime does.
+                        if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Expected a Run Action input');
+                        const { sessionId: _sessionId, ...runInput } = input as Record<string, unknown>;
+                        const request = actionId === 'execution.run.start'
+                            ? { start: ExecutionRunStartRequestSchema.parse(runInput) }
+                            : ExecutionRunEnsureRequestSchema.parse(runInput);
+                        const result = await params.dispatch(SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START, request);
+                        if (!result || typeof result !== 'object' || !('ok' in result) || result.ok !== true) return result;
+                        if (actionId === 'execution.run.ensure') return { ok: true, actionInvocation: admittedInvocation };
+                        admittedInvocation = ExternalActionRequesterInvocationBaseV1Schema.parse(context.invocation && {
+                            caller: context.invocation.caller, surface: context.invocation.surface, authority: context.invocation.authority,
+                        });
+                        return { runId: 'runId' in result ? result.runId : undefined, callId: 'voice-call', sidechainId: 'voice-sidechain',
+                            ...('preparedInstructionsFor' in result ? { preparedInstructionsFor: result.preparedInstructionsFor } : {}),
+                            actionInvocation: admittedInvocation };
+                    },
+                })));
+        } finally { account.dispose(); }
         applyPreference({ experiments: true, featureToggles: { voice: true, 'voice.agent': true, 'execution.runs': true },
             voice: { ...storage.getState().settings.voice, providerId: 'local_conversation', assistantLanguage: 'fr-FR', welcome: { ...storage.getState().settings.voice.welcome, enabled: params.mode !== 'off', mode: params.mode === 'on_first_turn' ? params.mode : 'immediate' },
                 providers: { local_conversation: { schemaVersion: 1, config: { agent: { agentSource: 'agent', agentId: 'claude', prewarmOnConnect: false, transcript: { persistenceMode: 'ephemeral', epoch: 0 } }, tts: { autoSpeakReplies: true } } } } } });
-        storage.setState({ sessions: { [session.id]: session, ...Object.fromEntries(extraSessions.map(value => [value.id, { ...value, serverId: connection.home.id }])) }, sessionListRowsByServerId: { [connection.home.id]: { [session.id]: session } },
-            ordinarySessionListMembershipByServerId: { [connection.home.id]: [session.id] },
-            sessionListIndexByServerId: { [connection.home.id]: [{ type: 'session', sessionId: session.id, serverId: connection.home.id, serverName: 'Voice' }] } });
+        storage.setState({ sessions: { [session.id]: session, ...Object.fromEntries(extraSessions.map(value => [value.id, { ...value, serverId: connection.home.id }])) }, sessionListRowsByServerId: { [sessionScopeId]: { [session.id]: session } },
+            ordinarySessionListMembershipByServerId: { [sessionScopeId]: [session.id] },
+            sessionListIndexByServerId: { [sessionScopeId]: [{ type: 'session', sessionId: session.id, serverId: connection.home.id, serverName: 'Voice' }] } });
         const { sync } = await import('@/sync/sync');
         await sync.refreshSessions({ awaitSessionListHydration: true });
         const { EphemeralUpdateSchema } = await import('@happier-dev/protocol/updates');
@@ -199,7 +249,7 @@ export async function createStandaloneVoicePolicyHarness(params: Readonly<{
         if (session.active) await vi.waitFor(() => {
             const state = storage.getState();
             const direct = state.sessions[session.id];
-            const row = state.sessionListRowsByServerId[connection.home.id]?.[session.id];
+            const row = state.sessionListRowsByServerId[sessionScopeId]?.[session.id];
             if (direct?.presence !== 'online' || row?.presence !== 'online') {
                 throw new Error(`Test daemon activity has not reached both Session carriers: ${JSON.stringify({
                     direct: direct ? { serverId: direct.serverId, active: direct.active, activeAt: direct.activeAt, presence: direct.presence } : null,

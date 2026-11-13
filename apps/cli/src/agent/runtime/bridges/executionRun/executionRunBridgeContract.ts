@@ -4,7 +4,6 @@ import type {
   ExecutionRunPublicState,
   ExecutionRunResultContractV1,
   SessionInputCausalPermissionAuthorityV1,
-  StructuredQuestionAnswersV1,
 } from '@happier-dev/protocol';
 
 export type ExecutionRunObservedInputTurn = Readonly<{
@@ -29,7 +28,10 @@ import type { ExecutionRunParentSessionPermissionResponseTarget } from '@/agent/
 import type { RuntimePermissionResponseOutcome } from './executionRunHostRuntime';
 import type { ExecutionRunPermissionRequestStore } from './executionRunPermissionResponseTarget';
 import type { RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
-import type { StructuredQuestionAnswerDetailsV1 } from '@happier-dev/protocol/tools/structuredQuestionAnswersV1';
+import type { ExecutionRunPermissionRespondInputSchema } from '@happier-dev/protocol/actions/specs/executionRuns';
+
+type WithoutRunId<Input> = Input extends unknown ? Omit<Input, 'runId'> : never;
+export type ExecutionRunPermissionCompletionInput = WithoutRunId<ReturnType<typeof ExecutionRunPermissionRespondInputSchema.parse>>;
 
 export type ExecutionRunPermissionResponseBridgeResult =
   | Readonly<{ ok: true; delivery: RuntimePermissionResponseOutcome }>
@@ -95,8 +97,8 @@ export interface ExecutionRunHostBridgeContract {
   ): Promise<{ ok: boolean; errorCode?: string; error?: string }>;
   ensure(
     runId: string,
-    params: Readonly<{ resume?: boolean; signal?: AbortSignal; causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1 }>,
-  ): Promise<{ ok: boolean; errorCode?: string; error?: string; details?: AgentStartupFailureDetails }>;
+    params: Readonly<{ actionInvocation?: ExecutionRunState['actionInvocation']; resume?: boolean; signal?: AbortSignal; causalPermissionAuthority?: SessionInputCausalPermissionAuthorityV1 }>,
+  ): Promise<{ ok: boolean; actionInvocation?: ExecutionRunState['actionInvocation']; errorCode?: string; error?: string; details?: AgentStartupFailureDetails }>;
   ensureOrStart(params: Readonly<{
     runId?: string | null;
     start?: ExecutionRunManagerStartParams;
@@ -147,9 +149,7 @@ export interface ExecutionRunHostBridgeContract {
   ): Promise<ExecutionRunPermissionResponseBridgeResult>;
   completePermissionRequest(
     runId: string,
-    params:
-      | Readonly<{ requestId: string; approved: boolean }>
-      | Readonly<{ requestId: string; answers: StructuredQuestionAnswersV1; answerDetails?: StructuredQuestionAnswerDetailsV1 }>,
+    params: ExecutionRunPermissionCompletionInput,
   ): Promise<Readonly<{ ok: true } | { ok: false; errorCode: string; error: string }>>;
   applyAction(
     runId: string,

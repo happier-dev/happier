@@ -134,7 +134,7 @@ export function createVoiceTurnStreaming(args: Readonly<{
             const settings: any = storage.getState().settings;
             const localConversation = readLocalConversationSettingsFromAccountSettings(settings);
             const streamingEnabled = localConversation.streaming.enabled === true;
-            const response = streamingEnabled
+            const send = async () => streamingEnabled
                 ? await streamVoiceAgentTurn({
                     sessionId,
                     handle,
@@ -156,6 +156,15 @@ export function createVoiceTurnStreaming(args: Readonly<{
                         ? { onPreparedInstructionsFor: options.onPreparedInstructionsFor }
                         : {}),
                 });
+            const toolTurn = { turnOrigin: options?.turnOrigin,
+                ...(options?.playHostText ? { playHostText: options.playHostText } : {}) };
+            if (handle.toolTurnContext) handle.toolTurnContext.current = toolTurn;
+            let response: Awaited<ReturnType<typeof send>>;
+            try {
+                response = await send();
+            } finally {
+                if (handle.toolTurnContext?.current === toolTurn) delete handle.toolTurnContext.current;
+            }
             const normalizedResponse = {
                 assistantText: response.assistantText,
                 actions: streamingEnabled

@@ -83,6 +83,7 @@ import { artifactReadResponse } from '@/testkit/http/artifactHome';
 import { createResourceDataKey } from '@/api/encryption/resourceDataKey';
 import { sealSessionStoredContent, type SessionStoredContentCryptoContext } from '@/session/transport/encryption/sessionStoredContentCodec';
 import { encodeBase64, encryptWithDataKey } from '@/api/encryption';
+import { VoiceRunActionDispatchRequestV1Schema, voiceRunActionClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
 
 const processIdentityBoundary = vi.hoisted(() => vi.fn());
 // Process inspection is the OS boundary. Tests that do not configure the
@@ -128,7 +129,31 @@ function createHarness(prepareExternalActionAuthorization?: Parameters<typeof cr
 }
 
 describe('daemon Session Account authority', () => {
+  it('returns the owning Voice client result for an admitted active Run without replacing its admission', async () => {
+    const child: Operation = { ...operation, executionRun: { runId: 'voice-run', occurrenceId: 'voice-occurrence' } };
+    const execute = createDaemonSessionAccountActionExecutor({
+      serverId: 'home', serverHttpBaseUrl: 'https://home.example.test', token: 'daemon-token',
+      createExecutor: () => createActionExecutor(createUnavailableActionTransportDeps()),
+      getMachineClient: () => ({ hasConnectedClientRpcHandler: () => true,
+        callConnectedClientRpc: async (method, raw, options) => {
+          expect(method).toBe(voiceRunActionClientRpcMethod('voice-run'));
+          const request = VoiceRunActionDispatchRequestV1Schema.parse(raw);
+          expect(request.voiceRun).toEqual({ runId: 'voice-run', sessionId: 'bob-session',
+            occurrenceId: 'voice-occurrence', turnId: operation.witness.turnId, actionRequestId: child.requestId });
+          options.onIssued();
+          // The owning UI has already validated then privacy-projected the Action output.
+          return { ok: true, result: { v: 1, execution: { ok: true, result: { deliveredChannels: 1 } } } };
+        },
+      }),
+    });
+    const invocation = { caller: { kind: 'host' as const }, surface: 'voice' as const, authority: 'present_user' as const };
+    expect(await execute(child, { sessionId: 'bob-session', isCurrent: async () => true, actionInvocation: invocation }))
+      .toEqual({ ok: true, result: { deliveredChannels: 1 } });
+    expect(await execute(child, { sessionId: 'bob-session', isCurrent: async () => false, actionInvocation: invocation }))
+      .toMatchObject({ ok: false, errorCode: 'target_unavailable' });
+  });
   it('projects native input admission into the real Action executor context and preserves its effect currentness', async () => {
+    const refusalDiagnostics = vi.spyOn(logger, 'warnLocalFile');
     vi.spyOn(axios, 'get').mockResolvedValue({ status: 200,
       data: { session: createSessionRecordFixture({ id: 'bob-session', share: null }) } });
     const harness = createHarness();
@@ -136,7 +161,8 @@ describe('daemon Session Account authority', () => {
     const nativeOperation: Operation = { ...operation, witness: { ...operation.witness,
       inputId: admission.admissionId, userMessageSeq: null, userMessageSeqs: [], nativeRealtimeAdmission: admission } };
     let live = true;
-    expect(await harness.execute(nativeOperation, { sessionId: 'bob-session', isCurrent: async () => live }))
+    expect(await harness.execute(nativeOperation, { sessionId: 'bob-session', isCurrent: async () => live }),
+      JSON.stringify(refusalDiagnostics.mock.calls.filter(([message]) => message === '[Session Account Action] Refused')))
       .toEqual({ ok: true, result: { attemptedChannels: 1, deliveredChannels: 1 } });
     expect(harness.delivered).toEqual([expect.objectContaining({ context: expect.objectContaining({ nativeRealtimeInput: true }) })]);
     expect(await harness.execute({ ...nativeOperation, actionId: 'approval.request.decide',

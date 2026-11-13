@@ -170,6 +170,7 @@ export type VoiceAgentTurnStreamState = {
 
 export type VoiceAgentInstance = {
   id: string;
+  actionTransport: 'native' | 'mcp';
   backendTarget: BackendTargetRefV1;
   backendId: string;
   createRuntime: BackendFactory;

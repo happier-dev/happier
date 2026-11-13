@@ -155,6 +155,7 @@ import {
   type PluginDevLoopActionIdV1,
   type RuntimeActionIdV1,
   isRuntimeActionIdV1,
+  isSessionPreparationRootActionIdV1,
 } from './actionIds.js';
 import {
   HUMAN_SECRET_API_EXCLUSION_ACTION_IDS,
@@ -272,6 +273,7 @@ import { MACHINE_VITALS_ACTION_SPECS } from './specs/machineVitals.js';
 import { MACHINE_PROCESSES_ACTION_SPECS } from './specs/machineProcesses.js';
 import { MACHINE_STORAGE_ACTION_SPECS } from './specs/storage.js';
 import { MACHINE_RESOURCES_ACTION_SPECS } from './specs/machineResources.js';
+import { MACHINE_ROLES_ACTION_SPECS } from './specs/machineRoles.js';
 import { MACHINE_SERVICE_ACTION_SPECS } from './specs/machine/services.js';
 import { MACHINE_SERVICE_ADOPTION_ACTION_SPECS } from './specs/machine/serviceAdoption.js';
 import { MACHINE_REBOOT_ACTION_SPECS } from './specs/machine/reboot.js';
@@ -497,6 +499,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   | (typeof MACHINE_PROCESSES_ACTION_SPECS)[number]
   | (typeof MACHINE_STORAGE_ACTION_SPECS)[number]
   | (typeof MACHINE_RESOURCES_ACTION_SPECS)[number]
+  | (typeof MACHINE_ROLES_ACTION_SPECS)[number]
   | (typeof MACHINE_SERVICE_ACTION_SPECS)[number]
   | (typeof MACHINE_SERVICE_ADOPTION_ACTION_SPECS)[number]
   | (typeof MACHINE_REBOOT_ACTION_SPECS)[number]
@@ -546,6 +549,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   ...MACHINE_PROCESSES_ACTION_SPECS,
   ...MACHINE_STORAGE_ACTION_SPECS,
   ...MACHINE_RESOURCES_ACTION_SPECS,
+  ...MACHINE_ROLES_ACTION_SPECS,
   ...MACHINE_SERVICE_ACTION_SPECS,
   ...MACHINE_SERVICE_ADOPTION_ACTION_SPECS,
   ...MACHINE_REBOOT_ACTION_SPECS,
@@ -2195,9 +2199,11 @@ export function readExternalActionMachineRuntimeDemandV1(actionId: string,
   return envelope.machineRuntimeDemand;
 }
 
-/** Invocation and inspection prepare targets under their own admitted Action root. */
+/** Invocation, inspection and Run admission prepare Sessions under their own admitted Action root. */
 export function isSessionTargetPreparationAction(id: ActionId): boolean {
-  return id === 'session.targets.resolve' || id === 'action.invoke' || Boolean(getActionSpec(id).sessionTarget);
+  // Run scope also accepts omitted/null detached Sessions, so it cannot declare
+  // a selector operand merely to authorize these preparation reads.
+  return isSessionPreparationRootActionIdV1(id) || Boolean(getActionSpec(id).sessionTarget);
 }
 
 export function getActionContextualDefaults(

@@ -1,6 +1,25 @@
 import { expect, it } from 'vitest';
-import { settleActionOutput } from './resultProjection.js';
+import { completeActionResult, settleActionOutput } from './resultProjection.js';
 import { getActionSpec } from '../actionSpecs.js';
+import { withActionFailureCauseDiagnostic } from './actionFailureDiagnostic.js';
+import { classifyExecutionRunStartFailure } from './executionRuns.js';
+
+it('projects a carried cause through returned failure normalization without private exception data', () => {
+  const error = Object.assign(new TypeError('PRIVATE_PROVIDER_BODY'), {
+    code: 'execution_run_profile_preparation_failed',
+    cause: { headers: { authorization: 'PRIVATE_CREDENTIAL' }, response: 'PRIVATE_RESPONSE' },
+  });
+  const normalized = completeActionResult(withActionFailureCauseDiagnostic({
+    ok: false, errorCode: error.code, error: 'Preparation failed',
+  }, error, 'execution.run.start'));
+  if (normalized.ok) throw new Error('Expected returned failure');
+  const result = settleActionOutput('execution.run.start', classifyExecutionRunStartFailure(normalized, 'noRunCreated'));
+  expect(result).toEqual({ ok: false, errorCode: error.code, error: 'Preparation failed',
+    details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } },
+    failureCause: { phase: 'execution.run.start', errorClass: 'TypeError', errorCode: error.code, httpStatus: null },
+  });
+  expect(JSON.stringify(result)).not.toContain('PRIVATE_');
+});
 
 it('logs sanitized terminal output issues and thrown causes privately', () => {
   const diagnostics: unknown[] = [];

@@ -1,15 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import { getActionSpec} from '@happier-dev/protocol/actions/actionSpecs';
+import { UiActionDispatchResultV1Schema } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { projectSessionActivityCompatibilityV1 } from '@happier-dev/protocol/sessions/awareness/action';
 
 import {
   redactVoiceToolResultForProvider,
+  redactVoiceActionExecutionResultForProvider,
   redactVoiceToolResultValue,
 } from './redactVoiceToolResult';
 
 const SHARE_ALL = { shareFilePaths: true, shareSessionSummary: true, sharePermissionRequests: true } as const;
 
 describe('redactVoiceToolResultValue', () => {
+  it.each([true, false])('retains the canonical Action envelope around bounded mounted settlement (ok=%s)', ok => {
+    const toolName = getActionSpec('action.invoke').bindings!.voiceClientToolName!;
+    const result = ok ? { ok: true, result: { privatePayload: 'PRIVATE_RESULT' } }
+      : { ok: false, errorCode: 'invalid_parameters', error: 'PRIVATE_ERROR', details: { privatePayload: 'PRIVATE_RESULT' } };
+    const execution = redactVoiceActionExecutionResultForProvider(toolName, result, SHARE_ALL);
+    expect(UiActionDispatchResultV1Schema.parse({ v: 1, execution }).execution).toEqual(ok
+      ? { ok: true, result: { ok: true } }
+      : { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' });
+  });
   it.each(['approval_request_list', 'approval_request_get', 'approval.request.list', 'approval.request.get'])(
     'withholds Account request details from %s when request sharing is off', toolName => {
       const request = { ok: true, items: [{ artifactId: 'own-request', summary: 'PRIVATE REQUEST', actionId: 'settings.set' }] };

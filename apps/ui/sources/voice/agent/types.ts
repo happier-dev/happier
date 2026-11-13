@@ -20,6 +20,7 @@ import type {
   BackendTargetRefV2,
 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { PermissionIntent } from '@happier-dev/agents';
+import type { ExternalActionRequesterInvocationBaseV1 } from '@happier-dev/protocol/sessions/creation/externalActionRequesterInvocationBaseV1';
 import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
@@ -33,6 +34,10 @@ export type VoiceAgentAcceptedOutputV1 = Readonly<{
 }>;
 
 export type VoiceAgentSendTurnOptions = Readonly<{
+  /** Captured by the UI turn owner, never supplied by provider tool arguments. */
+  turnOrigin?: import('@/voice/tools/executeSpokenAction').SpokenActionTurnOrigin;
+  /** Same host read-back used by native tools during this provider turn. */
+  playHostText?: import('@happier-dev/plugin-sdk/voice/client').VoiceHostTextPlayback;
   /** Host-authored facts for this turn, excluded from the person's transcript. */
   context?: string;
   onOutputEvent?: (output: VoiceAgentAcceptedOutputV1) => void | Promise<void>;
@@ -113,6 +118,7 @@ export type VoiceAgentStartParams = Readonly<{
 
 export type VoiceAgentStartResult = Readonly<{
   voiceAgentId: string;
+  actionInvocation?: ExternalActionRequesterInvocationBaseV1;
   preparedInstructionsFor?: ExecutionRunTurnStreamReadResponse['preparedInstructionsFor'];
   effective?: {
     chatModelId: string;
@@ -164,6 +170,9 @@ export function readVoiceAgentActionEffectId(action: unknown): string | null {
 
 export type VoiceAgentHandle = Readonly<{
   signal?: AbortSignal;
+  actionInvocation?: ExternalActionRequesterInvocationBaseV1;
+  /** Current provider send on this existing Run; native and MCP tools share its origin. */
+  toolTurnContext?: { current?: Readonly<Pick<VoiceAgentSendTurnOptions, 'turnOrigin' | 'playHostText'>> };
   voicePolicy?: ExecutionRunVoiceAgentIntentInputV1['voicePolicy'];
   accountLifetime: ServerAccountScopeLifetime;
   /** Transcript-memory boundary admitted with this handle, shared by replay and welcome. */

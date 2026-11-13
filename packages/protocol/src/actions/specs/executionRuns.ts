@@ -563,7 +563,7 @@ function createExecutionRunActionSpecs(): ExecutionRunActionSpecs {
     sideEffectClass: 'write',
     surfaces: {
       ui: true,
-      voice: false,
+      voice: true,
       agent: true,
       mcp: true,
       cli: true,

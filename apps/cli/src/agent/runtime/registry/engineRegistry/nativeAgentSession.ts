@@ -1,3 +1,4 @@
+import { createSessionHolderAdoptedTurnReader, hasSessionHolderAdoptToken } from '@/subprocess/supervision/sessionHolder';
 import { SessionGoalControlFailureV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import { sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { readSessionGoalControlDiagnosticDetails } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -624,6 +625,7 @@ function combineSessionOperationSignal(
 }
 
 export function createNativeAgentSessionHostServices(params: Readonly<{
+    actionInvocation?: import('@happier-dev/protocol/sessions/creation/externalActionRequesterInvocationBaseV1').ExternalActionRequesterInvocationBaseV1;
     owners: NativeAgentSessionHostServiceOwners;
     agentId: string;
     sessionId: string;
@@ -948,6 +950,7 @@ export function createNativeAgentSessionHostServices(params: Readonly<{
                 directory: params.directory,
                 systemPrompt: typeof request.systemPrompt === 'string' ? request.systemPrompt : '',
                 tools: resolveSessionNativeToolDescriptors({
+                    surface: params.actionInvocation?.surface === 'voice' ? 'voice' : 'agent',
                     happierToolsEnabled,
                     accountSettings: params.accountSettings ?? {},
                     profileId: params.profileId ?? null,
@@ -2157,6 +2160,8 @@ export function createNativeAgentSessionOperations(
     let disposeRuntimeScopePromise: Promise<void> | null = null;
     const invariant = createAgentSessionTurnInvariant<NativeAgentNewTurnAdmissionWitness>({
         sessionId: expectedSessionId,
+        // A respawned runner's adopted Agent finishes the previous runner's turn.
+        takeAdoptedTurnId: createSessionHolderAdoptedTurnReader(),
         ...(expectedProviderSessionId ? { expectedProviderSessionId } : {}),
         ...(session.runtimeCapabilities?.providerContinuations?.supported === true ? {
             providerContinuations: {
@@ -5553,7 +5558,9 @@ export async function createNativeAgentRuntimeSessionPlan(params: Readonly<{
                     beforeToolExecution: toolName => beforeToolExecution?.(toolName),
                     toolsDelivery: resolveAgentToolsDelivery(identity.agentId),
                     subagents: readAgentSessionSubagentObservationPublisher(services),
-                }), nativeLaunch });
+                }), nativeLaunch,
+                // Read before the Session's first Agent launch consumes the hand-off.
+                ...(hasSessionHolderAdoptToken() ? { adoptsHeldAgent: true as const } : {}) });
             const acpToolNormalizationSource = {
                 protocol: 'acp' as const,
                 agent: { pluginId: identity.pluginId, localId: contributionId },

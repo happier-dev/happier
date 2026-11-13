@@ -28,6 +28,7 @@ export function createSessionMcpToolInventory(params: Readonly<{
     /** Containing bridge lifetime, independent of replaceable native incarnations. */
     lifetimeSignal?: AbortSignal;
 }>) {
+    const surface = params.client.getRunActionInvocation?.()?.surface === 'voice' ? 'voice' : 'agent';
     let latestProjection: DaemonPluginCatalogProjection | undefined;
     let catalog: Readonly<{ tools: readonly ProjectedPluginToolCatalogEntry[];
         projection: DaemonPluginCatalogProjection | undefined; connectionEpoch: number | undefined; signalReady: boolean }> | undefined;
@@ -137,7 +138,7 @@ export function createSessionMcpToolInventory(params: Readonly<{
             const snapshot = structuredClone(inputs);
             const isActionEnabled = createMcpActionEnablementWithServerFeatureAvailability({
                 actionSettingsProvider: { getActionsSettings: () => inputs.actionsSettings },
-                surface: 'agent',
+                surface,
                 hasAuthenticatedRuntime: params.hasAuthenticatedRuntime,
                 authorityScope: params.authorityScope,
                 readSessionMemoryEnabled: () => inputs.sessionMemoryEnabled,
@@ -148,7 +149,7 @@ export function createSessionMcpToolInventory(params: Readonly<{
                 sessionMachineId: inputs.sessionMachineId,
                 sessionRootPath: inputs.sessionRootPath,
                 inventory: createHappierToolInventory({
-                    surface: 'agent', isActionEnabled, actionsSettings: inputs.actionsSettings,
+                    surface, isActionEnabled, actionsSettings: inputs.actionsSettings,
                     happierToolsEnabled: inputs.happierToolsEnabled,
                     pluginToolCatalog, requiredDirectActionIds: params.requiredDirectActionIds,
                 }),

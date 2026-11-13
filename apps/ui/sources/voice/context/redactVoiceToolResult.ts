@@ -219,10 +219,8 @@ function redactVoiceToolResultValueWithClassification(
   return resolvedPrefs.shareFilePaths ? stripped : redactVoicePathLikeData(stripped, { preserveSchemaFieldPaths });
 }
 
-function projectActionResultForProvider(value: unknown): Readonly<{
-  ok: boolean;
-  errorCode?: string;
-  errorMessage?: string;
+function projectActionResultForProvider(value: unknown): Readonly<{ ok: true }> | Readonly<{
+  ok: false; errorCode: string; errorMessage: string;
 }> {
   const result = value && typeof value === 'object' && !Array.isArray(value)
     ? value as Readonly<Record<string, unknown>>
@@ -308,6 +306,11 @@ export function redactVoiceActionExecutionResultForProvider(
     ? value as Readonly<Record<string, unknown>> : null;
   if (isVoiceToolResultBlockedByPrivacy(toolName, prefs)) {
     return { ok: false, errorCode: 'privacy_disabled', error: 'privacy_disabled' };
+  }
+  if (ACTION_RESULT_TOOL_NAMES.has(toolName)) {
+    const projected = projectActionResultForProvider(value);
+    return projected.ok ? { ok: true, result: projected }
+      : { ok: false, errorCode: projected.errorCode, error: projected.errorCode };
   }
   if (record?.ok === true) {
     return { ok: true, result: redactVoiceToolResultForProvider(toolName, record.result, prefs) };

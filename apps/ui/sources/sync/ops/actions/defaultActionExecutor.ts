@@ -1,4 +1,6 @@
 import { resolveAmbientTeamCredentialModelForModelIntent } from '@happier-dev/agents/session/state/metadataReaders';
+import { readActionOutputDiagnostic, withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { logPluginSurfaceDiagnostic } from '@/components/plugins/shared/pluginSurfaceDiagnosticLog';
 import { isSessionSpawnNewActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { isComputerRuntimeActionId } from '@happier-dev/protocol/actions/executor/computer';
@@ -5869,6 +5871,11 @@ export function createDefaultActionExecutor(opts?: DefaultActionExecutorOptions)
         account.dispose();
         const failure = accountScopeFailure(error);
         if (failure) return { kind: 'settled', result: failure };
+        logPluginSurfaceDiagnostic({ pluginId: null, contributionId: null, surfaceId: null }, {
+          kind: 'action_prepare_failed', actionId,
+          ...(context?.actionRequestId ? { requestId: context.actionRequestId } : {}),
+          failureDiagnostic: readActionOutputDiagnostic(withActionFailureCauseDiagnostic({}, error, 'action.prepare')),
+        });
         throw error;
       }
     },

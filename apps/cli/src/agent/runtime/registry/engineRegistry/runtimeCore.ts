@@ -799,6 +799,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                             ? await host.composeRunToolBinding({
                                                 mcpPermissionHandler: executionPermissionHandler,
                                                 runId: runScope.runId,
+                                                ...(runScope.actionInvocation ? { actionInvocation: runScope.actionInvocation } : {}),
                                                 agentId: params.agent.id,
                                                 agentCatalogEntry: params.agent.catalogEntry,
                                                 workDepth: runScope.workDepth,
@@ -882,6 +883,7 @@ export async function resolveBackendRuntimeCore(params: Readonly<{
                                         const nativeLaunch = issueAgentNativeLaunchQualifierForHost(invocationServices.exec);
                                         const sessionServices = Object.freeze({ ...createNativeAgentSessionHostServices({
                                             owners: sessionOwners,
+                                            ...(runScope?.actionInvocation ? { actionInvocation: runScope.actionInvocation } : {}),
                                             get agentEnvironment() { return runToolBinding?.agentEnvironment; },
                                             agentId: nativeIdentity.agentId,
                                             sessionId,

@@ -1,5 +1,6 @@
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
 import { z } from '../zodRuntimePolicy.js';
+import { ExternalActionRequesterInvocationBaseV1Schema as ExternalActionRequesterInvocationV1Schema } from '../sessions/creation/externalActionRequesterInvocationBaseV1.js';
 
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
@@ -118,6 +119,7 @@ export const SessionExecutionRunBrokerAuthorityResponseV1Schema = lazyZodSchema(
     runtimeState: z.enum(['active_turn', 'idle']),
     activeTurnId: z.optional(z.nullable(z.string().check(z.trim(), z.minLength(1), z.maxLength(512)))),
     teamCredentialProviderModel: ExecutionRunTeamCredentialProviderModelAttestationV1Schema,
+    actionInvocation: z.optional(ExternalActionRequesterInvocationV1Schema),
   }),
   z.strictObject({
     status: z.literal('not_current'),

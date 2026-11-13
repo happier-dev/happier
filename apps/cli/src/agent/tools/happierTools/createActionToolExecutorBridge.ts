@@ -27,7 +27,7 @@ type ActionExecutorLike = Readonly<{
     ctx: Readonly<{
       defaultSessionId: string;
       defaultSessionMachineId?: string | null;
-      surface: 'mcp' | 'cli' | 'agent';
+      surface: import('./actionToolCatalog').HappierBuiltInToolSurface;
       authority?: 'account_automation';
       approvalOrigin?: ApprovalRequestOriginV1 | null;
       callerPermissionMode?: string | null;
@@ -125,7 +125,7 @@ async function buildActionExecutorContext(params: Readonly<{
   input: unknown;
   defaultSessionId: string;
   defaultSessionMachineId?: string | null;
-  surface: 'mcp' | 'cli' | 'agent';
+  surface: import('./actionToolCatalog').HappierBuiltInToolSurface;
   options?: ActionToolExecutionOptions;
   resolveCallerPermissionMode?: (() => Promise<string | null> | string | null) | null;
   resolveActiveTurnPermissionWitness?: (() => Promise<unknown> | unknown) | null;
@@ -140,7 +140,7 @@ async function buildActionExecutorContext(params: Readonly<{
 }>): Promise<Readonly<{
   defaultSessionId: string;
   defaultSessionMachineId?: string | null;
-  surface: 'mcp' | 'cli' | 'agent';
+  surface: import('./actionToolCatalog').HappierBuiltInToolSurface;
   approvalOrigin?: ApprovalRequestOriginV1 | null;
   authority?: 'account_automation';
   callerPermissionMode?: string | null;
@@ -158,7 +158,7 @@ async function buildActionExecutorContext(params: Readonly<{
   reviewCommentPrincipal?: ReviewCommentPrincipalHeaderV1;
   onWaitSnapshot?: (snapshot: unknown) => void | Promise<void>;
 }>> {
-  let callerPermissionMode = params.surface === 'agent' && params.resolveCallerPermissionMode
+  let callerPermissionMode = (params.surface === 'agent' || params.surface === 'voice') && params.resolveCallerPermissionMode
     ? await params.resolveCallerPermissionMode()
     : null;
   const reviewActor = params.surface !== 'cli' ? params.resolveReviewCommentActor?.() : null;
@@ -203,7 +203,7 @@ async function buildActionExecutorContext(params: Readonly<{
       ? await params.getSessionAgentSpawnPolicyV1(signal)
       : params.sessionAgentSpawnPolicyV1;
   const origin = params.options?.approvalOrigin;
-  const runtimeRunId = params.surface === 'agent' ? params.resolveRuntimeRunId?.() : undefined;
+  const runtimeRunId = (params.surface === 'agent' || params.surface === 'voice') ? params.resolveRuntimeRunId?.() : undefined;
   const explicitActionRequestId = params.options?.actionRequestId;
   const actionRequestId = typeof explicitActionRequestId === 'string'
     && explicitActionRequestId.trim().length > 0
@@ -319,7 +319,7 @@ function readActionOptionsPayload(payload: unknown): DynamicActionOptionsResult 
 export function createActionToolExecutorBridge(params: Readonly<{
   executor: ActionExecutorLike;
   isActionEnabled?: (id: ActionId) => boolean;
-  surface?: 'mcp' | 'cli' | 'agent';
+  surface?: import('./actionToolCatalog').HappierBuiltInToolSurface;
   actionsSettings?: ActionsSettingsV1 | null;
   getActionsSettings?: (() => ActionsSettingsV1 | null) | null;
   resolveCallerPermissionMode?: (() => Promise<string | null> | string | null) | null;

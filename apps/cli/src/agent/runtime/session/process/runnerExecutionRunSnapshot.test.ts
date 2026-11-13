@@ -12,11 +12,15 @@ import { createAgentSessionRunnerFactoryBinding } from '@/plugins/runtime/runner
 import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { createRunnerExecutionRunSnapshotResolver } from './runnerExecutionRunSnapshot';
 import { projectRunnerDaemonPluginServicesFailure } from '@/daemon/agentRuntime/runnerDaemonPluginServicesHost';
+import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 
 // OS process inspection is the boundary; authority parsing/currentness and
 // the actual Runner service transport remain real.
 const processIdentity = vi.hoisted(() => vi.fn());
-vi.mock('@/daemon/processIdentity', () => ({ readProcessIdentityByPid: processIdentity }));
+vi.mock('@/daemon/processIdentity', async importOriginal => ({
+  ...await importOriginal<typeof import('@/daemon/processIdentity')>(),
+  readProcessIdentityByPid: processIdentity,
+}));
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); reloadConfiguration(); });
 
 describe('Runner pinned Execution Run snapshot', () => {
@@ -27,7 +31,11 @@ describe('Runner pinned Execution Run snapshot', () => {
         code: 'managed_source_refused', message: 'PRIVATE_REFUSAL',
         details: { cause: { code: 'ENOENT', stage: 'registry_acquisition' } },
       })) },
-  ])('retains a $title across the pinned service transport without private error text', async ({ refusal }) => {
+    { title: 'hosted Session typed source failure', hosted: true, refusal: projectRunnerDaemonPluginServicesFailure(new PluginError({
+        code: 'managed_source_refused', message: 'PRIVATE_REFUSAL',
+        details: { cause: { code: 'ENOENT', stage: 'registry_acquisition' } },
+      })) },
+  ])('retains a $title across the pinned service transport without private error text', async ({ refusal, ...testCase }) => {
     const happyHomeDir = await createTempDir('happier-run-native-refusal-', tmpdir());
     const command = `${process.execPath} /fixture/.runner-snapshots/runner-a/index.mjs daemon start-sync`;
     const runner = { pid: process.pid, processStartTimeMs: 1_717_171_717_000,
@@ -54,8 +62,13 @@ describe('Runner pinned Execution Run snapshot', () => {
         normalizedModulePath: '/immutable/acme/runtime.mjs', loadMode: 'immutable-js' });
       await publishAgentRuntimeDaemonServiceAuthority({ path, happyHomeDir, publicReleaseRing, runner, retainedAgent,
         sessionId: 'session-1', httpPort: address.port, capability: 'A'.repeat(43) });
-      vi.stubEnv(HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY, path);
-      const failure = await Promise.resolve(createRunnerExecutionRunSnapshotResolver({ sessionId: 'session-1' })(undefined)).catch((error: unknown) => error);
+      const read = () => createRunnerExecutionRunSnapshotResolver({ sessionId: 'session-1' })(undefined);
+      const hosted = 'hosted' in testCase;
+      vi.stubEnv(HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY, hosted ? undefined : path);
+      const failure = await Promise.resolve(hosted ? runAddedHostedSession({
+        environment: { ...process.env, [HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY]: path },
+        workingDirectory: happyHomeDir, end: () => undefined,
+      }, read) : read()).catch((error: unknown) => error);
       expect(failure).toMatchObject({ code: refusal.code });
       if ('cause' in refusal && refusal.cause) {
         expect(failure).toMatchObject({ cause: refusal.cause, details: { cause: refusal.cause } });

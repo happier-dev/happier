@@ -43,9 +43,11 @@ import { readContributedActionExecutionPlacement } from '@/session/actions/readC
 import { readServerIdentityIdFromFeaturesSnapshot, type CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { refreshAccountSettingsForMinimumVersion } from '@/settings/accountSettings/refreshAccountSettingsForMinimumVersion';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
+import { createClientActionReverseDispatcher, type ClientActionMachineRpc } from '@/session/actions/clientActionReverseDispatch';
 
 type SessionActionOperation = Extract<AgentRuntimeDaemonServiceRequestV1['operation'], { kind: 'action.execute' }>;
-type SessionActionAuthority = Readonly<{ sessionId: string; isCurrent(): Promise<boolean>; signal?: AbortSignal }>;
+type SessionActionAuthority = Readonly<{ sessionId: string; isCurrent(): Promise<boolean>; signal?: AbortSignal;
+  actionInvocation?: import('@happier-dev/protocol/sessions/creation/externalActionRequesterInvocationBaseV1').ExternalActionRequesterInvocationBaseV1 }>;
 type DiscussionAgentPublisher = NonNullable<Parameters<typeof createDiscussionActionDeps>[0]['postAgentMessage']>;
 type SessionAccountActionRefusalReason =
   | 'runtime_authority_unavailable'
@@ -84,6 +86,7 @@ export type SessionAccountActionAuthorizationPreparation = Readonly<{
 
 /** Adapts authenticated Session custody to the existing credentialed Account executor. */
 export function createDaemonSessionAccountActionExecutor(params: Readonly<{
+  getMachineClient?: () => ClientActionMachineRpc | null | undefined;
   serverId: string;
   serverHttpBaseUrl: string;
   token: string;
@@ -146,6 +149,17 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
     };
     if (authority.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
     if (!await authority.isCurrent()) return refuse('runtime_authority_unavailable');
+    // The active occurrence lookup supplies the accepted Account Voice fact.
+    // Its owning App retains that admission and executes through its front door.
+    if (authority.actionInvocation?.surface === 'voice' && authority.actionInvocation.caller.kind === 'host'
+      && operation.executionRun) {
+      return await createClientActionReverseDispatcher(params.getMachineClient ?? (() => null), {
+        ...operation.executionRun, sessionId: authority.sessionId, turnId: operation.witness.turnId,
+        actionRequestId: operation.requestId,
+      })({ actionId: operation.actionId, input: operation.input, context: {
+        ...(authority.signal ? { signal: authority.signal } : {}),
+      } });
+    }
     let executionPlacement = resolveActionExecutionPlacementForInput(getActionSpec(operation.actionId), operation.input);
     const operationSurface = operation.surface ?? 'agent';
     // An Ask-first plugin install only retains the daemon-evaluated candidate

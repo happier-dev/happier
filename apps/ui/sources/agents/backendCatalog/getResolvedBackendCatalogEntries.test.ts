@@ -7,7 +7,7 @@ vi.mock('@/text', async () => {
     });
 });
 
-import { getResolvedBackendCatalogEntries as readBackendCatalog, resolveCatalogAgentIdForBackendTarget, resolveOperationalBackendTargetForAgentSelection } from './getResolvedBackendCatalogEntries';
+import { getResolvedBackendCatalogEntries as readBackendCatalog, resolveBackendTargetOperationalAgentId, resolveCatalogAgentIdForBackendTarget, resolveOperationalBackendTargetForAgentSelection } from './getResolvedBackendCatalogEntries';
 import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES } from '@happier-dev/agents/agent-ids';
 import type { BundledAgentId } from '@/agents/catalog/catalog';
 import { AcpBackendDefinitionV1Schema, type AcpCatalogSettingsV1 } from '@happier-dev/protocol/acp/catalog/settingsV1';
@@ -45,6 +45,16 @@ function configuredAgentTargetKey(definitionId: string) {
 }
 
 describe('getResolvedBackendCatalogEntries', () => {
+    it('preserves the projected plugin Agent id while resolving configured targets to their declared Agent', () => {
+        expect(resolveBackendTargetOperationalAgentId({
+            backendTarget: { kind: 'agent', identity: { pluginId: 'acme.review', localId: 'review' } },
+            selectedEntry: { agentId: 'acme.review-specialist' },
+        })).toBe('acme.review-specialist');
+        expect(resolveBackendTargetOperationalAgentId({
+            backendTarget: { kind: 'backend', backendId: 'qa-foldseed-acp', configuredBackendId: 'qa-foldseed-acp', sourceKind: 'configured' },
+        })).toBe('custom-acp');
+    });
+
     it('requires the configured definition when resolving a presentation-only ACP Agent', () => {
         expect(resolveOperationalBackendTargetForAgentSelection({
             backendTarget: { kind: 'backend', backendId: 'custom-acp' },

@@ -10,8 +10,8 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { AgentSessionRuntime, AgentSessionOpenRequest, AgentSessionRuntimeContext, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import { externalShellBridgeAgentDeclaration } from '../../../../../../../packages/plugin-sdk/fixtures/external-targeted-packages/agent-runtime-source';
 import { accountSettingsParse } from '@happier-dev/protocol';
+import { PluginAvailabilityIntentsListActionInputV1Schema, PluginAvailabilityIntentsListActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { listVoiceActionBlockSpecs } from '@happier-dev/protocol/actions/actionSpecs';
-import { isActionDirectToolExposedOn } from '@happier-dev/protocol/actions/actionToolExposure';
 import { VOICE_CONVERSATION_SYSTEM_SESSION_KEY } from '@happier-dev/protocol/voice/sessionBinding';
 import { SessionExecutionRunBrokerAuthorityRequestV1Schema, SessionExecutionRunBrokerAuthorityResponseV1Schema } from '@happier-dev/protocol/daemon/executionRuns';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -20,7 +20,7 @@ import { resolvePluginContributes } from '@/plugins/projection/registry/resolveP
 import type { PluginDaemonModuleNamespace } from '@/plugins/runtime/types';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveCliEngineRegistry } from '@/agent/runtime/registry/engineRegistry';
-import { createAccountEncryptionCurrentnessFixture, createMutableApiSessionClientFixture, createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
+import { createAccountEncryptionCurrentnessFixture, createMutableApiSessionClientFixture, createSessionNotificationContextFixture, createSessionReadBatchResponseFixture } from '@/testkit/backends/sessionFixtures';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
 import { ProviderEnforcedPermissionHandler } from '@/agent/permissions/providerEnforced/handler';
 import { resolveCliVoicePromptPreparation } from '@/agent/prompts/library/resolveCliVoicePromptStackBlocks';
@@ -83,10 +83,12 @@ describe('Voice Run MCP provisioning occurrence', () => {
     const actualFetch = globalThis.fetch;
     vi.stubGlobal('fetch', vi.fn<typeof fetch>(async (input, init) => {
       if (new URL(input instanceof Request ? input.url : String(input)).hostname === '127.0.0.1') return actualFetch(input, init);
-      throw new Error('Unexpected fixture Home request');
+      throw new Error(`Unexpected fixture Home request: ${new URL(input instanceof Request ? input.url : String(input)).pathname}`);
     }));
     const homeGet = vi.spyOn(axios, 'get').mockRejectedValue(new Error('Unexpected fixture Home request'));
-    vi.spyOn(axios, 'post').mockRejectedValue(new Error('Unexpected fixture Home request'));
+    const homePost = vi.spyOn(axios, 'post').mockImplementation(async url => {
+      throw new Error(`Unexpected fixture Home request: ${new URL(String(url)).pathname}`);
+    });
     const resource = 'https://mcp.example.test/voice';
     const settings = accountSettingsParse({ mcpServersStrictMode: true });
     const snapshot = { source: 'network' as const, settings, rawSettings: {}, settingsVersion: 1, loadedAtMs: 1,
@@ -100,10 +102,12 @@ describe('Voice Run MCP provisioning occurrence', () => {
     const proofs: Array<{ runId: string; occurrenceId: string }> = [];
     const opened: AgentSessionOpenRequest[] = [];
     let openFailure: unknown = null;
+    let providerFailure: unknown = null;
     const contextFiles: string[] = [];
     const prompts: string[] = [];
-    const directTools = listVoiceActionBlockSpecs().filter(spec => isActionDirectToolExposedOn(spec, 'agent'))
-      .map(spec => spec.bindings!.voiceClientToolName!);
+    const voiceClientToolNames = listVoiceActionBlockSpecs().flatMap(spec =>
+      spec.bindings?.voiceClientToolName ? [spec.bindings.voiceClientToolName] : []);
+    const deliveredToolNames = new Set<string>();
     const closed: string[] = [];
     let holdProvider = false;
     let holdCleanup = false;
@@ -124,6 +128,8 @@ describe('Voice Run MCP provisioning occurrence', () => {
           throw new Error('mcp_request_auth_not_active');
         }
         expect(current).toMatchObject({ intent: 'voice_agent', runtimeState: 'idle', activeTurnId: null });
+        // A raw intent alone does not promote a Session caller to Account Voice.
+        expect(current).not.toHaveProperty('actionInvocation');
         proofs.push(input.executionRun);
         return { capabilityFile: join(home, `capability-${input.materializationId}.json`), resource };
       },
@@ -131,9 +137,11 @@ describe('Voice Run MCP provisioning occurrence', () => {
     };
     const openSession = async (request: AgentSessionOpenRequest, context: AgentSessionRuntimeContext): Promise<AgentSessionRuntime> => {
       opened.push(request);
-      // Check the launch policy at the native SDK boundary; each Agent adapter
-      // owns how that policy removes its vendor's built-in tools.
-      expect(request.configuration).toMatchObject({ allowedTools: [], unlistedTools: 'deny' });
+      // Shared Actions retain the Run's ordinary permission intent. Native
+      // extension and shell carriers still need their provider tool surface.
+      expect(request.configuration?.permissionIntent.value).toBe('read-only');
+      expect(request.configuration?.allowedTools).toBeUndefined();
+      expect(request.configuration?.unlistedTools).toBeUndefined();
       if (process.platform !== 'win32') {
         const environment = request.launchEnvironment?.values ?? {};
         expect(environment[SESSION_MCP_CONTEXT_FILE_ENV]).toEqual(expect.any(String));
@@ -147,6 +155,7 @@ describe('Voice Run MCP provisioning occurrence', () => {
           const { client, close } = await connectSessionMcpClient(sessionMcp);
           try {
             const catalog = await client.listTools();
+            for (const tool of catalog.tools) deliveredToolNames.add(tool.name);
             expect(catalog.tools.map(tool => tool.name)).toEqual(expect.arrayContaining([
               'settings_list', 'settings_get', 'settings_set', 'settings_reset', 'settings_invoke',
             ]));
@@ -159,6 +168,7 @@ describe('Voice Run MCP provisioning occurrence', () => {
         : null;
       if (delivery !== 'native_mcp') expect(request.mcpServers ?? {}).not.toHaveProperty('happier');
       if (nativeBridge) {
+        for (const tool of nativeBridge.tools) deliveredToolNames.add(tool.name);
         if (process.platform !== 'win32') {
           expect(nativeBridge.launch.env?.[SESSION_MCP_CONTEXT_FILE_ENV])
             .toBe(request.launchEnvironment?.values[SESSION_MCP_CONTEXT_FILE_ENV]);
@@ -178,32 +188,63 @@ describe('Voice Run MCP provisioning occurrence', () => {
         try {
           await client.connect(new StreamableHTTPClientTransport(new URL(url)));
           const catalog = await client.listTools();
+          for (const tool of catalog.tools) deliveredToolNames.add(tool.name);
           expect(catalog.tools.map(tool => tool.name)).toEqual(expect.arrayContaining([
             'settings_list', 'settings_get', 'settings_set', 'settings_reset', 'settings_invoke',
           ]));
           expect(catalog.tools.map(tool => tool.name)).not.toContain('approval_request_decide');
         } finally { await client.close(); }
       }
-      // Voice orchestrates through its structured action function, rather than
-      // inheriting the Account's external tool catalog into the carrier.
-      expect(request.mcpServers?.['voice-oauth']).toBeUndefined();
+      // The shared carrier retains the Account's selected MCP catalog whenever
+      // this Agent's declared delivery accepts user MCP servers.
+      if (delivery === 'shell_bridge') expect(request.mcpServers?.['voice-oauth']).toBeUndefined();
+      else expect(request.mcpServers?.['voice-oauth']).toBeDefined();
       if (holdProvider) { entered.resolve(); await release.promise; }
       let sequence = 0;
       const listeners = new Set<(event: AgentSessionRuntimeEvent) => void>();
-      expect(request.functionTools?.map(tool => tool.name)).toEqual(['happier_voice_action']);
-      return { functionToolsDelivered: true, watch(listener) {
+      expect(request.functionTools).toBeUndefined();
+      return { watch(listener) {
         listeners.add(listener);
         listener({ kind: 'provider-session-id', sessionId: request.sessionId, providerSessionId: 'voice-native-thread', sequence: ++sequence, emittedAtMs: sequence });
         return { dispose() { listeners.delete(listener); } };
       }, async send(input) {
+        try {
         prompts.push(input.input.text);
         for (const event of [
           { kind: 'input-accepted' as const, inputIds: input.inputIds, delivery: input.delivery },
           { kind: 'turn-start' as const, turnId: input.delivery.turnId, startedBy: 'host' as const },
+        ]) for (const listener of listeners) listener({ ...event, sessionId: request.sessionId, sequence: ++sequence, emittedAtMs: sequence });
+        if (delivery === 'native_mcp') {
+          const connected = process.platform === 'win32'
+            ? await (async () => {
+              const happier = request.mcpServers?.happier;
+              const urlIndex = happier?.args?.indexOf('--url') ?? -1;
+              const url = happier?.args?.[urlIndex + 1];
+              if (urlIndex < 0 || !url) throw new Error('Missing real Happier MCP bridge');
+              const client = new Client({ name: 'voice-action-turn', version: '1' });
+              await client.connect(new StreamableHTTPClientTransport(new URL(url)));
+              return { client, close: async () => { await client.close(); } };
+            })()
+            : await connectSessionMcpClient(await readSessionMcpContextFromEnvironment(request.launchEnvironment?.values ?? {}));
+          try {
+            for (const tool of [
+              { name: 'action_spec_search', arguments: { query: 'settings.list' } },
+              { name: 'action_spec_get', arguments: { id: 'settings.list' } },
+            ]) {
+              const result = await connected.client.callTool(tool);
+              expect(result.isError, JSON.stringify(result)).not.toBe(true);
+              const text = Array.isArray(result.content)
+                ? result.content.find(item => item.type === 'text')?.text : undefined;
+              expect(text).toEqual(expect.any(String));
+            }
+          } finally { await connected.close(); }
+        }
+        for (const event of [
           { kind: 'message-delta' as const, turnId: input.delivery.turnId, channel: 'assistant' as const, text: 'READY' },
           { kind: 'turn-complete' as const, turnId: input.delivery.turnId },
         ]) for (const listener of listeners) listener({ ...event, sessionId: request.sessionId, sequence: ++sequence, emittedAtMs: sequence });
         return { status: 'admitted' };
+        } catch (error) { providerFailure = error; throw error; }
       }, async dispose() { listeners.clear(); } };
     };
     const observeOpenSession: typeof openSession = async (request, context) => {
@@ -260,7 +301,21 @@ describe('Voice Run MCP provisioning occurrence', () => {
           return { status: 200, data: { session: { ...createSessionNotificationContextFixture(parent.sessionId),
             encryptionMode: 'plain', metadata: JSON.stringify(parent.getMetadataSnapshot()) } } };
         }
-        throw new Error('Unexpected fixture Home request');
+        throw new Error(`Unexpected fixture Home request: ${path}`);
+      });
+      homePost.mockImplementation(async (url, request) => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/v1/plugins/availability/intents/list') {
+          const { knownPluginIds: pluginIds = [] } = PluginAvailabilityIntentsListActionInputV1Schema.parse(request);
+          return { status: 200, data: PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor: 1,
+            pluginIds, failedPluginIds: [], intentReads: pluginIds.map(pluginId => ({ pluginId, response: {
+              availabilityCursor: 1, hostingCapability: { enabled: false }, intent: null, release: null, uiArtifacts: [], packageAssets: [],
+            } })) }) };
+        }
+        if (path === '/v2/sessions/read-batch') return { status: 200, data: createSessionReadBatchResponseFixture({ request,
+          sessions: [{ ...createSessionNotificationContextFixture(parent.sessionId),
+            encryptionMode: 'plain', metadata: JSON.stringify(parent.getMetadataSnapshot()) }] }) };
+        throw new Error(`Unexpected fixture Home request: ${path}`);
       });
       bridge = new ExecutionRunHostBridge({ parentProvider: 'claude', cwd: home, happyHomeDir: home, sendAcp: async () => {},
         resolveRunReportPolicy: async () => ({ preset: 'important' }),
@@ -311,7 +366,9 @@ describe('Voice Run MCP provisioning occurrence', () => {
       const started = await bridge.start({ sessionId: parent.sessionId, intent: 'voice_agent', backendTarget: { kind: 'builtInAgent', agentId },
         permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
         chatModelId: 'voice-model', commitModelId: 'default', bootstrapMode: 'ready_handshake', initialContextMode: 'first_turn', connectedServices: null });
+      expect(started).not.toHaveProperty('actionInvocation');
       if (openFailure) throw openFailure;
+      if (providerFailure) throw providerFailure;
       expect(proofs, JSON.stringify({ started, run: bridge.get(started.runId),
         preparation: diagnostics.mock.calls.filter(([message]) => message.includes('Prompt')) }))
         .toHaveLength(delivery === 'shell_bridge' ? 0 : 1);
@@ -319,25 +376,16 @@ describe('Voice Run MCP provisioning occurrence', () => {
       if (process.platform !== 'win32') {
         expect(opened[0]?.launchEnvironment?.values[SESSION_MCP_CONTEXT_FILE_ENV]).toEqual(expect.any(String));
       }
-      // Local Voice's action-block instructions must not hide the Agent-direct
-      // catalog the same native provider has just received over real MCP.
+      // MCP instructions may only name tools actually delivered to this Agent;
+      // Voice client aliases do not become callable Agent tools.
       expect(prompts).toHaveLength(1);
-      expect([...prompts[0]!.matchAll(/^- ([A-Za-z0-9_]+):/gm)].map(match => match[1]))
-        .toEqual(expect.arrayContaining(directTools));
-      // These are host Voice Actions, not permission-elevated native MCP
-      // tools. Both Global and scoped carriers must document their real route.
-      expect([...prompts[0]!.matchAll(/^- ([A-Za-z0-9_]+):/gm)].map(match => match[1]))
-        .toEqual(expect.arrayContaining([
-          'settings_list', 'settings_get', 'settings_set', 'settings_invoke',
-          'approval_request_get', 'approval_request_decide',
-          'session_permission_respond',
-        ]));
-      // Account queue discovery remains in the canonical long tail; the
-      // prompt explains it without inlining its large selector schema.
-      expect(prompts[0]).toContain('approval_request_list with status open');
+      for (const name of voiceClientToolNames) {
+        if (!deliveredToolNames.has(name)) expect(prompts[0]).not.toMatch(new RegExp(`(?<![A-Za-z0-9_])${name}(?![A-Za-z0-9_])`));
+      }
       // Inspect the instructions actually delivered to the retained native
       // Agent, so a correct shared helper omitted by composition cannot pass.
-      expect(prompts[0]).toContain('Trigger Actions with the native happier_voice_action function');
+      expect(prompts[0]).toContain('action_execute');
+      expect(prompts[0]).not.toContain('Trigger Actions with the native happier_voice_action function');
       expect(prompts[0]).not.toContain('<voice_actions>');
       expect(prompts[0]).toContain("The person's explicit spoken request is the confirmation");
       expect(prompts[0]).toContain('do not ask for confirmation again');

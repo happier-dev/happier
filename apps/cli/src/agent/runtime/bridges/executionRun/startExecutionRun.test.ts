@@ -338,13 +338,13 @@ describe('startExecutionRun', () => {
     { backendTarget: { kind: 'builtInAgent', agentId: 'claude' } },
     { backendTarget: { kind: 'configuredAcpBackend', backendId: 'voice-bot' } },
     { backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, contributions: { agentDefinitionsById: new Map() } },
-  ] as const)('refuses Voice before Run creation when the selected Agent has no native functions ($backendTarget.kind)', async options => {
+  ] as const)('admits Voice without requiring native function delivery ($backendTarget.kind)', async options => {
     const runs = new Map<string, ExecutionRunState>();
     const controllers = new Map<string, ExecutionRunController>();
-    const createRuntime = vi.fn(() => { throw new Error('Native startup must not run'); });
+    const createRuntime = vi.fn(() => { throw new Error('Provider boundary unavailable'); });
     const voiceAgentManager = new VoiceAgentManager({ createRuntime });
     try {
-      await expect(startExecutionRun({
+      const started = await startExecutionRun({
         params: { sessionId: 'parent_session_1', intent: 'voice_agent', backendTarget: options.backendTarget,
           permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming' },
         ...('contributions' in options ? { contributions: options.contributions } : {}),
@@ -352,10 +352,10 @@ describe('startExecutionRun', () => {
         createRuntime, getNowMs: () => 1, budgetRegistry: null, runs, controllers,
         enqueueMarkerWrite: async () => {}, writeActivityMarker: async () => {}, finishRun: async () => {},
         executeBoundedRun: async () => {}, send: async () => ({ ok: true }), voiceAgentManager,
-      })).rejects.toMatchObject({ code: 'VOICE_AGENT_UNSUPPORTED',
-        details: { executionRunStart: { runCreation: 'noRunCreated' } } });
-      expect(runs.size).toBe(0);
-      expect(createRuntime).not.toHaveBeenCalled();
+      });
+      expect(started).toMatchObject({ runId: expect.any(String) });
+      expect(runs.size).toBe(1);
+      expect(createRuntime).toHaveBeenCalled();
     } finally { await voiceAgentManager.dispose(); }
   });
 

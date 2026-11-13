@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { SessionCreationKeyV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { ACTION_ID_FAMILIES_V1, ActionIdSchema, isPluginDevLoopActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
@@ -54,7 +55,8 @@ export function createSessionAccountActionExecutor(params: Readonly<{
 }>): ActionExecutor {
   const execute = async (actionId: ActionId, input: unknown, context?: ActionExecutorContext,
     routingDescriptorRead = false): Promise<ActionExecuteResult> => {
-      const local = await params.executeInCurrentProcess?.(actionId, input, context);
+      const voiceRun = params.client.getRunActionInvocation?.()?.surface === 'voice';
+      const local = voiceRun ? undefined : await params.executeInCurrentProcess?.(actionId, input, context);
       if (local?.matched) return local.result;
       // These reads describe the bound host's admitted catalog, not Account data.
       // Keep its live Session policy (including memory choice) at the existing
@@ -64,15 +66,15 @@ export function createSessionAccountActionExecutor(params: Readonly<{
       }
       // Restricted child reads use the bound Session's admitted corpus reader.
       // Account forwarding would replace that authority with the daemon's scope.
-      if ((actionId === 'session.list' || actionId === 'session.targets.resolve') && context?.sessionListAccess === 'current_session') {
+      if (!voiceRun && (actionId === 'session.list' || actionId === 'session.targets.resolve') && context?.sessionListAccess === 'current_session') {
         return await params.base.execute(actionId, input, context);
       }
       // Contributed ids remain with the existing plugin catalog/execution owner.
       const builtIn = ActionIdSchema.safeParse(actionId);
       const spec = builtIn.success ? getActionSpec(builtIn.data) : null;
-      if (requiresExplicitScmMachineTarget(actionId)) return await params.base.execute(actionId, input, context);
+      if (!voiceRun && requiresExplicitScmMachineTarget(actionId)) return await params.base.execute(actionId, input, context);
       let executionPlacement = spec ? resolveActionExecutionPlacementForInput(spec, input) : null;
-      if (actionId === 'action.invoke' && !params.hasAccountAuthority) {
+      if (!voiceRun && actionId === 'action.invoke' && !params.hasAccountAuthority) {
         // Account-only releases need not exist in the bound Machine catalog.
         // This host-private read uses the same capability, witness and lifetime;
         // author-facing discovery above retains the bound Session policy.
@@ -86,7 +88,7 @@ export function createSessionAccountActionExecutor(params: Readonly<{
       }
       const requestedSessionId = input && typeof input === 'object' && 'sessionId' in input
         && typeof input.sessionId === 'string' ? input.sessionId.trim() : params.client.sessionId;
-      const path = process.env[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY];
+      const path = sessionProcessEnvironment()[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY];
       let needsSessionTargetTransport = false;
       if ((!params.hasAccountAuthority || path) && spec?.sessionTarget && input && typeof input === 'object' && !Array.isArray(input)) {
         const operand = readActionSessionTargetField(input as Readonly<Record<string, unknown>>, spec.sessionTarget.field);
@@ -135,7 +137,7 @@ export function createSessionAccountActionExecutor(params: Readonly<{
       // bound request store and its same canonical host-witness origin.
       const sessionOriginRpc = spec && isSessionActionRpcMethodV1(spec.bindings?.rpcMethod ?? actionId)
         && !(actionId === 'session.needs_you.raise' && requestedSessionId === params.client.sessionId);
-      if (!builtIn.success || (executionPlacement !== 'account'
+      if (!voiceRun && (!builtIn.success || (executionPlacement !== 'account'
         && executionPlacement !== 'client'
         && !sessionRead && !persistedRead && !sessionLifecycle && !nativeInventoryRead && !machineAction && !sessionOriginRpc && !needsSessionTargetTransport
         && builtIn.data !== 'session.spawn_new'
@@ -147,12 +149,12 @@ export function createSessionAccountActionExecutor(params: Readonly<{
         && !(builtIn.data.startsWith('scm.') && !params.hasAccountAuthority)
         // Machine plugin policy and lifecycle belong to the daemon's canonical
         // plugin-change owner, never to the restricted Session runner.
-        && !(isPluginDevLoopActionIdV1(builtIn.data) && executionPlacement === 'machine'))) {
+        && !(isPluginDevLoopActionIdV1(builtIn.data) && executionPlacement === 'machine')))) {
         return await params.base.execute(actionId, input, context);
       }
       // This daemon Action channel returns one result, not a passive snapshot
       // feed. Never drop the sink and turn watch into a blocking condition wait.
-      if (actionId === 'wait' && context?.onWaitSnapshot) {
+      if (!voiceRun && actionId === 'wait' && context?.onWaitSnapshot) {
         const request = WaitActionInputV1Schema.safeParse(input);
         if (!request.success) return { ok: false, errorCode: 'invalid_action_input', error: 'invalid_action_input' };
         const target = request.data.target;

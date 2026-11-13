@@ -44,7 +44,8 @@ async function createStreamingFixture(options: Readonly<{ streaming?: boolean; t
         onRpc(method, input) {
             if (method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START
                 || method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1) {
-                transcript = ExecutionRunEnsureOrStartRequestSchema.parse(input).start?.transcript;
+                const start = ExecutionRunEnsureOrStartRequestSchema.parse(input).start;
+                if (start) transcript = start.transcript;
             }
         },
         async handleOtherRpc(method, input) {
@@ -193,6 +194,18 @@ async function mountAutomaticUiContext() {
 }
 
 describe('Voice streaming through retained initialization, execution transport and daemon RPC', () => {
+    it.each(['person', 'synthetic'] as const)('exposes only the active host turn origin to shared MCP Actions (%s)', async turnOrigin => {
+        const f = await createStreamingFixture();
+        const playHostText = async () => ({ status: 'completed' as const });
+        let readDuringTurn = false;
+        f.beforeRead(() => {
+            expect(f.transport.readVoiceAgentHandle(f.controlSessionId)?.toolTurnContext?.current).toEqual({ turnOrigin, playHostText });
+            readDuringTurn = true;
+        });
+        await f.transport.sendTurn(f.controlSessionId, 'hello', { turnOrigin, playHostText });
+        expect(readDuringTurn).toBe(true);
+        expect(f.transport.readVoiceAgentHandle(f.controlSessionId)?.toolTurnContext?.current).toBeUndefined();
+    });
     it('publishes actual bootstrap instruction delivery while the current local attempt connects', async () => {
         const { voiceConversationRuntimeMachine: machine } = await import('@/voice/runtime/machine/VoiceConversationRuntimeMachine');
         const { VOICE_AGENT_GLOBAL_SESSION_ID } = await import('@/voice/agent/voiceAgentGlobalSessionId');

@@ -20,10 +20,23 @@ export class SessionMcpUnavailableError extends Error {
     }
 }
 
-/** Host-private transient authority; no public SDK or persisted representation. */
-export const SessionMcpLocalContextSchema = z.strictObject({
-    v: z.literal(1),
-    socketPath: z.string().check(z.refine(isAbsolute)),
-    bearerToken: z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u)),
-});
+const SessionMcpBearerTokenSchema = z.string().check(z.regex(/^[A-Za-z0-9_-]{43}$/u));
+
+/**
+ * Host-private transient authority; no public SDK or persisted representation. A Unix socket
+ * (owner-only, optionally granted to an isolated uid) where the platform supports it; otherwise
+ * (Windows) a 127.0.0.1 endpoint. Both demand the bearer.
+ */
+export const SessionMcpLocalContextSchema = z.union([
+    z.strictObject({
+        v: z.literal(1),
+        socketPath: z.string().check(z.refine(isAbsolute)),
+        bearerToken: SessionMcpBearerTokenSchema,
+    }),
+    z.strictObject({
+        v: z.literal(1),
+        url: z.string().check(z.refine(value => /^http:\/\/127\.0\.0\.1:\d{1,5}\/?$/u.test(value))),
+        bearerToken: SessionMcpBearerTokenSchema,
+    }),
+]);
 export type SessionMcpLocalContext = Readonly<z.infer<typeof SessionMcpLocalContextSchema>>;

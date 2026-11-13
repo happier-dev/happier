@@ -3,7 +3,7 @@ import { createActionExecutor, getActionSpec, RPC_METHODS, RPC_ERROR_CODES, UiAc
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createClientActionReverseDispatcher, type ClientActionMachineRpc } from './clientActionReverseDispatch';
 import { createCliSettingsDeclarationAction } from './settingsDeclarationAction';
-import { clientActionUnavailable, mountedWorkReadClientRpcMethod, sessionUiActionClientRpcMethod } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { clientActionUnavailable, mountedWorkReadClientRpcMethod, sessionUiActionClientRpcMethod, voiceRunActionClientRpcMethod, VoiceRunActionDispatchRequestV1Schema } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { ApprovalRequestV2Schema, StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { readApprovalExecutionFailure } from '@happier-dev/protocol/approvals/approvalExecutionFailure';
 import { projectSettledApprovalExecution } from '@happier-dev/protocol/actions/executor/approvalResults';
@@ -24,6 +24,23 @@ const disconnectedClient: ClientActionMachineRpc = {
 };
 
 describe('client Action reverse delivery', () => {
+  it('keeps mounted diagnostics on the admitted Voice Run frontdoor', async () => {
+    const voiceRun = { runId: 'voice-run', sessionId: 'source-session', occurrenceId: 'occurrence', turnId: 'turn', actionRequestId: 'effect' };
+    const dispatch = createClientActionReverseDispatcher(() => ({
+      hasConnectedClientRpcHandler: () => true,
+      callConnectedClientRpc: async (method, payload, options) => {
+        if (method !== voiceRunActionClientRpcMethod(voiceRun.runId)) return { ok: false, errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE };
+        expect(VoiceRunActionDispatchRequestV1Schema.parse(payload)).toMatchObject({ voiceRun });
+        options.onIssued();
+        return { ok: true, result: { v: 1, execution: { ok: false, errorCode: 'disabled', error: 'disabled' } } };
+      },
+    }), voiceRun);
+    expect(await dispatch({ actionId: 'browser.diagnostics.eval', input: {
+      v: 1, browserSessionId: 'browser', viewId: 'view', evalRequestId: 'eval', navigationGeneration: 0,
+      tier: 'injectedPage', expression: '1 + 1', objectGroupId: 'group', diagnosticsInteractionEnabled: true, timeoutMs: 3000,
+    }, context: { surface: 'agent', authority: 'account_automation', defaultSessionId: 'source-session' } }))
+      .toEqual({ ok: false, errorCode: 'disabled', error: 'disabled' });
+  });
   it.each([
     { actionId: 'session.connected_services_auth.set', input: { sessionId: 'target-session', machineId: 'machine', agentId: 'external-agent', bindings: { v: 2, bindingsByServiceId: {} } } },
     { actionId: 'session.config_option.set', input: { sessionId: 'target-session', configId: 'effort', valueId: 'high' } },

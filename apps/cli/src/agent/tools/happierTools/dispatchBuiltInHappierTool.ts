@@ -117,7 +117,7 @@ export async function dispatchBuiltInHappierTool(params: Readonly<{
   sessionId: string;
   sessionMachineId?: string | null;
   sessionRootPath?: string | null;
-  surface?: 'mcp' | 'cli' | 'agent';
+  surface?: import('./actionToolCatalog').HappierBuiltInToolSurface;
   actionsSettings?: ActionsSettingsV1 | null;
   getActionsSettings?: (() => ActionsSettingsV1 | null) | null;
   approvalOrigin?: ApprovalRequestOriginV1 | null;

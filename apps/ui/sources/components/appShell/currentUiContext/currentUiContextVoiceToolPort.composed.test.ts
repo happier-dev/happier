@@ -168,7 +168,7 @@ afterEach(async () => {
 
 import { resetMachineProjectionReadsForTests } from '@/sync/ops/machineContributionRegistryProjection';
 import type { CurrentUiContextResolvedCommand } from './CurrentUiContextProvider';
-import { executeCurrentUiContextAction, registerCurrentUiContextActionPort } from './currentUiContextActionRuntime';
+import { executeCurrentUiContextAction, readCurrentUiContextActionReader, registerCurrentUiContextActionPort } from './currentUiContextActionRuntime';
 import {
     createCurrentUiContributedActionRpcHandler,
     bindCurrentUiContextVoiceToolPortToAdmission,
@@ -659,7 +659,55 @@ async function startSpokenConfirmation(serverId: string, adapterId: string, canA
 }
 
 describe('current UI context Voice tool port', () => {
-    it.each(['native', 'command', 'tap', 'unavailable', 'synthetic', 'missing'] as const)('binds spoken confirmation to the prepared contributed inner effect (%s)', async runtimeShape => {
+    it('executes all mounted UI Actions through the admitted shared MCP Voice handle', async () => {
+        const handler = vi.fn(async (value: unknown) => ({ applied: value }));
+        const fixture = createCurrentUiClientActionFixture({ handler, surfaces: ['voice'], dangerLevel: 'writesRemote',
+            confirmation: { title: 'Confirm client mutation', inputFields: [{ path: 'ticket', title: 'Ticket' }] } });
+        await fixture.composition.reconcile([fixture.activation]);
+        const store = await startSpokenConfirmation(clientHomeId, 'shared-mounted');
+        const command: CurrentUiContextResolvedCommand = { id: COMMAND_ID,
+            command: { kind: 'executeAction', action: CLIENT_ACTION_ID, input: { ticket: 'command' } },
+            retirementSignal: new AbortController().signal };
+        const snapshot: CurrentUiContextSnapshotV1 = { navigation: { area: 'settings', screen: 'settings_page' }, commands: [] };
+        const unpublish = publishCommittedAppShellPluginUiProjection(() => fixture.projection);
+        const unregister = registerCurrentUiContextActionPort((invocationSurface, hostAction) => createCurrentUiContextVoiceToolPort({
+            invocationSurface, hostAction, readProjection: () => fixture.projection, readNavigationBinding: () => null,
+            reader: { readCurrentUiContext: () => snapshot, resolveCurrentUiCommand: id => id === command.id ? command : null,
+                subscribe: () => () => {} },
+        }));
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const account = await captureLazyActionAccountContext(clientHomeId);
+        const { DaemonVoiceAgentClient } = await import('@/voice/agent/daemonVoiceAgentClient');
+        const playHostText = vi.fn(async () => ({ status: 'completed' as const }));
+        const handle: import('@/voice/agent/types').VoiceAgentHandle = {
+            client: new DaemonVoiceAgentClient(account.accountLifetime.scope), accountLifetime: account.accountLifetime,
+            voiceAgentId: 'mounted-voice-run', rpcSessionId: 'mounted-voice-carrier', backend: 'daemon',
+            transcriptEpoch: 0, metadataSessionId: null, agentBackendId: 'codex',
+            actionInvocation: { caller: { kind: 'host' }, surface: 'voice', authority: 'present_user' },
+            toolTurnContext: { current: { turnOrigin: 'person', playHostText } },
+        };
+        const controller = new AbortController();
+        const { createVoiceRunActionReverseHandler } = await import('@/voice/agent/voiceRunActionReverseHandler');
+        const reverse = createVoiceRunActionReverseHandler(handle, 'contributed-voice');
+        const invoke = (actionId: import('@happier-dev/protocol/actions/actionIds').ActionId, input: unknown, actionRequestId: string) =>
+            reverse({ v: 1, actionId, input, voiceRun: { runId: handle.voiceAgentId, sessionId: handle.rpcSessionId,
+                occurrenceId: 'mounted-voice-occurrence', turnId: 'mounted-voice-turn', actionRequestId } }, { signal: controller.signal });
+        try {
+            expect(await invoke('ui.current_context.read', {}, 'mounted-read')).toMatchObject({ v: 1,
+                execution: { ok: true, result: snapshot } });
+            expect(await invoke('ui.current_context.command.invoke', { commandId: COMMAND_ID }, 'mounted-command'))
+                .toMatchObject({ v: 1, execution: { ok: true, result: { ok: true } } });
+            expect(await invoke('action.invoke', { action: CLIENT_ACTION_ID, input: { ticket: 'direct' } }, 'mounted-action'))
+                .toMatchObject({ v: 1, execution: { ok: true, result: { ok: true } } });
+            expect(handler.mock.calls.map(([input]) => input)).toEqual([{ ticket: 'command' }, { ticket: 'direct' }]);
+            expect(playHostText).toHaveBeenCalledTimes(2);
+            expect(visibleModalCount).toBe(0);
+        } finally {
+            controller.abort(); account.dispose(); unregister(); unpublish(); store.resetVoiceSessionStoreForTests();
+            await fixture.composition.unload();
+        }
+    });
+    it.each(['native', 'command', 'generic', 'tap', 'unavailable', 'synthetic', 'missing'] as const)('binds spoken confirmation to the prepared contributed inner effect (%s)', async runtimeShape => {
         const handler = vi.fn(async (value: unknown) => ({ applied: value }));
         const fixture = createCurrentUiClientActionFixture({ handler, surfaces: ['voice'], dangerLevel: 'writesRemote',
             confirmation: { title: 'Confirm client mutation', inputFields: [{ path: 'ticket', title: 'Ticket' }] } });
@@ -682,8 +730,9 @@ describe('current UI context Voice tool port', () => {
         const tappedConfirmation = new Promise<'tap'>(resolve => { onVisibleVoiceConfirmation = () => resolve('tap'); });
         let pending!: Promise<string>;
         const invoke = (ticket = 'original') =>
-            (runtimeShape === 'command' ? handlers.invokeCurrentUiCommand! : handlers.invokeAction!)(runtimeShape === 'command'
-                ? { commandId: COMMAND_ID } : { action: CLIENT_ACTION_ID, input: { ticket } },
+            (runtimeShape === 'generic' ? handlers.action_execute! : runtimeShape === 'command' ? handlers.invokeCurrentUiCommand! : handlers.invokeAction!)(runtimeShape === 'generic'
+                ? { actionId: 'action.invoke', input: { action: CLIENT_ACTION_ID, input: { ticket } } }
+                : runtimeShape === 'command' ? { commandId: COMMAND_ID } : { action: CLIENT_ACTION_ID, input: { ticket } },
             { serverId: clientHomeId, effectId: 'contributed-person-request', signal: controller.signal,
                 ...(runtimeShape === 'missing' ? {} : { turnOrigin: runtimeShape === 'synthetic' ? 'synthetic' as const : 'person' as const }) });
         await act(async () => { pending = invoke(); });
@@ -700,7 +749,7 @@ describe('current UI context Voice tool port', () => {
                 return;
             }
             expect(result).not.toBe('tap');
-            if (runtimeShape === 'native' || runtimeShape === 'command') {
+            if (runtimeShape === 'native' || runtimeShape === 'command' || runtimeShape === 'generic') {
                 expect(playHostText).toHaveBeenCalledWith(expect.objectContaining({ text: summary }));
                 expect(result).toMatchObject({ ok: true, result: { applied: { ticket: 'original' } } });
                 expect(handler).toHaveBeenCalledOnce();
@@ -1832,10 +1881,10 @@ describe('current UI context Voice tool port', () => {
         } finally { await fixture.composition.unload(); }
     });
 
-    it('retains authored recovery from the mounted contributed Action through the generic executor', async () => {
+    it.each(['generic', 'voice'] as const)('retains authored recovery from the mounted contributed Action through the generic executor (%s)', async surface => {
         const failureCause = { phase: 'deployment.target.create', errorClass: 'Error', errorCode: null,
             nativeErrorCode: '10000', httpStatus: 403 } as const;
-        const fixture = createCurrentUiClientActionFixture({ surfaces: ['agent'], handler: async () => {
+        const fixture = createCurrentUiClientActionFixture({ surfaces: [surface === 'voice' ? 'voice' : 'agent'], handler: async () => {
             throw new PluginError({ code: 'credential_unavailable', message: 'Sign in to the selected cloud account.',
                 remediation: { kind: 'retry' }, failureCause, details: { nativeCause: { localCause: 'native_options_changed' } },
                 diagnostics: [{ code: 'local_debug', severity: 'error', message: 'PRIVATE_DIAGNOSTIC' }],
@@ -1850,7 +1899,12 @@ describe('current UI context Voice tool port', () => {
         try {
             await fixture.composition.reconcile([fixture.activation]);
             const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
-            const result = await createDefaultActionExecutor().execute('action.invoke', { action: CLIENT_ACTION_ID, input: null }, {
+            const { createVoiceToolHandlers } = await import('@/voice/tools/handlers');
+            const port = readCurrentUiContextActionReader({ surface: 'voice' });
+            const result = surface === 'voice' ? JSON.parse(await createVoiceToolHandlers({
+                resolveSessionId: () => null, currentServerId: clientHomeId, currentUiContext: port ?? undefined,
+            }).action_execute!({ actionId: 'action.invoke', input: { action: CLIENT_ACTION_ID, input: null } }))
+            : await createDefaultActionExecutor().execute('action.invoke', { action: CLIENT_ACTION_ID, input: null }, {
                 surface: 'agent', expectedContributedActionOccurrenceId: fixture.action.occurrenceId,
             });
             expect(result).toMatchObject({ ok: false, errorCode: 'credential_unavailable',

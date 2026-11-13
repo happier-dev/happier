@@ -52,6 +52,7 @@ function resolveVoiceToolResultPrivacyPrefs(): VoiceToolResultPrivacyPrefs {
 }
 
 type VoiceAgentSessionsLike = Readonly<{
+  readVoiceAgentHandle?: (sessionId: string) => import('@/voice/agent/types').VoiceAgentHandle | undefined;
   commitUserTranscript?: (sessionId: string, userText: string, localId: string) => Promise<void>;
   sendTurn: (
     sessionId: string,
@@ -177,6 +178,9 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
   const serverId = params.currentToolSessionAddress?.serverId
     ?? binding?.conversationSessionAddress.serverId;
   const tools = createVoiceToolHandlers({
+    ...(params.voiceAgentSessions.readVoiceAgentHandle ? {
+      readVoiceAgentHandle: () => params.voiceAgentSessions.readVoiceAgentHandle?.(params.sessionId),
+    } : {}),
     voiceSessionBinding: binding,
     currentSessionAddress: params.currentToolSessionAddress ?? null,
     currentServerId: serverId,
@@ -330,6 +334,8 @@ export async function runVoiceAgentTurnWithTools(params: Readonly<{
       params.sessionId,
       nextPrompt,
       {
+        turnOrigin: params.turnOrigin ?? 'person',
+        ...(params.playHostText ? { playHostText: params.playHostText } : {}),
         ...(turnIndex === 0 && params.context ? { context: params.context } : {}),
         onOutputEvent: async output => {
           if (output.effects.some(effect => effect.kind === 'execute_side_effect'

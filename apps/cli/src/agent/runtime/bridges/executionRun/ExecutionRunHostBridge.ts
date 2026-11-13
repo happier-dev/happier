@@ -616,6 +616,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       intent: run.intent,
       runtimeState,
       activeTurnId,
+      ...(run.actionInvocation ? { actionInvocation: run.actionInvocation } : {}),
       teamCredentialProviderModel: ownTeamCredentialModel,
     };
   }
@@ -623,8 +624,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   /**
    * The host-only Run scope one Session-owned Run's runtime composition consumes.
    *
-   * It carries no permission decision or Account identity: it exposes this
-   * bridge's canonical occurrence owner and re-scopes the parent Session's
+   * It retains the accepted Action invocation, exposes this bridge's
+   * canonical occurrence owner and re-scopes the parent Session's
    * durable transcript writer onto this Run's sidechain. Detached Runs and Runs
    * without parent Session custody receive no scope at all.
    */
@@ -639,6 +640,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     return Object.freeze({
       runId,
       workDepth: run.depth,
+      ...(run.actionInvocation ? { actionInvocation: run.actionInvocation } : {}),
       sidechainId,
       readCurrentRunOccurrence: (id: string) => (
         this.runOccurrenceWitnesses.reader.readCurrentRunOccurrence(id)
@@ -2976,6 +2978,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   async ensure(
     runId: string,
     params: Readonly<{
+      actionInvocation?: ExecutionRunState['actionInvocation'];
       resume?: boolean | 'if_running';
       signal?: AbortSignal;
       /** Host-only coupling used by bounded `send({ resume: true })`. */

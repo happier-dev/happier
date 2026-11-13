@@ -5,6 +5,7 @@ import {
     storage,
 } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
+import { registerVoiceRunActionReverseHandler } from './voiceRunActionReverseHandler';
 import {
     ConnectedServiceBindingsV2Schema} from '@happier-dev/protocol/connect/connected-service-bindings';
 import {
@@ -29,6 +30,7 @@ import {
     doesVoiceAgentRunMetadataMatchBackendTarget,
 } from '@/voice/persistence/voiceAgentRunMetadata';
 import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
+import { resolveBackendTargetOperationalAgentId } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { resolveDisabledVoiceActionIdsFromState } from '@/voice/tools/resolveDisabledVoiceActionIds';
 import {
     DEFAULT_AGENT_ID,
@@ -67,7 +69,7 @@ import { readSessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
 import { resolveVoiceSessionModelSelection } from '@/voice/agent/resolveVoiceSessionModelSelection';
 import { projectSessionModelSelectionV2ToV1 } from '@happier-dev/protocol/providers/selection/v2';
 import { resolveSessionActionDefaultBackend, resolveSessionActionDefaultTarget } from '@/sync/domains/session/resolveSessionActionDefaultBackend';
-import { convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { buildBackendTargetKeyV2, convertBackendTargetRefV2ToV1, readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { resolveVoiceConfiguredAgentTarget } from '@/voice/agent/resolveVoiceConfiguredAgentTarget';
 import { requireVoiceSessionAgentSelection, resolveVoiceSessionAgentSelection } from '@/voice/agent/resolveVoiceSessionAgentSelection';
 import { isVoiceConversationSystemSessionMetadata } from '@/voice/persistence/voiceConversationSystemSessionLookup';
@@ -555,7 +557,11 @@ export async function initializeVoiceAgentHandle({
             targetAddress ?? nextRpcSessionId,
         );
         resolvedBackendTarget = admittedBackendTarget;
-        resolvedAgentId = resolvedBackendTarget?.kind === 'builtInAgent' ? resolvedBackendTarget.agentId : null;
+        const operationalTarget = resolvedBackendTarget ? readBackendTargetRefV2(resolvedBackendTarget) : null;
+        resolvedAgentId = operationalTarget ? resolveBackendTargetOperationalAgentId({
+            backendTarget: operationalTarget,
+            selectedEntry: resolvedBackendTarget?.kind === 'builtInAgent' ? { agentId: resolvedBackendTarget.agentId } : null,
+        }) : null;
         // Session-sourced starts follow their coding root. A fixed Agent uses
         // its saved choice, then its exact carrier's admitted choice, otherwise
         // the daemon's Account default.
@@ -566,14 +572,14 @@ export async function initializeVoiceAgentHandle({
         if (agentSource === 'agent') {
             connectedServices = projectVoiceAgentConnectedServices(agentCfg) ?? connectedServices;
         }
-        if (agentSource === 'session' && resolvedAgentId && targetAddress
+        if (agentSource === 'session' && resolvedAgentId && operationalTarget && targetAddress
             && targetAddress.sessionId !== nextRpcSessionId
             && (agentCfg.chatModelSource === 'session' || agentCfg.commitModelSource === 'session')) {
             const sessionSelection = await resolveVoiceSessionModelSelection({
                 sessionAddress: targetAddress,
                 signal,
                 agentId: resolvedAgentId,
-                agentTargetKey: buildAgentUniverseBackendTargetKey(resolvedAgentId),
+                agentTargetKey: buildBackendTargetKeyV2(operationalTarget),
             });
             let selection: NonNullable<typeof chatChoice> | undefined;
             if (sessionSelection?.v === 2) {
@@ -922,10 +928,12 @@ export async function initializeVoiceAgentHandle({
 
     if (started.preparedInstructionsFor) onPreparedInstructionsFor?.(started.preparedInstructionsFor);
 
-    return {
+    const handle: VoiceAgentHandle = {
         accountLifetime,
         transcriptEpoch,
         signal,
+        actionInvocation: started.actionInvocation,
+        toolTurnContext: {},
         // A fresh fallback start uses its new admission. Only this exact
         // retained Run can override the current Account preference snapshot.
         voicePolicy: retainedRunState?.runId === started.voiceAgentId
@@ -938,4 +946,9 @@ export async function initializeVoiceAgentHandle({
         rpcSessionId,
         agentBackendId: backend === 'daemon' ? resolvedAgentId : null,
     };
+    const machineId = readVoiceSessionOwnerMetadataFromState(storage.getState(), {
+        serverId: accountLifetime.scope.serverId, sessionId: rpcSessionId,
+    })?.machineId;
+    if (machineId) registerVoiceRunActionReverseHandler(handle, sessionId, machineId);
+    return handle;
 }

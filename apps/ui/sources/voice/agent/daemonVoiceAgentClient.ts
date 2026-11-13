@@ -4,8 +4,8 @@ import { sessionRpcWithServerAccountScope } from '@/sync/runtime/orchestration/s
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { isSocketIoAckTimeoutError } from '@happier-dev/sync-client';
 import { SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { ExecutionRunActionResponseSchema, ExecutionRunEnsureOrStartResponseSchema } from '@happier-dev/protocol/execution/runs/index';
-import { ExecutionRunStopResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { ExecutionRunActionResponseSchema, ExecutionRunEnsureResponseSchema } from '@happier-dev/protocol/execution/runs/index';
+import { ExecutionRunStartFailureDetailsV1Schema, ExecutionRunStartResponseSchema, ExecutionRunStopResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { ExecutionRunTurnStreamCancelResponseSchema, ExecutionRunTurnStreamReadResponseSchema, ExecutionRunTurnStreamStartResponseSchema, ExecutionRunUserTranscriptCommitResponseSchema, type ExecutionRunTurnStreamReadResponse } from '@happier-dev/protocol/execution/runs/streaming';
 import { ExecutionRunPreparedInstructionsForSchema } from '@happier-dev/protocol/execution/runs/runPrimitives';
 import type { ExecutionRunUserTranscriptDirective} from '@happier-dev/protocol/execution/runs/streaming';
@@ -13,8 +13,8 @@ import type { VoiceAssistantAction } from '@happier-dev/protocol/voice/actions';
 
 import type { VoiceAgentClient, VoiceAgentStartParams, VoiceAgentStartResult, VoiceAgentSendTurnOptions } from './types';
 import { streamVoiceAgentTurn } from './streamVoiceAgentTurn';
-import { requiresProviderSafeModelSelectionRpc } from '@/sync/ops/providerDaemonSessionCompatibility';
-import { requiresProviderSafeExecutionRunStartRpc } from '@happier-dev/protocol/execution/runs/startRequest';
+import { ExternalActionRequesterInvocationBaseV1Schema } from '@happier-dev/protocol/sessions/creation/externalActionRequesterInvocationBaseV1';
+import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { sleepWithSignal } from '@happier-dev/plugin-sdk/async';
 import { storage } from '@/sync/domains/state/storage';
@@ -109,10 +109,6 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
     const commitModelSelection = params.commitTeamCredentialModel ? undefined : params.commitModelSelection ?? (commitModelId && commitModelId !== 'default'
       ? { agentTargetKey, providerConnectionId: null, modelId: commitModelId }
       : undefined);
-    const ensureOrStartMethod = requiresProviderSafeExecutionRunStartRpc({ modelSelection: chatModelSelection }, true)
-      || requiresProviderSafeModelSelectionRpc(chatModelSelection, commitModelSelection)
-      ? SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1
-      : SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START;
     const startPayload = {
       intent: 'voice_agent',
       backendTarget,
@@ -156,21 +152,33 @@ export class DaemonVoiceAgentClient implements VoiceAgentClient {
     };
 
     const ensureOrStart = async () => {
-      const res: any = await this.sessionRpc({
-        sessionId: params.sessionId,
-        method: ensureOrStartMethod,
-        timeoutMs: VOICE_AGENT_LIFECYCLE_RPC_TIMEOUT_MS,
-        payload: {
-          runId: typeof params.existingRunId === 'string' ? params.existingRunId : null,
-          resume: params.resumeWhenInactive !== false,
-          start: startPayload,
-        },
-      });
+      const execute = createFrontDoorActionExecute();
+      const existingRunId = typeof params.existingRunId === 'string' ? params.existingRunId : null;
+      const res = await execute(existingRunId ? 'execution.run.ensure' : 'execution.run.start', existingRunId
+        ? { sessionId: params.sessionId, runId: existingRunId, resume: params.resumeWhenInactive !== false }
+        : { ...startPayload, sessionId: params.sessionId }, {
+          surface: 'voice', serverId: this.scope.serverId, expectedAccountId: this.scope.accountId,
+          defaultSessionId: params.sessionId, actionCaller: { kind: 'host' },
+          ...(this.lifetimeSignal ? { signal: this.lifetimeSignal } : {}),
+        });
+      if (!res.ok) {
+        const failure = ExecutionRunStartFailureDetailsV1Schema.safeParse(res.details);
+        if (failure.success && failure.data.executionRunStart.runCreation === 'outcomeUnknown') {
+          throw new VoiceAgentStartOutcomeUnknownError(createRpcCallError({ error: res.error, errorCode: res.errorCode }));
+        }
+      }
       throwIfRpcError(res);
-      const parsed = ensureOk(res, ExecutionRunEnsureOrStartResponseSchema);
-      if (!parsed.ok) throw createRpcCallError({ error: parsed.error, errorCode: parsed.errorCode });
-      return { voiceAgentId: parsed.runId,
-        ...(parsed.preparedInstructionsFor ? { preparedInstructionsFor: parsed.preparedInstructionsFor } : {}) };
+      if (!res.ok) throw createRpcCallError({ error: res.error, errorCode: res.errorCode });
+      const parsed = existingRunId ? ensureOk(res.result, ExecutionRunEnsureResponseSchema)
+        : ensureOk(res.result, ExecutionRunStartResponseSchema);
+      throwIfRpcError(parsed);
+      const prepared = ExecutionRunPreparedInstructionsForSchema.safeParse('preparedInstructionsFor' in parsed
+        ? parsed.preparedInstructionsFor : undefined);
+      const invocation = ExternalActionRequesterInvocationBaseV1Schema.safeParse('actionInvocation' in parsed
+        ? parsed.actionInvocation : undefined);
+      return { voiceAgentId: existingRunId ?? ExecutionRunStartResponseSchema.parse(parsed).runId,
+        ...(invocation.success ? { actionInvocation: invocation.data } : {}),
+        ...(prepared.success ? { preparedInstructionsFor: prepared.data } : {}) };
     };
 
     try {

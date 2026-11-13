@@ -17,7 +17,7 @@ export function resolveVoiceActionExecution(parameters: unknown) {
   if (!parsed.success) return null;
   const spec = listVoiceToolActionSpecs().find((candidate) => candidate.id === parsed.data.actionId);
   const toolName = spec?.bindings?.voiceClientToolName;
-  if (!spec || spec.id === 'action.invoke' || !toolName) return null;
+  if (!spec || !toolName) return null;
   // Resolve routing here; the Action executor (or a Voice override) owns input validation.
   return { spec, input: parsed.data.input ?? {}, toolName };
 }

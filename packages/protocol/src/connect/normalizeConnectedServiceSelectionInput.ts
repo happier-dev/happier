@@ -194,8 +194,7 @@ export function normalizeConnectedServiceSelectionInput(
         // Canonical power form: a full bindings object.
         const canonical = ConnectedServiceBindingsV2IngressSchema.safeParse(input);
         if (canonical.success) {
-            const hasBinding = Object.keys(canonical.data.bindingsByServiceId).length > 0;
-            return { ok: true, bindings: hasBinding ? canonical.data : undefined, defaultServiceIds: [] };
+            return { ok: true, bindings: canonical.data, defaultServiceIds: [] };
         }
         return invalid('Invalid connected-services object.');
     }

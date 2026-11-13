@@ -21,7 +21,7 @@ import {
 import type { HappierBuiltInToolDefinition } from './types';
 
 type ActionEnabledPredicate = (id: ActionId) => boolean;
-export type HappierBuiltInToolSurface = 'mcp' | 'cli' | 'agent';
+export type HappierBuiltInToolSurface = 'mcp' | 'cli' | 'agent' | 'voice';
 
 type ActionToolEntry = Readonly<{
   id: string;
@@ -64,7 +64,9 @@ const BUILT_IN_ACTION_TOOL_ENTRIES = Object.freeze(
       description: spec.description ?? spec.title,
       inputSchema: spec.surfaceBindings?.mcp?.inputSchema ?? spec.inputSchema,
       ...(spec.examples ? { examples: spec.examples } : {}),
-      ...(spec.contextualDefaults ? { contextualDefaults: spec.contextualDefaults } : {}),
+      // No contextualDefaults copy: the spec derives them from its input schema on
+      // read, which would build every Action schema in every process importing this
+      // module. Built-in tools bind defaults from their spec (`catalog.ts`).
       provenance: 'first_party' as const,
     }))
     .filter((entry) => entry.toolName.length > 0),
@@ -116,12 +118,13 @@ function isAuthorizedPluginToolContribution(
 }
 
 function toToolSurfaces(
-  surfaces: readonly ('mcp' | 'cli' | 'agent')[],
+  surfaces: readonly HappierBuiltInToolSurface[],
 ): Readonly<Record<HappierBuiltInToolSurface, boolean>> {
   return Object.freeze({
     mcp: surfaces.includes('mcp'),
     cli: surfaces.includes('cli'),
     agent: surfaces.includes('agent'),
+    voice: surfaces.includes('voice'),
   });
 }
 

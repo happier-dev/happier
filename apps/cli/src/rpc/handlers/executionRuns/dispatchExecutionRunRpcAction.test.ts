@@ -1101,6 +1101,8 @@ describe('createExecutionRunRpcActionExecutor', () => {
       errorCode: 'execution_run_profile_preparation_failed',
       error: 'Account settings could not be read',
       details: { executionRunStart: { v: 1, runCreation: 'noRunCreated', errorClass: 'Error' } },
+      failureCause: { phase: 'execution.run.start', errorClass: 'Error',
+        errorCode: 'execution_run_profile_preparation_failed', httpStatus: null },
     });
   });
 

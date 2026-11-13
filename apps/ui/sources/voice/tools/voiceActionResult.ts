@@ -64,6 +64,7 @@ export function serializeVoiceActionExecuteResult(
     alternativeAgent?: VoiceSpawnAlternative;
   }>,
 ): string {
+  if (options?.canonicalResult && !result.ok) return JSON.stringify(result);
   if (!result.ok) {
     const details = isRecord(result.details) ? result.details : {};
     const errorDetail = normalizeSpawnSessionErrorDetail(details.errorDetail);

@@ -26,7 +26,7 @@ import { resolveExecutionRunLifecycle } from './resolveExecutionRunLifecycle';
 import { resolveExecutionRunResumeBackendOptions, type ExecutionRunResumeBackendOptions } from './resolveExecutionRunResumeBackendOptions';
 
 export type ExecutionRunEnsureResult =
-  | Readonly<{ ok: true }>
+  | Readonly<{ ok: true; actionInvocation?: ExecutionRunState['actionInvocation'] }>
   | Readonly<{
       ok: false;
       errorCode: string;
@@ -38,6 +38,7 @@ export type ExecutionRunEnsureResult =
 export async function ensureExecutionRun(args: Readonly<{
   runId: string;
   params: Readonly<{
+    actionInvocation?: ExecutionRunState['actionInvocation'];
     resume?: boolean | 'if_running';
     signal?: AbortSignal;
     /** Host-only: the caller will couple bounded recovery to an admitted input. */
@@ -97,7 +98,7 @@ export async function ensureExecutionRun(args: Readonly<{
     ctrl = args.controllers.get(args.runId) ?? null;
   }
   let lifecycle = resolveExecutionRunLifecycle(run, ctrl, lifecycleOperation);
-  if (lifecycle.projection.state === 'current') return { ok: true };
+  if (lifecycle.projection.state === 'current') return { ok: true, ...(run.actionInvocation ? { actionInvocation: run.actionInvocation } : {}) };
   if (lifecycle.projection.state === 'recovering') return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Resume already in progress', resumeFailureKind: 'indeterminate' };
 
   if (!wantsResume) return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Not running', resumeFailureKind: 'indeterminate' };
@@ -132,7 +133,7 @@ export async function ensureExecutionRun(args: Readonly<{
     if (!run) return { ok: false, errorCode: 'execution_run_not_found', error: 'Not found', resumeFailureKind: 'indeterminate' };
     ctrl = args.controllers.get(args.runId) ?? null;
     lifecycle = resolveExecutionRunLifecycle(run, ctrl, lifecycleOperation);
-    if (lifecycle.projection.state === 'current') return { ok: true };
+    if (lifecycle.projection.state === 'current') return { ok: true, ...(run.actionInvocation ? { actionInvocation: run.actionInvocation } : {}) };
     if (lifecycle.projection.state === 'recovering') return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Resume already in progress', resumeFailureKind: 'indeterminate' };
     if (lifecycle.projection.state !== 'recoverable') {
       const error = lifecycle.unavailableReason === 'unsupported' ? 'Not supported' : 'Missing resume handle';
@@ -140,6 +141,10 @@ export async function ensureExecutionRun(args: Readonly<{
     }
     const config = run.voiceAgentConfig ?? null;
     if (!config) return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Missing voice agent config', resumeFailureKind: 'permanent' };
+    if (!run.actionInvocation && args.params.actionInvocation) {
+      run = { ...run, actionInvocation: args.params.actionInvocation };
+      args.runs.set(args.runId, run);
+    }
     const resumeHandle = run.resumeHandle!;
 
     const voiceRun = run;
@@ -236,6 +241,8 @@ export async function ensureExecutionRun(args: Readonly<{
         disabledActionIds: config.disabledActionIds,
         resumeHandle,
       }, {
+        // The authored native-function declaration covers fresh creation.
+        actionTransport: 'mcp',
         ...(args.params.signal ? { signal: args.params.signal } : {}),
         createRuntime: ({
           backendTarget,
@@ -312,7 +319,7 @@ export async function ensureExecutionRun(args: Readonly<{
         return { ok: false, errorCode: 'execution_run_not_allowed', error: 'Resume was superseded', resumeFailureKind: 'indeterminate' };
       }
       args.onPublicStateUpdated?.(args.runId);
-      return { ok: true };
+      return { ok: true, ...(resumedRun.actionInvocation ? { actionInvocation: resumedRun.actionInvocation } : {}) };
     } catch (error: unknown) {
       if (!startedVoice) materialization.rollback();
       await retireVoiceResumeOccurrence();

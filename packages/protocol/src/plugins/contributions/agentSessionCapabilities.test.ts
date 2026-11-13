@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { PluginAgentSessionCapabilitiesV2Schema, supportsAgentVoiceFunctions } from './agentSessionCapabilities.js';
+import { PluginAgentSessionCapabilitiesV2Schema, supportsAgentNativeFunctionTools } from './agentSessionCapabilities.js';
 
 const sessions = { open: ['create'], delivery: ['newTurn'], cancel: true };
 
@@ -10,12 +10,12 @@ describe('Agent Session native function declaration', () => {
     expect(PluginAgentSessionCapabilitiesV2Schema.safeParse({ ...sessions, functionTools: false }).success).toBe(false);
     expect(PluginAgentSessionCapabilitiesV2Schema.parse(sessions)).not.toHaveProperty('functionTools');
   });
-  it('requires both native functions and Session creation for Voice', () => {
-    expect(supportsAgentVoiceFunctions({ sessions: { open: ['create'], functionTools: true } })).toBe(true);
+  it('requires both native functions and fresh Session creation', () => {
+    expect(supportsAgentNativeFunctionTools({ sessions: { open: ['create'], functionTools: true } })).toBe(true);
     for (const capabilities of [undefined, null, {}, { sessions: null }, { sessions: { open: ['create'] } },
       { sessions: { open: ['create'], functionTools: false } }, { sessions: { open: ['resume'], functionTools: true } },
       { sessions: { functionTools: true } }]) {
-      expect(supportsAgentVoiceFunctions(capabilities)).toBe(false);
+      expect(supportsAgentNativeFunctionTools(capabilities)).toBe(false);
     }
   });
 });

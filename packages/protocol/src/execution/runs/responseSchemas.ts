@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
+import { ExternalActionRequesterInvocationBaseV1Schema as ExternalActionRequesterInvocationV1Schema } from '../../sessions/creation/externalActionRequesterInvocationBaseV1.js';
 import { ApprovalProfileIdV1Schema } from '../../actions/approvalProfiles.js';
 import { ExecutionRunPreparedInstructionsForSchema } from './runPrimitives.js';
 import { ExecutionRunPermissionRequestIdentitySchema } from './runPrimitives.js';
@@ -389,6 +390,7 @@ export const ExecutionRunStartResponseSchema = lazyZodSchema(() => z.looseObject
   resolvedSelection: z.optional(ExecutionRunResolvedSelectionSchema),
   wait: z.optional(ExecutionRunWaitResultSchema),
   preparedInstructionsFor: z.optional(ExecutionRunPreparedInstructionsForSchema),
+  actionInvocation: z.optional(ExternalActionRequesterInvocationV1Schema),
 }));
 export type ExecutionRunStartResponse = z.infer<typeof ExecutionRunStartResponseSchema>;
 

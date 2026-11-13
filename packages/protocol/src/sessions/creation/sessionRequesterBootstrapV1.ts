@@ -23,10 +23,7 @@ import { computeCanonicalDomainSeparatedDigest } from '../../crypto/canonicalDig
 import { ManagedWakeTargetV1Schema, type ManagedWakeTargetV1 } from '../../machines/managed/managedIntentV1.js';
 import type { AccessibleMachineAccessV1 } from '../../machines/machineAccessV1.js';
 import { SessionRequesterInstallationSealedBootstrapV1Schema } from './sessionRequesterBootstrapSchemasV1.js';
-import { PluginIdSchema } from '../../plugins/pluginId.js';
-import { PluginContributionLocalIdSchema } from '../../plugins/contributionIdentity.js';
-import { PluginSourceCustodyV1Schema } from '../../plugins/runtime/sourceCustody.js';
-import { PluginMachineMaterializationRefV1Schema } from '../../plugins/availability/materializationRefV1.js';
+import { ExternalActionRequesterInvocationBaseV1Schema } from './externalActionRequesterInvocationBaseV1.js';
 import { CallerInputConstraintsV1Schema } from '../../auth/callerInputConstraintsV1.js';
 import { AgentPermissionIntentV1Schema, parseAgentPermissionIntentV1Alias } from '../../runtime/permissionIntentV1.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
@@ -107,16 +104,7 @@ const RequesterAccountContextPurposeV1Schema = lazyZodSchema(() => z.union([
   }), request: WorkspaceSyncPrepareBetweenRequestV1Schema }),
 ]));
 /** Host-stamped facts inside the existing private box, never a public Action field. */
-export const ExternalActionRequesterInvocationV1Schema = lazyZodSchema(() => z.strictObject({
-  caller: z.union([
-    z.strictObject({ kind: z.literal('host') }),
-    z.strictObject({ kind: z.literal('plugin'), pluginId: asProtocolZod(PluginIdSchema),
-      contributionLocalId: asProtocolZod(PluginContributionLocalIdSchema), occurrenceId: z.optional(z.string().check(z.minLength(1))),
-      sourceCustody: z.optional(PluginSourceCustodyV1Schema), materialization: z.optional(PluginMachineMaterializationRefV1Schema),
-    }),
-  ]),
-  surface: z.enum(['ui', 'voice', 'agent', 'mcp', 'cli', 'rpc', 'api', 'plugin']),
-  authority: z.enum(['present_user', 'account_automation']),
+export const ExternalActionRequesterInvocationV1Schema = lazyZodSchema(() => z.extend(ExternalActionRequesterInvocationBaseV1Schema, {
   actionRequestAttributionV1: z.optional(ActionRequestAttributionV1Schema),
   callerPermissionMode: z.optional(z.nullable(asProtocolZod(AgentPermissionIntentV1Schema))),
   callerInputConstraints: z.optional(CallerInputConstraintsV1Schema),

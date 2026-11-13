@@ -10,8 +10,9 @@ import {
   mountedWorkReadClientRpcMethod,
   sessionUiActionClientRpcMethod,
   parseClientActionDispatchResult,
+  voiceRunActionClientRpcMethod, UiActionDispatchResultV1Schema, type VoiceRunActionDispatchRequestV1,
 } from '@happier-dev/protocol/actions/clientDispatchV1';
-import type { ActionExecutorDeps } from '@happier-dev/protocol';
+import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
 import { projectApprovalExecutionOriginCaller } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionExecuteFailureSchema, ClientActionRpcFailureCodeV1Schema, readUnexpectedActionErrorDiagnosticV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { isWorkflowAuthoringActionId, workflowDraftClientRpcMethod, WorkflowDraftGetInputV1Schema } from '@happier-dev/protocol/actions/workflowAuthoringAction';
@@ -34,10 +35,16 @@ export type ClientActionMachineRpc = Readonly<{
     Promise<Readonly<{ ok: true; result: unknown; answeringClientId?: string; answeringClientIds?: readonly string[] }> | Readonly<{ ok: false; errorCode?: string; answeringClients?: readonly SocketRpcAnsweringClientCandidateV1[] }>>;
 }>;
 
-/** One delivery owner for every built-in client-placed Action; no retry after issuance. */
+type ClientActionReverseRequest = Omit<Parameters<NonNullable<ActionExecutorDeps['clientActionExecute']>>[0], 'context' | 'execute'> & Readonly<{
+  context: ActionExecutorContext;
+  execute?: Parameters<NonNullable<ActionExecutorDeps['clientActionExecute']>>[0]['execute'];
+}>;
+
+/** One delivery owner for client continuations and the owning Voice Run frontdoor; no retry after issuance. */
 export function createClientActionReverseDispatcher(
   getMachineClient: () => ClientActionMachineRpc | null | undefined,
-): NonNullable<ActionExecutorDeps['clientActionExecute']> {
+  voiceRun?: VoiceRunActionDispatchRequestV1['voiceRun'],
+): (request: ClientActionReverseRequest) => Promise<ActionExecuteResult> {
   return async ({ actionId, input, context, executeChild, admittedHostReviewedChildren }) => {
     const requestedClientId: unknown = input && typeof input === 'object' ? Reflect.get(input, 'clientId') : undefined;
     const clientId = typeof requestedClientId === 'string' ? requestedClientId : undefined;
@@ -49,7 +56,7 @@ export function createClientActionReverseDispatcher(
     });
     const client = getMachineClient();
     const mountedDiagnosticsActionId = MOUNTED_BROWSER_DIAGNOSTICS_ACTION_IDS.find(id => id === actionId);
-    if (mountedDiagnosticsActionId) {
+    if (mountedDiagnosticsActionId && !voiceRun) {
       // The Action has already been admitted here. Continue at its exact mounted
       // engine, not a Session-wide App executor that can ask for approval again.
       const execute = createBrowserAutomationReverseDispatcher({ getMachineClient: () => client ? {
@@ -104,7 +111,8 @@ export function createClientActionReverseDispatcher(
     // Read and invoke select the same App socket. The current-UI command owner
     // decides whether the opaque command still exists; its separate registration
     // must not re-decide the answering client's availability.
-    const method = actionId === 'session.work.get' && input && typeof input === 'object'
+    const method = voiceRun ? voiceRunActionClientRpcMethod(voiceRun.runId)
+      : actionId === 'session.work.get' && input && typeof input === 'object'
       && typeof Reflect.get(input, 'sessionId') === 'string'
       ? mountedWorkReadClientRpcMethod(actionId, Reflect.get(input, 'sessionId'))
       : actionId === 'inbox.get' ? mountedWorkReadClientRpcMethod(actionId)
@@ -121,9 +129,10 @@ export function createClientActionReverseDispatcher(
     if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
     const actionCaller = context.actionCaller ? projectApprovalExecutionOriginCaller(context.actionCaller) : undefined;
     if (context.actionCaller && !actionCaller) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
-    let request: UiActionDispatchRequestV1;
+    let request: UiActionDispatchRequestV1 | VoiceRunActionDispatchRequestV1;
     try {
-      request = buildUiActionDispatchRequestV1({ actionId, input, ...(admittedHostReviewedChildren ? { admittedHostReviewedChildren } : {}), context: {
+      request = voiceRun ? { v: 1, actionId, input, voiceRun }
+        : buildUiActionDispatchRequestV1({ actionId, input, ...(admittedHostReviewedChildren ? { admittedHostReviewedChildren } : {}), context: {
         ...context, surface: context.surface ?? 'agent', authority: context.authority ?? 'account_automation',
         ...(actionCaller ? { actionCaller } : {}),
       } });
@@ -177,7 +186,11 @@ export function createClientActionReverseDispatcher(
       const refusal = response.result && typeof response.result === 'object'
         && 'errorCode' in response.result ? response.result.errorCode : undefined;
       if (refusal === RPC_ERROR_CODES.METHOD_NOT_FOUND || refusal === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) return unavailable();
-      const execution = parseClientActionDispatchResult(actionId, response.result);
+      // The Voice owner validates the Action result before applying the same
+      // provider privacy projection used by native Voice tool delivery.
+      const voiceResult = voiceRun ? UiActionDispatchResultV1Schema.safeParse(response.result) : null;
+      const execution = voiceRun ? voiceResult?.success ? voiceResult.data.execution : null
+        : parseClientActionDispatchResult(actionId, response.result);
       const answeringClients = listsAnsweringClients && response.answeringClientId ? {
         answeringClientId: response.answeringClientId,
         ...(response.answeringClientIds ? { answeringClientIds: [...response.answeringClientIds] } : {}),

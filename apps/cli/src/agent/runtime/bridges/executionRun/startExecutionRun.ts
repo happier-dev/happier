@@ -1,10 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { materializeActionRequestAttributionV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
 import { toVoiceAgentStartError } from '@/agent/voice/agent/voiceAgentStartError';
-import { supportsAgentVoiceFunctions } from '@happier-dev/protocol/plugins/contributions/agentSessionCapabilities';
-import { buildConfiguredAcpAgentSelectionV1 } from '@happier-dev/protocol/agents/executionTargetV1';
-import { readAgentCatalogSnapshot } from '@/agent/catalog/snapshot';
-import { readAgentSessionCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 
 import type { SessionId } from '@/agent/core/AgentMessage';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
@@ -69,7 +65,7 @@ import { createExecutionRunSidechainStreamText } from './sidechainStreamText';
 import {
   areExecutionRunBackendTargetsEqual,
   resolveExecutionRunRuntimeBackendId,
-  resolveExecutionRunRuntimeBackendTarget,
+  supportsExecutionRunNativeFunctionTools,
 } from './backendTargets';
 import { readBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { resolveExecutionRunImplicitRoleIdV1 } from '@happier-dev/protocol/prompts/roles/builtInRolesV1';
@@ -166,6 +162,7 @@ function projectExistingExecutionRunStartResult(run: ExecutionRunState): Executi
     runId: run.runId,
     callId: run.callId,
     sidechainId: run.sidechainId,
+    ...(run.actionInvocation ? { actionInvocation: run.actionInvocation } : {}),
     ...(requestedConfiguration ? { requestedConfiguration } : {}),
     ...(run.launch?.selectionSource ? { resolvedSelection: projectExecutionRunResolvedSelection({
       source: run.launch.selectionSource,
@@ -367,20 +364,6 @@ export async function startExecutionRun(args: StartExecutionRunArgs): Promise<Ex
     await args.recoverRetainedRuns?.();
     const existing = args.runs.get(requestBoundRunId);
     if (existing) return projectExistingExecutionRunStartResult(existing);
-  }
-  if (args.params.intent === 'voice_agent') {
-    const contributions = args.contributions ?? readAgentCatalogSnapshot();
-    const target = resolveExecutionRunRuntimeBackendTarget(args.params.backendTarget);
-    const configuredIdentity = target?.kind === 'configuredAcpBackend'
-      ? buildConfiguredAcpAgentSelectionV1(target.backendId).agentTarget.identity : null;
-    const contribution = configuredIdentity
-      ? [...contributions.agentDefinitionsById.values()].find(agent => agent.identity?.pluginId === configuredIdentity.pluginId
-        && agent.identity.localId === configuredIdentity.localId)
-      : contributions.agentDefinitionsById.get(resolveExecutionRunRuntimeBackendId(args.params.backendTarget));
-    if (!supportsAgentVoiceFunctions({ sessions: readAgentSessionCapabilities(contribution?.richDefinition?.definition) })) {
-      throw markExecutionRunStartFailure(new VoiceAgentError('VOICE_AGENT_UNSUPPORTED',
-        'This Agent cannot receive native Voice Action functions.'), 'noRunCreated');
-    }
   }
   // Generated role guidance cannot supply an authored review scope.
   assertPreparedReviewRunStartAllowed(args.params);
@@ -641,6 +624,7 @@ async function startAdmittedExecutionRun(
   });
   const startResult: ExecutionRunStartResult = {
     runId,
+    ...(args.params.actionInvocation ? { actionInvocation: args.params.actionInvocation } : {}),
     callId,
     sidechainId,
     ...(requestedConfiguration ? { requestedConfiguration } : {}),
@@ -726,6 +710,7 @@ async function startAdmittedExecutionRun(
   try {
     args.runs.set(runId, {
       runId,
+      ...(args.params.actionInvocation ? { actionInvocation: args.params.actionInvocation } : {}),
       ...(args.params.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: args.params.requesterWorkAttributionV1 } : {}),
       callId,
       sidechainId,
@@ -1072,6 +1057,7 @@ async function startAdmittedExecutionRun(
         ...(typeof bootstrapTimeoutMs === 'number' ? { bootstrapTimeoutMs } : {}),
         disabledActionIds,
       }, {
+        actionTransport: supportsExecutionRunNativeFunctionTools(args.params.backendTarget, args.contributions) ? 'native' : 'mcp',
         ...(args.params.signal ? { signal: args.params.signal } : {}),
         readHistoryContextWindowTokens: async ({ runtime, signal }) => {
           const selection = childSelection;

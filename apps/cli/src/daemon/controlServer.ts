@@ -1,15 +1,19 @@
+import { updateSessionMarkerHeldAgents } from './sessionRegistry';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
+import { parseSessionTrackingKey, type SessionTrackingKey, type TrackedSessionMap } from '@/daemon/sessions/sessionTrackingKey';
 /**
  * HTTP control server for daemon management
  * Provides endpoints for listing sessions, stopping sessions, and daemon shutdown
  */
 
-import fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from 'fastify';
+import fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest, type preHandlerAsyncHookHandler } from 'fastify';
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod/mini';
 import { SessionFollowOccurrenceNotificationSchema, type SessionFollowOccurrenceNotification } from './sessions/sessionActivityChangedContract';
 import { SessionActivityChangedResponseSchema, projectSessionFollowOccurrenceDiagnostic, type SessionActivityChangedResult } from './sessions/sessionActivityChangedContract';
 import { serializerCompiler, validatorCompiler, ZodTypeProvider } from 'fastify-type-provider-zod';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
+import { MACHINE_ROLE_CONTROL_ROUTES } from './roles/machineRoleRpcNamespaces';
 import { configuration } from '@/configuration';
 import { ScmDiffSummaryResultRevisionHintSchema, type ScmDiffSummaryResultRevisionHint } from '@happier-dev/protocol/scm/diffSummaryResult';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunch';
@@ -105,6 +109,7 @@ import {
 } from '@/session/shared/spawnSessionContract';
 import { mergeSpawnSessionOptions, SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { continueSessionWithReplay } from '@/session/replay/continueWithReplay';
+import { createRandomSpawnNonce } from '@/session/shared/spawnNonce';
 import { parseSessionContinueWithReplayRpcParamsCompatIngress } from '@/session/replay/continueWithReplayCompatIngress';
 import { getSessionHostBridge } from '@/agent/runtime/bridges/session/SessionHostBridge';
 import { SessionConnectedServiceAuthSwitchRpcParamsSchema } from '@happier-dev/protocol/connect/sessionConnectedServiceAuthSwitch';
@@ -203,10 +208,11 @@ export type AgentRuntimeDaemonServiceRoutes = Readonly<{
   authorizeExecutionRunAction?(
     operation: Extract<AgentRuntimeDaemonServiceRequestV1['operation'], { kind: 'action.execute' }>,
     context: Readonly<{ sessionId: string; trackedSession: TrackedSession; signal: AbortSignal }>,
-  ): Promise<boolean>;
+  ): Promise<boolean | Readonly<{ actionInvocation: import('@happier-dev/protocol/sessions/creation/externalActionRequesterInvocationBaseV1').ExternalActionRequesterInvocationBaseV1 }>>;
   dispatch(
     request: AgentRuntimeDaemonServiceRequestV1,
     context: Readonly<{
+      actionInvocation?: import('@happier-dev/protocol/sessions/creation/externalActionRequesterInvocationBaseV1').ExternalActionRequesterInvocationBaseV1;
       sessionId: string;
       runner: AgentRuntimeDaemonServiceAuthorityRunnerIdentity;
       retainedAgent: AgentSessionRunnerBindingV1;
@@ -679,10 +685,33 @@ export type RuntimeAuthFailureReportIntake = (body: Readonly<{
       | 'connected_service_runtime_auth_handler_unavailable' | 'connected_service_runtime_auth_recovery_intake_failed' }>
 >;
 
+/**
+ * The control socket's half of the Machine role registration seam (the Machine RPC half is the
+ * role activation runtime). Fastify fixes its route table at listen, so a route owned by a split
+ * role (`MACHINE_ROLE_CONTROL_ROUTES`) gets one extra pre-handler, after its own authentication:
+ * while that role is inactive it answers the same typed refusal as the role's RPC namespaces.
+ */
+function registerMachineRoleControlRoutes(app: FastifyInstance, isMachineRoleActive: ((roleId: string) => boolean) | undefined): void {
+  if (!isMachineRoleActive) return;
+  const roleByPath = new Map<string, string>(Object.entries(MACHINE_ROLE_CONTROL_ROUTES)
+    .flatMap(([roleId, paths]) => paths.map(path => [path, roleId] as const)));
+  app.addHook('onRoute', route => {
+    const roleId = roleByPath.get(route.url);
+    if (!roleId) return;
+    const refuseWhileInactive: preHandlerAsyncHookHandler = async (_request, reply) => {
+      if (isMachineRoleActive(roleId)) return;
+      // The route's own response schemas describe its domain results; this refusal is the role's.
+      await reply.code(503).serializer(JSON.stringify).send({ success: false,
+        error: 'The Machine role that serves this route is not active', errorCode: RPC_ERROR_CODES.MACHINE_ROLE_INACTIVE, roleId });
+    };
+    route.preHandler = [...(route.preHandler ? [route.preHandler].flat() : []), refuseWhileInactive];
+  });
+}
+
 export function createDaemonControlApp({
   skillStore,
   skillUsageRecorder,
-  pidToTrackedSession,
+  trackedSessionsByKey,
   getChildren,
   machineId,
   runtimeId = '',
@@ -737,7 +766,7 @@ export function createDaemonControlApp({
   recordAgentRuntimeDaemonServiceAdmission,
   clearAgentRuntimeDaemonServiceAdmission,
   foregroundAgentRuntimeAdmission,
-  simulatorPreview,
+  resolveSimulatorPreview,
   requestSelfRestart,
   pluginChangeService,
   pluginActionCurrentIntent,
@@ -745,10 +774,11 @@ export function createDaemonControlApp({
   runtimeActionExecute,
   readPluginHardRevocationRevision,
   readPluginCatalogProjection,
+  isMachineRoleActive,
 }: {
   skillStore?: SkillStore;
   skillUsageRecorder?: SkillUsageRecorder;
-  pidToTrackedSession?: Map<number, TrackedSession>;
+  trackedSessionsByKey?: TrackedSessionMap;
   getChildren: () => TrackedSession[];
   machineId: string;
   runtimeId?: string;
@@ -768,6 +798,7 @@ export function createDaemonControlApp({
     metadata: Metadata,
     reconcileCanonicalReadiness?: (tracked: TrackedSession) => Promise<void>,
     sessionCreationOutcome?: SessionCreationOutcome,
+    reportedTrackingKey?: SessionTrackingKey | null,
   ) => void | Promise<void>;
   onSessionActivityChanged?: (sessionId: string | null, followOccurrence?: SessionFollowOccurrenceNotification, executionRunId?: string) => void | SessionActivityChangedResult | Promise<void | SessionActivityChangedResult>;
   onScmDiffSummaryResultUpdated?: (change: ScmDiffSummaryResultRevisionHint) => void;
@@ -889,7 +920,8 @@ export function createDaemonControlApp({
     admission: AgentRuntimeDaemonServiceAdmission,
   ) => Promise<boolean>;
   foregroundAgentRuntimeAdmission?: ForegroundAgentRuntimeAdmissionOwner;
-  simulatorPreview?: SimulatorPreviewRoutes;
+  /** The active `devices` role's simulator preview; null while the role is off. */
+  resolveSimulatorPreview?: () => SimulatorPreviewRoutes | null;
   requestSelfRestart?: (request?: DaemonSelfRestartRequest) => Promise<unknown>;
   pluginChangeService?: DaemonPluginChangeService;
   pluginActionCurrentIntent?: (
@@ -900,6 +932,8 @@ export function createDaemonControlApp({
   /** Canonical daemon runtime owner; session processes have already admitted their Action. */
   runtimeActionExecute?: RuntimeActionExecute;
   readPluginHardRevocationRevision?: (pluginId: string) => Promise<number>;
+  /** The Machine's role set (one owner, P03-ROLES-POLICY); missing = every role, as today. */
+  isMachineRoleActive?: (roleId: string) => boolean;
 }): FastifyInstance {
   const normalizedRuntimeId = runtimeId.trim();
   const normalizedControlToken = controlToken.trim();
@@ -917,6 +951,7 @@ export function createDaemonControlApp({
     debug: (message, data) => logger.debug(message, data),
     warn: (message, data) => logger.warnLocalFile(message, data),
   });
+  registerMachineRoleControlRoutes(app, isMachineRoleActive);
 
   // Set up Zod type provider
   app.setValidatorCompiler(validatorCompiler);
@@ -1279,7 +1314,7 @@ export function createDaemonControlApp({
           const controlControllerTarget = await externalActionApi.resolveManagedControlControllerTarget?.(
             parsed.data.actionId, parsed.data.input, lifetime.signal) ?? null;
           if (requiresManagedMachineDaemonIngress(parsed.data.actionId,
-            resolveActionExecutionPlacementForInput(getActionSpec(parsed.data.actionId), parsed.data.input), controlControllerTarget)
+            resolveActionExecutionPlacementForInput(getActionSpec(parsed.data.actionId), parsed.data.input), controlControllerTarget, parsed.data.input)
             && requiresOriginalAccountMachineActionProof(parsed.data.actionId, parsed.data.input)) {
             if (!externalActionApi.executeOriginalAccountAction)
               return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
@@ -1451,7 +1486,7 @@ export function createDaemonControlApp({
     }
   });
 
-  registerSkillControlRoutes(app, { skillStore, skillUsageRecorder, getChildren, pidToTrackedSession, requireAuth, isShuttingDown: isDaemonQuiescing });
+  registerSkillControlRoutes(app, { skillStore, skillUsageRecorder, getChildren, trackedSessionsByKey, requireAuth, isShuttingDown: isDaemonQuiescing });
 
 
   // Least-privilege gate for the execution-run connected-services bridge. Accepts only the scoped
@@ -1976,6 +2011,32 @@ export function createDaemonControlApp({
     return { ok: true as const };
   });
 
+  // A runner reports its held primary Agent (or none), recorded on the tracked
+  // Session and its marker so a crashed runner's Agent can be spared and adopted.
+  typed.post('/session-holder', {
+    schema: {
+      body: z.strictObject({
+        sessionId: z.string().check(z.minLength(1)),
+        runnerPid: z.number().check(z.int(), z.positive()),
+        heldAgentsV1: z.array(z.strictObject({
+          role: z.literal('primary'),
+          socketPath: z.string().check(z.minLength(1), z.maxLength(4096)),
+          holderPid: z.number().check(z.int(), z.positive()),
+          agentPid: z.number().check(z.int(), z.positive()),
+        })).check(z.maxLength(1)),
+      }),
+      response: { 200: z.strictObject({ ok: z.boolean() }), 401: authSchema401 },
+    },
+    preHandler: requireAuth,
+  }, async (request) => {
+    const { sessionId, runnerPid, heldAgentsV1 } = request.body;
+    const tracked = getChildren().find(child => child.pid === runnerPid && child.happySessionId === sessionId);
+    if (!tracked) return { ok: false };
+    tracked.heldAgentsV1 = heldAgentsV1;
+    await updateSessionMarkerHeldAgents({ trackingKey: tracked.trackingKey, sessionId, heldAgentsV1 });
+    return { ok: true };
+  });
+
   // Session reports itself after creation
   typed.post('/session-activity-changed', {
     schema: {
@@ -2071,6 +2132,7 @@ export function createDaemonControlApp({
       sessionCreationOutcome,
       persistedTakeoverAdmission,
     } = successReport;
+    const reportedTrackingKey = parseSessionTrackingKey(successReport.trackingKey);
 
     if (persistedTakeoverAdmission) {
       // The host sends this strict, attempt-scoped request only after its ordinary startup
@@ -2128,14 +2190,13 @@ export function createDaemonControlApp({
     let requiredReadiness: Promise<void>;
     try {
       requiredReadiness = Promise.resolve(
-        sessionCreationOutcome
-          ? onHappySessionWebhook(
-              sessionId,
-              metadata,
-              undefined,
-              sessionCreationOutcome,
-            )
-          : onHappySessionWebhook(sessionId, metadata),
+        onHappySessionWebhook(
+          sessionId,
+          metadata,
+          undefined,
+          sessionCreationOutcome,
+          reportedTrackingKey,
+        ),
       );
     } catch (error) {
       requiredReadiness = Promise.reject(error);
@@ -3066,6 +3127,7 @@ export function createDaemonControlApp({
     },
     preHandler: requireAuth,
   }, async (_request, reply) => {
+    const simulatorPreview = resolveSimulatorPreview?.();
     if (!simulatorPreview) {
       reply.code(501);
       return { ok: false as const, errorCode: 'simulator_preview_unavailable' as const };
@@ -3089,6 +3151,7 @@ export function createDaemonControlApp({
       reply.code(503);
       return daemonAdmissionRefusedResponse();
     }
+    const simulatorPreview = resolveSimulatorPreview?.();
     if (!simulatorPreview) {
       reply.code(501);
       return { ok: false as const, errorCode: 'simulator_preview_unavailable' as const };
@@ -3247,12 +3310,15 @@ export function createDaemonControlApp({
     const childAction = request.body.operation.kind === 'action.execute' && request.body.operation.executionRun
       ? request.body.operation : null;
     let childActionAuthorized = false;
+    let childActionInvocation: Parameters<AgentRuntimeDaemonServiceRoutes['dispatch']>[1]['actionInvocation'];
     const authorizeChild = agentRuntimeDaemonServices.authorizeExecutionRunAction;
     if (childAction && trackedAuthority && authorizeChild) {
       try {
-        childActionAuthorized = await requestLifetime.run(() => authorizeChild(childAction, {
+        const admission = await requestLifetime.run(() => authorizeChild(childAction, {
           sessionId: request.body.context.sessionId, trackedSession: trackedAuthority.tracked, signal: requestLifetime.signal,
         }));
+        childActionAuthorized = Boolean(admission);
+        childActionInvocation = typeof admission === 'object' ? admission.actionInvocation : undefined;
       } catch { childActionAuthorized = false; }
       requestLifetime.signal.throwIfAborted();
     }
@@ -3469,6 +3535,7 @@ export function createDaemonControlApp({
             retainedAgent: trackedAuthority.retainedAgent,
             invocationContext: trackedAuthority.invocationContext,
             trackedSession: trackedAuthority.tracked,
+            ...(childActionInvocation ? { actionInvocation: childActionInvocation } : {}),
             signal: requestLifetime.signal,
             isCurrent,
           }
@@ -3966,7 +4033,14 @@ export function createDaemonControlApp({
 
         const requestBody = parsedRequest.data;
         const { existingSessionId } = requestBody;
-        const spawnNonce = typeof requestBody.spawnNonce === 'string' ? requestBody.spawnNonce.trim() : '';
+        const normalizedExistingSessionId = typeof existingSessionId === 'string' && existingSessionId.trim().length > 0
+          ? existingSessionId.trim()
+          : undefined;
+        // A fresh runner adopts its canonical Session id only with the launch nonce recorded
+        // here (session marker adoption). Callers that omit it still get one launch.
+        const spawnNonce = typeof requestBody.spawnNonce === 'string' && requestBody.spawnNonce.trim()
+          ? requestBody.spawnNonce.trim()
+          : normalizedExistingSessionId ? '' : createRandomSpawnNonce('daemon.spawn_session');
         const nonceAdmission = await claimSpawnNonceAdmission(spawnNonce);
         if (nonceAdmission.type === 'success') {
           return {
@@ -3993,12 +4067,9 @@ export function createDaemonControlApp({
 
         let result: SpawnSessionResult;
         try {
-          const normalizedExistingSessionId = typeof existingSessionId === 'string' && existingSessionId.trim().length > 0
-            ? existingSessionId.trim()
-            : undefined;
           result = await spawnSession(
             mergeSpawnSessionOptions(
-              requestBody,
+              spawnNonce ? { ...requestBody, spawnNonce } : requestBody,
               normalizedExistingSessionId ? { existingSessionId: normalizedExistingSessionId } : {},
               normalizedExistingSessionId ? { omit: ['sessionId'] } : {},
             ) as SpawnSessionOptions,
@@ -4466,7 +4537,7 @@ export function createDaemonControlApp({
 export function startDaemonControlServer({
   skillStore,
   skillUsageRecorder,
-  pidToTrackedSession,
+  trackedSessionsByKey,
   getChildren,
   machineId,
   runtimeId = '',
@@ -4496,7 +4567,7 @@ export function startDaemonControlServer({
   recordAgentRuntimeDaemonServiceAdmission,
   clearAgentRuntimeDaemonServiceAdmission,
   foregroundAgentRuntimeAdmission,
-  simulatorPreview,
+  resolveSimulatorPreview,
   handleConnectedServiceRuntimeAuthFailure,
   authorizeConnectedServiceRuntimeAuthFailure,
   resolveConnectedServiceRuntimeAuthResumePromptMode,
@@ -4528,10 +4599,11 @@ export function startDaemonControlServer({
   externalActionApi,
   runtimeActionExecute,
   readPluginCatalogProjection,
+  isMachineRoleActive,
 }: {
   skillStore?: SkillStore;
   skillUsageRecorder?: SkillUsageRecorder;
-  pidToTrackedSession?: Map<number, TrackedSession>;
+  trackedSessionsByKey?: TrackedSessionMap;
   getChildren: () => TrackedSession[];
   machineId: string;
   runtimeId?: string;
@@ -4551,6 +4623,7 @@ export function startDaemonControlServer({
     metadata: Metadata,
     reconcileCanonicalReadiness?: (tracked: TrackedSession) => Promise<void>,
     sessionCreationOutcome?: SessionCreationOutcome,
+    reportedTrackingKey?: SessionTrackingKey | null,
   ) => void | Promise<void>;
   onSessionActivityChanged?: (sessionId: string | null, followOccurrence?: SessionFollowOccurrenceNotification, executionRunId?: string) => void | SessionActivityChangedResult | Promise<void | SessionActivityChangedResult>;
   onScmDiffSummaryResultUpdated?: (change: ScmDiffSummaryResultRevisionHint) => void;
@@ -4599,7 +4672,8 @@ export function startDaemonControlServer({
     admission: AgentRuntimeDaemonServiceAdmission,
   ) => Promise<boolean>;
   foregroundAgentRuntimeAdmission?: ForegroundAgentRuntimeAdmissionOwner;
-  simulatorPreview?: SimulatorPreviewRoutes;
+  /** The active `devices` role's simulator preview; null while the role is off. */
+  resolveSimulatorPreview?: () => SimulatorPreviewRoutes | null;
   handleConnectedServiceRuntimeAuthFailure?: (input: Readonly<{
     sessionId: string;
     switchesThisTurn: number;
@@ -4665,12 +4739,13 @@ export function startDaemonControlServer({
   /** Public PAT-only ingress; intentionally outside the daemon control-token guard. */
   externalActionApi?: DaemonExternalActionApi;
   runtimeActionExecute?: RuntimeActionExecute;
+  isMachineRoleActive?: (roleId: string) => boolean;
 }): Promise<{ port: number; stop: () => Promise<void> }> {
   return new Promise((resolve) => {
     const app = createDaemonControlApp({
       skillStore,
       skillUsageRecorder,
-      pidToTrackedSession,
+      trackedSessionsByKey,
       getChildren,
       machineId,
       runtimeId,
@@ -4709,7 +4784,7 @@ export function startDaemonControlServer({
       recordAgentRuntimeDaemonServiceAdmission,
       clearAgentRuntimeDaemonServiceAdmission,
       foregroundAgentRuntimeAdmission,
-      simulatorPreview,
+      resolveSimulatorPreview,
       handleConnectedServiceRuntimeAuthFailure,
       authorizeConnectedServiceRuntimeAuthFailure,
       resolveConnectedServiceRuntimeAuthResumePromptMode,
@@ -4732,6 +4807,7 @@ export function startDaemonControlServer({
       externalActionApi,
       runtimeActionExecute,
       readPluginCatalogProjection,
+      ...(isMachineRoleActive ? { isMachineRoleActive } : {}),
     });
 
     app.listen({ port: resolveDaemonControlListenPort(process.env), host: '127.0.0.1' }, (err, address) => {

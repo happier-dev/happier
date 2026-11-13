@@ -6,7 +6,7 @@ import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/action
 import { createPluginSurfaceActionFailureError } from '@/components/plugins/surfaces/actionFailure';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionDefinitionSummaryV1 } from '@happier-dev/protocol/actions/actionDefinitionV1';
-import type { CurrentUiContextVoiceToolPort } from './currentUiContextVoiceToolPort';
+import type { CurrentUiContextVoiceToolPort, CurrentUiContextVoiceInvocationOutcome } from './currentUiContextVoiceToolPort';
 import type { PluginSurfaceActionInvocationSurface, PluginSurfaceHostActionBinding } from '@/components/plugins/surfaces/pluginSurfaceActionDispatch';
 import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
 import type { CurrentUiContextReader } from './CurrentUiContextProvider';
@@ -71,10 +71,11 @@ export async function observeCurrentUiContextContributedAction(
 }
 
 /** Typed host Actions resolve through the incumbent current record, never a second mount registry. */
-export function readCurrentUiContextActionReader(context: Pick<ActionExecutorContext, 'surface' | 'signal'>): CurrentUiContextVoiceToolPort | null {
+export function readCurrentUiContextActionReader(context: Pick<ActionExecutorContext, 'surface' | 'signal'>,
+    hostAction?: PluginSurfaceHostActionBinding): CurrentUiContextVoiceToolPort | null {
     const surface = PluginActionSurfaceV2Schema.safeParse(context.surface);
     return surface.success && surface.data !== 'plugin' && !context.signal?.aborted
-        ? mountedPortFactory?.(surface.data) ?? null : null;
+        ? mountedPortFactory?.(surface.data, hostAction) ?? null : null;
 }
 
 /** A declared Settings operation borrows its exact current command; no focus or retained-controller fallback. */
@@ -169,6 +170,11 @@ export async function executeCurrentUiContextContributedAction(
         ...(request.requiredDangerLevel ? { requiredDangerLevel: request.requiredDangerLevel } : {}),
         ...(request.signal ? { signal: request.signal } : {}),
     });
+    return projectCurrentUiContextActionOutcome(outcome);
+}
+
+/** Preserve the mounted dispatcher's authored settlement at every Action adapter. */
+export function projectCurrentUiContextActionOutcome(outcome: CurrentUiContextVoiceInvocationOutcome): ActionExecuteResult {
     if (outcome.ok) return { ok: true as const, result: outcome.result ?? null };
     const errorCode = outcome.code === 'outcome_unknown' ? PLUGIN_ACTION_OUTCOME_UNKNOWN_CODE
         : outcome.errorCode ?? (outcome.code === 'denied' ? 'permission_denied' : 'contributed_action_unavailable');

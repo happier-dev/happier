@@ -21,7 +21,6 @@ export function renderBundledAgentDeclarationTypeTs(): string {
   return [
     'export type BundledAgentDeclaration = Readonly<{',
     '    identity: PluginContributionIdentityV1;',
-    "    capabilities: PluginAgentContributionV2['capabilities'];",
     "    acpStderrRules: PluginAgentAcpDefinitionV2['stderrRules'] | null;",
     '    cli: PluginAgentCliMetadata | null;',
     '    acpRegistryIds?: readonly string[];',
@@ -78,7 +77,6 @@ export function renderBundledAgentDeclarationsTs(pluginPackages: readonly Bundle
     const accountSettings = (entry.manifest.contributes.settings ?? []).filter(definition => definition.scope === 'account');
     const declaration = {
       identity,
-      capabilities: agent.capabilities,
       acpStderrRules: agent.runtime.kind === 'acp' ? agent.runtime.definition?.stderrRules ?? null : null,
       cli: agent.cli ?? null,
       acpRegistryIds: agent.catalog?.acpRegistryIds ?? [],

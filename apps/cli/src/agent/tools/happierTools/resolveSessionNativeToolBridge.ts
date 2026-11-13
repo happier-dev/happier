@@ -29,6 +29,7 @@ function isSessionAgentToolAvailableWithSettings(params: Readonly<{
   profileId?: string | null;
   codingPromptBehavior?: CodingPromptBehaviorV1 | null;
   actionsSettings: ActionsSettingsV1;
+  surface?: 'agent' | 'voice';
 }>): boolean {
   if (params.toolName === 'change_title' && (params.codingPromptBehavior === null || (params.codingPromptBehavior ?? resolveEffectiveCodingPromptBehaviorV1({
     settings: params.accountSettings,
@@ -40,10 +41,10 @@ function isSessionAgentToolAvailableWithSettings(params: Readonly<{
   const isActionEnabled = (actionId: ActionId) => isActionEnabledByActionsSettings(
     actionId,
     actionsSettings,
-    { surface: 'agent', placement: null },
+    { surface: params.surface ?? 'agent', placement: null },
   );
   return isBuiltInHappierToolAdmitted(params.toolName, {
-    surface: 'agent',
+    surface: params.surface ?? 'agent',
     actionsSettings,
     isActionEnabled,
   });
@@ -66,6 +67,7 @@ export function isSessionAgentChangeTitleToolAvailable(params: Omit<Parameters<t
 }
 
 export function resolveSessionNativeToolDescriptors(params: Readonly<{
+  surface?: 'agent' | 'voice';
   accountSettings: Readonly<Record<string, unknown>>;
   profileId?: string | null;
   codingPromptBehavior?: CodingPromptBehaviorV1 | null;
@@ -85,7 +87,7 @@ export function resolveSessionNativeToolDescriptors(params: Readonly<{
   const isActionEnabled = (actionId: ActionId) => isActionEnabledByActionsSettings(
     actionId,
     actionsSettings,
-    { surface: 'agent', placement: null },
+    { surface: params.surface ?? 'agent', placement: null },
   );
   const titleUpdatesEnabled = isSessionAgentToolAvailableWithSettings({
     toolName: 'change_title',
@@ -93,9 +95,10 @@ export function resolveSessionNativeToolDescriptors(params: Readonly<{
     profileId: params.profileId,
     codingPromptBehavior: params.codingPromptBehavior,
     actionsSettings,
+    surface: params.surface,
   });
   const tools = listBuiltInHappierTools({
-    surface: 'agent',
+    surface: params.surface ?? 'agent',
     happierToolsEnabled: params.happierToolsEnabled,
     actionsSettings,
     isActionEnabled,

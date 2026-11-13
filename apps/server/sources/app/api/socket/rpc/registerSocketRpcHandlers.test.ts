@@ -39,6 +39,7 @@ import {
     currentUiContextCommandClientRpcMethod,
     currentUiContextReadClientRpcMethod,
     mountedWorkReadClientRpcMethod,
+    voiceRunActionClientRpcMethod,
 } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { getMachineSocketRoom } from '../../socketRooms';
 import { buildMachineRpcAvailabilityRoom } from './rpcMethodRoom';
@@ -99,6 +100,19 @@ function createOwnedSessionAccessRow(sessionId = "sess_1") {
         teamGrants: [],
         groupGrants: [],
     };
+}
+
+async function retainSessionMachineFixture() {
+    const target = { accountId: 'session-owner', sessionId: 'sess_1', machineId: 'machine-1',
+        homeId: `srv_${'a'.repeat(32)}`, installationId: 'installation-1' };
+    machineFindFirstMock.mockImplementation(async args =>
+        (args as { where: { id: string } }).where.id === target.machineId
+            ? { accountId: target.accountId, revokedAt: null, replacedByMachineId: null, installationId: target.installationId }
+            : null);
+    sessionFindUniqueMock.mockResolvedValue({ ...createOwnedSessionAccessRow(target.sessionId),
+        accountId: target.accountId, runtimeMachineTarget: target, shares: [await sessionShareFindUniqueMock()] });
+    accessKeyFindUniqueMock.mockResolvedValue({ accountId: target.accountId, machineId: target.machineId,
+        session: { accountId: target.accountId }, machine: { revokedAt: null, replacedByMachineId: null } });
 }
 
 const machineFindFirstMock = vi.hoisted(() => vi.fn(async (_args?: unknown): Promise<{ revokedAt: Date | null; replacedByMachineId: string | null; installationId?: string; installationPublicKey?: Uint8Array; kind?: string } | null> => ({
@@ -623,10 +637,10 @@ describe("registerSocketRpcHandlers", () => {
             const ack = vi.fn();
             await triggerSocketHandler(caller, SOCKET_RPC_EVENTS.CALL, { method, params: { runId: 'detached-run', sessionId: null },
                 ...(scenario === 'session-proof' ? { authorization: { kind: 'session.write', sessionId: 'other-session' } } : {}) }, ack);
-            if (scenario === 'current') {
+            if (scenario === 'current' || scenario === 'shared-use') {
                 expect(ack).toHaveBeenCalledWith({ ok: true, result: { runId: 'detached-run', status: 'failed' } });
                 expect(effect).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REQUEST, expect.objectContaining({
-                    machineAdmission: expect.objectContaining({ actorAccountId: 'user-1', machineId: 'machine-1', installationId: 'installation-1' }),
+                    machineAdmission: expect.objectContaining({ actorAccountId: scenario === 'shared-use' ? 'other-user' : 'user-1', machineId: 'machine-1', installationId: 'installation-1' }),
                 }));
             } else {
                 expect(ack).toHaveBeenCalledWith(expect.objectContaining({ ok: false }));
@@ -1210,6 +1224,8 @@ describe("registerSocketRpcHandlers", () => {
         mountedWorkReadClientRpcMethod('session.work.get', 'work-lead'),
         mountedWorkReadClientRpcMethod('session.work.get', '\u0800'.repeat(600)),
         mountedWorkReadClientRpcMethod('inbox.get'),
+        voiceRunActionClientRpcMethod('voice-run'),
+        voiceRunActionClientRpcMethod('\u0800'.repeat(600)),
         workflowDraftClientRpcMethod({ scope: { serverId: 'home', accountId: 'user-1' }, draftId: 'draft' }),
         workflowDraftClientRpcMethod({ scope: { serverId: 'home-' + '\u0800'.repeat(600), accountId: 'user-1' }, draftId: 'draft' }),
     ])("admits UI Action continuation %s only from the authenticated exact Machine", async (rpcMethod) => {
@@ -3187,7 +3203,7 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
     });
 
     it("keeps explicitly unbounded execution-run input forwarding under the caller lifecycle", async () => {
-        machineFindFirstMock.mockResolvedValue(null);
+        await retainSessionMachineFixture();
         const method = `sess_1:${SESSION_RPC_METHODS.EXECUTION_RUN_SEND}`;
         const targetEmitWithAck = vi.fn().mockResolvedValue({ ok: true });
         const target = {
@@ -3576,8 +3592,7 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
     });
 
     it("routes collaborator Run start to the owner daemon but keeps privileged Run controls owner-only", async () => {
-        // The exact Session fixture has no same-id Machine row.
-        machineFindFirstMock.mockResolvedValue(null);
+        await retainSessionMachineFixture();
         const targetEmitWithAck = vi.fn().mockResolvedValue({ ok: true });
         const target = {
             id: "target-socket",
@@ -3926,8 +3941,7 @@ expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.ERROR, expect.objectC
     });
 
     it("uses a dedicated cluster fetch timeout for session-scoped rpc discovery", async () => {
-        // The Session namespace is not a persisted Machine identity.
-        machineFindFirstMock.mockResolvedValue(null);
+        await retainSessionMachineFixture();
         const method = `sess_1:${SESSION_RPC_METHODS.SESSION_GOAL_SET}`;
         const { io, timeout } = createIo({
             targetsByRoom: {
