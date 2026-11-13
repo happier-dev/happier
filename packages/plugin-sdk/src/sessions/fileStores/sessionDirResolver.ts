@@ -48,6 +48,7 @@ export function resolveSessionFileStoreLaunchEnvironment(input: Readonly<{
   product: SessionFileStoreProductDescriptorV1;
   settings?: Readonly<Record<string, unknown>>;
   env?: Readonly<Record<string, string | undefined>>;
+  cwd?: string;
 }>): Readonly<Record<string, string>> {
   const env = input.env ?? {};
   const settingId = input.product.agentDirSettingId;
@@ -56,6 +57,7 @@ export function resolveSessionFileStoreLaunchEnvironment(input: Readonly<{
   const selected = configured
     ? resolveConfiguredPath(configured, {
       homeDir: resolveHomeDirFromEnvironment(env),
+      cwd: input.cwd,
     })
     : ambient;
   return Object.freeze(selected

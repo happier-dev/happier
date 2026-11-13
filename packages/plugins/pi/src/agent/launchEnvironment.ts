@@ -76,6 +76,7 @@ export function selectPiLaunchEnvironment(
 export function resolvePiSessionRuntimePreferences(params: Readonly<{
   settings?: Readonly<Record<string, unknown>>;
   environment: Readonly<Record<string, string | undefined>>;
+  cwd?: string;
 }>): Readonly<{
   environmentVariables?: Readonly<Record<string, string>>;
   unsetEnvironmentVariables?: readonly string[];
@@ -85,6 +86,7 @@ export function resolvePiSessionRuntimePreferences(params: Readonly<{
     product: PI_SESSION_FILE_STORE_DESCRIPTOR_V1,
     settings: params.settings,
     env: params.environment,
+    cwd: params.cwd,
   });
   const values = Object.freeze({ ...selected.values, ...configuredAgentDir });
   return Object.freeze({

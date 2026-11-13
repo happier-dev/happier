@@ -28,6 +28,8 @@ import {
   type ParsedSessionStartArgs,
 } from '@/cli/sessionStartArgs';
 import { claimSessionRunnerOwnership, withSessionRunnerOwnership } from '@/daemon/sessionRunnerLock';
+import { runInHostedSessionScope, sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
+import { endSessionCommand } from '@/agent/runtime/lifecycle/runnerTerminationHandlers';
 import { isInteractiveTerminal } from '@/terminal/prompts/promptInput';
 import { promptSecret } from '@/terminal/prompts/promptSecret';
 import {
@@ -144,7 +146,9 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
     phaseStartedAt = now;
   };
   recordStartupPhase('entered');
-  return withSessionRunnerOwnership(async () => {
+  return runInHostedSessionScope({}, () => withSessionRunnerOwnership(async () => {
+    // This Session's process environment (the live `process.env` for a runner).
+    const sessionEnvironment = sessionProcessEnvironment();
     let releaseForegroundAdmission: (() => void | Promise<void>) | null = null;
     let restoreForegroundRuntimeEnvironment: (() => void) | null = null;
     const applyForegroundRuntimeEnvironment = (claim: Readonly<{
@@ -156,15 +160,15 @@ export async function runBackendSessionCliCommand<Extra extends Record<string, u
         [HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY]: claim.authorityFilePath,
       };
       if (!restoreForegroundRuntimeEnvironment) {
-        const previous = Object.keys(environment).map(key => [key, process.env[key]] as const);
+        const previous = Object.keys(environment).map(key => [key, sessionEnvironment[key]] as const);
         restoreForegroundRuntimeEnvironment = () => {
           for (const [key, value] of previous) {
-            if (value === undefined) delete process.env[key];
-            else process.env[key] = value;
+            if (value === undefined) delete sessionEnvironment[key];
+            else sessionEnvironment[key] = value;
           }
         };
       }
-      Object.assign(process.env, environment);
+      Object.assign(sessionEnvironment, environment);
     };
     const cleanupForegroundAdmission = async (): Promise<void> => {
       const cleanup = releaseForegroundAdmission;
@@ -268,7 +272,7 @@ Provider CLI Options:
       const startedBy = resolved.startedBy ?? 'terminal';
       const commandExtraOptions = params.resolveExtraOptions ? params.resolveExtraOptions(params.context.args, parsed) : ({} as Extra);
       const bootstrapPath = startedBy === 'daemon'
-        ? process.env[HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY]?.trim()
+        ? sessionEnvironment[HAPPIER_AGENT_RUNTIME_RUNNER_BOOTSTRAP_FILE_ENV_KEY]?.trim()
         : undefined;
       const bootstrap = bootstrapPath
         ? await (await import('@/agent/runtime/session/process/runnerAgentSessionBootstrap')).readRunnerAgentSessionBootstrap(bootstrapPath)
@@ -296,6 +300,7 @@ Provider CLI Options:
       const runtimeDescriptorV1 = extraOptions.runtimeDescriptorV1 === undefined ? undefined : RuntimeDescriptorV1Schema.parse(extraOptions.runtimeDescriptorV1);
       const isExplicitCliSubcommand = params.isExplicitCliSubcommand
         ?? (params.context.args[0] === cliArgumentAgentId);
+      const directory = parsed.directory ?? resolveRequestedSessionDirectory();
 
       const selfMigration = await selfMigrateDaemonSpawnedSessionProcessOutOfDaemonServiceCgroup();
       if (selfMigration) {
@@ -331,7 +336,7 @@ Provider CLI Options:
           ?? (await (await import('@/ui/auth')).ensureMachineIdForCredentials(credentials)).machineId;
         if (
           shouldAutoStartDaemonAfterAuth({
-            env: process.env,
+            env: sessionEnvironment,
             isDaemonProcess: configuration.isDaemonProcess,
             startedBy,
           })
@@ -485,8 +490,7 @@ Provider CLI Options:
               ? { existingSessionId: normalizedExistingSessionId }
               : {}),
             foregroundPid: process.pid,
-            directory:
-              parsed.directory ?? resolveRequestedSessionDirectory(),
+            directory,
             agentId: runtimeAuthorityAgentId,
             backendTarget: agentTarget
               ? projectResolvedAgentBackendTarget(agentTarget, runtimeAuthorityAgentId)
@@ -591,7 +595,7 @@ Provider CLI Options:
               agentId: backendId,
               backendTarget: modelSelectionBackendTargetInput,
               profile: selectedProfile,
-              processEnv: process.env,
+              processEnv: sessionEnvironment,
               promptSecretFn:
                 startedBy !== 'daemon' && isInteractiveTerminal()
                   ? promptSecret
@@ -629,12 +633,12 @@ Provider CLI Options:
             const buildInput = buildAgentCliSessionCommandBuildInput({
               settings: accountSettingsContext.settings as Readonly<Record<string, unknown>>,
               processEnv: buildScopedProcessEnv({
-                baseEnv: process.env,
+                baseEnv: sessionEnvironment,
                 explicitEnv: profileEnvironmentVariables,
               }),
               startedBy,
               isExplicitCliSubcommand,
-              parsed,
+              parsed: { ...parsed, directory },
             });
             if (foregroundAdmissionClaim) {
               const { resolveDaemonForegroundAgentRuntimeSessionOptions } = await import('@/daemon/controlClient');
@@ -700,7 +704,7 @@ Provider CLI Options:
       const foregroundNativeHomeSourceEnvironmentValue =
         foregroundNativeHomeSourceEnvironmentKey
           ? stripUnsetEnvironmentVariables({
-              ...process.env,
+              ...sessionEnvironment,
               ...profileEnvironmentVariables,
               ...baseMergedEnvironmentVariables,
             }, baseUnsetEnvironmentVariables)[
@@ -716,7 +720,7 @@ Provider CLI Options:
               ...stripSessionControlEnvOverrides(profileEnvOverlay.expandProfileEnvOverlay({
                 profile: selectedProfile,
                 envOverlayRaw: profileEnvironmentVariablesRaw,
-                processEnv: process.env,
+                processEnv: sessionEnvironment,
                 resolvedEnvironment: admissionEnvironment,
               })),
               HAPPIER_SESSION_PROFILE_ID: selectedProfile.id,
@@ -948,7 +952,7 @@ Provider CLI Options:
       const { mergeSessionTeamCredentialBindingIntents } = await import('@/session/services/spawnConnectedServicesDefaults');
       const sessionRuntimeParams = {
         credentials,
-        directory: parsed.directory ?? resolveRequestedSessionDirectory(),
+        directory,
         terminalRuntime: params.context.terminalRuntime,
         ...(parsed.startingMode === 'terminal' || parsed.startingMode === 'remote' || parsed.startingMode === 'local'
           ? { startingMode: parsed.startingMode }
@@ -1030,9 +1034,10 @@ Provider CLI Options:
         console.error(rawDiagnostic);
       }
       await cleanupForegroundAdmission();
-      process.exit(exitCode);
+      // A Session added to a session host ends only itself; a runner exits its process.
+      endSessionCommand(exitCode);
     } finally {
       await cleanupForegroundAdmission();
     }
-  });
+  }));
 }
