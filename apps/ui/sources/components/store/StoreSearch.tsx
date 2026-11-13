@@ -84,6 +84,9 @@ function StoreSearchScope(props: StoreSearchProps): React.ReactNode {
         corpusIncomplete={sources.loading || !sources.hasValue || sources.error !== null} />;
 
     // Only demanded kinds mount. Explicit all-kind search uses these fixed leaves, never runtime hook dispatch.
+    // The kinds nest so one commit carries a kind's publication to the results. A sibling-leaf store that the
+    // results read was measured live (P03-UI-B/STORE after4): every publication became a second commit, 10.5 → 16.7
+    // commits and 5.5k → 6.7k renders per keystroke, so the nesting stays and the results below keep their identities.
     const software = (lists: StoreSearchLists) => kinds.includes('software')
         ? <StoreSoftwareKind input={input} demand={props.demand}>{list => render({ ...lists, software: list })}</StoreSoftwareKind> : render(lists);
     const plugin = (lists: StoreSearchLists) => kinds.includes('plugin')
@@ -136,8 +139,18 @@ function StoreSearchResults(props: Omit<StoreSearchProps, 'draft'> & Readonly<{
         testIDPrefix: 'store.filter', adapter: storeColumnAdapter, fields: props.fields, facts,
         draft: props.draft, search: { value: props.query, set: props.setQuery }, corpusCoverage: incomplete ? 'partial' : 'complete',
         ...(props.statedFields ? { statedFields: props.statedFields } : {}) });
-    const visible = rows.filter(row => filter.matches(row.key));
-    // These are current-render display bindings, not retained row objects or an identity cache.
-    const projections = new Map(rows.map(row => [row.summary.ref, row]));
-    return props.children({ rows: visible.map(row => row.summary.ref), projections, lists, query: props.query, setQuery: props.setQuery, filter });
+    // Derived from the held rows and the conditions only: a kind's loading publication (two per kind per keystroke)
+    // hands the page the same rows, so the sections and the directory below keep theirs instead of re-rendering.
+    const { matches } = filter;
+    // Each kind keeps its item objects across an equal answer, so an unchanged result set is the same refs in the same
+    // order: hand back the held array then, even when a fetched page around them was rebuilt.
+    const heldRefs = React.useRef<StoreSearchState['rows']>([]);
+    const visibleRefs = React.useMemo(() => {
+        const next = rows.filter(row => matches(row.key)).map(row => row.summary.ref);
+        const held = heldRefs.current;
+        return next.length === held.length && next.every((ref, index) => ref === held[index]) ? held : next;
+    }, [rows, matches]);
+    heldRefs.current = visibleRefs;
+    const projections = React.useMemo(() => new Map(rows.map(row => [row.summary.ref, row])), [rows]);
+    return props.children({ rows: visibleRefs, projections, lists, query: props.query, setQuery: props.setQuery, filter });
 }

@@ -210,3 +210,34 @@ it('lets human and agent compose the same Store narrowing, refuses hidden/ambigu
     await screen.unmount();
     expect(await set(selected)).toMatchObject({ ok: false, errorCode: 'client_surface_unavailable' });
 });
+
+it('keeps the result rows it hands the page while a kind republishes the same catalog', async () => {
+    const serverUrl = 'https://store-stable-rows.test';
+    const sourceId = 'stable-rows-catalog';
+    const fixture = await createPlainPromptLibraryCatalogHomeFixture(serverUrl, {
+        key: 'registry-sources', value: { v: 2, disabledSourceIds: [], sources: [{
+            id: sourceId, title: 'Service templates', url: `${serverUrl}/service-templates.json`,
+            kinds: ['app'], format: 'coolify-templates', enabled: true, addedAt: 1,
+        }] },
+    }, 'updated', { handleRequest: async path => path === '/service-templates.json' ? Response.json({
+        autobase: { slogan: 'PostgreSQL management', category: 'database' },
+        wordpress: { slogan: 'A website', category: 'cms' },
+    }) : null });
+    onTestFinished(async () => { await standardCleanup(); await fixture.dispose(); });
+    let current!: StoreSearchState;
+    const handed = new Set<unknown>();
+    const screen = await renderScreen(<StoreSearch kind="app" demand={{ presented: true }} sourceIds={[sourceId]}
+        fields={fields} curationComplete>
+        {state => { current = state; handed.add(state.rows); return null; }}
+    </StoreSearch>);
+    await waitForHomeGovernance(() => expect(current.lists.app?.items).toHaveLength(2));
+    await waitForHomeGovernance(() => expect(current.lists.app?.loading).toBe(false));
+    const settledRows = current.rows;
+    handed.clear();
+    // A refresh publishes loading, then the same catalog: nothing the results show changes.
+    await act(async () => { await current.lists.app!.refresh(); });
+    await waitForHomeGovernance(() => expect(current.lists.app?.loading).toBe(false));
+    expect(current.rows).toHaveLength(2);
+    expect({ republishedRows: [...handed].filter(rows => rows !== settledRows).length }).toEqual({ republishedRows: 0 });
+    await screen.unmount();
+});
