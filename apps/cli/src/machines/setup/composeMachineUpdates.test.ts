@@ -96,6 +96,10 @@ describe('fleet update Workflow composition', () => {
     const outcome = await running;
     expect(effects, JSON.stringify({ outcome, invocations: store.list().map(({ blockId, lifecycle, reason }) => ({ blockId, lifecycle, reason })) }))
       .toEqual(failurePolicy === 'fail_stop' ? ['first'] : ['first', 'second']);
-    expect(outcome.state).toBe(failurePolicy === 'fail_stop' ? 'failed' : 'succeeded');
+    expect(store.list()).toContainEqual(expect.objectContaining({
+      blockId: 'update-0-0', lifecycle: 'failed', reason: 'native_failed',
+    }));
+    expect(outcome).toMatchObject(failurePolicy === 'fail_stop'
+      ? { state: 'interrupted', reason: 'native_failed' } : { state: 'succeeded' });
   });
 });
