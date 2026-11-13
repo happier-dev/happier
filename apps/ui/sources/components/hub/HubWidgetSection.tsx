@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View, type LayoutChangeEvent } from 'react-native';
+import { View } from 'react-native';
 import { resolveHomeHubCardPresentation } from '@/components/hub/HomeHubSectionList';
 import { useIsFocused } from '@/components/appShell/workspace/destinationRoute';
 import { useLayoutPresentationActive, usePresentedValue } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
@@ -20,6 +20,7 @@ import { t } from '@/text';
 import { useActivateAppDestination, useCompactAppDestinations, type CompactAppPluginDestination } from '@/components/appShell/destinations/compactAppDestinationCatalog';
 import { WidgetFrame, type WidgetFrameFooter, type WidgetFrameStyle } from '@/components/widgets/frame/WidgetFrame';
 import { useWidgetFrameTitle } from '@/components/widgets/frame/widgetFrameTitle';
+import { useWidgetBodyLastHeight } from '@/components/widgets/frame/widgetFrameBody';
 import { useWidgetInstanceBindingLabel } from '@/components/widgets/surface/useWidgetInstanceBindingLabel';
 import { useWidgetCarriedIdentity } from '@/components/widgets/surface/widgetCarriedIdentity';
 import { WidgetFrameBodyCaptionContext, WidgetFrameBodyIdentityContext, WidgetFrameBodyMetaContext, type WidgetFrameBodyIdentity } from '@/components/widgets/frame/widgetFrameBodyCaption';
@@ -111,7 +112,7 @@ export const HubWidgetSection = React.memo(function HubWidgetSection(props: Read
     const carriedStyle = useSessionSurfaceCarriedStyle(drag);
     const sectionRef = React.useRef<View>(null);
     const { near, measure } = useMeasuredNearViewport(props.tracker, sectionRef, presented, props.instance.id);
-    const [bodyHeight, setBodyHeight] = React.useState(0);
+    const lastBodyHeight = useWidgetBodyLastHeight();
     // A hidden retained tab keeps the body it last showed (its demand withdraws with presentation), so
     // showing the tab again rebuilds nothing.
     const active = usePresentedValue(presented && near);
@@ -120,10 +121,7 @@ export const HubWidgetSection = React.memo(function HubWidgetSection(props: Read
         inRowOfThree: props.inRowOfThree === true, leads: props.leads === true }, descriptor?.sizeDeclaration).size;
     const widgetPresentation = React.useMemo(() => ({ size, footprint: getWidgetSizeFootprintV1('home', size)! }), [size]);
 
-    const onBodyLayout = React.useCallback((event: LayoutChangeEvent) => {
-        const height = event.nativeEvent.layout.height;
-        setBodyHeight((current) => (current === height ? current : height));
-    }, []);
+    const { onBodyLayout } = lastBodyHeight;
 
     const destinations = useCompactAppDestinations();
     const activate = useActivateAppDestination();
@@ -157,9 +155,9 @@ export const HubWidgetSection = React.memo(function HubWidgetSection(props: Read
             </View>
         ) : (
             // The body's last height, so leaving and returning never moves the page.
-            <View testID={`${props.testID}.deferred`} style={{ minHeight: bodyHeight }} />
+            <View testID={`${props.testID}.deferred`} style={{ minHeight: lastBodyHeight.read() }} />
         ),
-    }), [active, bodyHeight, onBodyLayout, onDefinitionRead, props.testID, descriptor, props.instance, props.onRepairInputs, size]);
+    }), [active, lastBodyHeight, onBodyLayout, onDefinitionRead, props.testID, descriptor, props.instance, props.onRepairInputs, size]);
 
     const settledMatch = React.useMemo<EntityDropSettledMatch>(() => ({
         item: item => item.kind === 'home-section' && item.sectionId === props.instance.id,

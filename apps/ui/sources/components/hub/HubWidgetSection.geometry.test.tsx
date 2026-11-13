@@ -39,6 +39,33 @@ describe('nested Home widget native geometry', () => {
         expect(screen.findByTestId('nested-card.body') !== null).toBe(false);
     });
 
+    it('settles its body height without re-rendering the card, and keeps that height for the deferred placeholder', async () => {
+        let scrollOffset = 0;
+        const measure = (top: () => number) => ({ measureInWindow: (done: (x: number, y: number, width: number, height: number) => void) => done(0, top(), 400, 100) });
+        const contentNode = measure(() => 56 - scrollOffset);
+        const tracker = createNearViewportTracker({ quantum: 40, initialViewportHeight: 400, readContentNode: () => contentNode });
+        const instance = { v: 1 as const, id: 'settling-copy', definition: { kind: 'builtin' as const, id: 'count' }, bindings: {} };
+        const screen = await renderScreen(<HubWidgetSection instance={instance} frameStyle="plain" menu={null} tracker={tracker} testID="settling-card" />, {
+            createNodeMock: node => node.props.testID === 'settling-card' ? measure(() => 3056 - scrollOffset) : null,
+        });
+        await act(async () => { screen.findByTestId('settling-card')!.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 400, height: 100 } } }); });
+        await act(async () => { scrollOffset = 2200; tracker.onScroll({ nativeEvent: { contentOffset: { x: 0, y: scrollOffset } } } as never); });
+        expect(screen.findByTestId('settling-card.body') !== null).toBe(true);
+        const frameProps = () => screen.root.findAll(node => node.props?.testID === 'settling-card.frame' && typeof node.type !== 'string')[0]!.props;
+        const seen = new Set([frameProps()]);
+        // A body settling its height (first layout, a transient 0, the loaded height) is no fact of its card.
+        for (const height of [32, 0, 48]) {
+            await act(async () => { screen.findByTestId('settling-card.body')!.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 400, height } } }); });
+            seen.add(frameProps());
+        }
+        expect(seen.size - 1).toBe(0);
+        // Scrolled away, the placeholder holds the body's last height, so returning never moves the page.
+        await act(async () => { scrollOffset = 0; tracker.onScroll({ nativeEvent: { contentOffset: { x: 0, y: scrollOffset } } } as never); });
+        const placeholder = screen.findByTestId('settling-card.deferred');
+        expect(placeholder !== null).toBe(true);
+        expect(placeholder!.props.style).toMatchObject({ minHeight: 48 });
+    });
+
     it('remeasures after an ancestor moves without changing the cell-relative layout', async () => {
         let contentTop = 300;
         const measure = (top: () => number) => ({ measureInWindow: (done: (x: number, y: number, width: number, height: number) => void) => done(0, top(), 400, 100) });

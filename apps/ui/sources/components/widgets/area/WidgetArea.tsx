@@ -2,7 +2,7 @@ import * as React from 'react';
 import { isDemoMachinesSurfaceRead } from '@/demoMode/runtime/demoMachinesWidgetBinding';
 import { WidgetFrameDemandContext, WidgetFrameInstanceIdContext } from '@/components/widgets/frame/widgetFrameDemand';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
-import { Platform, View, type LayoutChangeEvent } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_EMPTY_SLOT_METRICS, HAPPIER_ICON_BUTTON_SIZE, HAPPIER_PAGE_METRICS, HappierPageSectionContext, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
@@ -64,6 +64,7 @@ import { useWidgetAreaFrame } from '@/components/widgets/frame/useWidgetFrameSty
 import { useWidgetFrameRename } from '@/components/widgets/frame/useWidgetFrameRename';
 import { WidgetFrameBodyCaptionContext, WidgetFrameBodyIdentityContext, WidgetFrameBodyMetaContext, type WidgetFrameBodyIdentity } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { WidgetFrameBodyActionsContext } from '@/components/widgets/frame/widgetFrameBodyActions';
+import { useWidgetBodyLastHeight } from '@/components/widgets/frame/widgetFrameBody';
 import { useWidgetDefinitionFlows } from '@/components/widgets/definitions/useWidgetDefinitionFlows';
 import { useWidgetInputsEditor } from '@/components/widgets/surface/useWidgetInputsEditor';
 import { isWidgetFollowingSurfaceSlot, useWidgetInstanceBindingLabel } from '@/components/widgets/surface/useWidgetInstanceBindingLabel';
@@ -767,17 +768,14 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
     const shown = props.current && focused && opened && !collapsed;
     React.useLayoutEffect(() => demand?.place(instance.id, demandBuiltinId, measured ? shown : null),
         [demand, instance.id, demandBuiltinId, measured, shown]);
-    const [bodyHeight, setBodyHeight] = React.useState(0);
+    const lastBodyHeight = useWidgetBodyLastHeight();
     // A hidden retained page keeps the body and ⋯ it last showed (demand withdraws with presentation and
     // with `shown`), so a hide tears nothing down and a show rebuilds nothing.
     const active = usePresentedValue(props.current && focused && opened);
     const chromeCurrent = usePresentedValue(props.current);
     const focusEligible = usePluginSurfaceFocusEligibility();
     const currentUiEligible = usePluginSurfaceCurrentUiContextEligibility();
-    const onBodyLayout = React.useCallback((event: LayoutChangeEvent) => {
-        const height = event.nativeEvent.layout.height;
-        setBodyHeight(current => current === height ? current : height);
-    }, []);
+    const { onBodyLayout } = lastBodyHeight;
     const parent = props.parent;
     const groupContext = parent?.group.context;
     const groupLabels = parent?.labels;
@@ -980,8 +978,8 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
             </WidgetFrameBodyCaptionContext.Provider>
             </View>
             </PluginSurfaceFocusEligibilityProvider>
-        ) : <View testID={`${testID}.deferred`} style={{ minHeight: bodyHeight }} />,
-    }), [active, collapsed, focusEligible, currentUiEligible, bodyHeight, candidate, definition.about, edit.onRepairInputs, instance, onBodyLayout, providedContext, context.projectContext, groupContext, runtime, surface, testID, size, props.admittedViewer, props.isCurrent, props.isReadPending]);
+        ) : <View testID={`${testID}.deferred`} style={{ minHeight: lastBodyHeight.read() }} />,
+    }), [active, collapsed, focusEligible, currentUiEligible, lastBodyHeight, candidate, definition.about, edit.onRepairInputs, instance, onBodyLayout, providedContext, context.projectContext, groupContext, runtime, surface, testID, size, props.admittedViewer, props.isCurrent, props.isReadPending]);
 
     if (switchedOff) return null;
     return (
