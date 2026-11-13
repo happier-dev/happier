@@ -14429,6 +14429,7 @@ settingsSession: {
         speech_recognition_unavailable: 'Rozpoznawanie mowy nie jest tutaj dostępne. Wybierz inny silnik rozpoznawania mowy.',
         previous_session_stop_failed: 'Nie udało się zatrzymać poprzedniej sesji głosowej.',
         agent_selection_unavailable: 'Wybrany agent jest niedostępny. Wybierz agenta w ustawieniach głosu.',
+        provider_agent_unavailable: ({ service }: { service: string }) => `Agent ${service} jest niedostępny. Sprawdź jego ustawienia głosu.`,
       },},
     privacy: {
       title: "Udostępnianie kontekstu",

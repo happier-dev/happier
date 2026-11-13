@@ -14115,6 +14115,7 @@ settingsSession: {
         speech_recognition_unavailable: '这里无法使用语音识别。请选择其他语音识别引擎。',
         previous_session_stop_failed: '无法停止上一个语音会话。',
         agent_selection_unavailable: '所选智能体不可用。请在语音设置中选择智能体。',
+        provider_agent_unavailable: ({ service }: { service: string }) => `${service} 智能体不可用。请检查其语音设置。`,
       },},
     privacy: {
       title: "上下文共享",

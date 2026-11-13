@@ -19,6 +19,9 @@ import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } 
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { ELEVENLABS_VOICE_PROVIDER_DEFAULT_SETTINGS } from '../../../../../../packages/plugins/elevenlabs/src/protocol/voice/index';
+import { classifyRealtimeProviderFailure } from '@/voice/runtime/machine/voiceMachineError';
+import { resolveVoiceMachineErrorTranslationKey } from '@/voice/runtime/machine/voiceMachineErrorCopy';
+import { translateVoiceReadiness } from '@/voice/settings/panels/voiceProviderReadinessPresentation';
 
 import type { VoiceConnectRecoveryTarget } from '@/components/voice/surface/resolveVoiceConnectRecoveryTarget';
 import { resolveVoiceSurfaceRecovery, type VoiceSurfaceRecovery } from '@/components/voice/surface/resolveVoiceSurfaceRecovery';
@@ -144,6 +147,30 @@ describe('the one Voice recovery dispatch every placement fires', () => {
     storage.setState(initialStorage, true);
     vi.restoreAllMocks();
     resetVoiceSessionStoreForTests();
+  });
+
+  it.each(['web', 'ios'] as const)('keeps a vendor agent initialization refusal actionable in Voice settings on %s', async platform => {
+    state.platform = platform;
+    const failure = classifyRealtimeProviderFailure(Object.assign(new Error('voice_provider_agent_unavailable'), {
+      code: 'voice_provider_agent_unavailable', failureCause: {
+        phase: 'elevenlabs.sdk.error', errorClass: 'UnknownThrownValue', errorCode: null,
+        httpStatus: null, nativeErrorCode: '3000', nativeErrorReason: 'call_initialization_error',
+      },
+    }));
+    expect(failure).toMatchObject({ kind: 'provider_setup_required',
+      reason: 'voice_provider_agent_unavailable', recoveryAction: 'review_credentials',
+      failureCause: { nativeErrorCode: '3000', nativeErrorReason: 'call_initialization_error' } });
+    const key = resolveVoiceMachineErrorTranslationKey(failure.kind, failure.reason);
+    expect(key).toBe('settingsVoice.local.machineErrors.provider_agent_unavailable');
+    expect(translateVoiceReadiness(key, { service: 'ElevenLabs' })).toContain('ElevenLabs');
+    const navigate = vi.fn();
+    const { executeVoiceAttemptRecovery } = await import('./voiceAttemptRecovery');
+    expect(await executeVoiceAttemptRecovery({ recoveryAction: failure.recoveryAction,
+      errorReason: failure.reason, setupIncomplete: false, context: context(), navigate })).toBe(true);
+    expect(navigate).toHaveBeenCalledExactlyOnceWith({ pathname: '/settings/voice/conversations',
+      params: { setting: 'voiceConversations.provider' } });
+    expect(state.openSettings).not.toHaveBeenCalled();
+    expect(state.startSession).not.toHaveBeenCalled();
   });
 
   it('opens the declared provider row for credential review', async () => {

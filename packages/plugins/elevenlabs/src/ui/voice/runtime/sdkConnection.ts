@@ -3,6 +3,7 @@ import { VoiceRealtimeToolResultV1Schema } from '@happier-dev/plugin-sdk/voice/c
 import type {
   VoiceOutputFocusState,
   VoiceRealtimeConnection,
+  VoiceRealtimeCanonicalEvent,
   VoiceRealtimeJsonValue,
 } from '@happier-dev/plugin-sdk/voice/client';
 
@@ -118,14 +119,15 @@ export function createElevenLabsSdkConnection(input: Readonly<{
       async open({ signal, onControl, onTransport }): Promise<void> {
         publishControl = onControl;
         let sessionFailure: Error | null = null;
-        const reportSessionFailure = (error: unknown, phase: string, nativeErrorCode?: string, nativeErrorReason?: string): void => {
+        const reportSessionFailure = (error: unknown, phase: string, nativeErrorCode?: string, nativeErrorReason?: string,
+          code: Extract<VoiceRealtimeCanonicalEvent, { type: 'provider_error' }>['code'] = 'voice_service_unavailable'): void => {
           if (sessionFailure) return;
           const { errorClass, errorCode, httpStatus } = readUnexpectedActionErrorDiagnosticV1(error);
           const failureCause = { errorClass, errorCode, httpStatus, phase,
             ...(nativeErrorCode === undefined ? {} : { nativeErrorCode }),
             ...(nativeErrorReason === undefined ? {} : { nativeErrorReason }) };
-          sessionFailure = Object.assign(new Error('voice_service_unavailable'), { code: 'voice_service_unavailable', failureCause });
-          onControl({ type: 'elevenlabs.session_error', failureCause });
+          sessionFailure = Object.assign(new Error(code), { code, failureCause });
+          onControl({ type: 'elevenlabs.session_error', code, failureCause });
         };
         const onEvent = (event: ElevenLabsConversationHandleEvent): void => {
           switch (event.type) {
@@ -167,10 +169,20 @@ export function createElevenLabsSdkConnection(input: Readonly<{
                 },
               });
               return;
-            case 'error':
+            case 'error': {
               if (isRecoverableClientToolError(event.context)) return;
-              reportSessionFailure(event.context, 'elevenlabs.sdk.error', readNumericNativeCode(readRecord(event.context).code));
+              const context = readRecord(event.context);
+              const nativeErrorCode = readNumericNativeCode(context.code);
+              // SDK 1.18.0 exposes the server category separately from its
+              // prefixed message. Keep only this known, content-free category.
+              const nativeErrorReason = context.errorType === 'call_initialization_error'
+                ? 'call_initialization_error' : undefined;
+              const unavailable = nativeErrorCode === '3000' && nativeErrorReason === 'call_initialization_error'
+                && event.error === 'Server error: The AI agent you are trying to reach is not available.';
+              reportSessionFailure(event.context, 'elevenlabs.sdk.error', nativeErrorCode, nativeErrorReason,
+                unavailable ? 'voice_provider_agent_unavailable' : 'voice_service_unavailable');
               return;
+            }
             case 'status':
               onControl({ type: 'elevenlabs.status', status: event.data.status });
               return;

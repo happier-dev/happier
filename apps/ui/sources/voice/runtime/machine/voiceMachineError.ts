@@ -75,6 +75,7 @@ export function resolveVoiceMachineErrorKind(reason: string, preferredKind?: Voi
     if (reason === 'held_by_person' || reason === 'VOICE_AGENT_TARGET_SESSION_INACTIVE'
         || reason === 'VOICE_AGENT_TARGET_SESSION_OFFLINE') return 'session_unavailable';
     if (reason === 'provider_setup_required' || reason === 'realtime_byo_not_configured' || reason === 'realtime_agent_update_required'
+        || reason === 'voice_provider_agent_unavailable'
         || reason === 'VOICE_AGENT_STARTUP_INSTRUCTIONS_UNSUPPORTED'
         || reason === 'execution_run_protocol_unsupported'
         || reason === 'codex_tool_restriction_unsupported_model'
@@ -130,6 +131,10 @@ export function createVoiceMachineError(params: Readonly<{
             ? { usageLimit: { usageLimitRecovery: quota.data.usageLimitRecovery,
                 usageLimitResetAtMs: quota.data.usageLimitResetAtMs } } : {}),
         ...policy,
+        // A cloud agent refusal needs Voice provider settings on every platform,
+        // rather than the native microphone settings used by open_settings.
+        ...(params.reason === 'voice_provider_agent_unavailable'
+            ? { recoveryAction: 'review_credentials' as const } : {}),
         // Waiting for quota is not a setup failure. The native Run owns any automatic recovery.
         ...(params.kind === 'provider_error' && params.reason === 'usage_limit'
             ? { recoveryAction: 'none' as const, presentation: 'error' as const, retryPolicy: 'never' as const } : {}),

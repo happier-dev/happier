@@ -5,6 +5,9 @@ export function translateVoiceReadiness(key: string, params?: { service: string 
   if (key === 'voice.readiness.feature_policy_disabled') {
     return t('settingsVoice.pages.conversations.agentFeatureRequired', { feature: t('settingsFeatures.expVoiceAgent') });
   }
+  if (key === 'settingsVoice.local.machineErrors.provider_agent_unavailable') {
+    return t('settingsVoice.local.machineErrors.provider_agent_unavailable', { service: params?.service ?? t('voicePresence.title') });
+  }
   return key === 'voice.readiness.settings_missing_required_setting'
     ? t('voice.readiness.settings_missing_required_setting', { service: params?.service ?? t('voicePresence.title') })
     : tLoose(key);

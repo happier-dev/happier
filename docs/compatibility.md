@@ -8358,6 +8358,16 @@ or adapter changes. The scoped-clean `../0.2` frontier
 `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no corresponding Action cause
 module.
 
+The unreleased 0.3 realtime `provider_error` code union also accepts
+`voice_provider_agent_unavailable`. ElevenLabs alone classifies the exact
+observed SDK initialization refusal; the host consumes that reason through
+existing Voice setup recovery and localized copy. The diagnostic category
+`call_initialization_error` uses the existing optional `nativeErrorReason`;
+numeric `3000` already fits `nativeErrorCode`. No vendor prose enters the
+event or cause. SDK, provider and UI refresh together under the same direct
+cut; no wire epoch, persisted format or adapter changes. The scoped 0.2
+frontier above has no corresponding realtime event contract.
+
 Unreleased 0.3 Local Voice turn error events add optional `runtimeIssueV1`, reusing
 the closed Session runtime issue and failure-cause schemas. This diagnostic
 presentation carries the native owner's redacted vendor message and HTTP status

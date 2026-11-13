@@ -14438,6 +14438,7 @@ settingsSession: {
         speech_recognition_unavailable: 'Распознавание речи здесь недоступно. Выберите другой движок распознавания речи.',
         previous_session_stop_failed: 'Не удалось остановить предыдущий голосовой сеанс.',
         agent_selection_unavailable: 'Выбранный агент недоступен. Выберите агента в настройках голоса.',
+        provider_agent_unavailable: ({ service }: { service: string }) => `Агент ${service} недоступен. Проверьте его настройки голоса.`,
       },},
     privacy: {
       title: "Передача контекста",

@@ -337,6 +337,7 @@ export type VoiceRealtimeCanonicalEvent =
             | 'voice_transcription_failed'
             | 'voice_tool_result_delivery_unrecoverable'
             | 'voice_service_unavailable'
+            | 'voice_provider_agent_unavailable'
             | 'voice_response_incomplete';
         /** Content-free provider diagnostic code; never a message or payload. */
         providerCode?: string;

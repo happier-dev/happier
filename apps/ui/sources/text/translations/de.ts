@@ -14656,6 +14656,7 @@ settingsSession: {
                 speech_recognition_unavailable: 'Spracherkennung ist hier nicht verfügbar. Wähle eine andere Spracherkennung.',
                 previous_session_stop_failed: 'Die vorherige Voice-Sitzung konnte nicht beendet werden.',
                 agent_selection_unavailable: 'Der ausgewählte Agent ist nicht verfügbar. Wähle einen Agenten in den Voice-Einstellungen.',
+                provider_agent_unavailable: ({ service }: { service: string }) => `Der ${service}-Agent ist nicht verfügbar. Prüfe seine Voice-Einstellungen.`,
             },},
         languageTitle: 'Sprache',
         languageDescription: "Wähle die vom Voice-Dienst unterstützte Sprache. Einige Dienste nutzen dieselbe Sprache für Erkennung und Antworten.",

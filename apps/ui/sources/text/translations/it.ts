@@ -14815,6 +14815,7 @@ settingsSession: {
         speech_recognition_unavailable: 'Il riconoscimento vocale non è disponibile qui. Scegli un altro motore vocale.',
         previous_session_stop_failed: 'Impossibile interrompere la sessione vocale precedente.',
         agent_selection_unavailable: 'L’agente selezionato non è disponibile. Scegli un agente nelle impostazioni vocali.',
+        provider_agent_unavailable: ({ service }: { service: string }) => `L’agente ${service} non è disponibile. Controlla le sue impostazioni vocali.`,
       },},
     privacy: {
       title: "Condivisione del contesto",

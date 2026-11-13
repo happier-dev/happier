@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-native', () => ({ Platform: { OS: 'web' } }));
 
-const network = vi.hoisted(() => ({ terminateDuringStart: false, rooms: [] as Array<{
+const network = vi.hoisted(() => ({ terminateDuringStart: false, unavailableDuringStart: false, rooms: [] as Array<{
   name: string;
   emit(event: string, ...args: unknown[]): boolean;
   disconnected: boolean;
@@ -26,6 +26,13 @@ vi.mock('livekit-client', async (importOriginal) => {
         if (network.terminateDuringStart) {
           network.terminateDuringStart = false;
           this.emit(original.RoomEvent.ParticipantDisconnected, { identity: 'agent-early' });
+        }
+        if (network.unavailableDuringStart) {
+          network.unavailableDuringStart = false;
+          this.emit(original.RoomEvent.DataReceived, new TextEncoder().encode(JSON.stringify({ type: 'error',
+            error_event: { code: 3000, error_type: 'call_initialization_error',
+              reason: 'The AI agent you are trying to reach is not available.' },
+          })));
         }
       },
     };
@@ -54,7 +61,8 @@ const { createRealtimeToolBarrier } = await import(/* @vite-ignore */ new URL(
 ).href) as { createRealtimeToolBarrier: typeof CreateRealtimeToolBarrier };
 
 describe('ElevenLabs SDK terminal session callbacks', () => {
-  it.each(['agent', 'room', 'end_call', 'transport', 'server', 'early', 'reconnect'] as const)(
+  it.each(['agent', 'room', 'end_call', 'transport', 'server', 'early', 'reconnect',
+    'unavailable', 'unavailable_early', 'initialization_other', 'unknown_category', 'unavailable_other_code'] as const)(
     'surfaces %s termination before any turn without automatically starting another conversation', async (termination) => {
       const { RoomEvent, ConnectionState, DisconnectReason } = await import('livekit-client');
       const runtime = createElevenLabsVoiceProviderRuntime({ loadConversationSdk: () => import('@elevenlabs/client') });
@@ -93,8 +101,11 @@ describe('ElevenLabs SDK terminal session callbacks', () => {
       const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
       try {
         network.terminateDuringStart = termination === 'early';
+        network.unavailableDuringStart = termination === 'unavailable_early';
         await expect(controller.start({ controlSessionId: 'terminal-session', request: { textOnly: true } })).resolves.toEqual(
-          termination === 'early' ? { status: 'failed', code: 'voice_service_unavailable' } : { status: 'connected' },
+          termination === 'early' ? { status: 'failed', code: 'voice_service_unavailable' }
+            : termination === 'unavailable_early' ? { status: 'failed', code: 'voice_provider_agent_unavailable' }
+            : { status: 'connected' },
         );
         const room = network.rooms[firstRoom]!;
         expect(room.sent.map(item => item.message.type)).toEqual(['conversation_initiation_client_data']);
@@ -110,6 +121,17 @@ describe('ElevenLabs SDK terminal session callbacks', () => {
         else if (termination === 'server') room.emit(RoomEvent.DataReceived, new TextEncoder().encode(JSON.stringify({
           type: 'error', error_event: { message: 'private vendor response', code: 1008, details: 'private details' },
         })));
+        else if (termination === 'unavailable' || termination === 'initialization_other' || termination === 'unknown_category'
+          || termination === 'unavailable_other_code') {
+          // Actual R141 REST error shape, replayed through the installed SDK's
+          // error handler. The incident's departure-only callback lacks this wire event.
+          room.emit(RoomEvent.DataReceived, new TextEncoder().encode(JSON.stringify({ type: 'error', error_event: {
+            code: termination === 'unavailable_other_code' ? 1008 : 3000,
+            error_type: termination === 'unknown_category' ? 'private category' : 'call_initialization_error',
+            reason: termination === 'initialization_other' ? 'private vendor response' : 'The AI agent you are trying to reach is not available.',
+            debug_message: 'private debugging', details: { context: 'private details' },
+          } })));
+        }
         else if (termination === 'reconnect') {
           // Exercise the host's existing transport recovery. If the replacement
           // SDK conversation ends during startup, it must settle once too.
@@ -117,16 +139,22 @@ describe('ElevenLabs SDK terminal session callbacks', () => {
           await connections[0]!.close({ code: 'remote_close' });
         }
         await vi.waitFor(() => expect(failures).toHaveLength(1));
-        expect(failures[0]).toMatchObject({ code: 'voice_service_unavailable', failureCause: {
+        expect(failures[0]).toMatchObject({ code: termination === 'unavailable' || termination === 'unavailable_early'
+          ? 'voice_provider_agent_unavailable' : 'voice_service_unavailable', failureCause: {
           phase: termination === 'agent' || termination === 'room' || termination === 'early' || termination === 'reconnect' ? 'elevenlabs.disconnect.agent.close'
             : termination === 'end_call' ? 'elevenlabs.disconnect.agent.end_call'
             : termination === 'transport' ? 'elevenlabs.disconnect.error.connection_state_changed' : 'elevenlabs.sdk.error',
           errorCode: null, httpStatus: null,
           ...(termination === 'server' ? { nativeErrorCode: '1008' } : {}),
+          ...(termination === 'unavailable' || termination === 'unavailable_early' || termination === 'initialization_other'
+            ? { nativeErrorCode: '3000', nativeErrorReason: 'call_initialization_error' } : {}),
+          ...(termination === 'unknown_category' ? { nativeErrorCode: '3000' } : {}),
+          ...(termination === 'unavailable_other_code' ? { nativeErrorCode: '1008', nativeErrorReason: 'call_initialization_error' } : {}),
           ...(termination === 'room' ? { nativeErrorCode: String(DisconnectReason.ROOM_DELETED) } : {}),
           ...(termination === 'agent' || termination === 'early' || termination === 'reconnect'
             ? { nativeErrorReason: 'agent_disconnected' } : termination === 'end_call' ? { nativeErrorReason: 'agent_ended_call' } : {}),
         } });
+        if (termination === 'unknown_category') expect(failures[0]?.failureCause).not.toHaveProperty('nativeErrorReason');
         expect(JSON.stringify(failures)).not.toContain('private');
         expect(controller.getOwnedControlSessionId()).toBeNull();
         expect(connections[0]?.state()).toBe('closed');
@@ -147,6 +175,7 @@ describe('ElevenLabs SDK terminal session callbacks', () => {
         expect(network.rooms).toHaveLength(endedRoomCount + 1);
       } finally {
         network.terminateDuringStart = false;
+        network.unavailableDuringStart = false;
         await controller.stop();
         await runtime.dispose();
         consoleError.mockRestore();

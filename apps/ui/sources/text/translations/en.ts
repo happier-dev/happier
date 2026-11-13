@@ -17452,6 +17452,7 @@ const enSettingsVoice = {
       speech_recognition_unavailable: 'Speech recognition isn’t available here. Choose another speech engine.',
       previous_session_stop_failed: 'Couldn’t stop the previous voice session.',
       agent_selection_unavailable: 'The selected agent is unavailable. Choose an agent in Voice settings.',
+      provider_agent_unavailable: ({ service }: { service: string }) => `The ${service} agent isn't available. Review its Voice settings.`,
     },
   },
   languageTitle: 'Language',

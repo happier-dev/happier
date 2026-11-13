@@ -144,7 +144,8 @@ export function createElevenLabsProtocolAdapter(input: Readonly<{
           ...(cause.success ? { failureCause: cause.data } : {}),
           code: record.toolResult === true
             ? 'voice_tool_result_delivery_unrecoverable'
-            : 'voice_service_unavailable',
+            : record.code === 'voice_provider_agent_unavailable'
+              ? 'voice_provider_agent_unavailable' : 'voice_service_unavailable',
         }];
       }
       if (record.type === 'elevenlabs.client_tool_call') {

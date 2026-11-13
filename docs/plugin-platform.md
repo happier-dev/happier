@@ -9593,6 +9593,16 @@ agent participant departure; none is invented. Room disconnects retain the
 numeric LiveKit reason when supplied. Arbitrary vendor messages, close prose
 and payloads are excluded from diagnostics.
 
+When SDK 1.18.0 supplies `errorType: call_initialization_error`, the leaf retains
+that category in `nativeErrorReason`, independently of numeric `nativeErrorCode`.
+Only code `3000`, that category, and the SDK-prefixed observed refusal
+`Server error: The AI agent you are trying to reach is not available.` together
+produce `voice_provider_agent_unavailable`. The existing Voice error presenter
+uses localized service-specific wording and the provider-settings recovery.
+Other initialization messages remain unclassified; their safe codes survive.
+A participant departure alone cannot imply this refusal. No runtime REST
+enrichment, automatic agent update, retry, timeout or limit is added.
+
 ### Batch speech output (0.3 development)
 
 Protocol's `voice/speechText.ts` owns semantic sentence and clause boundaries for

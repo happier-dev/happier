@@ -13668,6 +13668,7 @@ settingsSession: {
                 speech_recognition_unavailable: 'El reconeixement de veu no està disponible aquí. Tria un altre motor de veu.',
                 previous_session_stop_failed: 'No s’ha pogut aturar la sessió de veu anterior.',
                 agent_selection_unavailable: 'L’agent seleccionat no està disponible. Tria un agent a la configuració de veu.',
+                provider_agent_unavailable: ({ service }: { service: string }) => `L’agent de ${service} no està disponible. Revisa’n la configuració de veu.`,
             },},
         privacy: {
             title: 'Context compartit',
