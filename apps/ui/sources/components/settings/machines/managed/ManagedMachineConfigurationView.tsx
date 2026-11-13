@@ -953,7 +953,7 @@ function ManagedMachineConfigurationViewBody(props: ManagedMachineConfigurationV
         const readError = presetQuery.state.error ?? catalog.error ?? (error?.during === 'read' ? error.code : undefined);
         return <ItemList pageColumn="wide">
             <PageHeader title={props.presetOnly ? t('machinePresets.title') : t('managedMachines.picker.newMachine')} actions={compact ? undefined : pageChip}
-                cancelAction={cancelContinuation ? { label: t('common.cancel'), onPress: cancelContinuation, disabled: busy,
+                cancelAction={cancelContinuation ? { title: t('common.cancel'), onPress: cancelContinuation, disabled: busy,
                     testID: 'managed-config.continuation-cancel' } : undefined} />
             {creationDisabledNotice}
             {compact && pageChip ? <ManagedScopeRow testID="managed-config.scope" chip={pageChip} /> : null}

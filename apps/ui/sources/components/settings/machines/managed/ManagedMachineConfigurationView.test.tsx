@@ -496,6 +496,8 @@ describe('mounted managed configurator', () => {
         expect(screen.findByTestId('managed-config.create')).toBeNull();
         const { PageHeader } = await import('@/components/ui/layout/PageHeader');
         const cancel = screen.tree.findByType(PageHeader).props.cancelAction;
+        // The header draws Cancel from its `title`; without it the button renders with no words.
+        expect(cancel?.title).toBe(t('common.cancel'));
         expect(cancel?.disabled).toBe(false);
         await act(async () => cancel.onPress());
         expect(onCancel).toHaveBeenCalledOnce();
