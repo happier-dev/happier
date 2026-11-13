@@ -580,15 +580,19 @@ const stylesheet = StyleSheet.create((theme, runtime) => ({
         paddingLeft: HAPPIER_ROW_TITLE_META_GAP_PX,
         alignItems: 'flex-end',
     },
+    // A meta that no longer fits beside the name reads as the row's next line, on the text edge like a
+    // description, never as a right-aligned orphan under the name (PHONE-ROWS-HUNT-1113, QA-RERUN F4/F13).
     titleMetaBeneath: {
-        alignItems: 'flex-end',
+        alignItems: 'flex-start',
     },
     // Beneath the name the meta has the row's width and no more: a long Machine list ellipsizes, never runs past
     // the screen (QA-45 F5).
     titleMetaBeneathCell: {
         maxWidth: '100%',
         flexShrink: 1,
+        marginLeft: 0,
         paddingLeft: 0,
+        alignItems: 'flex-start',
     },
     titleMetaContent: {
         maxWidth: '100%',

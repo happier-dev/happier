@@ -152,3 +152,41 @@ describe('page header entrance parts', () => {
     expect(new Set(parts)).toEqual(new Set(['mark', 'title', 'supporting']));
   });
 });
+
+describe('page header facts line', () => {
+  it('re-measures every fact when one changes, so the separator that now ends a line is hidden', () => {
+    // Native layout reports a view when it mounts or its own size changes, never when it only moves to another
+    // row. A fact whose text grows pushes the facts after it down without resizing them.
+    const mounted = new Set<string>();
+    function Glyph(props: Readonly<{ id: string }>) {
+      useEffect(() => { mounted.add(props.id); }, [props.id]);
+      return null;
+    }
+    const facts = (uptime: string) => ['presence', 'uptime', 'cores'].map(key => ({
+      key, testID: `fact-${key}`, icon: <Glyph id={key} />, text: key === 'uptime' ? uptime : key,
+    }));
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(<HappierPageHeader testID="header" title="leeroy-mbp" meta={facts('Up 5 min')} />);
+    });
+    onTestFinished(() => { act(() => renderer.unmount()); });
+    const fact = (key: string) => renderer.root.findAllByType('View').find(node => node.props.testID === `fact-${key}`)!;
+    const separatorHidden = (key: string) => fact(key).findAll(node => node.props['aria-hidden'] === true)
+      .some(node => node.props.style?.opacity === 0);
+    const place = (key: string, row: number) => act(() => fact(key).props.onLayout(
+      { nativeEvent: { layout: { x: 0, y: row * 18, width: 80, height: 18 } } } satisfies HappierLayoutChangeEvent));
+    for (const key of ['presence', 'uptime', 'cores']) place(key, 0);
+    expect(separatorHidden('presence')).toBe(false);
+    expect(separatorHidden('uptime')).toBe(false);
+
+    mounted.clear();
+    act(() => renderer.update(<HappierPageHeader testID="header" title="leeroy-mbp" meta={facts('Up 5 hours 19 minutes')} />));
+    // The grown fact reports its new size; a fact that remounted reports where it now stands.
+    place('uptime', 0);
+    if (mounted.has('presence')) place('presence', 0);
+    if (mounted.has('cores')) place('cores', 1);
+
+    expect(separatorHidden('presence')).toBe(false);
+    expect(separatorHidden('uptime')).toBe(true);
+  });
+});

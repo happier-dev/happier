@@ -603,7 +603,9 @@ function HappierSurfaceStateLineView(props: HappierSurfaceStateProps) {
           testID={props.testID}
           icon={props.glyph}
           action={lineActions}
-          actionPlacement={details ? 'below' : 'trailing'}
+          // Two ways forward never share a line with the words (the banner's rule): one recovery stays beside its
+          // sentence, two go under it on the sentence's edge, so a phone never squeezes the cause beside them.
+          actionPlacement={details || (props.action && props.secondaryAction) ? 'below' : 'trailing'}
           textLineHeightPx={textMetrics.lineHeight}
           density={props.lineDensity}
           below={details && detailsOpen ? bindings.renderDetailsCode?.(details, 'start') ?? (

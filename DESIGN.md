@@ -759,7 +759,22 @@ live in the page-presentation owners in code.
   single suggestion.
 - **Phones recompose rather than shrink.** Only a switch, a short value or a chevron may sit to the
   right of a label; anything wider moves beneath it. A setting that can never apply on a platform is
-  not shown there.
+  not shown there. Rows, metas and footers follow one phone rule, owned by the shared row and footer
+  components rather than by each screen (owner, 2026-11-13, PHONE-ROWS-HUNT):
+  - **One meta line, most important fact first.** A row's meta is one line that leads with the fact the
+    person acts on (a status, then where, then when); the rest lives in the detail. A line never truncates
+    twice: when two parts compete, the lesser one yields whole or moves to the detail.
+  - **Name and status priority.** The name keeps line 1 and ends in one ellipsis; it never wraps while a
+    status beside it truncates. A status word that no longer fits beside the name leads line 2, and a meta
+    that no longer fits beside the name takes the next line on the text edge, never a right-aligned orphan
+    line (in a column it joins the description line).
+  - **Footers.** Two actions share a phone sheet's footer; three or more stack at full width, primary last
+    (`HappierModalCardFooterActions`). A row or card never puts more than one text action beside a sentence:
+    the rest go under the sentence or into its "…" menu.
+  - **Tree indent from one token.** A nested row indents by its tree owner's step and nothing local:
+    disclosure trees (files, folders) by `resolveHappierTreeRowIndentPx`, collection columns by
+    `resolveHappierCollectionTreeChildIndentPx`, the Sessions list's reporting rows by
+    `SESSION_LIST_REPORTS_INDENT_STEP_PX`.
 - **A phone has one way around.** The tab bar holds the four tabs and More, and it does not move between
   tabs. Every tab opens on one head: the Home line, Activity and the avatar, with the page's large title
   under them on the page edge. A destination More opens keeps the tab bar and, while it is open, shows as a tab

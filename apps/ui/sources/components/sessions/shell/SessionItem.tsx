@@ -90,7 +90,7 @@ import {
     resolveSessionListRowStatusTextMetrics,
 } from './resolveSessionListDensityViewState';
 import { resolveSessionRowInteractionPolicy } from './row/resolveSessionRowInteractionPolicy';
-import { SESSION_LIST_SHEET_INSET_PX } from './sessionListStyles';
+import { SESSION_LIST_REPORTS_INDENT_STEP_PX, SESSION_LIST_SHEET_INSET_PX } from './sessionListStyles';
 import { resolveSessionItemTagCollections } from './sessionTagUtils';
 import { planSessionTagDisplay } from './sessionTagPlacement';
 import { EntityDragGrip } from '@/components/ui/treeDragDrop/ui/EntityReleasePreview';
@@ -163,7 +163,6 @@ const SESSION_ROW_ORGANIZE_LIST_MENU_ITEM_ID = 'session.organizeList';
 
 const CONTEXT_MENU_PRESS_IN_OPEN_DELAY_MS = 350;
 const CONTEXT_MENU_PRESS_SUPPRESSION_TIMEOUT_MS = 600;
-const SESSION_REPORTS_ROW_INDENT_STEP = 22;
 const SESSION_DELETE_DRAFT_MENU_ITEM_ID = 'session-draft.delete';
 
 let sessionForkStrategyFlowModulePromise:
@@ -1740,7 +1739,7 @@ const SessionItemContent = React.memo(
                             testID={`session-list-item-reports-gutter-${occurrenceTestId}`}
                             accessibilityElementsHidden
                             importantForAccessibility="no-hide-descendants"
-                            style={[styles.reportsGutter, { width: normalizedReportsDepth * SESSION_REPORTS_ROW_INDENT_STEP }]}
+                            style={[styles.reportsGutter, { width: normalizedReportsDepth * SESSION_LIST_REPORTS_INDENT_STEP_PX }]}
                         >
                             <View style={styles.reportsConnector} />
                         </View>

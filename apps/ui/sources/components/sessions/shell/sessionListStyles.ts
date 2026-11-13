@@ -20,6 +20,8 @@ export { SESSION_LIST_COLUMN_METRICS } from './sessionListColumnMetrics';
 const SESSION_LIST_TEXT_INSET_PX = HAPPIER_COLLECTION_LIST_METRICS.contentInset;
 /** The column's sheet edge: session rows, the Drafts sheet and the Browse row start here (the shared gutter). */
 export const SESSION_LIST_SHEET_INSET_PX = HAPPIER_COLLECTION_LIST_METRICS.rowInset;
+/** One step of a reporting row's indent under its coordinator: a Session and a Run nest by the same step. */
+export const SESSION_LIST_REPORTS_INDENT_STEP_PX = 22;
 /**
  * The title row's trailing inset: the icon buttons' squares end just inside the sheet edge, so their
  * glyphs sit on the rows' trailing text edge (lab: glyph right edge on `R = W - 22`).

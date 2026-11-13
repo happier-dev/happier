@@ -81,8 +81,6 @@ export type FilesystemBrowserRowProps = Readonly<{
     testID?: string;
     density?: ItemProps['density'];
     showDivider?: boolean;
-    basePaddingLeft?: number;
-    depthIndent?: number;
     paddingRight?: number;
     style?: ItemProps['style'] & React.ComponentProps<typeof HappierTreeRow>['style'];
     onRetryError?: (node: FilesystemBrowserNode) => void | Promise<void>;
@@ -98,10 +96,7 @@ export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.Re
     const presentationTheme = usePluginUiTheme(theme);
     const phone = useDeviceType() === 'phone';
     const reducedMotion = useReducedMotionPreference();
-    const paddingLeft = resolveHappierTreeRowIndentPx(props.node.depth, {
-        ...(props.basePaddingLeft === undefined ? {} : { basePaddingPx: props.basePaddingLeft }),
-        ...(props.depthIndent === undefined ? {} : { indentStepPx: props.depthIndent }),
-    });
+    const paddingLeft = resolveHappierTreeRowIndentPx(props.node.depth);
     const table = props.rowPresentation === 'table';
     const showDivider = props.showDivider === true;
 
@@ -126,7 +121,7 @@ export function FilesystemBrowserRow(props: FilesystemBrowserRowProps): React.Re
         ? (
             // Pane-states lab 0 "N": a folder that could not be listed is one quiet line in the tree — what
             // failed, the cause, and an inline retry of that folder. The raw error stays on the QA channel.
-            <View style={{ paddingLeft: Math.max(0, paddingLeft - (props.basePaddingLeft ?? 12)) }}>
+            <View style={{ paddingLeft: resolveHappierTreeRowIndentPx(props.node.depth, { basePaddingPx: 0 }) }}>
                 <SurfaceStateCard
                     testID={props.testID ? `${props.testID}-folder-error` : undefined}
                     size="line"

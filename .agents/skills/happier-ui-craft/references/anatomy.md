@@ -86,6 +86,17 @@ Description of what the section controls, above it.
   ("17 built-in · 2 custom ›"), so the user learns without opening it.
 - A compound row only for facets of one decision (model + effort), never for unrelated settings
   placed side by side.
+- **Phone rows** (`DESIGN.md` → Phones recompose; the owners decide, screens don't):
+  - Meta is one line, most important fact first (status, then where, then when). It never truncates
+    twice; the lesser part yields whole or goes to the detail.
+  - The name keeps line 1 and never wraps beside a truncating status. A status word that no longer
+    fits leads line 2. `Item`'s `titleMeta` moves beneath on the text edge by itself (in a column it
+    joins the description line), so don't move it by hand per screen.
+  - Footers: `HappierModalCardFooterActions` stacks three or more phone sheet actions. A row or card
+    keeps at most one text action beside its sentence; the rest go under it or into "…".
+  - Tree indent comes from the tree's owner token (`resolveHappierTreeRowIndentPx`,
+    `resolveHappierCollectionTreeChildIndentPx`, `SESSION_LIST_REPORTS_INDENT_STEP_PX`), never a local
+    number or override prop.
 
 ## Hubs
 

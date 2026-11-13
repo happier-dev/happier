@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { happierPageTextMetrics, useHappierTreeRowLineHeight } from '@happier-dev/plugin-ui/presentation';
+import { happierPageTextMetrics, resolveHappierTreeRowIndentPx, useHappierTreeRowLineHeight } from '@happier-dev/plugin-ui/presentation';
 
 import { Typography } from '@/constants/Typography';
 import { Tree, type TreeItem } from '@happier-dev/plugin-ui';
@@ -1115,11 +1115,12 @@ function useMoveMenu(
                     ),
                     disabled: here || refused !== null,
                     checked: here,
+                    // The chooser nests folders by the tree's own step, from the menu row's inset.
                     rowContainerStyle: {
-                      paddingLeft:
-                        12 +
-                        (folderId === null ? 0 : (depths.get(folderId) ?? 0)) *
-                          14,
+                      paddingLeft: resolveHappierTreeRowIndentPx(
+                        folderId === null ? 0 : (depths.get(folderId) ?? 0),
+                        { basePaddingPx: 12 },
+                      ),
                     },
                   };
                 },

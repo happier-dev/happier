@@ -38,7 +38,7 @@ import { WORKER_KIND_GLYPHS } from '@/components/sessions/work/workerKindGlyphs'
 import { resolveSessionRowTitleColorRole, sessionRowTitleInk, type SessionListActiveColorModeV1 } from './sessionRowTitleColorRole';
 
 import { resolveCollectionRowDensity, type SessionListRowDensity } from '../resolveSessionListDensityViewState';
-import { SESSION_LIST_SHEET_INSET_PX } from '../sessionListStyles';
+import { SESSION_LIST_REPORTS_INDENT_STEP_PX, SESSION_LIST_SHEET_INSET_PX } from '../sessionListStyles';
 import { CollectionRowContent, CollectionRowLine, CollectionRowTitle, useTouchCompactRow } from '@/components/ui/lists/collection/CollectionRowContent';
 
 export type WorkflowRunItemProps = Readonly<{
@@ -50,7 +50,6 @@ export type WorkflowRunItemProps = Readonly<{
     dataActive?: boolean;
     density?: SessionListRowDensity;
     selected?: boolean;
-    folderDepth?: number;
     reportsDepth?: number;
     /** Opened habit History only; collection/trigger summary rows never request result bodies. */
     includeResult?: boolean;
@@ -194,7 +193,7 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
     const resultLine = !resultEnabled ? null : result.text
         ?? t(result.status === 'failed' ? 'workflows.contentUnavailable'
             : result.status === 'pending' ? 'common.loading' : 'workflows.finalOutput.none');
-    const depth = (props.folderDepth ?? 0) + (props.reportsDepth ?? 0);
+    const depth = props.reportsDepth ?? 0;
     // At the list's one-line density a Run reads as a Session row does (calm ruling 2026-11-01): its name, then
     // the calm row mark (or its age), the word only when the person asked for status words, the one decider
     // Session rows follow. Progress, origin, the word and an unreadable title stay in the spoken label and the
@@ -230,7 +229,7 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
             accessibilityLabel={[name, word, context, starterLabel, editedBy].filter(Boolean).join('. ')}
             onPress={() => router.push(createWorkflowRunRoute(props.runId, props.serverId) as never)} />
     );
-    return <View testID={`workflow-run-sheet:${props.runId}`} style={[styles.row, depth > 0 ? { paddingLeft: depth * 12 } : null]}>
+    return <View testID={`workflow-run-sheet:${props.runId}`} style={[styles.row, depth > 0 ? { paddingLeft: depth * SESSION_LIST_REPORTS_INDENT_STEP_PX } : null]}>
         <View style={depth > 0 ? styles.guide : null}>
             <CollectionRowContent density={rowDensity} touchCompact={readablePhone} textScale={fontScale}
                 selected={props.selected} hovered={hovered}
