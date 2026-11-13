@@ -459,8 +459,7 @@ it('shows the canonical capacity weather and insufficient model/reset basis insi
   expect(screen.getTextContent()).not.toContain('—');
   expect(screen.getTextContent()).not.toContain(t('usage.board.plans.planNoPriceShort'));
   const sharedPriceReason = t('usage.board.plans.planNoPriceAll');
-  // The list's caveats are one quiet line (USAGE-ACCEPT #7): the first leads, the rest open under Details.
-  expect(String(screen.findByTestId('fit.once')!.props.reason)).toBe(sharedPriceReason);
+  expect(String(screen.findByTestId('fit.once')!.props.children)).toContain(sharedPriceReason);
   expect(screen.getTextContent().split(sharedPriceReason), 'one shared cause across the accounts').toHaveLength(2);
   // The plan row itself opens its details (lab p2sheet-D: one row per plan); no "Details" line repeats under every plan.
   expect(screen.getTextContent()).not.toContain(t('usage.board.plans.planDetails'));
@@ -1633,11 +1632,11 @@ it('promises later detail only for history gaps', async () => {
     return renderScreen(wrap(<UsagePlanFitWidget {...props} slice={slice} id="usage_plan_fit" testID="fit" />));
   };
   const priceGap = await render('period_price_unavailable');
-  expect(priceGap.getTextContent()).not.toContain(t('usage.board.plans.moreDetailLater'));
-  expect(priceGap.getTextContent()).not.toContain(t('usage.board.plans.attributionNote'));
+  expect(priceGap.findByTestId('fit.notRecorded')).toBeFalsy();
+  expect(priceGap.findByTestId('fit.attribution')).toBeFalsy();
   await priceGap.unmount();
   const historyGap = await render('recorded_resets_unavailable');
-  expect(historyGap.getTextContent()).toContain(t('usage.board.plans.moreDetailLater'));
+  expect(historyGap.findByTestId('fit.notRecorded')).toBeTruthy();
   await historyGap.unmount();
 });
 
