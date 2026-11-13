@@ -346,7 +346,7 @@ export const GlassSurface = React.memo(function GlassSurface(props: GlassSurface
     return (
         <View {...viewProps} style={[props.style, backed ? props.backedStyle : null, props.noCoat ? null : { backgroundColor: 'transparent' }, finishLift, backedInkStyle, innerPaint]}>
             {/* Native View types omit RN-web's dataSet; this branch is the web boundary. */}
-            <View {...{ dataSet: { happyGlassBackdrop: 'true' } }} style={[StyleSheet.absoluteFillObject, webMaterialLayerShape(props.style), paint, happierSurfaceGradientWebStyle(gradient, !theme.dark)]} />
+            <View {...{ dataSet: { happyGlassBackdrop: 'true' } }} style={[StyleSheet.absoluteFillObject, webMaterialLayerShape(props.style, group === 'floating' && capability === 'webBlur' && !props.noCoat && !inheritsTranslucentMaterial), paint, happierSurfaceGradientWebStyle(gradient, !theme.dark)]} />
             <GlassSurfaceGroupContext.Provider value={plane}>
                 <HappierMaterialRoleProvider {...materialPlane}>
                     {withBackedInk(props.children)}
@@ -377,17 +377,35 @@ export const renderThemeMaterialSurface: HappierMaterialSurfaceRender = input =>
  */
 export const renderPanelMaterialSurface: HappierMaterialSurfaceRender = input => renderGlassMaterialSurface(input, 'panel');
 
+/**
+ * Software-composited Chrome (headless QA browsers, machines without a GPU) frosts a backdrop only up to a constant
+ * ~96 device px short of the layer's right and bottom edges above 1x device scale (FIN 11-13: list rows read through a
+ * popover at 200 % text; measured at DPR 2 and 3, the layer box itself exact). GPU compositing is unaffected. A frosted
+ * floating layer reaches that far past those edges and clips itself back to the surface, so its frost always covers the
+ * whole surface; 96 CSS px covers 96 device px at every scale. Floating surfaces are few at once; in-flow cards stay exact.
+ */
+const SOFTWARE_BACKDROP_SHORTFALL_PX = 96;
+
 /** The layer fills the surface's padding box, so its corners follow the surface's inner radius. */
-function webMaterialLayerShape(style: StyleProp<ViewStyle>): ViewStyle {
+function webMaterialLayerShape(style: StyleProp<ViewStyle>, reachPastSoftwareShortfall = false): ViewStyle {
     const borderWidth = readSurfaceStyleProperty(style, 'borderWidth');
     const inset = typeof borderWidth === 'number' ? borderWidth : 0;
     // Unistyles styles retain non-enumerable geometry: flattening an array can
     // expose only its secret references. CSS inheritance keeps the paint's
     // corners attached to the real root without throwing those references away.
     const shape = { pointerEvents: 'none', borderRadius: 'inherit' } as unknown as ViewStyle;
+    const radii: Partial<Record<(typeof WEB_CORNER_RADII)[number], number>> = {};
     for (const key of WEB_CORNER_RADII) {
         const radius = readSurfaceStyleProperty(style, key);
-        if (typeof radius === 'number') shape[key] = Math.max(0, radius - inset);
+        if (typeof radius === 'number') radii[key] = Math.max(0, radius - inset);
     }
-    return shape;
+    if (!reachPastSoftwareShortfall) return Object.assign(shape, radii);
+    const corner = (key: (typeof WEB_CORNER_RADII)[number]) => radii[key] ?? radii.borderRadius ?? 0;
+    const reach = SOFTWARE_BACKDROP_SHORTFALL_PX;
+    return {
+        pointerEvents: 'none',
+        right: -reach,
+        bottom: -reach,
+        clipPath: `inset(0px ${reach}px ${reach}px 0px round ${corner('borderTopLeftRadius')}px ${corner('borderTopRightRadius')}px ${corner('borderBottomRightRadius')}px ${corner('borderBottomLeftRadius')}px)`,
+    } as unknown as ViewStyle;
 }

@@ -1044,6 +1044,25 @@ describe('web glass material', () => {
             expect(hasBackdrop(paint)).toBe(false);
         }
     });
+    it('frosts a floating surface to its edges where a software compositor stops the backdrop short of them', async () => {
+        const { GlassMaterialSettingsProvider } = await import('./useGlassMaterialSettings');
+        const { glassPresetMaterials } = await import('./glassMaterial');
+        // Software-composited Chrome (QA browsers, machines without a GPU) frosts ~96 device px short of the right and
+        // bottom edges above 1x device scale (FIN 11-13: list rows read through a popover at 200 % text).
+        const screen = await renderScreen(<GlassMaterialSettingsProvider value={{ glassSurfaceMaterials: glassPresetMaterials('everywhere') }}>
+            <GlassSurface testID="popover" surfaceGroup="floating" style={{ borderRadius: 12 }}>{null}</GlassSurface>
+            <GlassSurface testID="card" surfaceGroup="card" style={{ borderRadius: 12 }}>{null}</GlassSurface>
+        </GlassMaterialSettingsProvider>);
+        const layer = (id: string) => flattenTestStyle(screen.findAll(node => typeof node.type === 'string' && node.props.testID === id)[0]!
+            .findAll(node => typeof node.type === 'string' && node.props.dataSet?.happyGlassBackdrop === 'true')[0]!.props.style) ?? {};
+        const popover = layer('popover');
+        expect(popover.right).toBeLessThanOrEqual(-96);
+        expect(popover.bottom).toBeLessThanOrEqual(-96);
+        // The extension is clipped back to the surface's own rounded box, so nothing frosts outside it.
+        expect(String(popover.clipPath)).toBe(`inset(0px ${-Number(popover.right)}px ${-Number(popover.bottom)}px 0px round 12px 12px 12px 12px)`);
+        expect(layer('card').right ?? 0).toBe(0);
+    });
+
     it('lets secondary action ink sit on the containing translucent material instead of an opaque slab', async () => {
         const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
         const { GlassRuntimeEnvironmentProvider } = await import('./glassRuntimeEnvironment');
