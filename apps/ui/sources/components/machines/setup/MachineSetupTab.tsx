@@ -1,7 +1,7 @@
 import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
 import * as React from 'react';
 import { joinHappierFacts } from '@happier-dev/plugin-ui/presentation';
-import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
+import { machineSetupSourceApplyOriginKeyV1, type MachineSetupSourceApplyV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { machineSetupSourceOriginKeyV1, type MachineSetupSourceEntryV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -22,6 +22,7 @@ import {
 } from '@/components/settings/machines/managed/MachineSetupPlanReview';
 import { describeMachineSetup } from '@/components/settings/machines/managed/MachineSetupSection';
 import { useMachinePresets } from '@/components/settings/machines/managed/useMachinePresets';
+import type { OpenedManagedMachinePresetV1 } from '@/sync/ops/machines/machinePresetCollectionClient';
 import { machineSetupPresetSource, readMachineSetupPresetChoices, type MachineSetupPresetChoice } from '@/components/settings/machines/managed/machineSetupPresetChoices';
 import { machineSetupSourceName } from '@/components/machines/setup/machineSetupSourceName';
 import { showMachineSavePreset } from '@/components/machines/setup/MachineSavePresetModal';
@@ -52,7 +53,9 @@ import { t } from '@/text';
 
 import {
   readMachineSetupApps,
+  readOpenedMachineSetupSources,
   readMachineSetupRecipes,
+  type MachineSetupOpenedSourceV1,
   useMachineSetup,
   type MachineSetupRecipeRow,
   type MachineSetupState,
@@ -61,7 +64,7 @@ import { describeMachineSetupReason } from './machineSetupReasonText';
 
 type SetupParams = Extract<MachinePageTabParams, { id: 'setup' }>;
 const SETUP_PARAMS = Object.freeze({ id: 'setup' }) as SetupParams;
-const NO_PRESETS: readonly ManagedMachinePresetV1[] = Object.freeze([]);
+const NO_PRESETS: readonly OpenedManagedMachinePresetV1[] = Object.freeze([]);
 const TOOLS_PARAMS = Object.freeze({
   id: 'setup',
   page: 'tools',
@@ -85,7 +88,6 @@ const selectCanManage = canManageMachine;
 export function MachineSetupTab(props: MachinePageTabBodyProps) {
   const params = props.params as SetupParams;
   const setParams = props.setParams;
-  const canManage = useServerScopedMachine(props.serverId, props.machineId, selectCanManage);
   if (params.page === 'tools') {
     return (
       <View testID="machine-setup-tools">
@@ -101,7 +103,6 @@ export function MachineSetupTab(props: MachinePageTabBodyProps) {
           serverId={props.serverId}
           machineId={props.machineId}
           machineSentenceName={props.machineName}
-          canManage={canManage}
         />
       </View>
     );
@@ -141,9 +142,13 @@ function MachineSetupRoot(
       readMachineSetupPresetChoices(presets.presetsByServerId[props.serverId] ?? [], projection, localize),
     [presets.presetsByServerId, props.serverId, projection, localize],
   );
+  const openedSources = React.useMemo(
+    () => readOpenedMachineSetupSources(setup.sourcePresentations),
+    [setup.sourcePresentations],
+  );
   const recipes = React.useMemo(
-    () => readMachineSetupRecipes(setup.plan, setup.observation),
-    [setup.plan, setup.observation],
+    () => readMachineSetupRecipes(setup.plan, openedSources, setup.observation),
+    [openedSources, setup.plan, setup.observation],
   );
   const recipeTarget = React.useMemo(() => saveScope ? { scope: saveScope, machine: null } : null, [saveScope]);
   const recipeOptions = useMachineSetupRecipeOptions(recipeTarget, { presented: presented && recipes.length > 0 });
@@ -157,17 +162,30 @@ function MachineSetupRoot(
     return <MachineSetupReviewInPlace setup={setup} machineName={machine} />;
   }
 
-  const attached = setup.plan?.sources.filter(isAttachedSource) ?? NO_SOURCES;
-  const attachedKeys = new Set(attached.map(machineSetupSourceOriginKeyV1));
+  const attached = React.useMemo(
+    () => readAttachedMachineSetupSources(setup.plan?.sources ?? NO_SOURCES, openedSources),
+    [openedSources, setup.plan?.sources],
+  );
+  const attachedKeys = new Set(attached.map((source) => source.sourceKey));
   const attachable = presetList.filter(
     (entry) => !attachedKeys.has(presetOriginKey(entry)),
   );
-  const nameOf = (source: AttachedSource) => machineSetupSourceName(source, presetList);
+  const nameOf = (source: AttachedSetupSource) => {
+    if (!source.opened) return t('machinePresets.setup.tab.presetUnreadable');
+    return source.opened.source.kind === 'accountPreset'
+      ? source.opened.presetName ?? t('machinePresets.setup.tab.presetUnreadable')
+      : machineSetupSourceName(source.opened.source, presetList);
+  };
   const nothingSetUp =
     setup.plan !== null && attached.length === 0 && recipes.length === 0;
   const firstLoad = setup.plan === null && setup.failure?.during !== 'check';
-  const apps = readMachineSetupApps(setup.plan?.sources ?? NO_SOURCES);
-  const capturable = setup.plan?.sources.some((source) => describeMachineSetup(source.setup).length > 0) === true;
+  const apps = readMachineSetupApps(openedSources);
+  const allSourcesOpened = setup.plan !== null
+    && setup.sourcePresentations !== null
+    && setup.sourcePresentations.length === setup.plan.sources.length
+    && setup.sourcePresentations.every((source) => source.kind === 'opened');
+  const capturable = allSourcesOpened
+    && openedSources.some(({ source }) => describeMachineSetup(source.setup).length > 0);
   const presetCatalog = presets.presetsByServerId[props.serverId] ?? NO_PRESETS;
   const toolsSection = (
     <ItemGroup
@@ -280,19 +298,20 @@ function MachineSetupRoot(
             >
               {attached.length > 0 ? (
                 attached.map((source) => {
-                  const sourceKey = machineSetupSourceOriginKeyV1(source);
+                  const sourceKey = source.sourceKey;
+                  const opened = source.opened;
                   const latest =
-                    source.kind === 'accountPreset'
-                      ? (presetList.find((entry): entry is ManagedMachinePresetV1 => !('kind' in entry) && entry.id === source.presetId) ?? null)
+                    opened?.source.kind === 'accountPreset'
+                      ? (presetList.find((entry): entry is OpenedManagedMachinePresetV1 => !('kind' in entry) && entry.id === opened.source.presetId) ?? null)
                       : null;
                   return (
                     <AttachedPresetRow
                       key={sourceKey}
                       sourceKey={sourceKey}
-                      source={source}
+                      source={opened?.source ?? null}
                       name={nameOf(source)}
                       newer={
-                        latest && source.kind === 'accountPreset' && latest.revision > source.presetRevision
+                        latest && opened?.source.kind === 'accountPreset' && latest.revision > opened.source.presetRevision
                           ? latest
                           : null
                       }
@@ -386,11 +405,7 @@ function MachineSetupRoot(
                     key={recipe.key}
                     recipe={recipe}
                     presentation={machineSetupItemPresentation(recipe.item, recipeOffers)}
-                    presetName={
-                      setup.plan && recipe.fromPreset
-                        ? nameOf(setup.plan.sources[recipe.sourceIndex] as AttachedSource)
-                        : null
-                    }
+                    presetName={recipe.presetName}
                     editable={editable}
                     busy={setup.pending !== null}
                     onRetry={() => {
@@ -427,7 +442,13 @@ function MachineSetupRoot(
                     key={app.key}
                     {...read}
                     subtitle={joinHappierFacts(
-                      app.source.kind === 'direct' ? null : t('machinePresets.setup.tab.fromPreset', { preset: nameOf(app.source) }),
+                      app.source.kind === 'direct'
+                        ? null
+                        : t('machinePresets.setup.tab.fromPreset', {
+                            preset: app.source.kind === 'accountPreset'
+                              ? app.presetName ?? t('machinePresets.setup.tab.presetUnreadable')
+                              : machineSetupSourceName(app.source, presetList),
+                          }),
                       read.subtitle,
                     )}
                     subtitleLines={0}
@@ -451,7 +472,7 @@ function MachineSetupRoot(
                     homeId,
                     scope: saveScope,
                     machineName: machine,
-                    sources: setup.plan!.sources,
+                    sources: openedSources.map(({ source }) => source),
                     presets: presetCatalog,
                     onSaved: (presetId) => router.push(machinePresetCollectionHref({ serverId: props.serverId, presetId }) as never),
                   });
@@ -559,6 +580,7 @@ function MachineSetupAttention(
           title={title}
           reason={presented.reason ?? undefined}
           diagnosticCode={presented.code ?? setup.failure.code}
+          diagnosticDetail={presented.technicalDetails.map(line => `${line.label}: ${line.value}`).join('\n')}
           action={{
             label: t('common.retry'),
             onPress: () => {
@@ -786,8 +808,25 @@ function RecipeRow(
 }
 
 type AttachedSource = Exclude<MachineSetupSourceEntryV1, { kind: 'direct' }>;
-const NO_SOURCES: readonly AttachedSource[] = Object.freeze([]);
-const isAttachedSource = (source: MachineSetupSourceEntryV1): source is AttachedSource => source.kind !== 'direct';
+type AttachedSetupSource = Readonly<{
+  sourceKey: string;
+  opened: MachineSetupOpenedSourceV1 | null;
+}>;
+const NO_SOURCES: readonly MachineSetupSourceApplyV1[number][] = Object.freeze([]);
+function readAttachedMachineSetupSources(
+  sources: readonly MachineSetupSourceApplyV1[number][],
+  opened: readonly MachineSetupOpenedSourceV1[],
+): readonly AttachedSetupSource[] {
+  const openedByIndex = new Map(opened.map((source) => [source.sourceIndex, source]));
+  return sources.flatMap((source, sourceIndex) =>
+    source.kind === 'direct'
+      ? []
+      : [{
+          sourceKey: machineSetupSourceApplyOriginKeyV1(source),
+          opened: openedByIndex.get(sourceIndex) ?? null,
+        }],
+  );
+}
 /** The origin key an Account preset has once attached, from the source owner rather than a local format. */
 const presetOriginKey = (preset: MachineSetupPresetChoice) =>
   machineSetupSourceOriginKeyV1(machineSetupPresetSource(preset));
@@ -796,12 +835,12 @@ const presetOriginKey = (preset: MachineSetupPresetChoice) =>
 function AttachedPresetRow(
   props: Readonly<{
     sourceKey: string;
-    source: AttachedSource;
+    source: AttachedSource | null;
     name: string;
-    newer: ManagedMachinePresetV1 | null;
+    newer: OpenedManagedMachinePresetV1 | null;
     editable: boolean;
     busy: boolean;
-    onApplyAgain: (preset: ManagedMachinePresetV1) => void;
+    onApplyAgain: (preset: OpenedManagedMachinePresetV1) => void;
     onStopUsing: () => void;
   }>,
 ) {
@@ -809,7 +848,9 @@ function AttachedPresetRow(
   const [menuOpen, setMenuOpen] = React.useState(false);
   const { source, newer } = props;
   const facts =
-    source.kind === 'accountPreset'
+    source === null
+      ? t('common.unavailable')
+      : source.kind === 'accountPreset'
       ? t('machinePresets.setup.tab.presetFacts', {
           revision: source.presetRevision,
           count: source.setup.items?.length ?? 0,

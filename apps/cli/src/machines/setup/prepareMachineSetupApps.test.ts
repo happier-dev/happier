@@ -3,12 +3,14 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { accountSettingsParse, getMachineSetupDesiredV1 } from '@happier-dev/protocol';
 import { createRegistryHostV1, DeploymentTemplateV1Schema, REGISTRY_ACTION_OUTPUT_SCHEMAS_V1,
     type RegistrySourceDescriptorV1 } from '@happier-dev/protocol/registries';
+import { normalizeComposeTemplateV1 } from '@happier-dev/protocol/registries/formats/composeTemplateNormalizationV1';
 import { PromptLibraryCatalogKeyV1Schema, PromptLibraryRowsListResponseV1Schema } from '@happier-dev/protocol/prompts/library/promptLibraryRowsV1';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { readDeploymentCreationDefaultInputsForHost } from '@/deployments/readCreationDefaultsForHost';
 import { createDeploymentTemplateInstantiationForHost } from '@/deployments/templates/instantiate';
+import { createNativeSoftwareInstallFixture } from '@/testkit/machines/nativeSoftwareInstall';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createMachineSetupPlanAction } from './machineSetupAction';
@@ -17,15 +19,22 @@ import { DeploymentContentV1Schema, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '
 
 afterEach(() => vi.restoreAllMocks());
 
-it('prepares saved catalog setup intent through P45 without creating resources, and replays the exact review', async () => {
-    const identity = await readOrCreateInstallationIdentity();
+it.each([false, true])('prepares saved catalog setup intent before effects, retaining required address facts: %s', async requiredAddress => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt', accountEncryptionMode: 'plain',
+        accountId: 'owner', homeId: 'home', machineId: 'target', serverHttpBaseUrl: 'https://home.test',
+        token: `${token}-daemon` });
+    const identity = await readOrCreateInstallationIdentity();
+    // The requester keeps its bearer; the installed daemon has independent custody.
     const credentials = { token, encryption: null };
     const scopeKey = runWithServerHttpBaseUrl('https://home.test', () => resolveAccountSettingsScopeKey(credentials));
     const operation = createInvocationSavedSecretOperationContextV1({ credentials, serverHttpBaseUrl: 'https://home.test',
         snapshot: { source: 'network', settings: accountSettingsParse({ deploymentDefaultsV1: { retainPreviousDeployments: 7 } }),
             settingsVersion: 1, loadedAtMs: 1, scopeKey, settingsSecretsReadKeys: [] }, isCurrent: async () => true });
-    const descriptor = DeploymentTemplateV1Schema.parse({ schemaVersion: 1, title: 'App', compose: {
+    const normalized = normalizeComposeTemplateV1({ title: 'Redis Insight', document:
+        'services:\n  redisinsight:\n    image: redis/redisinsight:2.70\n    environment:\n      - SERVICE_URL_REDISINSIGHT_5540\n' });
+    if (normalized.state !== 'ready') throw new Error(JSON.stringify(normalized.diagnostics));
+    const descriptor = requiredAddress ? normalized.app : DeploymentTemplateV1Schema.parse({ schemaVersion: 1, title: 'App', compose: {
         document: 'services:\n  web:\n    image: nginx:1\n', profiles: [], services: ['web'] },
         variables: [], generatedSecrets: [], domains: [], volumes: [], firstRunSetup: true });
     const source: RegistrySourceDescriptorV1 = { id: 'apps', title: 'Apps', format: 'happier-catalog', kinds: ['app'],
@@ -40,7 +49,7 @@ it('prepares saved catalog setup intent through P45 without creating resources, 
     if (selected.payload.kind !== 'app') throw new Error('Expected App');
     const { origin: _origin, removable: _removable, ...sourceRow } = source;
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(catalog));
-    vi.spyOn(axios, 'get').mockImplementation(async url => {
+    fixture.setHomeRead(url => {
         if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
         if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 0 } };
         if (url.endsWith('/v1/account/entity-rows/prompt-library')) return { status: 200,
@@ -48,7 +57,7 @@ it('prepares saved catalog setup intent through P45 without creating resources, 
                 key, revision: 1, content: key === 'registry-sources' ? { t: 'plain', v: { key,
                     value: { v: 2, sources: [sourceRow], disabledSourceIds: [] } } } : null,
             })) }) };
-        throw new Error('No other Account read');
+        return undefined;
     });
     const sourceTransport = vi.spyOn(axios, 'request').mockImplementation(async () => { throw new Error('No unsaved Source exists'); });
     let contentWrites = 0;
@@ -69,21 +78,35 @@ it('prepares saved catalog setup intent through P45 without creating resources, 
     });
     const templateRef = { sourceId: source.id, itemId: 'app', version: selected.summary.version!, ref: selected.payload.ref };
     // Normal Preset Use sends saved app intent, not preconstructed P45 operands.
-    const setupPlan = createMachineSetupPlanAction({ homeId: 'home', machineId: 'target', installation: identity,
-        apiMachine: { getMachineSetupDesiredSnapshot: () => getMachineSetupDesiredV1({
-            read: async () => ({ status: 'ready', metadata: {}, metadataVersion: 0 }),
-            compareAndSwap: async () => { throw new Error('Plan cannot save desired setup'); },
-        }) }, appPreparation: {
+    const setupPlan = createMachineSetupPlanAction({ homeId: 'home', machineId: 'target', installation: fixture.installation,
+        apiMachine: fixture.client, appPreparation: {
             prepareDeploymentTemplateInstantiation: ({ input, context }) => templates.prepare(input, context),
         } });
-    const request = { homeId: 'home', machineId: 'target', mode: 'effects' as const,
-        sources: [{ kind: 'accountPreset' as const, presetId: 'app-preset', presetRevision: 1,
-            setup: { items: [{ kind: 'app' as const, definition: { name: 'App', project: { kind: 'create' as const },
-                definition: { from: 'catalogApp' as const, templateRef }, bindings: [] } }] } },
-            { kind: 'direct' as const, setup: {} }] };
-    const result = await setupPlan({ input: request, context: { runtimeAccountId: 'owner' } });
-    if ('errorCode' in result) throw new Error(JSON.stringify(result));
-    const planned = MachineSetupPlanResultV1Schema.parse(result);
+    const preset = { kind: 'accountPresetOpaque' as const, presetId: 'app-preset', presetRevision: 1,
+        contentEncryptionMode: 'plain' as const };
+    const direct = { kind: 'direct' as const, setup: {} };
+    const request = { homeId: 'home', machineId: 'target', mode: 'effects' as const, sources: [preset, direct] };
+    // Home resolves the saved recipient carrier; opening and preparation stay real.
+    vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+        expect(new URL(String(url)).pathname).toBe('/v1/machines/setup/resolve');
+        expect(body).toEqual({ homeId: 'home', machineId: 'target', sources: request.sources });
+        return { status: 200, data: { sources: [{ ...preset, presetContent: { content: { t: 'plain', v: { v: 1, name: 'App preset',
+            setup: { items: [{ kind: 'app', definition: { name: 'App', project: { kind: 'create' },
+                definition: { from: 'catalogApp', templateRef }, bindings: [] } }] } } }, recipientEnvelope: null } }, direct] } };
+    });
+    const context = { ...fixture.context('machines.setup.plan'), runtimeAccountId: 'owner' };
+    const result = await setupPlan({ input: request, context });
+    if (requiredAddress) {
+        expect(result).toMatchObject({ ok: false, effectAttempted: false, errorCode: 'template_domain_required',
+            error: expect.stringContaining('SERVICE_URL_REDISINSIGHT_5540'),
+            details: { key: 'SERVICE_URL_REDISINSIGHT_5540' } });
+        expect(sourceTransport).not.toHaveBeenCalled();
+        expect(contentWrites).toBe(0);
+        return;
+    }
+    const parsed = MachineSetupPlanResultV1Schema.safeParse(result);
+    if (!parsed.success) throw new Error(JSON.stringify(result));
+    const planned = parsed.data;
     expect(planned).toMatchObject({ appChildren: [{ sourceIndex: 0, itemIndex: 0,
         actionId: 'deployments.templates.instantiate', input: { mode: 'apply', serverId: 'home', machineId: 'target',
             newProject: { owner: { kind: 'account', accountId: 'owner' } }, templateRef,
@@ -93,10 +116,10 @@ it('prepares saved catalog setup intent through P45 without creating resources, 
         support: [{ sourceIndex: 0, itemIndex: 0, status: 'drifted' }] });
     expect(sourceTransport).not.toHaveBeenCalled();
     expect(contentWrites).toBe(0);
-    const repeated = await setupPlan({ input: request, context: { runtimeAccountId: 'owner' } });
+    const repeated = await setupPlan({ input: request, context });
     expect(repeated).toEqual(planned);
     const reviewed = await setupPlan({ input: { ...request, appChildren: planned.appChildren },
-        context: { runtimeAccountId: 'owner' } });
+        context });
     expect(reviewed).toEqual(planned);
     expect(sourceTransport).not.toHaveBeenCalled();
     expect(contentWrites).toBe(0);

@@ -9,6 +9,7 @@ import { MachineElevationFailureV1Schema } from '@happier-dev/protocol/machines/
 import { MachineReachabilityNativeFailureDetailsV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { readDeploymentRefusalRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 
 import { t } from '@/text';
 import { discussionFailureLabel } from '@/components/discussions/discussionFailureLabel';
@@ -200,6 +201,8 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     if (sessionInputLabel) return t(sessionInputLabel);
     if (code === 'feature_policy_disabled') return t('settingsVoice.pages.conversations.agentFeatureRequired', { feature: t('settingsFeatures.expVoiceAgent') });
     if (code === 'credential_unavailable') return t('session.startFailure.cause.credential_unavailable');
+    const deploymentRefusal = code === 'template_domain_required' ? readDeploymentRefusalRecoveryV1(code, record.details) : null;
+    if (deploymentRefusal) return deploymentRefusal.remedy;
     const error = typeof record.error === 'string' ? record.error.trim() : '';
     if (error.length > 0) return error;
     const errorMessage = typeof record.errorMessage === 'string' ? record.errorMessage.trim() : '';
