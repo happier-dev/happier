@@ -7779,6 +7779,9 @@ a display conflicts with windows on that display, while distinct background wind
 can remain independently selected.
 Another source identity's selection returns `computer_target_in_use`, including while the previous
 owner drains. Confirmed close releases ownership; an unconfirmed close remains quarantined.
+In development source, successful native process retirement acknowledges Stop sharing
+even when the effect of earlier input remains unknown; that historical uncertainty
+does not keep the retired share selected.
 Consent stays with that source. Agent model media remains Session-scoped. A Session-less
 person capture returns an ephemeral inline PNG instead of creating Session media or a hidden
 Session. Session closure retires only its Session source; Machine-person selection ends on

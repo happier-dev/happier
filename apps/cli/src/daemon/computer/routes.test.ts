@@ -65,6 +65,34 @@ function selectUnsupportedTarget(registry: ReturnType<typeof createMachineLiveSt
 }
 
 describe('native computer route authority', () => {
+  it.each([false, true])('settles Stop sharing despite historical input uncertainty (capture already ended: %s)', async alreadyEnded => {
+    native.call.mockImplementation(async ({ name }) => {
+      if (name === 'list_windows') return { structuredContent: { windows: [{ pid: cuaTarget.pid, window_id: cuaTarget.windowId, title: 'Fixture' }] } };
+      if (name === 'get_window_state') return captureResult();
+      if (name === 'drag') throw new Error('lost native drag acknowledgement');
+      return { structuredContent: { x11: true, xsend_event: true } };
+    });
+    const registry = createMachineLiveStreamCaptureRegistry();
+    const routes = createComputerRoutes({ machineId: 'machine', registry, executablePath: '/managed/cua-driver', defaultDisplayId: ':73' });
+    const human = { ...agentContext, authority: 'present_user' as const };
+    const request = { machineId: 'machine' };
+    try {
+      await routes.dispatch('computer.target.select', { ...request, target: cuaTarget }, human);
+      const source = registry.list()[0]!.computer!;
+      const retirement = registry.list()[0]!.retirementSignal!;
+      const capture = await source.observe('human');
+      expect(await routes.dispatch('computer.input', { ...request, captureId: capture.captureId,
+        operation: { kind: 'drag', fromX: 1, fromY: 1, toX: 5, toY: 5 } }, human))
+        .toMatchObject({ status: 'interrupted', completion: 'unknown' });
+      if (alreadyEnded) await source.close();
+      expect(await routes.dispatch('computer.target.close', request, human)).toMatchObject({ status: 'dispatched' });
+      expect(source.isClosed()).toBe(true);
+      expect(retirement.aborted).toBe(true);
+      expect(registry.list()).toEqual([]);
+      expect(await routes.dispatch('computer.target.get', request, human)).not.toHaveProperty('selectedTarget');
+    } finally { await routes.dispose(); }
+  });
+
   it.skipIf(process.platform !== 'linux').each(['uncertain', 'switch', 'reconnect'] as const)(
     'retains the human hold until Hand back after %s selection', async recovery => {
       const nextTarget = { ...cuaTarget, windowId: 456 };
@@ -157,7 +185,7 @@ describe('native computer route authority', () => {
   });
   it.each(['see', 'control'] as const)('replays an unchanged MCP clipboard Ask on its admitted Machine with %s access', async access => {
     const registry = createMachineLiveStreamCaptureRegistry();
-    const source = createComputerCaptureSource({ sessionId: 'session', target: cuaTarget, access: access === 'see' ? 'see' : 'control', executablePath: '/managed/cua-driver' });
+    const source = createComputerCaptureSource({ sessionId: 'session', target: cuaTarget, access: access === 'see' ? 'see' : 'use', executablePath: '/managed/cua-driver' });
     registry.register({ sourceId: source.sourceId, streamFamily: 'screen', computer: source, adapter: source.adapter,
       capabilities: { v: 1, sourceId: source.sourceId, sourceKind: 'screen', supportedCodecs: ['image.frame.v1'], inputMode: 'shared', sidebands: [], health: { status: 'available' } } });
     const routes = createComputerRoutes({ machineId: 'machine', registry, executablePath: '/managed/cua-driver' });

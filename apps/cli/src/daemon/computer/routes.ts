@@ -353,12 +353,12 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
         if (actionId === 'computer.control.handBack') return source.handBack()
           ? { ...identity, status: 'dispatched' } : { ...identity, status: 'failed', code: 'control_not_drained' };
         if (actionId === 'computer.target.close') {
-          const drain = await source.interrupt();
-          const result = await closeSource(source);
+          // Close drains input and proves native process retirement. Historical
+          // input uncertainty does not make this completed share stop uncertain.
+          await closeSource(source);
           if (selected(provider) !== source) return failure('computer_target_selection_changed');
           input.registry.unregister(sourceId);
-          return drain.completion === 'unknown' || result.completion === 'unknown' ? { ...identity, status: 'interrupted', completion: 'unknown' }
-            : { ...identity, status: 'dispatched' };
+          return { ...identity, status: 'dispatched' };
         }
         return failure('unsupported_action');
       } catch (error) {
