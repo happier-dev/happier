@@ -631,7 +631,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
         const nativePurposes = (projectionOnly ? [] : snapshot?.fileMaterializationPurposes ?? [])
           .filter(scope => snapshot?.bindings.some(binding =>
             qualifiedPurposeKey(binding.purpose) === qualifiedPurposeKey(scope.purpose)));
-        if (nativePurposes.length === 0 && !nativeHomeSelection.prepareWithoutFiles && !params.nativeHomeOnly && !params.legacyV021 && !projectionOnly) {
+        if (nativePurposes.length === 0 && !nativeHomeSelection.prepareWithoutFiles && !params.nativeHomeOnly && !params.agentLaunchTarget && !params.legacyV021 && !projectionOnly) {
           // Credential-only delivery leaves Session storage in the Agent's native home.
           targetMaterializedRoot = null;
           return;
@@ -670,7 +670,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
           // Credential producers merge against this invocation's copied configuration.
           const applyNativeHome = await prepareNativeHome(durableNativeHome ? previousManifest : undefined);
           await writeArtifacts(applyNativeHome);
-          const preparedCredentialFiles = nativePurposes.length > 0
+          const preparedCredentialFiles: Readonly<Record<string, Uint8Array>> = nativePurposes.length > 0
             ? await readConnectedServiceNativeHomeCredentialFiles({
                 targetRoot: nativeRoot, declaredSecretEntries: stateSharingDescriptor.authIsolation.secretEntries,
               })
@@ -746,7 +746,7 @@ async function materializeQualifiedConnectedAccountLaunchForSpawn(params: Readon
           if (snapshot && !projectionOnly) assertQualifiedConnectedAccountLaunchUsesProduced({
             snapshot, producedPurposeKeys, includeNativeHomeUses: true,
           });
-          if (Object.keys(nativeHomeFiles).length === 0 && !nativeHomeSelection.prepareWithoutFiles && !params.nativeHomeOnly
+          if (Object.keys(nativeHomeFiles).length === 0 && !nativeHomeSelection.prepareWithoutFiles && !params.nativeHomeOnly && !params.agentLaunchTarget
             && !params.legacyV021 && !projectionOnly) {
             await restoreCredentials();
             for (const key of Object.keys(env)) delete env[key];

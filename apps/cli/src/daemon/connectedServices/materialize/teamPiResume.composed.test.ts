@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -13,6 +13,8 @@ import { verifySpawnResumeReachability } from '../verifySpawnResumeReachability'
 import { resolveConnectedServiceAuthForSpawn } from '../resolveConnectedServiceAuthForSpawn';
 import type { ApiClient } from '@/api/api';
 import { formatPiSessionDirectoryForCwd } from '@happier-dev/plugins-pi/agent/sessionFiles';
+import { hostBoundaries } from '../../../../../../packages/plugins/pi/src/agent/runtime/nativeProcess.test-support';
+import { resolveSpawnChildEnvironment } from '@/daemon/spawn/resolveSpawnChildEnvironment';
 
 describe('Team Pi brokered native Session continuity', () => {
   let runtime: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>>;
@@ -22,6 +24,54 @@ describe('Team Pi brokered native Session continuity', () => {
   });
   afterAll(async () => { await runtime?.dispose(); });
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
+
+  it.each(['pi', 'codex', 'opencode'])('prepares a private member %s home for a Team broker-only launch', async agentId => {
+    const root = await mkdtemp(join(tmpdir(), 'team-member-home-'));
+    const memberHome = join(root, 'member', 'session');
+    const owner = createForegroundPurposeOwnerFixture({
+      consumer: { pluginId: `happier.agent.${agentId}`, localId: agentId },
+      service: { pluginId: 'happier.agent.muse', localId: 'muse-account' }, accountId: 'unused',
+      materializeAccount: async () => { throw new Error('Team broker must not acquire personal credentials'); },
+    }).owner;
+    let result: Awaited<ReturnType<typeof resolveConnectedServiceAuthForSpawn>> = null;
+    try {
+      result = await resolveConnectedServiceAuthForSpawn({
+        agentId, materializationKey: 'member-session', sessionId: 'member-session',
+        agentLaunchTarget: { runtimeHome: memberHome }, allowNativeAccountState: false,
+        activeServerDir: join(root, 'server'), baseDir: join(root, 'materialized'),
+        connectedServicesBindingsRaw: { v: 2, bindingsByServiceId: {
+          'happier.agent.muse/muse-account': { source: 'team_resource', resourceId: 'shared-muse', deliveryMode: 'brokered' },
+        } }, connectedAccountsOwner: owner,
+        resolveQualifiedPurposeBindingSnapshot: bindings => resolveQualifiedPurposeBindingSnapshotForAgentSpawn({
+          agentId, bindings, contributions: runtime.registry.contributes,
+        }),
+        activateQualifiedPurposeBindings: snapshot => owner.activateSessionPurposeBindings({
+          sessionId: 'member-session', purposes: snapshot.purposes, bindings: snapshot.bindings,
+        }),
+        api: {} as ApiClient, credentials: { token: 'synthetic', encryption: null },
+        processEnv: { HOME: join(root, 'custodian'), OPENAI_API_KEY: 'custodian-secret' },
+      });
+      expect(result).not.toBeNull();
+      const child = await resolveSpawnChildEnvironment({ options: { directory: root }, resolvedAgentId: agentId,
+        pluginRuntimeRegistry: runtime.registry, profileEnvironmentVariables: {}, daemonSpawnHooks: null,
+        // Executable discovery is an OS boundary; use a real executable. This
+        // test composes the environment without starting a vendor process.
+        processEnv: { OPENAI_API_KEY: 'custodian-secret', [`HAPPIER_${agentId.toUpperCase()}_PATH`]: process.execPath },
+        providerBindingContext: { v: 1, agentTargetKey: agentId, modelId: 'fixture-model' },
+        logDebug() {}, logInfo() {}, logWarn() {},
+        allowNativeAccountCredentials: false, connectedServiceAuth: result });
+      expect(child, child.ok ? undefined : child.errorMessage).toMatchObject({ ok: true });
+      const descriptor = await (await runtime.registry.acquireAgentCatalogEntry!(agentId))!.getConnectedServiceStateSharingDescriptor!();
+      const homeKey = descriptor!.nativeHome!.environmentKey;
+      expect(result!.agentLaunchMaterials!.environment[homeKey]).toBe(join(memberHome, 'native-home'));
+      expect(result!.agentLaunchMaterials!.selectedMaterials).toEqual([]);
+      await expect(stat(join(root, 'custodian'))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await result?.materializationPurposeLease?.dispose();
+      await result?.cleanupOnExit?.();
+      await rm(root, { recursive: true, force: true });
+    }
+  });
 
   it.each(['codex', 'opencode'] as const)('leaves unrelocated %s Session storage with the native runtime', async agentId => {
     const root = await mkdtemp(join(tmpdir(), 'team-native-resume-'));
@@ -65,9 +115,10 @@ describe('Team Pi brokered native Session continuity', () => {
     const nativeHome = join(root, 'native');
     const cwd = join(root, 'project');
     const sessionId = 'team-pi-session';
-    const nativeSessionId = '019e461b-0000-7000-8000-000000000000';
+    const nativeSessionId = 'pi-session-fixture';
     const results: NonNullable<Awaited<ReturnType<typeof resolveConnectedServiceAuthForSpawn>>>[] = [];
     let binding: Awaited<ReturnType<typeof openExactSessionTeamCredentialProviderBinding>> | undefined;
+    let nativeSession: Awaited<ReturnType<NonNullable<Awaited<ReturnType<typeof runtime.lease.registry.agentRuntimesByAgentId.get>>['createRuntime']>['sessions']['open']>> | undefined;
     try {
       vi.stubEnv('PI_CODING_AGENT_DIR', nativeHome);
       // The broker HTTP boundary supplies only synthetic endpoint metadata.
