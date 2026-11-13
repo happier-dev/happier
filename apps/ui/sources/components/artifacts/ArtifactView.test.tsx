@@ -47,6 +47,7 @@ vi.mock('@/components/ui/code/editor/CodeEditor', async () => {
     }) };
 });
 import { ArtifactView } from './ArtifactView';
+import { useArtifactOperations } from './useArtifactOperations';
 import { ArtifactDetailContent } from '@/app/(app)/artifacts/[id]';
 import { EditArtifactContent } from '@/app/(app)/artifacts/edit/[id]';
 
@@ -116,6 +117,23 @@ async function setup(kind: 'image' | 'html' | 'file' | 'document', delayBlob?: P
 }
 
 describe('Artifact composed view reads', () => {
+    it.each([
+        { access: 'owner', canEdit: true, canManage: true, canShare: true },
+        { access: 'admin', canEdit: true, canManage: true, canShare: true },
+        { access: 'edit', canEdit: true, canManage: false, canShare: false },
+        { access: 'view', canEdit: false, canManage: false, canShare: false },
+        { access: undefined, canEdit: true, canManage: true, canShare: false },
+    ] satisfies ReadonlyArray<{ access: DecryptedArtifact['access']; canEdit: boolean; canManage: boolean; canShare: boolean }>)('reports the document edit capability for $access access', async ({ access, canEdit, canManage, canShare }) => {
+        const { row } = await setup('document');
+        const hook = await renderHook(() => useArtifactOperations({ ...row, access }));
+        try {
+            expect(hook.getCurrent().canRead).toBe(true);
+            expect(hook.getCurrent()).toMatchObject({ canEdit, canManage, canShare });
+        } finally {
+            await hook.unmount();
+        }
+    });
+
     it('keeps Share unavailable for an owner opening an unlisted Deployment Artifact URL', async () => {
         const { head, row } = await setup('file');
         const header = { kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, title: 'Production' };

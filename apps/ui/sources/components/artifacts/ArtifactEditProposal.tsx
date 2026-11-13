@@ -35,6 +35,7 @@ import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { resolveThemeHairlineBorderStyle } from '@/components/ui/surfaces/resolveThemeHairlineBorderStyle';
 import { Text } from '@/components/ui/text/Text';
 import { getStorage } from '@/sync/domains/state/storage';
+import { readArtifactAccessCapabilities } from '@/sync/domains/artifacts/artifactAccessCapabilities';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
@@ -265,8 +266,6 @@ function ArtifactEditProposalCard(props: ArtifactEditProposalProps): React.React
     // label may be another device's name for that Home, so the read names only the document.
     void client.readDoc({ ref: { kind: 'doc', artifactId } }).then((read) => {
       if (!live) return;
-      // A reader is told who can accept up front rather than after pressing Accept.
-      if (read.ok && read.value.artifact.access === 'view') setRefusal('cantEdit');
       setStandaloneRead({ client, artifactId, read: read.ok
         ? { status: 'ready', value: read.value } : { status: 'unavailable' } });
     });
@@ -344,16 +343,18 @@ function ArtifactEditProposalCard(props: ArtifactEditProposalProps): React.React
   }, [artifactId, base.bodyVersion, busy, client, disposition, operationKey, settleUndo]);
 
   const docTitle = typeof admitted?.header.title === 'string' ? admitted.header.title : null;
-  const readOnly = refusal === 'cantEdit' || admitted?.access === 'view';
+  const admittedAccess = admitted ? readArtifactAccessCapabilities(admitted.access) : null;
+  const readOnly = refusal === 'cantEdit' || admittedAccess?.canEdit === false;
+  const canRestore = refusal === 'cantEdit' ? false : admittedAccess?.canEdit;
   const refusalMessage = refusal && typeof refusal === 'object'
     ? resolveActionExecutionErrorMessage(refusal, t('artifacts.browser.proposal.failed')) : null;
   // History is the one place to pick a version. Compare opens it on the version the suggestion was
   // reviewed against, beside the current text; a refused Undo opens it as it is.
   const openHistory = React.useCallback((compareFromBodyVersion?: number) => showArtifactHistorySheet({
     artifactId, client, currentDoc: admitted ?? undefined,
-    name: docTitle || undefined, canRestore: !readOnly,
+    name: docTitle || undefined, canRestore,
     ...(compareFromBodyVersion === undefined ? {} : { compareFromBodyVersion }),
-  }), [admitted, artifactId, client, docTitle, readOnly]);
+  }), [admitted, artifactId, canRestore, client, docTitle]);
   const compare = React.useCallback(() => openHistory(base.bodyVersion), [base.bodyVersion, openHistory]);
   const proposer = props.proposer ?? null;
   const proposedByViewer = proposer !== null && 'accountId' in proposer.mention && proposer.mention.accountId === props.viewerAccountId;

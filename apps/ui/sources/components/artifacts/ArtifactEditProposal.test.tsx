@@ -453,12 +453,12 @@ describe('ArtifactEditProposal', () => {
     expect(screen.findByTestId('proposal.decline')).not.toBeNull();
   });
 
-  it('compares the reviewed version with the current Doc through History, not by opening the current Doc', async () => {
-    const door = frontDoor({ 'doc.read': docRead({ headerVersion: 3, bodyVersion: 16 }) });
+  it.each(['owner', 'edit', 'view'] as const)('compares the reviewed version through History with the admitted Doc restore capability (%s)', async access => {
+    const door = frontDoor({ 'doc.read': docRead({ headerVersion: 3, bodyVersion: 16 }, access) });
     const screen = await render(door.client);
     await act(async () => { await screen.pressByTestIdAsync('proposal.compare'); });
     expect(Modal.show).toHaveBeenLastCalledWith(expect.objectContaining({
-      props: expect.objectContaining({ artifactId: 'runbook', compareFromBodyVersion: 14 }),
+      props: expect.objectContaining({ artifactId: 'runbook', compareFromBodyVersion: 14, canRestore: access !== 'view' }),
     }));
     expect(navigation.push).not.toHaveBeenCalled();
   });

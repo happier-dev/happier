@@ -103,7 +103,7 @@ describe('Doc passage thread demand', () => {
         const artifact = { id: 'doc-a', header: { kind: 'markdown', title: 'Review' }, title: 'Review', body: 'Before', isDecrypted: true as const,
             ...doc.revision, seq: 1, createdAt: 1, updatedAt: 1, ownerAccountId: 'alice', access: 'owner' as const,
             storageMode: 'plain' as const, publicAudience: 'none' as const };
-        const hook = await renderHook(() => useDocCollaboration(artifact));
+        const hook = await renderHook(() => useDocCollaboration(artifact, true));
         await waitForHomeGovernance(() => expect(hook.getCurrent()?.openCommentCount).toBe(initialThreads));
         await waitForHomeGovernance(() => expect(hook.getCurrent()?.threads).toHaveLength(initialThreads));
         return { scope, hook, artifact, entries, second, network, client, refuse: (docToo = true) => {
@@ -201,7 +201,7 @@ describe('Doc passage thread demand', () => {
     it('opens the shared reply composer only for the selected margin card and posts into that thread', async () => {
         const { artifact, scope, network } = await mountedDoc(1);
         function Margin() {
-            const current = useDocCollaboration(artifact);
+            const current = useDocCollaboration(artifact, true);
             return createElement(Fragment, null, current?.margin.renderCard('committed-thread'));
         }
         const screen = await renderScreen(createElement(Margin));
@@ -228,7 +228,7 @@ describe('Doc passage thread demand', () => {
                 content: { v: 1, parts: [{ t: 'text', text: `Committed reply ${seq}` }] } });
         }
         function Margin() {
-            const current = useDocCollaboration(artifact);
+            const current = useDocCollaboration(artifact, true);
             return createElement(Fragment, null, current?.margin.renderCard('committed-thread'));
         }
         await hook.unmount();
@@ -247,7 +247,7 @@ describe('Doc passage thread demand', () => {
     it('shows a held Discussion draft beside its Doc passage and withdraws it when the canonical approval settles', async () => {
         const { artifact, scope } = await mountedDoc(1);
         function Margin() {
-            const current = useDocCollaboration(artifact);
+            const current = useDocCollaboration(artifact, true);
             useEffect(() => current?.margin.reportShown?.(true), [current?.margin.reportShown]);
             return createElement(Fragment, null, current?.margin.renderCard('committed-thread'));
         }
@@ -390,7 +390,7 @@ describe('Doc passage thread demand', () => {
         } });
 
         const empty = await renderHook(
-            ({ value }: { value: typeof artifact }) => useDocCollaboration(value),
+            ({ value }: { value: typeof artifact }) => useDocCollaboration(value, true),
             { initialProps: { value: artifact } },
         );
         await entered.promise;
@@ -416,7 +416,7 @@ describe('Doc passage thread demand', () => {
         clearDiscussionRepositoryRegistryForTests();
         homes.answer(scope.serverId, 'GET /v1/discussions', { status: 503, body: { error: 'server_error' } });
         const count = () => homes.requests.filter(request => request.path.includes('anchorDocArtifactId=doc-a')).length;
-        const hook = await renderHook(({ value }: { value: DecryptedArtifact }) => useDocCollaboration(value), {
+        const hook = await renderHook(({ value }: { value: DecryptedArtifact }) => useDocCollaboration(value, true), {
             initialProps: { value: { ...artifact, body: undefined, bodyVersion: undefined } },
         });
         await waitForHomeGovernance(() => expect(hook.getCurrent()?.commentCountStatus).toBe('unavailable'));
@@ -443,7 +443,7 @@ describe('Doc passage thread demand', () => {
     it('reads audience only when its identity or sharing facts change, while content revisions stay live', async () => {
         const { scope, hook: seeded, artifact } = await mountedDoc(0);
         await seeded.unmount();
-        const hook = await renderHook(({ value }: { value: DecryptedArtifact }) => useDocCollaboration(value), {
+        const hook = await renderHook(({ value }: { value: DecryptedArtifact }) => useDocCollaboration(value, true), {
             initialProps: { value: artifact },
         });
         await waitForHomeGovernance(() => expect(hook.getCurrent()?.audience?.shared).toBe(false));
@@ -464,7 +464,7 @@ describe('Doc passage thread demand', () => {
     it('keeps an empty markdown Doc and its existing threads admitted after deleting all prose', async () => {
         const { scope, hook: seeded, artifact } = await mountedDoc(1);
         await seeded.unmount();
-        const hook = await renderHook(({ value }: { value: DecryptedArtifact }) => useDocCollaboration(value), {
+        const hook = await renderHook(({ value }: { value: DecryptedArtifact }) => useDocCollaboration(value, true), {
             initialProps: { value: artifact },
         });
         await waitForHomeGovernance(() => expect(hook.getCurrent()?.openCommentCount).toBe(1));

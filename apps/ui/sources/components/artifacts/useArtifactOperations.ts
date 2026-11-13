@@ -7,6 +7,7 @@ import type { ShareSheetAnchor } from '@/components/sharing/presentShareSheet';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { Modal } from '@/modal';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import { readArtifactAccessCapabilities } from '@/sync/domains/artifacts/artifactAccessCapabilities';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
@@ -29,11 +30,12 @@ export function useArtifactOperations(artifact: DecryptedArtifact | null, onDele
         createMountedArtifactActionExecute(mounted.execute)) : null, [scope, mounted.execute]);
     const [deleting, setDeleting] = React.useState(false);
     const canRead = artifact !== null && artifact.isDecrypted !== false;
-    const canEdit = canRead && (artifact.access === undefined || artifact.access === 'owner' || artifact.access === 'edit' || artifact.access === 'admin');
-    const canManage = canRead && (artifact.access === undefined || artifact.access === 'owner' || artifact.access === 'admin');
+    const access = readArtifactAccessCapabilities(artifact?.access);
+    const canEdit = canRead && access.canEdit;
+    const canManage = canRead && access.canManage;
     const header = artifact?.rawHeader ?? artifact?.header ?? {};
     const sharing = getArtifactKindPolicyV1(header.kind);
-    const canShare = canRead && (artifact.access === 'owner' || artifact.access === 'admin')
+    const canShare = canRead && access.canShare
         && (sharing.browserListed || classifyArtifactViewKind(artifact) === 'dashboard'
             || getArtifactUseTargetV1({ artifactId: artifact.id, header, body: artifact.body ?? null }, 'signed_in').publicLinkAllowed)
         && (sharing.peopleSharingAllowed || sharing.publicLinkAllowed);

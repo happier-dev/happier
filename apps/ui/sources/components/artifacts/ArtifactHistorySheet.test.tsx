@@ -84,6 +84,24 @@ async function setup(route: Parameters<typeof serveActionHomes>[0]['route'], set
 }
 
 describe('Artifact History continuity', () => {
+    it.each(['owner', 'admin', 'edit', 'view', undefined] as const)('uses the scoped retained artifact capability when the caller leaves restore undecided (%s)', async access => {
+        const served = await serveActionHomes({ homes: [{ key: 'owner', serverUrl: 'https://history-fallback.test', accountId: 'owner', currentAccount: true }],
+            route: request => request.path.endsWith('/revisions') ? Response.json(revisions)
+                : request.path === '/v1/artifacts/document' ? Response.json({ ...storedHead, access: access ?? 'owner' }) : undefined });
+        disposeHome = served.dispose;
+        await served.restoreActiveConnection();
+        getStorage().getState().addArtifact({ ...artifact, access });
+        const screen = await renderScreen(<ModalProvider>{null}</ModalProvider>);
+        try {
+            await act(async () => showArtifactHistorySheet({ artifactId: artifact.id, canRestore: undefined }));
+            await waitForHomeGovernance(() => expect(screen.findByTestId('artifact-history:loading')).toBeNull());
+            await screen.pressByTestIdAsync('artifact-history:version:1');
+            expect(screen.findByTestId('artifact-history:restore') !== null).toBe(access !== 'view');
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it.each([900, 390])('explains unavailable comparison without reading a foreign Home current Doc (%s)', async width => {
         vi.spyOn(ReactNative, 'useWindowDimensions').mockReturnValue({ width, height: 900, scale: 1, fontScale: 1 });
         const served = await serveActionHomes({ homes: [

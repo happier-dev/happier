@@ -57,7 +57,7 @@ export function useArtifactNetworkEditor(
   );
   const current = state?.artifactId === artifact.id ? state : null;
   // A saved HTML page, or a saved copy of an HTML visual (a widget definition with an HTML body).
-  const available = canEdit && client !== null && artifact.isDecrypted !== false && holdsHtmlNetwork(artifact);
+  const available = canEdit && client !== null && holdsHtmlNetwork(artifact);
   const close = React.useCallback(() => setState(null), []);
 
   const open = React.useCallback(async () => {

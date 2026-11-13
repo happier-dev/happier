@@ -31,6 +31,7 @@ import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 import { createArtifactActionsClient, type ArtifactActionFailure, type ArtifactActionsClient } from './artifactActionsClient';
 import type { ArtifactBodyV1, ArtifactRevisionProvenanceV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
+import { readArtifactAccessCapabilities } from '@/sync/domains/artifacts/artifactAccessCapabilities';
 import { ArtifactBinaryBody } from './ArtifactBinaryBody';
 
 type Revision = Readonly<{ bodyVersion: number; body: ArtifactBodyV1 | null; createdAt: number; sizeBytes: number; provenance?: ArtifactRevisionProvenanceV1 }>;
@@ -342,7 +343,10 @@ function ArtifactHistoryModal(props: HistoryModalProps): React.ReactElement {
 export function showArtifactHistorySheet(params: Readonly<{
     artifactId: string;
     /** The Doc's title; when the caller has not read it, the one the app already holds. */
-    name?: string; canRestore: boolean; compareFromBodyVersion?: number;
+    name?: string;
+    /** Callers without an admitted Doc delegate to the retained artifact's access capability. */
+    canRestore?: boolean;
+    compareFromBodyVersion?: number;
     acceptedVersions?: ReadonlySet<number>;
     client?: ArtifactActionsClient;
     /** Already admitted through this client's canonical Doc reader, including direct Discussion entry. */
@@ -359,7 +363,8 @@ export function showArtifactHistorySheet(params: Readonly<{
     } : areServerAccountScopesEqual(state.profileScope, client.scope) ? state.artifacts[params.artifactId] : undefined;
     Modal.show({
         component: ArtifactHistoryModal,
-        props: { artifactId: params.artifactId, client, currentArtifact, canRestore: params.canRestore && currentArtifact?.access !== 'view',
+        props: { artifactId: params.artifactId, client, currentArtifact,
+            canRestore: params.canRestore ?? readArtifactAccessCapabilities(currentArtifact?.access).canEdit,
             ...(params.compareFromBodyVersion === undefined ? {} : { compareFromBodyVersion: params.compareFromBodyVersion }),
             ...(params.acceptedVersions ? { acceptedVersions: params.acceptedVersions } : {}) },
         chrome: {

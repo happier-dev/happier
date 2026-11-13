@@ -71,7 +71,7 @@ function ArtifactDocumentView(props: React.ComponentProps<typeof ArtifactView>):
     const operations = useArtifactOperations(artifact, props.onDeleted);
     // Membership is an independent authenticated read: the known Artifact identity starts it
     // beside the body read, while prose-dependent thread placement waits for opened content.
-    const collaboration = useDocCollaboration(body.result?.artifact ?? artifact);
+    const collaboration = useDocCollaboration(artifact, operations.canEdit);
     const scope = useActiveServerAccountScope();
     const menuKey = collaboration && scope ? JSON.stringify([scope.serverId, scope.accountId, props.artifactId]) : null;
     const [threadMenu, setThreadMenu] = React.useState<Readonly<{ key: string | null; open: boolean }>>({ key: null, open: false });

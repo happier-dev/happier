@@ -73,7 +73,7 @@ export type DocCollaboration = Readonly<{
  * being read, the header's comment count and accepted-edit line, and the margin's thread cards.
  * `null` for anything that is not a prose Doc read at a known version.
  */
-export function useDocCollaboration(artifact: DecryptedArtifact | null): DocCollaboration | null {
+export function useDocCollaboration(artifact: DecryptedArtifact | null, canRestore: boolean): DocCollaboration | null {
   const scope = useActiveServerAccountScope();
   const openedProse = artifact !== null && typeof artifact.body === 'string';
   const knownDocIdentity = artifact !== null && artifact.body === undefined
@@ -248,8 +248,6 @@ export function useDocCollaboration(artifact: DecryptedArtifact | null): DocColl
       }),
     [speakerAccountLabels, speakerLabels],
   );
-  const canRestore = candidate !== null &&
-    (candidate.access === undefined || candidate.access === 'owner' || candidate.access === 'edit' || candidate.access === 'admin');
   const proseName = candidate?.title || t('artifacts.untitled');
   // A changed passage opens History on the version its comment was written against, compared with now.
   const openHistory = React.useCallback((compareFromBodyVersion: number) => {
