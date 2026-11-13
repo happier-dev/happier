@@ -11,6 +11,8 @@ import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFram
 import { t } from '@/text';
 import { usageMeterFill, usageSignatureAccent } from '../usageAccent';
 import { useUsageDrill } from '../usageDrill';
+import { usageCostKindPhrase } from '../usageCostPresentation';
+import { formatUsageCost } from '@/utils/format/usageNumbers';
 import {
   UsageBodyInsufficient,
   UsageCoverageLine,
@@ -104,6 +106,18 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
       />
     );
   const density = compact ? 'compact' : 'comfortable';
+  const projectMarks = (row: UsageWorkProjectRow) => (
+    <UsageWorkMarks agentIds={row.agentIds} providers={row.providers} serverId={props.serverId} testID={props.testID} />
+  );
+  // The amount alone in the figure column; a basis that differs from the whole's is said on the row's quiet line.
+  const sameCurrency = (moneyBasis: UsageWorkProjectRow['moneyBasis']) => props.query.metric === 'cost' && moneyBasis !== null
+    && summary.moneyBasis !== null && summary.moneyBasis !== undefined && moneyBasis.currency === summary.moneyBasis.currency;
+  const compactCell = (value: number | null, moneyBasis: UsageWorkProjectRow['moneyBasis']) =>
+    value !== null && sameCurrency(moneyBasis) ? value : cell(value, moneyBasis);
+  const compactBasis = (value: number | null, moneyBasis: UsageWorkProjectRow['moneyBasis']) =>
+    value !== null && sameCurrency(moneyBasis) && moneyBasis!.kind !== summary.moneyBasis!.kind ? usageCostKindPhrase(moneyBasis!.kind) : null;
+  const compactFormat = (value: number) => props.query.metric === 'cost' && summary.moneyBasis
+    ? formatUsageCost(value, summary.moneyBasis.currency) : format(value);
   const metricLabel = props.query.metric === 'cost' ? t('usage.cost') : t('usage.tokens');
   // Usage with no Session behind it is said for what it is; "0 sessions" reads as a contradiction beside its amount.
   const sessionsLine = (count: number) => count === 0 ? t('usage.board.work.noSessionLine') : t('usage.board.work.valueCaption', { count });
@@ -284,7 +298,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
         label={t('usage.board.work.ledgerLabel')}
         testID={`${props.testID}.projects`}
         density={density}
-        valueFormatter={format}
+        valueFormatter={compact ? compactFormat : format}
         showProportionShares={false}
         rowIds={projects.map((row) => row.projectKey ?? '\u0000none')}
         proportionColors={projects.map((_row, index) =>
@@ -296,14 +310,9 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
             icon="folder"
           />
         ))}
-        rowTrails={projects.map((row) => (
-          <UsageWorkMarks
-            agentIds={row.agentIds}
-            providers={row.providers}
-            serverId={props.serverId}
-            testID={props.testID}
-          />
-        ))}
+        // A narrow card keeps the project's name whole: its marks sit under the name and the amount drops its basis
+        // phrase to the row's quiet line (the Agents list rows), so nothing is cut at the card's edge.
+        rowTrails={compact ? undefined : projects.map((row) => projectMarks(row))}
         columns={[
           { label: t('usage.board.work.allProjects') },
           { label: metricLabel, proportion: true },
@@ -312,10 +321,11 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
         ]}
         rows={projects.map((row) => [
           projectLabel(row.projectKey),
-          cell(row.amount, row.moneyBasis),
+          compact ? compactCell(row.amount, row.moneyBasis) : cell(row.amount, row.moneyBasis),
           [anyLinked
             ? t('usage.board.work.ledgerRowLine', { sessions: row.sessionIds.length, prs: row.outcomes.length })
-            : sessionsLine(row.sessionIds.length), projectPlace(row.projectKey)].filter(Boolean).join(' · '),
+            : sessionsLine(row.sessionIds.length), compact ? compactBasis(row.amount, row.moneyBasis) : null,
+            projectPlace(row.projectKey)].filter(Boolean).join(' · '),
           ...(anyLinked
             ? [row.unallocated === null || row.unallocated > 0
               ? t('usage.board.work.notLinkedPart', { amount: format(row.unallocated, row.unallocatedBasis) })
@@ -330,7 +340,9 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
           const row = projects[index]!;
           const id = `project:${row.projectKey ?? ''}`;
           return <HappierPressable accessibilityLabel={projectWhere(row.projectKey)} expanded={disclosures.isOpen(id)}
-            testID={`${props.testID}.project.${row.projectKey ?? 'none'}.toggle`} onPress={() => disclosures.toggle(id)}>{visual}</HappierPressable>;
+            testID={`${props.testID}.project.${row.projectKey ?? 'none'}.toggle`} onPress={() => disclosures.toggle(id)}>
+            {compact ? <View style={styles.identity}>{visual}{projectMarks(row)}</View> : visual}
+          </HappierPressable>;
         }}
         renderRow={(_cells, visual, index) => {
           const row = projects[index]!;
@@ -489,7 +501,7 @@ export function UsageProjectLedgerWidget(props: UsageBodyProps) {
       </View>)}
       {summary.missingMoneyCount > 0 ? (
         <Text style={[styles.reasonLabel, caption]} testID={`${props.testID}.unpriced`}>
-          {t('usage.board.page.factUnpriced')} · {summary.missingMoneyCount} ·{' '}
+          {t('usage.board.page.factUnpriced')} · {t('usage.board.page.unpricedRecords', { count: summary.missingMoneyCount.toLocaleString() })} ·{' '}
           {t('usage.board.page.unpricedCaption')}
         </Text>
       ) : null}
@@ -512,6 +524,7 @@ const styles = StyleSheet.create((theme) => ({
     borderTopColor: theme.colors.border.default,
   },
   group: { gap: theme.space.s6, minWidth: 0 },
+  identity: { gap: theme.space.s4, minWidth: 0 },
   filter: { flexDirection: 'row', alignItems: 'center', alignSelf: 'flex-start', gap: theme.space.s6, minHeight: 32 },
   filterLabel: { ...Typography.default('semiBold'), color: theme.colors.text.secondary },
   commits: {

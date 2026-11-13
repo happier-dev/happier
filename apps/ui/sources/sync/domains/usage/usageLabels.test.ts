@@ -15,6 +15,11 @@ afterEach(() => {
 });
 
 describe('declared accounting source presentation', () => {
+    it('names the host ACP runtime captures in words, never as humanized event ids', () => {
+        for (const source of ['acp-usage-update', 'acp-session-update-usage', 'acp-prompt-usage']) {
+            expect(usageSourceTitle(source)).not.toMatch(/acp/i);
+        }
+    });
     it('preserves released and parameterized source titles in the selected host locale', async () => {
         const previous = getPreferredLanguage();
         try {

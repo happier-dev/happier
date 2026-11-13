@@ -124,6 +124,9 @@ export function HomeReachabilityGate(props: Readonly<{
     children: React.ReactNode;
     /** For multi-Home lists, only report this Home when it is part of the visible query. */
     relevantServerIds?: readonly string[];
+    /** `line` only: drawn inline in a page header's notice slot, with the time the kept content was read. */
+    presentation?: 'inline';
+    asOf?: number | null;
 }>) {
     const unavailable = useActiveHomeUnavailable();
     // Name the Home whose health this reports: the applied one (during a switch the requested Home
@@ -132,7 +135,7 @@ export function HomeReachabilityGate(props: Readonly<{
     const relevant = props.relevantServerIds === undefined
         || (serverId !== null && props.relevantServerIds.some((id) => areServerProfileIdentifiersEquivalent(id, serverId)));
     const home = React.useMemo(
-        () => resolveHomeDisplayLabel(serverId ? getServerProfileById(serverId) : null, t('settingsAccount.thisHome')),
+        () => resolveHomeDisplayLabel(serverId ? getServerProfileById(serverId) : null, serverId ?? '', serverId ?? undefined),
         [serverId],
     );
     const retry = React.useMemo(() => ({
@@ -151,6 +154,8 @@ export function HomeReachabilityGate(props: Readonly<{
                 glyph="cloud-slash"
                 reason={t('sidebarFooter.homeUnreachableLine', { home })}
                 action={retry}
+                {...(props.presentation ? { presentation: props.presentation } : {})}
+                {...(props.asOf !== undefined ? { asOf: props.asOf } : {})}
             />
         );
     }

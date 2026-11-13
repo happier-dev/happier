@@ -414,10 +414,13 @@ describe('one selected money basis across Usage bodies', () => {
       sources: [{ source: 'codex-token-count', path: 'native' as const, status: 'partial' as const,
         eventCount: 2, captureKind: 'from_logs' as const, historyComplete: false, asOfMs: 100 }] } };
     const slice = resolveUsagePageAggregation({ queries: [props.query], accounting: [{ query: props.query, status: 'available', value: accounting }] }).results[0]!;
-    const screen = await renderScreen(<UsageSourceCoverageWidget {...props} slice={slice} id="usage_source_coverage" testID="coverage" />);
+    const screen = await renderControls(<UsageSourceCoverageWidget {...props} slice={slice} id="usage_source_coverage" testID="coverage" />);
     expect(screen.findByType(HappierDataRows).props.rows).toHaveLength(1);
-    expect(screen.getTextContent()).toContain(t('usage.board.page.coverageReason_missing_baseline'));
     expect(screen.getTextContent()).toContain(t('usage.board.page.sourceKindFromLogs'));
+    // The caveat is one compact line; its reasons are one press away, never a paragraph under the rows.
+    expect(screen.getTextContent()).not.toContain(t('usage.board.page.coverageReason_missing_baseline'));
+    await screen.pressByTestIdAsync('coverage.detail.action');
+    expect(screen.getTextContent()).toContain(t('usage.board.page.coverageReason_missing_baseline'));
   });
   it('lists source coverage as a short led list: identical captures across machines say so once with a count, distinct ones fold behind Show all', async () => {
     const props = mountedCosts();
@@ -435,7 +438,13 @@ describe('one selected money basis across Usage bodies', () => {
         ...Array.from({ length: 2 }, () => ({ ...source, source: 'claude-assistant-usage', status: 'partial' as const }))])} />);
     const mixedRows = mixed.findByType(HappierDataRows).props.rows as readonly (readonly string[])[];
     expect(mixedRows).toHaveLength(1);
-    expect(mixedRows[0]![0]).toContain('×5');
+    // A human row: the source's name, then one status (the most limiting one) and how many machines report it,
+    // never a stacked list of every capture's status.
+    expect(mixedRows[0]![0]).not.toContain('×');
+    expect(mixedRows[0]![1]).toContain(t('usage.board.page.machinesCount', { count: 5 }));
+    expect(mixedRows[0]![1]).toContain(t('usage.board.page.factIncomplete'));
+    expect(mixedRows[0]![1]).not.toContain(';');
+    expect(mixedRows[0]![1]).not.toContain(t('usage.board.sources.coverageUnknown'));
     const distinct = await renderControls(<UsageSourceCoverageWidget {...props} id="usage_source_coverage" testID="coverage"
       slice={coverageOf(Array.from({ length: 10 }, (_, index) => ({ ...source, source: `source-${index}` })))} />);
     expect(distinct.findByType(HappierDataRows).props.rows.length).toBeLessThan(10);

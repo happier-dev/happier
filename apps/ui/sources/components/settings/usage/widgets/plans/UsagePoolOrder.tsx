@@ -117,10 +117,17 @@ const BASIS_KEYS = {
 } as const satisfies Record<Trace['selectionBasis'], Parameters<typeof t>[0]>;
 
 /** Why a member holds its place, in the selector's own terms. */
+/** The one account the queue calls "next": the first ranked one the selector did not pick, wherever the picked one sits. */
+export function readUsagePoolQueueNextRank(members: readonly Pick<UsagePoolMember, 'rank' | 'selected'>[]): number | null {
+  const ranks = members.filter(member => !member.selected && member.rank !== null).map(member => member.rank!);
+  return ranks.length ? Math.min(...ranks) : null;
+}
+
 function memberReason(
   member: UsagePoolMember,
   trace: Trace,
   nowMs: number,
+  nextRank: number | null,
 ): string {
   if (member.exclusion && !member.selected) {
     return [
@@ -139,7 +146,7 @@ function memberReason(
       : member.rank === null
         ? null
         : t(
-            member.rank <= 2
+            member.rank === nextRank
               ? 'usage.board.plans.usedFirstNext'
               : 'usage.board.plans.queueAfterThat',
           ),
@@ -325,6 +332,7 @@ function PoolQueue(
   const trace = selection.decisionTrace;
   const strategy = getPoolStrategyPresentation(trace.strategy);
   const members = readUsagePoolMembers(props.pool, props.accounts, selection);
+  const nextRank = readUsagePoolQueueNextRank(members);
   return (
     <View testID={props.testID} style={styles.pool}>
       <UsagePlanSectionHead
@@ -354,6 +362,7 @@ function PoolQueue(
             member={member}
             trace={trace}
             first={index === 0}
+            nextRank={nextRank}
             nameOf={props.nameOf}
             nowMs={props.nowMs}
             testID={`${props.testID}.${member.accountId}`}
@@ -369,6 +378,7 @@ function QueueRow(
     member: UsagePoolMember;
     trace: Trace;
     first: boolean;
+    nextRank: number | null;
     nameOf: NameOf;
     nowMs: number;
     testID: string;
@@ -380,7 +390,7 @@ function QueueRow(
   const name = member.account ? props.nameOf(member.account) : null;
   const window = member.account?.headline ?? null;
   const remaining = window?.remainingFraction ?? null;
-  const reason = memberReason(member, props.trace, props.nowMs);
+  const reason = memberReason(member, props.trace, props.nowMs, props.nextRank);
   const left =
     remaining === null
       ? null

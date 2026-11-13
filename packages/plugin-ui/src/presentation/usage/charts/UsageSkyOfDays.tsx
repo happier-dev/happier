@@ -565,9 +565,13 @@ export function UsageSkyOfDays(props: UsageSkyOfDaysProps) {
                 `bl${index}`,
               ),
             ])}
-            {geometry.months.map((month) =>
+            {geometry.months.map((month, index) =>
               svgText.draw(
-                geometry.dayLabels
+                geometry.edgeDays
+                  ? index === 0
+                    ? { x: Math.max(0, month.x - 8), y: height - 4, text: labels.day(month.date) }
+                    : { x: geometry.right, y: height - 4, anchor: 'end', text: labels.day(month.date) }
+                  : geometry.dayLabels
                   ? { x: month.x, y: height - 4, anchor: 'middle', text: labels.day(month.date) }
                   // A month starting in the period's last days would run off the drawing: it ends at the edge.
                   : month.x > geometry.right - MONTH_LABEL_GAP_PX
@@ -791,7 +795,10 @@ function layoutSky(
   }
   // Each day of a short period is named under its own column when the column fits the name; otherwise months.
   const dayLabels = sparse && column >= DAY_LABEL_MIN_PX;
-  const months = days
+  // A short period too narrow for a name per column (a phone week) names its first and last day: one month label
+  // ("Nov") under a week says nothing about which days these are.
+  const edgeDays = sparse && !dayLabels && days.length > 1;
+  const months = edgeDays ? [{ date: days[0]!.date, x: x(0) }, { date: days[days.length - 1]!.date, x: x(days.length - 1) }] : days
     .flatMap((day, index) =>
       dayLabels || index === 0 || day.date.endsWith('-01')
         ? [{ date: day.date, x: x(index) }]
@@ -803,6 +810,7 @@ function layoutSky(
     );
   return {
     dayLabels,
+    edgeDays,
     scale,
     stars,
     floor,

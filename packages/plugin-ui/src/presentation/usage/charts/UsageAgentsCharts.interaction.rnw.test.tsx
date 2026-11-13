@@ -210,6 +210,35 @@ describe('Agent chart exact data targets', () => {
     }
   });
 
+  it('keeps a crowded phone Constellation\'s names apart and inside the drawing (acceptance 1113 #14)', () => {
+    const names = ['Codex', 'Muse', 'Claude', 'OpenCode', 'oh-my-pi', 'Copilot', 'Kilo', 'Grok', 'Unknown', 'Antigravity', 'Auggie',
+      'CodeBuddy', 'Cursor', 'Custom ACP Agent', 'Factory Droid', 'FX', 'Kimi', 'Pi', 'Qwen Code'];
+    const crowd = names.map((name, index) => ({ id: `a${index}`, name, color: '#888888' }));
+    const width = 342;
+    const chart = mount(<UsageConstellation {...common} width={width} agents={crowd}
+      model={{ nodes: crowd.map((agent, index) => ({ agentId: agent.id, share: index === 0 ? 0.6 : 0.02 })), edges: null, unknownStarts: null }}
+      labels={{ values: { show: 'Values', hide: 'Hide values', agentColumn: 'Agent', shareColumn: 'Share', kindColumn: 'Kind', countColumn: 'Count' }, kinds: { session: 'Session', run: 'Run', native: 'Native' }, arrowNote: '', unknownStarts: String, nodesOnly: 'Nodes only', unknownAgent: 'Unknown' }} />);
+    try {
+      const size = 13;
+      const boxes = [...chart.container.querySelectorAll('svg text')]
+        // The halo is a stroked copy under each name; measure the name itself once.
+        .filter(node => names.includes(node.textContent ?? '') && !node.getAttribute('stroke')).map(node => {
+        const x = Number(node.getAttribute('x')), y = Number(node.getAttribute('y')), span = (node.textContent ?? '').length * size * 0.6;
+        const anchor = node.getAttribute('text-anchor');
+        const left = anchor === 'end' ? x - span : anchor === 'middle' ? x - span / 2 : x;
+        return { text: node.textContent, left, right: left + span, y };
+      });
+      expect(boxes).toHaveLength(names.length);
+      for (const box of boxes) {
+        expect(box.left, box.text!).toBeGreaterThanOrEqual(0);
+        expect(box.right, box.text!).toBeLessThanOrEqual(width);
+      }
+      for (const [index, a] of boxes.entries()) for (const b of boxes.slice(index + 1)) {
+        const overlap = a.left < b.right && b.left < a.right && Math.abs(a.y - b.y) < size;
+        expect(overlap, `${a.text} / ${b.text}`).toBe(false);
+      }
+    } finally { chart.unmount(); }
+  });
   it('exposes Constellation node shares and typed directed edge counts, including self edges', () => {
     const chart = mount(<UsageConstellation {...common} model={{ nodes: [{ agentId: 'claude', share: 0.123456 }, { agentId: 'codex', share: null }],
       edges: [{ from: 'claude', to: 'codex', kind: 'session', count: 1234 }, { from: 'claude', to: 'claude', kind: 'run', count: 2 }], unknownStarts: null }}

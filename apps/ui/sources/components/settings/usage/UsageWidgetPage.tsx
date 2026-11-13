@@ -12,6 +12,8 @@ import {
 import { HAPPIER_PAGE_METRICS, HAPPIER_PAGE_TEXT } from '@happier-dev/plugin-ui/presentation';
 import { HomeReachabilityGate, useActiveHomeUnavailable } from '@/components/navigation/connectionStatus/HomeReachabilityGate';
 import { PluginUiScrollActivityProvider } from '@happier-dev/plugin-ui/advanced';
+import { HappierUiTypographyProvider } from '@happier-dev/plugin-ui/environment';
+import { readPluginUiHostTypography } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { PluginSurfaceFocusEligibilityProvider } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { CurrentUiContextCommandsProvider, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { useActionApprovalContinuation } from '@/components/approvals/useActionApprovalContinuation';
@@ -162,6 +164,8 @@ export function UsageWidgetPage(
     >
       <CurrentUiContextCommandsProvider authority={authority} active={page.isCurrent}>
       <PluginUiScrollActivityProvider tracker={scrollTracker}>
+      {/* The page's shared data and chart text (SVG labels too) draws in the app's own face, not the browser default. */}
+      <HappierUiTypographyProvider typography={readPluginUiHostTypography()}>
       <ScrollView
         ref={scrollRef}
         onScroll={scrollTracker.onScroll}
@@ -203,6 +207,7 @@ export function UsageWidgetPage(
             )}
         </View>
       </ScrollView>
+      </HappierUiTypographyProvider>
       </PluginUiScrollActivityProvider>
       </CurrentUiContextCommandsProvider>
     </PluginSurfaceFocusEligibilityProvider>
@@ -449,8 +454,6 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
       <UsagePageHeader facts={facts} retry={pageReadRetry ? retryRead : null} history={history}
         homeUnavailable={homeUnavailable}
         layouts={layoutsFact} {...(props.sessionId ? { sessionId: props.sessionId } : {})} />
-      {/* The page's reads wait on the Home: it says why once, here, and the views and bodies keep their room. */}
-      <HomeReachabilityGate variant="line">{null}</HomeReachabilityGate>
       {/* One Session is one view: the Account's named views (Plans, Sources…) mean nothing here. A phone
           keeps choosing a view but not arranging one (D23): no + and no ⋯ (rename, reorder, delete). */}
       {session ? null : <WidgetAreaLayoutBar
@@ -599,7 +602,15 @@ function UsagePageHeader(
   const startSession = React.useCallback(() => { openNewSession(); }, [openNewSession]);
   // Unchanged page facts keep the same notice element, so the header does not redraw for a body-only change.
   const notice = React.useMemo(() => {
-    if (props.homeUnavailable) return null;
+    // The page's reads wait on the Home: the header says why once, in the facts line's own slot, so the views,
+    // filters and the last-read bodies keep their place below it.
+    if (props.homeUnavailable) return (
+      <SurfaceFreshnessOnSheetProvider>
+        <View style={styles.headerLine}>
+          <HomeReachabilityGate variant="line" presentation="inline" asOf={props.facts.observedAtMs}>{null}</HomeReachabilityGate>
+        </View>
+      </SurfaceFreshnessOnSheetProvider>
+    );
     const resolved = resolveUsagePageNotice(props.facts, retry, history, layouts, startSession);
     // A plain line under the purpose, on the title's edge: the page header is not a surface to band. It is drawn as
     // tall as the facts line it replaces, its Retry right after the sentence, so no view's header is taller (R139).

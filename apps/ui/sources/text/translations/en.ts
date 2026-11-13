@@ -9786,6 +9786,9 @@ const enSession = {
       enrollment_retired: "The machine enrollment is no longer active. Review the machine setup.",
       resource_mismatch: "The request does not match the current resource. Review the selection before retrying.",
       action_outcome_unknown: "The external operation could not be confirmed. Check its status before retrying.",
+      no_eligible_member: "No eligible Connected Account is available. Review Connected Accounts, then retry the session.",
+      no_eligible_group_member: "No eligible Connected Account is available. Review Connected Accounts, then retry the session.",
+      provider_incompatible_with_agent: "This Agent does not support the selected credential kind or brokered Team source. For a native-only Agent, use your own login or choose an Agent that supports brokered providers.",
       teamCredential: 'The shared Team credential refused the request.',
       // Isolation causes share errors.agentIsolationUnavailable in the presentation owner.
     } satisfies Record<AgentStartupFailureCode | RequesterSessionRuntimeRefusalCode
@@ -19861,6 +19864,9 @@ const enUsage = {
     page: {
       // usage-board:page
       sourceAccounting: "usage",
+      sourceAgentUsageUpdates: "agent usage updates",
+      sourceAgentSessionUsage: "agent session usage",
+      sourceAgentPromptUsage: "agent prompt usage",
       sourceAccountingAgent: "usage · {agent}",
       sourceClaudeResponses: "Claude responses",
       sourceClaudeSessionSummaries: "Claude session summaries",
@@ -19946,6 +19952,7 @@ const enUsage = {
       noCostFactsTitle: "No money facts yet",
       noCostFactsReason: "Agents haven't reported a price for this period, and none could be estimated.",
       unpricedCaption: "never counted as $0",
+      unpricedRecords: ({ count }: { count: string | number }) => `${count} ${Number(count) === 1 ? 'usage record' : 'usage records'}`,
       factTokens: ({ tokens }: { tokens: string | number }) => `${tokens} tokens`,
       factIncomplete: PUBLIC_USAGE_ORIGINAL_COPY_EN.page.factIncomplete,
       flowEmptyTitle: "Not enough history for a flow",
@@ -20078,6 +20085,8 @@ const enUsage = {
       limitsCaption: "next session",
       limitsNextUnit: ({ name }: { name: string | number }) => `left on ${name}`,
       limitsOthers: ({ count, usedUp }: { count: string | number; usedUp: string | number }) => `${count} more` + (Number(usedUp) > 0 ? ` · ${usedUp} used up` : ''),
+      /** Accounts whose allowance could not be read: said apart from the figures in "N more". */
+      limitsNotRead: ({ count }: { count: string | number }) => `${count} not read`,
       capacityResets: ({ time }: { time: string | number }) => `resets ${time}`,
       capacityAccounts: ({ count }: { count: string | number }) => `${count} ${Number(count) === 1 ? 'account' : 'accounts'} read`,
       capacityReading: ({ count }: { count: string | number }) => `Reading ${count} ${Number(count) === 1 ? 'account' : 'accounts'}…`,
@@ -20858,7 +20867,7 @@ const enUsage = {
       useDefaultFolder: "Use default folder",
       folderPromptTitle: "Folder to read",
       folderPromptMessage: ({ agent, machine }: { agent: string | number; machine: string | number }) => `Where ${agent} keeps its session files on ${machine}.`,
-      unsupported: "Not readable yet · coverage unknown",
+      unsupported: "Not readable yet",
       unavailable: "Can't read this source right now",
       failed: "Couldn't read this source",
       approvalPending: "Waiting for your approval",
@@ -22076,7 +22085,7 @@ const enProjects = {
       domainFieldCheck: "Outside check",
       domainCheckHint: "The path Happier opens from outside, the way your users reach it. Enter the HTTP status it should return.",
       domainFieldCheckStatus: "Expected HTTP status",
-      domainRecordedRoutedReplicas: "Recorded routed replicas",
+      domainRoutedOn: ({ machines }: { machines: string }) => `on ${machines}`,
       domainExists: "This address is already on this environment",
       domainCheckAgain: "Check again",
       domainDnsCheck: "Check DNS",
@@ -22291,7 +22300,7 @@ const enProjects = {
       nothingSetUp: "Nothing set up yet",
       sectionDenied: "You don’t have access to this",
       domainsErrorTitle: "Couldn’t load the domains",
-      domainRoute: ({ service, port, path }: { service: string; port: number; path: string }) => `${service} : ${port} · ${path}`,
+      domainRoute: ({ service, port, path }: { service: string; port: number; path: string }) => `${service}:${port} · ${path}`,
       domainAllPaths: "all paths",
       domainRedirect: ({ target }: { target: string }) => `Redirects to ${target}`,
       domainTagRedirect: "Redirect",
@@ -22903,6 +22912,8 @@ const enProjects = {
   emptyDescription:
     'Projects let you browse and edit files, and use Git on your machines outside of sessions.',
   searchPlaceholder: 'Search projects',
+  /** The Projects page's count line: the projects the list owner reports. */
+  projectCount: ({ count }: { count: number }) => count === 1 ? '1 project' : `${count} projects`,
   noneOpenTitle: 'No project open',
   noneOpenDescription:
     'Choose a project from the list, or add a folder from one of your machines.',
@@ -24659,7 +24670,7 @@ type EnglishNamespaces0 = {
     readonly face: {
         readonly title: string; readonly change: string; readonly style: string; readonly body: string; readonly colour: string;
         readonly styles: { readonly dither: string; readonly pixel: string; readonly solid: string; readonly dots: string; readonly planet: string };
-        readonly note: string; readonly useDefault: string; readonly surprise: string; readonly custom: string;
+        readonly note: string; readonly useDefault: string; readonly surprise: string; readonly shuffle: string; readonly custom: string;
         readonly surpriseNote: string; readonly customNote: string; readonly customEmptyNote: string; readonly failed: string;
     } & BotFaceNames;
     readonly create: { readonly description: string; readonly placeholder: string; readonly documentFailed: string };

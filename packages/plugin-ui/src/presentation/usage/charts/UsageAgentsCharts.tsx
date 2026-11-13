@@ -443,6 +443,20 @@ export function UsageConstellation(props: AgentsProps & Readonly<{ model: UsageC
         const radius = (id: string | null) => (9 + Math.sqrt(nodes.find((node) => node.agentId === id)?.share ?? 0.02) * (phone ? 22 : 30)) * scale;
         const edges = (props.model.edges ?? []).filter((edge) => position.has(edge.from) && position.has(edge.to));
         const edgeMarks: ReactNode[] = [];
+        // A crowded ring on a phone has no room under each planet: names sit beside their planet facing the
+        // centre, kept inside the drawing, and the Orbit's label owner moves any that would touch down a line.
+        const fontSize = svgText.styles.body.fontSize ?? 13;
+        const nameOf = (id: string | null) => shortName(props.agents, id, props.labels.unknownAgent);
+        const besideLabels = phone && crowded ? (() => {
+          const boxes = nodes.map((node) => {
+            const [x, y] = position.get(node.agentId)!, r = radius(node.agentId), text = nameOf(node.agentId);
+            const span = text.length * fontSize * 0.7, anchor = x >= width / 2 ? 'end' as const : 'start' as const;
+            const beside = anchor === 'end' ? x - r - 6 : x + r + 6;
+            return { x: anchor === 'start' ? Math.min(beside, width - span) : Math.max(beside, span), y: y + 4, span, anchor };
+          });
+          const ys = placeUsageOrbitLabels(boxes, { height, line: fontSize + 3 });
+          return new Map(nodes.map((node, index) => [node.agentId, { ...boxes[index]!, y: ys[index]! }]));
+        })() : null;
         return <>
           <Svg width={width} height={height}>
             <Defs>{nodes.map((node) => <Marker key={JSON.stringify(node.agentId)} id={`${markerId}-arrow-${node.agentId}`} viewBox="0 0 8 8" refX={7} refY={4} markerWidth={9} markerHeight={9}
@@ -485,7 +499,8 @@ export function UsageConstellation(props: AgentsProps & Readonly<{ model: UsageC
             })}
             {nodes.map((node) => { const [x, y] = position.get(node.agentId)!; return <G key={`n${node.agentId}`}>
               {!props.renderPlanet ? <Circle cx={r1(x)} cy={r1(y)} r={r1(radius(node.agentId) * 0.8)} fill={colour(node.agentId)} /> : null}
-              {svgText.draw({ x, y: y + radius(node.agentId) + 15, anchor: 'middle', tone: 'strong', size: 'body', text: shortName(props.agents, node.agentId, props.labels.unknownAgent) })}
+              {svgText.draw(besideLabels ? { ...besideLabels.get(node.agentId)!, tone: 'strong', size: 'body', halo: props.paint.paper, text: nameOf(node.agentId) }
+                : { x, y: y + radius(node.agentId) + 15, anchor: 'middle', tone: 'strong', size: 'body', text: nameOf(node.agentId) })}
             </G>; })}
           </Svg>
           {edgeMarks}

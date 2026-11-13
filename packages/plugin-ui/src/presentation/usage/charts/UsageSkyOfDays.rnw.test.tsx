@@ -59,6 +59,23 @@ describe('Sky of days', () => {
     } finally { mount.unmount(); }
   });
 
+  it('names a phone week by its first and last day, not by one month label (acceptance 1113 #11)', () => {
+    const start = Date.UTC(2026, 10, 7);
+    const days = Array.from({ length: 7 }, (_, index) => ({
+      date: new Date(start + index * 86_400_000).toISOString().slice(0, 10),
+      state: 'active' as const, value: 30 + index, leader: null,
+    }));
+    const mount = mountThroughReactNativeWeb(<UsageSkyOfDays theme={SURFACE_CONTEXT_THEME_FIXTURE} paint={paint} agents={agents}
+      model={{ encoding: 'amount', colourBy: 'leadingAgent', days }} labels={labels} label="Sky of days" width={340} testID="sky-phone" />);
+    try {
+      const texts = [...mount.container.querySelectorAll('svg text')].map(node => node.textContent);
+      expect(texts).toContain('2026-11-07');
+      expect(texts).toContain('2026-11-13');
+      expect(texts).not.toContain('11');
+      const last = [...mount.container.querySelectorAll('svg text')].find(node => node.textContent === '2026-11-13');
+      expect(last!.getAttribute('text-anchor')).toBe('end');
+    } finally { mount.unmount(); }
+  });
   it('says each day exactly, keeps unknown apart from no activity, and names a tie by both Agents', () => {
     const model: UsageSkyModel = { encoding: 'amount', colourBy: 'leadingAgent', days: [
       { date: '2026-09-01', state: 'active', value: 90, leader: { kind: 'agent', agentId: 'claude' } },

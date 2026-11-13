@@ -10,7 +10,7 @@ import { formatTokenCount } from '@/utils/format/usageNumbers';
 import { UsageModelPricesLine } from './UsageModelPrices';
 import { useUsageRetryCommand } from './usageMountedControls';
 import { UsageBodyInsufficient, UsageBodyNoUsage, UsageCoverageLine, UsageShowAllRows, leadingUsageRows, readUsageCoverageGaps,
-  usageCoverageDescription, usagePeriodPhrase, usageSourceTitle, useUsagePluginTheme, type UsageBodyProps } from './usageBodyKit';
+  usageCoverageDescription, usageCoverageSummary, usagePeriodPhrase, usageSourceTitle, useUsagePluginTheme, type UsageBodyProps } from './usageBodyKit';
 
 const statusKeys = {
   available: 'usage.board.sources.coverageAvailable', partial: 'usage.board.page.factIncomplete',
@@ -31,6 +31,10 @@ export function UsageSourceCoverageWidget(props: UsageBodyProps) {
   const led = leadingUsageRows(rows, expanded);
   const failed = !!props.slice.accounting && readUsageCoverageGaps(props.slice, ['accounting']).some(gap => gap.status === 'error');
   const description = props.slice.accounting ? usageCoverageDescription(props.slice, ['accounting']) : null;
+  const summary = props.slice.accounting ? usageCoverageSummary(props.slice, ['accounting']) : null;
+  // The caveat is one compact line; its sources and reasons are one press away (detail on demand), never a paragraph.
+  const [detailOpen, setDetailOpen] = React.useState(false);
+  const hasMore = !!description && description !== summary;
   const retry = useUsageRetryCommand(props.model.refresh, failed && !!description);
   if (!props.slice.accounting) return <UsageBodyNoUsage slice={props.slice} testID={props.testID} onRetry={props.model.refresh} />;
   return <UsageSourceCoverageBody theme={theme} testID={props.testID} label={t('usage.widgets.usage_source_coverage')}
@@ -38,8 +42,13 @@ export function UsageSourceCoverageWidget(props: UsageBodyProps) {
     showAll={<UsageShowAllRows label={t('usage.widgets.usage_source_coverage')} testID={`${props.testID}.showAll`} total={rows.length}
       hidden={led.hidden} expanded={expanded} onToggle={() => setExpanded(value => !value)} />}
     empty={<UsageBodyInsufficient testID={`${props.testID}.unknown`} replacesContent={false} title={t('usage.board.sources.coverageUnknown')} />}
-    detail={description ? <SurfaceFreshnessLine testID={`${props.testID}.detail`} reason={description} tone={failed ? 'warning' : 'neutral'}
-      {...(failed ? { action: { label: t('common.retry'), onPress: retry } } : {})} /> : null} />;
+    detail={description ? <View>
+      <SurfaceFreshnessLine testID={`${props.testID}.detail`} reason={(detailOpen ? description : summary) || description}
+        tone={failed ? 'warning' : 'neutral'}
+        {...(failed ? { action: { label: t('common.retry'), onPress: retry } }
+          : hasMore ? { action: { label: detailOpen ? t('usage.showLess') : t('common.details'), testID: `${props.testID}.detail.action`,
+            onPress: () => setDetailOpen(open => !open) } } : {})} />
+    </View> : null} />;
 }
 
 /**
@@ -48,26 +57,33 @@ export function UsageSourceCoverageWidget(props: UsageBodyProps) {
  * partial history ×43"), never the same source title on several rows (sweep 1110 N8).
  */
 function groupCoverageRows(sources: readonly UsageAnalyticsCoverage['sources'][number][]) {
-  const groups = new Map<string, { title: string; labels: Map<string, number>; count: number }>();
+  const groups = new Map<string, { title: string; kinds: Set<string | null>; status: CoverageStatus; count: number }>();
   for (const source of sources) {
     // A source's own title can be a mid-sentence fragment ("usage"); a row opens with a capital.
     const named = usageSourceTitle(source.source);
     const title = `${named.charAt(0).toLocaleUpperCase()}${named.slice(1)}`;
-    const label = sourceCoverageLabel(source);
-    const group = groups.get(title) ?? { title, labels: new Map<string, number>(), count: 0 };
+    const status = sourceCoverageStatus(source);
+    const group = groups.get(title) ?? { title, kinds: new Set<string | null>(), status, count: 0 };
     group.count += 1;
-    group.labels.set(label, (group.labels.get(label) ?? 0) + 1);
+    group.kinds.add(source.captureKind ?? null);
+    if (COVERAGE_STATUS_RANK.indexOf(status) < COVERAGE_STATUS_RANK.indexOf(group.status)) group.status = status;
     groups.set(title, group);
   }
-  return [...groups.values()].map(({ title, labels, count }) => ({ title, count,
-    label: labels.size === 1 ? [...labels.keys()][0]!
-      : [...labels].map(([label, n]) => n > 1 ? `${label} ×${n}` : label).join('; ') }));
+  // One status per row, the most limiting one; how it is captured only when every machine captures it the same way.
+  return [...groups.values()].map(({ title, kinds, status, count }) => {
+    const kind = kinds.size === 1 ? [...kinds][0] : null;
+    return { title, label: [count > 1 ? t('usage.board.page.machinesCount', { count }) : null,
+      kind ? t(captureKeys[kind as keyof typeof captureKeys]) : null, t(statusKeys[status])].filter(Boolean).join(' · ') };
+  });
 }
 
-function sourceCoverageLabel(source: UsageAnalyticsCoverage['sources'][number]): string {
-  return [source.captureKind ? t(captureKeys[source.captureKind]) : null, t(statusKeys[source.status]),
-    source.status === 'available' && source.historyComplete !== true
-      ? t(source.historyComplete === false ? 'usage.board.page.factIncomplete' : 'usage.board.sources.coverageUnknown') : null].filter(Boolean).join(' · ');
+type CoverageStatus = 'error' | 'unsupported' | 'partial' | 'unknown' | 'pending' | 'available';
+const COVERAGE_STATUS_RANK: readonly CoverageStatus[] = ['error', 'unsupported', 'partial', 'unknown', 'pending', 'available'];
+
+/** A capture's one coverage fact: an available source whose history is incomplete or unknown says that instead. */
+function sourceCoverageStatus(source: UsageAnalyticsCoverage['sources'][number]): CoverageStatus {
+  if (source.status === 'available' && source.historyComplete !== true) return source.historyComplete === false ? 'partial' : 'unknown';
+  return source.status;
 }
 
 /** The same unpriced population as Cost facts; unknown dollars never become a zero-dollar metric. */

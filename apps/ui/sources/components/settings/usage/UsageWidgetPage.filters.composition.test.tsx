@@ -636,6 +636,11 @@ describe('mounted Usage page scope commands', () => {
         await act(async () => { getStorage().setState({ endpointStatus: 'offline', socketStatus: 'disconnected', endpointReason: null, syncError: null }); });
         await waitForHomeGovernance(() => expect(screen.findAllByTestId('home-unreachable').length).toBeGreaterThan(0));
         expect(screen.findAllByTestId('home-unreachable-retry').length).toBeGreaterThan(0);
+        // The line takes the header's facts slot: no card is inserted between the header and the views, so the tabs
+        // and the last-read bodies keep their place (acceptance #16, 60 px push).
+        const header = screen.findAllByType(PageHeader).find(node => node.props.testID === 'usage-page.header')!;
+        expect(header.findAll(node => node.props?.testID === 'home-unreachable').length).toBeGreaterThan(0);
+        expect(screen.findAllByTestId('home-unreachable').filter(node => !header.findAll(inner => inner === node).length)).toHaveLength(0);
         expect(screen.findAllHostsByTestId('usage-page.header.failed')).toHaveLength(0);
         expect(screen.findAllHostsByTestId('usage-page.header.retry')).toHaveLength(0);
         // The cause is said once: the views bar and the area defer to the line.

@@ -22,6 +22,10 @@ const SOURCE_LABEL_KEYS = {
     legacy_usage_report: 'usage.board.page.sourceAccounting',
     runtime: 'usage.board.page.sourceAccounting',
     native: 'usage.board.page.sourceAccounting',
+    // The host's own ACP runtime captures (apps/cli agent/acp/usage), named for what they are, not as event ids.
+    'acp-usage-update': 'usage.board.page.sourceAgentUsageUpdates',
+    'acp-session-update-usage': 'usage.board.page.sourceAgentSessionUsage',
+    'acp-prompt-usage': 'usage.board.page.sourceAgentPromptUsage',
 } as const;
 
 function readDeclaredAccountingSource(source: string) {
