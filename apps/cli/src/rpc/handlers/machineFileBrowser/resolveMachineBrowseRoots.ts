@@ -1,6 +1,7 @@
 import { posix, win32 } from 'node:path'
 
 import type { MachineFileBrowserRoot } from '@happier-dev/protocol'
+import { resolveHomeDirFromEnvironment } from '@/utils/path/expandHomeDirPath'
 import {
   OS_USER_FILESYSTEM_ACCESS_POLICY,
   type FilesystemAccessPolicy,
@@ -10,6 +11,7 @@ type ResolveMachineBrowseRootsInput = Readonly<{
   platform?: NodeJS.Platform
   workingDirectory: string
   accessPolicy?: FilesystemAccessPolicy
+  startAtUserDirectories?: boolean
 }>
 
 export async function resolveMachineBrowseRoots(input: ResolveMachineBrowseRootsInput): Promise<MachineFileBrowserRoot[]> {
@@ -21,6 +23,15 @@ export async function resolveMachineBrowseRoots(input: ResolveMachineBrowseRoots
       label: root,
       path: root,
     }))
+  }
+
+  // Navigation starts at the selected worker's own directories. Ancestors may
+  // permit traversal without listing; these suggestions do not authorize IO.
+  if (input.startAtUserDirectories) {
+    const api = platform === 'win32' ? win32 : posix
+    const paths = [...new Set([resolveHomeDirFromEnvironment(process.env, platform), process.cwd()]
+      .map(path => api.resolve(path)))];
+    return paths.map(path => ({ id: path, label: path, path }));
   }
 
   const rawWorkingDirectory = String(input.workingDirectory ?? '').trim()

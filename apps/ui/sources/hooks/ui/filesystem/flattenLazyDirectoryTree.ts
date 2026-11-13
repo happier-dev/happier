@@ -1,4 +1,5 @@
 import type { LazyDirectoryTreeEntry, LazyDirectoryTreeNode } from './lazyDirectoryTreeTypes';
+import { isLoadedDirectory } from './lazyDirectoryTreeEntries';
 
 export function flattenLazyDirectoryTree(input: {
     directoryPath: string;
@@ -20,7 +21,7 @@ export function flattenLazyDirectoryTree(input: {
 
     for (const entry of entries) {
         const isExpanded = entry.type === 'directory' && input.expandedDirectories.has(entry.path);
-        const hasChildrenLoaded = entry.type === 'directory' && input.directoryEntriesByPath.has(entry.path);
+        const hasChildrenLoaded = entry.type === 'directory' && isLoadedDirectory(input.directoryEntriesByPath.get(entry.path));
         const dirErrorMessage = entry.type === 'directory' ? input.directoryErrors.get(entry.path) : undefined;
         const isLoadingChildren = entry.type === 'directory'
             && (input.loadingDirectories.has(entry.path) || (isExpanded && !hasChildrenLoaded && !dirErrorMessage));

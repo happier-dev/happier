@@ -12,6 +12,31 @@ describe('useLazyDirectoryTree', () => {
     const directory = (path: string): LazyDirectoryTreeEntry => ({ path, name: path.split('/').at(-1)!, type: 'directory' });
     const file = (path: string): LazyDirectoryTreeEntry => ({ path, name: path.split('/').at(-1)!, type: 'file' });
 
+    it('does not list preview ancestors while the selected identity roots are pending', async () => {
+        const home = '/var/lib/happier/members/member';
+        const reads: string[] = [];
+        let settle!: (result: LazyDirectoryTreeLoadResult) => void;
+        const pending = new Promise<LazyDirectoryTreeLoadResult>(resolve => { settle = resolve; });
+        const expandedPaths = ['/', '/var', '/var/lib', '/var/lib/happier', '/var/lib/happier/members', home];
+        const getCachedEntries = (path: string): LazyDirectoryTreeEntry[] | null => path === ''
+            ? [{ path: '/', name: '/', type: 'directory', source: 'preview' }] : null;
+        const loadDirectoryEntries = async (path: string): Promise<LazyDirectoryTreeLoadResult> => {
+            reads.push(path);
+            return path === '' ? pending : { ok: true, entries: [] };
+        };
+        const onExpandedPathsChange = () => {};
+        const hook = await renderHook(() => useLazyDirectoryTree({
+            scopeKey: 'member-preview', enabled: true, rootDirectoryPath: '', expandedPaths,
+            onExpandedPathsChange, getCachedEntries, loadDirectoryEntries,
+        }));
+        expect(reads).toEqual(['']);
+        await act(async () => {
+            settle({ ok: true, entries: [{ path: home, name: 'member', type: 'directory', source: 'remote' }] });
+        });
+        expect(reads).toEqual(['', home]);
+        expect(hook.getCurrent().nodes.map(node => node.path)).toContain(home);
+    });
+
     it('reconciles only the nearest loaded ancestor and queues writes during an inline edit', async () => {
         const entries = new Map<string, LazyDirectoryTreeEntry[]>([
             ['', [directory('src'), directory('other')]],

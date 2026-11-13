@@ -1,8 +1,9 @@
-import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
+import { chmod, readdir, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod/mini';
+import { DaemonFilesystemListRootsResponseSchema } from '@happier-dev/protocol/machines/fileBrowser';
 
 import { createEncryptedTransferChunkEnvelope, createTransferRecipientKeyPair,
   decryptEncryptedTransferChunkEnvelope } from '@happier-dev/transfers/node';
@@ -41,6 +42,40 @@ async function openNativePipe(root: string, configuration: Partial<FilesystemEff
 }
 
 describe('native filesystem mounted byte corridor', () => {
+  it.skipIf(process.platform === 'win32')('starts member roots and directory preflight beyond traverse-only parents without listing them', async () => {
+    await withTempDir('member-browser-traverse-', async root => {
+      const parent = join(root, 'members');
+      const home = join(parent, 'member');
+      const workspace = join(home, 'workspace');
+      const neighbor = join(parent, 'neighbor');
+      await mkdir(workspace, { recursive: true });
+      await mkdir(neighbor, { mode: 0o000 });
+      await chmod(parent, 0o111);
+      vi.stubEnv('HOME', home);
+      vi.spyOn(process, 'cwd').mockReturnValue(workspace);
+      const channel = await openNativePipe(workspace, { accessPolicy: { kind: 'osUser' }, capabilityAgentInstallExecutionScope: 'member' });
+      try {
+        await expect(readdir(parent)).rejects.toMatchObject({ code: 'EACCES' });
+        const result = DaemonFilesystemListRootsResponseSchema.parse(await channel.request({ kind: 'filesystem.rpc',
+          method: RPC_METHODS.DAEMON_FILESYSTEM_LIST_ROOTS, input: {} }));
+        expect(result).toMatchObject({ ok: true, roots: [{ path: home }, { path: workspace }] });
+        if (!result.ok) throw new Error(result.error);
+        for (const { path } of result.roots) {
+          await expect(channel.request({ kind: 'filesystem.rpc', method: RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY,
+            input: { path, includeFiles: false } })).resolves.toMatchObject({ ok: true, path });
+          await expect(channel.request({ kind: 'filesystem.rpc', method: RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT,
+            input: { directory: { kind: 'path', path } } })).resolves.toMatchObject({ ok: true, directory: path });
+        }
+        await expect(channel.request({ kind: 'filesystem.rpc', method: RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY,
+          input: { path: neighbor } })).resolves.toMatchObject({ ok: false, errorCode: 'EACCES' });
+      } finally {
+        await channel.dispose();
+        vi.restoreAllMocks(); vi.unstubAllEnvs();
+        await chmod(parent, 0o700); await chmod(neighbor, 0o700);
+      }
+    });
+  });
+
   it('returns the worker preflight refusal facts over its private pipe without changing the public result', async () => {
     await withTempDir('happier-native-preflight-diagnostic-', async root => {
       const folder = join(root, 'not-a-folder');

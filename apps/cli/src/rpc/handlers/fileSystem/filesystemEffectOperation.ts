@@ -74,7 +74,8 @@ export async function executeConfiguredFilesystemEffect(configurationInput: File
       if (name === method) browse = handler as RpcHandler<unknown, unknown>;
     } };
     registerMachineFileBrowserHandlers({ rpcHandlerManager: registrar, workingDirectory: configurationInput.workingDirectory,
-      accessPolicy: configurationInput.accessPolicy });
+      accessPolicy: configurationInput.accessPolicy,
+      startAtUserDirectories: configurationInput.capabilityAgentInstallExecutionScope === 'member' });
     if (!browse) throw invalidOperation();
     const result = await browse(operation.input, { signal: signal ?? new AbortController().signal });
     signal?.throwIfAborted();

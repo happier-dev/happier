@@ -1,6 +1,7 @@
 import * as React from 'react';
 
 import { flattenLazyDirectoryTree } from './flattenLazyDirectoryTree';
+import { isLoadedDirectory } from './lazyDirectoryTreeEntries';
 import { reuseLazyDirectoryTreeNodes } from './reuseLazyDirectoryTreeNodes';
 import { collectLazyDirectoryTreeMutationPaths, replaceLazyDirectoryTreeDirectory, resolveLazyDirectoryTreeMutationDirectories } from './reconcileLazyDirectoryTree';
 import type { LazyDirectoryTreeEntry, LazyDirectoryTreeLoadResult, LazyDirectoryTreeNode } from './lazyDirectoryTreeTypes';
@@ -29,10 +30,6 @@ function normalizeExpandedPaths(paths: readonly string[]): string[] {
 }
 
 /** Placeholder entries (the way to an initial folder) paint at once but still need the real listing. */
-function isLoadedDirectory(entries: readonly LazyDirectoryTreeEntry[] | undefined): boolean {
-    return entries !== undefined && !(entries.length > 0 && entries.every((entry) => entry.source === 'preview'));
-}
-
 function seedDirectoryEntriesByPathFromCache(input: Readonly<{
     rootDirectoryPath: string;
     expandedPaths: readonly string[] | null;
@@ -415,7 +412,10 @@ export function useLazyDirectoryTree<LoadContext = undefined>(input: {
             for (const dir of expandedDirectories) {
                 if (cancelled) return;
                 if (!dir) continue;
-                if (![...directoryEntriesByPath.values()].some(entries => entries.some(entry => entry.type === 'directory' && entry.path === dir))) continue;
+                // A preview path is presentation only; wait for the selected
+                // identity's directory listing before expanding it remotely.
+                if (![...directoryEntriesByPath.values()].some(entries => entries.some(entry => entry.type === 'directory'
+                    && entry.source !== 'preview' && entry.path === dir))) continue;
                 await loadDirectory(dir, { forceReload: shouldForceReloadExpandedDirectories });
             }
         };

@@ -14,6 +14,7 @@ type RegisterMachineFileBrowserHandlersParams = Readonly<{
   rpcHandlerManager: RpcHandlerRegistrar
   workingDirectory: string
   accessPolicy?: FilesystemAccessPolicy
+  startAtUserDirectories?: boolean
   deps?: Readonly<{
     resolveRoots?: typeof resolveMachineBrowseRoots
     maxEntries?: number
@@ -37,7 +38,8 @@ export function registerMachineFileBrowserHandlers(params: RegisterMachineFileBr
       try {
       await assertFilesystemEffectCurrent(context)
       if (actionId === 'daemon.filesystem.listRoots') {
-        const result = await listMachineBrowseRoots({ resolveRoots: async () => await resolveRoots({ platform, workingDirectory, accessPolicy }) })
+        const result = await listMachineBrowseRoots({ resolveRoots: async () => await resolveRoots({ platform, workingDirectory, accessPolicy,
+          startAtUserDirectories: params.startAtUserDirectories }) })
         await assertFilesystemEffectCurrent(context)
         return {
           ok: true,

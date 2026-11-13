@@ -127,7 +127,8 @@ export function createFilesystemEffectByteOwner(configuration: FilesystemEffectC
   registerDirectoryHandlers(registrar, filesystemDeps);
   registerPathMutationHandlers(registrar, filesystemDeps);
   registerMachineFileBrowserHandlers({ rpcHandlerManager: registrar, workingDirectory: configuration.workingDirectory,
-    accessPolicy: configuration.accessPolicy });
+    accessPolicy: configuration.accessPolicy,
+    startAtUserDirectories: configuration.capabilityAgentInstallExecutionScope === 'member' });
   registerWorkspaceFileSearchHandler(registrar, configuration.workingDirectory, { accessPolicy: configuration.accessPolicy });
   registerWorkspaceFileListHandler(registrar, configuration.workingDirectory, { accessPolicy: configuration.accessPolicy });
   registerTransferUploadRpcHandlers(registrar, { workingDirectory: configuration.workingDirectory,
