@@ -70,7 +70,9 @@ import { useDeploymentCancellation } from './useDeploymentCancellation';
 import type { createDeploymentActions } from './deploymentActions';
 import { useDeploymentEnvironment, useDeploymentEnvironmentDomains, useDeploymentReceipt } from './useDeploymentReads';
 import { DeploymentStepLogs } from './DeploymentStepLogs';
-import { DeploymentLiveAddressActions, formatDeploymentLiveAddress, resolveDeploymentLiveUrl } from './deploymentLiveAddress';
+import { DeploymentLiveAddressActions } from './deploymentLiveAddress';
+import { deploymentLiveAddressDemand, formatDeploymentLiveAddress, resolveDeploymentLiveAddress, type DeploymentLiveAddress } from './deploymentLiveAddressFacts';
+import { DomainStateLine } from './DeploymentDomainRow';
 import { DeploymentUploadProvenance } from './DeploymentUploadProvenance';
 import { showDeploymentPromotionSheet } from './DeploymentPromotionSheet';
 import type { DeploymentReadLogs } from './useDeploymentStepLog';
@@ -139,7 +141,8 @@ export const DeploymentReceiptDetail = React.memo(
     const serving = value !== null && activeId === value.deployment.id
       && environmentValue?.runtimeTargetLink?.id === value.deployment.targetLinkId;
     // Native addresses belong to current Domains; a historical receipt never borrows them.
-    const nativeAddressDemand = serving && value?.deployment.state === 'succeeded' && !value.content.platform;
+    // The live-address owner decides which serving receipts read current Domains, as it does for the Overview.
+    const nativeAddressDemand = deploymentLiveAddressDemand(value, serving);
     const domains = useDeploymentEnvironmentDomains(nativeAddressDemand ? props.controller : null,
       nativeAddressDemand ? props.environmentId : null, props.demand);
     const { press: cancelPress, canCancel, cancelRequested, pressCancel } = useDeploymentCancellation({
@@ -262,7 +265,8 @@ export const DeploymentReceiptDetail = React.memo(
     const images = 'images' in content ? content.images : NO_IMAGES;
     const notice = deploymentStateNotice(deployment.state, facts.failure);
     // Domains are read only while this receipt serves natively, so a historical one never borrows them.
-    const outcomeUrl = resolveDeploymentLiveUrl({ ...value, facts }, nativeAddressDemand ? domains.result.items : []);
+    const live = resolveDeploymentLiveAddress({ ...value, facts }, nativeAddressDemand ? domains.result.items : [], serving);
+    const outcomeUrl = live?.url ?? null;
     const firstMachine = machineName(content.machines[0] ?? '');
     // A failed deploy's way back is the incumbent it recorded; the rollback Action decides admission at the press.
     const target = facts.rollbackTarget;
@@ -292,6 +296,8 @@ export const DeploymentReceiptDetail = React.memo(
     };
     const stripFacts = receiptFacts({
       facts,
+      // A succeeded receipt says its address in the outcome row; any other live one says it here.
+      address: outcomeUrl && deployment.state !== 'succeeded' ? formatDeploymentLiveAddress(outcomeUrl) : null,
       addressAvailable: outcomeUrl !== null,
       serving,
       health: environmentValue?.healthAggregate,
@@ -517,7 +523,7 @@ export const DeploymentReceiptDetail = React.memo(
                 serverId={props.serverId}
                 accountId={props.accountId}
                 facts={facts}
-                url={outcomeUrl}
+                live={live}
                 machine={firstMachine}
                 serving={serving}
               />
@@ -710,13 +716,14 @@ function ReceiptMenu(props: Readonly<{
  */
 const SucceededOutcome = React.memo(function SucceededOutcome(props: Readonly<{
   facts: DeploymentReceiptFactsV1;
-  url: string | null;
+  live: DeploymentLiveAddress | null;
   machine: string;
   serving: boolean;
   serverId: string;
   accountId: string;
 }>) {
-  const url = props.url;
+  const url = props.live?.url ?? null;
+  const attention = props.live?.attention ?? null;
   const address = url ? formatDeploymentLiveAddress(url) : null;
   const members = props.facts.health.members;
   const parts: string[] = [];
@@ -734,10 +741,12 @@ const SucceededOutcome = React.memo(function SucceededOutcome(props: Readonly<{
           : props.serving
             ? t('projects.deployments.servingOn', { machine: props.machine })
             : t('projects.deployments.ranOn', { machine: props.machine })}
-        subtitle={parts.length > 0 ? parts.join(' · ') : undefined}
+        // A Domain that needs a look says so first, as the Domains tab does; Open then steps back.
+        subtitle={attention ? <DomainStateLine state={attention} route={parts.join(' · ') || null} />
+          : parts.length > 0 ? parts.join(' · ') : undefined}
         rightElement={url ? (
           <DeploymentLiveAddressActions url={url} serverId={props.serverId} accountId={props.accountId}
-            testIDPrefix="project-deployments.receipt.outcome" openEmphasis="primary" />
+            testIDPrefix="project-deployments.receipt.outcome" openEmphasis={attention ? 'secondary' : 'primary'} />
         ) : undefined}
         mode="info"
       />
@@ -781,6 +790,7 @@ function failureConsequence(
  */
 function receiptFacts(input: Readonly<{
   facts: DeploymentReceiptFactsV1;
+  address: string | null;
   addressAvailable: boolean;
   serving: boolean;
   health: Parameters<typeof deploymentHealthFact>[0];
@@ -790,8 +800,9 @@ function receiptFacts(input: Readonly<{
   if (input.serving) {
     list.push({ key: 'health', testID: 'project-deployments.receipt.facts.health',
       label: t('projects.deployments.factHealthNow'), ...deploymentHealthFact(input.health, input.state) });
-    if (!input.addressAvailable) {
-      list.push({ key: 'address', label: t('projects.deployments.factAddress'), value: t('projects.deployments.factNotAvailable') });
+    if (input.address || !input.addressAvailable) {
+      list.push({ key: 'address', label: t('projects.deployments.factAddress'),
+        value: input.address ?? t('projects.deployments.factNotAvailable') });
     }
   }
   const target = input.facts.previousVersion;

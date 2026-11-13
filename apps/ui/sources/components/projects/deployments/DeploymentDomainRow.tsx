@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { isDeploymentReadDemandActiveV1, projectDeploymentDomainFactsV1, type DeploymentReadDemandV1 } from '@happier-dev/deployments';
 import type { ActionOperationGetV1Response } from '@happier-dev/protocol/actions/operations/v1';
 
@@ -19,12 +19,11 @@ import { useActionOperation } from '@/sync/domains/actionOperations/useActionOpe
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { getActionOperation } from '@/sync/ops/actionOperations';
 import { t } from '@/text';
-import type { useDeploymentEnvironmentDomains } from './useDeploymentReads';
+import { deploymentDomainAttention, type DomainCredentialRole, type DomainItem } from './deploymentDomainAttention';
+import { useMachineDisplayNamesById } from '@/sync/store/hooks';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 
-export type DomainItem = ReturnType<typeof useDeploymentEnvironmentDomains>['result']['items'][number];
-/** A Domain credential binding's role (basic auth password, your certificate's chain and key). */
-export type DomainCredentialRole = 'basicAuth' | 'certificateChain' | 'privateKey';
-type RowState = Readonly<{ variant: StatusPillVariant; label: string }>;
+export type { DomainCredentialRole, DomainItem } from './deploymentDomainAttention';
 type OperationAddress = NonNullable<DomainItem['domain']['operationAddress']>;
 type DomainRowProps = Readonly<{
   item: DomainItem;
@@ -84,36 +83,37 @@ function DomainRowContent(props: DomainRowProps & Readonly<{ observation: Action
   const { item } = props;
   const { state: lifecycle, retryRemoval, failure } = projectDeploymentDomainFactsV1(item.domain, props.accountId, props.observation);
   const missing = props.missingCredentials ?? [];
-  // One state per row: the lifecycle speaks first; a settled address then names what it needs, then its health.
-  const state: RowState | null = lifecycle === 'outcome_unknown'
-    ? { variant: 'attention' as const, label: t('projects.deployments.stateUnknown') }
-    : lifecycle === 'cancelled' ? { variant: 'attention' as const, label: t('projects.deployments.stateCancelled') }
-    : domainState(lifecycle) ?? credentialState(missing) ?? healthState(item.health);
+  // One state per row, from the Domain attention owner the live address reads too.
+  const state = deploymentDomainAttention(item, lifecycle, missing);
   const tag = domainTag(item.content);
+  // Recorded routed replicas say where the address leads, by Machine name; raw ids stay out of the row.
+  const replicaMachineIds = React.useMemo(() => item.domain.routedReplicas?.replicas.map(replica => replica.machineId) ?? [],
+    [item.domain.routedReplicas]);
+  const replicaNames = useMachineDisplayNamesById(replicaMachineIds);
+  const replicas = item.domain.routedReplicas && replicaMachineIds.length > 0
+    ? `${t('projects.deployments.domainRecordedRoutedReplicas')} · ${[...new Set(replicaMachineIds
+      .map(machineId => replicaNames[machineId] ?? t('projects.deployments.aMachine')))].join(', ')}` : null;
+  const route = [domainRoute(item.content), replicas].filter(Boolean).join(' · ') || null;
+  // An address that needs the person shows its recovery beside it, not only in ⋯.
+  const checkAgain = state && props.onVerify && lifecycle !== 'removing' ? props.onVerify : null;
   return <>
     <Item
       testID={`project-deployments.environment.domains.${item.domain.id}`}
       icon={<Icon name="globe" size={18} color={theme.colors.text.secondary} />}
       title={item.content.hostname}
       titleAccessory={tag ? <StatusPill variant="neutral" hideDot label={tag} /> : undefined}
-      subtitle={state ? <DomainStateLine state={state} route={domainRoute(item.content)} /> : domainRoute(item.content)}
+      subtitle={state ? <DomainStateLine state={state} route={route} /> : route}
       mode="info"
-      rightElement={props.onRemove && props.onVerify ? <DomainRowMenu item={item} disabled={props.disabled}
-        retryRemoval={retryRemoval} onVerify={props.onVerify} onRemove={props.onRemove}
-        onConfigureChecks={props.onConfigureChecks}
-        missingCredentials={missing} onChooseCredential={props.onChooseCredential} /> : undefined}
+      rightElement={props.onRemove && props.onVerify ? <View style={styles.rowActions}>
+        {checkAgain ? <RoundButton testID={`project-deployments.environment.domains.${item.domain.id}.checkAgain`}
+          size="small" display="secondary" title={t('projects.deployments.domainCheckAgain')} disabled={props.disabled}
+          onPress={checkAgain} /> : null}
+        <DomainRowMenu item={item} disabled={props.disabled}
+          retryRemoval={retryRemoval} onVerify={props.onVerify} onRemove={props.onRemove}
+          onConfigureChecks={props.onConfigureChecks}
+          missingCredentials={missing} onChooseCredential={props.onChooseCredential} />
+      </View> : undefined}
     />
-    {item.domain.routedReplicas ? (
-      <View testID={'project-deployments.environment.domains.' + item.domain.id + '.routedReplicas'}>
-        <FieldItem label={t('projects.deployments.domainRecordedRoutedReplicas') + ' · ' + item.domain.routedReplicas.count}>
-          {item.domain.routedReplicas.replicas.map(replica => (
-            <Text key={JSON.stringify([replica.machineId, replica.installationId, replica.containerName])} selectable>
-              {replica.machineId + ' · ' + replica.containerName}
-            </Text>
-          ))}
-        </FieldItem>
-      </View>
-    ) : null}
     {item.content.providerObservation?.dns.map((record, index) => (
       <FieldItem key={JSON.stringify([record.type, record.name, index])} label={`${record.type} · ${record.name}`}>
         <Text selectable>{record.value}</Text>
@@ -209,7 +209,7 @@ function DomainRowMenu(
 }
 
 /** "Needs a look · admin : 8080 · all paths": the state word and the route wrap as one run in the row's subtitle role. */
-function DomainStateLine(
+export function DomainStateLine(
   props: Readonly<{
     state: Readonly<{ variant: StatusPillVariant; label: string }>;
     route: string | null;
@@ -251,13 +251,6 @@ function domainTag(content: DomainItem['content']): string | null {
   return null;
 }
 
-/** A settled address whose own content asks for a credential no binding supplies yet. */
-function credentialState(missing: readonly DomainCredentialRole[]): RowState | null {
-  if (missing.length === 0) return null;
-  return { variant: 'attention', label: missing.includes('basicAuth')
-    ? t('projects.deployments.editors.needsPassword') : t('projects.deployments.editors.needsCertificate') };
-}
-
 function credentialChoiceTitle(role: DomainCredentialRole): string {
   switch (role) {
     case 'basicAuth': return t('projects.deployments.editors.choosePassword');
@@ -266,56 +259,6 @@ function credentialChoiceTitle(role: DomainCredentialRole): string {
   }
 }
 
-/**
- * The Domain health owner's one `needsYou` fact (T2-DOMAIN-PREVIEW `projectDeploymentDomainHealthFactsV1`): a
- * certificate that expires soon or is no longer valid, or an address that does not answer, with its one cause.
- * Healthy, unchecked and unavailable observations stay quiet.
- */
-function healthState(health: DomainItem['health']): RowState | null {
-  const needs = health?.needsYou;
-  if (!needs) return null;
-  if (needs.cause === 'certificate') {
-    if (needs.reason === 'expiresSoon') return { variant: 'attention', label: health?.certificate.expiresAt
-      ? t('projects.deployments.editors.certExpiresSoon', { date: new Date(health.certificate.expiresAt).toLocaleDateString() })
-      : t('projects.deployments.editors.certInvalid') };
-    return { variant: 'danger', label: needs.reason === 'expired'
-      ? t('projects.deployments.editors.certExpired') : t('projects.deployments.editors.certInvalid') };
-  }
-  const where = needs.vantage === 'outside'
-    ? t('projects.deployments.editors.unreachableOutside') : t('projects.deployments.editors.unreachableHere');
-  const why = needs.cause === 'dns' ? t('projects.deployments.editors.diagnosisDns')
-    : needs.cause === 'network' ? t('projects.deployments.editors.diagnosisNetwork')
-    : t('projects.deployments.editors.diagnosisHttp');
-  return { variant: 'danger', label: `${where} · ${why}` };
-}
-
-/** Healthy (`active`) is quiet; the rest speak, in the colour of what they need. */
-function domainState(
-  state: DomainItem['domain']['state'],
-): RowState | null {
-  switch (state) {
-    case 'active':
-      return null;
-    case 'pending':
-    case 'applying':
-      return {
-        variant: 'neutral',
-        label: t('projects.deployments.domainStateSettingUp'),
-      };
-    case 'warning':
-      return {
-        variant: 'attention',
-        label: t('projects.deployments.domainStateWarning'),
-      };
-    case 'failed':
-      return {
-        variant: 'danger',
-        label: t('projects.deployments.domainStateFailed'),
-      };
-    case 'removing':
-      return {
-        variant: 'neutral',
-        label: t('projects.deployments.domainStateRemoving'),
-      };
-  }
-}
+const styles = StyleSheet.create((theme) => ({
+  rowActions: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
+}));

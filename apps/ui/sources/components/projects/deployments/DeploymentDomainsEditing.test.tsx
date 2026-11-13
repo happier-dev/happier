@@ -204,7 +204,7 @@ function platformDetail(targetKind = 'vercel', content: Record<string, unknown> 
 }
 
 describe('Environment → Domains: add form (P6)', () => {
-  it('shows every recorded routed replica without inventing a live inventory', async () => {
+  it('names where the recorded routed replicas run, inside the row and without raw ids (DEPLOY-ACCEPT-143 A3)', async () => {
     const detail = createDeploymentEnvironmentDetailV1();
     const known = domain('recorded', 'shop.example.com');
     const item = { ...known, domain: { ...known.domain, routedReplicas: {
@@ -216,11 +216,11 @@ describe('Environment → Domains: add form (P6)', () => {
     const { screen, controller, settle } = await renderDomains(detail, [item, domain('unknown', 'old.example.com')], domainActions(detail));
     try {
       await settle('project-deployments.environment.domains.recorded');
-      const { Text } = await import('@/components/ui/text/Text');
-      const texts = screen.findAllByType(Text).map(node => node.props.children);
-      expect(texts).toContain('machine-a · shop-web-1');
-      expect(texts).toContain('machine-b · shop-web-2');
-      expect(screen.findByTestId('project-deployments.environment.domains.unknown.routedReplicas')).toBeNull();
+      const text = screen.getTextContent();
+      // Only the recorded Domain names its replicas; Machine and container ids stay out of the page.
+      expect(text.split('Recorded routed replicas').length - 1).toBe(1);
+      expect(text).not.toContain('shop-web-1');
+      expect(text).not.toContain('machine-a ·');
     } finally {
       await screen.unmount();
       controller.retire();

@@ -152,7 +152,9 @@ import { randomUUID } from '@/platform/randomUUID';
 import { DeploymentVersionComparison } from './DeploymentVersionComparison';
 import { DeploymentPullRequestDeploy } from './DeploymentPullRequestDeploy';
 import { DeploymentPendingRequest } from './DeploymentPendingRequest';
-import { DeploymentLiveAddressActions, formatDeploymentLiveAddress, resolveDeploymentLiveUrl } from './deploymentLiveAddress';
+import { DeploymentLiveAddressActions } from './deploymentLiveAddress';
+import { formatDeploymentLiveAddress, resolveDeploymentLiveAddress } from './deploymentLiveAddressFacts';
+import { DomainStateLine } from './DeploymentDomainRow';
 
 type EnvironmentTab = DeploymentEnvironmentTabV1;
 const noEnvironmentName = () => null;
@@ -441,11 +443,12 @@ export const DeploymentEnvironmentDetail = React.memo(
     const services = activeReceipt ? deploymentServices(activeReceipt.content) : NO_SERVICES;
     // What serves is live at its address; a first deploy that serves ends there (P60 §1 step 5): its address
     // leads the page and Open is the one primary until the Environment has deployed again.
-    const liveUrl = activeReceipt && (activeReceipt.deployment.state === 'succeeded'
-      || activeReceipt.deployment.state === 'running_unverified')
-      ? resolveDeploymentLiveUrl(activeReceipt, domains.result.items) : null;
+    // The active receipt serves by definition; the live-address owner decides which states and Domains count.
+    const liveAddress = activeReceipt ? resolveDeploymentLiveAddress(activeReceipt, domains.result.items, true) : null;
+    const liveUrl = liveAddress?.url ?? null;
     const historyPage = history.snapshot.status === 'ready' ? history.snapshot.value : null;
-    const firstServing = liveUrl !== null && historyPage !== null && !historyPage.hasNextPage
+    // An address whose Domain needs a look never leads as plainly live; its recovery does.
+    const firstServing = liveUrl !== null && !liveAddress?.attention && historyPage !== null && !historyPage.hasNextPage
       && historyPage.coverage !== 'partial'
       && historyPage.items.every(receipt => receipt.operation === 'teardown' || receipt.id === activeId);
     // Declared edges only (#23): the page's one Domains read and the stored template, never a per-resource read.
@@ -732,9 +735,14 @@ export const DeploymentEnvironmentDetail = React.memo(
     const deployWhenFinished = ready && deploy && availability.kind === 'ready' ? () => {
       void press(() => deploy({ environmentId, targetLinkId: availability.targetLinkId, ...(onFailure ? { onFailure } : {}), whenBusy: 'supersede', ...(sourceMethod ? { sourceMethod } : {}) }));
     } : null;
+    const liveDomain = liveAddress?.attention ? liveAddress.domain : null;
+    const domainActions = props.domainActions;
     const liveActions = (url: string) => (
       <DeploymentLiveAddressActions url={url} serverId={props.serverId} accountId={props.accountId}
-        testIDPrefix="project-deployments.environment.live" openEmphasis={firstServing ? 'primary' : 'secondary'} />
+        testIDPrefix="project-deployments.environment.live" openEmphasis={firstServing ? 'primary' : 'secondary'}
+        checkAgain={liveDomain && domainActions ? { review: props.review, onSettled: () => { void environment.refresh(); },
+          run: () => domainActions.verifyDomain({ environmentId, domainId: liveDomain.id,
+            expectedRevision: detail.environment.revision, expectedDomainRevision: liveDomain.revision }) } : null} />
     );
     const attentionNotice = (() => {
       switch (attention?.kind) {
@@ -937,6 +945,8 @@ export const DeploymentEnvironmentDetail = React.memo(
                       <Item
                         testID="project-deployments.environment.live"
                         title={t('projects.deployments.liveAt', { address: formatDeploymentLiveAddress(liveUrl) })}
+                        // The Domain's own line, as the Domains tab says it, at the address it is about.
+                        subtitle={liveAddress?.attention ? <DomainStateLine state={liveAddress.attention} route={null} /> : undefined}
                         showChevron={false}
                         // A phone keeps only a short control beside a label; the address's actions sit beneath it.
                         {...(props.phone ? { bottomElement: liveActions(liveUrl) } : { rightElement: liveActions(liveUrl) })}
