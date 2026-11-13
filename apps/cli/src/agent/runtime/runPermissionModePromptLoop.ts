@@ -53,6 +53,7 @@ import {
 } from '@/agent/runtime/replaySeed/replaySeedV1';
 import type { UnsettledReplaySeedRetirement } from '@/agent/runtime/replaySeed/unsettledReplaySeedRetirement';
 import { isAbortLikeError } from '@/agent/runtime/lifecycle/classifyAbortLikeError';
+import { readSessionRuntimeFailureCause } from '@/agent/runtime/session/errors/readSessionRuntimeFailureCause';
 import { isAgentNativeResumeIdentityMismatchError } from '@/session/agentTransition/agentNativeReturn';
 import {
   createSessionProviderInputConsumer,
@@ -676,6 +677,14 @@ export async function runPermissionModePromptLoop(opts: {
   const prepareHostContext: PermissionModePromptLoopTurnOperations['prepareHostContext'] = opts.prepareHostContext
     ?? (async (input) => await opts.runtime.prepareHostContext?.(input) ?? null);
   let wasStarted = false;
+  let runtimeNeedsTeamBindingRecovery = false;
+  const observeTeamBindingRefusal = (error: unknown): void => {
+    const cause = readSessionRuntimeFailureCause(error);
+    if (cause?.code === 'session_team_credential_binding_rejected'
+      && cause.phase === 'turn_start' && cause.providerErrorCode === 'access_removed') {
+      runtimeNeedsTeamBindingRecovery = true;
+    }
+  };
   let currentRuntimeRestartModeHash: string | null = null;
   let pending: QueuedPermissionModeMessage | null = null;
   let turnInFlight = false;
@@ -742,6 +751,7 @@ export async function runPermissionModePromptLoop(opts: {
   const unsubscribeCheckpointRuntimeMessages = (() => {
     try {
       return opts.runtime.subscribeRuntimeEvents((event) => {
+        if (event.kind === 'turn-failed') observeTeamBindingRefusal(event.diagnostic);
         if (event.kind === 'context-compaction' && event.phase !== 'progress') {
           opts.manualCompaction?.setRunning(event.phase === 'started');
         } else if (event.kind === 'runtime-ended') {
@@ -893,6 +903,7 @@ export async function runPermissionModePromptLoop(opts: {
   ): Promise<void> => {
     await opts.runtime.resetOrDisposeRuntime(reason, intent);
     modelRequestScope = createPromptCompositionScope();
+    runtimeNeedsTeamBindingRecovery = false;
   };
 
   try {
@@ -1149,8 +1160,7 @@ export async function runPermissionModePromptLoop(opts: {
       await opts.onBeforeReset?.({ reason: 'clear' });
       resetAssistantTextSnapshotTurnScope(opts.session, 'clear');
       await opts.permissionHandler.reset();
-      await opts.runtime.resetOrDisposeRuntime(undefined, { kind: 'create' });
-      modelRequestScope = createPromptCompositionScope();
+      await replaceRuntimeForPrompt({ kind: 'create' });
       lastDeliveredSessionSystemPrompt = null;
       pendingSessionSystemPromptDelivery = null;
       wasStarted = false;
@@ -1219,6 +1229,22 @@ export async function runPermissionModePromptLoop(opts: {
     };
     let promptFailurePhase = 'runtime_start';
     try {
+      if (runtimeNeedsTeamBindingRecovery) {
+        // The refused generation still owns its old signed broker job. Reopen
+        // only for new input, so restoration gets fresh admission without
+        // retrying the refused input or renewing withdrawn authority.
+        const providerSessionId = opts.runtime.readSessionIdentity().sessionId;
+        const intent: RuntimeTurnSessionOpenIntent = providerSessionId
+          ? { kind: 'resume', providerSessionId, importHistory: false }
+          : { kind: 'create' };
+        await replaceRuntimeForPrompt(intent, 'runtime_recovery');
+        wasStarted = false;
+        nextSessionIsFresh = intent.kind === 'create';
+        if (nextSessionIsFresh) lastDeliveredSessionSystemPrompt = null;
+        pendingSessionSystemPromptDelivery = null;
+        runtimePermissionModeApplied = null;
+        pendingFreshSessionSystemPrompt = false;
+      }
       const promptDeliveryIdentity = readQueuedPromptDeliveryIdentity(message.message);
       const localIds = [...promptDeliveryIdentity.localIds];
       const userMessageSeqs = [...promptDeliveryIdentity.userMessageSeqs];
@@ -1854,6 +1880,7 @@ export async function runPermissionModePromptLoop(opts: {
         continue;
       }
     } catch (error) {
+      observeTeamBindingRefusal(error);
       const preparation = readStructuredInputPreparationFailure(error);
       const preTurnFailure = !beganTurn && !isAbortLikeError(error)
         ? readPreTurnFailure(error)
