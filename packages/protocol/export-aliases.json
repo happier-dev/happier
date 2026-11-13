@@ -121,6 +121,7 @@
   "./plugins/contributions/voice": "./src/plugins/contributions/voiceProviders.ts",
   "./plugins/contributions/ui": "./src/plugins/contributions/ui/index.ts",
   "./plugins/contributions/ui/declarative-document-authoring": "./src/plugins/contributions/ui/declarativeDocumentAuthoringV1.ts",
+  "./profiles/v2/profileId": "./src/profiles/v2/profileId.ts",
   "./scm": "./src/scm/index.ts",
   "./voice/realtime": "./src/voice/realtime/index.ts",
   "./workflows": "./src/workflows/index.ts"

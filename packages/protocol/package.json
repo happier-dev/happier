@@ -403,6 +403,11 @@
       "types": "./dist/plugins/ui/index.d.ts",
       "default": "./dist/plugins/ui/index.js"
     },
+    "./profiles/v2/profileId": {
+      "happier-source": "./src/profiles/v2/profileId.ts",
+      "types": "./dist/profiles/v2/profileId.d.ts",
+      "default": "./dist/profiles/v2/profileId.js"
+    },
     "./providers": {
       "happier-source": "./src/providers/index.ts",
       "types": "./dist/providers/index.d.ts",
