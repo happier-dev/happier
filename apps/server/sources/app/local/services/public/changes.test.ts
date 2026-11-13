@@ -14,10 +14,10 @@ vi.mock('@/storage/db', async () => {
     db.sessionGroupGrant.findMany.mockResolvedValue([]);
     const reader = { ...db, ...inTxPostgresControlStatementMock,
         $queryRawUnsafe: async (query: string) => {
-            if (!query.includes('WITH selected AS') || !query.includes('MachineAccountGrant')) throw new Error('Unexpected audience fixture SQL');
+            if (!query.includes('WITH RECURSIVE selected AS') || !query.includes('MachineAccountGrant')) throw new Error('Unexpected audience fixture SQL');
             return [{ machineId: 'machine_1', custodianAccountId: 'machine_owner', source: 'account',
                 membershipStatus: null, membershipRole: null, teamArchivedAt: null, groupArchivedAt: null,
-                id: 'machine_reader', status: 'active' }];
+                inherited: 0, accessLevel: 'view', id: 'machine_reader', status: 'active' }];
         } };
     return { db: createDbTransactionMock(() => reader).wrapDb(reader),
         getDbProviderFromEnv: (await import('@/storage/prisma')).getDbProviderFromEnv };

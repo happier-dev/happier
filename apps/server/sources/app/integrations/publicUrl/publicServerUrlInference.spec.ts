@@ -1,3 +1,5 @@
+import { createBuiltinRelayAccessSelection as relaySelection } from "@happier-dev/cli-common/relayAccess";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -27,7 +29,7 @@ describe("publicServerUrlInference", () => {
     });
 
     describe("resolveCachedPublicServerUrl", () => {
-        it("infers the canonical public URL from the persisted relay access config (cloudflareNamed)", async () => {
+        it("infers the canonical public URL from the persisted relay access config (lan)", async () => {
             const { mkdtemp, writeFile, rm, mkdir } = await import("node:fs/promises");
             const { tmpdir } = await import("node:os");
             const { join } = await import("node:path");
@@ -39,7 +41,7 @@ describe("publicServerUrlInference", () => {
                 await mkdir(join(homeDir, ".happier", "relay", "access"), { recursive: true });
                 await writeFile(
                     join(homeDir, ".happier", "relay", "access", "local.json"),
-                    JSON.stringify({ providerId: "cloudflareNamed", hostname: "relay.example.test", token: "secret" }),
+                    JSON.stringify(relaySelection("lan", { url: "https://relay.example.test" })),
                     "utf8",
                 );
 
@@ -68,7 +70,7 @@ describe("publicServerUrlInference", () => {
                 await mkdir(join(homeDir, ".happier", "relay", "access"), { recursive: true });
                 await writeFile(
                     join(homeDir, ".happier", "relay", "access", "local.json"),
-                    JSON.stringify({ providerId: "cloudflareNamed", hostname: "relay.example.test", token: "secret" }),
+                    JSON.stringify(relaySelection("lan", { url: "https://relay.example.test" })),
                     "utf8",
                 );
 
@@ -125,7 +127,7 @@ describe("publicServerUrlInference", () => {
                 await mkdir(join(homeDir, ".happier", "relay", "access"), { recursive: true });
                 await writeFile(
                     join(homeDir, ".happier", "relay", "access", "local.json"),
-                    JSON.stringify({ providerId: "tailscaleFunnel" }),
+                    JSON.stringify(relaySelection("tailscaleFunnel")),
                     "utf8",
                 );
 
@@ -216,7 +218,7 @@ describe("publicServerUrlInference", () => {
                 await mkdir(accessDir, { recursive: true });
                 await writeFile(
                     accessPath,
-                    JSON.stringify({ providerId: "cloudflareNamed", hostname: "relay.example.test", token: "secret" }),
+                    JSON.stringify(relaySelection("lan", { url: "https://relay.example.test" })),
                     "utf8",
                 );
 
@@ -251,7 +253,7 @@ describe("publicServerUrlInference", () => {
                 await mkdir(accessDir, { recursive: true });
                 await writeFile(
                     accessPath,
-                    JSON.stringify({ providerId: "cloudflareNamed", hostname: "relay.example.test", token: "secret" }),
+                    JSON.stringify(relaySelection("lan", { url: "https://relay.example.test" })),
                     "utf8",
                 );
 
@@ -280,7 +282,7 @@ describe("publicServerUrlInference", () => {
                 const accessPath = join(homeDir, ".happier", "relay", "access", "local.json");
                 await writeFile(
                     accessPath,
-                    JSON.stringify({ providerId: "cloudflareNamed", hostname: "relay1.example.test", token: "secret" }),
+                    JSON.stringify(relaySelection("lan", { url: "https://relay1.example.test" })),
                     "utf8",
                 );
 
@@ -296,7 +298,7 @@ describe("publicServerUrlInference", () => {
 
                 await writeFile(
                     accessPath,
-                    JSON.stringify({ providerId: "cloudflareNamed", hostname: "relay2.example.test", token: "secret" }),
+                    JSON.stringify(relaySelection("lan", { url: "https://relay2.example.test" })),
                     "utf8",
                 );
 

@@ -716,6 +716,7 @@ describe("local service API route composition", () => {
                 NODE_ENV: "production",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__ENABLED: "1",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ENABLED: "1",
+                HAPPIER_FEATURE_LOCAL_SERVICES_PREVIEW__HOST_ORIGIN_DOMAIN: "preview.example.test",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__ALLOWED_MODES: "secret_link",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__MAX_TTL_MS: "60000",
                 HAPPIER_FEATURE_LOCAL_SERVICES_PUBLIC_PREVIEW__DNS_TLS_REQUIRED: "0",
@@ -747,11 +748,12 @@ describe("local service API route composition", () => {
                 mode: "secret_link",
                 ttlMs: 60_000,
                 rateLimitProfileId: "default",
+                confirmation: { acknowledged: true },
             },
         }, exposureReply);
 
-        expect(exposureReply.statusCode).toBe(404);
-        expect(exposureReply.send).toHaveBeenCalledWith({ error: "not_found" });
+        expect(exposureReply.send).toHaveBeenCalledWith({ error: "public_preview_denied", reasonCode: "public_preview_disabled" });
+        expect(exposureReply.statusCode).toBe(403);
     });
 
     it("allows composed public exposure creation with real local audit and rate dependencies", async () => {
