@@ -10,6 +10,13 @@ import { projectDeploymentFailure, privateServiceForwardAcquisitionError } from 
 import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
 
 describe('deployment failure diagnostics', () => {
+    it('retains an authored cause for a generic PluginError without exposing its private details', () => {
+        const failureCause = projectActionFailureCauseV1({ code: 'invalid_request' }, 'deployment.build.secret_build_argument');
+        const result = projectDeploymentFailure('invalid_request', new PluginError({ code: 'invalid_request',
+            details: { token: 'private-native-token' }, failureCause }));
+        expect(result.failureCause).toEqual(failureCause);
+        expect(JSON.stringify(result)).not.toContain('private-native-token');
+    });
     it.each([
         [new MachineCarrierError('service_export_unavailable', 'private-export'), 'private_service_forward_refused'],
         [Object.assign(new Error('private-destination'), { code: 'ECONNREFUSED' }), 'private_service_destination_unreachable'],

@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { access, readFile, realpath } from 'node:fs/promises';
+import { access, mkdir, readFile, realpath, rmdir, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { OwnServerDeploymentSourceV1 } from '@happier-dev/deployment-protocol';
@@ -25,6 +25,26 @@ async function verifyPublishedBuildSource(source: OwnServerDeploymentSourceV1, s
 }
 
 describe('admitted builder receipt production', () => {
+    it.each(['secret_build_argument', 'admitted_root'] as const)('retains %s through the real builder and receipt transition', async reason => {
+        await withBuilder(async ({ host, request, receipt, root, deploymentRoot, environmentInstanceId, nativeRequests }) => {
+            if (reason === 'admitted_root') {
+                const outside = join(root, 'outside-admitted-deployments');
+                await mkdir(outside);
+                await mkdir(join(deploymentRoot, environmentInstanceId), { recursive: true, mode: 0o700 });
+                await rmdir(join(deploymentRoot, environmentInstanceId, 'builds'));
+                await symlink(outside, join(deploymentRoot, environmentInstanceId, 'builds'), process.platform === 'win32' ? 'junction' : 'dir');
+            }
+            const result = await buildOwnServerDeploymentReceipt(host, request);
+            expect(result).toMatchObject({ ok: false, errorCode: 'invalid_request', failureCause: {
+                phase: reason === 'admitted_root' ? 'workspace.materialization.admitted_root' : 'deployment.build.secret_build_argument',
+            } });
+            expect(receipt.content.failure).toMatchObject({ code: 'invalid_request', phase: 'build',
+                failureCause: { phase: reason === 'admitted_root' ? 'workspace.materialization.admitted_root' : 'deployment.build.secret_build_argument' } });
+            expect(JSON.stringify(result)).not.toContain('build-owner-secret-sentinel');
+            expect(JSON.stringify(receipt.content.failure)).not.toContain(root);
+            expect(nativeRequests.some(call => call.args.includes('bake') && !call.args.includes('--print'))).toBe(false);
+        }, { secretBuildArgument: reason === 'secret_build_argument' });
+    });
     it('executes the approved build after the trusted native tool version changes', async () => {
         await withBuilder(async ({ host, request, receipt, nativeRequests }) => {
             receipt.content.ownServer!.approvedInputBasis.toolVersion = 'reviewed-older-version';
@@ -54,7 +74,7 @@ describe('admitted builder receipt production', () => {
             const result = await buildOwnServerDeploymentReceipt(host, request);
             expect(result).toMatchObject({ ok: false });
             if (result.ok) throw new Error('The Docker boundary must fail');
-            expect(receipt.content.failure).toEqual({ code: result.errorCode, phase: 'build' });
+            expect(receipt.content.failure).toMatchObject({ code: result.errorCode, phase: 'build', failureCause: result.failureCause });
             expect(receipt.content.ownServer?.stageLogs?.[0]?.excerpt, JSON.stringify({ errorCode: result.errorCode,
                 failure: receipt.content.failure, boundaryActivity }))
                 .toMatchObject({ text: expect.stringContaining('build failed [REDACTED]'), truncated: false });
@@ -380,12 +400,14 @@ describe('admitted builder receipt production', () => {
                 },
             }, request);
             expect(result).toMatchObject({ ok: false, errorCode: 'deployment_conflict' });
+            if (result.ok) throw new Error('Changed input must refuse the build');
             expect(changed).toBe(true);
             expect(revisionAtEdit).toBeDefined();
             // A competing revision must not be overwritten. Other approved-input
             // conflicts persist their failure through the incumbent receipt CAS.
             expect(receipt.deployment.revision).toBe(revisionAtEdit! + (changedInput === 'receipt revision' ? 0 : 1));
-            if (changedInput !== 'receipt revision') expect(receipt.content.failure).toEqual({ code: 'deployment_conflict', phase: 'build' });
+            if (changedInput !== 'receipt revision') expect(receipt.content.failure).toMatchObject({
+                code: 'deployment_conflict', phase: 'build', failureCause: result.failureCause });
             expect(publishedSources).toHaveLength(1);
             expect(receipt.content.images).toStrictEqual(initialContent.images);
             expect(receipt.content.ownServer?.buildSecretRevisions).toBeUndefined();

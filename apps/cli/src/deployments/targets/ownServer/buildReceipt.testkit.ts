@@ -228,7 +228,7 @@ export async function withOwnServerBuildFixture(run: (value: Readonly<{
         installations: readonly Readonly<{ machineId: string; installationId: string; seed: Uint8Array }>[] }>;
 }>) => Promise<void>, options: Readonly<{ mode?: 'source' | 'mixed' | 'prebuilt' | 'stored' | 'closure'; secretRevision?: number;
     deploymentId?: string; buildSecret?: boolean; revokeAfter?: 'config' | 'build'; registryAccess?: 'pull' | 'pushPull'; failBuild?: boolean;
-    coldImages?: boolean; buildReference?: boolean; changingBuildReference?: boolean;
+    coldImages?: boolean; buildReference?: boolean; changingBuildReference?: boolean; secretBuildArgument?: boolean;
     referenceBindAddress?: string; referencePublishedPort?: number; referenceIroh?: boolean; referenceDualPublication?: boolean; referenceNetworkObserved?: boolean }> = {}) {
     const root = await mkdtemp(join(tmpdir(), 'happier-build-receipt-'));
     const homeServerIdentityId = 'srv_build_receipt';
@@ -254,7 +254,7 @@ export async function withOwnServerBuildFixture(run: (value: Readonly<{
         const usesBuildSecret = options.buildSecret !== false;
         const model = { services: {
             app: { image: 'example/app:reviewed', ...(sourceBuildServices.includes('app') ? {
-                build: { context: '.', ...(usesBuildSecret ? { secrets: ['token'] } : {}) } } : {}),
+                build: { context: '.', ...(options.secretBuildArgument ? { args: { CANARY: '${BUILD_TOKEN}' } } : {}), ...(usesBuildSecret ? { secrets: ['token'] } : {}) } } : {}),
                 environment: { RUNTIME_TOKEN: '${RUNTIME_TOKEN:?required}' },
                 ...(options.mode === 'closure' ? { depends_on: ['worker'] } : {}) },
             worker: { image: 'example/worker:reviewed', ...(sourceBuildServices.includes('worker') ? { build: { context: '.' } } : {}) },
@@ -470,6 +470,7 @@ export async function withOwnServerBuildFixture(run: (value: Readonly<{
                 if (request.args.includes('--print')) return { exitCode: 0, stdout: JSON.stringify({ target: Object.fromEntries(
                     Object.entries(projected.services).map(([name, value]) => [name, { context: value.build.context,
                         dockerfile: 'Dockerfile', tags: [value.image],
+                        ...(options.secretBuildArgument && name === 'app' ? { args: { CANARY: 'build-owner-secret-sentinel' } } : {}),
                         secret: name === 'app' && usesBuildSecret ? [{ id: 'token', env: 'BUILD_TOKEN' }] : [] }])) }) };
                 if (options.failBuild) {
                     // Process IO is the genuine boundary; the sink contract is already-masked output.

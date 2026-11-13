@@ -1,6 +1,7 @@
 import { readFile, realpath, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { DeploymentBuildSupportV1, DeploymentImageV1 } from '@happier-dev/deployment-protocol';
 import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk/services';
 import { isDeploymentSourceUnchangedManifestInput } from '@/deployments/targets/ownServer/exactCommitRelease';
@@ -76,7 +77,8 @@ function refuse(reason: string): never {
 
 function secretArgument(): never {
     throw new PluginError({ code: 'invalid_request', message: 'Build arguments must use non-secret values; use a BuildKit secret instead',
-        details: { reason: 'secret_build_argument' } });
+        details: { reason: 'secret_build_argument' },
+        failureCause: projectActionFailureCauseV1({ code: 'invalid_request' }, 'deployment.build.secret_build_argument') });
 }
 
 

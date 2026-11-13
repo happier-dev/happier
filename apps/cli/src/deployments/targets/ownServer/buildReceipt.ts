@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { readDeploymentOutputValidation } from '../../outputValidation';
-import { projectDeploymentFailure } from '../../deploymentFailure';
+import { projectDeploymentFailure, projectDeploymentReceiptFailure } from '../../deploymentFailure';
 import { configuration } from '@/configuration';
 import { DeploymentOwnServerContentV1Schema, type DeploymentEnvironmentDetailV1, type DeploymentOwnServerContentV1, type DeploymentImageV1, type OwnServerDeploymentDetailsV1 } from '@happier-dev/deployment-protocol';
 import { createNativeComposeLifecycle } from '@/daemon/local/services/launch/nativeComposeLifecycle';
@@ -266,7 +266,8 @@ export async function buildOwnServerDeploymentReceipt(host: OwnServerDeploymentT
             const written = await host.writeTransition({ environmentId: initial.receipt.deployment.environmentId,
                 deploymentId: initial.receipt.deployment.id, receiptHeader: initial.deployment,
                 expectedRevision: initial.receipt.deployment.revision, state: 'running',
-                content: { ...captured, failure: { code, phase: 'build', ...(validation ? { validation } : {}) } }, context: request.context });
+                content: { ...captured, failure: { ...projectDeploymentReceiptFailure(projectDeploymentFailure(code, error), 'build'),
+                    ...(validation ? { validation } : {}) } }, context: request.context });
             if (!written.ok) return written;
             throw error;
         } finally {

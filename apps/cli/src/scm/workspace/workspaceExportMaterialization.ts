@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { access, lstat, readFile, readdir, realpath, rename, rm, rmdir, unlink } from 'node:fs/promises';
 import { basename, dirname, join, parse, relative, resolve } from 'node:path';
 import type { PinnedUnixDirectoryAccess } from '@/utils/fs/unixPathAccess';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { z } from 'zod/mini';
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 
@@ -742,7 +743,8 @@ export async function materializeWorkspaceExportArtifactsWithScmWorkspace(params
     const assertCanContinue = authorizeTarget ? async () => {
         await params.assertCanContinue?.();
         if (!(await authorizeTarget(targetPath)).valid) {
-            throw Object.assign(new Error('Materialization escaped its admitted root'), { code: 'invalid_request' });
+            const error = Object.assign(new Error('Materialization escaped its admitted root'), { code: 'invalid_request' });
+            throw Object.assign(error, { failureCause: projectActionFailureCauseV1(error, 'workspace.materialization.admitted_root') });
         }
     } : params.assertCanContinue;
     if (authorizeTarget) await assertCanContinue?.();
