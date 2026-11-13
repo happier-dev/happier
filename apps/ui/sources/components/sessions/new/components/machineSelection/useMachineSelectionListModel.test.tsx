@@ -200,6 +200,35 @@ function firstStaticOption(model: ReturnType<typeof UseMachineSelectionListModel
 }
 
 describe('useMachineSelectionListModel', () => {
+    it('keeps unknown Home counts and Pool members unknown until each census settles', async () => {
+        const fixture = { ...createFixture([createMachine('member-a')]), recent: [], favorites: [] };
+        const settledGroups = [fixture.groups[0]!, { ...fixture.groups[0]!, serverId: 'server-b', serverName: 'Server B' }];
+        const coldGroups = settledGroups.map(group => ({ ...group, loading: true, machines: [] }));
+        const base = { ...buildParams(fixture, makeHandlers()), poolGroups: [{
+            serverId: 'server-a', accountId: 'account-a', serverName: 'Server A', status: 'idle' as const,
+            projectionReady: true, pools: [{ pool: { id: 'pool-a', name: 'Development', description: null,
+                revision: 1, createdAt: 1, updatedAt: 1,
+                members: [{ machineId: 'member-a', enabled: true, priorityTier: 0, state: 'revoked' as const }] },
+                availability: { state: 'known' as const, connectedCount: 0, enabledCount: 1 } }],
+        }] };
+        const rendered = await renderHook(({ groups }) => useMachineSelectionListModel({ ...base, groups }),
+            { initialProps: { groups: coldGroups as typeof settledGroups } });
+        const section = (id: string) => rendered.getCurrent().rootStep.sections.find(section => section.id === id);
+        for (const id of ['server:server-a', 'server:server-b']) expect.soft(section(id)?.count).toBeUndefined();
+        const poolSubtitle = () => {
+            const pools = section('server:server-a:machine-pools');
+            return pools?.kind === 'static' ? pools.options[0]?.subtitle : undefined;
+        };
+        expect(poolSubtitle()).toContain('common.loading');
+        expect.soft(poolSubtitle()).not.toContain('machine.removedMachine');
+        expect(poolSubtitle()).not.toContain('member-a');
+        await rendered.rerender({ groups: settledGroups });
+        for (const id of ['server:server-a', 'server:server-b']) expect(section(id)?.count).toBe(1);
+        expect(poolSubtitle()).toContain('member-a');
+        expect(poolSubtitle()).toContain('machinePools.availabilityKnown');
+        await rendered.unmount();
+    });
+
     it.each([1, 2])('shows failed census state rather than an empty Machine roster across %s Homes', async homeCount => {
         const fixture = { ...createFixture([]), recent: [], favorites: [] };
         const failed = { ...fixture.groups[0]!, error: true };

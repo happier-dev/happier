@@ -4,10 +4,10 @@ import { useLocalSearchParams, useNavigation, useRouter } from 'expo-router';
 
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { MachineSelector } from '@/components/sessions/new/components/MachineSelector';
+import { useServerScopedMachineOptions } from '@/components/sessions/new/hooks/machines/useServerScopedMachineOptions';
 import { useSettingMutable, useSettingsSelector, useActiveMachineFacts } from '@/sync/domains/state/storage';
 import { getActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { t } from '@/text';
-import { useUnistyles } from 'react-native-unistyles';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
 import { buildBackendTargetRouteParams, resolveRouteCloseoutFallbackTarget } from '@/agents/backendCatalog/backendTargetRouteParams';
 import { resolvePreferredBackendTarget } from '@/agents/backendCatalog/resolvePreferredBackendTarget';
@@ -18,12 +18,9 @@ import { buildNewSessionPickerFallbackHref, pickNewSessionRouteParams, setNewSes
 import { useNewSessionPickerReturnHost } from '@/components/sessions/new/navigation/newSessionEntry';
 import { resolveSpawnServerRouteParam } from '@/components/sessions/new/navigation/spawnServerRouteParam';
 import { NewSessionPickerRouteScreen } from '@/components/sessions/new/navigation/NewSessionPickerRouteScreen';
-import { Icon } from '@/components/ui/icons/Icon';
-import { motionTokens } from '@/components/ui/motion/motionTokens';
-import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { AppHeaderCloseButton } from '@/components/navigation/AppHeaderCloseButton';
 
 export default React.memo(function PreviewMachinePickerScreen() {
-    const { theme } = useUnistyles();
     const router = useRouter();
     const returnToHost = useNewSessionPickerReturnHost();
     const navigation = useNavigation();
@@ -36,7 +33,16 @@ export default React.memo(function PreviewMachinePickerScreen() {
         selectedId?: string;
         spawnServerId?: string;
     }>();
-    const machines = useActiveMachineFacts();
+    const activeMachines = useActiveMachineFacts();
+    const activeServerId = getActiveServerId();
+    const allowedServerIds = React.useMemo(() => [activeServerId], [activeServerId]);
+    const groups = useServerScopedMachineOptions({
+        allowedServerIds,
+        activeServerId,
+        activeMachines,
+        inventoryPurpose: 'launch',
+    });
+    const machines = React.useMemo(() => groups.flatMap(group => group.machines), [groups]);
     const [favoriteMachines, setFavoriteMachines] = useSettingMutable('favoriteMachines');
     const remembered = useLastUsedBackendSelection();
     const settings = useSettingsSelector((settings) => ({
@@ -45,7 +51,6 @@ export default React.memo(function PreviewMachinePickerScreen() {
 
     const selectedMachineId = typeof params.selectedId === 'string' ? params.selectedId : null;
     const selectedMachine = machines.find((m) => m.id === selectedMachineId) ?? null;
-    const activeServerId = getActiveServerId();
     const currentRouteParams = React.useMemo(() => {
         return pickNewSessionRouteParams(params);
     }, [params]);
@@ -76,16 +81,14 @@ export default React.memo(function PreviewMachinePickerScreen() {
         remembered.lastUsedBackendTarget,
     ]);
 
+    // K2 picker route chrome: the title plus Cancel, as the other New Session pickers.
     const headerLeft = React.useCallback(() => (
-        <HappierPressable
+        <AppHeaderCloseButton
+            testID="new-session-preview-machine-picker-cancel"
+            appearance="text"
             onPress={() => safeRouterBack({ router, navigation, fallbackHref: pickerFallbackHref })}
-            style={({ pressed }) => ({ padding: theme.space.s2, opacity: pressed ? motionTokens.press.opacity : 1 })}
-            accessibilityRole="button"
-            accessibilityLabel={t('common.back')}
-        >
-            <Icon name="caret-left" size={20} color={theme.colors.chrome.header.foreground} />
-        </HappierPressable>
-    ), [navigation, router, theme.colors.chrome.header.foreground]);
+        />
+    ), [navigation, pickerFallbackHref, router]);
 
     const screenOptions = React.useCallback(() => {
         return {

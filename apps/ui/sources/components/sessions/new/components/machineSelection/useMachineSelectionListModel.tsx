@@ -261,9 +261,11 @@ function buildPoolActionTestID(
 
 function poolMemberSummary(
     pool: MachinePoolViewV1,
-    machines: ReadonlyArray<MachineDisplayRenderable>,
+    machines: ReadonlyArray<MachineDisplayRenderable> | null,
     options?: Readonly<{ includeAvailability?: boolean }>,
 ): string {
+    // An unanswered Home census cannot establish that a member is absent.
+    if (machines === null) return '';
     const memberLabels = resolveMachinePoolEnabledMemberLabels(pool, machines);
     const members = memberLabels.join(', ');
     if (options?.includeAvailability === false) return members;
@@ -605,6 +607,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
             // exact-Machine picker and contradict the sibling surface.
             if (poolGroup.featureStatus === 'disabled') return [];
             const unavailableReason = resolveMachinePoolRowUnavailableReason({ group, poolGroup });
+            const memberMachines = group.loading || group.signedOut || group.error ? null : group.machines;
             // Feedback belongs to exactly one activated row on one Home; every other row keeps its
             // own state, so a pending or failed selection never repaints an unrelated Home.
             const selection = params.poolSelectionStatus;
@@ -616,14 +619,14 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                 : null;
             const options: SelectionListOption[] = buildMachinePoolRowPresentations(
                 poolGroup.pools,
-                (pool) => poolMemberSummary(pool, group.machines),
+                (pool) => poolMemberSummary(pool, memberMachines),
             ).map(({ view: pool, identityDetail, accessibilityName }) => {
                 const resolving = status?.kind === 'resolving' && status.poolId === pool.pool.id;
                 // A non-current Home reports why, instead of repeating a retained connection count
                 // as though it were observed just now.
                 const summary = unavailableReason === null
-                    ? poolMemberSummary(pool, group.machines)
-                    : [poolMemberSummary(pool, group.machines, { includeAvailability: false }), poolRowUnavailableText(unavailableReason)]
+                    ? poolMemberSummary(pool, memberMachines)
+                    : [poolMemberSummary(pool, memberMachines, { includeAvailability: false }), poolRowUnavailableText(unavailableReason)]
                         .filter(Boolean).join(' · ');
                 const feedback = poolSelectionFeedback(
                     status ?? undefined,
@@ -1148,7 +1151,7 @@ export function useMachineSelectionListModel<TMachine extends MachineDisplayRend
                 kind: 'static',
                 id: `server:${group.serverId}`,
                 title: group.serverName,
-                count: group.machines.length,
+                count: group.loading || group.signedOut || group.error ? undefined : group.machines.length,
                 options,
             };
             const ownershipGroups = !group.loading && !group.signedOut && group.machines.length > 0

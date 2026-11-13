@@ -158,10 +158,10 @@ describe('PreviewMachinePickerScreen replace fallback', () => {
             ...(index >= 2 ? { isShared: true, access: { custodian: { accountId: 'qa-c', displayName: 'qa-c' },
                 role: 'use' as const, resourceMode: 'plain' as const, accessState: 'ready' as const } } : {}),
         }));
-        // The facts roster has no content; the demanded inventory already opened those records.
-        storage.getState().applyMachines(named.map(machine => ({ ...machine, metadata: null })), true, { sourceServerId: serverId });
+        // Cold shells have no availability verdict until their content is opened.
+        storage.getState().applyMachines(named.map(machine => ({ ...machine, metadata: null, availability: undefined })), true, { sourceServerId: serverId });
         publishMachineActivityForTest(named);
-        storage.setState({ machineListByServerId: { [serverId]: named.map(machine => ({ ...machine, metadata: null })) }, machineListStatusByServerId: { [serverId]: 'loading' } });
+        storage.setState({ machineListByServerId: { [serverId]: named.map(machine => ({ ...machine, metadata: null, availability: undefined })) }, machineListStatusByServerId: { [serverId]: 'loading' } });
         const PreviewMachinePickerScreen = (await import('@/app/(app)/new/pick/preview-machine')).default;
         const { SelectionList } = await import('@/components/ui/selectionList');
         const screen = await renderScreen(<PreviewMachinePickerScreen />);
