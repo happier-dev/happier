@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, onTestFailed, onTestFinished, vi } from 'vitest';
+import { executeManagedAccountPowerOutputScenario } from '@/dev/testkit/machineAccountOutputContractFixture';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
@@ -12,12 +13,7 @@ import { replacePluginAccountAvailabilityProjection } from '@/sync/domains/plugi
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 import { standardCleanup } from '@/dev/testkit';
 import { PLUGIN_MANIFEST } from '../../../../../../packages/plugins/machine-vercel/src/manifest';
-import type { PluginAccountApi } from '@happier-dev/plugin-sdk';
-import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
-import { configureConnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
-import { createAccountEncryptionCurrentnessFixtureForCredentials } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { Modal } from '@/modal';
-import { createDesktopSecureStorageBoundary } from '@/dev/testkit/mocks/desktopSecureStorage';
 import { log } from '@/log';
 
 const vendorHttp = vi.hoisted(() => vi.fn<typeof fetch>());
@@ -185,185 +181,26 @@ describe('Account native power through the original reviewed role port', () => {
     });
 });
 
-it.each(['confirmed', 'admission-refused', 'guest-startup-report-failed', 'native-refused-report-failed', 'confirmed-report-failed', 'native-refused-report-confirmed', 'resize-unsupported-report-failed'] as const)(
+it.each(['confirmed', 'admission-refused', 'guest-startup-report-failed', 'native-refused-report-failed', 'confirmed-report-failed', 'native-refused-report-confirmed', 'resize-unsupported-report-failed', 'delete-refused-report-failed', 'delete-refused-report-confirmed', 'delete-confirmed-report-failed'] as const)(
     'settles retained Account power through public activation and its selected credential, outcome=%s', async outcome => {
-    const refused = outcome === 'admission-refused';
-    const guestStartup = outcome === 'guest-startup-report-failed';
-    const nativeRefused = outcome.startsWith('native-refused-');
-    const reportFailed = outcome.endsWith('report-failed');
-    const resizeUnsupported = outcome === 'resize-unsupported-report-failed';
-    const actionId = resizeUnsupported ? 'machines.managed.resize' : 'machines.managed.power.set';
-    const logStart = log.getCount();
-    // Native HTTP is the intended runtime boundary; a browser requires a selected remote host.
-    // The real credential owner verifies writes through the desktop OS storage command boundary.
-    vi.stubGlobal('__TAURI_INTERNALS__', { ...createDesktopSecureStorageBoundary(),
-        metadata: { currentWindow: { label: 'main' } } });
-    expect(await readRuntimeFetchHost('https://foreground-native-power.test')).toBe('native');
-    const homes = createHomeGovernanceHarness();
-    installHomeGovernanceBoundaries(homes);
-    onTestFinished(() => homes.reset());
-    const accountId = 'foreground-power-owner';
-    const credentials = { token: createAccountTokenForTests(accountId, { currentAccount: true }) };
-    const serverUrl = 'https://foreground-native-power.test';
-    const homeId = 'srv_foreground_native_power';
-    const serverId = await homes.addHome({ name: 'Power', serverUrl, accountId, credentials, serverIdentityId: homeId,
-        accountEncryptionMode: 'plain', credentialResourcesEnabled: true });
-    homes.answer(serverId, '/v1/account/encryption/currentness', {
-        body: createAccountEncryptionCurrentnessFixtureForCredentials(credentials),
-    });
-    const provisioner = PLUGIN_MANIFEST.contributes.machineProvisioners![0]!;
-    const provider = { pluginId: PLUGIN_MANIFEST.id, localId: provisioner.id };
-    const selected = { service: { pluginId: provider.pluginId, localId: 'vercel-account' }, accountId: 'selected-power-token' };
-    const secret = 'private-selected-power-token';
-    const launch = { provider, schemaVersion: 1, name: 'Retained', choices: {}, credentials: [{
-        purpose: { consumer: provider, purpose: 'cloud-api' }, account: selected,
-    }] };
-    let machine = ManagedMachineV1Schema.parse({ id: 'retained', homeId, custodianAccountId: refused ? 'another-owner' : accountId,
-        launch, allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 2,
-        ...(guestStartup ? { enrolledMachineId: 'enrolled-guest', enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } } : {}),
-        resource: { contributionRef: provider, schemaVersion: 1,
-            value: { name: 'same-native', createdAt: 1000, managedId: 'retained', teamId: 'team_one', projectId: 'prj_one' } },
-        retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
-        reviewedFacts: { launch, provisioner, optionStatus: 'current', prerequisites: [], billing: provisioner.billing,
-            retentionCapabilities: provisioner.retention, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
-        observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' },
-    });
-    let credential: unknown;
-    let configuration: unknown;
-    let admissions = 0;
-    let submitted = 0;
-    let reports = 0;
-    let nativeResumes = 0;
-    let guestBoots = 0;
-    const roles: string[] = [];
-    const reported: unknown[] = [];
-    const requests: string[] = [];
-    onTestFailed(() => { console.info('Managed power boundary evidence', JSON.stringify({
-        roles, requests, reported, admissions, submitted, reports, nativeResumes, guestBoots,
-    })); });
-    const connection = await restoreServerAccountForTest({ serverUrl, accountId, credentials,
-        additionalRequestOrigins: ['https://api.vercel.com'],
-        configureSocket: configureConnectedServerSocketBoundary,
-        request: async (url, init) => {
-            const address = new URL(String(url));
-            requests.push(address.pathname);
-            if (address.origin === 'https://api.vercel.com') return vendorHttp(url, init);
-            if (address.pathname === '/v4/connect/qualified/accounts') return Response.json({ service: selected.service,
-                accounts: [{ ref: selected, status: 'connected', authenticationModeId: 'token', configurationReady: true,
-                    configurationRevision: 'selected-config', revisionSemantics: 'revisioned',
-                    credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', scopes: [] }] });
-            if (address.pathname === '/v4/connect/qualified/credential') return Response.json(credential);
-            if (address.pathname === '/v4/connect/qualified/configuration') return Response.json(configuration);
-            if (address.pathname.endsWith('/actions/get')) return refused
-                ? Response.json({ code: 'permission_denied' }, { status: 403 })
-                : Response.json({ ...machine, resource: { ...machine.resource, value: { name: 'stale-public-row', createdAt: 1000,
-                    managedId: 'retained', teamId: 'team_one', projectId: 'prj_one' } } });
-            if (address.pathname.endsWith('/admit-control')) {
-                admissions++;
-                if (refused) return Response.json({ code: 'managed_power_required' }, { status: 403 });
-                expect(await new Response(init?.body).json()).toMatchObject({
-                    action: actionId, input: resizeUnsupported ? { managedId: machine.id, size: { memoryBytes: 4294967296 } }
-                        : { managedId: machine.id, intent: 'start', when: 'now' },
-                });
-                machine = { ...machine, desired: 'start', intentRevision: 3 };
-                return Response.json({ machine, replayed: false, ...(resizeUnsupported ? { resizeProvisioner: provisioner } : {}) });
-            }
-            if (address.pathname.endsWith('/submit-intent')) {
-                submitted++;
-                return Response.json({ machine, submitted: true });
-            }
-            if (address.pathname.endsWith('/report-intent') || address.pathname.endsWith('/report-resize')) {
-                reports++;
-                const body: unknown = await new Response(init?.body).json();
-                reported.push(body);
-                if (reportFailed) return Response.json({ code: 'managed_request_failed', message: 'private-home-report-body' }, { status: 503 });
-                if (body && typeof body === 'object' && 'observation' in body) {
-                    machine = ManagedMachineV1Schema.parse({ ...machine, observation: body.observation });
-                }
-                return Response.json({ machine });
-            }
-            return homes.request(url, init);
-        } });
-    onTestFinished(() => connection.dispose());
-    const account = await captureLazyActionAccountContext(serverId);
-    onTestFinished(() => account.dispose());
-    const { createUiConnectedAccountContent } = await import('@/sync/ops/connectedAccounts/connectedAccountContent');
-    const { QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountConfigurationSnapshotV4Schema } =
-        await import('@happier-dev/protocol/connect/qualifiedConnectedAccountsV4');
-    const content = createUiConnectedAccountContent(account);
-    const mode = await content.resolveAccountMode();
-    credential = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ref: selected, authenticationModeId: 'token',
-        revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', configurationRevision: 'selected-config',
-        content: content.seal('credential', mode, { v: 1, values: { token: secret } }), metadata: { scopes: [] } });
-    configuration = QualifiedConnectedAccountConfigurationSnapshotV4Schema.parse({ target: { kind: 'account', ref: selected },
-        authenticationModeId: 'token', revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
-        configurationRevision: 'selected-config', configurationContent: content.seal('configuration', mode, {
-            values: { teamId: 'team_one', projectId: 'prj_one' }, secretRefs: {},
-        }) });
-    const { readPluginAccountAvailability } = await import('@/sync/domains/plugins/availability/projection');
-    replacePluginAccountAvailabilityProjection({ scope: account.accountLifetime.scope,
-        snapshot: { availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [] } });
-    const reader = readPluginAccountAvailability(account.accountLifetime.scope);
-    expect((await reader.ensureCurrentAccountExecution(PLUGIN_MANIFEST.id)).kind).toBe('available');
-    const projection = reader.readAccountUiProjection();
-    if (!projection) throw new Error('Missing admitted Account projection');
-    const { createPluginUiCommonJsLoaderBackend } = await import('@/components/plugins/reactNative/commonJsLoaderBackend');
-    const { reconcileProjectedPluginUiClientExecutables } = await import('@/components/plugins/reactNative/clientExecutableActivation');
-    const backend = createPluginUiCommonJsLoaderBackend();
-    await reconcileProjectedPluginUiClientExecutables({ actionProjection: { projection }, platform: 'web', reader,
-        accountLifetime: account.accountLifetime, loaderBackend: { ...backend, async loadInstalledBundle(input) {
-            // The evaluated JS export is the byte-loader boundary. Every
-            // wrapped handler is the real public authored implementation.
-            const activate = await backend.loadInstalledBundle!(input) as (api: PluginAccountApi) => unknown;
-            return (api: PluginAccountApi) => activate({ ...api, actions: { ...api.actions, register(id, handler, options) {
-                return api.actions.register(id, (value, context) => { roles.push(id); return handler(value, context); }, options);
-            } } });
-        } } });
-    const { publishCommittedAppShellPluginUiProjection } = await import('@/components/appShell/plugins/committedPluginUiProjection');
-    const { registerCurrentUiContextActionPort } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
-    const { createCurrentUiContextVoiceToolPort } = await import('@/components/appShell/currentUiContext/currentUiContextVoiceToolPort');
-    onTestFinished(publishCommittedAppShellPluginUiProjection(() => reader.readAccountUiProjection()));
-    onTestFinished(registerCurrentUiContextActionPort((invocationSurface, hostAction) => createCurrentUiContextVoiceToolPort({
-        invocationSurface, hostAction, readProjection: () => reader.readAccountUiProjection(), readNavigationBinding: () => null,
-        reader: { readCurrentUiContext: () => null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
-    })));
-    vendorHttp.mockImplementation(async (url, init) => {
-        const address = new URL(String(url));
-        const path = address.pathname;
-        expect(new Headers(init?.headers).get('authorization')).toBe(`Bearer ${secret}`);
-        if (path === '/v2/sandboxes/sessions/sbx_one/cmd') {
-            guestBoots++;
-            return Response.json({ command: { id: 'cmd_one', sessionId: 'sbx_one', exitCode: null } });
-        }
-        if (path === '/v2/sandboxes/sessions/sbx_one/cmd/cmd_one') return Response.json({
-            command: { id: 'cmd_one', sessionId: 'sbx_one', exitCode: guestStartup ? 7 : 0 },
-        });
-        if (path === '/v2/sandboxes/sessions/sbx_one/cmd/cmd_one/logs') return new Response(
-            JSON.stringify({ stream: 'stderr', data: guestStartup ? 'private-guest-startup-output' : '' }) + '\n');
-        if (path === '/v2/sandboxes/snapshots/snap_one') return Response.json({ snapshot: {
-            id: 'snap_one', sourceSessionId: 'sbx_one', status: 'created', createdAt: 1000,
-        } });
-        if (path === '/v2/sandboxes/same-native') {
-            if (nativeRefused) return Response.json({ error: { code: 'FORBIDDEN', message: 'private-native-refusal-body' } }, { status: 403 });
-            if (address.searchParams.get('resume') === 'true') nativeResumes++;
-            return Response.json({ sandbox: {
-            name: 'same-native', createdAt: 1000, currentSessionId: 'sbx_one', currentSnapshotId: 'snap_one', persistent: true,
-            status: nativeResumes ? 'running' : 'stopped', tags: { 'happier-managed-id': 'retained' }, networkPolicy: { mode: 'allow-all' },
-        }, session: { id: 'sbx_one', sourceSandboxName: 'same-native', projectId: 'prj_one', createdAt: 1000,
-            networkPolicy: { mode: 'allow-all' } } });
-        }
-        throw new Error(`Unexpected native power HTTP ${path}`);
-    });
-    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
-    const { bindPresentUserActionConfirmation } = await import('@/sync/ops/actions/presentUserConfirmation');
-    const input = resizeUnsupported ? { homeId, managedId: machine.id, size: { memoryBytes: 4294967296 } }
-        : { homeId, managedId: machine.id, expectedRevision: 2, when: 'now' as const, intent: 'start' as const };
-    const result = await createDefaultActionExecutor().execute(actionId, input,
-        bindPresentUserActionConfirmation(actionId, input, { surface: 'ui', authority: 'present_user',
-            actionCaller: { kind: 'host' }, serverId, serverIdentityId: homeId, runtimeAccountId: accountId, actionRequestId: 'foreground-power' }));
+    const { refused, guestStartup, nativeRefused, reportFailed, resizeUnsupported, deleting, deleteRefused, actionId, logStart, result, reported, roles, requests, admissions, submitted, reports, nativeResumes, guestBoots, secret, machine } = await executeManagedAccountPowerOutputScenario(outcome, vendorHttp);
     // The original Action already owns review. A provider role cannot ask the
     // person a second time instead of consuming its exact reviewed-child proof.
     expect(Modal.show).not.toHaveBeenCalled();
+    if (deleting) {
+        expect(result).toMatchObject({ ok: false, errorCode: deleteRefused ? 'vercel_scope_mismatch' : 'managed_request_failed' });
+        expect(reported).toEqual([expect.objectContaining({ result: expect.objectContaining(deleteRefused
+            ? { kind: 'refused', code: 'vercel_scope_mismatch' } : { kind: 'confirmed' }) })]);
+        expect({ admissions, submitted, reports, nativeResumes, guestBoots }).toEqual({
+            admissions: 1, submitted: 1, reports: 1, nativeResumes: 0, guestBoots: 0 });
+        expect(roles).toContain('destroy');
+        const retainedLogs = log.getLogs().slice(logStart);
+        if (deleteRefused && reportFailed) expect(retainedLogs).toContain(JSON.stringify({ phase: actionId,
+            errorClass: 'ManagedMachineControllerError', errorCode: 'managed_request_failed', httpStatus: null }));
+        else expect(retainedLogs.some(entry => entry.includes('"errorCode":"managed_request_failed"'))).toBe(false);
+        expect(JSON.stringify({ result, retainedLogs })).not.toMatch(/private-home-report-body|private-selected-power-token/);
+        return;
+    }
     if (resizeUnsupported) {
         expect(result).toMatchObject({ ok: true, result: { result: { kind: 'unsupported', dimension: 'memoryBytes' } } });
         if (!result.ok) throw new Error(result.errorCode);

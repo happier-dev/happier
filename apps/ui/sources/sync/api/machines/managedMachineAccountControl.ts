@@ -65,7 +65,16 @@ export async function executeUiManagedAccountControl(params: Readonly<{
             for (;;) {
                 params.signal?.throwIfAborted();
                 const deletion = await executeManagedMachineDeleteIntent({ machine, invoke: native.invoke, io: { signal: params.signal } });
-                machine = await client.home.row('report-intent', { ...correlation, ...deletion }, null);
+                const nativeFailure = deletion.result.kind === 'refused'
+                    ? new ManagedMachineControllerError(deletion.result.code, undefined,
+                        deletion.result.nativeCause ? { kind: 'managedNative', nativeCause: deletion.result.nativeCause } : undefined) : undefined;
+                try {
+                    machine = await client.home.row('report-intent', { ...correlation, ...deletion }, null);
+                } catch (reportError) {
+                    if (!nativeFailure) throw reportError;
+                    log.log(JSON.stringify(projectActionFailureCauseV1(reportError, control.action)));
+                }
+                if (nativeFailure) throw nativeFailure;
                 if (machine.allocation === 'confirmed-absent' && !machine.submittedNativeEffect) return accepted();
                 if (deletion.result.kind !== 'accepted' && deletion.result.kind !== 'pending') {
                     return failure(deletion.result.kind === 'confirmed' ? 'native_intent_unconfirmed'
