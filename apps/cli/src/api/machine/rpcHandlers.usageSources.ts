@@ -74,8 +74,19 @@ export function registerMachineUsageSourceRpcHandlers(params: NativeUsageSourceR
         if ('sources' in admitted) return { sources: admitted.sources.map(source => ({ ...source, serverId: input.serverId })) };
         if ('source' in admitted) return { source: { ...admitted.source, serverId: input.serverId } };
         return admitted;
-      } catch {
-        return failure(context.signal.aborted ? 'cancelled' : 'usage_source_operation_failed');
+      } catch (error) {
+        if (context.signal.aborted) return failure('cancelled');
+        // Only owner-authored, content-free conditions cross the RPC boundary.
+        if (error instanceof Error) {
+          switch (error.message) {
+            case 'usage_source_not_found':
+            case 'usage_source_unavailable':
+            case 'usage_source_root_override_unsupported':
+            case 'usage_source_root_invalid':
+              return failure(error.message);
+          }
+        }
+        return failure('usage_source_operation_failed');
       }
     });
   }

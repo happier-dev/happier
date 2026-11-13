@@ -22,6 +22,33 @@ import { createResolvedContributionRegistry } from '@/plugins/projection/registr
 import { resolveBuiltInContributions } from '@/plugins/projection/registry/resolveBuiltInContributions';
 
 describe('native usage daemon lifetime', () => {
+    it('changes and resets an isolated OpenCode directory through the daemon source owner', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'happier-native-opencode-root-'));
+        const admitted = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+            runtimeOptions: { pluginIds: ['happier.agent.opencode'] } });
+        const observation = createExternalSessionObservationDaemonProjection({ publishField: async () => {} });
+        const profile = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: AccountProfileResponseSchema.parse({ id: 'account' }) });
+        let runtime: ReturnType<typeof createNativeUsageDaemonRuntime> | undefined;
+        try {
+            const token = `header.${Buffer.from(JSON.stringify({ sub: 'account' })).toString('base64url')}.signature`;
+            runtime = createNativeUsageDaemonRuntime({ authority: { serverId: configuration.activeServerId, accountId: 'account', machineId: 'machine' },
+                installationId: 'installation', activeServerDir: directory, serverHttpBaseUrl: 'https://native-opencode.test', token,
+                storage: await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') }), observation,
+                readCredentials: async () => ({ token, encryption: null }), budgetRegistry: new ExecutionBudgetRegistry() });
+            const initial = (await runtime.owner.service.discover()).find(source => source.agent.pluginId === 'happier.agent.opencode');
+            if (!initial) throw new Error('OpenCode default must be discoverable');
+            const root = join(directory, 'isolated');
+            const override = await runtime.owner.service.setRoot(initial.sourceId, root);
+            expect(override).toMatchObject({ consent: 'disabled', root: { kind: 'override', path: root } });
+            expect(override.sourceId).not.toBe(initial.sourceId);
+            const reset = await runtime.owner.service.setRoot(override.sourceId, null);
+            expect(reset).toMatchObject({ sourceId: initial.sourceId, consent: 'disabled', root: { kind: 'default', path: null } });
+            expect((await runtime.owner.service.get(override.sourceId))[0]).toMatchObject({ consent: 'disabled', pendingCount: 0 });
+        } finally {
+            await runtime?.dispose(); await observation.dispose(); await admitted.dispose(); profile.mockRestore();
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
     it('reapplies a recovered Claude root without its stale failure and resumes daemon capture', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'happier-native-claude-retry-'));
         vi.stubEnv('CLAUDE_CONFIG_DIR', directory);

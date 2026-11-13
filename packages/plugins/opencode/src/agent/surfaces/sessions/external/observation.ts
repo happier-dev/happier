@@ -111,7 +111,9 @@ function buildResourceKey(source: NormalizedOpenCodeObservationSource): string {
 /** Source-wide accounting and linked Session observation share the endpoint. */
 export function describeOpenCodeAccountingSource(source: AgentExternalSessionsResolvedIdentity['source'],
   env: Readonly<Record<string, string | undefined>>) {
-  return { resourceKey: buildResourceKey(normalizedSourceOrThrow({ source, remoteSessionId: '', linkData: {} }, env)),
+  const normalized = normalizedSourceOrThrow({ source, remoteSessionId: '', linkData: {} }, env);
+  return { resourceKey: buildResourceKey(normalized),
+    rootField: 'directory', ...(normalized.directory ? { rootPath: normalized.directory } : {}),
     changeObservation: 'observe_resource' as const };
 }
 

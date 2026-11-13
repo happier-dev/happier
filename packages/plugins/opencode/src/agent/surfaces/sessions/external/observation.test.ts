@@ -131,6 +131,7 @@ describe('OpenCode External Session observation', () => {
         accountingSource: {
           accountingSources: ['opencode-native-accounting'],
           resourceKey: expect.stringMatching(/^opencode-resource-v2:managed:[A-Za-z0-9_-]{43}$/u),
+          rootField: 'directory',
           changeObservation: 'observe_resource',
         },
       },
@@ -199,6 +200,8 @@ describe('OpenCode External Session observation', () => {
         accountingSource: {
           accountingSources: ['opencode-native-accounting'],
           resourceKey: expect.stringMatching(/^opencode-resource-v2:external:[A-Za-z0-9_-]{43}$/u),
+          rootField: 'directory',
+          rootPath: '/tmp/external-attach',
           changeObservation: 'observe_resource',
         },
       },

@@ -118,6 +118,8 @@ describe('native source Machine RPC with real capture custody', () => {
       expect((await store.load()).sources[0]).toMatchObject({ pending: [] });
       expect(published).toEqual([]);
       const selected = { ...target, sourceId: discovered.sourceId };
+      expect(await call('usage.sources.root.set', { ...target, sourceId: 'missing-source', root: overrideDir }))
+        .toMatchObject({ ok: false, errorCode: 'usage_source_not_found' });
       expect(await call('usage.sources.consent.set', { ...selected, enabled: true }, { ...context,
         machineAdmission: { ...context.machineAdmission!, actorAccountId: 'other' } })).toMatchObject({ ok: false, errorCode: 'access_denied' });
       expect(await call('usage.sources.get', { ...selected, machineId: 'other' })).toMatchObject({ ok: false, errorCode: 'access_denied' });

@@ -47,7 +47,8 @@ export async function resolveNativeUsageSourceMetadata(input: Readonly<{
     if (!canonical.ok) return null;
     if (input.admittedSourceKey !== undefined && canonical.sourceKey !== input.admittedSourceKey) return null;
     const rootField = resolved.value.accountingSource?.rootField;
-    if (rootField && !canonical.declaration.schema.fields.some(field => field.name === rootField && field.kind === 'string')) {
+    if (rootField && !canonical.declaration.schema.fields.some(field => field.name === rootField
+        && (field.kind === 'string' || field.kind === 'unknown'))) {
         throw new TypeError('Accounting root field is not declared by this source');
     }
     return {
