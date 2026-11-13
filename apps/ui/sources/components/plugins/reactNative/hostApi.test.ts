@@ -1045,6 +1045,39 @@ describe('canonical React Native plugin Host API adapter', () => {
         });
         subscription.dispose();
     });
+
+    it('delivers watched Resource pages to the author as decoded bytes', async () => {
+        const digest = PluginUiArtifactDigestV1Schema.parse(`sha256:${'c'.repeat(64)}`);
+        const events: unknown[] = [];
+        let subscriptionId: string | undefined;
+        const adapter = createCanonicalPluginReactNativeHostApiAdapter({
+            surface: createPluginSurfaceContextFixture({
+                mount: canonicalRightPaneMount,
+                target: { kind: 'session', sessionId: 'session-1' },
+            }),
+            requestSurface: surface,
+            handleRequest: async (request) => {
+                if (request.method !== 'watchResource') return null;
+                const id = (request.payload as Readonly<{ subscriptionId?: unknown }> | undefined)?.subscriptionId;
+                if (typeof id !== 'string') throw new Error('expected_resource_subscription_id');
+                subscriptionId = id;
+                return { subscriptionId: id };
+            },
+            installedMethods: ['watchResource'],
+        });
+
+        const subscription = await adapter.api.watchResource('live-status', (event) => { events.push(event); });
+        expect(adapter.publishResourceSubscriptionEvent({
+            version: 1, subscriptionId: subscriptionId!, kind: 'pages',
+            pages: [{ contentType: 'text/plain', digest, bytesBase64: 'aGk=' }],
+        })).toBe(true);
+
+        expect(events).toEqual([{
+            version: 1, subscriptionId, kind: 'pages',
+            pages: [{ contentType: 'text/plain', digest, bytes: new Uint8Array([104, 105]) }],
+        }]);
+        subscription.dispose();
+    });
 });
 
 /**

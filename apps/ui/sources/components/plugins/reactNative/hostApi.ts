@@ -731,6 +731,20 @@ function canonicalResourceReferencePayload(reference: Parameters<PluginUiHostApi
     return parsed.data;
 }
 
+type PublicResourceSubscriptionListener = Parameters<PluginUiHostApi['watchResource']>[1];
+
+/** Authors receive watched pages as bytes, exactly as the hosted SDK client decodes them. */
+function deliverDecodedResourceSubscriptionEvents(
+    listener: PublicResourceSubscriptionListener,
+): (event: PluginUiResourceSubscriptionEventV1) => void {
+    return (event) => {
+        if (event.kind !== 'pages') return listener(event);
+        listener({ ...event, pages: event.pages.map(({ bytesBase64, ...page }) => ({
+            ...page, bytes: decodeBase64(bytesBase64, 'base64'),
+        })) });
+    };
+}
+
 function throwIfAborted(signal: AbortSignal | undefined): void {
     if (signal?.aborted) {
         throwHostApiError('unavailable', ['aborted']);
@@ -1230,7 +1244,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                     subscriptionId: randomUUID(),
                     resource: canonicalResourceReferencePayload(resource) as PluginUiResourceSubscriptionRequestV1['resource'],
                 },
-                listener,
+                deliverDecodedResourceSubscriptionEvents(listener),
                 options?.signal ? { signal: options.signal } : undefined,
             );
             // An author who abandoned establishment must not be left holding a
@@ -1300,7 +1314,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                     subscriptionId: randomUUID(),
                     sessionId,
                 },
-                listener,
+                deliverDecodedResourceSubscriptionEvents(listener),
                 options?.signal ? { signal: options.signal } : undefined,
             );
             if (disposed || options?.signal?.aborted) {
@@ -1312,7 +1326,7 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
         watchLiveStream: async (reference, listener, options) => {
             assertActive(options?.signal); assertInstalled('watchLiveStream');
             const subscription = await transport.watchLiveStream({ reference,
-                subscriptionId: randomUUID() }, listener,
+                subscriptionId: randomUUID() }, deliverDecodedResourceSubscriptionEvents(listener),
                 options?.signal ? { signal: options.signal } : undefined);
             if (disposed || options?.signal?.aborted) { await subscription.dispose(); assertActive(options?.signal); }
             return disposable(() => { void subscription.dispose(); });
