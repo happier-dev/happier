@@ -40,6 +40,14 @@ describe('Action failure error adapter', () => {
 });
 
 describe('Action failure cause projection', () => {
+  it('retains producer-projected native reason codes independently of numeric codes and invalid sibling fields', () => {
+    const cause = { phase: 'elevenlabs.disconnect.agent.close', errorClass: 'UnknownThrownValue',
+      errorCode: null, httpStatus: null, nativeErrorCode: '1000', nativeErrorReason: 'agent_disconnected' } as const;
+    expect(ActionFailureCauseV1Schema.parse(cause)).toEqual(cause);
+    expect(actionResults.readActionFailureCauseV1({ ...cause, httpStatus: 'invalid' })).toEqual(cause);
+    expect(actionResults.readActionFailureCauseV1({ ...cause, nativeErrorReason: 'PRIVATE vendor prose' }))
+      .toEqual({ phase: cause.phase, errorClass: cause.errorClass, errorCode: null, httpStatus: null, nativeErrorCode: '1000' });
+  });
   it('preserves native codes separately and salvages sibling cause fields', () => {
     const native = { phase: 'deployment.target.create', errorClass: 'Error', errorCode: null,
       nativeErrorCode: '10000', httpStatus: 403 } as const;

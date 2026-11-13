@@ -39,6 +39,14 @@ function readNumericNativeCode(value: unknown): string | undefined {
   return typeof number === 'number' && Number.isSafeInteger(number) ? String(number) : undefined;
 }
 
+function readSdkDisconnectReason(value: unknown): string | undefined {
+  // SDK 1.18.0 authors these literals itself. Other close prose comes from the
+  // remote peer and may contain private content; never copy that into diagnostics.
+  if (value === 'agent disconnected') return 'agent_disconnected';
+  if (value === 'Agent ended the call') return 'agent_ended_call';
+  return undefined;
+}
+
 export function createElevenLabsSdkConnection(input: Readonly<{
   createSdkHandleConnection: (input: Readonly<{ driver: Readonly<{
     open(input: Readonly<{
@@ -110,11 +118,12 @@ export function createElevenLabsSdkConnection(input: Readonly<{
       async open({ signal, onControl, onTransport }): Promise<void> {
         publishControl = onControl;
         let sessionFailure: Error | null = null;
-        const reportSessionFailure = (error: unknown, phase: string, nativeErrorCode?: string): void => {
+        const reportSessionFailure = (error: unknown, phase: string, nativeErrorCode?: string, nativeErrorReason?: string): void => {
           if (sessionFailure) return;
           const { errorClass, errorCode, httpStatus } = readUnexpectedActionErrorDiagnosticV1(error);
           const failureCause = { errorClass, errorCode, httpStatus, phase,
-            ...(nativeErrorCode === undefined ? {} : { nativeErrorCode }) };
+            ...(nativeErrorCode === undefined ? {} : { nativeErrorCode }),
+            ...(nativeErrorReason === undefined ? {} : { nativeErrorReason }) };
           sessionFailure = Object.assign(new Error('voice_service_unavailable'), { code: 'voice_service_unavailable', failureCause });
           onControl({ type: 'elevenlabs.session_error', failureCause });
         };
@@ -136,7 +145,7 @@ export function createElevenLabsSdkConnection(input: Readonly<{
                   ? `.${contextType}` : ''}`;
               reportSessionFailure(undefined, phase, readNumericNativeCode(
                 details && details.reason !== 'user' ? details.closeCode ?? context?.code ?? context?.reason : undefined,
-              ));
+              ), readSdkDisconnectReason(context?.reason));
               return;
             }
             case 'message':

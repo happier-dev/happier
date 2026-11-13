@@ -9586,7 +9586,12 @@ existing typed `failureCause`, including the disconnect phase and numeric native
 code when available. The host ends that attempt and offers explicit recovery,
 including when no user turn arrived, rather than silently creating conversations
 in a reconnect loop. SDK-handled client-tool execution errors remain recoverable.
-Vendor messages, close reasons and payloads are excluded from diagnostics.
+Known SDK-authored close reasons survive as `nativeErrorReason` codes:
+`agent disconnected` becomes `agent_disconnected`, and `Agent ended the call`
+becomes `agent_ended_call`. SDK 1.18.0 supplies no numeric close code for an
+agent participant departure; none is invented. Room disconnects retain the
+numeric LiveKit reason when supplied. Arbitrary vendor messages, close prose
+and payloads are excluded from diagnostics.
 
 ### Batch speech output (0.3 development)
 

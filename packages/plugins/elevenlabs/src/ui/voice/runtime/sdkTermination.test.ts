@@ -54,9 +54,9 @@ const { createRealtimeToolBarrier } = await import(/* @vite-ignore */ new URL(
 ).href) as { createRealtimeToolBarrier: typeof CreateRealtimeToolBarrier };
 
 describe('ElevenLabs SDK terminal session callbacks', () => {
-  it.each(['agent', 'transport', 'server', 'early', 'reconnect'] as const)(
+  it.each(['agent', 'room', 'end_call', 'transport', 'server', 'early', 'reconnect'] as const)(
     'surfaces %s termination before any turn without automatically starting another conversation', async (termination) => {
-      const { RoomEvent, ConnectionState } = await import('livekit-client');
+      const { RoomEvent, ConnectionState, DisconnectReason } = await import('livekit-client');
       const runtime = createElevenLabsVoiceProviderRuntime({ loadConversationSdk: () => import('@elevenlabs/client') });
       type Failure = Parameters<Parameters<CreateVoiceConversationController>[0]['machine']['failed']>[0];
       const failures: Failure[] = [];
@@ -101,6 +101,11 @@ describe('ElevenLabs SDK terminal session callbacks', () => {
         expect(room.sent.every(item => item.reliable)).toBe(true);
         expect(inputs).toEqual([]);
         if (termination === 'agent') room.emit(RoomEvent.ParticipantDisconnected, { identity: 'agent-remote' });
+        else if (termination === 'room') room.emit(RoomEvent.Disconnected, DisconnectReason.ROOM_DELETED);
+        else if (termination === 'end_call') room.emit(RoomEvent.DataReceived, new TextEncoder().encode(JSON.stringify({
+          type: 'agent_tool_response', agent_tool_response: { tool_name: 'end_call', tool_call_id: 'end-call',
+            tool_type: 'system', is_error: false },
+        })));
         else if (termination === 'transport') room.emit(RoomEvent.ConnectionStateChanged, ConnectionState.Disconnected);
         else if (termination === 'server') room.emit(RoomEvent.DataReceived, new TextEncoder().encode(JSON.stringify({
           type: 'error', error_event: { message: 'private vendor response', code: 1008, details: 'private details' },
@@ -113,10 +118,14 @@ describe('ElevenLabs SDK terminal session callbacks', () => {
         }
         await vi.waitFor(() => expect(failures).toHaveLength(1));
         expect(failures[0]).toMatchObject({ code: 'voice_service_unavailable', failureCause: {
-          phase: termination === 'agent' || termination === 'early' || termination === 'reconnect' ? 'elevenlabs.disconnect.agent.close'
+          phase: termination === 'agent' || termination === 'room' || termination === 'early' || termination === 'reconnect' ? 'elevenlabs.disconnect.agent.close'
+            : termination === 'end_call' ? 'elevenlabs.disconnect.agent.end_call'
             : termination === 'transport' ? 'elevenlabs.disconnect.error.connection_state_changed' : 'elevenlabs.sdk.error',
           errorCode: null, httpStatus: null,
           ...(termination === 'server' ? { nativeErrorCode: '1008' } : {}),
+          ...(termination === 'room' ? { nativeErrorCode: String(DisconnectReason.ROOM_DELETED) } : {}),
+          ...(termination === 'agent' || termination === 'early' || termination === 'reconnect'
+            ? { nativeErrorReason: 'agent_disconnected' } : termination === 'end_call' ? { nativeErrorReason: 'agent_ended_call' } : {}),
         } });
         expect(JSON.stringify(failures)).not.toContain('private');
         expect(controller.getOwnedControlSessionId()).toBeNull();

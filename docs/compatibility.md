@@ -8303,6 +8303,18 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Action failure causes add optional `nativeErrorReason`, a
+producer-projected diagnostic code using the existing native-code alphabet.
+The cause and enclosing result/event objects remain closed; unknown fields
+are rejected, and no reason gains authority, routing or retry meaning.
+ElevenLabs projects only known SDK-authored literals; arbitrary close prose
+is excluded. Matching Protocol, SDK and UI readers refresh together under the
+unpublished 0.3 direct cut; older strict development readers reject the field.
+Old causes without it remain valid. No wire epoch, persisted format, capability
+or adapter changes. The scoped-clean `../0.2` frontier
+`dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no corresponding Action cause
+module.
+
 Unreleased 0.3 Local Voice turn error events add optional `runtimeIssueV1`, reusing
 the closed Session runtime issue and failure-cause schemas. This diagnostic
 presentation carries the native owner's redacted vendor message and HTTP status

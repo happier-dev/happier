@@ -169,6 +169,8 @@ type KnownActionFailureCauseV1 = Readonly<{
   httpStatus: number | null;
   /** Provider-authored code, independent of Happier error classification. */
   nativeErrorCode?: string;
+  /** Producer-projected public reason code; never raw vendor close prose. */
+  nativeErrorReason?: string;
 }>;
 export const UNKNOWN_ACTION_FAILURE_CAUSE_V1 = Object.freeze({
   kind: 'unknown', phase: 'dispatch', errorClass: 'UnknownThrownValue', errorCode: 'unknown_failure_cause', httpStatus: null,
@@ -184,6 +186,7 @@ export const ActionFailureCauseV1Schema: z.ZodMiniType<ActionFailureCauseV1> = l
   errorClass: ActionErrorClassV1Schema,
   errorCode: z.nullable(z.string()),
   nativeErrorCode: z.optional(ActionNativeErrorCodeV1Schema),
+  nativeErrorReason: z.optional(ActionNativeErrorCodeV1Schema),
   httpStatus: z.nullable(z.number().check(z.int(), z.minimum(100), z.maximum(599))),
 }).check(z.refine(value => readActionErrorCodeV1({ code: value.errorCode }) === value.errorCode || readUnexpectedActionErrorDiagnosticV1({
   name: value.errorClass, code: value.errorCode,
@@ -215,6 +218,7 @@ export function readActionFailureCauseV1(value: unknown): ActionFailureCauseV1 {
   const native = ActionNativeErrorCodeV1Schema.safeParse(record.nativeErrorCode);
   const nativeErrorCode = native.success ? native.data
     : typeof record.errorCode === 'string' && /^\d+$/u.test(record.errorCode) ? record.errorCode : undefined;
+  const nativeReason = ActionNativeErrorCodeV1Schema.safeParse(record.nativeErrorReason);
   const candidate = { phase: settledPhase, errorClass: settledClass,
     errorCode: record.errorCode, httpStatus: null };
   const code = ActionFailureCauseV1Schema.safeParse(candidate);
@@ -222,7 +226,8 @@ export function readActionFailureCauseV1(value: unknown): ActionFailureCauseV1 {
   return { phase: settledPhase, errorClass: settledClass,
     errorCode: code.success ? code.data.errorCode : null,
     httpStatus: status.success ? status.data.httpStatus : null,
-    ...(nativeErrorCode === undefined ? {} : { nativeErrorCode }) };
+    ...(nativeErrorCode === undefined ? {} : { nativeErrorCode }),
+    ...(nativeReason.success ? { nativeErrorReason: nativeReason.data } : {}) };
 }
 
 export function projectActionFailureCauseV1(error: unknown, phase?: string): ActionFailureCauseV1 {
