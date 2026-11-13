@@ -479,6 +479,8 @@ export async function requestSessionStop(params: Readonly<{
           ok: true,
           sessionId: resolved.sessionId,
           stopped: false,
+          ...('failureCause' in physicalStopResult ? { failureCause: physicalStopResult.failureCause } : {}),
+          ...('effectAttempted' in physicalStopResult ? { effectAttempted: physicalStopResult.effectAttempted } : {}),
           stopOutcome: await stopOutcomeFromAttemptResult({
             result: physicalStopResult,
             token: params.credentials.token,
@@ -548,6 +550,8 @@ export async function requestSessionStop(params: Readonly<{
         ok: true,
         sessionId: resolved.sessionId,
         stopped: false,
+        ...('failureCause' in physicalStopResult ? { failureCause: physicalStopResult.failureCause } : {}),
+        ...('effectAttempted' in physicalStopResult ? { effectAttempted: physicalStopResult.effectAttempted } : {}),
         stopOutcome: await stopOutcomeFromAttemptResult({
           result: physicalStopResult,
           token: params.credentials.token,

@@ -11452,3 +11452,20 @@ development readers reject the unfamiliar variant; no epoch, migration,
 retained preview record or compatibility adapter is introduced. The inspected
 `../0.2` frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no
 `packages/protocol/src/deployments` contract and no local change at that path.
+
+## Session Stop failure diagnostics (unreleased 0.3)
+
+Incomplete daemon Stop receipts optionally retain the existing sanitized Action
+`failureCause` and `effectAttempted` facts. The native receipt remains closed;
+its nested cause uses the existing closed Action diagnostic schema. The command
+Stop result remains additive-open/preserve and declares these optional fields,
+along with the native `processFailure`. CLI, app and dependent Action projections
+retain the facts without changing physical-stop confirmation or failure outcomes.
+Receipts without diagnostics remain readable.
+
+Matching Protocol, daemon, CLI and UI readers reload together under the unpublished
+0.3 direct cut. The scoped-clean `../0.2` frontier at
+`dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has a strict native Stop reader that
+rejects these additions; current development responses are not a supported reverse
+rollback direction. No input, authority, persistence format, wire epoch, error
+taxonomy, polling or compatibility adapter changes.

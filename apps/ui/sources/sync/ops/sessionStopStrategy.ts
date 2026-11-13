@@ -23,6 +23,8 @@ import { readMachineControlTargetForSession, shouldFallbackFromMachineRpc } from
 import { log } from '@/log';
 
 type SessionKillRequest = Record<string, never>;
+type SessionStopFailureDiagnostics = Pick<Extract<StopSessionResult, { status: 'incomplete' }>,
+    'failureCause' | 'effectAttempted' | 'processFailure'>;
 
 type LegacySessionKillResponse = Readonly<{
     success: boolean;
@@ -33,13 +35,13 @@ type LegacySessionKillResponse = Readonly<{
 export type DaemonMachineSessionStopAttempt =
     | Readonly<{ type: 'stopped' }>
     | Readonly<{ type: 'requested' }>
-    | Readonly<{
+    | Readonly<SessionStopFailureDiagnostics & {
         type: 'fallback';
         reason: 'not_found' | 'control_unavailable' | 'tracked_runner_absent';
         message: string;
         errorCode?: string;
     }>
-    | Readonly<{ type: 'failed'; message: string; errorCode?: string }>;
+    | Readonly<SessionStopFailureDiagnostics & { type: 'failed'; message: string; errorCode?: string }>;
 
 export type SessionStopStrategyOutcome =
     | Readonly<{ success: true; effect: 'process_stopped'; method: 'daemon_machine_rpc' | 'session_rpc';
@@ -65,7 +67,7 @@ export type SessionStopStrategyOutcome =
         message: string;
         errorCode?: string;
     }>
-    | Readonly<{
+    | Readonly<SessionStopFailureDiagnostics & {
         success: false;
         failedAt: 'daemon_machine_rpc' | 'session_rpc';
         reason: 'failed';
@@ -255,9 +257,14 @@ async function requestDaemonMachineSessionStop(params: Readonly<{
                     type: 'fallback',
                     reason: 'tracked_runner_absent',
                     message: 'Session stop incomplete: tracked_runner_absent',
+                    failureCause: strictResult.failureCause,
+                    effectAttempted: strictResult.effectAttempted,
+                    processFailure: strictResult.processFailure,
                 };
             }
-            return { type: 'failed', message: `Session stop incomplete: ${strictResult.reason}` };
+            return { type: 'failed', message: `Session stop incomplete: ${strictResult.reason}`,
+                failureCause: strictResult.failureCause, effectAttempted: strictResult.effectAttempted,
+                processFailure: strictResult.processFailure };
         }
         if (isReleasedMachineStopAcknowledgement(response)) return { type: 'requested' };
 
@@ -455,6 +462,9 @@ export async function stopSessionUsingCanonicalStrategy(params: Readonly<{
                 reason: 'failed',
                 message: daemonStop.message,
                 ...(daemonStop.errorCode ? { errorCode: daemonStop.errorCode } : {}),
+                failureCause: daemonStop.failureCause,
+                effectAttempted: daemonStop.effectAttempted,
+                processFailure: daemonStop.processFailure,
             };
         }
         if (daemonStop.reason === 'not_found') {
@@ -515,6 +525,9 @@ export async function stopSessionUsingCanonicalStrategy(params: Readonly<{
             failedAt: 'session_rpc',
             reason: 'failed',
             message: `Session stop incomplete: ${strictKillResult.reason}`,
+            failureCause: strictKillResult.failureCause,
+            effectAttempted: strictKillResult.effectAttempted,
+            processFailure: strictKillResult.processFailure,
         };
     }
     const releasedAcknowledgement = readReleasedRunnerStopAcknowledgement(killResult);
@@ -558,6 +571,9 @@ export async function stopSessionUsingCanonicalStrategy(params: Readonly<{
                 failedAt: 'daemon_machine_rpc',
                 reason: 'failed',
                 message: daemonFallback.message,
+                failureCause: daemonFallback.failureCause,
+                effectAttempted: daemonFallback.effectAttempted,
+                processFailure: daemonFallback.processFailure,
             };
         }
         return {

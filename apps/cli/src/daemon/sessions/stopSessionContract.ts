@@ -5,8 +5,12 @@ import type { SessionStopProcessFailure } from '@happier-dev/protocol/sessionSto
 export { StopSessionIncompleteReasonSchema, StopSessionResultSchema } from '@happier-dev/protocol/sessionStop';
 export type { StopSessionIncompleteReason, StopSessionResult } from '@happier-dev/protocol';
 
-export function incompleteStopSession(reason: StopSessionIncompleteReason, processFailure?: SessionStopProcessFailure): StopSessionResult {
-  return { status: 'incomplete', reason, ...(processFailure ? { processFailure } : {}) };
+export function incompleteStopSession(
+  reason: StopSessionIncompleteReason,
+  processFailure?: SessionStopProcessFailure,
+  diagnostics?: Pick<Extract<StopSessionResult, { status: 'incomplete' }>, 'failureCause' | 'effectAttempted'>,
+): StopSessionResult {
+  return { status: 'incomplete', reason, ...(processFailure ? { processFailure } : {}), ...diagnostics };
 }
 
 export function isTerminalHostPhysicallyRetiredStopResult(result: StopSessionResult): boolean {

@@ -9,7 +9,7 @@ import { isPidPresent } from '@happier-dev/cli-common/process';
 import { readTerminalHostAttachmentState } from '@/terminal/attachment/terminalAttachmentInfo';
 import { logger } from '@/ui/logger';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
-import { readSessionMarkerForPid, type DaemonSessionMarker } from '../sessionRegistry';
+import { readSessionMarker, type DaemonSessionMarker } from '../sessionRegistry';
 import type { TrackedSession } from '../types';
 import { resolveTrackedSessionRunnerIdentity } from './sessionReportCorrelation';
 
@@ -19,7 +19,7 @@ import { readRetiredPlainRunnerObservation } from './plainRunnerRetirement';
 export type ExactTerminalControlServiceabilityRetirement = 'retired' | 'superseded';
 export type RetainedPlainRunnerRetirement = ExactTerminalControlServiceabilityRetirement | 'deferred';
 export type TerminalControlServiceabilityRetirementTarget = Readonly<{ attachmentId: string; terminalMode: TerminalMode; expectedRunner?: never; expectedPlainRetirement?: never }>
-    | Readonly<{ attachmentId?: never; terminalMode: 'plain'; expectedRunner: Readonly<{ pid: number; startTimeMs?: number }>; expectedPlainRetirement?: never }>
+    | Readonly<{ attachmentId?: never; terminalMode: 'plain'; expectedRunner: Readonly<{ pid: number; startTimeMs?: number; sessionEndObserved?: Promise<void> }>; expectedPlainRetirement?: never }>
     | Readonly<{ attachmentId?: never; terminalMode: 'plain'; expectedRunner?: never; expectedPlainRetirement: number }>;
 
 /** The existing marker is the recovery obligation; a live or unrecorded runner cannot defer publication. */
@@ -29,8 +29,8 @@ export async function readRetainedPlainRunnerExitMarker(tracked: TrackedSession)
     const { pid, processStartTimeMs: startTimeMs } = runner;
     if (!tracked.happySessionId || startTimeMs === undefined
         || isPidPresent(pid) || (pid !== tracked.pid && isPidPresent(tracked.pid))) return null;
-    const marker = await readSessionMarkerForPid(pid);
-    if (!marker || marker.startedBy !== tracked.startedBy || marker.happySessionId !== tracked.happySessionId
+    const marker = await readSessionMarker(tracked.trackingKey);
+    if (!marker || marker.pid !== pid || marker.startedBy !== tracked.startedBy || marker.happySessionId !== tracked.happySessionId
         || marker.processStartTimeMs !== startTimeMs) return null;
     const attachment = await readTerminalHostAttachmentState({ happyHomeDir: configuration.happyHomeDir, sessionId: marker.happySessionId });
     return attachment.status === 'absent' ? marker : null;
@@ -39,7 +39,7 @@ export async function readRetainedPlainRunnerExitMarker(tracked: TrackedSession)
 export async function retireStoppedPlainRunnerControlServiceability(params: Readonly<{
     sessionId: string;
     trackedSession: TrackedSession;
-    publishRetirement: (expectedRunner: Readonly<{ pid: number; startTimeMs: number }>) => Promise<ExactTerminalControlServiceabilityRetirement>;
+    publishRetirement: (expectedRunner: Readonly<{ pid: number; startTimeMs: number; sessionEndObserved?: Promise<void> }>) => Promise<ExactTerminalControlServiceabilityRetirement>;
 }>): Promise<RetainedPlainRunnerRetirement> {
     try {
         const runner = resolveTrackedSessionRunnerIdentity(params.trackedSession);
@@ -47,7 +47,8 @@ export async function retireStoppedPlainRunnerControlServiceability(params: Read
         if (!runner || typeof startTimeMs !== 'number' || !Number.isInteger(startTimeMs) || startTimeMs < 0) {
             throw new Error('terminal_control_serviceability_retirement_runner_or_host_unresolved');
         }
-        return await params.publishRetirement({ pid: runner.pid, startTimeMs });
+        return await params.publishRetirement({ pid: runner.pid, startTimeMs,
+            ...(params.trackedSession.hostedSession ? { sessionEndObserved: params.trackedSession.hostedSession.observed } : {}) });
     } catch (error) {
         if (params.trackedSession.happySessionId !== params.sessionId
             || !await readRetainedPlainRunnerExitMarker(params.trackedSession)) throw error;
@@ -63,7 +64,7 @@ export async function retireExactTerminalControlServiceability(params: Readonly<
     sessionId: string;
     currentness?: SessionMetadataMutationCurrentness;
     resolveAuthorizationHeaders?: Parameters<typeof updateSessionMetadataWithRetry>[0]['resolveAuthorizationHeaders'];
-    /** Supplied only by the physical Stop owner after positive process/host retirement. */
+    /** Supplied only by the Stop owner after positive runner or hosted Session retirement. */
     stoppedAt?: number;
 }> & TerminalControlServiceabilityRetirementTarget): Promise<ExactTerminalControlServiceabilityRetirement> {
     const matchesRetirementTarget = (metadata: Readonly<Record<string, unknown>>) => {
@@ -77,13 +78,16 @@ export async function retireExactTerminalControlServiceability(params: Readonly<
         }
         // Startup may never publish a runner tuple; confirmed exit may already
         // retire it. Neither absence can supersede this Stop. Still require the
-        // local dead-runner/absent-host proof below, and never retire an active host.
+        // local runner-end/absent-attachment proof below.
         if (metadata.terminal === undefined || readRetiredPlainRunnerObservation(metadata) !== null) return true;
         const terminal = metadata.terminal;
         return !!terminal && typeof terminal === 'object' && !Array.isArray(terminal)
             && (terminal as Record<string, unknown>).mode === 'plain'
             && (terminal as Record<string, unknown>).controlServiceabilityV1 === undefined;
     };
+    // A shared host stays alive for its other Sessions. Its existing per-Session
+    // end report settles this runner's custody without lending a sibling's exit.
+    await params.expectedRunner?.sessionEndObserved;
     assertSessionMetadataMutationCurrentness(params.currentness);
     const currentnessHeaders = params.resolveAuthorizationHeaders?.({ method: 'GET', path: '/v1/account/encryption/currentness' });
     if (params.resolveAuthorizationHeaders && !currentnessHeaders) throw new Error('Terminal retirement Account authorization unavailable');
@@ -127,7 +131,8 @@ export async function retireExactTerminalControlServiceability(params: Readonly<
                 const attachment = await readTerminalHostAttachmentState({
                     happyHomeDir: configuration.happyHomeDir, sessionId: params.sessionId,
                 });
-                if (attachment.status !== 'absent' || params.expectedRunner && isPidPresent(params.expectedRunner.pid)) {
+                if (attachment.status !== 'absent' || params.expectedRunner
+                    && !params.expectedRunner.sessionEndObserved && isPidPresent(params.expectedRunner.pid)) {
                     throw new Error('terminal_control_serviceability_retirement_runner_or_host_unresolved');
                 }
                 // Runner-bound retirement also clears that departed runner's

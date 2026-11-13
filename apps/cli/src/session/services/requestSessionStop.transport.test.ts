@@ -182,6 +182,9 @@ describe('requestSessionStop machine transport', () => {
       // Mirror the relay's existing finite forwarding deadline, not a caller-owned timer.
       if (boundary.mode === 'timeout') setTimeout(() => callback?.({ ok: false, error: 'RPC call timeout' }), 30_000);
       if (boundary.mode === 'stopped') callback?.(stopped);
+      if (boundary.mode === 'retirement_failed') callback?.({ ok: true, result: await socketRpcCodec.encodeResponse(content,
+        { status: 'incomplete', reason: 'terminal_control_serviceability_retirement_failed', effectAttempted: true,
+          failureCause: { phase: 'stop.plain_control_serviceability_retirement', errorClass: 'Error', errorCode: null, httpStatus: 503 } }, decoded.callId) });
       if (boundary.mode === 'action_refused') callback?.({ ok: true, result: await socketRpcCodec.encodeResponse(content,
         { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.stop',
           details: { cause: 'target_outside_led_subtree' } }, decoded.callId) });
@@ -406,6 +409,15 @@ describe('requestSessionStop machine transport', () => {
       : { ok: true, sessionId, stopped: false, stopOutcome: { reason: 'target_daemon_unavailable' } });
     expect(stoppedSessions).toEqual(installedMachineId === 'owning-machine' ? [sessionId] : []);
     expect(issuedMethods).toEqual(installedMachineId === 'owning-machine' ? [] : ['owning-machine:stop-session']);
+  });
+
+  it('retains owning-machine retirement diagnostics through the encrypted Stop transport', async () => {
+    boundary.mode = 'retirement_failed';
+    const result = requestSessionStop({ stopIntent: 'explicit_stop', credentials, idOrPrefix: sessionId });
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(result).resolves.toMatchObject({ ok: true, sessionId, stopped: false, effectAttempted: true,
+      failureCause: { phase: 'stop.plain_control_serviceability_retirement', errorClass: 'Error', errorCode: null, httpStatus: 503 },
+      stopOutcome: { status: 'stopped_cleanup_incomplete', reason: 'terminal_control_serviceability_retirement_failed' } });
   });
 
   it('routes layout-one Stop through the Account-owned locality instead of caller-local control', async () => {

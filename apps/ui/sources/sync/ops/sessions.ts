@@ -1531,7 +1531,12 @@ export async function sessionStopWithServerScope(
         ? stopResult.stopOutcome
             ? { sessionId, stopped: false, stopOutcome: stopResult.stopOutcome }
             : { sessionId, stopped: true }
-        : { sessionId, stopped: false };
+        : { sessionId, stopped: false,
+            ...(stopResult.reason === 'failed' ? {
+                ...(stopResult.failureCause ? { failureCause: stopResult.failureCause } : {}),
+                ...(stopResult.effectAttempted !== undefined ? { effectAttempted: stopResult.effectAttempted } : {}),
+                ...(stopResult.processFailure ? { processFailure: stopResult.processFailure } : {}),
+            } : {}) };
     if (holdFailure) confirmation = { ...confirmation, holdRecorded: false, holdFailure };
     if (holdFailure) {
         return { ...confirmation, success: false, code: holdFailure, message: t('sessionInfo.stopSessionHoldFailed') };

@@ -37,6 +37,7 @@ import { ExternalSessionStorageStateV1Schema } from '../external/operationV1.js'
 import { PendingActivationAuthorizationV1Schema, PendingActivationFailureDetailsV1Schema } from '../pending/pendingActivationAuthorizationV1.js';
 import { SubAgentRunResultV2Schema } from '../../tools/v2/schemas.js';
 import { SessionStopProcessFailureSchema, StopSessionIncompleteReasonSchema } from '../../sessionStop.js';
+import { ActionFailureCauseV1Schema } from '../../actions/actionExecutionResult.js';
 import { AccountEncryptionModeSchema } from '../../features/payload/capabilities/encryptionCapabilities.js';
 import { ActionDefinitionIdV1Schema, ActionDefinitionSummaryV1Schema } from '../../actions/actionDefinitionV1.js';
 import {
@@ -778,6 +779,9 @@ export const SessionStopResultSchema = lazyZodSchema(() => z.discriminatedUnion(
     // cli-v0.2.0 and cli-v0.2.1 emitted `{ stopped: false }`; keep reading that
     // released shape while current writers add the structured reason.
     stopOutcome: z.optional(SessionStopOutcomeSchema),
+    processFailure: z.optional(SessionStopProcessFailureSchema),
+    failureCause: z.optional(ActionFailureCauseV1Schema),
+    effectAttempted: z.optional(z.boolean()),
   })),
 ]));
 export type SessionStopResult = z.infer<typeof SessionStopResultSchema>;

@@ -698,6 +698,8 @@ describe('requestSessionStop', () => {
     { status: 'incomplete', reason: 'runner_exit_timeout' },
     { status: 'incomplete', reason: 'process_owner_observation_unavailable',
       processFailure: { phase: 'tree_capture', reason: 'read_failed' } },
+    { status: 'incomplete', reason: 'runner_exit_timeout', effectAttempted: false,
+      failureCause: { phase: 'stop.plain_control_serviceability_retirement', errorClass: 'Error', errorCode: null, httpStatus: null } },
   ] as const)('preserves an incomplete daemon result despite inactive metadata ($reason)', async incomplete => {
     const sessionId = 'sess_incomplete_daemon_stop';
     resolveSessionIdOrPrefixMock.mockResolvedValue({
@@ -720,6 +722,7 @@ describe('requestSessionStop', () => {
       ok: true,
       sessionId,
       stopped: false,
+      ...('failureCause' in incomplete ? { failureCause: incomplete.failureCause, effectAttempted: incomplete.effectAttempted } : {}),
       stopOutcome: { status: 'physical_stop_unconfirmed', reason: incomplete.reason,
         ...('processFailure' in incomplete ? { processFailure: incomplete.processFailure } : {}) },
     });

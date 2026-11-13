@@ -18,6 +18,27 @@ beforeEach(async () => { boundary.resetRequests(); await loadSyncSingletonForTes
 afterAll(async () => { await resetServerReachabilitySupervisors(); await boundary.dispose(); });
 
 describe('explicit Stop hold failure through real metadata transport', () => {
+    it.each(['daemon', 'runner'] as const)('retains retirement diagnostics through the public Stop Action (%s)', async route => {
+        const home = await boundary.addHome(`https://stop-diagnostics-${route}.example`, 'stop-owner');
+        const sessionId = `stop-diagnostics-${route}`;
+        const metadata = createSessionMetadataHttpBoundary(() => ({}));
+        metadata.replaceSession(sessionId, createPlainSessionCurrentProjectionRecordFixture({ id: sessionId, active: true }));
+        boundary.setHttpResponder(async (input, init) => metadata.handle(input, init));
+        const failureCause = { phase: 'stop.plain_control_serviceability_retirement', errorClass: 'Error', errorCode: null, httpStatus: 403 };
+        const diagnostics = { failureCause, effectAttempted: route === 'daemon',
+            ...(route === 'runner' ? { processFailure: { phase: 'ownership_view', reason: 'read_failed' } } : {}) };
+        const failure = { status: 'incomplete', reason: 'terminal_control_serviceability_retirement_failed', ...diagnostics };
+        boundary.respond('stop-session', route === 'daemon' ? failure : { status: 'incomplete', reason: 'tracked_runner_absent' });
+        boundary.respond('killSession', failure);
+
+        const result = await createDefaultActionExecutor().execute('session.stop', { sessionId }, {
+            serverId: home.id, surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true,
+            result: { sessionId, stopped: false, success: false, code: 'session_stop_failed', ...diagnostics } });
+        expect(boundary.requests.map(request => request.method)).toEqual(route === 'daemon' ? ['stop-session'] : ['stop-session', 'killSession']);
+    });
+
     it('preserves the successful hold and physical Stop result', async () => {
         const home = await boundary.addHome('https://stop-hold-success.example', 'stop-owner');
         const sessionId = 'stop-hold-success';

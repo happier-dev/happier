@@ -1,3 +1,4 @@
+import { ActionFailureCauseV1Schema } from './actions/actionExecutionResult.js';
 import { lazyZodSchema } from './lazyZodSchema.js';
 import { z } from './zodRuntimePolicy.js';
 
@@ -37,6 +38,8 @@ export const StopSessionResultSchema = lazyZodSchema(() => z.discriminatedUnion(
     status: z.literal('incomplete'),
     reason: StopSessionIncompleteReasonSchema,
     processFailure: z.optional(SessionStopProcessFailureSchema),
+    failureCause: z.optional(ActionFailureCauseV1Schema),
+    effectAttempted: z.optional(z.boolean()),
   }),
 ]));
 
