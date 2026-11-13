@@ -99,7 +99,10 @@ export function resolveConnectionHealth(params: Readonly<{
         };
     }
 
-    if (params.hasSyncError || params.socketStatus === 'error' || params.machineGroups.some((group) => group.status === 'error')) {
+    // A background sync failure is not a transport verdict. Current endpoint
+    // and socket success supersede it; auth and failed Home reads stay actionable.
+    if ((params.hasSyncError && !(params.endpointStatus === 'online' && params.socketStatus === 'connected'))
+        || params.socketStatus === 'error' || params.machineGroups.some((group) => group.status === 'error')) {
         return {
             kind: 'server_error',
             machineCount: machines.machineCount,

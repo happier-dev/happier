@@ -48,6 +48,19 @@ function applyMachine(serverId: string, id: string, host: string, presence = { a
 }
 
 describe('useActiveHomeConnectionHealth', () => {
+    it('pushes recovered Home health to chrome and the unavailable reader despite a retained sync failure', async () => {
+        applyMachine(appliedHomeId, 'machine-a', 'applied-a');
+        storage.setState({ endpointStatus: 'offline', socketStatus: 'disconnected', syncError: {
+            kind: 'unknown', message: 'A background read failed', retryable: true, at: Date.now(), serverId: appliedHomeId,
+        } });
+        const hook = await renderHook(() => ({ health: useActiveHomeConnectionHealth(), unavailable: useActiveHomeUnavailable() }));
+        expect(hook.getCurrent().unavailable).toBe(true);
+        await act(async () => { storage.setState({ endpointStatus: 'online', socketStatus: 'connected' }); });
+        expect(hook.getCurrent().health.kind).toBe('healthy');
+        expect(hook.getCurrent().unavailable).toBe(false);
+        expect(storage.getState().syncError).not.toBeNull();
+    });
+
     it('counts the same current persistent fleet in Account chrome and selected-Home health', async () => {
         storage.getState().applyMachines([
             createMachineFixture({ id: 'online', active: true, activeAt: 0 }),

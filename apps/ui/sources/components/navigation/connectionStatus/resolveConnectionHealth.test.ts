@@ -3,6 +3,21 @@ import { describe, expect, it } from 'vitest';
 import { resolveConnectionHealth } from './resolveConnectionHealth';
 
 describe('resolveConnectionHealth', () => {
+    it('re-decides from recovered transport despite an unrelated or retained non-auth sync failure', () => {
+        const facts = {
+            hasSyncError: true,
+            syncErrorKind: 'unknown' as const,
+            machineGroups: [{ machineCount: 1, onlineCount: 1, status: 'idle' as const }],
+        };
+        expect(resolveConnectionHealth({ ...facts, endpointStatus: 'offline', socketStatus: 'disconnected' }).kind)
+            .toBe('server_unreachable');
+        expect(resolveConnectionHealth({ ...facts, endpointStatus: 'online', socketStatus: 'connected' }).kind)
+            .toBe('healthy');
+        // A failed authenticated read remains actionable; transport recovery is not re-authentication.
+        expect(resolveConnectionHealth({ ...facts, syncErrorKind: 'auth', endpointStatus: 'online', socketStatus: 'connected' }).kind)
+            .toBe('auth_required');
+    });
+
     it('keeps a failed Home read unhealthy despite a connected socket and retained online machines, then recovers', () => {
         const retainedMachines = { machineCount: 2, onlineCount: 2, readyCount: 2 };
         const connection = { endpointStatus: 'online' as const, socketStatus: 'connected' as const };

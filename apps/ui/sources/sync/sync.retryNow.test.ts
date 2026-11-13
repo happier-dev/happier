@@ -57,9 +57,16 @@ describe('sync manual retry', () => {
 
     async function expectManualRecovery() {
         const { sync } = await import('./sync');
+        const { storage } = await import('./domains/state/storage');
+        storage.getState().setSyncError({
+            kind: 'unknown', message: 'Previous background read failed', retryable: true,
+            at: Date.now(), serverId: home.id,
+        });
         // Call-through observation retains the real resume owner and its HTTP work.
         const resume = vi.spyOn(sync, 'resumeSync');
         sync.retryNow();
+        // The previous failure is withdrawn before asynchronous recovery can succeed.
+        expect(storage.getState().syncError).toBeNull();
         expect(resume).toHaveBeenCalledWith('manual');
         await resume.mock.results.find((result) => result.type === 'return')?.value;
         await vi.waitFor(() => {
