@@ -51,7 +51,7 @@ afterEach(() => { database.current = null; database.homeServerIdentityId = null;
 
 const actionId = 'machines.agentIsolation.status';
 // This receiver has no Machine metadata or native setup effects. Admission
-// must still report owner trust and an honest unavailable member observation.
+// must still report owner/Manage trust and an honest unavailable Use observation.
 const observedStatus = { kind: 'unavailable' as const, code: 'metadata_unavailable' as const };
 
 async function installedStatus(accountSettings?: Readonly<Record<string, unknown>>) {
@@ -82,9 +82,9 @@ describe('installed own Machine isolation status admission', () => {
     expect(await f.relay.invokeUi(actionId, input)).toEqual({ protection: 'trusted_administrator', status: observedStatus });
     expect.soft(await f.relay.invokeUi(actionId, { ...input, serverId: f.homeServerIdentityId }))
       .toEqual({ protection: 'trusted_administrator', status: observedStatus });
-    for (const actorAccountId of ['member-use', 'member-manage']) {
+    for (const [actorAccountId, protection] of [['member-use', 'unavailable'], ['member-manage', 'trusted_administrator']] as const) {
       const result = await f.relay.invokeUi(actionId, input, { actorAccountId });
-      expect(result).toEqual({ protection: 'unavailable', status: observedStatus });
+      expect(result).toEqual({ protection, status: observedStatus });
       expect(JSON.stringify(result)).not.toContain(actorAccountId);
     }
     expect(await f.relay.invokeUi(actionId, input, { actorAccountId: 'foreign-account' })).toHaveProperty('errorCode');

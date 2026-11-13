@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { registerDaemonMachineAgentIsolationRpcHandlers } from '@/rpc/handlers/daemonMachineAgentIsolation';
-import { MachineAgentIsolationPreviewResultV1Schema, type MachineAgentIsolationStatusV1, type MachineAdminAccessV1 } from '@happier-dev/protocol';
+import { MachineAgentIsolationPreviewResultV1Schema, MachineAgentIsolationStatusV1Schema, type MachineAgentIsolationStatusV1, type MachineAdminAccessV1 } from '@happier-dev/protocol';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { createAgentIsolationEffectsBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
@@ -13,6 +13,59 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createActionExecutor, type ActionExecutorDeps } from '@happier-dev/protocol';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+
+it.skipIf(process.platform !== 'linux').each(['machines.agentIsolation.status', 'machines.agentIsolation.preview', 'machines.agentIsolation.set'] as const)(
+  'returns the qualified member result through the declared %s Action output', async actionId => {
+    const target = { serverId: 'home', machineId: 'machine', installationId: 'installation', custodianAccountId: 'owner' };
+    const policy = { enabled: true, memberProvisioning: 'linuxUsersV1' as const };
+    const status = { kind: 'effective' as const, platform: 'linux' as const, agentUser: 'happier-agent' as const };
+    const native = createAgentIsolationEffectsBoundary({ installationId: target.installationId,
+      installedCli: '/opt/happier/cli/current/happier', readRoots: () => [], readSessionsToReplace: () => 0,
+      publishStatus: async () => {}, backend: {
+        observe: async step => ({ stepId: step.id, status: 'satisfied', facts: {} }),
+        apply: async () => { throw new Error('Existing native isolation must not be applied again'); },
+      } });
+    const manager = new RpcHandlerManager({ scopePrefix: target.machineId, localMachineId: target.machineId,
+      encryptionMode: 'plain', logger() {}, authorizeRequest: async () => ({ ok: true }) });
+    const { createHostActionOperationRuntime } = await import('@/daemon/actionOperations');
+    registerDaemonMachineAgentIsolationRpcHandlers(manager, { target: () => target,
+      readCanonicalHomeServerIdentityId: () => target.serverId, read: () => ({ ...policy, status }), effects: native.effects,
+      runActionOperation: createHostActionOperationRuntime({ serverId: target.serverId, machineId: target.machineId,
+        resolveAccountId: async () => target.custodianAccountId }).runActionOperation,
+      captureMetadataPort: () => ({ read: async () => ({ status: 'ready', metadata: { agentIsolation: policy }, metadataVersion: 10 }),
+        compareAndSwap: async () => { throw new Error('Unchanged isolation must not write metadata'); } }),
+      // Native own-status observation is the OS boundary; custody, placement,
+      // preview planning, mutation settlement and Action projection stay real.
+      inspectOwn: async () => ({ protection: 'member_separated', status: { kind: 'effective', platform: 'linux' } }),
+    });
+    const rpcContext = { signal: new AbortController().signal, callerAuthority: 'present_user' as const,
+      verifyMachineAdmissionCurrent: async () => true, transportRequestId: `qualified-${actionId}`,
+      machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
+        installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const } };
+    const reviewed = await manager.invokeLocal('machines.agentIsolation.preview', { machineId: target.machineId, ...policy }, { rpcContext });
+    if (!reviewed || typeof reviewed !== 'object' || !('plan' in reviewed) || !reviewed.plan || typeof reviewed.plan !== 'object'
+      || !('planDigest' in reviewed.plan)) throw new Error('Native isolation preview unavailable');
+    if (actionId === 'machines.agentIsolation.preview') {
+      const declared = getActionSpec(actionId).outputSchema!.safeParse(reviewed);
+      expect(declared.success, JSON.stringify(declared)).toBe(true);
+    }
+    const executor = createActionExecutor({ machineAgentIsolationAction: async ({ actionId, input }) =>
+      manager.invokeLocal(actionId, input, { rpcContext }) } as ActionExecutorDeps);
+    const result = await executor.execute(actionId, { machineId: target.machineId,
+      ...(actionId === 'machines.agentIsolation.status' ? {} : policy),
+      ...(actionId === 'machines.agentIsolation.set' ? { expectedMetadataVersion: 10, expectedPolicy: policy,
+        expectedPlanDigest: reviewed.plan.planDigest } : {}) }, { surface: 'ui', serverId: target.serverId,
+          // Approval policy is waived for this output-contract test; the real
+          // Machine receiver still consumes the admitted Manage boundary above.
+          bypassApprovals: true });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: { kind: 'effective', platform: 'linux' } } });
+    if (!result.ok) throw new Error(result.errorCode);
+    expect(getActionSpec(actionId).outputSchema!.safeParse(result.result).success).toBe(true);
+    expect(result.result).not.toHaveProperty('status.agentUser');
+    // A person's qualified result is not the daemon's global launch proof.
+    expect(MachineAgentIsolationStatusV1Schema.safeParse({ kind: 'effective', platform: 'linux' }).success).toBe(false);
+  });
 
 it.skipIf(process.platform !== 'linux')('projects the owners member directories under separate users instead of administrator filesystem placement', async () => {
   const target = { serverId: 'fixture-home', machineId: 'fixture-machine', installationId: 'fixture-install', custodianAccountId: 'fixture-owner' };
@@ -39,11 +92,12 @@ it.skipIf(process.platform !== 'linux')('projects the owners member directories 
 });
 
 it.each([
-  [{ version: 1, mode: 'none' }, 'mode_none'],
-  [{ version: 1, mode: 'ask', administratorUsername: 'admin' }, 'not_preauthorized'],
-  [{ version: 1, mode: 'preauthorized' }, 'managed_cli_unavailable'],
-] satisfies readonly (readonly [MachineAdminAccessV1, string])[])(
-  'preserves the actual setup prerequisite through the preview Action for %j', async (adminAccess, reasonCode) => {
+  [{ version: 1, mode: 'none' }, 'mode_none', 'allowed'],
+  [{ version: 1, mode: 'ask', administratorUsername: 'admin' }, 'needs_attendance', 'allowed'],
+  [{ version: 1, mode: 'preauthorized' }, 'not_preauthorized', 'denied'],
+  [{ version: 1, mode: 'preauthorized' }, 'managed_cli_unavailable', 'allowed'],
+] satisfies readonly (readonly [MachineAdminAccessV1, string, 'allowed' | 'denied'])[])(
+  'preserves the actual setup prerequisite through the preview Action for %j', async (adminAccess, reasonCode, passwordlessSudoToRoot) => {
     const target = { serverId: 'fixture-home', machineId: 'fixture-machine', installationId: 'fixture-install', custodianAccountId: 'fixture-owner' };
     const boundary = createAgentIsolationEffectsBoundary({ installationId: target.installationId,
       installedCli: '/nonexistent-happier-mi2/current/happier', readRoots: () => [], readSessionsToReplace: () => 0,
@@ -57,7 +111,8 @@ it.each([
         compareAndSwap: async () => { throw new Error('Preview must not write metadata'); } }),
       // Keep real elevation policy and managed-executable admission. No process
       // can launch for these refusals; the nonexistent path is the OS boundary.
-      effects: { ...boundary.effects, backend: undefined, elevation: { ...boundary.effects.elevation, spawn: undefined } } });
+      effects: { ...boundary.effects, backend: undefined, elevation: { ...boundary.effects.elevation, spawn: undefined,
+        observe: async () => ({ ...await boundary.effects.elevation.observe(), passwordlessSudoToRoot }) } } });
     const executor = createActionExecutor({ machineAgentIsolationAction: async ({ input }) => manager.handleRequest({
       requestId: 'b0ac79a8-b800-485d-9a4f-cd1e8ef8f490',
       method: `${target.machineId}:machines.agentIsolation.preview`, params: input,
@@ -66,10 +121,18 @@ it.each([
     }) } as ActionExecutorDeps);
     const result = await executor.execute('machines.agentIsolation.preview', { machineId: target.machineId,
       enabled: true, memberProvisioning: 'linuxUsersV1' }, { surface: 'ui', serverId: target.serverId });
-    expect(result).toMatchObject({ ok: true, result: { kind: 'unavailable', setup: { outcome: 'not_applied', reasonCode } } });
+    expect(result).toMatchObject({ ok: true, result: { kind: 'unavailable' } });
     if (!result.ok) throw new Error(result.errorCode);
     const preview = MachineAgentIsolationPreviewResultV1Schema.parse(result.result);
-    expect(preview).toMatchObject({ setup: { reasonCode } });
+    // Ask requires the elevation owner's attendance flow; an unprompted read
+    // must not fabricate a not_applied refusal or try a native process.
+    if (reasonCode === 'needs_attendance') {
+      expect(preview).not.toHaveProperty('setup');
+      expect(boundary.mutations).toEqual([]);
+      expect(boundary.launches).toEqual([]);
+      return;
+    }
+    expect(preview).toMatchObject({ setup: { outcome: 'not_applied', reasonCode } });
     if (reasonCode === 'mode_none') expect(preview).toMatchObject({ setup: {
       recovery: { kind: 'configure_admin_access', mode: 'preauthorized' },
     } });

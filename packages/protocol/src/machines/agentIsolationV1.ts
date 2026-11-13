@@ -114,13 +114,19 @@ const previewInput = { serverId: z.optional(id), machineId: id, enabled: z.boole
 /** Own readiness is a read result, never global launch or provisioning authority. */
 export const MachineAgentIsolationStatusInputV1Schema = lazyZodSchema(() => z.strictObject({ serverId: z.optional(id), machineId: id }));
 export type MachineAgentIsolationStatusInputV1 = z.infer<typeof MachineAgentIsolationStatusInputV1Schema>;
+const MachineAgentIsolationMemberEffectiveStatusV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('effective'), platform: z.literal('linux'),
+}));
+/** Action results may qualify one member; the persisted launch proof remains global. */
+const MachineAgentIsolationResultStatusV1Schema = lazyZodSchema(() => z.union([
+  MachineAgentIsolationStatusV1Schema, MachineAgentIsolationMemberEffectiveStatusV1Schema,
+]));
 export const MachineAgentIsolationOwnStatusV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ protection: z.literal('shared_user'), status: z.strictObject({
     kind: z.literal('effective'), platform: z.literal('linux'), agentUser: z.literal('happier-agent'),
   }) }),
-  z.strictObject({ protection: z.literal('member_separated'), status: z.strictObject({
-    kind: z.literal('effective'), platform: z.literal('linux'),
-  }), directories: z.optional(z.strictObject({ home: id, workspace: id })) }),
+  z.strictObject({ protection: z.literal('member_separated'), status: MachineAgentIsolationMemberEffectiveStatusV1Schema,
+    directories: z.optional(z.strictObject({ home: id, workspace: id })) }),
   z.strictObject({ protection: z.literal('setup_pending'), status: z.union([
     z.strictObject({ kind: z.literal('disabled') }),
     z.strictObject({ kind: z.literal('enable_required'), reason: z.literal('existing_machine_workspace_migration') }),
@@ -134,7 +140,7 @@ export const MachineAgentIsolationPreviewInputV1Schema = lazyZodSchema(() => z.s
 export type MachineAgentIsolationPreviewInputV1 = z.infer<typeof MachineAgentIsolationPreviewInputV1Schema>;
 export const MachineAgentIsolationReadyPreviewV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('ready'), plan: AgentIsolationEffectPlanV1Schema, policy: MachineAgentIsolationPolicyV1Schema,
-  metadataVersion: version, status: MachineAgentIsolationStatusV1Schema,
+  metadataVersion: version, status: MachineAgentIsolationResultStatusV1Schema,
 }));
 export const MachineAgentIsolationPreviewResultV1Schema = lazyZodSchema(() => z.union([
   MachineAgentIsolationReadyPreviewV1Schema,
@@ -156,9 +162,9 @@ export const MachineAgentIsolationSetInputV1Schema = lazyZodSchema(() => z.stric
 }));
 export type MachineAgentIsolationSetInputV1 = z.infer<typeof MachineAgentIsolationSetInputV1Schema>;
 export const MachineAgentIsolationSetResultV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ kind: z.literal('accepted'), operationId: id, metadataVersion: version, status: MachineAgentIsolationStatusV1Schema,
+  z.strictObject({ kind: z.literal('accepted'), operationId: id, metadataVersion: version, status: MachineAgentIsolationResultStatusV1Schema,
     retirement: z.optional(AgentIsolationRetirementResultV1Schema) }),
-  z.strictObject({ kind: z.literal('unchanged'), metadataVersion: version, status: MachineAgentIsolationStatusV1Schema,
+  z.strictObject({ kind: z.literal('unchanged'), metadataVersion: version, status: MachineAgentIsolationResultStatusV1Schema,
     retirement: z.optional(AgentIsolationRetirementResultV1Schema) }),
   z.strictObject({ kind: z.literal('plan_changed'), current: MachineAgentIsolationReadyPreviewV1Schema,
     operationId: z.optional(id) }),

@@ -284,6 +284,15 @@ retains the receipt, records running, and observes the native terminal outcome.
 Inline Actions still return their full result. This development correction uses
 the existing receipt and frozen completion shapes, with no new wire epoch.
 
+A confirmed failed Action interrupts its Run and retains the failed invocation
+for exact retry. Interruption keeps recovery custody pending; the combined Setup
+observer returns the recorded child failure without waiting for terminal custody.
+When a failed script has published partial progress, the signed Workflow retry
+uses the retained unfinished script ordinals only if the desired sources and
+exclusions still match its frozen review. Completed recipes and scripts stay
+completed. Ordinary stale reviews and later desired edits still require a fresh
+Plan. No new persisted progress format is introduced.
+
 ## Machine Setup connector grant scope (unreleased 0.3)
 
 The existing Setup preparation admission optionally carries `connectorGrants`
@@ -2147,6 +2156,11 @@ absent field and refuses isolated launch rather than silently selecting off.
 Stored readers discard additive fields; Action inputs and current publication
 schemas remain closed. These are separate read/write boundaries, not a second
 launcher or an identity downgrade path.
+
+Isolation Action READ, preview and set results accept the member-qualified
+effective status without a shared `agentUser`. Persisted global launch status
+still requires its shared-user proof. The daemon and client result readers
+refresh together for this unreleased 0.3 correction; no stored shape changes.
 
 The prospective 0.2 `apps/cli/src/api/types.ts` Machine metadata/daemon-state
 schemas do not produce isolation policy or observed host-power facts. Its
@@ -4269,9 +4283,18 @@ Project", stored as `projectKeyNone`) is skipped by an include selection through
 republishes, so 0.2 data keeps its membership. A Session that gains a Project
 later is selected once its owner publishes the key, which replaces the "no
 Project" fact. Owner republication happens on accepted-workspace registration
-(Session start/resume) and native-link metadata writes; an older no-Project
-Session whose folder is later opened as a Project joins that roster on its next
-registration, not before.
+(Session start/resume), native-link metadata writes, and when the Machine's
+accepted checkouts change: each daemon subscribes to its installed Project rows
+(`subscribeActiveProjectAccountRowsSnapshot`, refreshed by the server's Project
+row change push) and, when a checkout on its Machine arrives, reads its
+owner-published no-Project rows (`projectKeys: { include: [], exclude: [], none:
+true }`, which selects only `projectKeyNone` rows and takes no keys) and
+publishes the key for each Session on that Machine the canonical resolver now
+places (exact checkout root, not a subfolder). When a checkout on its Machine is
+forgotten, it reads that checkout's Project keys and returns each of its
+Sessions on that Machine stamped with that checkout to "no Project" (or to the
+checkout now at the same root). A daemon that was offline at the change applies
+it at each Session's next registration.
 The canonical local Project predicate remains responsible for unpublished
 identities; the server does not derive private Workspace associations. The
 Project Session roster (`useProjectSessions`) sends its Project as this selector
@@ -8348,6 +8371,16 @@ The scoped-clean `../0.2` frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf`
 has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
+
+Unreleased 0.3 Machine Shell and Workspace Sync requester availability may carry
+optional `preparation: member_not_prepared` on their existing available result.
+The enclosing objects remain closed and reject unknown fields. This projection
+adds no authority or persisted state; absent bindings expose only the native
+identity owner's deterministic directories, and deliberate admission still
+prepares and validates the native identity. Responses without the field remain
+valid. Matching strict development readers and writers reload together under
+the unpublished 0.3 direct cut; older strict readers reject the extra field.
+No wire epoch, capability, migration or adapter is added.
 
 Unreleased 0.3 plugin exec requests add optional `requiredFiles`, carried by the
 runner writer and strict daemon reader together. It declares transient launch
