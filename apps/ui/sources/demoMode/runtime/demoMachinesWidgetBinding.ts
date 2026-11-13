@@ -20,6 +20,7 @@ export function createDemoMachinesWidgetBinding(presets: readonly WidgetAreaPres
         if (operation.actionId !== 'widgets.item.list' || !isSeededDemoHome(serverId))
             return { ok: false, errorCode: 'widget_area_unavailable', error: 'widget_area_unavailable' };
         const result = await actions.read(surface, {}, signal);
+        if ('ok' in result) return result;
         return { ok: true, result: { ...result, canEdit: false } };
     } };
     const executeLayoutAction = async (actionId: Extract<ActionId, `widgets.area.layout.${string}`>): Promise<ActionExecuteResult> =>
