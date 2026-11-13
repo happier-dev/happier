@@ -5,6 +5,10 @@ import { MachineAgentIsolationPreviewResultV1Schema, type MachineAgentIsolationS
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { resolveMachineRpcRoutePolicy } from '@happier-dev/protocol/machines/peer/mediation/rpc/routePolicyV1';
 import { createAgentIsolationEffectsBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
+import { readAgentIsolationMemberLaunchIdentity, writeAgentIsolationMemberBinding } from '@/daemon/agentIsolation/memberBindings';
+import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
+import { createMachineSetupNativeBackend } from '@happier-dev/cli-common/machineSetup';
+import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -157,4 +161,54 @@ it('keeps exact provisioning roots behind Manage while Use reads only own protec
     expect(resolveMachineRpcRoutePolicy('machines.agentIsolation.status').sharedMachineAccess).toBe('use');
     expect(resolveMachineRpcRoutePolicy('machines.agentIsolation.preview').sharedMachineAccess).toBe('manage');
   } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+it.skipIf(process.platform !== 'linux')('Repair reports the missing native user of a retained member binding instead of shared effectiveness', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'member-repair-'));
+  const target = { serverId: 'home', machineId: 'machine', installationId: 'installation', custodianAccountId: 'owner' };
+  const requesterIdentity = { kind: 'isolated' as const, separationRequired: false, homeServerIdentityId: 'home',
+    requester: { serverId: 'home', accountId: 'owner', machineId: 'machine', installationId: 'installation' } };
+  const policy = { enabled: true, memberProvisioning: 'linuxUsersV1' as const };
+  const status = { kind: 'effective' as const, platform: 'linux' as const, agentUser: 'happier-agent' as const };
+  // Root-owned account lookup is the OS boundary. The retained binding, native
+  // qualification, reviewed Repair and Action operation all remain real.
+  const backend = createMachineSetupNativeBackend({ run: async () => ({ code: 2, stdout: '', stderr: '' }) });
+  const native = createAgentIsolationEffectsBoundary({ installationId: target.installationId,
+    installedCli: '/opt/happier/cli/current/happier', readRoots: () => [], readSessionsToReplace: () => 0,
+    publishStatus: async () => {}, backend: {
+      observe: async step => ({ stepId: step.id, status: 'satisfied', facts: {} }),
+      apply: async () => { throw new Error('Shared setup is already satisfied'); },
+    } });
+  const manager = new RpcHandlerManager({ scopePrefix: 'machine', localMachineId: 'machine',
+    encryptionMode: 'plain', logger() {}, authorizeRequest: async () => ({ ok: true }) });
+  const { createHostActionOperationRuntime } = await import('@/daemon/actionOperations');
+  registerDaemonMachineAgentIsolationRpcHandlers(manager, { target: () => target,
+    readCanonicalHomeServerIdentityId: () => 'home', read: () => ({ ...policy, status }), effects: native.effects,
+    runActionOperation: createHostActionOperationRuntime({ serverId: 'home', machineId: 'machine', resolveAccountId: async () => 'owner' }).runActionOperation,
+    captureMetadataPort: () => ({ read: async () => ({ status: 'ready', metadata: { agentIsolation: policy }, metadataVersion: 10 }),
+      compareAndSwap: async () => { throw new Error('Repair must preserve the selected policy'); } }),
+    inspectOwn: async ({ requesterIdentity }) => {
+      try {
+        await readAgentIsolationMemberLaunchIdentity({ requesterIdentity, activeServerDir: directory }, backend);
+        throw new Error('Missing native user must not qualify');
+      } catch (error) {
+        if (!isPluginError(error) || error.code !== 'agent_isolation_unavailable') throw error;
+        return { protection: 'unavailable', status: { kind: 'unavailable', code: 'agent_user_missing' } };
+      }
+    },
+  });
+  try {
+    await writeAgentIsolationMemberBinding(directory, { ...deriveAgentIsolationMemberIdentity(requesterIdentity), agentUid: 2401, agentGid: 2401 });
+    const rpcContext = { signal: new AbortController().signal, callerAuthority: 'present_user' as const,
+      verifyMachineAdmissionCurrent: async () => true, transportRequestId: 'retained-member-repair',
+      machineAdmission: { actorAccountId: 'owner', custodianAccountId: 'owner', machineId: 'machine',
+        installationId: 'installation', role: 'manage' as const, encryptionMode: 'plain' as const } };
+    const reviewed = MachineAgentIsolationPreviewResultV1Schema.parse(await manager.invokeLocal('machines.agentIsolation.preview',
+      { machineId: 'machine', ...policy }, { rpcContext }));
+    if (reviewed.kind !== 'ready') throw new Error('Shared setup review unavailable');
+    expect(reviewed.status).toMatchObject({ kind: 'unavailable', code: 'agent_user_missing' });
+    expect(await manager.invokeLocal('machines.agentIsolation.set', { machineId: 'machine', ...policy,
+      expectedMetadataVersion: reviewed.metadataVersion, expectedPolicy: reviewed.policy, expectedPlanDigest: reviewed.plan.planDigest },
+    { rpcContext })).toMatchObject({ status: { kind: 'unavailable', code: 'agent_user_missing' } });
+  } finally { await rm(directory, { recursive: true, force: true }); }
 });

@@ -2,7 +2,7 @@ import { MACHINE_AGENT_ISOLATION_ACTION_IDS, MACHINE_AGENT_ISOLATION_ACTION_INPU
   MachineAgentIsolationPreviewResultV1Schema, MachineAgentIsolationSetResultV1Schema,
   MachineAgentIsolationOwnStatusV1Schema, type MachineAgentIsolationOwnStatusV1,
   agentIsolationMetadataFieldV1, readMachineAgentIsolationPolicyV1, resolveMachineAgentExecutionPlacementV1,
-  type MachineAgentIsolationStatusV1, type MachineAgentIsolationPolicyV1, type MachineElevatedNotAppliedResultV1,
+  type MachineAgentIsolationStatusV1, type MachineAgentIsolationPolicyV1, type MachineElevatedResultV1,
   type ActionExecutorDeps } from '@happier-dev/protocol';
 import { mutateMachineMetadataFieldV1, type MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import { projectMachineAgentIsolationUnavailableStatusV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
@@ -20,6 +20,8 @@ import { runElevatedEffect } from '@/machines/adminAccess/runElevatedEffect';
 import { observeAgentIsolationNativeReadiness } from '@/daemon/agentIsolation/agentIsolationReadiness';
 import { selectHostRequesterExecutionIdentity, isHostRequesterUnrestrictedOwner, resolveHostRequesterAgentExecutionIdentity,
   type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+
+type MachineElevatedNotAppliedResultV1 = Extract<MachineElevatedResultV1, { outcome: 'not_applied' }>;
 
 export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRegistrar, options: Readonly<{
   target: () => Readonly<{ serverId: string; machineId: string; installationId: string; custodianAccountId: string }> | null;
@@ -58,7 +60,7 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
         throw new RpcError('Current Machine admission is required', RPC_ERROR_CODES.FORBIDDEN);
       }
       const snapshot = options.read();
-      if (actionId === 'machines.agentIsolation.status') {
+      const readOwnStatus = async (snapshot: AgentIsolationSnapshot): Promise<MachineAgentIsolationOwnStatusV1> => {
         const bootstrap = context?.requesterSessionBootstrap;
         const personIdentity = selectHostRequesterExecutionIdentity({ rpcContext: context,
           hostHomeServerIdentityId: homeServerIdentityId, hostCustodianAccountId: target!.custodianAccountId,
@@ -85,7 +87,13 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
         // no second Home check or setup/materialization is part of status.
         context?.signal.throwIfAborted();
         return MachineAgentIsolationOwnStatusV1Schema.parse(result);
-      }
+      };
+      if (actionId === 'machines.agentIsolation.status') return await readOwnStatus(snapshot);
+      // Shared native setup cannot qualify a person's retained member binding.
+      // Repair and own-status consume the same launch-identity observation.
+      const qualifyMemberStatus = async (status: MachineAgentIsolationStatusV1, policy: MachineAgentIsolationPolicyV1) =>
+        status.kind === 'effective' && resolveMachineAgentExecutionPlacementV1({ policy, platform: process.platform }) === 'member'
+          ? (await readOwnStatus({ ...policy, status })).status : status;
       const desired = actionId === 'machines.agentIsolation.preview'
         ? MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS['machines.agentIsolation.preview'].parse(raw)
         : MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS['machines.agentIsolation.set'].parse(raw);
@@ -133,10 +141,11 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
         if (!await verify()) throw new RpcError('Current Machine admission is required', RPC_ERROR_CODES.FORBIDDEN);
         if (status) {
           await effects.publishStatus(status);
-          return { ...preview, status };
+          return { ...preview, status: await qualifyMemberStatus(status, desiredPolicy) };
         }
         if (preview.kind === 'unavailable') await effects.publishStatus(projectMachineAgentIsolationUnavailableStatusV1(preview));
-        return preview;
+        return preview.kind === 'ready'
+          ? { ...preview, status: await qualifyMemberStatus(preview.status, desiredPolicy) } : preview;
       }
       const mutation = MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS['machines.agentIsolation.set'].parse(raw);
       const failed = (code: 'cancelled' | 'denied' | 'locked' | 'invalid' | 'unavailable' | 'outcome_unknown',
@@ -161,7 +170,7 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
         || context?.callerInputAuthorization?.binding.managedContinuation);
       if (creationDefault && previous.source === 'stored') {
         return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'unchanged',
-          metadataVersion: before.metadataVersion, status: options.read().status });
+          metadataVersion: before.metadataVersion, status: await qualifyMemberStatus(options.read().status, previous.policy) });
       }
       if (!agentIsolationMetadataFieldV1.equal(previous.policy, mutation.expectedPolicy)
         && !agentIsolationMetadataFieldV1.equal(previous.policy, desiredPolicy)) return MachineAgentIsolationSetResultV1Schema.parse({
@@ -195,7 +204,7 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
         },
       }, agentIsolationMetadataFieldV1, { signal: context?.signal });
       if (preservedCreationVersion !== undefined) return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'unchanged',
-        metadataVersion: preservedCreationVersion, status: options.read().status });
+        metadataVersion: preservedCreationVersion, status: await qualifyMemberStatus(options.read().status, options.read()) });
       if (changed) return await requireReview(changed);
       if (result.status === 'conflict') return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'conflict', policy: result.policy, metadataVersion: result.metadataVersion });
       if (result.status !== 'applied' && result.status !== 'satisfied' && result.status !== 'unchanged') {
@@ -219,7 +228,10 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
           ...(fresh && prepared ? { comparison: compareMachineSetupEffectPlansV1(prepared.setupPlan, fresh.setupPlan),
             pendingFields: fresh.setupPlan.nativeFacts.flatMap((fact, index) => fact.status === 'satisfied' ? []
               : [`nativeFacts[${index}].status`]) } : {}) });
-        if (!fresh) return failed('unavailable', operationId);
+        if (!fresh) {
+          await publish({ kind: 'unavailable', code: 'provisioning_unavailable' });
+          return failed('unavailable', operationId);
+        }
         return await requireReview(fresh);
       };
       // Preserve the reviewed pre-CAS basis. Its own desired write is not drift.
@@ -250,7 +262,7 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
         && (mutation.enabled ? currentStatus.kind === 'effective' : currentStatus.kind === 'disabled');
       if (result.status !== 'applied' && !prepared.preview.plan.requiresAdmin && (waitingForReplacement || settled)) {
         return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'unchanged', metadataVersion: result.metadataVersion,
-          status: currentStatus, ...retirement });
+          status: await qualifyMemberStatus(currentStatus, desiredPolicy), ...retirement });
       }
       const applying = { kind: 'applying', phase: mutation.enabled ? 'account' : 'runtime_replacement' } as const;
       await publish(applying);
@@ -304,7 +316,7 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
         } else if (observed) status = projectMachineAgentIsolationUnavailableStatusV1(observed);
       }
       await publish(status);
-      return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'accepted', operationId, metadataVersion: result.metadataVersion, status, ...retirement });
+      return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'accepted', operationId, metadataVersion: result.metadataVersion, status: await qualifyMemberStatus(status, desiredPolicy), ...retirement });
     };
     rpc.registerHandler(actionId, async (raw, ingress) => {
       if (actionId !== 'machines.agentIsolation.set' || !options.runActionOperation || !ingress) return await run(raw, ingress);

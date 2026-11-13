@@ -791,6 +791,14 @@ spawn transport accepts that existing-row attach without requiring another
 fresh-create outcome; ordinary fresh creation still requires its authoritative
 create-or-rejoin settlement. This is unreleased 0.3 source behavior.
 
+Admission refusals that need no persisted Session, such as an unavailable target,
+permission denial or an unknown Agent, return before either creator commits.
+Credential materialization that consumes a Session binding follows commit. A known
+failure before its runner starts retains that row and records the typed terminal
+cause through the shared turn lifecycle before archiving this launch's new row.
+Host-seeded managed-target acquisition failures follow that post-binding rule.
+An uncertain launch outcome retains its existing pending/recovery semantics.
+
 Fresh daemon admission resolves an omitted connected-account choice through
 `resolveSessionSpawnConnectedServicesDefaultsPayload`, the same fresh Account
 purpose-catalog owner used by CLI and Workflow creators before they commit their
@@ -2381,6 +2389,11 @@ elevated-effect owner. A policy conflict or changed plan requires its returned
 current review; an unavailable or uncertain outcome is not permission to replay
 host effects. Desired enablement and accepted work do not establish effective
 isolation while replacement or native observation remains incomplete.
+For member provisioning, preview and Repair consume the requester's retained
+binding qualification used by launch. A missing native user returns the typed
+`agent_user_missing` status, even when shared-user setup is already satisfied;
+an unchanged policy does not establish member readiness. The UI presents that
+unavailable status as the repair result.
 
 An Off review inventories the shared bootstrap and member RunAs rules derived
 from the existing private bindings, even when desired policy is already disabled.
@@ -5658,10 +5671,27 @@ bearer and tool authority remain unchanged. No custodian ancestor permissions or
 daemon group membership are widened. Every host-owned local MCP listener admits
 only its per-endpoint bearer (`mcp/runtime/localMcpBearer.ts`, timing-safe): the
 Session MCP Unix socket; where no socket transport exists (Windows), the
-127.0.0.1 Session MCP endpoint, whose bearer reaches the launched bridge through
+127.0.0.1 Session MCP endpoint, whose bearer reaches the launched relay through
 the same private context file; and plugin-hosted loopback MCP servers, whose
 bearer rides the private remote-bridge config written by the MCP materializer.
-No bearer is placed on argv, in MCP config env or in logs. Standard MCP source metadata is
+No bearer is placed on argv, in MCP config env or in logs.
+
+Agents launch the Session MCP as `happier-session-holder mcp-relay` (the shipped
+holder binary; no Node bridge process per Session). The relay reads only the
+context file named by `HAPPIER_SESSION_MCP_CONTEXT_FILE`, upgrades one HTTP/1.1
+connection on the Session endpoint (`Upgrade: happier-mcp-relay`, the bearer, the
+Agent's tool-name budget from `--tool-name-max-length`), then pipes MCP stdio
+framing both ways. The host serves that connection in-process as one MCP session
+(`mcp/runtime/sessionMcpRelayEndpoint.ts`): each request binds a fresh request
+server for the current admitted catalog, as Streamable HTTP requests do, and
+tool-name aliases resolve in the host (`mcp/bridges/forwardingMcpServer.ts`, also
+used by the public `happier-mcp --url` bridge). On Unix the endpoint also admits a
+relay only when its kernel-proven peer (SO_PEERCRED / LOCAL_PEERPID through the
+process-custody helper) runs as the Session's Agent uid and is in the process group
+of one of that Session's held Agents or descends from one of its holders
+(`mcp/runtime/sessionMcpAgentPeer.ts`), so another Session's Agent holding a copied
+bearer is refused. The Windows loopback endpoint stays bearer-only. Relay memory
+(Linux x64, static-pie): about 0.17 MiB USS / 0.33 MiB PSS per Session. Standard MCP source metadata is
 handled by the existing tool-handler decoration owner and delegates selected
 custom profiles to `resolveRunnerMcpServers` and its permission/currentness
 adapters. Native advertisements remain separate from explicit custom discovery.
@@ -7054,7 +7084,7 @@ Every runner evaluates the static import graph of
 at start, and each evaluated module stays resident for the Session's lifetime.
 Rare paths load at first use instead: the shared-Provider HTTP application
 (Fastify) when a shared Provider run starts, the Session MCP client side
-(`mcp/runtime/sessionMcpLocalClient.ts`, used by bridges and `happier tools`;
+(`mcp/runtime/sessionMcpLocalClient.ts`, used by `happier tools`;
 the runner hosts only the listener in `sessionMcpLocalTransport.ts`), the SDK
 client for API-token automation custody, and Triage sources for a health-check
 auto-start investigation. Module-level work must not read derived Action facts
@@ -7166,9 +7196,11 @@ respawned into a current host exactly as after a crash, where it adopts its held
 Agent; the holder replays only output the old host never delivered. There is no
 separate detach mode.
 
-Not yet built: per-Session memory ceilings and stderr inside the host, and one Session
-MCP endpoint per host without a per-Session bridge process (pending an owner ruling on
-its transport).
+Not yet built: per-Session memory ceilings and stderr inside the host. Session MCP
+needs no per-Session bridge process: Agents launch the holder's `mcp-relay` mode and
+the host serves the MCP session in-process (see the Session MCP paragraph). A host
+restart ends the relays' connections; the adopted Agent's MCP server then reports
+closed (the new host's endpoint has a new context).
 
 ### One tree terminator and owner-end recovery
 

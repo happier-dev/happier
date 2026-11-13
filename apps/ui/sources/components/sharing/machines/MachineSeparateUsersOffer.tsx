@@ -157,7 +157,13 @@ export function useSeparateUsersChange(
       }
       const value = settled.data;
       // Each typed result keeps its own recovery: a changed plan is reviewed again, never re-applied blind.
-      if (value.kind === 'accepted')
+      if ((value.kind === 'accepted' || value.kind === 'unchanged') && value.status.kind === 'unavailable')
+        setPhase({
+          kind: 'settled',
+          tone: 'unavailable',
+          message: t(`machines.sharing.fallback.prerequisites.${value.status.code}`),
+        });
+      else if (value.kind === 'accepted')
         setPhase({
           kind: 'settled',
           tone: 'loading',

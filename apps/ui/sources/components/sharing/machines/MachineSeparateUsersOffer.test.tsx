@@ -53,6 +53,31 @@ describe('separate users reviewed setup', () => {
             expect(screen.findAllByTestId('machine-security-separate-users-confirm')).toHaveLength(0);
         } finally { await screen.unmount(); }
     });
+    it.each(['unchanged', 'accepted'] as const)('shows the identity owners typed refusal after an otherwise $0 Repair', async kind => {
+        const preview = { kind: 'ready', policy: { enabled: true, memberProvisioning: 'linuxUsersV1' },
+            metadataVersion: 1, status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' },
+            plan: { roots: [], ancestorAcls: [], sessionsToReplace: 0, requiresAdmin: false, planDigest: 'reviewed' } } as const satisfies MachineAgentIsolationPreviewResultV1;
+        // The daemon RPC is the boundary: the UI consumes its typed native cause.
+        const execute = createFrontDoorActionExecute(createActionExecutor({ presentUserActionConfirmation: async () => true,
+            machineAgentIsolationAction: async ({ actionId }) => actionId === 'machines.agentIsolation.preview' ? preview
+                : { kind, metadataVersion: 1, ...(kind === 'accepted' ? { operationId: 'repair' } : {}),
+                    status: { kind: 'unavailable', code: 'agent_user_missing' } } }));
+        let change!: ReturnType<typeof useSeparateUsersChange>;
+        function Surface() {
+            const guestExecution = useMachineGuestExecution({ machineId: 'machine', scope: { serverId: 'home', accountId: 'owner' },
+                canManage: true, execute });
+            change = useSeparateUsersChange({ machine: 'Devbox', guestExecution, target: 'member' });
+            return <SeparateUsersChangeStep change={change} machine="Devbox" testID="machine-security-separate-users" />;
+        }
+        const screen = await renderScreen(<Surface />);
+        try {
+            await act(async () => { await change.review(); });
+            await screen.pressByTestIdAsync('machine-security-separate-users-confirm');
+            expect(change.phase).toMatchObject({ kind: 'settled', tone: 'unavailable' });
+            expect(screen.getTextContent()).toContain(t('machines.sharing.fallback.prerequisites.agent_user_missing'));
+            expect(screen.getTextContent()).not.toContain(t('machines.sharing.fallback.alreadyOn'));
+        } finally { await screen.unmount(); }
+    });
     it('rechecks an unconfirmed Apply without replaying it', async () => {
         const preview: MachineAgentIsolationPreviewResultV1 = { kind: 'ready', policy: { enabled: false },
             metadataVersion: 1, status: { kind: 'disabled' }, plan: { roots: [], ancestorAcls: [],
