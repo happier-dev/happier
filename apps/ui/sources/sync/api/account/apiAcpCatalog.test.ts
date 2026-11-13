@@ -321,6 +321,7 @@ describe('ACP captured Account row snapshots', () => {
         const mutations: string[] = [];
         setRuntimeFetch(async (url, init) => {
             const path = new URL(String(url)).pathname;
+            if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
             // Other sync domains use POST for reads; count the actual ACP/source activation boundaries.
             if (init?.method === 'POST' && (path === ACP_CATALOG_ROWS_ROUTE_V1 || path === '/v2/account/settings'
                 || path === SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.promote']
@@ -414,12 +415,15 @@ describe('ACP captured Account row snapshots', () => {
             if (path === `${PROJECT_ACCOUNT_ROWS_ROUTE_V1}/list`) return Response.json({ status: 'listed', rows: [], coverage: 'complete' });
             if (path === '/v1/artifacts') return Response.json([]);
             if (path === '/v2/account/settings/history') return Response.json({ snapshots: [] });
-            if (path === '/v1/account/saved-secrets/resources/materials') return Response.json({ resources: promotions.map(input => ({
-                resourceId: input.resourceId, encryptionMode: 'plain', recipientEnvelope: null, storedContent: input.storedContent,
-                entry: { ref: formatSharedSavedSecretRefV1(input.resourceId), source: 'shared_resource', relationship: 'owner',
-                    name: input.displayName, kind: input.kind, revision: 1, materialStatus: 'ready',
-                    capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
-            })) });
+            if (path === '/v1/account/saved-secrets/resources' || path === '/v1/account/saved-secrets/resources/materials') {
+                const resources = promotions.map(input => ({
+                    resourceId: input.resourceId, encryptionMode: 'plain', recipientEnvelope: null, storedContent: input.storedContent,
+                    entry: { ref: formatSharedSavedSecretRefV1(input.resourceId), source: 'shared_resource', relationship: 'owner',
+                        name: input.displayName, kind: input.kind, revision: 1, materialStatus: 'ready',
+                        capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+                }));
+                return Response.json({ resources: path.endsWith('/materials') ? resources : resources.map(resource => resource.entry) });
+            }
             if (path === SHARED_SAVED_SECRET_ACTION_PATHS_V1['secrets.shared.promote']) {
                 const input = SharedSavedSecretPromoteInputV1Schema.parse(JSON.parse(String(init?.body)));
                 promotions.push(input);
@@ -753,11 +757,9 @@ describe('ACP captured Account row snapshots', () => {
             const path = new URL(String(url)).pathname;
             if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
-            if (path === '/v1/account/saved-secrets/resources/materials') return Response.json({ resources: [{
-                resourceId: 'catalog-token', encryptionMode: 'plain', recipientEnvelope: null,
-                storedContent: { t: 'plain', v: { v: 1, name: 'Token', kind: 'token', value: 'private' } },
-                entry: { ref, source: 'shared_resource', relationship: 'owner', name: 'Token', kind: 'token', revision: 5,
-                    materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+            if (path === '/v1/account/saved-secrets/resources') return Response.json({ resources: [{
+                ref, source: 'shared_resource', relationship: 'owner', name: 'Token', kind: 'token', revision: 5,
+                materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true },
             }] });
             if (path === ACP_CATALOG_ROWS_ROUTE_V1) {
                 if (init?.method === 'POST') {
@@ -831,7 +833,9 @@ describe('ACP captured Account row snapshots', () => {
         try {
             const settings = getStorage().getState().settings;
             const reader = createVoiceAgentSettingsCatalogReader(account);
-            const entries = (await reader(settings))?.entries;
+            const admitted = await reader(settings);
+            expect(admitted?.isCurrent(settings)).toBe(true);
+            const entries = admitted?.entries;
             expect(entries).toEqual(expect.arrayContaining([definition, secondDefinition].map(entry => expect.objectContaining({
                 backendTargetKey: `agent:happier.agent.custom-acp/custom-acp:definition:${entry.id}`, title: entry.title,
             }))));
@@ -841,7 +845,10 @@ describe('ACP captured Account row snapshots', () => {
                     'agent:happier.agent.custom-acp/custom-acp:definition:second-review',
                 ]);
             row = { status: 'present', revision: 4, content: { t: 'plain', v: { v: 1, definitions: [definition, { id: 'broken' }] } } };
-            expect(await reader(settings)).toBeNull();
+            // Since 572f6780f34, incomplete ACP facts retain choices but refuse configured mutation currentness.
+            const incomplete = await reader(settings);
+            expect(incomplete).not.toBeNull();
+            expect(incomplete?.isCurrent(settings)).toBe(false);
         } finally { account.dispose(); }
     });
     it('retires a captured Voice Settings catalog when the Account disables its selected Agent', async () => {
@@ -930,6 +937,7 @@ describe('ACP captured Account row snapshots', () => {
             record: { v: 1, definitions: [definition] }, randomBytes: length => new Uint8Array(length).fill(11) }) };
         setRuntimeFetch(async url => {
             const path = new URL(String(url)).pathname;
+            if (path === '/health' || path === '/v1/auth/ping') return Response.json({});
             if (path === '/v1/account/encryption/currentness') return Response.json({ ...createPlainAccountEncryptionCurrentnessFixture(),
                 mode: 'e2ee', contentKeyFingerprint: fingerprint, recipientEnvelopeReadiness: { status: 'available' } });
             if (path === '/v1/account/encryption') return Response.json({ mode: 'e2ee', updatedAt: 0 });
