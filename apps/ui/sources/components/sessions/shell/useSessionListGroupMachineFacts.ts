@@ -40,7 +40,10 @@ export function useSessionListGroupMachineFacts(input: Readonly<{
     }, [input.machinesById, machineIds]);
     const machines = useMachineDisplayById(selectMachines);
     const machineNameKey = machineNameKeyFor(machines);
-    return React.useMemo(() => syncPerformanceTelemetry.measure('ui.sessionsList.render.groupMachineFacts', {
+    // The last published facts. A list update that leaves every header's name unchanged republishes
+    // nothing, so the rows and headers reading these facts do not redraw for another Session's change.
+    const publishedRef = React.useRef<SessionListProjectHeaderViewModelState | null>(null);
+    const published = React.useMemo(() => syncPerformanceTelemetry.measure('ui.sessionsList.render.groupMachineFacts', {
         items: input.listItems.length,
     }, () => {
         const names = resolveMachineDisplayNameParts(machines);
@@ -69,8 +72,35 @@ export function useSessionListGroupMachineFacts(input: Readonly<{
         if (projectHeaderViewModelByGroupKey === input.headerState.projectHeaderViewModelByGroupKey) {
             return input.headerState;
         }
+        const previous = publishedRef.current;
+        if (previous && isSameNamedHeaderState(previous, input.headerState, projectHeaderViewModelByGroupKey)) return previous;
         return { ...input.headerState, projectHeaderViewModelByGroupKey };
     }), [input.listItems, input.headerState, headerMachineByGroup, machineNameKey]);
+    publishedRef.current = published;
+    return published;
+}
+
+/** Whether `previous` already publishes these headers: the same base facts, and each header field-equal. */
+function isSameNamedHeaderState(
+    previous: SessionListProjectHeaderViewModelState,
+    base: SessionListProjectHeaderViewModelState,
+    nextHeaders: SessionListProjectHeaderViewModelState['projectHeaderViewModelByGroupKey'],
+): boolean {
+    if (previous.scopeHintByLegacyWorkspaceKey !== base.scopeHintByLegacyWorkspaceKey
+        || previous.projectDisplayByKey !== base.projectDisplayByKey
+        || previous.groupProjectByGroupKey !== base.groupProjectByGroupKey
+        || previous.projectHeaderViewModelByGroupKey.size !== nextHeaders.size) return false;
+    for (const [groupKey, header] of nextHeaders) {
+        const prior = previous.projectHeaderViewModelByGroupKey.get(groupKey);
+        if (prior === header) continue;
+        if (!prior || Object.keys(prior).length !== Object.keys(header).length) return false;
+        for (const [field, value] of Object.entries(header) as Array<[keyof typeof header, unknown]>) {
+            if (field === 'machineDetail') {
+                if (prior.machineDetail?.name !== header.machineDetail?.name || prior.machineDetail?.end !== header.machineDetail?.end) return false;
+            } else if (prior[field] !== value) return false;
+        }
+    }
+    return true;
 }
 
 /** The Machine facts a header name reads; presence and receipts never enter it. */

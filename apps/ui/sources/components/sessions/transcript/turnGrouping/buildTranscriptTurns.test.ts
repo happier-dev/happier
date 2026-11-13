@@ -4,6 +4,7 @@ import type { AgentTextMessage, Message, ModeSwitchMessage, ToolCallMessage, Use
 import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 
 import { buildTranscriptTurns, buildTranscriptTurnsCached } from './buildTranscriptTurns';
+import { isToolCallMessageGroupableInTranscript } from '../toolCalls/isToolCallMessageGroupableInTranscript';
 
 function userMessage(id: string, createdAt: number): UserTextMessage {
     return {
@@ -1162,5 +1163,28 @@ describe('buildTranscriptTurnsCached', () => {
 
         expect(cache1.turns[0]!.content.flatMap((content) => content.kind === 'message' ? [content.messageId] : [])).toEqual(['compact-start']);
         expect(cache2.turns[0]!.content.flatMap((content) => content.kind === 'message' ? [content.messageId] : [])).toEqual(['compact-completed']);
+    });
+
+    it('decides each tool call\'s grouping once per build (P03 Q17: every older page re-reads every tool envelope)', () => {
+        let envelopeReads = 0;
+        const envelope = { v: 2, protocol: 'acp', provider: 'codex', rawToolName: 'Read', canonicalToolName: 'Read' };
+        const countedInput = () => ({ path: '/tmp/x', get _happier() { envelopeReads += 1; return envelope; } });
+        const tools = Array.from({ length: 6 }, (_, index) => toolMessage({
+            id: `t${index}`, createdAt: 10 + index, state: 'completed', name: 'Read', input: countedInput(),
+        }));
+        isToolCallMessageGroupableInTranscript(tools[0]!);
+        const readsPerDecision = envelopeReads;
+        expect(readsPerDecision).toBeGreaterThan(0);
+        envelopeReads = 0;
+        const chronological: Message[] = [userMessage('u1', 1), ...tools];
+        const built = buildTranscriptTurnsCached({
+            cache: null,
+            messageIdsOldestFirst: chronological.map((m) => m.id),
+            messagesById: Object.fromEntries(chronological.map((m) => [m.id, m])),
+            groupToolCalls: true,
+            toolCallsGroupStrategy: 'consecutive_tools',
+        });
+        expect(built.turns[0]!.content).toEqual([{ kind: 'tool_calls', id: expect.any(String), toolMessageIds: tools.map((tool) => tool.id) }]);
+        expect(envelopeReads).toBe(tools.length * readsPerDecision);
     });
 });

@@ -46,16 +46,13 @@ function isToolMessage(m: Message): m is ToolCallMessage {
     return m.kind === 'tool-call';
 }
 
-function isGroupableToolMessage(m: Message): m is ToolCallMessage {
-    if (!isToolMessage(m)) return false;
-    return isToolCallMessageGroupableInTranscript(m);
-}
+const GROUPABLE_TOOL_KEY = 'tool:groupable';
 
 function getMessageGroupingKey(message: Message | undefined): string {
     if (!message) return 'missing';
     if (isUserMessage(message)) return 'user';
     if (isToolMessage(message)) {
-        return isToolCallMessageGroupableInTranscript(message) ? 'tool:groupable' : 'tool:standalone';
+        return isToolCallMessageGroupableInTranscript(message) ? GROUPABLE_TOOL_KEY : 'tool:standalone';
     }
     return `message:${message.kind}`;
 }
@@ -83,7 +80,8 @@ function appendNonUserToTurn(params: Readonly<{
     turn: TranscriptTurn;
     lastTurnState: TranscriptTurnsLastTurnState;
     messageId: string;
-    message: Message;
+    /** From the message's grouping key, decided once per build. */
+    groupable: boolean;
     groupToolCalls: boolean;
     toolCallsGroupStrategy: TranscriptTurnToolCallsGroupStrategy;
 }>): { turn: TranscriptTurn; lastTurnState: TranscriptTurnsLastTurnState } {
@@ -96,7 +94,7 @@ function appendNonUserToTurn(params: Readonly<{
     }
 
     if (params.toolCallsGroupStrategy === 'all_tools_in_turn') {
-        if (isGroupableToolMessage(params.message)) {
+        if (params.groupable) {
             const state =
                 params.lastTurnState.kind === 'all_tools_in_turn'
                     ? params.lastTurnState
@@ -140,7 +138,7 @@ function appendNonUserToTurn(params: Readonly<{
             ? params.lastTurnState
             : ({ kind: 'consecutive_tools', openActivityIndex: null } as const);
 
-    if (isGroupableToolMessage(params.message)) {
+    if (params.groupable) {
         if (state.openActivityIndex != null) {
             const prev = content[state.openActivityIndex];
             if (prev?.kind === 'tool_calls') {
@@ -389,7 +387,7 @@ export function buildTranscriptTurnsCached(opts: {
                 turn: last,
                 lastTurnState,
                 messageId: message.id,
-                message,
+                groupable: nextMessageGroupingKeysOldestFirst[i] === GROUPABLE_TOOL_KEY,
                 groupToolCalls: opts.groupToolCalls,
                 toolCallsGroupStrategy: opts.toolCallsGroupStrategy,
             });
@@ -411,7 +409,7 @@ export function buildTranscriptTurnsCached(opts: {
     const turns: TranscriptTurn[] = [];
     let lastTurnState = createEmptyLastTurnState(opts);
 
-    for (const id of visibleMessageIdsOldestFirst) {
+    for (const [index, id] of visibleMessageIdsOldestFirst.entries()) {
         const message = opts.messagesById[id];
         if (!message) continue;
 
@@ -431,7 +429,7 @@ export function buildTranscriptTurnsCached(opts: {
             turn: last,
             lastTurnState,
             messageId: message.id,
-            message,
+            groupable: nextMessageGroupingKeysOldestFirst[index] === GROUPABLE_TOOL_KEY,
             groupToolCalls: opts.groupToolCalls,
             toolCallsGroupStrategy: opts.toolCallsGroupStrategy,
         });

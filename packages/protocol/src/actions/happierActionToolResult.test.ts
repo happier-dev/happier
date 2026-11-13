@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { readHappierActionToolFailure, readHappierActionToolPayload } from './happierActionToolResult.js';
+import { readHappierActionToolFailure, readHappierActionToolName, readHappierActionToolPayload } from './happierActionToolResult.js';
 
 /** The MCP text envelope an Agent's transcript stores for a first-party Action call. */
 function mcpTextResult(payload: unknown) {
@@ -73,5 +73,27 @@ describe('readHappierActionToolFailure', () => {
   it('only reads first-party Happier tools, never another MCP server that returns the same keys', () => {
     const result = mcpTextResult({ errorCode: 'target_unavailable', error: 'target_unavailable' });
     expect(readHappierActionToolFailure('mcp__linear__create_issue', {}, result)).toBeNull();
+  });
+});
+
+describe('readHappierActionToolName', () => {
+  it('decodes no tool envelope for a call that carries no first-party shell bridge', () => {
+    // The transcript asks this of every tool call on every grouping pass (P03 Q17); only a shell bridge call
+    // can be renamed, so an ordinary call must not pay for decoding its envelope.
+    let envelopeReads = 0;
+    const meta = { v: 2, protocol: 'acp', provider: 'codex', rawToolName: 'Bash', canonicalToolName: 'Bash' };
+    const callInput = { command: 'ls', get _happier() { envelopeReads += 1; return meta; } };
+    expect(readHappierActionToolName('Bash', callInput)).toBe('Bash');
+    expect(envelopeReads).toBe(0);
+  });
+
+  it('still renames a first-party shell bridge call from its decoded envelope', () => {
+    const bridgeInput = {
+      command: 'happier action execute',
+      _happier: { v: 2, protocol: 'acp', provider: 'codex', rawToolName: 'Bash', canonicalToolName: 'action_execute' },
+      happierToolsShellBridge: { kind: 'call', source: 'happier', rawCommand: 'happier action execute', tool: 'action_execute',
+        json: true, sessionId: null, directory: null, argsJson: null, args: {} },
+    };
+    expect(readHappierActionToolName('Bash', bridgeInput)).toBe('happier__action_execute');
   });
 });

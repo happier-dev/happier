@@ -13,10 +13,13 @@ export function isRecord(value: unknown): value is Readonly<Record<string, unkno
 function readFirstPartyShellBridgeCall(value: unknown): Readonly<{ tool: string; json: boolean; rawToolName: string }> | null {
     const parsed = maybeParseJson(value);
     if (!isRecord(parsed)) return null;
-    const meta = resolveToolEnvelopeMeta(parsed);
+    // Only a shell bridge call is first-party: check its marker before decoding the envelope, which
+    // every tool call on every transcript grouping pass would otherwise pay for.
     const bridge = parsed.happierToolsShellBridge;
+    if (!isRecord(bridge) || bridge.kind !== 'call') return null;
+    const meta = resolveToolEnvelopeMeta(parsed);
     if (!meta || !isShellToolNameAlias(meta.rawToolName)
-        || !isRecord(bridge) || bridge.kind !== 'call' || bridge.source !== 'happier'
+        || bridge.source !== 'happier'
         || typeof bridge.rawCommand !== 'string' || !bridge.rawCommand.trim()
         || typeof bridge.tool !== 'string' || bridge.tool !== meta.canonicalToolName
         || typeof bridge.json !== 'boolean'
@@ -78,8 +81,8 @@ export function readHappierActionToolResultCandidates(result: unknown, input?: u
     const normalized = maybeParseJson(result);
     const parsed = readHappierActionToolPayload(normalized);
     const candidates: unknown[] = [parsed];
-    if (isRecord(normalized) && resolveToolEnvelopeMeta(normalized) && isRecord(parsed)
-        && Object.keys(parsed).length === 1 && Object.hasOwn(parsed, 'value')) {
+    if (isRecord(parsed) && Object.keys(parsed).length === 1 && Object.hasOwn(parsed, 'value')
+        && isRecord(normalized) && resolveToolEnvelopeMeta(normalized)) {
         candidates.push(maybeParseJson(parsed.value));
     }
     if (isRecord(parsed) && parsed.structuredContent !== undefined) candidates.push(parsed.structuredContent);
