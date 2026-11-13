@@ -10,6 +10,8 @@ import { readPendingResetStartsForSource } from '@/api/session/pendingQueueV2Tra
 import axios from '@/api/client/credentialAxios';
 import type { ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
 import type { ProviderAccountUsageWaitingWorkV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
+import { openProviderAccountUsageDaySummaryV1 } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
+import { readQualifiedProviderAccountUsageDaySummariesV4 } from '@/api/client/qualifiedConnectedAccountApi';
 
 export type ProviderAccountUsageReadOptions = Readonly<{
   credentials: StoredCredentials;
@@ -38,13 +40,18 @@ export async function readProviderAccountUsageQuotaV4(input: ConnectedServiceQuo
   await options.assertCurrent?.();
   const current = record && resolution ? openProviderAccountUsageRecordV4({ recordId: resolution.recordId, enteredMonthlyPrice, accountMode: options.accountMode, material, record }) : null;
   if (current && resolution && current.recordKey.accountSubjectId !== resolution.providerAccountId) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_identity_mismatch');
-  const page = request.history && resolution ? await readQualifiedProviderAccountUsageHistoryV4({ ...transport, query: { recordId: resolution.recordId, history: request.history } }) : null;
+  const [page, summaryRead] = request.history && resolution ? await Promise.all([
+    readQualifiedProviderAccountUsageHistoryV4({ ...transport, query: { recordId: resolution.recordId, history: request.history } }),
+    readQualifiedProviderAccountUsageDaySummariesV4({ ...transport, query: { recordId: resolution.recordId, range: request.history.range } }),
+  ]) : [null, null] as const;
   await options.assertCurrent?.();
   if (request.history && resolution && !page) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_unavailable');
   const { nowMs, waitingWork } = options.includePendingWork === false
     ? { nowMs: options.nowMs ?? Date.now(), waitingWork: undefined }
     : await readWaitingWork(request, current, options);
-  return projectProviderAccountUsageQuotaReadV1({ input: request, current, ...(request.history ? { history: page && resolution ? openProviderAccountUsageHistoryPageV4({ recordId: resolution.recordId, accountMode: options.accountMode, material, page }) : { entries: [], nextCursor: null } } : {}), nowMs, targets: options.targets, waitingWork });
+  const daySummaries = request.history && resolution ? (summaryRead?.summaries ?? []).map(summary => openProviderAccountUsageDaySummaryV1({ recordId: resolution.recordId,
+    dayStartAtMs: summary.dayStartAtMs, accountMode: options.accountMode, material, content: summary.payload.content })) : undefined;
+  return projectProviderAccountUsageQuotaReadV1({ input: request, current, daySummaries, ...(request.history ? { history: page && resolution ? openProviderAccountUsageHistoryPageV4({ recordId: resolution.recordId, accountMode: options.accountMode, material, page }) : { entries: [], nextCursor: null } } : {}), nowMs, targets: options.targets, waitingWork });
 }
 
 async function readWaitingWork(input: ConnectedServiceQuotaGetInputV1, current: ProviderAccountUsageSnapshotV1 | null, options: ProviderAccountUsageReadOptions): Promise<{ nowMs: number; waitingWork: ProviderAccountUsageWaitingWorkV1 }> {

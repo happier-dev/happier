@@ -21,8 +21,10 @@ import { captureUiUsageQueryAccountContext, getUsageQueryResourceStore } from '@
 import { RetryableServerResponseError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import {
   ConnectedServiceQuotaGetResultV1Schema,
+  projectProviderAccountUsageQuotaReadV1,
   type ConnectedServiceQuotaGetResultV1,
 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
+import { deriveProviderAccountUsageDayQuotaHistoryV1 } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
 import { buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { BurnUpChart, ChartDatum } from '@happier-dev/plugin-ui/presentation';
 import { WidgetPresentationProvider } from '@happier-dev/plugin-ui';
@@ -38,6 +40,8 @@ import type { UsageWidgetBodyModel } from '../../useUsageWidgetResource';
 import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
 import { getPoolStrategyPresentation } from '@/sync/domains/connectedServices/connectedServicePoolPolicy';
 import { formatPlanMoment } from './UsagePlanParts';
+import { formatUsageCalendarDate } from '@/sync/domains/usage/usageCalendarPresentation';
+import { getUsagePeriodDefinition } from '@/sync/api/account/usagePeriods';
 import { recordMachineRequestSucceeded } from '@/sync/domains/machines/reachability/machineReachability';
 
 // Machine RPC, native confirmation and the served Home's HTTP transport are external boundaries.
@@ -277,6 +281,64 @@ const wrap = (node: React.ReactElement, credentials: React.ComponentProps<typeof
     <ModalProvider><OverlayPortalProvider>{node}<OverlayPortalHost /></OverlayPortalProvider></ModalProvider>
   </InjectedAuthProvider>
 );
+
+// The canonical period owner maps 30D/90D to day and 1Y/All to month. Exercise each distinct UI path once.
+it.each([...new Set((['30days', '90days', 'year', 'all'] as const).map(period => getUsagePeriodDefinition(period).granularity))])(
+  'renders identical daily quota history for %s queries from detail and retained summaries, including a single-reading window and an intraday reset', async granularity => {
+  const nowMs = Date.now();
+  const cutoff = nowMs - 90 * DAY;
+  const day = Math.floor(cutoff / DAY) * DAY - DAY;
+  const recentDay = day + 2 * DAY;
+  const currentDay = Math.floor(nowMs / DAY) * DAY;
+  const sample = (at: number, used: number, resetAtMs: number) => {
+    const read = quotaRead('retained', at, [{ meterId: 'hour', label: 'Hourly', usedPct: used, resetAtMs, windowDurationMs: HOUR }]);
+    const snapshot = read.current!;
+    snapshot.meters[0]!.used = used;
+    snapshot.meters[0]!.limit = 1000;
+    snapshot.meters[0]!.usedPct = used / 10;
+    snapshot.meters[0]!.utilizationPct = used / 10;
+    return snapshot;
+  };
+  const snapshots = [sample(day + 9.5 * HOUR, 20, day + 10 * HOUR),
+    sample(day + 9.75 * HOUR, 35, day + 10 * HOUR),
+    sample(day + 10.25 * HOUR, 7, day + 11 * HOUR),
+    sample(recentDay + 9.25 * HOUR, 40, recentDay + 10 * HOUR),
+    sample(nowMs - 1000, 60, nowMs + HOUR / 2)];
+  const current = snapshots.at(-1)!;
+  const source = quotaRead('retained', current.observedAtMs, []).source;
+  const input = { source, projection: { range: { startAtMs: day, endAtMs: nowMs + 1 }, resolution: 'accepted_observations' as const } };
+  const entries = snapshots.map((snapshot, index) => ({ id: String(index), observedAtMs: snapshot.observedAtMs, snapshot }));
+  const detail = projectProviderAccountUsageQuotaReadV1({ input, current, daySummaries: [], nowMs,
+    history: { entries, nextCursor: null } });
+  const summaries = deriveProviderAccountUsageDayQuotaHistoryV1({ recordId: current.recordId, snapshots });
+  const compacted = projectProviderAccountUsageQuotaReadV1({ input, current, nowMs,
+    daySummaries: summaries.filter(summary => summary.dayStartAtMs < cutoff),
+    history: { entries: entries.filter(entry => entry.snapshot.fetchedAtMs >= cutoff), nextCursor: null } });
+  expect(compacted.pageFacts?.dayQuotaHistory).toEqual(detail.pageFacts?.dayQuotaHistory);
+  const shownQuery = normalizeUsageQuery({ period: { startMs: day, endMs: nowMs + 1 }, granularity });
+  const { UsageProjectionsWidget } = await import('../UsageProjectionsWidget');
+  const render = async (read: ConnectedServiceQuotaGetResultV1) => {
+    const screen = await renderScreen(wrap(<UsageProjectionsWidget {...bodyProps([read], undefined, shownQuery)} id="usage_projections" testID="daily" />));
+    const chart = screen.findAllByType(BurnUpChart).find(node => node.props.testID === 'daily.dailyHistory');
+    expect(chart).toBeTruthy();
+    return chart!.props;
+  };
+  const fromDetail = await render(detail);
+  const fromSummaries = await render(compacted);
+  expect(fromSummaries.series).toEqual(fromDetail.series);
+  expect(fromDetail.series.map((series: { points: readonly { x: number; y: number | null }[] }) => series.points.map(point => [point.x, point.y])))
+    .toEqual([[[day, 7], [recentDay, 40], [currentDay, 60]], [[day, 35], [recentDay, 40], [currentDay, 60]]]);
+  expect(fromSummaries.series[0].points[0].annotation).toContain(t('usage.board.plans.dailyHistoryReset', {
+    time: formatUsageCalendarDate(day + 10 * HOUR, 0,
+      { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }), value: '35',
+  }));
+  // Compaction may supply daily facts but never an exact observation witness for a reset action.
+  const allCompacted = projectProviderAccountUsageQuotaReadV1({ input, current, daySummaries: summaries, nowMs,
+    history: { entries: [], nextCursor: null } });
+  expect(allCompacted.pageFacts?.dayQuotaHistory).toEqual(detail.pageFacts?.dayQuotaHistory);
+  expect(allCompacted.pageFacts?.resetWitness).toBeNull();
+  expect(compacted.pageFacts?.resetWitness?.id).toBe(entries.at(-1)!.id);
+});
 
 // Native measurement is the physical boundary; Popover open/close, placement and portal owners run.
 const renderScreen = async (node: Parameters<typeof renderScreenAtHost>[0]) => (await import('@/dev/testkit/harness/mountedCurrentUiContext')).renderMountedCurrentUiContext(node, {

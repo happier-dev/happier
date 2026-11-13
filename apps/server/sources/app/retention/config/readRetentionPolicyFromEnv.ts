@@ -57,15 +57,17 @@ function readAgePolicy(params: {
     env: NodeJS.ProcessEnv;
     modeKey: string;
     daysKey: string;
+    defaultPolicy: RetentionAgePolicy;
 }): RetentionAgePolicy {
-    const mode = String(params.env[params.modeKey] ?? '').trim().toLowerCase();
-    if (!mode || mode === 'keep_forever') return KEEP_FOREVER_POLICY;
+    const mode = String(params.env[params.modeKey] ?? '').trim().toLowerCase() || params.defaultPolicy.mode;
+    if (mode === 'keep_forever') return KEEP_FOREVER_POLICY;
     if (mode !== 'delete_older_than') {
         throw new RetentionPolicyEnvError(params.modeKey, 'invalid', `${params.modeKey} must be keep_forever or delete_older_than`);
     }
     return Object.freeze({
         mode: 'delete_older_than',
-        days: parsePositiveInt({ env: params.env, key: params.daysKey }),
+        days: parsePositiveInt({ env: params.env, key: params.daysKey,
+            ...(params.defaultPolicy.mode === 'delete_older_than' ? { fallback: params.defaultPolicy.days } : {}) }),
     }) satisfies DeleteOlderThanRetentionPolicy;
 }
 
@@ -89,7 +91,7 @@ function readDomainPolicies(env: NodeJS.ProcessEnv): RetentionDomainPolicies {
         const config = definition.policyConfig;
         const policy = config.kind === 'inactive'
             ? readSessionPolicy({ env, modeKey: config.modeKey, durationKey: config.durationKey })
-            : readAgePolicy({ env, modeKey: config.modeKey, daysKey: config.durationKey });
+            : readAgePolicy({ env, modeKey: config.modeKey, daysKey: config.durationKey, defaultPolicy: config.defaultPolicy });
         return [definition.id, policy] as const;
     });
     return Object.freeze(Object.fromEntries(entries)) as RetentionDomainPolicies;

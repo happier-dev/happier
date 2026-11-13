@@ -19,6 +19,7 @@ import { runSessionRetentionRule } from '@/app/retention/rules/sessionRetentionR
 import { createTerminalAuthRequestRetentionRule } from '@/app/retention/rules/terminalAuthRequestRetentionRule';
 import { createAccountAuthRequestRetentionRule } from '@/app/retention/rules/accountAuthRequestRetentionRule';
 import { createUsageEventRetentionRule } from '@/app/retention/rules/usageEventRetentionRule';
+import { createProviderAccountUsageHistoryRetentionRule } from '@/app/retention/rules/providerAccountUsageHistoryRetentionRule';
 import { createUserFeedItemRetentionRule } from '@/app/retention/rules/userFeedItemRetentionRule';
 import { createVoiceSessionLeaseRetentionRule } from '@/app/retention/rules/voiceSessionLeaseRetentionRule';
 
@@ -104,6 +105,7 @@ const RETENTION_RULE_FACTORIES = Object.freeze({
         };
     },
     usageEvents: createUsageEventRetentionRule,
+    providerAccountUsageHistory: createProviderAccountUsageHistoryRetentionRule,
     voiceSessionLeases: createVoiceSessionLeaseRetentionRule,
     userFeedItems: createUserFeedItemRetentionRule,
     sessionShareAccessLogs: createSessionShareAccessLogRetentionRule,

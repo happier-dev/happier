@@ -1,5 +1,6 @@
 import { ConnectedServiceCredentialRevisionV1Schema } from '@happier-dev/protocol/connect/connected-service-schemas';
 import { QualifiedConnectedServiceUsageSourceV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { QualifiedProviderAccountUsageWriteV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { sealProviderAccountUsageSnapshot } from '@happier-dev/protocol/connect/accountUsage';
 import { mergeProviderAccountSubscription, type ProviderAccountSubscriptionV1 } from '@happier-dev/protocol/connect/accountSubscription';
@@ -17,6 +18,9 @@ import type { RequesterSessionRuntimeContext } from '../../sessionEncryption/req
 import { createConnectedServiceQuotaPersistenceScheduler } from '../quotas/createConnectedServiceQuotaPersistenceScheduler';
 import { createQuotaPersistenceBackoff } from '../quotas/createQuotaPersistenceBackoff';
 import { DEFAULT_CONNECTED_SERVICE_QUOTA_FRESHNESS_MS } from '../quotas/resolveConnectedServiceQuotasDaemonOptions';
+import { maintainProviderAccountUsageDaySummaries } from './dailySummaryPersistence';
+import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { logger } from '@/ui/logger';
 import {
   shouldPersistQuotaSnapshot,
   type QuotaPersistenceMaterialState,
@@ -30,6 +34,35 @@ import {
 type AccountUsageApi = Readonly<{
   getAccountEncryptionMode: (options?: AccountEncryptionModeReadOptions) => Promise<'plain' | 'e2ee' | 'unknown'>;
 }>;
+
+/** One publication owner for all key-holding CLI quota producers. A failed
+ * summary leaves accepted detail intact for the next normal write to backfill. */
+export async function persistProviderAccountUsageWithDaySummaries(input: Readonly<{
+  token: string; write: Parameters<typeof writeQualifiedProviderAccountUsageV4>[0]['write'];
+  material?: AccountScopedCryptoMaterial; signal?: AbortSignal; nowMs: number;
+  randomBytes?: (length: number) => Uint8Array;
+  writer?: typeof writeQualifiedProviderAccountUsageV4;
+}>) {
+  const result = await (input.writer ?? writeQualifiedProviderAccountUsageV4)({ token: input.token, write: input.write,
+    ...(input.material ? { material: input.material } : {}), ...(input.signal ? { signal: input.signal } : {}) });
+  const write = QualifiedProviderAccountUsageWriteV4Schema.parse(input.write);
+  try {
+    const dailySummary = await maintainProviderAccountUsageDaySummaries({ ...input, recordId: write.recordId,
+      accountMode: write.payloadMode === 'plain_json_v1' ? 'plain' : 'e2ee', nowMs: Math.max(input.nowMs, write.fetchedAt ?? 0) });
+    if (dailySummary.status === 'partial') logger.warnLocalFile('Provider account usage daily summary maintenance unavailable',
+      { phase: 'daily_summary', reason: 'content_unavailable', writtenDays: dailySummary.days, unavailableDays: dailySummary.unavailableDays.length });
+    else if (dailySummary.status === 'conflict') logger.warnLocalFile('Provider account usage daily summary maintenance unavailable',
+      { phase: 'daily_summary', reason: 'coverage_changed', writtenDays: dailySummary.days });
+    else if (dailySummary.status === 'unavailable') logger.warnLocalFile('Provider account usage daily summary maintenance unavailable',
+      { phase: 'daily_summary', reason: dailySummary.reason, writtenDays: dailySummary.days });
+    return { ...result, dailySummary };
+  } catch (error) {
+    input.signal?.throwIfAborted();
+    const reason = readHttpStatus(error) === 401 || readHttpStatus(error) === 403 ? 'authority_unavailable' as const : 'write_failed' as const;
+    logger.warnLocalFile('Provider account usage daily summary maintenance unavailable', { phase: 'daily_summary', reason, writtenDays: 0 });
+    return { ...result, dailySummary: { status: 'unavailable' as const, reason } };
+  }
+}
 
 /**
  * Caller-proven V4 source and currentness basis. The scheduler owns only the
@@ -275,7 +308,8 @@ export function createProviderAccountUsagePersistenceScheduler(params: Readonly<
       staleAfterMs: payload.snapshot.staleAfterMs,
       metadata: { materialFingerprint: payload.materialFingerprint },
     };
-    await writeProviderAccountUsage({ token: params.credentials.token, write,
+    await persistProviderAccountUsageWithDaySummaries({ token: params.credentials.token, write, writer: writeProviderAccountUsage,
+      nowMs: params.now(), randomBytes: params.randomBytes,
       ...(accountMode === 'e2ee' ? { material: requireAccountEncryptionCredentials(params.credentials).encryption } : {}) });
     stateByPersistenceKey.set(persistenceKey, { ...payload.materialState, ...(payload.snapshot.subscription ? { subscription: payload.snapshot.subscription } : {}) });
   }

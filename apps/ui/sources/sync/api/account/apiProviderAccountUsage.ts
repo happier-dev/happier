@@ -36,6 +36,8 @@ import { createScopedResolutionSingleFlight, type ScopedResolutionSingleFlight }
 import { getActiveServerHomeCarrier, getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveActiveServerRuntimeOrigin } from '@/sync/runtime/nativeLoopbackTunnels/runtimeOrigin';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
+import { ProviderAccountUsageDaySummaryReadV1Schema, ProviderAccountUsageDaySummaryResponseV1Schema,
+    openProviderAccountUsageDaySummaryV1, type ProviderAccountUsageDaySummaryV1 } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
 
 type UsageHttpObservation = Readonly<{
     status: number; ok: boolean; json: unknown; jsonFailure?: Readonly<{ error: unknown }>;
@@ -56,6 +58,7 @@ type AdmittedUsageProjection = {
         nowMs: number;
         interval: ReturnType<typeof getProviderAccountUsageDerivationInterval>;
         value: ConnectedServiceQuotaGetResultV1;
+        daySummaries?: readonly ProviderAccountUsageDaySummaryV1[];
     };
 };
 
@@ -118,8 +121,9 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
         let history: ConnectedServiceQuotaGetResultV1['history'];
         let waitingWork: ProviderAccountUsageWaitingWorkV1 | undefined;
         let targets = options.targets;
+        let daySummaries: ProviderAccountUsageDaySummaryV1[] | undefined;
         const project = (appendHistory?: ConnectedServiceQuotaGetResultV1['history']) => projectProviderAccountUsageQuotaReadV1({ input: request, current, history, appendHistory, waitingWork,
-            targets, nowMs: options.nowMs ?? Date.now() });
+            targets, daySummaries, nowMs: options.nowMs ?? Date.now() });
         const publish = (appendHistory?: ConnectedServiceQuotaGetResultV1['history']) => { throwIfAborted(options.signal); options.assertCurrent?.(); const value = project(appendHistory); history = value.history; options.readAllHistory!.onProgress(value); return value; };
         // Current capacity is useful before either history or unrelated Pending work answers.
         publish();
@@ -140,6 +144,11 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
                 accountMode: options.accountMode, material, record: recordJson });
             publish();
         }) : Promise.resolve();
+        const summaries = requestProviderAccountUsageDaySummaries(credentials, { recordId: resolution.recordId, range: historyRequest.range },
+            { ...options, material }).then(value => {
+            if (!active) return;
+            daySummaries = value; publish();
+        });
         try {
             await Promise.all([(async () => {
                 let cursor = historyRequest.cursor;
@@ -159,16 +168,19 @@ export async function getProviderAccountUsageQuota(credentials: AuthCredentials,
                     cursor = opened.nextCursor ?? undefined;
                     publish(opened);
                 } while (cursor);
-            })(), pending, price, pacing]);
+            })(), pending, price, pacing, summaries]);
             return project();
         } finally { active = false; }
     }
-    const page = request.history && resolution ? await requestProviderAccountUsageHistoryPage(credentials, { recordId: resolution.recordId, history: request.history }, options) : null;
+    const [page, daySummaries] = request.history && resolution ? await Promise.all([
+        requestProviderAccountUsageHistoryPage(credentials, { recordId: resolution.recordId, history: request.history }, options),
+        requestProviderAccountUsageDaySummaries(credentials, { recordId: resolution.recordId, range: request.history.range }, { ...options, material }),
+    ]) : [null, undefined] as const;
     if (request.history && resolution && !page) throw new ProviderAccountUsageReadErrorV1('provider_account_usage_content_unavailable');
     const { nowMs, waitingWork } = options.includePendingWork === false
         ? { nowMs: options.nowMs ?? Date.now(), waitingWork: undefined }
         : await readProviderAccountUsageWaitingWork(credentials, request, current, options);
-    return projectProviderAccountUsageQuotaReadV1({ input: request, current, ...(request.history ? { history: page && resolution ? await openHistoryPageWithYield({ recordId: resolution.recordId, accountMode: options.accountMode, material, page }, options) : { entries: [], nextCursor: null } } : {}), nowMs, targets: options.targets, waitingWork });
+    return projectProviderAccountUsageQuotaReadV1({ input: request, current, daySummaries, ...(request.history ? { history: page && resolution ? await openHistoryPageWithYield({ recordId: resolution.recordId, accountMode: options.accountMode, material, page }, options) : { entries: [], nextCursor: null } } : {}), nowMs, targets: options.targets, waitingWork });
 }
 
 /** The B owner materializes exact accepted observations once; Plans never carries raw history trees. */
@@ -183,6 +195,7 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
     let targets = options.targets;
     let active = true;
     let admitted: AdmittedUsageProjection | undefined;
+    let daySummaries: ProviderAccountUsageDaySummaryV1[] | undefined;
     const credentialScope = resolveAuthCredentialsScopeKey(credentials);
     const materialBytes = options.material?.type === 'legacy' ? options.material.secret : options.material?.machineKey;
     // One instant per read: price, Pending and pacing revisions of this read keep its derived pace and
@@ -193,16 +206,17 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
         const previous = admitted?.view;
         // The admitted record owns quota facts. Entered price is opened onto
         // current separately and does not change that history/pace basis.
-        const sameBasis = previous && history === previous.history && sameStrictJsonValue(recordJson, previous.record);
+        const sameBasis = previous && history === previous.history && sameStrictJsonValue(recordJson, previous.record)
+            && sameStrictJsonValue(daySummaries ?? null, previous.daySummaries ?? null);
         if (sameBasis && (previous.nowMs === nowMs || previous.interval
             && nowMs >= previous.interval.fromMs && nowMs < previous.interval.untilMs)) return { ...previous.value, current, source: request.source,
             targets: targets ?? [], waitingWork: waitingWork ?? { status: 'unavailable' as const, reason: 'read_failed' as const } };
         const value = projectProviderAccountUsageQuotaReadV1({ input: request, current, history, pageFacts,
-            waitingWork, targets, nowMs });
+            waitingWork, targets, daySummaries, nowMs });
         // History settles once in this read. Price and Pending revisions change
         // independent facets, so keep its admitted page facts for them.
         pageFacts = value.pageFacts;
-        if (admitted && history) admitted.view = { record: recordJson, history, nowMs, value,
+        if (admitted && history) admitted.view = { record: recordJson, history, nowMs, value, daySummaries,
             interval: getProviderAccountUsageDerivationInterval({ current, history: history.entries.map(entry => entry.snapshot), nowMs }) };
         return value;
     };
@@ -223,8 +237,10 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
             material: options.material, record: recordJson });
         publish();
     }) : Promise.resolve();
+    const summaries = requestProviderAccountUsageDaySummaries(credentials, { recordId, range: demand.range }, options)
+        .then(value => { daySummaries = value; });
     try {
-        await Promise.all([pending, price, pacing, (async () => {
+        await Promise.all([pending, price, pacing, summaries, (async () => {
             const query = { recordId, projection: demand };
             // A concurrent backfill or accepted tail can invalidate publication.
             // Reopen canonical coverage before deriving another write.
@@ -318,12 +334,16 @@ async function readProviderAccountUsageProjectedQuota(credentials: AuthCredentia
                 assertCurrent();
                 // Coverage/range may change without a new selected observation.
                 // Reuse only exact admitted entry identities, never a cursor/count.
+                await summaries;
+                if (!active) return;
+                assertCurrent();
                 const view = admitted?.view;
                 const selected = entries.filter(entry => entry.observedAtMs >= demand.range.startAtMs && entry.observedAtMs < demand.range.endAtMs);
                 history = view && selected.length === view.history.entries.length
                     && selected.every((entry, index) => entry === view.history.entries[index])
                     ? view.history : { entries: selected, nextCursor: null };
-                pageFacts = view && history === view.history && sameStrictJsonValue(recordJson, view.record) ? view.value.pageFacts : undefined;
+                pageFacts = view && history === view.history && sameStrictJsonValue(recordJson, view.record)
+                    && sameStrictJsonValue(daySummaries ?? null, view.daySummaries ?? null) ? view.value.pageFacts : undefined;
                 publish();
                 return;
             }
@@ -505,6 +525,22 @@ async function requestProviderAccountUsageRead(credentials: AuthCredentials, pat
 async function requestProviderAccountUsageHistoryPage(credentials: AuthCredentials, query: ReturnType<typeof QualifiedProviderAccountUsageHistoryRequestV4Schema.parse>, options: ProviderAccountUsageQuotaReadOptions, fresh = false) {
     const read = await requestProviderAccountUsageRead(credentials, `/v4/connect/qualified/provider-account-usage/history?${new URLSearchParams({ query: encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema, query) }).toString()}`, options, fresh);
     return read === null ? null : QualifiedProviderAccountUsageHistoryResponseV4Schema.parse(read.json);
+}
+
+async function requestProviderAccountUsageDaySummaries(credentials: AuthCredentials,
+    query: ReturnType<typeof ProviderAccountUsageDaySummaryReadV1Schema.parse>, options: ProviderAccountUsageQuotaReadOptions): Promise<ProviderAccountUsageDaySummaryV1[]> {
+    const read = await requestProviderAccountUsageRead(credentials, `/v4/connect/qualified/provider-account-usage/day-summaries?${new URLSearchParams({ query:
+        encodeQualifiedConnectedAccountV4StructuredQueryValue(ProviderAccountUsageDaySummaryReadV1Schema, query) }).toString()}`, options);
+    if (!read) return [];
+    const summaries = ProviderAccountUsageDaySummaryResponseV1Schema.parse(read.json).summaries;
+    const assertCurrent = () => { throwIfAborted(options.signal); options.assertCurrent?.(); };
+    const opened = await mapCryptoBatchWithYield(summaries, summary => {
+        assertCurrent();
+        return openProviderAccountUsageDaySummaryV1({ recordId: query.recordId,
+            dayStartAtMs: summary.dayStartAtMs, accountMode: options.accountMode, material: options.material, content: summary.payload.content });
+    });
+    assertCurrent();
+    return opened;
 }
 
 export async function getProviderAccountUsageHistoryWitness(credentials: AuthCredentials, input: Readonly<{ recordId: ProviderAccountUsageRecordId; witness: ProviderAccountUsageHistoryWitnessV1 }>, options: ProviderAccountUsageQuotaReadOptions) {

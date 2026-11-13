@@ -8,27 +8,17 @@ vars, the server keeps sessions and records that have no intrinsic expiry foreve
 RepeatKeys that carry their own `expiresAt` remain subject to that validity boundary and are reclaimed
 by the same bounded sweep worker.
 
+In unreleased 0.3 development, provider usage history has a default policy of 90 days of detailed
+observations, followed by daily summaries. The global retention switch still defaults to off; this
+policy only deletes detail when automatic deletion is enabled.
+
 ## What retention currently covers
 
 Retention is implemented as one server-side sweep worker backed by one domain registry. Each registry
 entry owns its domain id, environment keys, policy shape, and deletion rule, so configuration parsing,
-execution, and public disclosure cannot silently maintain different domain lists. It can clean up:
-
-- Sessions
-- Subagent and other sidechain transcript messages
-- Account changes
-- Usage events
-- Voice session leases
-- User feed items
-- Session share access logs
-- Public share access logs
-- Terminal auth requests
-- Account auth requests
-- Auth pairing sessions
-- Repeat keys
-- Global locks
-- Automation runs
-- Automation run events
+execution, and public disclosure cannot silently maintain different domain lists. The generated
+[Data and retention reference](/self-hosting/env#data-and-retention) lists the supported domains,
+their environment keys, and defaults.
 
 ## How session retention works
 
@@ -74,6 +64,37 @@ Operator-configured age-based retention only becomes effective when both of thes
 If retention is disabled, or if every domain is still set to `keep_forever`, the effective operator
 policy remains keep-forever for every domain. Intrinsic lifecycle rules such as RepeatKey expiry still
 run; they preserve rows whose intrinsic expiry is in the future.
+
+In 0.3 development, enabling automatic deletion also activates the default 90-day provider usage
+history policy. Set that domain to `keep_forever` if you want to enable other cleanup rules while
+keeping all provider usage observations.
+
+## Provider usage history (0.3 development)
+
+Provider usage history records quota and capacity observations shown in Plans and Limits. It is
+separate from the usage events used for token and cost accounting. Its default policy is:
+
+```bash
+HAPPIER_SERVER_RETENTION__PROVIDER_ACCOUNT_USAGE_HISTORY__MODE=delete_older_than
+HAPPIER_SERVER_RETENTION__PROVIDER_ACCOUNT_USAGE_HISTORY__DAYS=90
+```
+
+With automatic deletion enabled, the existing retention worker can remove detailed observations
+older than this window only after their day has a summary covering its accepted observations. Days
+without a summary keep their detail. A normal usage write by a client that can open the history backfills every missing day it can
+read; no server decryption or separate cleanup timer is involved.
+
+Summaries group observations by UTC day and retain each provider window's last accepted reading, peak usage, first and last
+observation times, and every witnessed reset with its time and usage before the reset. Older Plans
+and Limits charts use these daily observations and preserve resets within a day. Quota readings
+are not additive, so these summaries do not represent conserved token, cost, or consumption totals.
+Individual historical observations and exact reset-witness actions are no longer available after
+their detail is deleted. Daily summaries remain available beyond the detail window.
+
+For encrypted Accounts, a client with the Account material seals the summaries. The server stores
+them and selects eligible detail for deletion without opening their content. Change the mode to
+`keep_forever` to preserve detail, or change `DAYS` to choose a different detail window. These options
+also appear in the existing Home data and retention settings.
 
 ## Global retention env vars
 
@@ -154,22 +175,8 @@ Supported age-based modes:
 - `keep_forever`
 - `delete_older_than`
 
-Supported domain names:
-
-- `SESSION_SIDECHAIN_MESSAGES`
-- `ACCOUNT_CHANGES`
-- `USAGE_EVENTS`
-- `VOICE_SESSION_LEASES`
-- `USER_FEED_ITEMS`
-- `SESSION_SHARE_ACCESS_LOGS`
-- `PUBLIC_SHARE_ACCESS_LOGS`
-- `TERMINAL_AUTH_REQUESTS`
-- `ACCOUNT_AUTH_REQUESTS`
-- `AUTH_PAIRING_SESSIONS`
-- `REPEAT_KEYS`
-- `GLOBAL_LOCKS`
-- `AUTOMATION_RUNS`
-- `AUTOMATION_RUN_EVENTS`
+Use the domain-specific keys in the generated
+[Data and retention reference](/self-hosting/env#data-and-retention).
 
 Connected-account OAuth and device attempts use expiring RepeatKey rows. A live CLI daemon reclaims
 its exact durable transaction when the attempt expires, and an exact server read or mutation also
@@ -262,7 +269,7 @@ HAPPIER_SERVER_RETENTION__SESSIONS__MODE=delete_inactive
 HAPPIER_SERVER_RETENTION__SESSIONS__INACTIVITY_DAYS=30
 ```
 
-## Related docs
+## Related
 
 - [Server quickstart](/self-hosting/quickstart)
 - [Encryption & plaintext storage](/self-hosting/encryption)

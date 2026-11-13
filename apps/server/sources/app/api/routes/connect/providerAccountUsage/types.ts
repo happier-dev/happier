@@ -16,6 +16,7 @@ export type LegacyQuotaCompatibilityProjection = Readonly<{
     sealed: SealedConnectedServiceQuotaSnapshotV1;
 }>;
 export type ProviderAccountUsageRecordMetadata = Readonly<{
+    daySummaryPendingDays?: readonly number[];
     pageProjection?: z.infer<typeof StoredProviderAccountUsagePageProjectionV1Schema>;
     materialFingerprint?: string;
     subscription?: ProviderAccountSubscriptionV1;

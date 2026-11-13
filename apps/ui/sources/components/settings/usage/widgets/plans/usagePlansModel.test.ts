@@ -11,6 +11,8 @@ import {
   resolveUsageResetStartBinding,
   summarizeUsagePlanFit,
 } from './usagePlansModel';
+import { deriveProviderAccountUsageDayQuotaHistoryV1 } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
+import { projectUsageDailyQuotaHistory } from './usageDailyQuotaHistoryModel';
 
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
@@ -98,6 +100,31 @@ function quotaRead(
 }
 
 describe('Plans projection of admitted allowance reads', () => {
+  it('keeps daily amount and percentage axes separate and leaves an unreported peak unknown', () => {
+    const first = quotaRead({ accountId: 'percentage-only', observedAtMs: NOW - DAY,
+      meters: [{ meterId: 'week', label: 'Weekly', usedPct: 70 }] });
+    const latest = quotaRead({ accountId: 'percentage-only', observedAtMs: NOW,
+      meters: [{ meterId: 'week', label: 'Weekly', usedPct: 50 }] });
+    const days = deriveProviderAccountUsageDayQuotaHistoryV1({ recordId: latest.current!.recordId,
+      snapshots: [first.current!, latest.current!] });
+    const read = ConnectedServiceQuotaGetResultV1Schema.parse({ ...latest, pageFacts: {
+      dayQuotaHistory: days, historyStatus: 'complete', resetWitness: null, witnessedResets: [], earlierCurves: [],
+    } });
+    const history = projectUsageDailyQuotaHistory(projectUsagePlans([read], NOW).accounts);
+    expect(history).toHaveLength(1);
+    expect(history[0]).toMatchObject({ measure: 'percent', days: [
+      { last: 70, peak: null }, { last: 50, peak: null },
+    ] });
+    first.current!.meters[0]!.used = 7;
+    first.current!.meters[0]!.limit = 10;
+    const mixed = ConnectedServiceQuotaGetResultV1Schema.parse({ ...read, pageFacts: { ...read.pageFacts,
+      dayQuotaHistory: deriveProviderAccountUsageDayQuotaHistoryV1({ recordId: latest.current!.recordId,
+        snapshots: [first.current!, latest.current!] }),
+    } });
+    expect(projectUsageDailyQuotaHistory(projectUsagePlans([mixed], NOW).accounts)[0]).toMatchObject({
+      measure: 'amount', days: [{ last: 7, peak: 7 }, { last: null, peak: null }],
+    });
+  });
   it('separates admitted observations from pending qualified sources', () => {
     const observed = quotaRead({ accountId: 'observed', meters: [] });
     const unread = { bindingKind: 'account' as const, ref: { service, accountId: 'unread' } };

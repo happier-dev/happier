@@ -6,6 +6,7 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { ProviderAccountUsageRecordKeyV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { parseBuiltInLegacyProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
 import { SealedProviderAccountUsageSnapshotV1Schema, type SealedProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/accountUsage';
+import { PROVIDER_ACCOUNT_USAGE_DAY_MS } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
 import {
     ProviderAccountUsageRecordMetadataSchema,
     UpsertProviderAccountUsageRecordSchema,
@@ -16,6 +17,8 @@ import type {
     UpsertProviderAccountUsageRecordParams,
 } from "./types";
 import { ProviderAccountUsagePayloadInvariantError } from "./types";
+import { appendProviderAccountUsagePendingDay } from './daySummaryPendingStorage';
+import { usageSqlName as name, usageSqlTimestamp } from './storageSql';
 
 type ProviderAccountUsageRecordClient = Pick<typeof db, "providerAccountUsageRecord">
     | Pick<TransactionClient, "providerAccountUsageRecord">;
@@ -98,13 +101,13 @@ export async function readProviderAccountUsageHistoryWitnessRow(params: Readonly
 /** Only the accepted-write policy invokes this inside the same transaction as its CAS. */
 export async function retainProviderAccountUsageHistory(
     raw: UpsertProviderAccountUsageRecordParams,
-    client: Pick<TransactionClient, "providerAccountUsageHistory">,
+    client: Pick<TransactionClient, "providerAccountUsageHistory" | '$executeRaw'>,
 ) {
     const parsed = parseProviderAccountUsageRecordWrite(raw);
     if (parsed.fetchedAt === undefined || (!parsed.snapshot && !parsed.sealedPayload)) return;
     // The read materialization belongs only to the current record. Embedding it
     // into every accepted observation would recursively duplicate its history.
-    const { pageProjection: _derived, ...metadata } = parsed.metadata ?? {};
+    const { pageProjection: _derived, daySummaryPendingDays: _pending, ...metadata } = parsed.metadata ?? {};
     const retained = { ...parsed, ...(parsed.metadata ? { metadata } : {}) };
     // The policy already owns the accepted parent CAS in this transaction.
     // Insert through the existing composite FK without updating that parent again.
@@ -113,6 +116,36 @@ export async function retainProviderAccountUsageHistory(
             observedAt: new Date(parsed.fetchedAt), payload: retained as Prisma.InputJsonValue },
         select: { id: true },
     });
+    // Empty coverage proves no remaining detail. A newly retained observation
+    // invalidates that proof at its producer, including equal-time insertions
+    // whose opaque ids need not sort after the old frontier. The sealed body
+    // remains available for the CLI to merge with remaining/new observations.
+    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    const payload = name('payload');
+    const coverage = JSON.stringify({ observationCount: 0, frontier: null });
+    const dayStartAtMs = Math.floor(parsed.fetchedAt / PROVIDER_ACCOUNT_USAGE_DAY_MS) * PROVIDER_ACCOUNT_USAGE_DAY_MS;
+    const invalidated = provider === 'sqlite' ? prismaRuntime.sql`json_set(${payload}, '$.coverage', json(${coverage}))`
+        : provider === 'mysql' ? prismaRuntime.sql`JSON_SET(${payload}, '$.coverage', CAST(${coverage} AS JSON))`
+        : prismaRuntime.sql`jsonb_set(${payload}, '{coverage}', ${coverage}::jsonb)`;
+    await client.$executeRaw(prismaRuntime.sql`UPDATE ${name('ProviderAccountUsageDaySummary')} SET ${payload} = ${invalidated}
+        WHERE ${name('accountId')} = ${parsed.accountId} AND ${name('recordId')} = ${parsed.recordId}
+            AND ${name('dayStartAt')} = ${usageSqlTimestamp(dayStartAtMs)}`);
+    // Both live callers are the policy: existing rows were initialized before
+    // its CAS, and a newly created record has no earlier pending work.
+    await appendProviderAccountUsagePendingDay({ accountId: parsed.accountId, recordId: parsed.recordId, dayStartAtMs,
+        knownPendingDays: parsed.metadata?.daySummaryPendingDays ?? [] }, client);
+}
+
+/** Remove retained exact-observation cache bytes when their source detail is compacted. */
+export async function clearProviderAccountUsagePageProjection(params: Readonly<{ accountId: string; recordId: string }>,
+    client: Pick<TransactionClient, '$executeRaw'>): Promise<void> {
+    const provider = getDbProviderFromEnv(process.env, 'postgres');
+    const metadata = name('metadata');
+    const updated = provider === 'sqlite' ? prismaRuntime.sql`json_remove(${metadata}, '$.pageProjection')`
+        : provider === 'mysql' ? prismaRuntime.sql`JSON_REMOVE(${metadata}, '$.pageProjection')`
+        : prismaRuntime.sql`${metadata} - 'pageProjection'`;
+    await client.$executeRaw(prismaRuntime.sql`UPDATE ${name('ProviderAccountUsageRecord')} SET ${metadata} = ${updated}
+        WHERE ${name('accountId')} = ${params.accountId} AND ${name('recordId')} = ${params.recordId} AND ${metadata} IS NOT NULL`);
 }
 
 export type ProviderAccountUsageRecordCurrentGuard = Readonly<{
@@ -382,7 +415,7 @@ export async function readProviderAccountUsageRecordWithCurrentGuard(params: Rea
 }>, client: ProviderAccountUsageRecordClient): Promise<Readonly<{
     record: StoredProviderAccountUsageRecord;
     guard: ProviderAccountUsageRecordCurrentGuard;
-    rawMetadata: unknown;
+    rawMetadata: Prisma.JsonValue;
 }> | null> {
     const row = await client.providerAccountUsageRecord.findUnique({
         where: {

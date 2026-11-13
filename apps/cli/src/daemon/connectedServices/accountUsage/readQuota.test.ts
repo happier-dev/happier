@@ -11,6 +11,23 @@ function fixture() {
 }
 
 describe('qualified quota read', () => {
+  it('reads day aggregates alongside empty detail while exact witnesses stay absent', async () => {
+    const { source, snapshot } = fixture();
+    const { buildProviderAccountUsageDaySummaryV1 } = await import('@happier-dev/protocol/connect/providerAccountUsageDaySummary');
+    const summary = buildProviderAccountUsageDaySummaryV1({ recordId: snapshot.recordId, dayStartAtMs: 0, snapshots: [snapshot] });
+    const http = vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200, data: String(url).includes('/sources/resolve')
+      ? { source, recordId: snapshot.recordId, providerAccountId: 'subject', fetchedAt: 250, staleAfterMs: 1000 }
+      : String(url).includes('/day-summaries') ? { summaries: [{ dayStartAtMs: 0, payload: { v: 1, coverage: { observationCount: 0, frontier: null }, content: { t: 'plain', v: summary } } }], missingDays: [] }
+      : String(url).includes('/history') ? { entries: [], nextCursor: null }
+      : { content: { t: 'plain', v: snapshot }, metadata: { fetchedAt: 250, staleAfterMs: 1000, status: 'ok' }, sources: [source] } }));
+    try {
+      const result = await readProviderAccountUsageQuotaV4({ source, history: { range: { startAtMs: 0, endAtMs: 1000 }, pageSize: 10 } },
+        { credentials: { token: 'token', encryption: null }, accountMode: 'plain', nowMs: 500, includePendingWork: false });
+      expect(result.history?.entries).toEqual([]);
+      expect(result.pageFacts?.resetWitness).toBeNull();
+      expect(result.pageFacts?.dayQuotaHistory).toEqual([summary]);
+    } finally { http.mockRestore(); }
+  });
   it('reads reset admission facts without unrelated Account-wide Pending work', async () => {
     const { source, snapshot } = fixture();
     const http = vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200,
@@ -22,6 +39,7 @@ describe('qualified quota read', () => {
         ...{ includePendingWork: false } });
       expect(result.current).toEqual(snapshot);
       expect(pendingHttp).not.toHaveBeenCalled();
+      expect(http.mock.calls.some(([url]) => String(url).includes('/day-summaries'))).toBe(false);
     } finally { http.mockRestore(); pendingHttp.mockRestore(); }
   });
   it.each(['pending', 'witness'] as const)('samples completion time after held %s HTTP without changing explicit as-of reads', async held => {
@@ -66,6 +84,7 @@ describe('qualified quota read', () => {
     const { source, snapshot } = fixture();
     let historyAvailable = false;
     const http = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      if (String(url).includes('/day-summaries')) return { status: 404, data: {} };
       if (String(url).includes('/history')) {
         // This transport's validateStatus explicitly admits HTTP 404.
         if (!historyAvailable) return { status: 404, data: {} };

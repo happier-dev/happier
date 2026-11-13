@@ -12,6 +12,7 @@ import { buildProviderAccountUsagePageProjectionV1 } from '@happier-dev/protocol
 import { sealProviderAccountUsagePageProjectionV1 } from '@happier-dev/protocol/connect/providerAccountUsagePageProjectionCrypto';
 import { PROVIDER_ACCOUNT_USAGE_PAGE_ENCODING } from '@happier-dev/protocol/connect/providerAccountUsagePageProjection';
 import { readProviderAccountUsagePageProjection, writeProviderAccountUsagePageProjection } from './pageProjectionStorage';
+import { buildProviderAccountUsageMaterialChangesV1 } from '@happier-dev/protocol/changes/providerAccountUsage';
 
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
@@ -119,23 +120,15 @@ describe("provider account usage record storage (integration)", () => {
             }) }) };
         await db.providerAccountUsageRecord.update({ where: { accountId_recordId: { accountId: account.id, recordId: first.recordId } },
             data: { metadata: { pageProjection } } });
-        const { encoding: _superseded, ...superseded } = pageProjection;
         await db.providerAccountUsageRecord.update({ where: { accountId_recordId: { accountId: account.id, recordId: first.recordId } },
-            data: { metadata: { pageProjection: superseded } } });
+            data: { metadata: { pageProjection, futureReadExtension: { value: true } } } });
         const readParams = { accountId: account.id, recordId: first.recordId };
-        expect((await readProviderAccountUsageRecord(readParams))?.metadata?.pageProjection).toEqual(superseded);
+        expect((await readProviderAccountUsageRecord(readParams))?.metadata?.pageProjection).toEqual(pageProjection);
         expect(await readProviderAccountUsagePageProjection({ ...readParams, projection: pageProjection.demand }, db))
-            .toEqual({ projection: superseded, complete: true });
+            .toEqual({ projection: pageProjection, complete: true });
         await write({ ...first, fetchedAtMs: first.fetchedAtMs + 500, observedAtMs: first.observedAtMs + 500 });
-        expect((await readProviderAccountUsageRecord(readParams))?.metadata?.pageProjection).toEqual(superseded);
+        expect((await readProviderAccountUsageRecord(readParams))?.metadata?.pageProjection).toEqual(pageProjection);
         expect(await readProviderAccountUsageHistory({ ...readParams, history: { range, pageSize: 100 } })).toEqual(history);
-        if (pageProjection.content.t !== 'plain') throw new Error('Expected plain fixture');
-        const obsolete = { ...superseded, content: { t: 'plain',
-            v: Object.fromEntries(Object.entries(pageProjection.content.v).filter(([key]) => key !== 'encoding')) } };
-        await db.providerAccountUsageRecord.update({ where: { accountId_recordId: readParams }, data: { metadata: { pageProjection: obsolete } } });
-        expect((await readProviderAccountUsageRecord(readParams))?.metadata?.pageProjection).toBeUndefined();
-        expect(await readProviderAccountUsagePageProjection({ ...readParams, projection: pageProjection.demand }, db))
-            .toEqual({ projection: null, complete: false });
         expect(await writeProviderAccountUsagePageProjection({ accountId: account.id, value: pageProjection }, db)).toEqual(pageProjection);
         expect(await readProviderAccountUsageHistory({ ...readParams, history: { range, pageSize: 100 } })).toEqual(history);
         await write({ ...first, planLabel: 'new plan', fetchedAtMs: first.fetchedAtMs + 1000, observedAtMs: first.observedAtMs + 1000 });
@@ -434,7 +427,8 @@ describe("provider account usage record storage (integration)", () => {
         const history = await readProviderAccountUsageHistory({ accountId: account.id, recordId: base.recordId,
             history: { range: { startAtMs: at, endAtMs: at + 3000 }, pageSize: 10 } });
         expect(history.entries.map(entry => entry.record.snapshot)).toEqual(snapshots);
-        expect((await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } })).seq).toBe(snapshots.length);
+        expect((await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } })).seq)
+            .toBe(snapshots.length * buildProviderAccountUsageMaterialChangesV1(base.recordId).length);
     });
 
     it('coalesces plain subscription-only observation refreshes without relying on caller fingerprints', async () => {
@@ -467,7 +461,8 @@ describe("provider account usage record storage (integration)", () => {
         const write = (snapshot: typeof first, materialFingerprint: string) => writeProviderAccountUsageRecordWithPolicy({ accountId: account.id, recordId: snapshot.recordId, recordKey: snapshot.recordKey, payloadMode: 'plain_json_v1', status: 'ok', fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs, snapshot, materialFingerprint });
         await write(first, 'first');
         const initial = await db.accountChange.findFirst({ where: { accountId: account.id, kind: 'account', entityId: 'provider-account-usage' } });
-        expect(initial).toMatchObject({ hint: null });
+        const accountWideChange = buildProviderAccountUsageMaterialChangesV1(first.recordId)[0];
+        expect(initial).toMatchObject(accountWideChange);
         const unchangedWrites: string[] = [];
         for (let second = 0; second < 60; second++) unchangedWrites.push(await write(first, 'first'));
         expect(unchangedWrites.filter(outcome => outcome === 'written'), 'identical observations perform zero record writes').toHaveLength(0);
@@ -484,7 +479,7 @@ describe("provider account usage record storage (integration)", () => {
         await write({ ...first, fetchedAtMs: first.fetchedAtMs + 2000, observedAtMs: first.observedAtMs + 2000, planLabel: 'new tier' }, 'changed');
         const changed = await db.accountChange.findFirst({ where: { accountId: account.id, kind: 'account', entityId: 'provider-account-usage' } });
         expect(changed?.cursor).toBeGreaterThan(freshnessChanged!.cursor);
-        expect(changed?.hint).toBeNull();
+        expect(changed?.hint).toEqual(accountWideChange.hint);
     });
 
     it("persists refresh-requested records without requiring a payload", async () => {

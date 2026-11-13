@@ -20,6 +20,7 @@ export type RetentionDomainPolicies = Readonly<{
     sessionSidechainMessages: RetentionAgePolicy;
     accountChanges: RetentionAgePolicy;
     usageEvents: RetentionAgePolicy;
+    providerAccountUsageHistory: RetentionAgePolicy;
     voiceSessionLeases: RetentionAgePolicy;
     userFeedItems: RetentionAgePolicy;
     sessionShareAccessLogs: RetentionAgePolicy;

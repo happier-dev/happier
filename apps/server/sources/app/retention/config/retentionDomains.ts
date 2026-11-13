@@ -1,4 +1,4 @@
-import type { RetentionDomainPolicies } from './retentionPolicyTypes';
+import type { RetentionAgePolicy, RetentionDomainPolicies } from './retentionPolicyTypes';
 
 /**
  * The retention domains: each one's id, the env keys of its mode and days, and whether it runs even
@@ -10,7 +10,7 @@ export type RetentionDomainId = keyof RetentionDomainPolicies;
 
 export type RetentionDomainPolicyConfig = Readonly<
     | { kind: 'inactive'; modeKey: string; durationKey: string }
-    | { kind: 'age'; modeKey: string; durationKey: string }
+    | { kind: 'age'; modeKey: string; durationKey: string; defaultPolicy: RetentionAgePolicy }
 >;
 
 export type RetentionDomainDefinition = Readonly<{
@@ -20,11 +20,12 @@ export type RetentionDomainDefinition = Readonly<{
     runsWhenGlobalPolicyIsDisabled?: true;
 }>;
 
-function ageConfig(envName: string): RetentionDomainPolicyConfig {
+function ageConfig(envName: string, defaultPolicy: RetentionAgePolicy = { mode: 'keep_forever' }): RetentionDomainPolicyConfig {
     return {
         kind: 'age',
         modeKey: `HAPPIER_SERVER_RETENTION__${envName}__MODE`,
         durationKey: `HAPPIER_SERVER_RETENTION__${envName}__DAYS`,
+        defaultPolicy,
     };
 }
 
@@ -40,6 +41,10 @@ const RETENTION_DOMAIN_DEFINITIONS = Object.freeze({
     sessionSidechainMessages: { id: 'sessionSidechainMessages', policyConfig: ageConfig('SESSION_SIDECHAIN_MESSAGES') },
     accountChanges: { id: 'accountChanges', policyConfig: ageConfig('ACCOUNT_CHANGES') },
     usageEvents: { id: 'usageEvents', policyConfig: ageConfig('USAGE_EVENTS') },
+    providerAccountUsageHistory: {
+        id: 'providerAccountUsageHistory',
+        policyConfig: ageConfig('PROVIDER_ACCOUNT_USAGE_HISTORY', { mode: 'delete_older_than', days: 90 }),
+    },
     voiceSessionLeases: { id: 'voiceSessionLeases', policyConfig: ageConfig('VOICE_SESSION_LEASES') },
     userFeedItems: { id: 'userFeedItems', policyConfig: ageConfig('USER_FEED_ITEMS') },
     sessionShareAccessLogs: { id: 'sessionShareAccessLogs', policyConfig: ageConfig('SESSION_SHARE_ACCESS_LOGS') },

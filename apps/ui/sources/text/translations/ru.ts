@@ -2760,6 +2760,11 @@ export const ru: TranslationStructure = {
     copyDetails: "Скопировать детали ошибки",
   },
 
+  appBoot: {
+    credentialAccessTitle: 'Открываем сохранённый вход',
+    credentialAccessReason: 'Happier хранит ваш вход в связке ключей этого компьютера. Если система спросит, разрешить ли Happier доступ, выберите «Разрешить».',
+  },
+
   webCryptoGate: {
     title: "Требуется защищённое соединение",
     subtitle:
@@ -7876,6 +7881,7 @@ export const ru: TranslationStructure = {
         sessions: "Сессии",
         sidechainMessages: "Транскрипты субагентов",
         usageEvents: "События использования",
+        providerAccountUsageHistory: "История использования провайдера",
         accountChanges: "Изменения аккаунта",
         voiceSessionLeases: "Аренды голосовых сессий",
         feedItems: "Элементы ленты",
@@ -11375,6 +11381,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
         bindingUnavailableOnMachine: ({ machine }: { machine: string }) => `Не удалось проверить службы на ${machine}. Подключите машину и повторите попытку.`,
         previewRegistrationUnavailable: "Эта служба не может зарегистрировать предпросмотр.",
         nativeStateUnknown: "Happier не может определить, работает ли ещё эта служба. Остановите её, чтобы всё убрать.",
+        custodyUnavailable: "Happier больше не управляет этим экземпляром службы. Её процесс может всё ещё работать. Проверьте его на машине.",
         nativeCleanupUnconfirmed: "Эта служба остановлена, но её процессы, возможно, ещё работают. Остановите её, чтобы всё убрать.",
         browserTargetUnavailable: "Эту службу нельзя открыть в браузере.",
         starting: "Эта служба ещё запускается.",
@@ -16756,6 +16763,12 @@ settingsSession: {
             earlierNone: ({ reason }: { reason: string | number }) => `Нельзя показать рядом ни одно прошлое окно: ${reason}`,
             earlierSingleReading: "только один замер",
 
+            dailyHistoryTitle: "История квот по дням",
+            dailyHistoryLast: "Последнее значение",
+            dailyHistoryPeak: "Максимум за день",
+            dailyHistoryReset: ({ time, value }: { time: string; value: string }) => `Сброс ${time} · до сброса использовано ${value}`,
+            dailyHistorySummary: "Дневные значения используют дни UTC и сохраняют каждый период квоты; отдельные периоды не суммируются.",
+            dailyHistoryWindow: ({ window, last, peak, first, latest }: { window: string; last: string; peak: string; first: string; latest: string }) => `Период ${window} · последнее ${last} · максимум ${peak} · наблюдения ${first}–${latest}`,
             endedUnusedTitle: "Неиспользованный объём в завершённых периодах",
             endedUnusedObserved: ({ amount, unit, time }: { amount: string | number; unit: string | number; time: string | number }) => `Не использовано ${amount} ${unit} на ${time} · записано при сбросе`,
             endedUnusedEstimated: ({ amount, unit, time }: { amount: string | number; unit: string | number; time: string | number }) => `Не использовано ~${amount} ${unit} на ${time} · линейная оценка по последнему показанию`,
@@ -18561,6 +18574,7 @@ settingsSession: {
         domainFieldCheck: "Внешняя проверка",
         domainCheckHint: "Путь, который Happier открывает снаружи, как пользователи. Укажите ожидаемый HTTP-статус.",
       domainFieldCheckStatus: "Ожидаемый HTTP-статус",
+      domainRecordedRoutedReplicas: "Записанные реплики маршрутизации",
         domainExists: "Этот адрес уже есть в этом окружении",
         domainCheckAgain: "Проверить снова",
         domainRemove: "Удалить домен",

@@ -2901,6 +2901,11 @@ export const ja: TranslationStructure = {
     copyDetails: "エラー詳細をコピー",
   },
 
+  appBoot: {
+    credentialAccessTitle: '保存済みのサインインを開いています',
+    credentialAccessReason: 'Happier はサインイン情報をこのコンピュータのキーチェーンに保存しています。Happier による使用の許可を求められたら、「許可」を選んでください。',
+  },
+
   webCryptoGate: {
     title: "安全な接続が必要です",
     subtitle:
@@ -9759,6 +9764,7 @@ localTailscale: {
       sessions: "セッション",
       sidechainMessages: "サブエージェントの記録",
       usageEvents: "使用状況イベント",
+      providerAccountUsageHistory: "プロバイダーの使用履歴",
       accountChanges: "アカウント変更",
       voiceSessionLeases: "音声セッションのリース",
       feedItems: "フィード項目",
@@ -11821,6 +11827,7 @@ localTailscale: {
         bindingUnavailableOnMachine: ({ machine }: { machine: string }) => `${machine} のサービスを確認できません。再接続して、もう一度お試しください。`,
         previewRegistrationUnavailable: "このサービスはプレビューを登録できません。",
         nativeStateUnknown: "このサービスがまだ実行中か Happier には判断できません。停止して後片付けしてください。",
+        custodyUnavailable: "Happier はこのサービスインスタンスを制御できなくなりました。プロセスはまだ実行中の可能性があります。マシン上で確認してください。",
         nativeCleanupUnconfirmed: "このサービスは停止しましたが、プロセスがまだ実行中の可能性があります。停止して後片付けしてください。",
         browserTargetUnavailable: "このサービスはブラウザーで開けません。",
         starting: "このサービスはまだ起動中です。",
@@ -17089,6 +17096,12 @@ settingsSession: {
             earlierNone: ({ reason }: { reason: string | number }) => `比較できる以前のウィンドウがありません: ${reason}`,
             earlierSingleReading: "読み取りが1回のみ",
 
+            dailyHistoryTitle: "日別のクォータ履歴",
+            dailyHistoryLast: "最後の測定値",
+            dailyHistoryPeak: "日別の最大使用量",
+            dailyHistoryReset: ({ time, value }: { time: string; value: string }) => `リセット ${time} · リセット前の使用量 ${value}`,
+            dailyHistorySummary: "日別の測定値はUTCの日付を使い、各利用枠の期間を保持します。異なる期間は合算しません。",
+            dailyHistoryWindow: ({ window, last, peak, first, latest }: { window: string; last: string; peak: string; first: string; latest: string }) => `期間 ${window} · 最終 ${last} · 最大 ${peak} · 観測 ${first}–${latest}`,
             endedUnusedTitle: "終了した期間の未使用枠",
             endedUnusedObserved: ({ amount, unit, time }: { amount: string | number; unit: string | number; time: string | number }) => `${time} 時点で ${amount} ${unit} が未使用 · リセット時に記録`,
             endedUnusedEstimated: ({ amount, unit, time }: { amount: string | number; unit: string | number; time: string | number }) => `${time} 時点で約 ${amount} ${unit} が未使用 · 最後の読み取りからの線形推定`,
@@ -18522,6 +18535,7 @@ settingsSession: {
         domainFieldCheck: "外部チェック",
         domainCheckHint: "Happier がユーザーと同じように外部から開くパスです。返すべき HTTP ステータスを入力してください。",
       domainFieldCheckStatus: "期待する HTTP ステータス",
+      domainRecordedRoutedReplicas: "記録されたルーティング先レプリカ",
         domainExists: "このアドレスはすでにこの環境にあります",
         domainCheckAgain: "もう一度確認",
         domainRemove: "ドメインを削除",

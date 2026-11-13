@@ -27,6 +27,7 @@ function createPolicy(automationRunDays = 1): RetentionPolicy {
             sessionSidechainMessages: keepForever,
             accountChanges: keepForever,
             usageEvents: keepForever,
+            providerAccountUsageHistory: { mode: 'keep_forever' },
             voiceSessionLeases: keepForever,
             userFeedItems: keepForever,
             sessionShareAccessLogs: keepForever,

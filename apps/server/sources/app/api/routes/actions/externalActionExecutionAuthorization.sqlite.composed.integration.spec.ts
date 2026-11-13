@@ -4113,7 +4113,9 @@ describe("external Action execution authorization", () => {
             const sourcePath = `/v4/connect/qualified/provider-account-usage/sources/resolve?${new URLSearchParams({ source: JSON.stringify(source) })}`;
             const recordId = 'paug_v1_abcdefgh';
             const historyPath = `/v4/connect/qualified/provider-account-usage/history?${new URLSearchParams({ query: JSON.stringify({ recordId, history: { range: { startAtMs: 0, endAtMs: 100 }, pageSize: 10 } }) })}`;
+            const summaryPath = `/v4/connect/qualified/provider-account-usage/day-summaries?${new URLSearchParams({ query: JSON.stringify({ recordId, range: { startAtMs: 0, endAtMs: 100 } }) })}`;
             for (const path of [sourcePath, `/v4/connect/qualified/provider-account-usage/record?recordId=${recordId}`, historyPath,
+                summaryPath,
                 '/v1/account/encryption/currentness', '/v1/account/encryption', '/v2/account/settings']) {
                 expect(await verify('GET', path), path).toMatchObject({ effectActionId: actionId, binding: { accountId: fixture.account.id } });
             }
@@ -4124,6 +4126,9 @@ describe("external Action execution authorization", () => {
                 ['GET', '/v4/connect/qualified/provider-account-usage/record?recordId=invalid', undefined],
                 ['GET', `${sourcePath}&source=${encodeURIComponent(JSON.stringify(source))}`, undefined],
                 ['GET', `${historyPath}&accountId=other`, undefined],
+                ['GET', `${summaryPath}&accountId=other`, undefined],
+                ['GET', summaryPath.replace('day-summaries?', 'day-summaries?query={}&'), undefined],
+                ['PUT', summaryPath.split('?')[0]!, { recordId, dayStartAtMs: 0, payload: {} }],
                 ['GET', '/v1/account/encryption/currentness?accountId=other', undefined],
                 ['POST', '/v4/connect/qualified/provider-account-usage/record/refresh', { recordId }],
                 ['POST', '/v2/pending/reset-starts/read', { source, accountId: 'other' }],

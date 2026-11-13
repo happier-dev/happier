@@ -3001,6 +3001,12 @@ const enAppCrash = {
   copyDetails: 'Copy error details',
 };
 
+const enAppBoot = {
+  credentialAccessTitle: 'Opening your saved sign-in',
+  credentialAccessReason:
+    'Happier keeps your sign-in in this computer’s keychain. If your system asks to let Happier use it, choose Allow.',
+};
+
 const enWebCryptoGate = {
   title: 'Secure connection required',
   subtitle:
@@ -11103,6 +11109,7 @@ const enServer = {
     sessions: 'Sessions',
     sidechainMessages: 'Subagent transcripts',
     usageEvents: 'Usage events',
+    providerAccountUsageHistory: "Provider usage history",
     accountChanges: 'Account changes',
     voiceSessionLeases: 'Voice session leases',
     feedItems: 'Feed items',
@@ -13326,6 +13333,7 @@ const enLocalServices = {
       bindingUnavailableOnMachine: ({ machine }: { machine: string }) => `Can't check services on ${machine}. Reconnect it and try again.`,
       previewRegistrationUnavailable: "This service can't register a preview.",
       nativeStateUnknown: "Happier can't tell whether this service is still running. Stop it to clean up.",
+      custodyUnavailable: "Happier no longer controls this service instance. Its process may still be running. Check it on the machine.",
       nativeCleanupUnconfirmed: "This service stopped, but its processes may still be running. Stop it to clean up.",
       browserTargetUnavailable: "This service can't be opened in the browser.",
       starting: 'This service is still starting up.',
@@ -20102,6 +20110,12 @@ const enUsage = {
       excludedWaitReset: "waits for its reset",
       excludedBack: ({ time }: { time: string | number }) => `back ${time}`,
       projectionsCaption: "with pace and projection",
+      dailyHistoryTitle: "Daily quota history",
+      dailyHistoryLast: "Last reading",
+      dailyHistoryPeak: "Daily peak",
+      dailyHistoryReset: ({ time, value }: { time: string; value: string }) => `Reset ${time} · ${value} used before reset`,
+      dailyHistorySummary: "Daily readings use UTC days and preserve each allowance window; separate windows are not added together.",
+      dailyHistoryWindow: ({ window, last, peak, first, latest }: { window: string; last: string; peak: string; first: string; latest: string }) => `Window ${window} · last ${last} · peak ${peak} · observed ${first}–${latest}`,
       endedUnusedTitle: "Unused capacity in ended windows",
       endedUnusedObserved: ({ amount, unit, time }: { amount: string | number; unit: string | number; time: string | number }) => `${amount} ${unit} unused at ${time} · recorded at reset`,
       endedUnusedEstimated: ({ amount, unit, time }: { amount: string | number; unit: string | number; time: string | number }) => `~${amount} ${unit} unused at ${time} · linear estimate from the last reading`,
@@ -22056,6 +22070,7 @@ const enProjects = {
       domainFieldCheck: "Outside check",
       domainCheckHint: "The path Happier opens from outside, the way your users reach it. Enter the HTTP status it should return.",
       domainFieldCheckStatus: "Expected HTTP status",
+      domainRecordedRoutedReplicas: "Recorded routed replicas",
       domainExists: "This address is already on this environment",
       domainCheckAgain: "Check again",
       domainRemove: "Remove domain",
@@ -24175,6 +24190,7 @@ export const en: TranslationStructure = {
   sessionLog: enSessionLog,
   automations: enAutomations,
   appCrash: enAppCrash,
+  appBoot: enAppBoot,
   webCryptoGate: enWebCryptoGate,
   common: enCommon,
   ui: enUi,
@@ -24746,6 +24762,7 @@ type EnglishNamespaces10 = TranslationOverlay<
     readonly sessionLog: typeof enSessionLog;
     readonly automations: typeof enAutomations;
     readonly appCrash: typeof enAppCrash;
+    readonly appBoot: typeof enAppBoot;
     readonly webCryptoGate: typeof enWebCryptoGate;
     readonly common: typeof enCommon;
     readonly ui: typeof enUi;

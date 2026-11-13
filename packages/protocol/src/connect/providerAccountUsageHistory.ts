@@ -11,6 +11,7 @@ import type { AccountScopedCryptoMaterial } from '../crypto/accountScopedCipher.
 import type { ProviderAccountUsageSnapshotV1 } from './providerAccountUsagePrimitives.js';
 import { openProviderAccountUsageEncryptedContentV4 } from './accountUsage.js';
 import type { ProviderAccountSubscriptionMonthlyPriceV1 } from './accountSubscription.js';
+import type { ProviderAccountUsageDaySummaryV1 } from './providerAccountUsageDaySummary.js';
 import {
   ConnectedServiceQuotaGetResultV1Schema, OpenedProviderAccountUsageHistoryPageV1Schema,
   type ConnectedServiceQuotaGetInputV1, type ConnectedServiceQuotaGetResultV1,
@@ -26,10 +27,14 @@ export {
   type ProviderAccountUsageWaitingWorkV1,
 } from './providerAccountUsageHistorySchemasV1.js';
 
-export function projectProviderAccountUsageQuotaReadV1(input: Readonly<{ input: ConnectedServiceQuotaGetInputV1; current: ProviderAccountUsageSnapshotV1 | null; history?: z.infer<typeof OpenedProviderAccountUsageHistoryPageV1Schema>; pageProjection?: z.infer<typeof PackedProviderAccountUsagePageProjectionV1Schema>; pageFacts?: ConnectedServiceQuotaGetResultV1['pageFacts']; /** New page following an already coalesced prefix from this same read. */ appendHistory?: z.infer<typeof OpenedProviderAccountUsageHistoryPageV1Schema>; nowMs: number; targets?: z.infer<typeof UsagePacingTargetsV1Schema>; waitingWork?: ProviderAccountUsageWaitingWorkV1; coalesceHistory?: boolean }>): ConnectedServiceQuotaGetResultV1 {
+export function projectProviderAccountUsageQuotaReadV1(input: Readonly<{ input: ConnectedServiceQuotaGetInputV1; current: ProviderAccountUsageSnapshotV1 | null; history?: z.infer<typeof OpenedProviderAccountUsageHistoryPageV1Schema>; pageProjection?: z.infer<typeof PackedProviderAccountUsagePageProjectionV1Schema>; pageFacts?: ConnectedServiceQuotaGetResultV1['pageFacts']; daySummaries?: readonly ProviderAccountUsageDaySummaryV1[]; /** New page following an already coalesced prefix from this same read. */ appendHistory?: z.infer<typeof OpenedProviderAccountUsageHistoryPageV1Schema>; nowMs: number; targets?: z.infer<typeof UsagePacingTargetsV1Schema>; waitingWork?: ProviderAccountUsageWaitingWorkV1; coalesceHistory?: boolean }>): ConnectedServiceQuotaGetResultV1 {
   const history = input.pageProjection ? getProviderAccountUsageQuotaHistoryV1(input) : input.appendHistory ? appendCoalescedHistory(input.history, input.appendHistory)
     : input.history && input.coalesceHistory ? coalesceHistory(input.history) : input.history;
-  const snapshots = history?.entries.map(entry => entry.snapshot);
+  const detailSnapshots = history?.entries.map(entry => entry.snapshot);
+  const range = input.input.projection?.range ?? input.input.history?.range;
+  const retainedSnapshots = (input.daySummaries ?? []).flatMap(day => day.windows.map(window => window.lastSnapshot))
+    .filter(snapshot => !range || snapshot.fetchedAtMs >= range.startAtMs && snapshot.fetchedAtMs < range.endAtMs);
+  const snapshots = input.daySummaries?.length ? [...retainedSnapshots, ...(detailSnapshots ?? [])] : detailSnapshots;
   const operands = new ProviderAccountUsageDerivationOperands();
   const result: ConnectedServiceQuotaGetResultV1 = { source: input.input.source, current: input.current,
     ...(history ? { history } : {}), ...(input.pageFacts ? { pageFacts: input.pageFacts } : {}),
@@ -39,9 +44,10 @@ export function projectProviderAccountUsageQuotaReadV1(input: Readonly<{ input: 
   // current-snapshot cache). Re-parsing them here clones the whole accumulated
   // history on every progressive page. Derived fields also stay typed; the
   // outward Action boundary validates serialized results.
+  if (input.daySummaries) result.pageFacts = getProviderAccountUsageQuotaPageFactsV1(result, operands, input.daySummaries, range);
   if (!input.input.projection) return result;
   const { history: _history, ...page } = result;
-  const pageFacts = input.pageFacts ?? getProviderAccountUsageQuotaPageFactsV1(result, operands);
+  const pageFacts = result.pageFacts ?? getProviderAccountUsageQuotaPageFactsV1(result, operands);
   return { ...page, ...(pageFacts ? { pageFacts } : {}) };
 }
 

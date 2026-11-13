@@ -1545,6 +1545,9 @@ model Session {
     metadataLayoutVersion Int             @default(0)
     /// Home-local opaque accepted Project identity; null until the owner publishes it.
     projectKey        String?
+    /// The owner published that this Session belongs to no Project (projectKey stays null).
+    /// False with a null key means not yet classified, including 0.2 rows: still a Project candidate.
+    projectKeyNone    Boolean             @default(false)
     agentState        String?
     agentStateVersion Int                 @default(0)
     seq               Int                 @default(0)
@@ -1631,6 +1634,7 @@ model Session {
     @@index([accountId, managedCreationId], map: "Session_account_managed_creation_idx")
     @@index([createdByApiTokenId])
     @@index([accountId, updatedAt(sort: Desc)])
+    @@index([accountId, projectKey, projectKeyNone], map: "Session_project_selection_idx")
     @@index([accountId, meaningfulActivityAt(sort: Desc), id(sort: Desc)])
     @@index([accountId, currentStorageState, meaningfulActivityAt(sort: Desc), id(sort: Desc)], map: "Session_listing_hosted_activity_idx")
     @@index([accountId, currentStorageState, materializedThroughSourceAt(sort: Desc), id(sort: Desc)], map: "Session_listing_state_snapshot_idx")
@@ -3464,6 +3468,7 @@ model ProviderAccountUsageRecord {
 
     sources ConnectedServiceUsageSource[]
     history ProviderAccountUsageHistory[]
+    summaries ProviderAccountUsageDaySummary[]
 
     @@unique([accountId, recordId])
     @@unique([accountId, providerId, accountSubjectId, quotaScope, quotaScopeIdKey], map: "paur_scope_key")
@@ -3482,6 +3487,20 @@ model ProviderAccountUsageHistory {
     record ProviderAccountUsageRecord @relation(fields: [accountId, recordId], references: [accountId, recordId], onDelete: Cascade, onUpdate: Cascade)
 
     @@index([accountId, recordId, observedAt, id], map: "pauh_record_time_idx")
+}
+
+/// Daily quota history retained after detail expires. Payload follows the
+/// Account-mode content envelope used by ProviderAccountUsageHistory.
+model ProviderAccountUsageDaySummary {
+    accountId String
+    recordId String
+    dayStartAt DateTime
+    payload Json
+    record ProviderAccountUsageRecord @relation(fields: [accountId, recordId], references: [accountId, recordId], onDelete: Cascade, onUpdate: Cascade)
+
+    @@id([accountId, recordId, dayStartAt])
+    // pauds_day_idx is owned by 20261112211000_provider_usage_pending_day_index:
+    // positive-coverage partial indexes on PG/SQLite, a functional key on MySQL.
 }
 
 /// Bounded compatibility storage for sealed quota snapshots written by the

@@ -13,6 +13,7 @@ describe('retention/createRetentionRuleRegistry', () => {
             'sessionSidechainMessages',
             'accountChanges',
             'usageEvents',
+            'providerAccountUsageHistory',
             'voiceSessionLeases',
             'userFeedItems',
             'sessionShareAccessLogs',

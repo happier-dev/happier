@@ -2,6 +2,7 @@ import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ProviderAccountUsageRecordIdSchema, ProviderAccountUsageSnapshotV1Schema, type ProviderAccountUsageHistoryWitnessV1, type ProviderAccountUsageSnapshotV1 } from './providerAccountUsagePrimitives.js';
 import { ProviderAccountSubscriptionV1Schema } from './accountSubscription.js';
+import { deriveProviderAccountUsageDayQuotaHistoryV1, type ProviderAccountUsageDaySummaryV1 } from './providerAccountUsageDaySummary.js';
 import { ConnectedServiceQuotaMeterV1Schema, ConnectedServiceQuotaMeterDetailsV1Schema } from './connectedServiceSchemas.js';
 import type { ConnectedServiceQuotaGetResultV1 } from './providerAccountUsageHistorySchemasV1.js';
 import { deriveProviderAccountUsageEarlierWindowCurves, hasProviderAccountUsageWitnessedReset,
@@ -237,7 +238,7 @@ export function getProviderAccountUsageQuotaHistoryV1(read: Readonly<{
 }
 
 /** The page consumes these facts, never the observations used to derive them. */
-export function getProviderAccountUsageQuotaPageFactsV1(read: ConnectedServiceQuotaGetResultV1, operands = new ProviderAccountUsageDerivationOperands()): ConnectedServiceQuotaGetResultV1['pageFacts'] {
+export function getProviderAccountUsageQuotaPageFactsV1(read: ConnectedServiceQuotaGetResultV1, operands = new ProviderAccountUsageDerivationOperands(), daySummaries?: readonly ProviderAccountUsageDaySummaryV1[], range?: Readonly<{ startAtMs: number; endAtMs: number }>): ConnectedServiceQuotaGetResultV1['pageFacts'] {
   if (read.pageFacts) return read.pageFacts;
   const history = getProviderAccountUsageQuotaHistoryV1(read);
   if (!history) return undefined;
@@ -258,10 +259,27 @@ export function getProviderAccountUsageQuotaPageFactsV1(read: ConnectedServiceQu
       resets.add(window.resetAtMs); witnessedResets.push(window);
     }
   }
+  // Summaries retain the reset facts, never the exact observation identity used
+  // for reset-start admission. Their window bounds follow the canonical meter.
+  const resetKeys = new Set(witnessedResets.map(value => JSON.stringify([value.recordId, value.meterId, value.resetAtMs])));
+  for (const day of daySummaries ?? []) for (const window of day.windows) {
+    const basis = resolveProviderAccountUsagePaceWindow(window.lastSnapshot, window.meterId, operands);
+    if (!basis) continue;
+    for (const reset of window.resets) {
+      if (range && (reset.resetAtMs < range.startAtMs || reset.resetAtMs >= range.endAtMs)) continue;
+      const key = JSON.stringify([day.recordId, window.meterId, reset.resetAtMs]);
+      if (resetKeys.has(key)) continue;
+      resetKeys.add(key);
+      witnessedResets.push({ ...basis, resetAtMs: reset.resetAtMs, windowStartAtMs: reset.resetAtMs - basis.windowDurationMs });
+    }
+  }
+  witnessedResets.sort((left, right) => left.resetAtMs - right.resetAtMs || left.meterId.localeCompare(right.meterId));
   let resetWitness: NonNullable<ConnectedServiceQuotaGetResultV1['pageFacts']>['resetWitness'] = null;
   for (const entry of history.entries) if (entry.snapshot.recordId === current?.recordId
     && (!resetWitness || entry.observedAtMs > resetWitness.observedAtMs)) resetWitness = entry;
   return { historyStatus: history.nextCursor === null ? 'complete' : 'partial', resetWitness, witnessedResets,
+    ...(daySummaries ? { dayQuotaHistory: deriveProviderAccountUsageDayQuotaHistoryV1({ recordId: current?.recordId ?? daySummaries[0]?.recordId ?? snapshots[0]?.recordId ?? '',
+      snapshots, summaries: daySummaries }) } : {}),
     earlierCurves: (current?.meters ?? []).map(meter => ({ meterId: meter.meterId,
       value: deriveProviderAccountUsageEarlierWindowCurves({ current: current!, meterId: meter.meterId, history: snapshots }, operands) })) };
 }

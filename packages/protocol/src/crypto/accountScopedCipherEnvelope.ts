@@ -38,6 +38,7 @@ export type AccountScopedBlobKind =
   | 'connected_service_quota_snapshot'
   | 'provider_account_usage_snapshot'
   | 'provider_account_usage_page_projection'
+  | 'provider_account_usage_day_summary'
   | 'qualified_connected_account_attempt_transaction'
   | 'qualified_connected_account_configuration'
   | 'plugin_declarative_settings'
@@ -111,6 +112,7 @@ const ACCOUNT_SCOPED_KIND_BYTE = Object.freeze({
   provider_account_usage_page_projection: 49,
   account_session_follow_rule: 50,
   session_owner_display: 51,
+  provider_account_usage_day_summary: 52,
 } satisfies Record<AccountScopedBlobKind, number>);
 
 /**

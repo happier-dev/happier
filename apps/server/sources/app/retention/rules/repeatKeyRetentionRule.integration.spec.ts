@@ -26,6 +26,7 @@ function createPolicy(input: Readonly<{
             sessionSidechainMessages: keepForever,
             accountChanges: keepForever,
             usageEvents: keepForever,
+            providerAccountUsageHistory: { mode: 'keep_forever' },
             voiceSessionLeases: keepForever,
             userFeedItems: keepForever,
             sessionShareAccessLogs: keepForever,

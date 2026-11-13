@@ -2721,6 +2721,11 @@ export const zhHans: TranslationStructure = {
     copyDetails: "复制错误详情",
   },
 
+  appBoot: {
+    credentialAccessTitle: '正在打开已保存的登录信息',
+    credentialAccessReason: 'Happier 将你的登录信息保存在这台电脑的钥匙串中。如果系统询问是否允许 Happier 使用它，请选择“允许”。',
+  },
+
   webCryptoGate: {
     title: "需要安全连接",
     subtitle:
@@ -9126,6 +9131,7 @@ export const zhHans: TranslationStructure = {
         sessions: "会话",
         sidechainMessages: "子代理记录",
         usageEvents: "使用事件",
+        providerAccountUsageHistory: "提供商使用历史",
         accountChanges: "账户变更",
         voiceSessionLeases: "语音会话租约",
         feedItems: "动态条目",
@@ -11158,6 +11164,7 @@ export const zhHans: TranslationStructure = {
         bindingUnavailableOnMachine: ({ machine }: { machine: string }) => `无法检查 ${machine} 上的服务。请重新连接该机器后重试。`,
         previewRegistrationUnavailable: "此服务无法注册预览。",
         nativeStateUnknown: "Happier 无法确定此服务是否仍在运行。请停止它以完成清理。",
+        custodyUnavailable: "Happier 已无法控制此服务实例。其进程可能仍在运行。请在机器上检查。",
         nativeCleanupUnconfirmed: "此服务已停止，但其进程可能仍在运行。请停止它以完成清理。",
         browserTargetUnavailable: "此服务无法在浏览器中打开。",
         starting: "此服务仍在启动中。",
@@ -16453,6 +16460,12 @@ settingsSession: {
             earlierNone: ({ reason }: { reason: string | number }) => `没有可与之并列显示的较早窗口：${reason}`,
             earlierSingleReading: "只有一次读数",
 
+            dailyHistoryTitle: "每日配额历史",
+            dailyHistoryLast: "最后读数",
+            dailyHistoryPeak: "每日峰值",
+            dailyHistoryReset: ({ time, value }: { time: string; value: string }) => `重置 ${time} · 重置前已使用 ${value}`,
+            dailyHistorySummary: "每日读数按UTC日期分组，并保留每个额度周期；不同周期不会相加。",
+            dailyHistoryWindow: ({ window, last, peak, first, latest }: { window: string; last: string; peak: string; first: string; latest: string }) => `周期 ${window} · 最后 ${last} · 峰值 ${peak} · 观测 ${first}–${latest}`,
             endedUnusedTitle: "已结束周期的未用额度",
             endedUnusedObserved: ({ amount, unit, time }: { amount: string | number; unit: string | number; time: string | number }) => `${time}时有 ${amount} ${unit} 未使用 · 重置时记录`,
             endedUnusedEstimated: ({ amount, unit, time }: { amount: string | number; unit: string | number; time: string | number }) => `${time}时约有 ${amount} ${unit} 未使用 · 根据最后读数线性估算`,
@@ -18227,6 +18240,7 @@ settingsSession: {
         domainFieldCheck: "外部检查",
         domainCheckHint: "Happier 像用户一样从外部打开的路径。请输入它应返回的 HTTP 状态码。",
       domainFieldCheckStatus: "预期 HTTP 状态码",
+      domainRecordedRoutedReplicas: "已记录的路由副本",
         domainExists: "此地址已在该环境中",
         domainCheckAgain: "重新检查",
         domainRemove: "移除域名",

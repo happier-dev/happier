@@ -18,6 +18,7 @@ function createPolicy(): RetentionPolicy {
             sessionSidechainMessages: keepForever,
             accountChanges: keepForever,
             usageEvents: keepForever,
+            providerAccountUsageHistory: { mode: 'keep_forever' },
             voiceSessionLeases: { mode: "delete_older_than", days: 1 },
             userFeedItems: keepForever,
             sessionShareAccessLogs: keepForever,

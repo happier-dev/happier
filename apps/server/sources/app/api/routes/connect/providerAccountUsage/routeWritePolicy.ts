@@ -17,6 +17,7 @@ import {
     updateProviderAccountUsageRecordIfCurrent,
     retainProviderAccountUsageHistory,
     hasProviderAccountUsageHistory,
+    updateProviderAccountUsageRecordMetadataIfCurrent,
 } from "./recordStorage";
 import type {
     LegacyQuotaCompatibilityProjection,
@@ -25,6 +26,7 @@ import type {
     UpsertProviderAccountUsageRecordParams,
 } from "./types";
 import { ProviderAccountUsagePayloadInvariantError } from "./types";
+import { readProviderAccountUsageLegacyPendingDays } from './daySummaryPendingStorage';
 
 type ProviderAccountUsagePolicyClient = TransactionClient;
 
@@ -181,7 +183,7 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
     // Concurrent material writes retry within the containing transaction's
     // existing deadline; this phase must not fail valid work after five CAS misses.
     for (;;) {
-        const captured = await readProviderAccountUsageRecordWithCurrentGuard({
+        let captured = await readProviderAccountUsageRecordWithCurrentGuard({
             accountId: params.accountId,
             recordId: params.recordId,
         }, params.client);
@@ -216,7 +218,20 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
             }
         }
 
-        const existing = captured.record;
+        let existing = captured.record;
+        if (existing.metadata?.daySummaryPendingDays === undefined) {
+            // Initialize once at the normal-write owner, including freshness and
+            // no-op writes. The existing parent CAS retries concurrent changes.
+            const pending = await readProviderAccountUsageLegacyPendingDays(params, params.client);
+            const rawMetadata = captured.rawMetadata && typeof captured.rawMetadata === 'object' && !Array.isArray(captured.rawMetadata)
+                ? captured.rawMetadata : {};
+            const metadata = { ...rawMetadata, daySummaryPendingDays: pending };
+            if (!await updateProviderAccountUsageRecordMetadataIfCurrent({ accountId: params.accountId,
+                recordId: params.recordId, metadata }, captured.guard, params.client)) continue;
+            existing = { ...existing, metadata: { ...existing.metadata, daySummaryPendingDays: pending } };
+            captured = { ...captured, record: existing, rawMetadata: metadata,
+                guard: { ...captured.guard, content: { ...captured.guard.content, metadata: { equals: metadata } } } };
+        }
 
         const existingFingerprint = normalizeFingerprint(existing.metadata?.materialFingerprint);
         const existingFetchedAt = existing.fetchedAt ?? null;
@@ -303,6 +318,8 @@ async function writeProviderAccountUsageRecordWithPolicyInClient(
 
         if (existing.metadata?.pageProjection) nextWrite = { ...nextWrite,
             metadata: { ...nextWrite.metadata, pageProjection: existing.metadata.pageProjection } };
+        if (existing.metadata?.daySummaryPendingDays !== undefined) nextWrite = { ...nextWrite,
+            metadata: { ...nextWrite.metadata, daySummaryPendingDays: existing.metadata.daySummaryPendingDays } };
         await params.beforeWrite?.();
         const updated = await updateProviderAccountUsageRecordIfCurrent(nextWrite, captured.guard, params.client);
         if (updated) {

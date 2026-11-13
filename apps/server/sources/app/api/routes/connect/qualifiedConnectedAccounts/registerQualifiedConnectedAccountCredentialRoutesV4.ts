@@ -2,6 +2,8 @@ import { z } from "zod/mini";
 import { createHash } from 'node:crypto';
 import { QualifiedProviderAccountUsageHistoryRequestV4Schema, QualifiedProviderAccountUsageHistoryResponseV4Schema } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { ProviderAccountUsagePageProjectionReadV1Schema, ProviderAccountUsagePageProjectionWriteV1Schema } from '@happier-dev/protocol/connect/providerAccountUsagePageProjection';
+import { ProviderAccountUsageDaySummaryReadV1Schema, ProviderAccountUsageDaySummaryWriteV1Schema,
+    ProviderAccountUsageDaySummaryResponseV1Schema } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
 import { projectProviderAccountUsageRecordV4 } from '../providerAccountUsage/recordStorage';
 import { QualifiedConnectedAccountCredentialDeleteResponseV4Schema, QualifiedConnectedAccountConfigurationPatchV4Schema, QualifiedConnectedAccountCredentialErrorV4Schema, QualifiedConnectedAccountCredentialHealthPatchV4Schema, QualifiedConnectedAccountCredentialDeleteV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema, QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountRefreshLeaseV4Schema, QualifiedConnectedAccountRefreshLeaseResponseV4Schema, QualifiedConnectedAccountQuotaQueryV4Schema, QualifiedConnectedAccountQuotaResponseV4Schema, QualifiedConnectedAccountSuccessV4Schema, QualifiedConnectedServiceUsageSourceResolutionV4Schema, QualifiedProviderAccountUsageWriteV4Schema, QualifiedProviderAccountUsageWriteSuccessV4Schema, QualifiedProviderAccountUsageRecordQueryV4Schema, QualifiedProviderAccountUsageReadErrorV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { ManagedResourceDispositionV1Schema } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
@@ -40,6 +42,8 @@ import {
     readQualifiedProviderAccountUsageRecord,
     readQualifiedProviderAccountUsageHistory,
     writeQualifiedProviderAccountUsagePageProjection,
+    readQualifiedProviderAccountUsageDaySummaries,
+    writeQualifiedProviderAccountUsageDaySummary,
     readQualifiedConnectedAccountQuota,
     requestQualifiedProviderAccountUsageRefresh,
     requestQualifiedConnectedAccountQuotaRefresh,
@@ -1368,6 +1372,39 @@ export function registerQualifiedConnectedAccountCredentialRoutesV4(
             }
             throw error;
         }
+    });
+
+    app.get('/v4/connect/qualified/provider-account-usage/day-summaries', {
+        preHandler: app.authenticate,
+        schema: { querystring: z.strictObject({ query: z.union([z.string(), z.array(z.string())]) }), response: {
+            200: ProviderAccountUsageDaySummaryResponseV1Schema, 400: z.strictObject({ error: z.literal('invalid-params') }),
+            404: NotFoundResponseSchema, 409: QualifiedProviderAccountUsageReadErrorV4Schema,
+        } },
+    }, async (request, reply) => {
+        let query;
+        try { query = parseQualifiedConnectedAccountV4StructuredQueryValue(ProviderAccountUsageDaySummaryReadV1Schema, request.query.query); }
+        catch { return reply.code(400).send({ error: 'invalid-params' }); }
+        const result = await readQualifiedProviderAccountUsageDaySummaries({ accountId: request.userId, ...query });
+        if (result.status === 'not_found') return reply.code(404).send({ error: 'provider_account_usage_not_found' });
+        if (result.status === 'storage_mode_mismatch') return reply.code(409).send({ error: 'provider_account_usage_storage_mode_mismatch' });
+        reply.header('cache-control', 'no-store');
+        return reply.send({ summaries: result.summaries, missingDays: result.missingDays });
+    });
+
+    app.put('/v4/connect/qualified/provider-account-usage/day-summaries', {
+        preHandler: app.authenticate,
+        schema: { body: ProviderAccountUsageDaySummaryWriteV1Schema, response: {
+            200: z.strictObject({ success: z.literal(true) }), 404: NotFoundResponseSchema,
+            409: z.union([QualifiedProviderAccountUsageReadErrorV4Schema,
+                z.strictObject({ error: z.literal('provider_account_usage_day_summary_conflict') })]),
+        } },
+    }, async (request, reply) => {
+        const result = await writeQualifiedProviderAccountUsageDaySummary({ accountId: request.userId, ...request.body });
+        if (result === 'not_found') return reply.code(404).send({ error: 'provider_account_usage_not_found' });
+        if (result === 'storage_mode_mismatch') return reply.code(409).send({ error: 'provider_account_usage_storage_mode_mismatch' });
+        if (result === 'summary_conflict') return reply.code(409).send({ error: 'provider_account_usage_day_summary_conflict' });
+        reply.header('cache-control', 'no-store');
+        return reply.send({ success: true });
     });
 
     app.route({ method: 'GET', url: '/v4/connect/qualified/provider-account-usage/history', exposeHeadRoute: false,

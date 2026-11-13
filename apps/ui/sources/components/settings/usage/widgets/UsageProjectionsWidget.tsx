@@ -63,6 +63,7 @@ import {
   usePlanText,
 } from './plans/UsagePlanParts';
 import { readUsagePersonalPaceTarget, selectUsageWindowsAboveTarget } from './plans/usagePacingTarget';
+import { UsageDailyQuotaHistory } from './plans/UsageDailyQuotaHistory';
 
 /** Below this width a meter stacks its name over the bar and the projection beneath it. */
 const STACKED_BELOW_PX = 460;
@@ -435,6 +436,8 @@ export function UsageProjectionsWidget(props: UsageBodyProps) {
           reason={t('usage.board.plans.noPaceAnywhereReason')}
         />
       )}
+      {!tile && props.query.granularity !== 'hour' ? <UsageDailyQuotaHistory accounts={projection.accounts} nameOf={nameOf}
+        testID={`${props.testID}.dailyHistory`} /> : null}
       {rows.length ? <UsagePlanDisclosure testID={`${props.testID}.reported`}
         title={t('usage.board.plans.reportedWindows', { count: rows.length })}>
       {!tile && focus && paced.length > 1 ? (

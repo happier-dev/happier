@@ -6,7 +6,7 @@ import {
     type ProviderAccountUsageRecordKeyV1,
     type ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 
 import type { StoredCredentials } from '@/persistence';
@@ -72,6 +72,11 @@ const plainCredentials = {
     encryption: null,
 } satisfies StoredCredentials;
 
+// These incumbent writer fixtures model a server without the additive summary
+// operation. Tests exercising that operation install its response explicitly.
+beforeEach(() => { vi.spyOn(axios, 'get').mockResolvedValue({ status: 404, data: {} }); });
+afterEach(() => { vi.restoreAllMocks(); });
+
 describe('provider account usage persistence scheduler', () => {
     it('persists every valid queued source beyond 500 records and ten minutes of delayed Home writes', async () => {
         let release!: () => void;
@@ -109,10 +114,10 @@ describe('provider account usage persistence scheduler', () => {
         const { sealProviderAccountUsageSnapshot } = await import('@happier-dev/protocol/connect/accountUsage');
         const sealed = sealProviderAccountUsageSnapshot({ snapshot, material, randomBytes: length => new Uint8Array(length).fill(9) });
         const post = vi.spyOn(axios, 'post').mockRejectedValue({ response: { status: 503, data: { error: 'database_transaction_conflict_exhausted' } } });
-        const get = vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: {
+        const get = vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: String(url).includes('/day-summaries') ? 404 : 200, data: {
             content: mode === 'plain' ? { t: 'plain', v: snapshot } : { t: 'encrypted', c: sealed.ciphertext },
             metadata: { fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs, status: 'ok' }, sources: [target.source],
-        } });
+        } }));
         const scheduler = createProviderAccountUsagePersistenceScheduler({
             api: { getAccountEncryptionMode: async () => mode },
             credentials: mode === 'plain' ? plainCredentials : { token: 'token', encryption: material },
@@ -121,7 +126,7 @@ describe('provider account usage persistence scheduler', () => {
         try {
             await scheduler.recordInBandSnapshot(snapshot, { targets: [target] });
             await scheduler.flush(1_000);
-            expect(get).toHaveBeenCalledTimes(1);
+            expect(get.mock.calls.filter(call => String(call[0]).includes('/provider-account-usage/record?'))).toHaveLength(1);
             expect(get.mock.calls[0]?.[0]).toContain('/provider-account-usage/record?');
             expect(post).toHaveBeenCalledTimes(1);
             expect(post.mock.calls[0]?.[1]).not.toHaveProperty('material');

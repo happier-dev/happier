@@ -7,6 +7,7 @@ import { QualifiedProviderAccountUsageHistoryRequestV4Schema, QualifiedProviderA
 import { openSealedProviderAccountUsageSnapshot } from '@happier-dev/protocol/connect/accountUsage';
 import { serializeProviderAccountUsageSnapshotMaterialV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { mergeProviderAccountSubscription } from '@happier-dev/protocol/connect/accountSubscription';
+import { ProviderAccountUsageDaySummaryReadV1Schema, ProviderAccountUsageDaySummaryResponseV1Schema, ProviderAccountUsageDaySummaryWriteV1Schema } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { QualifiedConnectedAccountCredentialDeleteResponseV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import type { ManagedResourceDependencyV1 } from '@happier-dev/protocol';
@@ -1114,6 +1115,35 @@ export async function readQualifiedProviderAccountUsageHistoryV4(params: Readonl
     if (response.status === 409) throwQualifiedProviderAccountUsageReadConflict(response.data);
     if (response.status !== 200) throw new Error(`Qualified provider-account usage history read returned ${response.status}`);
     return QualifiedProviderAccountUsageHistoryResponseV4Schema.parse(response.data);
+}
+
+export async function readQualifiedProviderAccountUsageDaySummariesV4(params: Readonly<{ token: string;
+    query: ReturnType<typeof ProviderAccountUsageDaySummaryReadV1Schema.parse>; signal?: AbortSignal;
+    requestPurpose?: QualifiedConnectedAccountReadRequestPurpose; authorizeRequest?: QualifiedProviderAccountUsageReadAuthorization }>) {
+    const query = ProviderAccountUsageDaySummaryReadV1Schema.parse(params.query);
+    const path = `/v4/connect/qualified/provider-account-usage/day-summaries?${new URLSearchParams({ query: encodeQualifiedConnectedAccountV4StructuredQueryValue(ProviderAccountUsageDaySummaryReadV1Schema, query) }).toString()}`;
+    const response = await axios.get(`${resolveServerHttpBaseUrl()}${path}`, { headers: providerUsageReadHeaders(params, path),
+        timeout: resolveConnectedServicesServerApiTimeoutMs(), validateStatus: status => status === 200 || status === 404 || status === 409,
+        ...(params.signal ? { signal: params.signal } : {}) });
+    if (response.status === 404) return null;
+    if (response.status === 409) throwQualifiedProviderAccountUsageReadConflict(response.data);
+    if (response.status !== 200) throw new Error(`Qualified provider-account usage summary read returned ${response.status}`);
+    return ProviderAccountUsageDaySummaryResponseV1Schema.parse(response.data);
+}
+
+export async function writeQualifiedProviderAccountUsageDaySummaryV4(params: Readonly<{ token: string;
+    write: ReturnType<typeof ProviderAccountUsageDaySummaryWriteV1Schema.parse>; signal?: AbortSignal }>) {
+    const write = ProviderAccountUsageDaySummaryWriteV1Schema.parse(params.write);
+    const response = await axios.put(`${resolveServerHttpBaseUrl()}/v4/connect/qualified/provider-account-usage/day-summaries`, write,
+        { headers: requestHeaders(params.token), timeout: resolveConnectedServicesServerApiTimeoutMs(),
+            validateStatus: status => status === 200 || status === 404 || status === 409, ...(params.signal ? { signal: params.signal } : {}) });
+    if (response.status === 404) return 'unsupported' as const;
+    if (response.status === 409) {
+        if (response.data?.error === 'provider_account_usage_projection_conflict') return 'conflict' as const;
+        throwQualifiedProviderAccountUsageReadConflict(response.data);
+    }
+    if (response.status !== 200) throw new Error(`Qualified provider-account usage summary write returned ${response.status}`);
+    return 'written' as const;
 }
 
 export async function requestQualifiedProviderAccountUsageRefreshV4(

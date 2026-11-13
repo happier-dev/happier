@@ -1,14 +1,18 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { ConnectedServiceQuotaGetResultV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { sealProviderAccountUsageSnapshot, openSealedProviderAccountUsageSnapshot } from '@happier-dev/protocol/connect/accountUsage';
-import { isServerFetchConnectivityProbeRequest } from '@/dev/testkit/mocks/serverFetch';
+import { isServerFetchConnectivityProbeRequest, withLegacyProviderAccountUsageRoutes } from '@/dev/testkit/mocks/serverFetch';
 import {
     ProviderAccountUsageSnapshotV1Schema,
     buildProviderAccountUsageRecordId,
     type ProviderAccountUsageSnapshotV1,
 } from '@happier-dev/protocol/connect/account-usage-primitives';
+
+// Warm the API graph outside the first test's request lifetime. Each test still
+// installs its HTTP boundaries before acquiring the API and resets afterwards.
+beforeAll(async () => { await import('./apiProviderAccountUsage'); });
 
 afterEach(() => {
     vi.unstubAllGlobals();
@@ -53,11 +57,50 @@ function makeSnapshot(): ProviderAccountUsageSnapshotV1 {
     });
 }
 
-async function loadApi() {
-    return await import('./apiProviderAccountUsage');
+async function loadApi(options: Readonly<{ daySummaries?: boolean }> = {}) {
+    const api = await import('./apiProviderAccountUsage');
+    if (options.daySummaries) return api;
+    // Incumbent fixtures model the prior server's unknown-operation 404 at
+    // the HTTP boundary; all quota derivation beneath it remains real.
+    vi.stubGlobal('fetch', withLegacyProviderAccountUsageRoutes(globalThis.fetch));
+    return { ...api, getProviderAccountUsageQuota: ((credentials, input, readOptions) => api.getProviderAccountUsageQuota(credentials, input,
+        readOptions.request ? { ...readOptions, request: withLegacyProviderAccountUsageRoutes(readOptions.request) } : readOptions)) satisfies typeof api.getProviderAccountUsageQuota };
 }
 
 describe('apiProviderAccountUsage', () => {
+    it.each((['plain', 'e2ee'] as const).flatMap(accountMode => (['history', 'projection'] as const).map(readKind => ({ accountMode, readKind }))))(
+        'opens retained $accountMode quota days through $readKind', async ({ accountMode, readKind }) => {
+        const { buildProviderAccountUsageDaySummaryV1, sealProviderAccountUsageDaySummaryV1 } = await import('@happier-dev/protocol/connect/providerAccountUsageDaySummary');
+        const snapshot = makeSnapshot();
+        const source = { bindingKind: 'account' as const, ref: { service: { pluginId: 'example.usage', localId: 'usage' }, accountId: 'account' } };
+        const material = { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) };
+        const summary = buildProviderAccountUsageDaySummaryV1({ recordId: snapshot.recordId, dayStartAtMs: 0, snapshots: [snapshot] });
+        const sealed = sealProviderAccountUsageSnapshot({ material, snapshot, randomBytes: n => new Uint8Array(n).fill(3) });
+        let summaryReads = 0;
+        const request = vi.fn(async (input: string, init?: RequestInit) => {
+            if (isServerFetchConnectivityProbeRequest(input)) return Response.json({ ok: true });
+            const path = new URL(String(input), 'https://test.invalid').pathname;
+            if (path.endsWith('/sources/resolve')) return Response.json({ source, recordId: snapshot.recordId, providerAccountId: snapshot.recordKey.accountSubjectId, fetchedAt: 1, staleAfterMs: 2 });
+            if (path.endsWith('/day-summaries')) { summaryReads++; return Response.json({ summaries: [{ dayStartAtMs: 0,
+                payload: { v: 1, coverage: { observationCount: 0, frontier: null }, content: accountMode === 'plain'
+                    ? { t: 'plain', v: summary } : sealProviderAccountUsageDaySummaryV1({ summary, material, randomBytes: n => new Uint8Array(n).fill(3) }) } }], missingDays: [] }); }
+            if (path.endsWith('/history')) {
+                if (init?.method === 'PUT') return Response.json({ success: true });
+                const query = JSON.parse(new URL(input, 'https://test.invalid').searchParams.get('query')!);
+                return Response.json(query.projection ? { projection: null, complete: false } : { entries: [], nextCursor: null });
+            }
+            return Response.json({ content: accountMode === 'plain' ? { t: 'plain', v: snapshot } : { t: 'encrypted', c: sealed.ciphertext,
+                subscription: sealed.subscription, recoveryCreditDetails: sealed.recoveryCreditDetails }, metadata: { fetchedAt: 1, staleAfterMs: 2, status: 'ok' }, sources: [source] });
+        });
+        const range = { startAtMs: 0, endAtMs: 86_400_000 };
+        const result = await (await loadApi({ daySummaries: true })).getProviderAccountUsageQuota(credentials,
+            { source, ...(readKind === 'history' ? { history: { range, pageSize: 100 } } : { projection: { range, resolution: 'accepted_observations' as const } }) },
+            { accountMode, material, request, includePendingWork: false });
+        expect(result.history).toEqual(readKind === 'history' ? { entries: [], nextCursor: null } : undefined);
+        expect(result.pageFacts?.resetWitness).toBeNull();
+        expect(result.pageFacts?.dayQuotaHistory).toEqual([summary]);
+        expect(summaryReads).toBe(1);
+    });
     it('borrows the quota record acquisition from the snapshot row owner without borrowing its cancellation', async () => {
         await activateTestHome();
         const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');

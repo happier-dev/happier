@@ -1186,7 +1186,7 @@ plain/sealed Account-mode representation; an authorized client opens sealed
 content, and mode/content disagreement fails closed. Retention metadata does
 not make the quota or capacity numbers SQL-queryable for E2EE Accounts.
 
-The authorized client can drain exact encrypted history. Current capacity is published before history, entered-price and Pending work settle;
+Within the retained detail window, the authorized client can drain exact encrypted history. Current capacity is published before history, entered-price and Pending work settle;
 each accepted page then updates the same Resource. The ordinary progressive
 history adapter keeps the first and last actual observations of an unchanged
 material run. Plans' page projection instead retains every accepted observation,
@@ -1218,8 +1218,9 @@ encrypted bodies after authenticated opening. A missing projection can be
 backfilled from exact accepted history. An authenticated malformed or unsupported
 body is refused by the current schema; it is not classified as a superseded body
 or silently rebuilt. Authentication and mode failures also remain errors. No
-legacy projection decoder is retained, and exact history is not rewritten or
-compacted.
+legacy projection decoder is retained. The page projection does not rewrite
+exact history; the separate retention owner can remove summarized detail as
+described below.
 
 Unchanged polls update current-record freshness without appending history.
 Material equality ignores HTTP observation clocks and headers, while retaining
@@ -1241,9 +1242,50 @@ the key-holding producer backfills exact pages on demand. The server checks the
 accepted count and frontier before storing the derived document in current-record
 metadata. A new tail makes the read incomplete; a changed prefix requires a fresh
 backfill. The document is preserved across latest updates, never copied into
-accepted observations, and is deleted with its parent record. Exact history and
-immutable Pending witnesses remain authoritative. This is development source,
+accepted observations, and is deleted with its parent record. Retained exact history and
+immutable Pending witnesses remain authoritative for exact observation reads. This is development source,
 not a claim of completed loaded-runtime or performance acceptance.
+
+#### Daily summaries and detail retention (unreleased 0.3)
+
+The CLI's key-holding usage persistence owner,
+`daemon/connectedServices/accountUsage/persistence.ts`, creates daily summaries
+while it holds the Account material. Days use UTC boundaries from each accepted
+observation's `fetchedAt` clock. The Protocol owner
+`connect/providerAccountUsageDaySummary.ts` defines the summary and its explicit
+plain/encrypted envelope, with the separate `provider_account_usage_day_summary`
+cipher purpose for E2EE. The server stores sealed summaries and their
+non-content coverage facts without opening quota values.
+
+Each day retains the last accepted snapshot and, for each meter and provider
+window, the last accepted snapshot, peak used value, first and last observation
+times, and all witnessed resets with their time and usage before reset. Reset
+count is derived from that reset list. Plans and Limits consume these summaries
+for older curves at day granularity while retaining resets within a day. Quota
+and capacity readings are nonadditive: this is not a token/cost ledger and does
+not promise conserved consumption totals.
+
+The existing server retention registry owns `providerAccountUsageHistory` and
+the `HAPPIER_SERVER_RETENTION__PROVIDER_ACCOUNT_USAGE_HISTORY__MODE` / `__DAYS`
+keys. Their configured defaults are `delete_older_than` and 90 days; the global
+`HAPPIER_SERVER_RETENTION__ENABLED` switch remains off by default. The existing
+sweeper deletes expired detail only for days whose summaries match accepted
+coverage. Unsummarized detail stays available, and the next ordinary key-holding
+usage write backfills
+every missing day it can open, opening and summarizing only those missing days.
+The server's `daySummaryPendingStorage` owner tracks pending UTC days in the
+server-only `ProviderAccountUsageRecord.metadata.daySummaryPendingDays` leaf.
+Accepted material writes add their day, and a summary write clears its day only
+when coverage matches. An explicit empty list means no pending work. Records
+without this leaf use legacy missing-day discovery until the next normal write
+initializes it from retained detail; reads need not wait for that write. This
+metadata is preserved across current-record updates and excluded from retained
+history payloads. Normal initialized discovery transfers only pending days and
+their required predecessor summaries.
+Daily summaries remain after detailed observations expire. Exact observation
+and reset-witness reads cannot recover deleted detail; that loss beyond the
+configured detail window is accepted. The operator-facing contract is
+[Server retention policies](../apps/docs/content/docs/self-hosting/retention.mdx).
 
 History also follows B's existing lifecycle. The explicit Account-mode
 conversion owner, `migrateConnectedServicesAccountEncryptionInTx`, clears B's
@@ -3116,9 +3158,16 @@ CLI publishes it after accepted-workspace registration through the strict
 `mode:'owner'` metadata patch, alongside the existing encrypted/plain metadata
 tuple. The server stores it separately from those content envelopes and includes
 it in authorized owner and recipient row projections. Shared editors and
-owner-migration patches cannot publish it. Omission preserves the prior value;
-null or absence on reads means not yet published. Private Project display and
-checkout facts retain their existing Account-mode envelopes.
+owner-migration patches cannot publish it. Omission preserves the prior value.
+An owner patch with `projectKey: null` publishes the classification "this
+Session is in no Project": the CLI sends it once, when the canonical resolver
+(`resolveSessionProjectKeyV1`) returns `none` for an unkeyed Session (a
+Session-private managed folder, or a placement no accepted Workspace covers).
+The server stores that as `projectKeyNone` and row projections carry
+`projectKeyNone: true`; it is equally contentless. Null without that flag, or
+absence on reads, means not yet classified (every 0.2-created row stays so until
+its owner republishes). Private Project display and checkout facts retain their
+existing Account-mode envelopes.
 
 The Artifact list/query owner is implementing the first consumed extraction:
 `{ kind: <existing coarse family>, kindHint: <exact header.kind or null> }`.

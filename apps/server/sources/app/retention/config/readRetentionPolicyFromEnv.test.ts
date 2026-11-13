@@ -1,8 +1,29 @@
 import { describe, expect, it } from 'vitest';
 
 import { readRetentionPolicyFromEnv } from './readRetentionPolicyFromEnv';
+import { RETENTION_DOMAIN_SERVER_CONFIG } from './retentionServerConfig';
 
 describe('retention/readRetentionPolicyFromEnv', () => {
+    it('defaults provider history to 90 days and accepts the operator override', () => {
+        // Owner ruling 2026-11-12: covered detail expires; sealed daily summaries remain.
+        expect(readRetentionPolicyFromEnv({}).domains).toMatchObject({
+            providerAccountUsageHistory: { mode: 'delete_older_than', days: 90 },
+        });
+        expect(readRetentionPolicyFromEnv({
+            HAPPIER_SERVER_RETENTION__PROVIDER_ACCOUNT_USAGE_HISTORY__DAYS: '180',
+        }).domains).toMatchObject({
+            providerAccountUsageHistory: { mode: 'delete_older_than', days: 180 },
+        });
+        expect(readRetentionPolicyFromEnv({
+            HAPPIER_SERVER_RETENTION__PROVIDER_ACCOUNT_USAGE_HISTORY__MODE: 'keep_forever',
+        }).domains).toMatchObject({ providerAccountUsageHistory: { mode: 'keep_forever' } });
+        expect(RETENTION_DOMAIN_SERVER_CONFIG.find((entry) => entry.key === 'HAPPIER_SERVER_RETENTION__PROVIDER_ACCOUNT_USAGE_HISTORY__MODE'))
+            .toMatchObject({ default: 'delete_older_than', editable: 'home', apply: 'live' });
+        expect(RETENTION_DOMAIN_SERVER_CONFIG.find((entry) => entry.key === 'HAPPIER_SERVER_RETENTION__PROVIDER_ACCOUNT_USAGE_HISTORY__DAYS'))
+            .toMatchObject({ default: 90, editable: 'home', apply: 'live' });
+        expect(readRetentionPolicyFromEnv({}).enabled).toBe(false);
+    });
+
     it('falls back to defaults when env is undefined', () => {
         const policy = readRetentionPolicyFromEnv(undefined as unknown as NodeJS.ProcessEnv);
 
@@ -25,7 +46,7 @@ describe('retention/readRetentionPolicyFromEnv', () => {
         });
     });
 
-    it('defaults every domain to keep_forever with retention disabled', () => {
+    it('keeps automatic deletion disabled by default', () => {
         const policy = readRetentionPolicyFromEnv({});
 
         expect(policy).toMatchObject({

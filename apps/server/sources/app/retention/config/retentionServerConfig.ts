@@ -97,6 +97,7 @@ const RETENTION_DOMAIN_COPY = {
     sessions: { group: 'user', what: 'sessions with no activity' },
     sessionSidechainMessages: { group: 'user', what: 'sub-agent (sidechain) messages' },
     usageEvents: { group: 'user', what: 'usage events' },
+    providerAccountUsageHistory: { group: 'user', what: 'detailed provider usage observations covered by daily summaries' },
     automationRuns: { group: 'user', what: 'automation runs' },
     automationRunEvents: { group: 'user', what: 'automation run events' },
     userFeedItems: { group: 'user', what: 'activity feed items' },
@@ -136,7 +137,7 @@ export const RETENTION_DOMAIN_SERVER_CONFIG: readonly ServerConfigEntry[] = Obje
                 ...shared,
                 key: config.modeKey,
                 type: 'enum',
-                default: 'keep_forever',
+                default: config.kind === 'age' ? config.defaultPolicy.mode : 'keep_forever',
                 bounds: { values: ['keep_forever', deleteMode] },
                 description: `Whether ${copy.what} are kept forever or deleted after a number of days.${alwaysRuns}`,
             },
@@ -144,10 +145,12 @@ export const RETENTION_DOMAIN_SERVER_CONFIG: readonly ServerConfigEntry[] = Obje
                 ...shared,
                 key: config.durationKey,
                 type: 'int',
+                ...(config.kind === 'age' && config.defaultPolicy.mode === 'delete_older_than'
+                    ? { default: config.defaultPolicy.days } : {}),
                 bounds: { min: 1 },
                 description: config.kind === 'inactive'
                     ? `Days without activity before ${copy.what} are deleted. Required when deletion is on.`
-                    : `Age in days after which ${copy.what} are deleted. Required when deletion is on.`,
+                    : `Age in days after which ${copy.what} are deleted.${config.defaultPolicy.mode === 'delete_older_than' ? '' : ' Required when deletion is on.'}`,
             },
         ];
     }),

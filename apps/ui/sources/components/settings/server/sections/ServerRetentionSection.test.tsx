@@ -22,6 +22,8 @@ vi.mock('@/components/ui/lists/Item', () => ({
     Item: (props: any) => React.createElement('Item', props),
 }));
 
+const { ServerRetentionSection } = await import('./ServerRetentionSection');
+
 const LEGACY_KEEP_ALL = {
     policyVersion: 1,
     enabled: true,
@@ -45,7 +47,6 @@ function fullPolicy(domains: ReadonlyArray<Readonly<{ id: string; policy: Record
 }
 
 async function renderSection() {
-    const { ServerRetentionSection } = await import('./ServerRetentionSection');
     return renderScreen(React.createElement(ServerRetentionSection, { serverId: 'server-a' }));
 }
 
@@ -56,7 +57,6 @@ function texts(screen: Awaited<ReturnType<typeof renderSection>>): string[] {
 describe('ServerRetentionSection', () => {
     it('renders nothing without a Home to ask', async () => {
         useServerRetentionPolicy.mockReturnValue({ status: 'loading' });
-        const { ServerRetentionSection } = await import('./ServerRetentionSection');
         const screen = await renderScreen(React.createElement(ServerRetentionSection, { serverId: null }));
         expect(screen.root.findAllByType('ItemGroup' as any)).toHaveLength(0);
     });
@@ -90,6 +90,7 @@ describe('ServerRetentionSection', () => {
         useServerRetentionPolicy.mockReturnValue(fullPolicy([
             { id: 'sessions', policy: { mode: 'delete_inactive', inactivityDays: 30 } },
             { id: 'sessionSidechainMessages', policy: { mode: 'delete_older_than', days: 7 } },
+            { id: 'providerAccountUsageHistory', policy: { mode: 'delete_older_than', days: 90 } },
             { id: 'usageEvents', policy: { mode: 'keep_forever' } },
         ]));
         const screen = await renderSection();
@@ -100,6 +101,7 @@ describe('ServerRetentionSection', () => {
             subtitle: 'server.retention.deleteInactiveSessionsDays',
         });
         expect(screen.findByTestId('server-retention-row-sessionSidechainMessages')).not.toBeNull();
+        expect(screen.findByTestId('server-retention-row-providerAccountUsageHistory')).not.toBeNull();
         expect(screen.findByTestId('server-retention-row-usageEvents')).toBeNull();
     });
 

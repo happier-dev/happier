@@ -6,6 +6,7 @@ import { ProviderAccountUsageRecordIdSchema, ProviderAccountUsageRecordKeyV1Sche
 import { ProviderAccountUsageRecordWriteV1Schema, SealedProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/accountUsage';
 import { ProviderAccountSubscriptionV1Schema } from '@happier-dev/protocol/connect/accountSubscription';
 import { ProviderAccountUsagePageProjectionMetadataV1Schema } from '@happier-dev/protocol/connect/providerAccountUsagePageProjection';
+import { ProviderAccountUsageDaySummaryWriteV1Schema } from '@happier-dev/protocol/connect/providerAccountUsageDaySummary';
 import type { ProviderAccountUsagePayloadMode, ProviderAccountUsageStatus } from "./types";
 
 export const ProviderAccountUsagePayloadModeSchema = z.enum([
@@ -22,6 +23,7 @@ export const ProviderAccountUsageStatusSchema = z.enum([
 ]) satisfies z.ZodMiniType<ProviderAccountUsageStatus>;
 
 export const ProviderAccountUsageRecordMetadataSchema = z.strictObject({
+    daySummaryPendingDays: z.optional(z.array(ProviderAccountUsageDaySummaryWriteV1Schema.shape.dayStartAtMs)),
     pageProjection: ProviderAccountUsagePageProjectionMetadataV1Schema,
     materialFingerprint: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
     subscription: z.optional(ProviderAccountSubscriptionV1Schema),

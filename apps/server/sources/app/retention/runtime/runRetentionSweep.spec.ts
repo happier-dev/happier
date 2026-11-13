@@ -29,6 +29,8 @@ dbMocks.db.automationRun.findMany.mockResolvedValue([]);
 dbMocks.db.automation.findMany.mockResolvedValue([]);
 installDbModuleMock({ db: dbMocks.db });
 
+const { runRetentionSweep } = await import('./runRetentionSweep');
+
 function createPolicy(): RetentionPolicy {
     return {
         enabled: true,
@@ -41,6 +43,7 @@ function createPolicy(): RetentionPolicy {
             sessionSidechainMessages: { mode: 'keep_forever' },
             accountChanges: { mode: 'keep_forever' },
             usageEvents: { mode: 'keep_forever' },
+            providerAccountUsageHistory: { mode: 'keep_forever' },
             voiceSessionLeases: { mode: 'keep_forever' },
             userFeedItems: { mode: 'keep_forever' },
             sessionShareAccessLogs: { mode: 'keep_forever' },
@@ -72,7 +75,6 @@ describe('runRetentionSweep', () => {
             .mockResolvedValueOnce({ count: 10 })
             .mockResolvedValueOnce({ count: 5 });
 
-        const { runRetentionSweep } = await import('./runRetentionSweep');
         const result = await runRetentionSweep({
             policy: createPolicy(),
             now: new Date('2025-01-08T00:00:00.000Z'),

@@ -56,6 +56,7 @@ function createPolicy(intervalMs: number) {
             sessionSidechainMessages: { mode: 'keep_forever' },
             accountChanges: { mode: 'keep_forever' },
             usageEvents: { mode: 'keep_forever' },
+            providerAccountUsageHistory: { mode: 'keep_forever' },
             voiceSessionLeases: { mode: 'delete_older_than', days: 7 },
             userFeedItems: { mode: 'keep_forever' },
             sessionShareAccessLogs: { mode: 'keep_forever' },

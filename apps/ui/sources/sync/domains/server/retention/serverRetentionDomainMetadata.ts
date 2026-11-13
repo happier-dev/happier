@@ -18,6 +18,7 @@ export const SERVER_RETENTION_DOMAIN_METADATA: readonly ServerRetentionDomainMet
     { key: 'sessions', titleKey: 'server.retention.sessions' },
     { key: 'sessionSidechainMessages', titleKey: 'server.retention.sidechainMessages' },
     { key: 'usageEvents', titleKey: 'server.retention.usageEvents' },
+    { key: 'providerAccountUsageHistory', titleKey: 'server.retention.providerAccountUsageHistory' },
     { key: 'automationRuns', titleKey: 'server.retention.automationRuns', runsWhenDeletionOff: true },
     { key: 'automationRunEvents', titleKey: 'server.retention.automationRunEvents' },
     { key: 'userFeedItems', titleKey: 'server.retention.feedItems' },
