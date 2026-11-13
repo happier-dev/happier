@@ -1,5 +1,6 @@
 export const PI_HAPPIER_TOOLS_CONFIG_FLAG = 'happier-tools-config';
 export const PI_MCP_APPROVAL_CALL_PREFIX = 'happier:mcp-approval:';
+export const PI_MCP_DELIVERY_RECORD_TYPE = 'happier-pi-mcp-delivery';
 export const PI_MCP_CAPABILITY_NOTICE_RECORD_TYPE = 'happier-pi-mcp-capability-notice';
 export const PI_USER_INPUT_NOTIFICATION_TYPE = 'happy-pi-user-input';
 
@@ -11,6 +12,7 @@ import { createInterface } from "node:readline";
 
 const CONFIG_FLAG = ${JSON.stringify(PI_HAPPIER_TOOLS_CONFIG_FLAG)};
 const MCP_APPROVAL_CALL_PREFIX = ${JSON.stringify(PI_MCP_APPROVAL_CALL_PREFIX)};
+const MCP_DELIVERY_RECORD_TYPE = ${JSON.stringify(PI_MCP_DELIVERY_RECORD_TYPE)};
 const MCP_CAPABILITY_NOTICE_RECORD_TYPE = ${JSON.stringify(PI_MCP_CAPABILITY_NOTICE_RECORD_TYPE)};
 const USER_INPUT_NOTIFICATION_TYPE = ${JSON.stringify(PI_USER_INPUT_NOTIFICATION_TYPE)};
 const TOOL_OUTPUT_MAX_BYTES = 50 * 1024;
@@ -31,6 +33,8 @@ function isConfig(value) {
     value && value.v === 1
     && typeof value.directory === "string" && value.directory.trim()
     && typeof value.systemPrompt === "string"
+    && (value.nativeTools === undefined || value.nativeTools === null || (Array.isArray(value.nativeTools)
+      && value.nativeTools.every((name) => typeof name === "string")))
     && Array.isArray(value.tools)
     && (value.mcpServersStrictMode === undefined || typeof value.mcpServersStrictMode === "boolean")
     && value.tools.every((tool) => (
@@ -321,6 +325,12 @@ export default function happierPiToolsExtension(pi) {
     const config = readConfig(pi);
     if (!config) return;
     registered = true;
+    const names = [];
+    const activateTools = () => {
+      const base = Array.isArray(config.nativeTools)
+        ? [...config.nativeTools, ...config.tools.map((tool) => tool.name)] : pi.getActiveTools();
+      pi.setActiveTools([...new Set([...base, ...names])]);
+    };
     // Explicit CLI extensions load before discovered user extensions. Observe submission
     // before another input handler can transform or handle it; RPC input is already host-owned.
     pi.on("input", (event, ctx) => {
@@ -328,16 +338,30 @@ export default function happierPiToolsExtension(pi) {
         ctx.ui.notify(JSON.stringify({ type: USER_INPUT_NOTIFICATION_TYPE, text: event.text }));
       }
     });
-    pi.on("before_agent_start", (event) => {
+    pi.on("before_agent_start", (event, ctx) => {
+      const restricted = Array.isArray(config.nativeTools);
+      if (restricted) activateTools();
       const addition = String(config.systemPrompt || "").trim();
-      if (!addition) return undefined;
-      const base = typeof event?.systemPrompt === "string" ? event.systemPrompt.trim() : "";
+      if (!addition && !restricted) return undefined;
+      const base = restricted ? ctx.getSystemPrompt()
+        : typeof event?.systemPrompt === "string" ? event.systemPrompt.trim() : "";
+      if (!addition) return { systemPrompt: base };
       return { systemPrompt: base ? base + "\\n\\n" + addition : addition };
     });
     // Non-strict Anthropic alone drops root keywords during serialization.
     // Restore its complete registered document at Pi's supported request seam.
     // getAllTools includes inactive definitions; only selected tools can supply schemas.
     pi.on("before_provider_request", ({ payload }) => {
+      // Witness the serialized native request, never the configured catalog.
+      // Anthropic uses flat definitions; OpenAI uses function objects.
+      if (Object.keys(config.mcpServers || {}).length > 0 && Array.isArray(payload?.tools)) {
+        const definitions = payload.tools.flatMap((tool) => Array.isArray(tool.functionDeclarations)
+          ? tool.functionDeclarations : [tool.function || tool]);
+        if (definitions.every((tool) => typeof tool?.name === "string")) {
+          fs.writeSync(1, JSON.stringify({ type: MCP_DELIVERY_RECORD_TYPE,
+            tools: definitions.map((tool) => tool.name).filter((name) => name.startsWith("mcp__")) }) + "\\n");
+        }
+      }
       if (!Array.isArray(payload?.tools) || !payload.tools.some((tool) => tool.input_schema && tool.strict !== true)) return;
       const activeNames = new Set(pi.getActiveTools());
       const tools = pi.getAllTools().filter((tool) => activeNames.has(tool.name));
@@ -372,7 +396,6 @@ export default function happierPiToolsExtension(pi) {
         notice: { v: 1, items: failures } }) + "\\n");
     };
     try {
-      const names = [];
       for (const [serverName, server] of Object.entries(config.mcpServers || {})) {
         let connection;
         let stage = "spawn";
@@ -433,7 +456,7 @@ export default function happierPiToolsExtension(pi) {
           if (config.mcpServersStrictMode === true) throw new Error("MCP server " + serverName + " could not start (" + stage + ")");
         }
       }
-      if (names.length) pi.setActiveTools([...new Set([...pi.getActiveTools(), ...names])]);
+      if (names.length || Array.isArray(config.nativeTools)) activateTools();
       publishFailures();
     } catch (error) {
       await closeConnections();

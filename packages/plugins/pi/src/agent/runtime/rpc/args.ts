@@ -78,6 +78,7 @@ type PiRpcArgsOptions = Readonly<{
     extensionPath: string;
     configPath: string;
     toolNames?: readonly string[];
+    nativeToolSelection?: readonly string[] | null;
   }>;
 }>;
 
@@ -87,7 +88,10 @@ export function buildPiRpcLaunch(opts?: PiRpcArgsOptions): Readonly<{ args: read
   const launchSelection = opts?.providerModelId
     ? { provider: PI_PROVIDER_ID, startupModel: opts.providerModelId, modelScope: `${PI_PROVIDER_ID}/*` }
     : readPreparedConnectedAccountModel(opts?.env) ?? resolvePiLaunchSelectionForConnectedService(opts?.connectedServiceId);
-  const restrictedTools = buildPiToolsForPermissionMode(opts?.permissionMode);
+  // A prepared extension applies the canonical selection after native MCP discovery.
+  // Pi's CLI allowlist would permanently exclude those dynamically registered names.
+  const restrictedTools = opts?.happierToolsExtension?.nativeToolSelection !== undefined
+    ? null : buildPiToolsForPermissionMode(opts?.permissionMode);
   const tools = restrictedTools
     ? [...new Set([...restrictedTools, ...(opts?.happierToolsExtension?.toolNames ?? [])])]
     : null;

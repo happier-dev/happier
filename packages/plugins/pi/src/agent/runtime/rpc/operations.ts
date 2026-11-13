@@ -77,7 +77,7 @@ import {
   type PiBlockingExtensionUiRequest,
   type PiExtensionUiResponse,
 } from './extensionUi.js';
-import { PI_MCP_APPROVAL_CALL_PREFIX, PI_MCP_CAPABILITY_NOTICE_RECORD_TYPE } from '../../tools/extensionSource.js';
+import { PI_MCP_APPROVAL_CALL_PREFIX, PI_MCP_CAPABILITY_NOTICE_RECORD_TYPE, PI_MCP_DELIVERY_RECORD_TYPE } from '../../tools/extensionSource.js';
 import { preparePiHappierToolsExtension, type PreparedPiHappierToolsExtension } from '../../tools/assets.js';
 
 const PI_VERSION_PROBE_TIMEOUT_MS = 30_000;
@@ -194,7 +194,7 @@ type PiRuntimeOperationsParams = Readonly<{
   sessionId: string;
   eagerStart?: boolean;
   sessionOpenLifecycle?: PiSessionOpenLifecycle;
-  happierToolsExtension?: Readonly<{ extensionPath: string; configPath: string }>;
+  happierToolsExtension?: Readonly<{ extensionPath: string; configPath: string; nativeToolSelection?: readonly string[] | null }>;
   mcpServersStrictMode?: boolean;
   mcpServerNames?: readonly string[];
   publishCapabilityNotice?: (notice: SessionCapabilityNoticeV1) => Promise<void>;
@@ -525,6 +525,8 @@ function createRuntimeOperations(params: Readonly<{
   const runtimeEventProjector = createPiRuntimeEventProjector();
   const mcpServerNames = new Set(params.mcpServerNames);
   const nativeMcpCalls = new Map<string, string>();
+  let nativeMcpInventory: Set<string> | null = null;
+  let nativeMcpInventoryIncomplete = false;
   let sessionId = params.initialSessionId;
   let activeTurn: ActiveTurnState | null = null;
   let activeTurnStartObserved = false;
@@ -560,6 +562,8 @@ function createRuntimeOperations(params: Readonly<{
   ): ActiveTurnState {
     runtimeEventProjector.resetTurn();
     nativeMcpCalls.clear();
+    nativeMcpInventory = null;
+    nativeMcpInventoryIncomplete = false;
     const turn = Object.freeze({
       turnId,
       agentTurnId,
@@ -587,6 +591,8 @@ function createRuntimeOperations(params: Readonly<{
 
   function clearActiveTurn(): void {
     nativeMcpCalls.clear();
+    nativeMcpInventory = null;
+    nativeMcpInventoryIncomplete = false;
     activeTurn = null;
     activeTurnJoinedInProgress = false;
     activeTurnStartObserved = false;
@@ -669,8 +675,12 @@ function createRuntimeOperations(params: Readonly<{
     if (settleTurnFailedForEmptyResponse(turn, terminalProviderTurnId, completion)) {
       return;
     }
-    if (nativeMcpCalls.size > 0) {
+    if (nativeMcpInventory !== null || nativeMcpCalls.size > 0) {
       const counts = new Map<string, number>();
+      for (const name of nativeMcpInventory ?? []) {
+        const tool = parseMcpToolWireNameV1(name, mcpServerNames);
+        if (tool) counts.set(tool.server, 0);
+      }
       for (const server of nativeMcpCalls.values()) counts.set(server, (counts.get(server) ?? 0) + 1);
       const endMs = Date.now();
       params.publishRuntimeEvent({
@@ -679,9 +689,9 @@ function createRuntimeOperations(params: Readonly<{
         turnId: turn.turnId,
         ...(terminalProviderTurnId ? { agentTurnId: terminalProviderTurnId } : {}),
         window: { startMs: turnStartedAtMs!, endMs },
-        // Pi RPC witnesses native calls, but does not report the complete
-        // model-context inventory. Uncalled configured servers are unknown.
-        coverage: 'partial',
+        // Only native request evidence can establish delivered, unused bindings.
+        coverage: nativeMcpInventory !== null && !nativeMcpInventoryIncomplete && !activeTurnJoinedInProgress
+          && [...mcpServerNames].every(name => counts.has(name)) ? 'complete' : 'partial',
         servers: [...counts].map(([serverName, toolCallCount]) => ({ serverName, toolCallCount, schemaBytes: null })),
       });
     }
@@ -753,6 +763,17 @@ function createRuntimeOperations(params: Readonly<{
       activeTurnJoinedInProgress = true;
     }
     const turn = activeTurn;
+    if (turn && type === PI_MCP_DELIVERY_RECORD_TYPE) {
+      if (!Array.isArray(record.tools) || !record.tools.every((name): name is string => typeof name === 'string')) {
+        nativeMcpInventoryIncomplete = true;
+        return;
+      }
+      const next = new Set(record.tools);
+      if (nativeMcpInventory !== null && (next.size !== nativeMcpInventory.size
+        || [...next].some(name => !nativeMcpInventory!.has(name)))) nativeMcpInventoryIncomplete = true;
+      nativeMcpInventory = next;
+      return;
+    }
     const providerFailureDiagnostic = readPiProviderFailureDiagnostic(record);
     if (turn && type === 'message_start' && record.message && typeof record.message === 'object'
       && 'role' in record.message && record.message.role === 'assistant') {
@@ -761,7 +782,10 @@ function createRuntimeOperations(params: Readonly<{
     if (turn && type === 'tool_execution_start' && typeof record.toolCallId === 'string'
       && record.toolCallId && typeof record.toolName === 'string' && !nativeMcpCalls.has(record.toolCallId)) {
       const tool = parseMcpToolWireNameV1(record.toolName, mcpServerNames);
-      if (tool) nativeMcpCalls.set(record.toolCallId, tool.server);
+      if (tool) {
+        nativeMcpCalls.set(record.toolCallId, tool.server);
+        if (!nativeMcpInventory?.has(record.toolName)) nativeMcpInventoryIncomplete = true;
+      }
     }
     if (turn && type === 'tool_execution_end') {
       lastNonModelItemCompletedAtMs = observedAtMs;
@@ -1463,6 +1487,7 @@ async function createPiConversationRuntimeOperations(
     // The bridge observes extension input even when no host tools or MCP servers are configured.
     const preparation = preparePiHappierToolsExtension({
       directory: params.cwd,
+      permissionMode: params.permissionMode,
     });
     ownedToolsExtension = sessionOpenLifecycle
       ? await sessionOpenLifecycle.waitFor(preparation, 'Happier input bridge preparation', async lateTools => await lateTools.dispose())

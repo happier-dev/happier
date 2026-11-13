@@ -9,6 +9,31 @@ import { readSessionCapabilityNoticeV1, SessionCapabilityNoticeV1Schema } from '
 
 runAgentMcpToolPolicyContract(createPiMcpToolPolicyContractFixture());
 
+it('publishes complete native delivery and zero calls for the delivered unused binding', async () => {
+  const input = createPiMcpToolPolicyContractFixture();
+  const cwd = await mkdtemp(join(tmpdir(), 'pi-mcp-delivery-contract-'));
+  let runtime: AgentSessionRuntime | undefined;
+  try {
+    const fixture = await input.fixtureServer.prepare({ cwd });
+    runtime = await input.openSession({ kind: 'create', sessionId: 'pi-mcp-delivery', cwd,
+      configuration: { mode: { value: null, updatedAtMs: 1 }, model: { value: null, updatedAtMs: 1 },
+        permissionIntent: { value: 'read-only', updatedAtMs: 1 }, options: {} },
+      mcpServers: Object.fromEntries(fixture.servers.map(server => [server.key, server.config])),
+    });
+    const result = await input.invokeTool(runtime, { server: 'a', tool: 'echo', arguments: {}, approvalScope: 'once' });
+    expect(result.outcome).toBe('completed');
+    const usage = input.observeLaunch().runtimeEvents.filter(event => event.kind === 'mcp-tool-usage');
+    expect(usage).toMatchObject([{ coverage: 'complete', servers: [
+      { serverName: 'a', toolCallCount: 1, schemaBytes: null },
+      { serverName: 'b', toolCallCount: 0, schemaBytes: null },
+    ] }]);
+    expect(usage).toHaveLength(1);
+  } finally {
+    try { await runtime?.dispose(); }
+    finally { await input.fixtureServer.dispose(); await rm(cwd, { recursive: true, force: true }); }
+  }
+});
+
 it('keeps healthy MCP callable after optional initialize failure through real Pi startup and notice publication', async () => {
   const stage = 'initialize';
   const input = createPiMcpToolPolicyContractFixture({ brokenServer: stage });

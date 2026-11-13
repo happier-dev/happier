@@ -34,6 +34,7 @@ import {
 import { buildPiCompletedContextCompactionPayload, type PiRuntimeEvent } from './events.js';
 import { createPiExecutionRunConversation, createPiRuntimeOperations } from './operations.js';
 import recordedMcp from '../../transcripts/__fixtures__/pi-rpc-mcp-0.82.1.json';
+import recordedDelivery from '../../transcripts/__fixtures__/pi-rpc-mcp-delivery-0.82.1.json';
 
 type Capture = {
   initialRecords?: readonly unknown[];
@@ -336,6 +337,34 @@ function configuration(options: Readonly<Record<string, string>>): AgentSessionC
 }
 
 describe('createPiRuntimeOperations', () => {
+  it.each([true, false])('replays real native delivery with complete=%s, without inventing configured zeros', async delivered => {
+    const capture: Capture = { specs: [], written: [] };
+    const runtime = await createPiRuntimeOperations({ ...createRuntimeContext(capture),
+      cwd: '/tmp/pi-workspace', env: {}, sessionId: 'mcp-session', initialSessionId: 'pi-native-session', mcpServerNames: ['a', 'b'] });
+    const events: AgentSessionRuntimeEvent[] = [];
+    runtime.watch(event => events.push(event));
+    try {
+      const prompt = sendPrompt(runtime, 'replay delivered MCP');
+      await waitForWrittenCount(capture, 1); await ackLastCommand(capture); await prompt;
+      for (const frame of recordedDelivery.frames) {
+        if (!delivered && frame.type === 'happier-pi-mcp-delivery') continue;
+        if (frame.type === 'tool_execution_start') {
+          for (let index = 0; index < 128; index++) {
+            const call = { ...frame, toolCallId: `delivery-${index}` };
+            await emit(capture, call); await emit(capture, call);
+          }
+        } else await emit(capture, frame);
+      }
+      const usage = parseEvents(events).filter(event => event.kind === 'mcp-tool-usage');
+      expect(usage).toMatchObject([{ coverage: delivered ? 'complete' : 'partial', servers: [
+        { serverName: 'a', toolCallCount: 128, schemaBytes: null },
+        ...(delivered ? [{ serverName: 'b', toolCallCount: 0, schemaBytes: null }] : []),
+      ] }]);
+      expect(usage).toHaveLength(1);
+      expect(usage[0]?.kind === 'mcp-tool-usage' && usage[0].servers).toHaveLength(delivered ? 2 : 1);
+    } finally { await runtime.dispose(); }
+  });
+
   it('counts recorded native MCP calls once per completed window without configured zero claims', async () => {
     const capture: Capture = { specs: [], written: [] };
     const runtime = await createPiRuntimeOperations({ ...createRuntimeContext(capture),

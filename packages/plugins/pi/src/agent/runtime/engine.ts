@@ -121,6 +121,7 @@ async function openPiSession(
           nativeBridgeResolution, 'Happier tools bridge resolution',
         ) : undefined;
         const toolPreparation = preparePiHappierToolsExtension({
+          permissionMode: readPermissionMode(request),
           ...(config ? { config } : { directory: request.cwd }),
           mcpServersStrictMode: request.mcpServersStrictMode,
           mcpServers: request.mcpServers, mcpToolPolicy: request.mcpToolPolicy });
@@ -260,6 +261,7 @@ async function openPiExecutionRun(
         }
         if (Object.keys(request.mcpServers ?? {}).length > 0) {
           preparedTools = await lifecycle.waitFor(preparePiHappierToolsExtension({
+            permissionMode: request.configuration?.permissionIntent.value ?? undefined,
             directory: request.cwd,
             mcpServersStrictMode: request.mcpServersStrictMode,
             mcpServers: request.mcpServers, mcpToolPolicy: request.mcpToolPolicy,

@@ -1291,6 +1291,14 @@ native tools extension for Sessions and detached Runs, including MCP-only launch
 without the built-in Happier bridge. The host's shared MCP resolver selects and
 materializes the servers; Pi writes the open-request record to its private 0600
 config and registers `mcp__<server>__<tool>` tools over retained stdio connections.
+For restricted permission intents, the extension consumes the canonical native-tool
+selection after MCP discovery, including the selected MCP and Happier bridge tools.
+It reapplies that selection at native turn start; Pi's static CLI allowlist would
+exclude the tools discovered later. The provider-request hook witnesses the actual
+serialized MCP tool names. Successful turns combine that inventory with native
+call identities to publish complete binding usage, including delivered tools that
+were unused. Missing or changing inventory remains partial; schema bytes remain
+unknown, as in Claude's native witness.
 Off tools are omitted at launch. Before each exposed MCP call, the extension's
 confirmation carries the native call id over the existing RPC dialog route.
 The host correlates it with the preceding tool-start event and requests approval
