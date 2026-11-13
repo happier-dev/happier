@@ -164,6 +164,13 @@ describe('notification configuration Action authority', () => {
       expect(record.channels[0]).toMatchObject({ id: 'workflow-hook', url: 'https://updated.example.test/hook', signingSecretRef: null });
       expect(settingsWrites).toEqual([]);
       expect(sourceVersion).toBe(7);
+      // A channel-addressed id this host does not own refuses typed instead of parsing another Action's input.
+      const before = revision;
+      await expect(createNotificationConfigurationAction(context)({ actionId: 'notifications.test',
+        input: { serverId: home.id, machineId: 'controller', sourceInstanceId: 'source', channelId: 'workflow-hook',
+          channelIndex: 0, expectedSourceRevision: 'revision' },
+        context: { serverId: home.id, surface: 'ui' } })).resolves.toEqual({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' });
+      expect(revision).toBe(before);
     } finally { context.dispose(); }
   });
 });

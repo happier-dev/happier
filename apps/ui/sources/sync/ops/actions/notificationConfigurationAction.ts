@@ -250,12 +250,12 @@ export function createNotificationConfigurationAction(account: LazyActionAccount
             }
             if (actionId === 'notifications.webhooks.remove') next = channels.filter(row => row !== channel);
             else if (actionId === 'notifications.webhooks.signingSecret.clear') next = channels.map(row => row === channel ? { ...channel, signingSecretRef: null } : row);
-            else {
+            else if (actionId === 'notifications.webhooks.update') {
                 const { patch } = NotificationConfigurationActionInputSchemas[actionId].parse(input);
                 const edited = WebhookNotificationChannelRecordV1Schema.parse({ ...patchChannel(channel, patch),
                     ...(patch.url === undefined ? {} : { url: patch.url }) });
                 next = channels.map(row => row === channel ? edited : row);
-            }
+            } else return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
         }
         const receipt = await writeNotificationChannelCatalogInContext(account, { record: { v: 1, channels: [...next] },
             expectedRevision: catalog.revision }, context.signal);
