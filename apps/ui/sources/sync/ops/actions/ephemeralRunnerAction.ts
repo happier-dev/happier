@@ -4,9 +4,10 @@ import { createRunnerActivationClient, RunnerActivationClientError } from '@/syn
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
 import { resolveRuntimeFeatureDecisionFromSnapshot } from '@/sync/domains/features/featureDecisionRuntime';
 import type { LazyActionAccountContext } from './actionAccountContext';
+import type { Settings } from '@/sync/domains/settings/settings';
 
 /** Feature policy admits new activations; existing activations keep their read and cancel transport. */
-export function createUiEphemeralRunnerAction(account: LazyActionAccountContext | undefined): NonNullable<ActionExecutorDeps['ephemeralRunnerAction']> {
+export function createUiEphemeralRunnerAction(account: (LazyActionAccountContext & Readonly<{ settings: Settings }>) | undefined): NonNullable<ActionExecutorDeps['ephemeralRunnerAction']> {
     return async ({ actionId, input, signal }) => {
         if (!account) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
         account.assertCurrent();

@@ -2039,7 +2039,7 @@ export async function fetchAndApplyPendingMessagesV2(params: {
     if (params.readBinding) {
         // Scoped sources return a fresh Promise for the same installed Session reader.
         // Compare the reader, then capture freshness after its asynchronous admission.
-        sessionEncryptionAtCapture = await sessionEncryptionAtCapture;
+        sessionEncryptionAtCapture = (await sessionEncryptionAtCapture) ?? null;
         pendingVersionAtCapture = readPendingSnapshotVersion(params.outboxScope, sessionId);
         transcriptAtCapture = storage.getState().sessionMessages[sessionId];
     }

@@ -4,9 +4,14 @@ import type { CurrentUiContextLocalCommand } from '@/components/appShell/current
 import type { BaseModalConfig } from '../types';
 
 type ModalCommandInvocation = (key: string, input?: PluginUiJsonValueV1) => unknown;
+/** Unscoped dialogs invoke without an Action context; bridged dialogs receive the opener's. */
+type ModalCommand = Omit<CurrentUiContextLocalCommand, 'invoke'> & Readonly<{
+    invoke(input: PluginUiJsonValueV1 | undefined, context?: Parameters<CurrentUiContextLocalCommand['invoke']>[1],
+        invocation?: Parameters<CurrentUiContextLocalCommand['invoke']>[2]): ReturnType<CurrentUiContextLocalCommand['invoke']>;
+}>;
 type ModalCommandsProps = Readonly<{
     bridge?: BaseModalConfig['commandBridge'];
-    commands: readonly CurrentUiContextLocalCommand[];
+    commands: readonly ModalCommand[];
     children: (invoke: ModalCommandInvocation) => React.ReactNode;
 }>;
 

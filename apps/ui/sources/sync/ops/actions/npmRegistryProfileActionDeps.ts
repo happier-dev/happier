@@ -58,7 +58,9 @@ export function createUiNpmRegistryProfileAction(
         const mutation = inputs[actionId].parse(input);
         let credential: Extract<DaemonNpmRegistryProfileMutationRequestV1, { action: 'login' }>['credential'] | null = null;
         if (actionId === 'plugins.npm_registry_profiles.login') {
-            if ('login' in mutation && mutation.login) credential = mutation.login;
+            // `mutation` spans every mutation input; only the Login input declares `login`.
+            const { login } = inputs[actionId].parse(input);
+            if (login) credential = login;
             else if (delivery) credential = await delivery.acquireCredential(mutation.mutationId);
             else {
                 const secret = await Modal.prompt(t('settingsPlugins.registriesLoginTitle'),

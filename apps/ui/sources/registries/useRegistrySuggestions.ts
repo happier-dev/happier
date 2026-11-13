@@ -1,6 +1,6 @@
 import { Platform } from 'react-native';
 import {
-    HAPPIER_PICKS_SOURCE_ID, REGISTRY_FORMAT_ADAPTERS_V1, resolveRegistryFetchPlanV1,
+    HAPPIER_PICKS_SOURCE_ID, REGISTRY_FORMAT_ADAPTERS_V1, registrySourceSupportsKindV1, resolveRegistryFetchPlanV1,
     type RegistryFormatAdapterV1, type RegistryKindV1,
 } from '@happier-dev/protocol/registries';
 import { useRegistryItems } from './useRegistryItems';
@@ -17,11 +17,11 @@ export function useRegistryCuration(input: Readonly<{ sourceIds?: readonly strin
     const sources = useRegistrySources(undefined, presented);
     const requested = input.sourceIds;
     const selectedSources = React.useMemo(() => sources.sources.filter(source => source.enabled
-        && (requested === undefined ? source.format === 'happier-catalog' && source.kinds.includes('plugin') : requested.includes(source.id))),
+        && (requested === undefined ? source.format === 'happier-catalog' && registrySourceSupportsKindV1(source, 'plugin') : requested.includes(source.id))),
     [sources.sources, JSON.stringify(requested)]);
-    const kind = requested !== undefined && selectedSources.length === 1 && !selectedSources[0]!.kinds.includes('plugin')
+    const kind = requested !== undefined && selectedSources.length === 1 && !registrySourceSupportsKindV1(selectedSources[0]!, 'plugin')
         ? selectedSources[0]!.kinds[0]! : 'plugin';
-    const sourceIds = React.useMemo(() => selectedSources.filter(source => source.kinds.includes(kind)).map(source => source.id), [selectedSources, kind]);
+    const sourceIds = React.useMemo(() => selectedSources.filter(source => registrySourceSupportsKindV1(source, kind)).map(source => source.id), [selectedSources, kind]);
     const catalog = useRegistryItems({ kind, sourceIds }, presented && sources.hasValue && sourceIds.length > 0);
     // Presentation owns acquisition, not the admitted facts already held by a retained page.
     const admitted = sourceIds.length > 0 && !catalog.stale;

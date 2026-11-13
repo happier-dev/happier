@@ -3,13 +3,11 @@ import { createMachineReadBatchResponseFixture, createPlainMachineRowFixture } f
 import {
     CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION} from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import {
-    MACHINE_PLAIN_DATA_KEY_MARKER,
-    encodePlainMachineStoredContent} from '@happier-dev/protocol/machines/machineStoredContent';
-import {
     type MachinePoolSelectionOriginV1,
 } from '@happier-dev/protocol/machines/pools/v1';
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectSessionSpawnNewActionInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { createExistingSessionDirectoryPreflightResult } from '@/dev/testkit/fixtures/sessionFixtures';
 import { getServerFeaturesSnapshot, resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -48,10 +46,15 @@ vi.mock('socket.io-client', async (importOriginal) =>
 installDisconnectedServerSocketBoundary((socket) => {
     configureConnectedServerSocketBoundary(socket);
     vi.spyOn(socket, 'timeout').mockReturnValue(socket);
-    vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event: string, payload: SocketRpcRequestPayload) => {
+    socket.emitWithAck = vi.fn<typeof socket.emitWithAck>(async (event, payload: SocketRpcRequestPayload) => {
         if (event !== SOCKET_RPC_EVENTS.CALL) return { v: 1, ok: true, admittedSessionIds: [] };
         if (payload.method === `machine-a:${RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT}`) {
             return { ok: true, result: createExistingSessionDirectoryPreflightResult(payload.params) };
+        }
+        if (payload.method === `machine-a:${RPC_METHODS.SESSION_SPAWN_NEW}`) {
+            // This process boundary consumes the real daemon transport schema.
+            const admitted = getActionSpec('session.spawn_new').surfaceBindings?.rpc?.inputSchema.safeParse(payload.params);
+            if (!admitted?.success) return { ok: false, errorCode: 'invalid_action_transport_input', error: 'invalid_action_transport_input' };
         }
         outgoing.push(payload);
         return { ok: true, result: {
@@ -140,10 +143,7 @@ describe('Session spawn first-dispatch placement origin', () => {
         await fetchAndApplyMachines({
             credentials: { token }, encryption: null, machineDataKeys: new Map(),
             request: async () => Response.json([{
-                id: 'machine-a', metadata: encodePlainMachineStoredContent({ host: 'host-a' }),
-                metadataVersion: 1, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
-                seq: 1, active: true, activeAt: 1, createdAt: 1, updatedAt: 1,
-                revokedAt: null, replacedByMachineId: null,
+                ...createPlainMachineRowFixture({ id: 'machine-a', accountId: 'alice' }),
                 operationProtocolCapabilities: capabilities, operationProtocolCapabilitiesRevision: 1,
             }]),
             applyMachines: (machines, replace) => getStorage().getState().applyMachines(machines, replace, { sourceServerId: serverId }),
@@ -154,19 +154,35 @@ describe('Session spawn first-dispatch placement origin', () => {
         expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { type: 'success' } });
         expect(outgoing).toHaveLength(1);
         expect(outgoing[0]?.method).toBe(`machine-a:${RPC_METHODS.SESSION_SPAWN_NEW}`);
-        expect(outgoing[0]?.params).toMatchObject({ executionTarget: { serverId, machineId: 'machine-a' }, creationKey: 'creation-a' });
+        expect(outgoing[0]?.params).toMatchObject({ executionTarget: { serverId, machineId: 'machine-a' }, creationKey: 'creation-a',
+            organizationPlacement: { folderId: null, tagIds: [] } });
         if (expectedOrigin) expect(outgoing[0]?.params).toHaveProperty('placementOrigin', origin);
         else expect(outgoing[0]?.params).not.toHaveProperty('placementOrigin');
+    });
+
+    it('dispatches the admitted section placement as the canonical folder placement', async () => {
+        await fetchAndApplyMachines({
+            credentials: { token }, encryption: null, machineDataKeys: new Map(),
+            request: async () => Response.json([{
+                ...createPlainMachineRowFixture({ id: 'machine-a', accountId: 'alice' }),
+                operationProtocolCapabilities: { sessionSpawn: { protocolVersions: [1] } }, operationProtocolCapabilitiesRevision: 1,
+            }]),
+            applyMachines: (machines, replace) => getStorage().getState().applyMachines(machines, replace, { sourceServerId: serverId }),
+            replace: true,
+        });
+        const result = await createDefaultActionExecutor().execute('session.spawn_new', {
+            ...buildSpawnInput(serverId), organizationPlacement: { sectionId: 'section-a', tagIds: ['tag-a'] },
+        }, { surface: 'ui', serverId });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { type: 'success' } });
+        expect(outgoing).toHaveLength(1);
+        expect(outgoing[0]?.params).toMatchObject({ organizationPlacement: { folderId: 'section-a', tagIds: ['tag-a'] } });
     });
 
     it('returns a typed update requirement before dispatching a Saved Secret overlay to a V1 daemon', async () => {
         await fetchAndApplyMachines({
             credentials: { token }, encryption: null, machineDataKeys: new Map(),
             request: async () => Response.json([{
-                id: 'machine-a', metadata: encodePlainMachineStoredContent({ host: 'host-a' }),
-                metadataVersion: 1, dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
-                seq: 1, active: true, activeAt: 1, createdAt: 1, updatedAt: 1,
-                revokedAt: null, replacedByMachineId: null,
+                ...createPlainMachineRowFixture({ id: 'machine-a', accountId: 'alice' }),
                 operationProtocolCapabilities: { sessionSpawn: { protocolVersions: [1] } },
                 operationProtocolCapabilitiesRevision: 1,
             }]),

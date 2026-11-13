@@ -42,6 +42,7 @@ import type {
     PluginDaemonProjectionArtifactSelection,
     PluginSelectedArtifactLease,
     PluginSelectedArtifactLeaseAcquireResult,
+    PluginSelectedArtifactLeaseFileResult,
 } from './artifactLease';
 import {
     acquirePluginSelectedArtifactLease,
@@ -296,7 +297,7 @@ export type PluginHostedWebBrowserArtifactAvailability =
         kind: 'unavailable';
         code: Extract<PluginSelectedArtifactLeaseAcquireResult, { kind: 'unavailable' }>['code']
             | HostedWebAssetPolicyFailureCode
-            | 'artifact_file_not_declared'
+            | Extract<PluginSelectedArtifactLeaseFileResult, { kind: 'unavailable' }>['code']
             | 'hosted_web_artifact_tier_invalid'
             | 'hosted_web_artifact_policy_invalid'
             | 'hosted_web_artifact_bundle_invalid';

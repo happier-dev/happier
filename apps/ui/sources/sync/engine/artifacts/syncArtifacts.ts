@@ -62,7 +62,7 @@ import { listArtifactHeadersV1, selectArtifactHeaderPageV1 } from '@happier-dev/
 import { hashArtifactBinaryContent, openArtifactBinaryContent, sealArtifactBinaryContent } from '@/sync/domains/artifacts/artifactBinaryContent';
 import { openArtifactPrivateRevisionMetadata, sealArtifactPrivateRevisionMetadata } from '@/sync/domains/artifacts/accountArtifactEnvelope';
 import type { ArtifactRevisionProvenanceV1 } from '@happier-dev/protocol/artifacts/artifactBinaryV1';
-import type { ArtifactAccessRecipientCensusResponseV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
+import type { ArtifactAccessRecipientCensusResponseV1, ArtifactHttpReadV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
 
 function prepareArtifactBody(input: ArtifactBodyInput): ArtifactBodyV1 | null {
@@ -1222,7 +1222,7 @@ export async function fetchArtifactsWithBodiesFromApi(params: Readonly<{
 
 /** Read-only opening of HTTP rows already admitted by a composing endpoint; no key-audience repair. */
 export function openArtifactsWithBodiesFromApi(params: Omit<Parameters<typeof fetchArtifactsWithBodiesFromApi>[0],
-    'artifactIds' | 'prepareRecipientKeys'> & Readonly<{ artifacts: readonly Artifact[] }>) {
+    'artifactIds' | 'prepareRecipientKeys'> & Readonly<{ artifacts: readonly ArtifactHttpReadV1[] }>) {
     return openArtifactReadBatchFromApi({ ...params, prepareRecipientKeys: false,
         detailReads: params.artifacts.map(artifact => ({ artifactId: artifact.id, ok: true as const,
             artifact, recipientCensus: null })) });

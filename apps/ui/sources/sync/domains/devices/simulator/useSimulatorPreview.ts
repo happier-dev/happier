@@ -76,7 +76,7 @@ function canSendAction(viewModel: SimulatorPreviewViewModel, action: SimulatorPr
     if (!simulatorPreviewControlActionRequiresLease(action)) return viewModel.controls.canWatch;
     return resourceAllowsInput(viewModel)
         && viewModel.controls.canControl
-        && viewModel.controls.supportedInputKinds.includes(action.kind);
+        && viewModel.controls.supportedInputKinds.some(kind => kind === action.kind);
 }
 
 function buildActionControl(viewModel: SimulatorPreviewViewModel, action: SimulatorPreviewControlAction): MachineLiveStreamControlSidebandV1 | null {

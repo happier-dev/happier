@@ -26,8 +26,9 @@ export function resolveRunningExecutionRunsFromListResult(
 /** Every demanded roster uses the same admitted list reader, including Inbox Follow sources. */
 export async function readSessionRunningExecutionRuns(address: SessionAddress): Promise<readonly ExecutionRunPublicState[] | null> {
     const result = await sessionExecutionRunList(address.sessionId, {}, { serverId: address.serverId });
+    // The list response is a loose object, so `ok === false` does not narrow `errorCode`.
     return result.ok === false
-        ? isExecutionRunTargetUnavailable(result.errorCode) ? [] : null
+        ? isExecutionRunTargetUnavailable(typeof result.errorCode === 'string' ? result.errorCode : null) ? [] : null
         : resolveRunningExecutionRunsFromListResult(result);
 }
 

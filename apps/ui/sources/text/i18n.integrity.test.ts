@@ -120,6 +120,8 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
     // "password" is the ordinary Italian word for it; "parola d'ordine" is not
     // what anyone types into a credential form.
     it: new Set([
+        // Project readiness: Controller is the established Italian deployment term.
+        'projects.readiness.controller',
         // The publisher uses the established Italian developer terms.
         'settingsPlugins.publish.repository', 'settingsPlugins.publish.branch',
         // Store is the ordinary app-distribution loanword, already used in “Apri aggiornamento store”.
@@ -178,6 +180,8 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
         'settingsSourceControl.page.generator.agentTitle',
     ]),
     pt: new Set([
+        // Project readiness and deployment data: Backups is the Portuguese noun the deployment copy already uses.
+        'projects.readiness.backups', 'projects.deployments.dataBackups',
         // Branch is the established Portuguese source-control term.
         'settingsPlugins.publish.branch',
         // Widget/Board nouns used unchanged in Portuguese.
@@ -207,6 +211,8 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
         'settingsProvidersCollection.endpointsTitle',
     ]),
     fr: new Set([
+        // Project readiness: "Secrets" is also the French plural noun.
+        'projects.readiness.secrets',
         // These publisher labels are ordinary French cognates.
         'settingsPlugins.publish.description', 'settingsPlugins.publish.version', 'settingsPlugins.publish.publicationMode',
         // French cognates for coding Agents and the conversations browser.
@@ -573,6 +579,8 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
     // German noun is spelled. A key here is a decision, not a gap — translating one would make
     // the UI read worse, not better.
     de: new Set([
+        // Project readiness and deployment data: Backups and Controller are the German nouns used across deployments.
+        'projects.readiness.backups', 'projects.readiness.controller', 'projects.deployments.dataBackups',
         // These publisher labels are German cognates and developer terms.
         'settingsPlugins.publish.name', 'settingsPlugins.publish.version', 'settingsPlugins.publish.repository', 'settingsPlugins.publish.branch',
         // Store is the ordinary app-distribution loanword, already used in Store-Update and Store-Veröffentlichung.
@@ -1022,6 +1030,8 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
         'settingsProvidersCollection.endpointsTitle',
     ]),
     ca: new Set([
+        // Project readiness: "Secrets" is also the Catalan plural noun.
+        'projects.readiness.secrets',
         // Major is the canonical semantic-version term in Catalan.
         'settingsPlugins.publish.major',
         // Agent is the ordinary localized noun for an executable coding Agent.

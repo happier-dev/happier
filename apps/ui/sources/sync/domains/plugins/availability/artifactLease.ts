@@ -915,7 +915,7 @@ export async function acquirePluginSelectedArtifactLease(input: Readonly<{
         });
     }
     if (admission.kind !== 'available') {
-        return Object.freeze(carryActionFailureDiagnostic({ kind: 'unavailable', code: admission.code }, admission));
+        return Object.freeze(carryActionFailureDiagnostic({ kind: 'unavailable' as const, code: admission.code }, admission));
     }
     const graph = PluginUiArtifactsManifestEntryV2Schema.safeParse(input.artifactGraph);
     if (!graph.success) {

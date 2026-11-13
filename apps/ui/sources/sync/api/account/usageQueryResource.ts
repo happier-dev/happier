@@ -121,7 +121,7 @@ type UsageAllowanceProjection = Readonly<{
 export function mergeRetainedUsageAllowance(
     previous: UsageAllowanceProjection,
     replacement: UsageAllowanceProjection,
-): Readonly<{ quota: readonly ConnectedServiceQuotaGetResultV1[]; sources: readonly UsageQuerySourceState[] }> {
+): Readonly<{ quota: ConnectedServiceQuotaGetResultV1[]; sources: UsageQuerySourceState[] }> {
     const quotaBySource = new Map<string, ConnectedServiceQuotaGetResultV1>();
     for (const read of previous.quota ?? []) quotaBySource.set(createCanonicalJsonSigningInput(read.source), read);
     for (const read of replacement.quota ?? []) {

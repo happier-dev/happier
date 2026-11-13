@@ -67,7 +67,10 @@ export function readHeldCollectionContract(
 export function parseCollectionContractReadResult(
     body: unknown,
     held?: NormalizedPluginAccountCollectionContractV1 | null,
-): PluginCollectionContractReadResultV1 | null {
+): Readonly<{
+    access: PluginCollectionContractReadResultV1['access'];
+    contract: NormalizedPluginAccountCollectionContractV1;
+}> | null {
     if (held) {
         const answer = PluginCollectionContractAccessReadResultV1Schema.safeParse(body);
         if (answer.success) return { access: answer.data.access, contract: held };

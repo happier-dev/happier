@@ -1,5 +1,5 @@
 import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
-import type { PluginReference } from '@happier-dev/plugin-sdk';
+import type { PluginContributionRef, PluginReference } from '@happier-dev/plugin-sdk';
 import type { SurfaceContext } from '@happier-dev/plugin-sdk/ui';
 import {
     PluginUiExecuteActionRequestV1Schema, PluginUiJsonValueV1Schema, PluginUiPublishCurrentUiContextRequestV1Schema,
@@ -24,7 +24,8 @@ import { createPluginPageLocationOwner } from '@/components/plugins/pages/plugin
 export function createDemoPluginTransport(input: Readonly<{
     pluginId: string;
     surface: SurfaceContext;
-    readResource?: (resource: PluginReference) => unknown | Promise<unknown>;
+    /** Demo resources are always qualified; unqualified references are refused before this reader runs. */
+    readResource?: (resource: PluginContributionRef) => unknown | Promise<unknown>;
     executeAction?: (action: PluginReference, payload: JsonValue, options?: PluginCancellationOptions) => unknown | Promise<unknown>;
 }>) {
     if (!isDemoModeActive()) throw new Error('A demo plugin transport requires an active demo world.');

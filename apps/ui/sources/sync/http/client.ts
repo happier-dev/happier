@@ -31,7 +31,7 @@ import { getActiveServerHomeCarrier } from '@/sync/domains/server/serverRuntime'
 import type { HomeCarrier } from '@/sync/runtime/homeCarrier';
 import { normalizeRequestBodyHeaders } from './requestBodyHeaders';
 import { bindAccountEncryptionObservation, captureAccountEncryptionObservationForHome, matchesAccountEncryptionObservationCredentials, type AccountEncryptionObservationBinding } from './accountEncryptionObservationBinding';
-import { bufferReadLifetimeResponse, createReadLifetimeResponse } from './readLifetimeResponse';
+import { bufferReadLifetimeResponse, createReadLifetimeResponse, type ResponseBodyChunk } from './readLifetimeResponse';
 
 export { resetRuntimeFetch, setRuntimeFetch } from '@/utils/system/runtimeFetch';
 
@@ -260,7 +260,7 @@ export async function withServerReadLifetime<T = Response>(
     };
     const timeoutMs = readServerReadInactivityTimeoutMs();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
+    let reader: ReadableStreamDefaultReader<ResponseBodyChunk> | undefined;
     // Native fetch resolves after the whole XHR body: a large unpaged response
     // must not acquire a total deadline until native exposes body progress.
     let canObserveInactivity = Platform.OS === 'web' || options.responseSizeBounded === true;
@@ -302,7 +302,7 @@ export async function withServerReadLifetime<T = Response>(
                 canObserveInactivity = true;
                 reader = response.body.getReader();
                 const bodyReader = reader;
-                ownedResponse = createReadLifetimeResponse(response, new ReadableStream<Uint8Array>({
+                ownedResponse = createReadLifetimeResponse(response, new ReadableStream<ResponseBodyChunk>({
                     async pull(body) {
                         // Time only a pending transport read. Buffered rows and
                         // post-EOF folding belong to the consumer's lifetime.

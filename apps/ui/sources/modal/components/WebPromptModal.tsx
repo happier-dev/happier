@@ -10,6 +10,7 @@ import { t } from '@/text';
 import { ModalCardFrame } from './card/ModalCardFrame';
 import { ModalChoiceRow } from './card/ModalChoiceRow';
 import { ModalCommands } from './ModalCommands';
+import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 
@@ -90,7 +91,7 @@ export function WebPromptModal({ config, onClose, onConfirm, showBackdrop = true
     return <ModalCommands bridge={config.commandBridge} commands={[
         { key: 'input', title: config.title, invoke: input => {
             if (input === undefined) return { ok: true, result: { value: inputValue } };
-            if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.value !== 'string') return false;
+            if (!isJsonObject(input) || typeof input.value !== 'string') return false;
             setInputValue(input.value);
             return { ok: true, result: { value: input.value } };
         } },

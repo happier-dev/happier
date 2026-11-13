@@ -20,6 +20,8 @@ const kindNoun = (kind: Kind['kind'], plural: boolean): string => {
       return plural ? 'apps' : 'app';
     case 'browserExtension':
       return plural ? 'browser extensions' : 'browser extension';
+    case 'starter':
+      return plural ? 'starters' : 'starter';
   }
 };
 const compact = (count: number, decimal = '.'): string =>
@@ -49,6 +51,7 @@ export type RegistriesTranslation = Readonly<{
     happierNpm: string;
     composeCatalog: string;
     composeTomlCatalog: string;
+    chromeWebStore: string;
     addedBy: (params: Readonly<{ plugin: string }>) => string;
     off: string;
   }>;
@@ -147,6 +150,7 @@ const en: RegistriesTranslation = {
     happierNpm: 'npm',
     composeCatalog: "Compose templates",
     composeTomlCatalog: "Compose + TOML templates",
+    chromeWebStore: "Chrome Web Store",
     addedBy: ({ plugin }) => `Added by ${plugin}`,
     off: 'Off',
   },
@@ -512,6 +516,7 @@ const caNouns = pairNouns({
   agent: ['agent', 'agents'],
   plugin: ['connector', 'connectors'],
   app: ['aplicació', 'aplicacions'],
+  starter: ['plantilla inicial', 'plantilles inicials'],
 });
 
 const ca: RegistriesTranslation = {
@@ -533,6 +538,7 @@ const ca: RegistriesTranslation = {
     happierNpm: 'npm',
     composeCatalog: "Plantilles Compose",
     composeTomlCatalog: "Plantilles Compose + TOML",
+    chromeWebStore: "Chrome Web Store",
     addedBy: ({ plugin }) => `Afegit per ${plugin}`,
     off: 'Desactivat',
   },
@@ -748,6 +754,7 @@ const deNouns = pairNouns({
   agent: ['Agent', 'Agenten'],
   plugin: ['Plugin', 'Plugins'],
   app: ['App', 'Apps'],
+  starter: ['Starter-Vorlage', 'Starter-Vorlagen'],
 });
 
 const de: RegistriesTranslation = {
@@ -769,6 +776,7 @@ const de: RegistriesTranslation = {
     happierNpm: 'npm',
     composeCatalog: "Compose-Vorlagen",
     composeTomlCatalog: "Compose- und TOML-Vorlagen",
+    chromeWebStore: "Chrome Web Store",
     addedBy: ({ plugin }) => `Hinzugefügt von ${plugin}`,
     off: 'Aus',
   },
@@ -993,6 +1001,7 @@ const esNouns = pairNouns({
   agent: ['agente', 'agentes'],
   plugin: ['plugin', 'plugins'],
   app: ['aplicación', 'aplicaciones'],
+  starter: ['plantilla inicial', 'plantillas iniciales'],
 });
 
 const es: RegistriesTranslation = {
@@ -1014,6 +1023,7 @@ const es: RegistriesTranslation = {
     happierNpm: 'npm',
     composeCatalog: "Plantillas Compose",
     composeTomlCatalog: "Plantillas Compose y TOML",
+    chromeWebStore: "Chrome Web Store",
     addedBy: ({ plugin }) => `Añadido por ${plugin}`,
     off: 'Desactivado',
   },
@@ -1231,6 +1241,7 @@ const frNouns = pairNouns(
     agent: ['agent', 'agents'],
     plugin: ['plugin', 'plugins'],
     app: ['application', 'applications'],
+    starter: ['modèle de départ', 'modèles de départ'],
   },
   (count) => count < 2,
 );
@@ -1254,6 +1265,7 @@ const fr: RegistriesTranslation = {
     happierNpm: 'npm',
     composeCatalog: "Modèles Compose",
     composeTomlCatalog: "Modèles Compose et TOML",
+    chromeWebStore: "Chrome Web Store",
     addedBy: ({ plugin }) => `Ajouté par ${plugin}`,
     off: 'Désactivé',
   },
@@ -1472,6 +1484,7 @@ const itNouns = pairNouns({
   agent: ['agente', 'agenti'],
   plugin: ['plugin', 'plugin'],
   app: ['app', 'app'],
+  starter: ['modello iniziale', 'modelli iniziali'],
 });
 
 const it: RegistriesTranslation = {
@@ -1493,6 +1506,7 @@ const it: RegistriesTranslation = {
     happierNpm: 'npm',
     composeCatalog: "Modelli Compose",
     composeTomlCatalog: "Modelli Compose e TOML",
+    chromeWebStore: "Chrome Web Store",
     addedBy: ({ plugin }) => `Aggiunto da ${plugin}`,
     off: 'Disattivato',
   },
@@ -1707,6 +1721,7 @@ const jaNouns = bareNouns({
   agent: 'エージェント',
   plugin: 'プラグイン',
   app: 'アプリ',
+  starter: 'スターター',
 });
 
 const ja: RegistriesTranslation = {
@@ -1728,6 +1743,7 @@ const ja: RegistriesTranslation = {
     happierNpm: 'npm',
     composeCatalog: "Compose テンプレート",
     composeTomlCatalog: "Compose + TOML テンプレート",
+    chromeWebStore: "Chrome Web Store",
     addedBy: ({ plugin }) => `${plugin} が追加`,
     off: 'オフ',
   },
@@ -1977,6 +1993,13 @@ const plNouns = slavicNouns(
       plural: "aplikacje",
       object: "aplikacje",
     },
+    starter: {
+      one: "szablon startowy",
+      few: "szablony startowe",
+      many: "szablonów startowych",
+      plural: "szablony startowe",
+      object: "szablony startowe",
+    },
   },
   polishForm,
 );
@@ -2000,6 +2023,7 @@ const pl: RegistriesTranslation = {
     happierNpm: 'npm',
     composeCatalog: "Szablony Compose",
     composeTomlCatalog: "Szablony Compose i TOML",
+    chromeWebStore: "Chrome Web Store",
     addedBy: ({ plugin }) => `Dodane przez ${plugin}`,
     off: 'Wyłączony',
   },
@@ -2221,6 +2245,7 @@ const ptNouns = pairNouns({
   agent: ['agente', 'agentes'],
   plugin: ['plugin', 'plugins'],
   app: ['aplicativo', 'aplicativos'],
+  starter: ['modelo inicial', 'modelos iniciais'],
 });
 
 const pt: RegistriesTranslation = {
@@ -2242,6 +2267,7 @@ const pt: RegistriesTranslation = {
     happierNpm: 'npm',
     composeCatalog: "Modelos Compose",
     composeTomlCatalog: "Modelos Compose e TOML",
+    chromeWebStore: "Chrome Web Store",
     addedBy: ({ plugin }) => `Adicionado por ${plugin}`,
     off: 'Desativado',
   },
@@ -2495,6 +2521,13 @@ const ruNouns = slavicNouns(
       plural: "приложения",
       object: "приложений",
     },
+    starter: {
+      one: "стартовый шаблон",
+      few: "стартовых шаблона",
+      many: "стартовых шаблонов",
+      plural: "стартовые шаблоны",
+      object: "стартовых шаблонов",
+    },
   },
   russianForm,
 );
@@ -2518,6 +2551,7 @@ const ru: RegistriesTranslation = {
     happierNpm: 'npm',
     composeCatalog: "Шаблоны Compose",
     composeTomlCatalog: "Шаблоны Compose и TOML",
+    chromeWebStore: "Chrome Web Store",
     addedBy: ({ plugin }) => `Добавлено: ${plugin}`,
     off: 'Выкл.',
   },
@@ -2755,6 +2789,7 @@ const zhHansNouns = bareNouns({
   agent: '智能体',
   plugin: '插件',
   app: '应用',
+  starter: '起始模板',
 });
 
 const zhHans: RegistriesTranslation = {
@@ -2776,6 +2811,7 @@ const zhHans: RegistriesTranslation = {
     happierNpm: 'npm',
     composeCatalog: "Compose 模板",
     composeTomlCatalog: "Compose + TOML 模板",
+    chromeWebStore: "Chrome Web Store",
     addedBy: ({ plugin }) => `由 ${plugin} 添加`,
     off: '关闭',
   },
@@ -2980,6 +3016,7 @@ const zhHantNouns = bareNouns({
   agent: '代理',
   plugin: '外掛程式',
   app: '應用程式',
+  starter: '起始範本',
 });
 
 const zhHant: RegistriesTranslation = {
@@ -3001,6 +3038,7 @@ const zhHant: RegistriesTranslation = {
     happierNpm: 'npm',
     composeCatalog: "Compose 範本",
     composeTomlCatalog: "Compose + TOML 範本",
+    chromeWebStore: "Chrome Web Store",
     addedBy: ({ plugin }) => `由 ${plugin} 新增`,
     off: '關閉',
   },

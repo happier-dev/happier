@@ -49,7 +49,7 @@ const loader = createScopedSnapshotLoader<Target>({
             : getConnectedMetadataCatalog(scope).acknowledgementsRevision),
     onCredentialMutation: (_event, { scope }) => {
         applyConnectedMetadataCatalogSnapshot(scope, { presentation: { status: 'unavailable', reason: 'unauthorized' },
-            acknowledgements: { status: 'unavailable', reason: 'unauthorized' }, disclosure: [] }, true);
+            acknowledgements: { status: 'unavailable', reason: 'unauthorized' } }, true);
         return true;
     },
 });

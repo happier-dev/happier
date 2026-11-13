@@ -31,6 +31,8 @@ export function registryFormatIcon(
     case 'coolify-templates':
     case 'dokploy-templates':
       return 'stack';
+    case 'chrome-web-store':
+      return 'globe';
   }
 }
 
@@ -54,6 +56,8 @@ export function registryFormatLabel(format: RegistryFormatV1): string {
       return t('capabilities.registries.format.composeCatalog');
     case 'dokploy-templates':
       return t('capabilities.registries.format.composeTomlCatalog');
+    case 'chrome-web-store':
+      return t('capabilities.registries.format.chromeWebStore');
   }
 }
 

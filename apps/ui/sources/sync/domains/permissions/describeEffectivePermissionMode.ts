@@ -113,7 +113,9 @@ export function describeEffectivePermissionMode(_params: {
         reasons.push({ code: 'plan_not_supported_for_provider' });
     }
 
-    const providerNative = permissionMapping?.[parsePermissionIntentAlias(effectiveMode) ?? 'default'] ?? resolveProviderNativePermissionModeForAgent({ agentId, mode: _params.selectedMode });
+    // A candidate list selects its first advertised id; describe the preferred candidate.
+    const mapped = permissionMapping?.[parsePermissionIntentAlias(effectiveMode) ?? 'default'];
+    const providerNative = (Array.isArray(mapped) ? mapped[0] : mapped) ?? resolveProviderNativePermissionModeForAgent({ agentId, mode: _params.selectedMode });
     if (!nativePolicy?.isExplicitOverride && providerNative !== effectiveMode) {
         reasons.push({ code: 'mode_mapped_for_provider', params: { providerMode: providerNative } });
     }

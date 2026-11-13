@@ -15,6 +15,7 @@ import { deploymentEditorsTranslations } from './deploymentEditorsTranslations';
 import { deploymentPreparationTranslations } from './deploymentPreparationTranslations';
 import { deploymentSettingsTranslations } from './deploymentSettingsTranslations';
 import { deploymentPlatformLinkTranslations } from './deploymentPlatformLinkTranslations';
+import { deploymentPromotionTranslations } from './deploymentPromotionTranslations';
 import { fileEditingTranslations } from './fileEditingTranslations.shared';
 import { usageChartInputTranslations } from './usageChartInputTranslations.shared';
 import { usageChartPlanetFamilyTranslations } from './usageChartPlanetFamilyTranslations.shared';
@@ -2133,6 +2134,12 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             },
         },
         openSession: ({ session }: { session: string }) => `開啟工作階段：${session}`,
+        pluginDisabled: ({ name }: { name: string }) => `${name} 已關閉。其項目會保留；重新開啟後即可再次開啟相應頁面。`,
+        pluginEnableFailed: "無法開啟。請重試。",
+        pluginTurnOn: "開啟",
+        pluginFallback: "此外掛",
+        resolvedReceipt: "已解決 · 已從 Inbox 中清除",
+        nextItem: "下一項",
         stoppedResumeToAnswer: '已停止 — 恢復後即可回覆',
         readySessionAccessibilityLabel: ({ session }: { session: string }) => `待檢視：${session}`,
         // Inbox screen
@@ -6720,6 +6727,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 
           inputPlaceholder: '輸入訊息...',
           usageLimitRecovery: {
+              operationErrors: { inactive: "此工作階段的用量上限復原已不再進行。請檢查工作階段後重試。", exhausted: "沒有可用於復原的合格帳號。請檢查帳號集區，或等待額度重設。", cancelled: "用量上限復原已取消。準備好後可以再次開始。", rate_limited: "供應商仍在限制請求速率。請等待額度重設後重試。", unsupported: "此工作階段不支援所要求的用量上限復原操作。", malformed_response: "工作階段傳回了無效的復原回應。請重新連線到其機器後重試。", session_unreachable: "無法連線到此工作階段所在的機器。請重新連線到該機器後重試。", generation_apply_failed: "無法將復原所需的帳號切換套用到此工作階段。請檢查其已連接帳號後重試。", group_conflict: "操作完成前，帳號集區或復原要求已變更。請重新整理工作階段後重試。", not_found: "此工作階段在所選機器上已無法使用。" },
               overloadTitle: "模型過載",
               overloadWaiting: "等待重試。",
               overloadDispatching: "正在重試。",
@@ -6838,6 +6846,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               enrollment_retired: "機器註冊已不再有效。請檢查機器設定。",
               resource_mismatch: "請求與目前資源不符。請在重試前檢查選擇。",
               action_outcome_unknown: "無法確認外部操作的結果。請在重試前檢查其狀態。",
+              no_eligible_member: "沒有可用的合格連結帳戶。請檢查連結帳戶，然後重試工作階段。",
+              no_eligible_group_member: "沒有可用的合格連結帳戶。請檢查連結帳戶，然後重試工作階段。",
+              provider_incompatible_with_agent: "此代理程式不支援所選的憑證類型或經代理的 Team 來源。對於僅支援原生登入的代理程式，請使用你自己的登入，或選擇支援經代理供應商的代理程式。",
               teamCredential: "共用的 Team 憑證拒絕了該請求。",
             },
           },
@@ -7130,6 +7141,12 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                     matching: '符合的工作階段',
                     matchingChoose: '符合…',
                     matchingHint: '符合篩選條件的工作階段',
+                    modelChoose: "在新工作階段中使用模型…",
+                    modelHint: "傳送前請選擇代理和模型",
+                    modelUse: "使用此模型",
+                    modelStarts: ({ machine }: { machine: string }) => `在 ${machine} 上為你啟動新工作階段`,
+                    chipModelAsk: ({ model }: { model: string }) => `詢問 ${model} · 新工作階段`,
+                    modelAskFailed: "無法傳送",
                     useThese: '使用這些',
                     noMatches: '沒有符合的工作階段',
                     refreshing: '正在重新整理',
@@ -13639,6 +13656,7 @@ settingsSession: {
       preparation: deploymentPreparationTranslations['zh-Hant'],
             settingsSections: deploymentSettingsTranslations['zh-Hant'],
             platformLink: deploymentPlatformLinkTranslations['zh-Hant'],
+            promotion: deploymentPromotionTranslations['zh-Hant'],
             review: {
                 awakeNote: '僅在這台機器處於喚醒狀態且 Docker Desktop 已開啟時執行。',
                 portLocal: ({ port }: { port: string }) => `連接埠 ${port}，僅限這台機器`,

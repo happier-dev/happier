@@ -1,5 +1,6 @@
 import * as React from 'react';
 import {
+  SKILL_ACTION_OUTPUT_SCHEMAS_V1,
   SkillFoundListResultV1Schema,
   type SkillFoundListResultV1,
 } from '@happier-dev/protocol/prompts/library/skills/skillActionSchemasV1';

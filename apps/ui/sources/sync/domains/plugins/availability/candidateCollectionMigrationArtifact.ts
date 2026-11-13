@@ -341,6 +341,8 @@ function createCandidateLease(input: Readonly<{
         retirement.dispose();
         revoke();
     };
+    // The holder's `releaseFiles` drops this lease's view of the verified bytes, as the selected lease does.
+    let files: typeof input.files | null = input.files;
     return Object.freeze({
         dispose,
         lease: Object.freeze({
@@ -352,7 +354,10 @@ function createCandidateLease(input: Readonly<{
                 if (!isCurrent()) {
                     return Object.freeze({ kind: 'unavailable' as const, code: 'artifact_lease_revoked' as const });
                 }
-                const record = input.files.get(relativePath);
+                if (!files) {
+                    return Object.freeze({ kind: 'unavailable' as const, code: 'artifact_lease_files_released' as const });
+                }
+                const record = files.get(relativePath);
                 if (!record) {
                     return Object.freeze({ kind: 'unavailable' as const, code: 'artifact_file_not_declared' as const });
                 }
@@ -362,6 +367,7 @@ function createCandidateLease(input: Readonly<{
                     bytes: new Uint8Array(record.bytes),
                 });
             },
+            releaseFiles: () => { files = null; },
             isCurrent,
             onRevoke: (listener: () => void) => {
                 if (revoked) {

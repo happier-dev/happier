@@ -133,6 +133,7 @@ export const ArtifactHttpReadV1Schema = lazyZodSchema(() => z.strictObject({
   provenance: z.optional(z.nullable(z.string())), provenanceDataEncryptionKey: z.optional(z.nullable(z.string())),
   dataEncryptionKey: z.string(), seq: z.number(), createdAt: z.number(), updatedAt: z.number(),
 }));
+export type ArtifactHttpReadV1 = z.infer<typeof ArtifactHttpReadV1Schema>;
 
 /** V1 selected read: one result for every requested identity, in request order. */
 export const ArtifactReadBatchInputV1Schema = lazyZodSchema(() => z.strictObject({

@@ -188,6 +188,7 @@ export function buildSimulatorPreviewControl(input: Readonly<{
         case 'keyboard_key':
             return input.action.modifiers?.length ? { ok: false, reasonCode: 'invalid_control' }
                 : parseControl({ ...base, kind: 'keyboard_key', key: input.action.key });
+        case 'move':
         case 'pointer':
         case 'wheel':
             return { ok: false, reasonCode: 'invalid_control' };

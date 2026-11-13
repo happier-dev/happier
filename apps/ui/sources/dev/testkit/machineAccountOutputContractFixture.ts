@@ -119,8 +119,9 @@ export async function executeManagedAccountPowerOutputScenario(
     const resizeUnsupported = outcome === 'resize-unsupported-report-failed';
     const deleting = outcome.startsWith('delete-');
     const deleteRefused = outcome.startsWith('delete-refused-');
-    const actionId = resizeUnsupported ? 'machines.managed.resize'
-        : deleting ? 'machines.managed.delete' : 'machines.managed.power.set';
+    // Declared (non-widening) so the returned scenario keeps the exact Action id.
+    const actionId: Extract<ActionId, 'machines.managed.resize' | 'machines.managed.delete' | 'machines.managed.power.set'> = resizeUnsupported
+        ? 'machines.managed.resize' : deleting ? 'machines.managed.delete' : 'machines.managed.power.set';
     const logStart = log.getCount();
     // Native HTTP is the intended runtime boundary; a browser requires a selected remote host.
     // The real credential owner verifies writes through the desktop OS storage command boundary.

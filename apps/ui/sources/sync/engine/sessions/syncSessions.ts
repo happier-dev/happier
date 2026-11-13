@@ -363,7 +363,7 @@ export async function buildNewSessionFromSocketUpdate(params: {
     const active = typeof updateBody.active === 'boolean' ? updateBody.active : true;
     const activeAt = readTimestamp(updateBody.activeAt, params.updateCreatedAt);
     const pendingFlags = derivePendingRequestFlagsFromAgentState(decryptedState.agentState,
-        readSessionRequestCoverage({ serverId: params.sourceServerId,
+        readSessionRequestCoverage({ serverId: params.sourceServerId ?? undefined,
             metadata: decryptedState.metadata, metadataLayoutVersion,
         }));
     const currentStorageState = readExternalSessionStorageState(updateBody.currentStorageState);

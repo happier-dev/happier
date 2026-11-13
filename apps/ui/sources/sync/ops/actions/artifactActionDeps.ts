@@ -50,7 +50,7 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
         return { artifactId, revision };
     };
     const forbidden = () => Object.assign(new Error('artifact_source_forbidden'), { code: 'artifact_source_forbidden' });
-    const listDirectory = options?.workspaceList ?? (async request => await workspaceListDirectory({ machineId: request.machineId,
+    const listDirectory: NonNullable<NonNullable<typeof options>['workspaceList']> = options?.workspaceList ?? (async request => await workspaceListDirectory({ machineId: request.machineId,
         rootPath: request.rootPath, agentRootPath: request.agentRootPath ?? null, serverId: account.serverId }, request.path,
         { signal: request.signal, callerContext: request.context }));
     /**
@@ -122,7 +122,8 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
             return { name: relativePath.split('/').at(-1) ?? relativePath, bytes, bundle };
         };
         try {
-            const acquired = entrypoint === undefined ? await download(relativePath) : await readFolder();
+            const folder = entrypoint === undefined ? null : await readFolder();
+            const acquired = folder ?? await download(relativePath);
             const current = resolveTarget();
             if (!current || current.machineId !== target.machineId || current.basePath !== target.basePath)
                 throw Object.assign(new Error('artifact_source_unavailable'), { code: 'artifact_source_unavailable' });
@@ -131,7 +132,7 @@ export function createUiArtifactAction(account: LazyActionAccountContext, option
                 : { sessionId: sessionId!, machineId: target.machineId, ...(context.runtimeRunId ? { runId: context.runtimeRunId } : {}) };
             return { caller,
                 file: { bytes, name: acquired.name, path: relativePath, sha: hashArtifactBinaryContent(bytes),
-                    ...('bundle' in acquired ? { bundle: acquired.bundle } : {}) } };
+                    ...(folder ? { bundle: folder.bundle } : {}) } };
         } finally {
             cancellation.dispose();
             stop.dispose();

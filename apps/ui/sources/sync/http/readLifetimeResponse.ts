@@ -18,7 +18,8 @@ export async function bufferReadLifetimeResponse(source: Response): Promise<Resp
 }
 
 type ResponseBody = NonNullable<Response['body']>;
-type ResponseBodyChunk = ResponseBody extends ReadableStream<infer Chunk> ? Chunk : never;
+/** The platform Response body's chunk type (`Uint8Array<ArrayBuffer>` under current DOM types). */
+export type ResponseBodyChunk = ResponseBody extends ReadableStream<infer Chunk> ? Chunk : never;
 type ReactNativeFormData = Awaited<ReturnType<globalThis.Response['formData']>>;
 type ResponseFormData = globalThis.FormData & ReactNativeFormData;
 type BodyState = { stream: ResponseBody; used: boolean };

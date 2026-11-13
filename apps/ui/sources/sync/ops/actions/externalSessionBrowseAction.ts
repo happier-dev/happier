@@ -9,9 +9,11 @@ import {
     ExternalSessionOperationReferenceV1Schema,
     projectExternalSessionMaterializeActionResultV1,
     projectExternalSessionOperationActionResultV1,
+} from '@happier-dev/protocol/sessions';
+import {
     ExternalSessionTakeoverActionInputV1Schema,
     captureExternalSessionTakeoverStartInputV1,
-} from '@happier-dev/protocol/sessions';
+} from '@happier-dev/protocol/sessions/external/operationActionSchemasV1';
 import {
     machineExternalSessionCandidateDelete,
     machineExternalSessionLinkEnsure,

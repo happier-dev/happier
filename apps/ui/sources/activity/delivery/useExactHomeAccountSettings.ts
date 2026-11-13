@@ -13,6 +13,7 @@ import {
     subscribeAccountSettingsPersistenceMutations,
 } from '@/sync/domains/state/accountSettingsPersistence';
 import { retainDeep } from '@/sync/domains/state/structuralSharing';
+import type { Settings } from '@/sync/domains/settings/settings';
 
 const DELIVERY_SETTING_KEYS = ['attentionDeliveryPolicyV1'] as const;
 
@@ -59,7 +60,7 @@ export function readExactHomeAccountSettings(
  */
 export function useExactHomeAccountSettings(
     audienceScopes: ReadonlyMap<string, ServerAccountScope> | undefined,
-    consumedKeys: readonly (keyof AccountSettings)[] = DELIVERY_SETTING_KEYS,
+    consumedKeys: readonly (keyof Settings)[] = DELIVERY_SETTING_KEYS,
 ): ExactHomeAccountSettingsResolver {
     const scopes = React.useMemo(() => {
         const unique = new Map<string, ServerAccountScope>();

@@ -1,6 +1,6 @@
 import type { ActionId} from '@happier-dev/protocol/actions/actionIds';
 import type { ActionSettingsActionId } from '@happier-dev/protocol/actions/actionSettings';
-import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { isActionEnabledByActionsSettings, normalizeActionsSettingsV1, type ActionEnablementContext, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 
 import { isExecutionRunsFeatureAction } from '@/sync/domains/actions/isExecutionRunsFeatureAction';
@@ -21,7 +21,7 @@ export function resolveActionsSettingsV1FromState(state: ActionSettingsState): A
 export function isActionEnabledInState(
     state: ActionSettingsState,
     actionId: ActionId,
-    ctx?: Readonly<{ surface?: string | null; placement?: string | null }>,
+    ctx?: ActionEnablementContext,
 ): boolean {
     const settingsState = {
         experiments: state.settings?.experiments ?? settingsDefaults.experiments,

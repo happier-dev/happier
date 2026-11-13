@@ -149,6 +149,7 @@ type MessagesDomainDependencies = {
     sessionListRowsByServerId: Readonly<Record<string, Readonly<Record<string, SessionListRenderableSession>>>>;
     ordinarySessionListMembershipByServerId?: Readonly<Record<string, readonly string[] | undefined>>;
     sessionListIndexByServerId: Readonly<Record<string, import('../../domains/sessionList/sessionListIndex').SessionListIndexItem[] | null | undefined>>;
+    sessionListRenderableDelta: import('./sessionListIndexFinalization').SessionListRenderableDelta;
     machines: Record<string, import('../../domains/state/storageTypes').Machine>;
     machineDisplayById: Record<string, import('../../domains/machines/machineDisplayRenderable').MachineDisplayRenderable>;
     profile: { id?: string | null } | null;

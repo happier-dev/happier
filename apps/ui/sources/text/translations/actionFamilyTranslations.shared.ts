@@ -170,6 +170,8 @@ export const english = {
         identity_github_apps: 'GitHub Apps',
         identity_providers: 'Sign-in providers',
         machine_pools: 'Machine pools',
+        machine_roles: "Machine roles",
+        machine_scheduled: "Scheduled jobs",
         ephemeral_runner: 'Runners',
         automation_events: 'Workflow events',
         automation_conversation: 'Workflow conversations',

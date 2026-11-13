@@ -15,7 +15,7 @@ export type MachineOfflineAlertState = Readonly<{
 
 type OfflineAlertMutation = {
     machineId: string;
-    serverId: string | undefined;
+    serverId: MachineResourceKey['serverId'];
     scope: ReturnType<typeof storage.getState>['settingsScope'];
     desired: boolean | null;
     saving: Promise<MachineOfflineAlertSetResult> | null;

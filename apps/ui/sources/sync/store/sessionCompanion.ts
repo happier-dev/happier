@@ -64,7 +64,7 @@ function readRawSlot(state: CompanionState, sessionId: string | null, activeServ
 /** Hooks and admitted Actions share the same realm-qualified state owner. */
 export function readSessionCompanionPreferenceSlotFromState(state: CompanionState, sessionId: string | null, activeServerId: string | null | undefined, serverId?: string | null): SessionCompanionPreferenceSlot {
     const slot = readRawSlot(state, sessionId, activeServerId, serverId);
-    return slot.storageKey ? { ...slot, stored: overlayInteraction(slot.stored, interactionState.read(slot.storageKey)) } : slot;
+    return { ...slot, stored: overlayInteraction(slot.stored, slot.storageKey ? interactionState.read(slot.storageKey) : undefined) };
 }
 
 export function useSessionCompanionPreferenceSlot(sessionId: string | null, serverId?: string | null): SessionCompanionPreferenceSlot {

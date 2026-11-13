@@ -43,11 +43,11 @@ function readFailureReason(value: unknown): BrowserDaemonControlFailureReason | 
 /** The caller supplies its admitted transport scope; a discovered Machine id grants no Machine authority. */
 async function browserRpc<R, A>(input: Readonly<{
     machineId?: string; sessionId?: string; serverId: string; accountId?: string;
-    method: string; payload: A; signal?: AbortSignal; operationTimeoutMs?: number | null;
+    /** Machine RPC: caller cancellation owns the admitted operation (the same contract as `machineRpcWithServerScope`). */
+    method: string; payload: A; signal?: AbortSignal; operationTimeoutMs?: null;
 }>): Promise<R> {
     if (input.sessionId) {
-        const request = { sessionId: input.sessionId, method: input.method, payload: input.payload, signal: input.signal,
-            ...(typeof input.operationTimeoutMs === 'number' ? { timeoutMs: input.operationTimeoutMs } : {}) };
+        const request = { sessionId: input.sessionId, method: input.method, payload: input.payload, signal: input.signal };
         return input.accountId
             ? sessionRpcWithServerAccountScope<R, A>({ ...request, scope: { serverId: input.serverId, accountId: input.accountId } })
             : sessionRpcWithServerScope<R, A>({ ...request, serverId: input.serverId });

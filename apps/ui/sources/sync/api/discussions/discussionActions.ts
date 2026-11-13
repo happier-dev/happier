@@ -520,7 +520,7 @@ export function createDiscussionClient(options: Readonly<{ scope: ServerAccountS
             const roster = await run('discussion.participants.list', { discussionId: input.discussionId }, signal);
             if (roster.kind !== 'succeeded') return roster;
             const admitted = new Set(roster.value.participants.flatMap(row => row.participant.kind === 'session'
-                ? [row.participant.sessionId] : row.sessionId ? [row.sessionId] : []));
+                ? [row.participant.sessionId] : 'sessionId' in row && row.sessionId ? [row.sessionId] : []));
             for (const sessionId of addressed) {
                 if (admitted.has(sessionId)) continue;
                 const invitation = await run('discussion.invite', { discussionId: input.discussionId,

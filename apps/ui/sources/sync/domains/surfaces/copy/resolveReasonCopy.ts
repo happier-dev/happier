@@ -5,7 +5,7 @@ import { t } from '@/text';
 import type { PluginMachineOriginRejectionReasonV1 } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import type { LocalServiceNativePrerequisiteV1, LocalServiceEstablishmentFailureV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import type { LocalServicePublicPreviewCreateFailureReasonV1 } from '@happier-dev/protocol/local/services/public/v1';
-import type { TranslationKey } from '@/text/i18n';
+import type { TranslationKey, TranslationKeyNoParams } from '@/text/i18n';
 
 /**
  * The surface family a reason code is rendered into. Each kind selects the
@@ -337,29 +337,8 @@ const LOCAL_SERVICE_ACTION_KEYS = {
     invalid_parameters: 'localServices.actions.failure.unavailable',
 } as const satisfies Record<string, LocalServiceActionMessageKey>;
 
-type BrowserMessageKey =
-    | 'browserShell.unavailable.desktopEngineUnavailable'
-    | 'browserShell.unavailable.desktopWebView'
-    | 'browserShell.unavailable.desktopWebViewUnsupportedPlatform'
-    | 'browserShell.unavailable.externalUrlPolicyDenied'
-    | 'browserShell.unavailable.externalUrlUnavailable'
-    | 'browserShell.unavailable.simulatorPreviewUnavailable'
-    | 'browserShell.unavailable.sidecarRuntimeUnavailable'
-    | 'browserShell.unavailable.streamedBrowserUnavailable'
-    | 'browserShell.unavailable.managedPackageMissing'
-    | 'browserShell.unavailable.provisioningFailed'
-    | 'browserShell.unavailable.sandboxUnavailable'
-    | 'browserShell.unavailable.hostUnavailable'
-    | 'browserShell.unavailable.targetKindUnavailable'
-    | 'browserShell.unavailable.browserProfileMissing'
-    | 'browserShell.unavailable.hostedPluginBlocked'
-    | 'browserShell.unavailable.invalidUrl'
-    | 'browserShell.unavailable.ownerDisconnected'
-    | 'browserShell.unavailable.annotationIframeCaptureUnavailable'
-    | 'browserShell.unavailable.annotationCaptureUnavailable'
-    | 'browserShell.unavailable.previewEnded'
-    | 'browserShell.unavailable.previewTransportUnavailable'
-    | 'browserShell.unavailable.previewPortNotAllowed';
+/** Derived from the translation tree, so a new unavailable reason never needs a hand-kept key list. */
+type BrowserMessageKey = Extract<TranslationKeyNoParams, `browserShell.unavailable.${string}`>;
 
 type BrowserSurfaceMessageKey =
     | 'browserShell.unavailable.surface.disabled'

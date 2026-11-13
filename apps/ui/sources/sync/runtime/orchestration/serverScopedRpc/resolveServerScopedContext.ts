@@ -18,7 +18,7 @@ import { readCredentialAuthorityKind } from '@/auth/context/credentialAuthority'
 import {
     DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS,
     type ResolvedServerRpcContext,
-    type ScopedRpcEncryptionContext,
+    type ScopedServerRpcContext,
 } from './serverScopedRpcTypes';
 
 function normalizeId(raw: unknown): string {
@@ -81,7 +81,7 @@ export async function resolveServerScopedContext(params: Readonly<{
     if (expectedAccountId && targetAccountId !== expectedAccountId) {
         throw new Error(`Scoped credentials do not match requested Account "${expectedAccountId}"`);
     }
-    const encryption: ScopedRpcEncryptionContext | null = await resolveScopedAccountEncryption({
+    const encryption: ScopedServerRpcContext['encryption'] = await resolveScopedAccountEncryption({
         serverId: resolvedTargetServerId,
         serverUrl: targetProfile.canonicalServerUrl ?? targetProfile.serverUrl,
         credentials,
