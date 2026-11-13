@@ -8,6 +8,8 @@ import { GITHUB_CONNECTED_ACCOUNT_PURPOSE, GITHUB_PLUGIN_ID } from '../observati
 import { encodeGithubTriageConfiguration } from './configuration.js';
 import { GITHUB_PULL_REQUEST_RESPONSE, GITHUB_FIXTURE_REPOSITORY_ID } from './__fixtures__/githubResponses.js';
 import { createStubGithubTransport, GITHUB_TEST_ACCOUNT, type StubHttpResponse } from './testkit/githubTriage.test-support.js';
+import { GITHUB_TRIAGE_ACTION_IDS_V1 } from './contribution.js';
+import { githubNativeReadActionId } from './readActions.js';
 
 function configuredInstance() {
   const fixture = createTriageSourceV1Fixture();
@@ -129,7 +131,7 @@ describe('registered GitHub attention feed', () => {
     } finally { await kit.dispose(); }
   });
 
-  it('cancels the in-flight provider request without returning an acknowledged page', async () => {
+  it.each(['account', 'native'] as const)('cancels the in-flight %s provider read without returning an acknowledged page', async target => {
     const instance = configuredInstance();
     const controller = new AbortController();
     let requestSignal: AbortSignal | undefined;
@@ -144,7 +146,9 @@ describe('registered GitHub attention feed', () => {
       http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
     } });
     try {
-      const pending = kit.invokeAction('triage/read-github-attention', { v: 1, instance },
+      const actionId = target === 'native' ? githubNativeReadActionId(GITHUB_TRIAGE_ACTION_IDS_V1.readAttention)
+        : GITHUB_TRIAGE_ACTION_IDS_V1.readAttention;
+      const pending = kit.invokeAction(actionId, { v: 1, instance },
         { surface: 'plugin', signal: controller.signal });
       const rejected = expect(pending).rejects.toMatchObject({ code: 'plugin_action_aborted' });
       await started;

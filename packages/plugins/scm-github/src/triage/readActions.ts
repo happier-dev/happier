@@ -22,6 +22,7 @@ type AccountReadDeclaration = Extract<PluginActionDeclaration, Readonly<{
   execution: Readonly<{ target: 'account' }>;
 }>>;
 type ReadDefinition = Omit<AccountReadDeclaration, 'execution'> & Readonly<{
+  readOnly: true;
   run: (input: JsonValue, context: GithubTriageInvocationContext) => Promise<JsonValue | void>;
   observeRead?: PluginActionReadObserver<JsonValue, GithubTriageObservationContext>;
   nativeRun?: ActionHandler;
@@ -37,6 +38,7 @@ const definitions = {
       run: async (input, context) => (await import('./issueFacts.js')).readGithubIssueFacts(input, context),
     },
 [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readPreview]: {
+      readOnly: true,
       title: 'Read the pull request preview',
       description: 'Reads the exact pull request preview and its current receipt and serving address.',
       surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: [],
@@ -45,6 +47,7 @@ const definitions = {
       run: async (input, context) => (await import('./previewRead.js')).readGithubPreview(input, context),
     },
 [GITHUB_TRIAGE_ACTION_IDS_V1.listScopeUnits]: {
+      readOnly: true,
       title: 'List GitHub repositories',
       description: 'Lists selectable repositories or the retained configured selection.',
       surfaces: sources.operations.listScopeUnits.declaration.surfaces,
@@ -56,6 +59,7 @@ const definitions = {
       run: async (input, context) => (await import('./operations.js')).listGithubTriageScopeUnits(input, context),
     },
 [GITHUB_TRIAGE_ACTION_IDS_V1.listInstances]: {
+      readOnly: true,
       title: 'Discover GitHub accounts',
       description: 'Lists the GitHub accounts each authorized connection can reach.',
       surfaces: sources.operations.listInstances.declaration.surfaces,
@@ -71,6 +75,7 @@ const definitions = {
       run: async (input, context) => (await import('./operations.js')).listGithubTriageInstancesOperation(input, context),
     },
 [GITHUB_TRIAGE_ACTION_IDS_V1.scan]: {
+      readOnly: true,
       title: 'Scan GitHub pull requests and issues',
       description: 'Reads one bounded page of GitHub pull requests and issues for a configured account.',
       surfaces: sources.operations.scan.declaration.surfaces,
@@ -82,6 +87,7 @@ const definitions = {
       run: async (input, context) => (await import('./operations.js')).scanGithubTriageSource(input, context),
     },
 [GITHUB_TRIAGE_ACTION_IDS_V1.readAttention]: {
+      readOnly: true,
       title: 'Read GitHub review attention',
       description: 'Reads one conditional notification page using GitHub’s next-poll instruction.',
       surfaces: sources.operations.readAttention.declaration.surfaces,
@@ -93,6 +99,7 @@ const definitions = {
       run: async (input, context) => (await import('./attention.js')).readGithubAttention(input, context),
     },
 [GITHUB_TRIAGE_ACTION_IDS_V1.get]: {
+      readOnly: true,
       title: 'Read one GitHub pull request or issue',
       description: 'Authoritatively reads one GitHub pull request or issue for a configured account.',
       surfaces: sources.operations.get.declaration.surfaces,
@@ -109,6 +116,7 @@ const definitions = {
       run: async (input, context) => (await import('./operations.js')).getGithubTriageEntry(input, context),
     },
 [GITHUB_TRIAGE_ACTION_IDS_V1.resolveResource]: {
+      readOnly: true,
       title: 'Resolve a GitHub resource link',
       description: 'Resolves a GitHub URL to its exact source identity through the configured connection.',
       surfaces: sources.operations.resolveResource.declaration.surfaces,
@@ -121,6 +129,7 @@ const definitions = {
       run: async (input, context) => (await import('./resourceLinks.js')).resolveGithubTriageResource(input, context),
     },
 [GITHUB_TRIAGE_ACTION_IDS_V1.readFixPullRequests]: {
+      readOnly: true,
       title: 'Read GitHub fix pull requests',
       description: 'Reads the selected finding’s current native fix pull-request association.',
       surfaces: sources.operations.readFixPullRequests.declaration.surfaces,
@@ -164,6 +173,7 @@ const definitions = {
       run: async (input, context) => (await import('./detailOperations.js')).readGithubPullRequestStatus(input, context),
     },
 [GITHUB_SECURITY_ALERT_ACTION_IDS_V1.read]: {
+      readOnly: true,
       title: 'Read a GitHub security alert', description: 'Reads the selected native alert and its advisory or rule evidence.',
       surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], placementBindings: [],
       inputSchema: GithubSecurityAlertReadInputV1Schema.jsonSchema, resultSchema: GithubSecurityAlertReadResultV1Schema.jsonSchema,
@@ -171,6 +181,7 @@ const definitions = {
       run: async (input, context) => (await import('./securityAlerts/reads.js')).readGithubSecurityAlert(input, context),
     },
 [GITHUB_SECURITY_ALERT_ACTION_IDS_V1.listLocations]: {
+      readOnly: true,
       title: 'Read code scanning alert locations', description: 'Reads one native page of locations for the selected code scanning finding.',
       surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], placementBindings: [],
       inputSchema: GithubCodeScanningLocationsInputV1Schema.jsonSchema, resultSchema: GithubCodeScanningLocationsResultV1Schema.jsonSchema,
@@ -178,6 +189,7 @@ const definitions = {
       run: async (input, context) => (await import('./securityAlerts/reads.js')).listGithubCodeScanningLocations(input, context),
     },
 [GITHUB_SECURITY_ALERT_ACTION_IDS_V1.readLocation]: {
+      readOnly: true,
       title: 'Read code scanning location evidence', description: 'Revalidates a selected provider instance and reads its code at the exact immutable commit.',
       surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], placementBindings: [],
       inputSchema: GithubCodeScanningLocationInputV1Schema.jsonSchema, resultSchema: GithubCodeScanningLocationResultV1Schema.jsonSchema,
@@ -185,6 +197,7 @@ const definitions = {
       run: async (input, context) => (await import('./securityAlerts/reads.js')).readGithubCodeScanningLocation(input, context),
     },
 [GITHUB_SECURITY_ALERT_ACTION_IDS_V1.readFixPullRequest]: {
+      readOnly: true,
       title: 'Read the Dependabot fix pull request', description: 'Reads the exact current Dependabot update association without listing pull requests.',
       surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], placementBindings: [],
       inputSchema: GithubDependabotFixPullRequestInputV1Schema.jsonSchema, resultSchema: GithubDependabotFixPullRequestResultV1Schema.jsonSchema,
@@ -192,6 +205,7 @@ const definitions = {
       run: async (input, context) => (await import('./securityAlerts/reads.js')).readGithubDependabotFixPullRequest(input, context),
     },
 [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readCapabilities]: {
+      readOnly: true,
       title: 'Read GitHub repository capabilities',
       description: 'Reads authoritative repository write, issue, and merge-method availability.',
       surfaces: ['ui', 'agent', 'mcp', 'cli'],
@@ -210,6 +224,7 @@ const definitions = {
       run: async (input, context) => (await import('./fileViewed.js')).readGithubFileViewed(input, context),
     },
 [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readOverview]: {
+      readOnly: true,
       title: 'Refresh the GitHub overview',
       description: 'Reads the current body, people, milestone, and branch facts for one pull request or issue.',
       surfaces: ['ui', 'agent', 'mcp', 'cli'],
@@ -221,6 +236,7 @@ const definitions = {
       run: async (input, context) => (await import('./detailOperations.js')).readGithubOverview(input, context),
     },
 [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listTimeline]: {
+      readOnly: true,
       title: 'Read a GitHub timeline page',
       description: 'Reads one bounded page of the event timeline of one pull request or issue.',
       surfaces: ['ui', 'agent', 'mcp', 'cli'],
@@ -232,6 +248,7 @@ const definitions = {
       run: async (input, context) => (await import('./detailOperations.js')).listGithubTimeline(input, context),
     },
 [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.listChangedFiles]: {
+      readOnly: true,
       title: 'Read a GitHub changed-file page',
       description: 'Reads one bounded page of the files one pull request changes, with their'
         + ' counts and whether GitHub supplied a patch for each.',
@@ -244,6 +261,7 @@ const definitions = {
       run: async (input, context) => (await import('./detailOperations.js')).listGithubChangedFiles(input, context),
     },
 [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readFeedback]: {
+      readOnly: true,
       title: 'Read one GitHub feedback connection',
       description: 'Reads one independently paged pull-request feedback connection: issue comments,'
         + ' review threads, review bodies, outstanding requests, or one thread\'s earlier replies.',
@@ -256,6 +274,7 @@ const definitions = {
       run: async (input, context) => (await import('./detailOperations.js')).readGithubFeedback(input, context),
     },
 [GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readChecks]: {
+      readOnly: true,
       title: 'Read the GitHub checks of a pull request',
       description: 'Reads the check runs and commit statuses of one pull request at its current'
         + ' head revision.',

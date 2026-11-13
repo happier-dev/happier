@@ -33,7 +33,11 @@ it('loads resumable summaries only when the Start menu opens and does not reread
         identity: { instanceId: 'fixture-start-choices', mountNonce: 'fixture-start-choices-mount' },
         authorPlugin: { id: 'happier.triage', version: '0.0.0' },
         surface, surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-        handlers: { executeAction: async ({ action }) => {
+        handlers: { readSession: async ({ sessionId }) => ({
+            sessionId, serverId: 'home-a', lifecycle: 'active', runtime: 'idle', operational: 'ready',
+            workStatus: { state: 'ready', bucket: 'finished', tone: 'neutral', attentionType: null, word: 'Ready' },
+            pendingPermissions: [],
+        }), executeAction: async ({ action }) => {
             const id = typeof action === 'string' ? action : action.localId;
             calls.push(id);
             if (id === 'agents.backends.list') return { defaultTargetKey: 'backend:claude', items: [{

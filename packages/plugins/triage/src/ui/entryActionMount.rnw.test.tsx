@@ -364,6 +364,9 @@ function createHarness(options: Readonly<{
             return options.comparisonRead?.();
         }
         const action = testkitTriageActionId(request.action);
+        if (action === 'session.list') {
+            return { sessions: [{ id: 'session-picked', serverId: 'server-a', updatedAt: 20 }], hasNext: false };
+        }
         if (action === TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1) {
             const result = await reobserveTriageEntry(TriageReobserveEntryInputV1Schema.parse(request.input), {
                 readConfiguredInstance: async () => configuredInstance(),
@@ -575,6 +578,15 @@ async function mountShell(harness: Harness, hostedDetail: boolean | Readonly<{ a
             handlers: {
                 actionControl: controls.handler,
                 publishCurrentUiContext: () => undefined,
+                readSession: async ({ sessionId }) => ({
+                    sessionId, serverId: 'server-a', lifecycle: 'active', runtime: 'idle', operational: 'ready',
+                    workStatus: { state: 'ready', bucket: 'finished', tone: 'neutral', attentionType: null, word: 'Ready' },
+                    pendingPermissions: [],
+                    acceptedWorkspace: {
+                        checkout: { serverId: 'server-a', workspaceId: 'workspace-a', machineId: 'machine-a', rootPath: '/checkouts/api' },
+                        repository: REPOSITORY,
+                    },
+                }),
                 executeAction: async ({ action, input, signal }) => {
                     // The host routes this addressed Action back to this mount's real dispatcher;
                     // it is not a list read or a replacement for the pressed callback.
@@ -623,6 +635,7 @@ async function mountShell(harness: Harness, hostedDetail: boolean | Readonly<{ a
                         } as never;
                     }
                     if ('hostAction' in request && request.hostAction.action === 'session.transcript.get') {
+                        expect(request.sessionCandidates).toEqual([{ serverId: 'server-a', sessionId: 'session-picked' }]);
                         sessionPicks += 1;
                         return pickedSession === null
                             ? { kind: 'cancelled' } as never
@@ -1420,7 +1433,7 @@ describe('the entry action controls on the mounted detail header', () => {
         await openTheRow(shell);
 
         await pressAction(shell, 'Direct fix options');
-        await pressMenuItem(shell, 'Send to a Session…');
+        await pressMenuItem(shell, 'Find a Session…');
 
         expect(sessionPicks).toBe(1);
         expect(draftsOpened).toBe(0);
@@ -1432,7 +1445,7 @@ describe('the entry action controls on the mounted detail header', () => {
             context: { kind: 'entry', entry: { entryRef: ENTRY_REF, sourceInstanceId: INSTANCE } },
             sessionChoice: { kind: 'existing', session: 'session-picked' },
             agentChoice: { kind: 'configured' },
-            delivery: 'configured',
+            delivery: 'send',
         });
         expect(harness.configuredRequests[0]?.handoff.evidence).toEqual([
             { kind: 'entry', entry: { entryRef: ENTRY_REF, sourceInstanceId: INSTANCE } },
@@ -1445,7 +1458,7 @@ describe('the entry action controls on the mounted detail header', () => {
         await openTheRow(shell);
 
         await pressAction(shell, 'Direct fix options');
-        await pressMenuItem(shell, 'Send to a Session…');
+        await pressMenuItem(shell, 'Find a Session…');
 
         expect(sessionPicks).toBe(1);
         expect(harness.startRequests).toHaveLength(0);
