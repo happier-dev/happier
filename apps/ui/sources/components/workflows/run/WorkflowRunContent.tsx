@@ -374,9 +374,11 @@ function WorkflowReviewCardModal(props: Readonly<{
         kind: 'card' as const,
         scrollHost: props.contentSized ? 'overlay' as const : 'body' as const,
         bodyScroll: props.contentSized ? 'auto' as const : 'none' as const,
-        actions: props.headerActions ?? null,
+        // With hold navigation, the step's own actions join its line instead of taking a row of their own.
+        actions: props.headerTrailing ? null : props.headerActions ?? null,
         subtitle: props.headerTrailing
-            ? <View>{props.subtitle ? <Text style={styles.sheetSubtitle}>{props.subtitle}</Text> : null}{props.headerTrailing}</View>
+            ? <View>{props.subtitle ? <Text style={styles.sheetSubtitle}>{props.subtitle}</Text> : null}
+                <View style={styles.actions}>{props.headerTrailing}{props.headerActions}</View></View>
             : props.subtitle,
     }), [props.contentSized, props.headerActions, props.headerTrailing, props.subtitle]));
     return <View style={[{ ...(props.contentSized ? {} : { flex: 1 }), minHeight: 0, minWidth: 0 }, styles.reviewSheet]}>{props.card}</View>;
@@ -399,6 +401,8 @@ function WorkflowSelectedDetail(props: Readonly<{
     subtitle: string | null;
     headerActions?: React.ReactNode;
     headerTrailing?: React.ReactNode;
+    /** The same hold navigation for a page's own inline header, which also names the next hold. */
+    inlineHeaderTrailing?: React.ReactNode;
     onClose?: () => void;
     identity: string;
     renderReviewCard?: WorkflowRunContentProps['renderReviewCard'];
@@ -464,7 +468,7 @@ function WorkflowSelectedDetail(props: Readonly<{
         {!props.phone && props.inlineHeader ? <DetailsTabHeader
             testID={`${props.detail.testIDPrefix}-selected-header`} title={props.title}
             leading={BackControl ? <BackControl style={null} /> : undefined}
-            actions={props.headerActions} metaTrailing={props.headerTrailing}
+            actions={props.headerActions} metaTrailing={props.inlineHeaderTrailing}
             meta={props.subtitle ? [{ key: 'invocation', text: props.subtitle }] : undefined} /> : null}
         {reopenReview}
         {/* The held result stays bounded above its own conversation, with the composer at the pane's foot. */}
@@ -1745,19 +1749,26 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     const selectedAttentionIndex = attentionRows.findIndex((row) => row.id === props.selectedInvocationId);
     const previousHold = attentionRows[selectedAttentionIndex - 1];
     const nextHold = selectedAttentionIndex < 0 ? undefined : attentionRows[selectedAttentionIndex + 1];
-    const selectedHeaderTrailing = selectedAttentionIndex < 0 || attentionRows.length < 2 ? null : <View style={[styles.actions, styles.holdNavigation]}>
-        <Text style={styles.provenance}>{t('workflows.run.holdsPosition', { current: selectedAttentionIndex + 1, total: attentionRows.length, more: props.attentionHasMore === true })}</Text>
-        {/* The next step's name wraps rather than cut off at the column's edge. */}
-        {nextHold === undefined ? null : <Text style={[styles.provenance, styles.holdNavigationNext]}>{t('workflows.run.nextHoldOccurrence', {
-            step: [invocationLabel(nextHold), invocationOccurrenceLabel(nextHold)].filter(Boolean).join(' · ') || t('workflows.contentUnavailable'),
-        })}</Text>}
+    const nextHoldReading = nextHold === undefined ? null : t('workflows.run.nextHoldOccurrence', {
+        step: [invocationLabel(nextHold), invocationOccurrenceLabel(nextHold)].filter(Boolean).join(' · ') || t('workflows.contentUnavailable'),
+    });
+    const holdPosition = <Text style={styles.provenance}>{t('workflows.run.holdsPosition', { current: selectedAttentionIndex + 1, total: attentionRows.length, more: props.attentionHasMore === true })}</Text>;
+    // Hold navigation in a one-line band (a pane's header, a phone sheet or step header) is one pager,
+    // ‹ 1 of 2 ›, whose › says where it goes; it never wraps over the result beneath it. A page's own
+    // inline header has the room to name the next hold too, wrapping rather than cut off.
+    const holdNavigation = (named: boolean) => selectedAttentionIndex < 0 || attentionRows.length < 2 ? null : <View style={[styles.actions, styles.holdNavigation]}>
+        {named ? holdPosition : null}
+        {nextHoldReading === null || !named ? null : <Text style={[styles.provenance, styles.holdNavigationNext]}>{nextHoldReading}</Text>}
         <RoundButton testID={`${testIDPrefix}-previous-hold`} size="mini" display="secondary" title="‹"
             accessibilityLabel={t('workflows.run.previousHold')} disabled={previousHold === undefined}
             onPress={() => { if (previousHold !== undefined) selectInvocation(previousHold.id); }} />
+        {named ? null : holdPosition}
         <RoundButton testID={`${testIDPrefix}-next-hold`} size="mini" display="secondary" title="›"
-            accessibilityLabel={t('workflows.run.nextHold')} disabled={nextHold === undefined}
+            accessibilityLabel={!named && nextHoldReading !== null ? nextHoldReading : t('workflows.run.nextHold')} disabled={nextHold === undefined}
             onPress={() => { if (nextHold !== undefined) selectInvocation(nextHold.id); }} />
     </View>;
+    const selectedHeaderTrailing = holdNavigation(false);
+    const selectedInlineHeaderTrailing = holdNavigation(true);
     const selectedKind = props.selectedInvocationProgress?.blockKind;
     const selectedSessionId = (selectedKind !== undefined && selectedKind !== 'step') || selectedExecution?.kind === 'detached_run' ? null
         : props.selectedSessionId !== undefined ? props.selectedSessionId
@@ -1767,7 +1778,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         serverId={props.serverId} active={props.active !== false} phone={phone}
         inlineHeader={!detailsPaneAvailable && props.invocationPage === true}
         title={selectedDetailTitle} subtitle={selectedDetailSubtitle} identity={props.selectedInvocationId}
-        headerActions={selectedHeaderActions} headerTrailing={selectedHeaderTrailing}
+        headerActions={selectedHeaderActions} headerTrailing={selectedHeaderTrailing} inlineHeaderTrailing={selectedInlineHeaderTrailing}
         onClose={props.onDeselectInvocation}
         renderReviewCard={props.renderReviewCard} focusReturnRef={detailFocusReturnRef}
     />;

@@ -293,9 +293,12 @@ export function WorkflowActionBlockEditor(props: Readonly<{
                                 {...(row.hint === null || row.hint.widget === 'json' ? {} : {
                                     renderLiteral: (value: unknown, onChange: (next: unknown) => void) => (
                                         <ActionInputFields
-                                            // An empty value well says what goes in it, like the plain value entry (DESIGN-9 N5).
-                                            fields={[{ ...(row.hint as EffectiveActionInputField),
-                                                placeholder: (row.hint as EffectiveActionInputField).placeholder ?? t('workflows.condition.literalPlaceholder') }]}
+                                            // An empty value well says what goes in it, like the plain value entry (DESIGN-9 N5): a
+                                            // typed field asks for a value; a choice keeps its select's own "Choose…" rather than "Type…".
+                                            fields={[row.hint === null || row.hint.placeholder !== undefined
+                                                || row.hint.widget === 'select' || row.hint.widget === 'multiselect'
+                                                ? row.hint as EffectiveActionInputField
+                                                : { ...row.hint, placeholder: t('workflows.condition.literalPlaceholder') }]}
                                             input={{ [row.key]: value }}
                                             editable={editable}
                                             frame="none"

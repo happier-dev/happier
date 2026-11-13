@@ -95,7 +95,7 @@ export function WorkflowBlockHeading(props: Readonly<{
     // start (the name line's inset).
     const [metaWrapped, setMetaWrapped] = React.useState(false);
     const meta = props.meta === undefined ? null : sentenceTitle ? (
-        <Text testID={`${props.testID}-meta`} numberOfLines={2} style={[workflowEditorStyles.headingName, { flexShrink: 1 }]}>{props.meta}</Text>
+        <Text testID={`${props.testID}-meta`} style={[workflowEditorStyles.headingName, { flexShrink: 1 }]}>{props.meta}</Text>
     ) : (
         <Text testID={`${props.testID}-meta`} numberOfLines={2} style={workflowEditorStyles.headingMeta}
             onLayout={(event) => {
@@ -158,7 +158,8 @@ export function WorkflowBlockHeading(props: Readonly<{
                     ]}
                 >
                     {nameMark}
-                    {showsName ? <Text numberOfLines={compound ? 1 : 2} style={[workflowEditorStyles.headingName,
+                    {/* The name tells this step from its siblings: it wraps whole, as the editable name does. */}
+                    {showsName ? <Text style={[workflowEditorStyles.headingName,
                         props.unnamed === 'placeholder' ? workflowEditorStyles.headingNamePlaceholder : null]}>{props.displayName}</Text> : null}
                     {source}
                     {meta}

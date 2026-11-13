@@ -218,12 +218,16 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
             label: spec.title,
             searchText: spec.id,
             subtitle: spec.projectionError ? t('workflows.page.blocks.actionUnavailable', { action: spec.title }) : spec.description?.trim() || spec.plugin?.title,
+            // A picker row says what the Action does in a glance; its whole description is on the step it adds.
+            subtitleLines: 2,
             disabled: spec.projectionError !== undefined,
             icon: () => <Icon name={spec.plugin ? resolvePluginContributedActionIconName(spec.plugin.icon) : spec.icon ?? 'lightning'}
                 size={ICON_SIZE.sm} color={theme.colors.text.secondary} />,
-            rightAccessory: <Text numberOfLines={1} style={{ ...Typography.variant('meta'), color: theme.colors.text.tertiary }}>
-                {spec.plugin?.title ?? spec.sourceLabel ?? t('workflows.actionTitles.host')}
-            </Text>,
+            // Host Actions sit under the host's own section title, so a row names its source only when it adds
+            // something (a plugin, or where a host Action reaches: "Phone").
+            ...(spec.plugin || spec.sourceLabel ? { rightAccessory: <Text numberOfLines={1} style={{ ...Typography.variant('meta'), color: theme.colors.text.tertiary }}>
+                {spec.plugin?.title ?? spec.sourceLabel}
+            </Text> } : {}),
             onSelect: spec.projectionError ? undefined : add({ kind: 'action', actionId: spec.id }),
         });
         const actionsStep: SelectionListStep = {

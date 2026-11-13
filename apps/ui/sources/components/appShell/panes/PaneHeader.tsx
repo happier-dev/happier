@@ -461,7 +461,7 @@ export const PaneHeader = React.memo(function PaneHeader(props: PaneHeaderProps)
                     testID={`${testID}.close`}
                     iconName="x"
                     accessibilityLabel={t('common.close')}
-                    tooltip={props.size === 'large' ? undefined : t('common.close')}
+                    tooltip={t('common.close')}
                     variant="plain"
                     onPress={props.onClose}
                 />
@@ -572,8 +572,9 @@ const stylesheet = StyleSheet.create((theme) => ({
     identityMark: { flexShrink: 0, alignSelf: 'flex-start', marginTop: theme.space.s2 },
     // In the band the mark centres on the whole identity text (title over its live line).
     identityMarkCentered: { flexShrink: 0 },
-    // Controls aligned with the facts keep to the column: at a large text size they wrap within it rather than run past its edge.
-    lineTrailing: { flexShrink: 1, minWidth: 0, marginLeft: 'auto' },
+    // Controls aligned with the band's one line of facts keep their own line: the facts give way (they drop
+    // whole or ellipsize), since controls wrapped inside the fixed band would spill over the content beneath it.
+    lineTrailing: { flexShrink: 0, maxWidth: '100%', marginLeft: 'auto' },
     largeTitle: {
         ...pageTitleTypography(),
         color: theme.colors.text.primary,

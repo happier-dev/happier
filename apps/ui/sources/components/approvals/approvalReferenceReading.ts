@@ -43,7 +43,7 @@ import { resolveRunNativeModelLabel } from '@/components/sessions/runs/resolveEx
 import { useProjectedQualifiedConnectedAccountTargetPresentations, type ProjectedQualifiedConnectedAccountTarget } from '@/hooks/server/connectedServices/useProjectedQualifiedConnectedAccountTargetPresentations';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { readApprovalPrincipalName, useApprovalPrincipalName } from './approvalPrincipalReading';
-import { useDiscussionTitles } from '@/components/discussions/useDiscussionTitles';
+import { useDiscussionTitleReadings } from '@/components/discussions/useDiscussionTitles';
 import { readDiscussionTitle } from '@/sync/ops/discussions/useDiscussionRepositorySnapshot';
 type ApprovalReference = ApprovalActionReference;
 
@@ -184,24 +184,24 @@ export function useApprovalReferenceReading(reference: ApprovalReference | undef
     // A Saved Secret reads by its name from the Account's catalog on its own Home; another Home's catalog is not read.
     const savedSecret = useSavedSecretCatalogName(reference?.kind === 'savedSecret' ? reference.id : null, ownHome ? viewer : null);
     const principal = useApprovalPrincipalName(reference, approvalServerId);
-    const discussionTitle = useApprovalDiscussionTitle(reference, approvalServerId);
+    const discussion = useApprovalDiscussionTitle(reference, approvalServerId);
     return resolveApprovalReferenceReading(reference, literal, approvalServerId, { serverId, sessionReading, viewer, ownHome, artifact, machine, machineInventory, connectedAccount, savedSecret,
         managedMachine, managedEnrolledMachine, managedMachineLoading, sessionMachine, mcp, registries, project, projectCensusComplete, agents,
         providerConnection, providerManualModel, providerCatalogLoading, declarations, localizePluginText,
-        syncLink, workspace, discussionTitle, principalName: principal.name, principalResolving: principal.resolving });
+        syncLink, workspace, discussionTitle: discussion.title, discussionTitleResolving: discussion.resolving, principalName: principal.name, principalResolving: principal.resolving });
 }
 
 const NO_DISCUSSION_IDS: readonly string[] = Object.freeze([]);
 
 /** A Discussion reads by the title this Account can read, from the one shared Discussion repository. */
-function useApprovalDiscussionTitle(reference: ApprovalReference | undefined, approvalServerId: string | null): string | null {
+function useApprovalDiscussionTitle(reference: ApprovalReference | undefined, approvalServerId: string | null): Readonly<{ title: string | null; resolving: boolean }> {
     const discussionId = reference?.kind === 'discussion' && approvalServerId ? reference.id : null;
     // The repository is keyed by the Home's scope id; an approval may carry any of that Home's identifiers.
     const scopeServerId = discussionId && approvalServerId ? resolveServerProfileScopeIdForIdentifier(approvalServerId) : null;
     const address = React.useMemo(() => (scopeServerId ? { serverId: scopeServerId } : null), [scopeServerId]);
     const discussionIds = React.useMemo(() => (discussionId ? [discussionId] : NO_DISCUSSION_IDS), [discussionId]);
-    const titles = useDiscussionTitles({ address, discussionIds });
-    return discussionId ? titles.get(discussionId) ?? null : null;
+    const { titles, resolving } = useDiscussionTitleReadings({ address, discussionIds });
+    return { title: discussionId ? titles.get(discussionId) ?? null : null, resolving: discussionId !== null && resolving.has(discussionId) };
 }
 
 /** The managed row and its enrolled Machine behind a managed reference, read in the reference's own Home. */
@@ -265,6 +265,8 @@ type ApprovalReferenceSources = {
     workspace?: WorkspaceSyncRelationshipEndpoint | null;
     /** The Discussion's title as this Account reads it; null while it is not readable. */
     discussionTitle?: string | null;
+    /** The title is still being read: the destination reads as loading, not unavailable. */
+    discussionTitleResolving?: boolean;
 };
 
 function resolveApprovalReferenceReading(reference: ApprovalReference | undefined, literal: string, approvalServerId: string | null, sources: ApprovalReferenceSources): ApprovalReferenceReading {
@@ -375,7 +377,9 @@ function resolveApprovalReferenceReading(reference: ApprovalReference | undefine
     }
     if (reference?.kind === 'discussion') {
         // A destination this device cannot read yet never borrows its opaque id as a name (the id stays in Technical details).
-        return sources.discussionTitle ? { text: sources.discussionTitle, named: true } : { text: t('common.unavailable'), named: false };
+        return sources.discussionTitle ? { text: sources.discussionTitle, named: true }
+            : sources.discussionTitleResolving ? { text: t('common.loading'), named: false, resolving: true }
+            : { text: t('common.unavailable'), named: false };
     }
     if (reference?.kind === 'home') {
         const home = resolveApprovalHomeName(reference.id)

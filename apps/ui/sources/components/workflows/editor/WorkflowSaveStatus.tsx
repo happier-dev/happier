@@ -93,6 +93,9 @@ const styles = StyleSheet.create((theme) => ({
     conflict: {
         gap: theme.space.s4,
         alignItems: 'flex-end',
+        // Held to the column it stands in: the comparison's two documents never push it past the page's edge.
+        maxWidth: '100%',
+        minWidth: 0,
     },
     comparison: {
         flexDirection: 'row',
@@ -101,7 +104,9 @@ const styles = StyleSheet.create((theme) => ({
         alignSelf: 'stretch',
     },
     comparisonPane: {
+        // Side by side from 280 each; a narrower column stacks them, each at the column's width.
         flexGrow: 1,
+        flexShrink: 1,
         flexBasis: 280,
         minWidth: 0,
         gap: theme.space.s4,
