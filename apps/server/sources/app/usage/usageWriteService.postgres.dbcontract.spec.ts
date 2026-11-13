@@ -4,6 +4,8 @@ import { PrismaClient, type Prisma } from '@prisma/client';
 import { db, initDbPostgres, shutdownDbClient } from '@/storage/db';
 import { recordUsageEvent } from './usageWriteService';
 import { UsageEventIngestRequestSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { createUsageSnapshot } from '@/app/api/routes/connect/providerAccountUsageTestkit';
+import { writeProviderAccountUsageRecordWithPolicy } from '@/app/api/routes/connect/providerAccountUsage/routeWritePolicy';
 
 describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Usage native-history write cost on PostgreSQL', () => {
     const statements: Prisma.QueryEvent[] = [];
@@ -60,5 +62,37 @@ describe.skipIf(process.env.HAPPIER_DB_PROVIDER !== 'postgres')('Usage native-hi
         console.log(JSON.stringify({ boundary: 'postgresql-native-witness', statements: statements.length,
             usageSelectColumns: usageSelect?.query.match(/SELECT ([\s\S]*?) FROM/)?.[1] ?? null,
             candidateRows: 1, bodyBytesRead: 0 }));
+    });
+
+    it('lets an Account writer commit during a material usage write without serialization retries or a second parent update', async () => {
+        const fetchedAt = Date.now() - 2_000;
+        const initial = createUsageSnapshot({ fetchedAt, planLabel: 'before' });
+        const write = (snapshot: typeof initial, beforeWrite?: () => Promise<void>) => writeProviderAccountUsageRecordWithPolicy({
+            accountId, recordId: snapshot.recordId, recordKey: snapshot.recordKey, payloadMode: 'plain_json_v1',
+            status: 'ok', fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs, snapshot, beforeWrite,
+        });
+        expect(await write(initial)).toBe('written');
+        const before = await db.account.findUniqueOrThrow({ where: { id: accountId }, select: { seq: true, settingsVersion: true } });
+        statements.length = 0;
+        let accountCommitted = false;
+        const changed = createUsageSnapshot({ fetchedAt: fetchedAt + 1, planLabel: 'after' });
+        await expect(write(changed, async () => {
+            // The Usage transaction has already admitted Account content and read
+            // the record. NOWAIT detects an early exclusive Account lock without
+            // a timing threshold; both transactions overlap until this commits.
+            await client.$transaction(async peer => {
+                await peer.$queryRaw`SELECT "id" FROM "Account" WHERE "id" = ${accountId} FOR NO KEY UPDATE NOWAIT`;
+                await peer.account.update({ where: { id: accountId }, data: { settingsVersion: { increment: 1 } } });
+            });
+            accountCommitted = true;
+        })).resolves.toBe('written');
+        expect(accountCommitted).toBe(true);
+        const after = await db.account.findUniqueOrThrow({ where: { id: accountId }, select: { seq: true, settingsVersion: true } });
+        expect(after.settingsVersion).toBe(before.settingsVersion + 1);
+        expect(after.seq).toBeGreaterThan(before.seq); // Usage publication survives the competing writer.
+        expect(await db.providerAccountUsageHistory.count({ where: { accountId, recordId: initial.recordId } })).toBe(2);
+        expect(statements.filter(event => /^UPDATE\b/i.test(event.query.trimStart())
+            && event.query.includes('"ProviderAccountUsageRecord"'))).toHaveLength(1);
+        expect(statements.filter(event => /^ROLLBACK\b/i.test(event.query.trimStart()))).toHaveLength(0);
     });
 });
