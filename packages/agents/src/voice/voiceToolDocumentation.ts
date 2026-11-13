@@ -101,13 +101,11 @@ export function buildVoiceToolDocumentationLines(
     invocationLabel: string;
     functionToolName?: string;
     includeAllTools?: boolean;
-    requiredDirectActionIds?: readonly string[];
   }>,
 ): readonly string[] {
   const disabled = new Set((params.disabledActionIds ?? []).map((value) => normalizeText(value)).filter(Boolean));
-  const requiredDirect = new Set(params.requiredDirectActionIds ?? []);
   const enabledSpecs = specs.filter((spec) => (
-    params.includeAllTools || isVoicePromptHotPathSpec(spec) || requiredDirect.has(spec.id)
+    params.includeAllTools || isVoicePromptHotPathSpec(spec)
   ) && !disabled.has(spec.id));
   const availability: VoiceGuidanceAvailability = {
     disabledActionIds: params.disabledActionIds,

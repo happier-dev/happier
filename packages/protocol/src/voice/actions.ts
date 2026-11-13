@@ -84,10 +84,13 @@ function buildVoiceActionFunctionTool() {
   return {
     name: VOICE_ACTION_FUNCTION_NAME,
     description: 'Queue one Happier Voice Action for the connected UI. This does not execute it. Wait for the Voice tool-results follow-up before reporting its outcome.',
-    inputSchema: PluginJsonValueV2Schema.parse({
-      type: 'object',
-      ...zodSchemaToJsonSchemaObject(VoiceAssistantActionSchema, { reused: 'ref' }),
-    }),
+    // Advertise transport, not the whole catalog. searchActionSpecs/getActionSpec
+    // provide the canonical sectioned schemas on demand; the decoder below
+    // still validates args against the selected Action before queueing it.
+    inputSchema: PluginJsonValueV2Schema.parse(zodSchemaToJsonSchemaObject(z.strictObject({
+      t: z.string(),
+      args: z.record(z.string(), z.unknown()),
+    }))),
   };
 }
 

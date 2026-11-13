@@ -3673,6 +3673,7 @@ describe('VoiceAgentManager', () => {
 
     const createBackend: BackendFactory = ({ modelId, functionTools }) => {
       if (modelId === 'commit-model') return commitBackend;
+      expect(functionTools, 'one native Voice discovery envelope at the Agent boundary').toHaveLength(1);
       return createPromptCaptureBackend([{ responseText: 'Hello.',
         functionCalls: [{ t: 'sendSessionMessage', args: { message: 'Do X.' } }],
       }], { functionTools });

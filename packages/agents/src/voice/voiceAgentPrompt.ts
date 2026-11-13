@@ -1,5 +1,4 @@
 import { listVoiceActionBlockSpecs, listVoiceSdkSafeToolActionSpecs, listVoiceToolActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
-import { isActionDirectToolExposedOn } from '@happier-dev/protocol/actions/actionToolExposure';
 import { buildMemoryRecallGuidanceBlockV1, type MemoryRecallGuidanceVariant } from '@happier-dev/protocol/prompts/memoryRecallGuidanceV1';
 import { buildPromptPlanV1, renderPromptPlanV1 } from '@happier-dev/protocol/prompts/promptPlanV1';
 import { VOICE_ACTION_FUNCTION_NAME } from '@happier-dev/protocol/voice/actions';
@@ -360,13 +359,12 @@ export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
   const discoveryLines = nativeActions ? buildVoiceDiscoveryChecklistLines(actionSpecs, {
     disabledActionIds: params?.disabledActionIds,
   }) : [];
-  // The native function and its instructions share direct-exposure
-  // policy. A hot-path-only prompt otherwise hides tools the Agent receives.
+  // The native envelope reaches the whole catalog through sectioned discovery;
+  // document the same hot path as realtime Voice instead of expanding every schema.
   const actionLines = nativeActions ? buildVoiceToolDocumentationLines(actionSpecs, {
     disabledActionIds: params?.disabledActionIds,
     invocationLabel: `Call ${VOICE_ACTION_FUNCTION_NAME}`,
     functionToolName: VOICE_ACTION_FUNCTION_NAME,
-    requiredDirectActionIds: actionSpecs.filter(spec => isActionDirectToolExposedOn(spec, 'agent')).map(spec => spec.id),
   }) : [];
 
   return renderPromptPlanV1(buildPromptPlanV1({

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   listVoiceActionBlockSpecs,
+  isVoicePromptHotPathSpec,
   listVoiceSdkSafeToolActionSpecs,
   listVoiceToolActionSpecs,
   VOICE_TOOL_RESULTS_JSON_PREFIX,
@@ -20,6 +21,17 @@ import {
 } from './voiceAgentPrompt.js';
 
 describe('voiceAgentPrompt', () => {
+  it('documents only the shared hot path while the full catalog stays discoverable', () => {
+    const catalog = listVoiceActionBlockSpecs();
+    const prompt = buildLocalVoiceAgentSystemPrompt();
+    const documented = prompt.slice(prompt.indexOf('Available actions:')).split('\n')
+      .filter(line => /^- \w+: /.test(line));
+    const hotPath = catalog.filter(isVoicePromptHotPathSpec);
+    console.info(JSON.stringify({ catalogDescriptors: catalog.length, documentedDescriptors: documented.length,
+      promptBytes: new TextEncoder().encode(prompt).byteLength }));
+    expect(documented).toHaveLength(hotPath.length);
+    expect(documented.length).toBeLessThan(catalog.length);
+  });
   it('publishes native function arguments from the Voice catalog, including unnamed creation', () => {
     const prompt = buildLocalVoiceAgentSystemPrompt();
     const listedTools = prompt.slice(prompt.indexOf('Available actions:')).split('\n')
@@ -64,8 +76,11 @@ describe('voiceAgentPrompt', () => {
     const documented = [...prompt.matchAll(/^- ([A-Za-z0-9_]+):/gm)].map(match => match[1]);
     expect(documented).toEqual(expect.arrayContaining(tools.filter(name => name !== 'settings_invoke')));
     const local = buildLocalVoiceAgentSystemPrompt({ sessionId: 's1' });
+    // VOICE-TOOL-SIZE-1113: non-hot-path inputs are read through spec discovery.
+    const hotPathNames = new Set(listVoiceActionBlockSpecs().filter(isVoicePromptHotPathSpec)
+      .map(spec => spec.bindings?.voiceClientToolName));
     expect([...local.matchAll(/^- ([A-Za-z0-9_]+):/gm)].map(match => match[1]))
-      .toEqual(expect.arrayContaining(tools));
+      .toEqual(expect.arrayContaining(tools.filter(name => hotPathNames.has(name))));
     expect(local).toContain('voiceConversations');
     for (const name of tools) expect(prompt).toContain(name);
     expect(prompt).toContain('action_execute');

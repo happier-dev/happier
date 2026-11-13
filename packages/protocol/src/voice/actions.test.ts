@@ -1,6 +1,30 @@
 import { describe, expect, it } from 'vitest';
 
-import { decodeVoiceAssistantActions } from './actions.js';
+import { decodeVoiceAssistantActions, getVoiceActionFunctionTool } from './actions.js';
+import { getActionSpec, listVoiceActionBlockSpecs } from '../actions/actionSpecs.js';
+import { zodSchemaToJsonSchemaObject } from '../actions/actionInputJsonSchema.js';
+
+describe('Voice carrier advertisement cost', () => {
+  it('advertises one envelope instead of embedding the real Action catalog', () => {
+    const catalog = listVoiceActionBlockSpecs();
+    expect(catalog.length).toBeGreaterThanOrEqual(460); // Brief's incident-scale floor, not a runtime cap.
+    const tools = [getVoiceActionFunctionTool()];
+    const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+    const discoverySchemaBytes = bytes(zodSchemaToJsonSchemaObject(getActionSpec('action.spec.get').inputSchema));
+    console.info(JSON.stringify({ catalogDescriptors: catalog.length, advertisedDescriptors: tools.length,
+      advertisedBytes: bytes(tools), discoverySchemaBytes }));
+    expect(bytes(tools[0].inputSchema)).toBeLessThan(discoverySchemaBytes);
+    expect(tools[0].inputSchema).toMatchObject({ type: 'object', additionalProperties: false,
+      properties: { t: { type: 'string' }, args: { type: 'object' } } });
+    expect(tools[0].inputSchema).not.toHaveProperty('oneOf');
+    expect(tools[0].inputSchema).not.toHaveProperty('definitions');
+    // Discovery aliases and ordinary Actions still cross the same decoder.
+    for (const action of [
+      { t: getActionSpec('action.spec.get').bindings!.voiceClientToolName, args: { id: 'session.spawn_new' } },
+      { t: 'sendSessionMessage', args: { message: 'Continue.' } },
+    ]) expect(decodeVoiceAssistantActions([action]).actions).toEqual([action]);
+  });
+});
 
 describe('decodeVoiceAssistantActions', () => {
   it('retains content-free repair facts when global Voice supplies a null optional target', () => {
