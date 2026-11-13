@@ -1,4 +1,4 @@
-import { redactBugReportSensitiveText } from '@happier-dev/plugin-sdk';
+import { projectPluginFailureText, redactBugReportSensitiveText } from '@happier-dev/plugin-sdk';
 
 const PROVIDER_PROMPT_ERROR_MAX_CHARS = 4_000;
 
@@ -53,4 +53,17 @@ export function formatOpenCodeServerPromptErrorMessage(error: unknown): string {
     return 'Error: Unknown error';
   }
   return /^error:/i.test(formatted) ? formatted : `Error: ${formatted}`;
+}
+
+/** Explicit fields survive JSON log serialization; no stack, headers or request bodies escape. */
+export function projectOpenCodeServerError(error: unknown): Readonly<Record<string, unknown>> {
+  const record = typeof error === 'object' && error !== null
+    ? error as Readonly<Record<string, unknown>> : {};
+  const fields: Record<string, unknown> = { message: projectPluginFailureText(error) };
+  for (const key of ['name', 'code', 'operation'] as const) {
+    const value = record[key];
+    if (typeof value === 'string') fields[key] = projectPluginFailureText(new Error(value));
+  }
+  if (typeof record.status === 'number') fields.status = record.status;
+  return fields;
 }

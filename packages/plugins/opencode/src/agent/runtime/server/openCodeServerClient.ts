@@ -854,6 +854,7 @@ export function createOpenCodeServerClient(input: Readonly<{
           fetch: params.fetch,
           method: 'PUT',
           path: `/api/experimental/mcp/${encodeURIComponent(serverName)}`,
+          operation: 'mcp_registration',
           query: locationQuery(input.directory),
           body: { config: input.config },
           expectJson: false,
@@ -865,6 +866,7 @@ export function createOpenCodeServerClient(input: Readonly<{
             fetch: params.fetch,
             method: 'GET',
             path: '/api/mcp',
+            operation: 'mcp_registration',
             query: locationQuery(input.directory),
             timeoutMs: remainingMs,
           });

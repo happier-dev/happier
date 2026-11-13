@@ -1749,7 +1749,7 @@ describe('createOpenCodeServerRuntime', () => {
     expect(client.sessionPromptAsync).not.toHaveBeenCalled();
     expect(runtimeEvents).toContainEqual(expect.objectContaining({
       kind: 'turn-failed',
-      issue: expect.objectContaining({ code: 'opencode_prompt_submission_failed' }),
+      issue: expect.objectContaining({ code: 'opencode_prompt_rejected' }),
     }));
   });
 

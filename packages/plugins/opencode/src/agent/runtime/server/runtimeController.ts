@@ -24,7 +24,7 @@ import type { OpenCodeServerClient } from './openCodeServerClient.js';
 import { OpenCodeServerUnsupportedOperationError } from './openCodeServerClient.js';
 import { OpenCodeSkillIdentityError } from './openCodeV2Wire.js';
 import type { OpenCodeMcpRegistrationResult, OpenCodeSessionMcpProjection } from './mcpRegistration.js';
-import { resolveOpenCodeProjectedMcpToolName } from './mcpRegistration.js';
+import { OpenCodeMcpRegistrationError, resolveOpenCodeProjectedMcpToolName } from './mcpRegistration.js';
 import { asRecord, normalizeString, readNonBlankOpaqueIdentifier } from './openCodeParsing.js';
 import { formatOpenCodeServerPromptErrorMessage } from './formatOpenCodeServerPromptErrorMessage.js';
 import type { OpenCodeToolPart } from './foregroundToolTracker.js';
@@ -85,7 +85,7 @@ function readOpenCodeProviderErrorMessage(error: unknown): string {
 }
 
 function isPromptRejectedBeforeProviderEffect(error: unknown): boolean {
-  return error instanceof OpenCodeSkillIdentityError || error instanceof OpenCodeServerUnsupportedOperationError;
+  return error instanceof OpenCodeMcpRegistrationError || error instanceof OpenCodeSkillIdentityError || error instanceof OpenCodeServerUnsupportedOperationError;
 }
 
 function projectOpenCodeNativeChildStatus(
@@ -2491,14 +2491,7 @@ export function createOpenCodeServerRuntimeController(params: Readonly<{
         // reported on a default-on signal, and is not a reason to block
         // ordinary prompting.
         if (mcpRegistration.requiredHappier.status === 'failed') {
-          const registrationError = mcpRegistration.requiredHappier.error;
-          const detail = registrationError instanceof Error
-            ? registrationError.message
-            : formatOpenCodeServerPromptErrorMessage(registrationError);
-          throw new Error(
-            `required Happier MCP registration failed${detail ? `: ${detail}` : ''}`,
-            { cause: registrationError },
-          );
+          throw new OpenCodeMcpRegistrationError(mcpRegistration.requiredHappier.error);
         }
         if (!nativeCommand || meta?.delivery !== 'steer') {
           state.currentTurnProviderUserMessageIds.clear();

@@ -1,3 +1,4 @@
+import { projectOpenCodeServerError } from './formatOpenCodeServerPromptErrorMessage.js';
 import { createHash } from 'node:crypto';
 
 import { asRecord, normalizeString, readStringRecord } from './openCodeParsing.js';
@@ -5,6 +6,16 @@ import type { OpenCodeServerClient } from './openCodeServerClient.js';
 import { isOpenCodeServerUnsupportedOperation } from './openCodeServerClient.js';
 import type { OpenCodeRuntimeContext } from './runtimeContext.js';
 import type { AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
+
+/** Required bridge failure is a known refusal before any provider dispatch. */
+export class OpenCodeMcpRegistrationError extends Error {
+  readonly code = 'opencode_mcp_registration_failed';
+
+  constructor(cause: unknown) {
+    super(`required Happier MCP registration failed: ${projectOpenCodeServerError(cause).message}`, { cause });
+    this.name = 'OpenCodeMcpRegistrationError';
+  }
+}
 
 export type OpenCodeMcpRegistration = Readonly<{
   originalName: string;
@@ -258,7 +269,7 @@ export async function registerOpenCodeMcpServers(params: Readonly<{
           : '[OpenCodeServer] Failed to register MCP server (non-fatal)',
         {
           serverName: registration.projectedName,
-          error,
+          error: projectOpenCodeServerError(error),
         },
       );
     }
@@ -287,7 +298,7 @@ export function scheduleOpenCodeMcpServerRegistration(params: Readonly<{
   })().catch((error: unknown) => {
     params.ctx.logger.debug(
       '[OpenCodeServer] MCP server registration setup failed; prompt admission will fail closed',
-      { error },
+      { error: projectOpenCodeServerError(error) },
     );
     return {
       requiredHappier: { status: 'failed', error },
@@ -308,7 +319,7 @@ export async function disconnectOpenCodeMcpServers(params: Readonly<{
     } catch (error) {
       params.ctx.logger.debug('[OpenCodeServer] Failed to disconnect session-scoped MCP server (non-fatal)', {
         ...server,
-        error,
+        error: projectOpenCodeServerError(error),
       });
     }
   }

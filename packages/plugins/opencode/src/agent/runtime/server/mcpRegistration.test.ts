@@ -10,6 +10,8 @@ import {
 } from './mcpRegistration.js';
 import type { OpenCodeRuntimeContext } from './runtimeContext.js';
 import type { OpenCodeServerClient } from './openCodeServerClient.js';
+import { createOpenCodeServerTransport } from './transport.js';
+import { createOpenCodeServerClient } from './openCodeServerClient.js';
 import { OpenCodeServerUnsupportedOperationError } from './openCodeServerClient.js';
 
 function createRegistrationHarness() {
@@ -36,6 +38,29 @@ function projection(mcpServers: unknown) {
 }
 
 describe('registerOpenCodeMcpServers', () => {
+  it('retains sanitized V2 HTTP refusal fields through projection, transport and registration', async () => {
+    const harness = createRegistrationHarness();
+    const transport = createOpenCodeServerTransport({ managedService: { request: async input => {
+      expect(input.method).toBe('PUT');
+      expect(input.pathAndQuery).toContain('/api/experimental/mcp/');
+      const body = JSON.parse(new TextDecoder().decode(input.body));
+      expect(body.config.command).toEqual(['/fixture']);
+      return { ok: false, status: 400, statusText: 'Bad Request', headers: {},
+        body: new Response('invalid MCP config; Authorization: Bearer diagnostic-secret').body };
+    } } });
+    const result = await registerOpenCodeMcpServers({ ctx: harness.ctx,
+      client: createOpenCodeServerClient({ transport, dialect: 'v2' }),
+      directory: '/repo', mcpProjection: projection({ happier: { command: '/fixture' } }),
+    });
+    expect(result.requiredHappier.status).toBe('failed');
+    const fields = JSON.parse(JSON.stringify(harness.debug.mock.calls.at(-1)?.[1]));
+    expect(fields.error).toMatchObject({ name: 'OpenCodeServerHttpError',
+      code: 'opencode_server_request_failed', operation: 'mcp_registration', status: 400,
+      message: expect.stringContaining('invalid MCP config') });
+    expect(JSON.stringify(fields)).not.toContain('diagnostic-secret');
+    expect(fields.error).not.toHaveProperty('stack');
+  });
+
   it('keeps unchanged names independent of a later unavailable alias inventory', async () => {
     let available = true;
     const resolve = createHappierMcpToolNamingResolver({ command: '/fixture' }, async () => {
