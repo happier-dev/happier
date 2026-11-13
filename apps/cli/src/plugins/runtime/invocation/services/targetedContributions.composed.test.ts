@@ -18,7 +18,10 @@ import {
 import { PLUGIN_MANIFEST as CHANNELS_PLUGIN_MANIFEST } from '@happier-dev/plugins-channels';
 import { PLUGIN_MANIFEST as TELEGRAM_PLUGIN_MANIFEST } from '@happier-dev/plugins-channel-telegram';
 import { PLUGIN_MANIFEST as GITHUB_PLUGIN_MANIFEST } from '@happier-dev/plugins-scm-github';
-import { PLUGIN_MANIFEST as TRIAGE_PLUGIN_MANIFEST, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '@happier-dev/plugins-triage/manifest';
+import { PLUGIN_MANIFEST as TRIAGE_PLUGIN_MANIFEST, TRIAGE_PLUGIN, TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '@happier-dev/plugins-triage/manifest';
+import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { createTriageListEntriesActionHandler } from '../../../../../../../packages/plugins/triage/src/actions/listEntries';
 import type { TriageDataActionContext } from '../../../../../../../packages/plugins/triage/src/actions/dataContext';
 import { TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1, TriageListEntriesResultV1Schema } from '../../../../../../../packages/plugins/triage/src/actions/listEntriesProtocol';
@@ -430,6 +433,56 @@ function emptyTriageDataContext(
 }
 
 describe('targeted contribution observation service', () => {
+    it('cancels the declared Triage list before an abort-ignoring HTTP read settles', async () => {
+        const release = Promise.withResolvers<void>();
+        let requestOpened = false;
+        const provider = createServer(async (_request, response) => {
+            requestOpened = true;
+            await release.promise;
+            response.end('released');
+        });
+        provider.listen(0, '127.0.0.1');
+        await once(provider, 'listening');
+        const address = provider.address();
+        if (!address || typeof address === 'string') throw new Error('Missing fixture address');
+        const registry = await triageListRegistry(false);
+        const controller = createPluginReloadController({ resolveRuntimeRegistry: async () => registry });
+        const lease = await controller.acquireRuntimeRegistry();
+        await lease.release();
+        const caller = new AbortController();
+        const service = createReloadControllerTargetedContributionsService({ reloadController: controller }).bind({
+            pluginId: TRIAGE_PLUGIN_MANIFEST.id, signal: caller.signal, isCurrent: () => true,
+        });
+        // Only the network-backed Collection boundary is held. The declaration,
+        // activation, invocation owner, list handler and targeted service stay real.
+        const context = emptyTriageDataContext(caller.signal, service, async () => {
+            await (await fetch(`http://127.0.0.1:${address.port}`)).text();
+        });
+        const unusedStorage = (): never => { throw new Error('Unexpected storage scope'); };
+        const kit = await createPluginTestkit({ manifest: TRIAGE_PLUGIN_MANIFEST, module: TRIAGE_PLUGIN,
+            services: { targetedContributions: service, storage: { ...context.services.storage,
+                get ephemeral() { return unusedStorage(); }, get daemonSession() { return unusedStorage(); },
+                get daemon() { return unusedStorage(); },
+            } },
+        });
+        let failure: unknown;
+        const pending = kit.invokeAction(TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1, {
+            v: 1, sources: { kind: 'allConfigured' }, order: 'newest', limit: 10,
+        }, { signal: caller.signal }).catch((error: unknown) => { failure = error; });
+        try {
+            await vi.waitFor(() => expect({ requestOpened, failure }).toEqual({ requestOpened: true, failure: undefined }), { timeout: 10_000 });
+            caller.abort(new Error('SIGINT'));
+            await vi.waitFor(() => expect(failure).toMatchObject({ code: 'plugin_action_aborted' }));
+        } finally {
+            release.resolve();
+            await pending;
+            await kit.dispose();
+            await controller.shutdown();
+            provider.closeAllConnections();
+            await new Promise<void>((resolve, reject) => provider.close(error => error ? reject(error) : resolve()));
+        }
+    });
+
     it('carries upstream excluded-plugin causes through the admitted and public snapshots', () => {
         const excluded = 'happier.channel.invalid';
         const disabled = TELEGRAM_PLUGIN_MANIFEST.id;

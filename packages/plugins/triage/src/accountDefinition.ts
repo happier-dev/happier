@@ -119,6 +119,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
       },
 ...INTERNAL_TASK_ACTIONS_V1,
 [TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1]: {
+        readOnly: true,
         title: 'List tasks',
         description: 'Reads the current task kinds from configured sources through the shared list window.',
         surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli'], placementBindings: [],
@@ -193,6 +194,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         run: createTriageLinkEntryToSessionActionHandler(),
       },
 [TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1]: {
+        readOnly: true,
         title: {
           key: 'plugins.triage.action.listEntries.title',
           fallback: 'Read the current list window',
@@ -212,6 +214,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         run: createTriageListEntriesActionHandler(),
       },
 [TRIAGE_SEARCH_ENTRIES_ACTION_LOCAL_ID_V1]: {
+        readOnly: true,
         // The Universal Search section header. It is the product name the
         // views already carry, which is a proper noun rather than translated
         // copy — the same reason `ui.views` declares it directly.
@@ -259,6 +262,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         run: createTriageSetFixPullRequestActionHandler(),
       },
 [TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_LOCAL_ID_V1]: {
+        readOnly: true,
         title: 'Read the fix pull requests',
         description: 'Reads the pull requests linked as fixes for one issue or error group.',
         surfaces: ['ui', 'agent', 'mcp', 'cli'],
@@ -271,6 +275,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         run: createTriageReadFixPullRequestsActionHandler(),
       },
 [TRIAGE_LIST_PINNED_ENTRIES_ACTION_LOCAL_ID_V1]: {
+        readOnly: true,
         title: 'Read the pinned entries',
         description: 'Reads one bounded page of the entries the user pinned, newest first.',
         surfaces: ['ui', 'agent', 'mcp', 'cli'],
@@ -367,6 +372,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         }),
       },
 [TRIAGE_SOURCES_READ_CONFIGURED_ACTION_LOCAL_ID_V1]: {
+        readOnly: true,
         title: 'Read the sources you configured',
         description: 'Reads the pull-request, issue and error-group sources the calling source has configured, so it can change or remove one.',
         // Host automated callers may discover admitted sources. Plugin callers
@@ -381,6 +387,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         run: createTriageReadConfiguredSourceInstancesActionHandler(),
       },
 [TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1]: {
+        readOnly: true,
         title: 'Read the durable facts of one entry',
         description: 'Reads the configured connection and linked Sessions for an exact entry. First resolve a GitHub issue or pull request URL with entries/resolve-resource-v1, or search entries/search-v1. Pass v:1, its entryRef and sourceInstanceId from sourceInstance.sourceInstanceId. On kind read, result.instance is the configured instance required by source read and mutation Actions. The localRef uses kindId, collisionScope and entryId from entryRef; routingToken comes from the resolved locator. Non-secret configuration: instance.configuration.token contains source-selection data, not a credential. Copy the entire returned instance unchanged into source read and mutation Action inputs; never replace its configuration with [REDACTED]. Credentials are acquired internally through the account binding. Keep configuration contents out of user-facing prose. No mounted UI is required.',
         // Mounted self and host automated callers resolve the exact connection;
@@ -408,6 +415,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         run: createTriageResolveResourceActionHandler(),
       },
 [TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1]: {
+        readOnly: true,
         title: 'Re-read an entry after a provider change',
         description: 'Reads the exact selected entry through its configured source after a provider Action settles.',
         surfaces: ['ui', 'agent', 'mcp', 'cli'],
@@ -433,6 +441,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         observeRead: createTriageReadPullRequestStatusObserver(),
       },
 [TRIAGE_READ_SAVED_VIEWS_ACTION_LOCAL_ID_V1]: {
+        readOnly: true,
         title: 'Read the saved views',
         description: 'Reads the saved filter and order views. Select one on this device with ui/mounted-v1 selectSavedView.',
         surfaces: ['ui', 'agent', 'mcp', 'cli'],
@@ -466,6 +475,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         run: createTriageAdministerSavedViewActionHandler(),
       },
 [TRIAGE_READ_ACTIONS_ACTION_LOCAL_ID_V1]: {
+        readOnly: true,
         title: 'Read the configured actions',
         description: 'Reads the configured set of things a reader can start from a pull request, issue or error group.',
         // The editor and external handoff surfaces read this same Account owner.
