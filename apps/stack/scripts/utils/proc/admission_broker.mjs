@@ -166,7 +166,9 @@ export function createAdmissionBroker({ root, oldLockPath = '/tmp/happier-heavyw
     return item.floorOptions ? Math.min(...item.floorOptions.map(option => accountedCpuCores(item, option.workers))) : accountedCpuCores(item);
   }
   function reserveHead(head) {
-    if (headPledge?.item !== head) headPledge = head ? { item: head, memoryKiB: 0, cpuCores: 0 } : undefined;
+    // Eligibility can flap with achievable memory or publication pressure.
+    // Keep earned releases on the waiting item until it is admitted or gone.
+    headPledge = head ? (head.headPledge ??= { item: head, memoryKiB: 0, cpuCores: 0 }) : undefined;
   }
   function headReservation(head) {
     const active = Boolean(head && Date.now() - head.arrivedAt >= HEAD_RESERVATION_DELAY_MS);

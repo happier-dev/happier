@@ -318,6 +318,48 @@ for (const starvation of [false, true]) test(`capped head reservation ${starvati
   assert.equal((await sample()).waitingCount, 0, 'the head starts despite sustained smaller demand');
 });
 
+test('head pledges survive older waiter achievable-memory flips', linux, async t => {
+  const clock = captureRecoveryClock(t);
+  const gib = 1024 * 1024;
+  let availableMemoryKiB = 100 * gib;
+  const { root } = await fixture(t, {
+    readMemory: () => ({ availableMemoryKiB, totalMemoryKiB: 120 * gib }),
+  });
+  await (await acquire(root, 40 * gib, t)).admit();
+  const small = [];
+  for (let i = 0; i < 12; i++) small.push(await (await acquire(root, 5 * gib, t)).admit());
+  const arrivedAt = Date.now() - headReservationDelayMs;
+  const older = await acquire(root, 110 * gib, t, { arrivedAt: arrivedAt - 1 });
+  const head = await acquire(root, 38 * gib, t, { arrivedAt });
+  await small[0].release();
+  assert.equal((await requestAdmissionSample(root)).head.reservationKiB, 5 * gib);
+
+  availableMemoryKiB = 120 * gib;
+  await clock.tick();
+  assert.equal((await requestAdmissionSample(root)).head.minimumFloorKiB, 110 * gib);
+  await small[1].release();
+  assert.equal((await requestAdmissionSample(root)).head.reservationKiB, 5 * gib);
+  availableMemoryKiB = 100 * gib;
+  await clock.tick();
+  const returned = await requestAdmissionSample(root);
+  assert.equal(returned.head.minimumFloorKiB, 38 * gib);
+  assert.equal(returned.head.reservationKiB, 5 * gib, 'the younger head keeps the release it earned before the flip');
+  availableMemoryKiB = 120 * gib;
+  await clock.tick();
+  assert.equal((await requestAdmissionSample(root)).head.reservationKiB, 5 * gib, 'the older head also keeps its earned release');
+  availableMemoryKiB = 100 * gib;
+  await clock.tick();
+  await (await acquire(root, 5 * gib, t)).admit(); // Spare capacity from the older head's release.
+  for (let i = 2; i < 9; i++) {
+    const follower = await acquire(root, 5 * gib, t, { noWait: true });
+    assert.equal((await follower.next()).reason, 'HSTACK_MEMORY_BUSY');
+    await small[i].release();
+  }
+  await head.admit();
+  assert.equal((await requestAdmissionSample(root)).waitingCount, 1, 'the younger head starts after nine 5 GiB releases; the older request keeps its place');
+  older.socket.destroy();
+});
+
 // Coordination 2026-11-13 11:22Z: host-bound reloads may use a relocatable head's pledge.
 for (const scenario of ['nl3 reload', 'head resumes', 'relocatable order', 'host-bound head']) {
   test(`host-bound pledge priority: ${scenario}`, linux, async t => {
