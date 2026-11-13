@@ -6,13 +6,15 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { Readable } from 'node:stream';
 import { createHash, randomUUID } from 'node:crypto';
-import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import { z } from 'zod';
 import nacl from 'tweetnacl';
 
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readDeploymentDomainServingUrlV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import { ApprovalRequestPublicSettlementSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ACTION_SPECS, getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { DEPLOYMENT_ACTION_IDS_V1, type DeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
@@ -76,6 +78,7 @@ import { runDeploymentRootMoveCoverage } from './deploymentRootMoveCoverage.test
 import { createSignedAccountContentBinding } from '../../../server/sources/testkit/accountEncryption';
 import { db } from '../../../server/sources/storage/db';
 import { inTx } from '../../../server/sources/storage/inTx';
+import { removeTeamMemberForActorInTx } from '../../../server/sources/app/teams/memberships/memberAdministration';
 import { readArtifactHeadersForCallerInTx, resolveArtifactAccessInTx } from '../../../server/sources/app/artifacts/artifactAccessService';
 import type { createManagedServicesOwner, ProjectManagedServiceHandle } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
@@ -84,7 +87,7 @@ import { configuration } from '@/configuration';
 import { adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
 import { createMachineContentCodec } from '@/api/machine/machineStoredContent';
 import { ApiClient } from '@/api/api';
-import { acquireEnrollmentJourneyGuest, type EnrollmentJourneyNativeBoundary } from '@/machines/managed/enrollmentJourney.testkit';
+import { acquireEnrollmentJourneyGuest, createEnrollmentJourneyIsolationReadinessSystem, type EnrollmentJourneyNativeBoundary } from '@/machines/managed/enrollmentJourney.testkit';
 import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
 import type { AgentIsolationReadinessSystem } from '@/daemon/agentIsolation/agentIsolationReadiness';
 import { createAgentIsolationSessionContext } from '@/daemon/agentIsolation/agentIsolationSessionContext';
@@ -128,14 +131,14 @@ async function settlePublicApproval(invoke: (name: string, input: unknown) => Pr
     const approval = result.ok ? ActionApprovalRequestCreatedResultSchema.safeParse(result.result) : null;
     if (!approval?.success) return result;
     const decided = await invoke('approval.request.decide', { artifactId: approval.data.artifactId, decision: 'approve' });
-    expect(decided.ok, decided.ok ? undefined : decided.errorCode).toBe(true);
+    expect(decided.ok, decided.ok ? undefined : JSON.stringify({ actionId: approval.data.actionId, failure: decided })).toBe(true);
     const opened = await invoke('approval.request.get', { artifactId: approval.data.artifactId });
     if (!opened.ok) throw new Error(`Approval settlement refused: ${opened.errorCode}`);
     const detail = getActionSpec('approval.request.get').outputSchema.parse(opened.result);
     if (!detail || typeof detail !== 'object' || !('request' in detail)) throw new Error('Approval settlement is unavailable');
     const { execution } = ApprovalRequestPublicSettlementSchema.parse(detail.request);
     return execution.ok ? { ok: true, result: execution.result }
-        : z.object({ ok: z.literal(false), errorCode: z.string(), error: z.string(), details: z.unknown().optional() }).parse(execution);
+        : ActionExecuteFailureSchema.parse(execution);
 }
 
 function sourceRequesterForHome(home: DeploymentSocketHomeFixture): import('./readDeploymentSourceIntentForHost').DeploymentSourceRequesterIdentityResolver {
@@ -179,35 +182,7 @@ vi.mock('node:child_process', async importOriginal => {
     };
 });
 
-/** Process/OS substitute beneath the real finite native qualification owner. */
-const isolationReadinessSystem: AgentIsolationReadinessSystem = { run: async (command, args, options) => {
-    if (command === 'getent') return { stdout: args.includes('group')
-        ? args.at(-1) === 'happier-agent' ? 'happier-agent:x:988:\n' : 'happier-workspace:x:1001:happier,happier-agent\n'
-        : `happier-agent:x:${isolationOs.agentUid}:988::/var/lib/happier-agent:/usr/sbin/nologin\n`, stderr: '' };
-    expect(command).toBe('sudo');
-    expect(args.slice(0, 5)).toEqual(['-n', '-u', 'happier-agent', '--', '/opt/happier/cli/current/happier']);
-    const frame = await readAgentLaunchFrame(Readable.from([options!.inputBytes!], { objectMode: false }));
-    expect(frame.executable).toBe('/bin/sh');
-    execFileSync('/bin/sh', ['-n', '-c', frame.args[1]!]);
-    const headers = frame.selectedMaterials.find(file => file.relativePath === 'files/headers');
-    const challenge = frame.selectedMaterials.find(file => file.relativePath === 'files/challenge');
-    if (!headers || !challenge) throw new Error('The readiness producer must frame its native challenge');
-    const authorization = Buffer.from(headers.contentBase64, 'base64').toString('utf8').trim().slice('Authorization: '.length);
-    for (const auth of [authorization, undefined]) await new Promise<void>((resolve, reject) => {
-        const request = httpRequest({ socketPath: frame.args[7]!, path: '/readiness',
-            ...(auth ? { headers: { authorization: auth } } : {}) }, response => {
-            expect(response.statusCode).toBe(auth ? 200 : 401);
-            response.resume(); response.once('end', resolve);
-        });
-        request.once('error', reject); request.end();
-    });
-    const privateCount = Number(frame.args[9]);
-    for (const path of frame.args.slice(10 + privateCount)) {
-        await appendFile(join(path, 'daemon'), 'agent');
-        await writeFile(join(path, 'agent'), 'agent');
-    }
-    return { stdout: Buffer.from(challenge.contentBase64, 'base64'), stderr: '' };
-} };
+const isolationReadinessSystem = createEnrollmentJourneyIsolationReadinessSystem(isolationOs.agentUid);
 
 /** A virtual sudo/UID/filesystem boundary around real shim and Agent processes.
  * Linux guest QA owns kernel UID/ACL proof; this test proves the composition
@@ -221,7 +196,7 @@ async function prepareS0AgentProcessBoundary(directory: string, privateFile: str
     const modulePath = (path: string) => fileURLToPath(new URL(path, import.meta.url));
     const frameModule = modulePath('../daemon/agentIsolation/agentLaunchFrame.ts');
     const shimModule = modulePath('../daemon/agentIsolation/agentLaunchShim.ts');
-    const mcpModule = modulePath('../mcp/runtime/sessionMcpLocalTransport.ts');
+    const mcpModule = modulePath('../mcp/runtime/sessionMcpLocalClient.ts');
     await writeFile(osEntry, `import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import net from 'node:net';
@@ -682,6 +657,19 @@ describe.skipIf(process.platform !== 'linux')('Source audience Environment conte
                 { headers: memberHeaders });
             expect(memberSourceResponse.status).toBe(200);
             expect(ProjectSourcesReadOutputV1Schema.parse(await memberSourceResponse.json()).ok).toBe(true);
+            const artifacts = createCredentialedAccountArtifactStore(credentials);
+            if (encryptionMode === 'e2ee') {
+                expect((await observeHeaders()).map(row => ({ access: row.memberAccess, header: row.memberHeader,
+                    recipientEnvelopePresent: row.recipientEnvelopePresent })))
+                    .toEqual(references.map(() => ({ access: 'view', header: 'artifact_content_unavailable',
+                        recipientEnvelopePresent: false })));
+                // Raw Source metadata does not seal keys. The existing keyholder
+                // header read prepares the canonical Artifact recipient census.
+                for (const reference of references) {
+                    expect(await runWithServerHttpBaseUrl(sharedHome.baseUrl, () => artifacts.readHeader(reference.artifactId)))
+                        .not.toBeNull();
+                }
+            }
             const sharedHeaders = await observeHeaders();
             // Only IDs, access results and presence booleans enter failure output.
             console.info('QA-PERMISSIONS-1109 Source audience headers', JSON.stringify({ encryptionMode, headers: sharedHeaders }));
@@ -694,7 +682,6 @@ describe.skipIf(process.platform !== 'linux')('Source audience Environment conte
                 .toEqual({ status: 200, result: 'ok' });
             // The ordinary grant is a causal control and an independent right:
             // withdrawing Source visibility must not remove this direct grant.
-            const artifacts = createCredentialedAccountArtifactStore(credentials);
             for (const reference of references) {
                 await runWithServerHttpBaseUrl(sharedHome.baseUrl, () => artifacts.accessGrants.set({ artifactId: reference.artifactId,
                     principal: { kind: 'team', teamId: team.id }, accessLevel: 'view' }));
@@ -723,6 +710,7 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
     let home: DeploymentSocketHomeFixture;
     type HomeHttpObservation = Readonly<{ method: string; path: string; status: number }>;
     let observeRootHttp: ((observation: HomeHttpObservation) => void) | undefined;
+    let beforeHomeResponse: ((observation: HomeHttpObservation, payload: unknown) => Promise<void>) | undefined;
     beforeAll(async () => {
         home = await createDeploymentSocketHome({ encryptionMode: 'e2ee',
             prepareMachineContent: (encryptionKey, metadata) => createMachineContentCodec({ encryptionMode: 'e2ee',
@@ -731,6 +719,11 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
                 registerQualifiedConnectedAccountCredentialRoutesV4(app);
                 sessionRoutes(app);
                 sessionPendingRoutes(app);
+                app.addHook('onSend', async (request, reply, payload) => {
+                    await beforeHomeResponse?.({ method: request.method,
+                        path: new URL(request.url, 'https://home.invalid').pathname, status: reply.statusCode }, payload);
+                    return payload;
+                });
                 // Observe the real server response, including fetch requests and
                 // requests made by the enrolled guest's separate process. Keep
                 // credentials, bodies and query values out of failure output.
@@ -1134,6 +1127,7 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
             // author's material reader is unavailable. Artifact/controller
             // transport stays live; the installed target must use its seals.
             let authorMaterialOffline = false;
+            let authorMaterialRequests = 0;
             let offlineMaterialRequests = 0;
             let observeStoredDeployment = false;
             const storedDeploymentPaths: string[] = [];
@@ -1162,6 +1156,7 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
             const accountGet = axios.get;
             vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
                 observeStoredPath(url);
+                if (new URL(url, home.baseUrl).pathname === '/v1/account/saved-secrets/resources/materials') authorMaterialRequests++;
                 if (authorMaterialOffline && new URL(url, home.baseUrl).pathname === '/v1/account/saved-secrets/resources/materials') {
                     offlineMaterialRequests++;
                     throw new Error('The binding author material transport is offline');
@@ -1180,8 +1175,10 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
             const daemonLifetime = new AbortController();
             cleanup.push(async () => { daemonLifetime.abort(); });
             const s0DockerDirectory = join(home.baseDir, 'docker-boundary');
-            const caddyDirectory = join(home.baseDir, 'coverage-caddy');
-            await mkdir(caddyDirectory);
+            // AF_UNIX paths must fit Linux's sockaddr_un even when the
+            // execution owner's TMPDIR is a long remote-admission path.
+            const caddyDirectory = await mkdtemp('/tmp/hjd-');
+            cleanup.push(() => rm(caddyDirectory, { recursive: true, force: true }));
             const caddySocket = join(caddyDirectory, 'admin.sock');
             const caddyConfigPath = join(caddyDirectory, 'config.json');
             const caddyConfig: Record<string, unknown> = { admin: { listen: 'unix//run/coverage-caddy/admin.sock|0660' },
@@ -1273,12 +1270,26 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
                 acquirePluginRuntimeRegistryLease: () => mounted.controller.acquireRuntimeRegistry({
                     resolveRuntimeRegistry: async () => mounted.registry,
                 }), readEnvironmentSecretLaunchAdmission: readP42RuntimeAdmission, signal: daemonLifetime.signal });
-            const createDeploymentActionDeps = (requester?: RequesterAccountActionContext) => createDaemonDeploymentActionDeps({
-                resolveRequesterIdentity: sourceRequesterForHome(home),
-                credentials: requester?.credentials ?? credentials, serverId: home.serverId,
-                serverHttpBaseUrl: requester?.serverHttpBaseUrl ?? home.baseUrl, machineId: home.machineId,
-                ...(requester ? { savedSecretOperationContext: requester.savedSecretOperationContext } : {}), runtime,
-            });
+            type InstalledDeploymentChild = ReturnType<typeof createDaemonDeploymentActionDeps>['deploymentChild'];
+            const roleChildObservation: { admitted?: Readonly<{
+                execute: InstalledDeploymentChild;
+                args: Parameters<InstalledDeploymentChild>;
+            }> } = {};
+            const createDeploymentActionDeps = (requester?: RequesterAccountActionContext) => {
+                const deps = createDaemonDeploymentActionDeps({
+                    resolveRequesterIdentity: sourceRequesterForHome(home),
+                    credentials: requester?.credentials ?? credentials, serverId: home.serverId,
+                    serverHttpBaseUrl: requester?.serverHttpBaseUrl ?? home.baseUrl, machineId: home.machineId,
+                    ...(requester ? { savedSecretOperationContext: requester.savedSecretOperationContext } : {}), runtime,
+                });
+                return { ...deps, async deploymentChild(...args: Parameters<typeof deps.deploymentChild>) {
+                    // Observe the actual installed receiver's admitted arguments;
+                    // every invocation still executes the canonical child owner.
+                    const result = await deps.deploymentChild(...args);
+                    if (args[0].kind === 'dataRole') roleChildObservation.admitted = { execute: deps.deploymentChild, args };
+                    return result;
+                } };
+            };
             // Match the standalone CLI's signed-root author, preserving the
             // reviewed parent when its retention child enters the daemon.
             const executor = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
@@ -1416,6 +1427,7 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
             // later deploy; enrollment-only ingress cannot prepare that review.
             await enrollment.daemon?.close();
             const daemon = await createS0DeploymentDaemonIngress({ home, createDeploymentActionDeps, nativeBoundary: enrollment.native,
+                resolveDeploymentRequesterIdentity: sourceRequesterForHome(home),
                 projectManagedServices: mounted.registry.projectManagedServices,
                 isolationWorkspace: { rootId: workspaceId, path: repositoryPath }, isolationReadinessSystem });
             cleanup.push(() => daemon.close());
@@ -1481,25 +1493,7 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
             const beforeFiniteOnly = await readManagedAllocation();
             await home.setControllerProvisionerFiniteOnly(true);
             try {
-                const unsupported = await invoke('deployments.targets.link', {
-                    serverId: home.serverId, environmentId: environment.environmentId, expectedRevision: first.environment.revision,
-                    requestKey: 's0-finite-only-target', targetId: 'own-server', role: 'runtime',
-                    replacesLinkId: firstTarget.id, expectedTargetLinkRevision: firstTarget.revision,
-                    machines: [{ machineId: home.machineId, installationId: home.installationId }],
-                    ...await prepareContent({}, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1),
-                });
-                expect(unsupported).toMatchObject({ ok: false, errorCode: 'provider_unavailable' });
-                const unchanged = await invoke('deployments.environments.get', {
-                    serverId: home.serverId, environmentId: environment.environmentId,
-                });
-                if (!unchanged.ok) throw new Error(`Unsupported target read refused: ${unchanged.errorCode}`);
-                expect(DeploymentEnvironmentGetResultV1Schema.parse(unchanged.result))
-                    .toMatchObject({ ok: true, environment: { revision: first.environment.revision, runtimeTargetLinkId: firstTarget.id } });
-                expect(await readManagedAllocation()).toMatchObject({ id: beforeFiniteOnly.id,
-                    intentRevision: beforeFiniteOnly.intentRevision, retention: beforeFiniteOnly.retention,
-                    wakeOnAcceptedMessage: beforeFiniteOnly.wakeOnAcceptedMessage });
-                // Declining until-delete is a real choice: finite providers
-                // remain valid targets under their existing lifetime policy.
+                // Explicit keep remains a real choice on an admitted allocation.
                 const kept = await invoke('deployments.environments.create', {
                     serverId: home.serverId, projectSourceId: source.source.id, requestKey: 's0-finite-keep-create',
                     protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
@@ -1531,7 +1525,25 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
                 expect(await readManagedAllocation()).toMatchObject({ id: beforeFiniteOnly.id,
                     intentRevision: beforeFiniteOnly.intentRevision, retention: beforeFiniteOnly.retention,
                     wakeOnAcceptedMessage: beforeFiniteOnly.wakeOnAcceptedMessage });
+                // d92b4aa3eb0 / managedRows.resolveManagedRowDeclarationInTx:
+                // controller publication cannot change the already admitted
+                // allocation's reviewed native capabilities.
+                if (!keptLink.ok) throw new Error(`Kept target refused: ${keptLink.errorCode}`);
+                const previousLink = DeploymentTargetLinkResultV1Schema.parse(keptLink.result);
+                if (!previousLink.ok) throw new Error(previousLink.error);
+                const retainedCapabilities = await invoke('deployments.targets.link', {
+                    serverId: home.serverId, environmentId: keptEnvironment.environmentId,
+                    expectedRevision: previousLink.revision, requestKey: 's0-retained-provider-target',
+                    targetId: 'own-server', role: 'runtime', replacesLinkId: previousLink.targetLinkId,
+                    expectedTargetLinkRevision: previousLink.targetLinkRevision,
+                    machines: [{ machineId: home.machineId, installationId: home.installationId }],
+                    ...await prepareContent({}, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1),
+                });
+                expect(retainedCapabilities).toMatchObject({ ok: true, result: { ok: true } });
+                expect(await readManagedAllocation()).toMatchObject({ id: beforeFiniteOnly.id,
+                    retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false });
             } finally { await home.setControllerProvisionerFiniteOnly(false); }
+            await chooseUnusedRetention(false);
             const linked = await invoke('deployments.targets.link', {
                 serverId: home.serverId, environmentId: environment.environmentId, expectedRevision: first.environment.revision,
                 requestKey: 's0-target', targetId: 'own-server', role: 'runtime',
@@ -1550,8 +1562,7 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
             await chooseUnusedRetention(false);
             const bound = await invoke('deployments.bindings.set', { serverId: home.serverId,
                 environmentId: environment.environmentId, expectedRevision: target.revision,
-                ...await prepareContent({ ...environmentContent, bindings: p42Bindings }, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, environmentContent.name),
-                referencedSavedSecretRevisions: [{ resourceId: p42ResourceId, revision: 1 }] });
+                set: p42Bindings, remove: [] });
             expect(bound.ok, bound.ok ? undefined : bound.error).toBe(true);
             if (!bound.ok) throw new Error(`Binding Action refused: ${bound.errorCode}`);
             authorMaterialOffline = true;
@@ -1936,6 +1947,24 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
                 if (!link) throw new Error('Runtime target disappeared');
                 return { environment: read.environment, target: link };
             };
+            const domainBasis = await readEnvironment();
+            const journeyDomainId = randomUUID();
+            const journeyDomain = await invoke('deployments.domains.add', { serverId: home.serverId,
+                environmentId: environment.environmentId, domainId: journeyDomainId,
+                expectedRevision: domainBasis.environment.revision, targetLinkId: domainBasis.target.id,
+                expectedTargetLinkRevision: domainBasis.target.revision, requestKey: randomUUID(),
+                content: { hostname: 'journey.example.test', target: { service: 'web', containerPort: 3000 } } });
+            expect(journeyDomain).toMatchObject({ ok: true, result: { ok: true } });
+            const domainRead = await invoke('deployments.domains.get', { serverId: home.serverId,
+                environmentId: environment.environmentId, domainId: journeyDomainId });
+            if (!domainRead.ok) throw new Error(`Journey Domain read refused: ${domainRead.errorCode}`);
+            const domainDetail = DeploymentDomainMutationResultV1Schema.parse(domainRead.result);
+            if (!domainDetail.ok) throw new Error('Journey Domain is unavailable');
+            const domainArtifact = await nativeDeploymentArtifacts(home).read(domainDetail.domain.contentArtifactId);
+            if (!domainArtifact || typeof domainArtifact.body !== 'string') throw new Error('Journey Domain content is unavailable');
+            // Consume the same Domain URL owner as deploymentLiveAddress.
+            const liveUrl = readDeploymentDomainServingUrlV1(JSON.parse(domainArtifact.body));
+            expect(liveUrl).toBeTruthy();
             const beforeB = await readEnvironment();
             const candidateB = DeploymentContentV1Schema.parse({ ...candidateA,
                 images: s0ImagesB,
@@ -1948,10 +1977,37 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
             if (!deployedB.ok) throw new Error(`Deployment B refused: ${deployedB.errorCode}`);
             const receiptB = DeploymentReceiptResultV1Schema.parse(deployedB.result);
             expect(receiptB).toMatchObject({ ok: true, state: 'succeeded' });
+            // Soft so the uninterrupted journey also reaches the native-failure
+            // leg when the successful Action still omits its serving address.
+            expect.soft(JSON.stringify(deployedB.result), 'Serving Action delivers the Domain live URL').toContain(liveUrl);
             if (!receiptB.ok) throw new Error(`Deployment B admission refused: ${receiptB.error}`);
             expect((await readReceipt(receiptB.deploymentId)).content.sourceIntent).toMatchObject({ sha: commitB });
             const p42Unattended = await observeP42Runtime(await readReceipt(receiptB.deploymentId));
             expect(await readReceipt(receiptA.deploymentId)).toEqual(immutableA);
+
+            // K1: enter through the same signed Action and real approval path
+            // as B. Only Docker reports the unhealthy candidate; the receipt
+            // and Action owners must carry its activation cause back to us.
+            const unhealthyImage = await s0Docker.registerImage('web', 'unhealthy-candidate');
+            await s0Docker.failImageHealth(unhealthyImage.configDigest);
+            const unhealthyImages: typeof s0ImagesA = [unhealthyImage, s0ImagesA[1]];
+            await writeFile(join(repositoryPath, 'compose.yaml'), sourceCompose(unhealthyImages));
+            git('add', 'compose.yaml'); git('commit', '--quiet', '-m', 'Unhealthy candidate');
+            const beforeUnhealthy = await readEnvironment();
+            const failedCandidate = await invoke('deployments.deploy', { serverId: home.serverId,
+                environmentId: environment.environmentId, expectedRevision: beforeUnhealthy.environment.revision,
+                targetLinkId: target.targetLinkId, expectedTargetLinkRevision: beforeUnhealthy.target.revision,
+                requestKey: 's0-deploy-unhealthy', ...await prepareContent(DeploymentContentV1Schema.parse({
+                    ...candidateA, images: unhealthyImages,
+                    sourceIntent: { ...candidateA.sourceIntent, sha: git('rev-parse', 'HEAD') },
+                }), DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1) });
+            expect.soft(failedCandidate, 'K1 carries the native activation cause through Action settlement').toMatchObject({ ok: false,
+                failureCause: { phase: expect.any(String) },
+                details: { failure: { phase: 'activate', code: expect.any(String) } } });
+            // The failed candidate must leave the healthy predecessor serving,
+            // even when the caller receives a typed native activation failure.
+            expect((await readEnvironment()).target.activeDeploymentId).toBe(receiptB.deploymentId);
+            expect(await s0Docker.readRunningImageConfig('web')).toBe(s0ImagesB[0].configDigest);
 
             const beforeRollback = await readEnvironment();
             const rolledBack = await invoke('deployments.rollback', { serverId: home.serverId,
@@ -1988,9 +2044,18 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
 
             // P60-7a consumes the same installed owners with a repository-free
             // Source. No Publish/catalog/image-entry producer is substituted.
+            const deploymentTeam = await db.team.create({ data: { name: 'Admitted deployment continuation' } });
+            const remainingOwner = await db.account.create({ data: { encryptionMode: 'plain' } });
+            await db.teamMembership.createMany({ data: [
+                { teamId: deploymentTeam.id, accountId: home.accountId, role: 'owner' },
+                { teamId: deploymentTeam.id, accountId: remainingOwner.id, role: 'owner' },
+            ] });
+            await db.machineTeamGrant.create({ data: { machineId: home.machineId, teamId: deploymentTeam.id,
+                accessLevel: 'view', createdByAccountId: home.accountId } });
             const storedSourceResponse = await fetch(`${home.baseUrl}/v1/projects/sources`, {
                 method: 'POST', headers: { Authorization: `Bearer ${home.token}`, 'Content-Type': 'application/json' },
-                body: JSON.stringify({ serverId: home.serverId, requestKey: randomUUID(), name: 'Stored app', audience: [] }),
+                body: JSON.stringify({ serverId: home.serverId, requestKey: randomUUID(), name: 'Stored app', audience: [],
+                    owner: { kind: 'team', teamId: deploymentTeam.id } }),
             });
             expect(storedSourceResponse.status).toBe(200);
             const storedSource = ProjectSourcesCreateOutputV1Schema.parse(await storedSourceResponse.json());
@@ -2021,7 +2086,7 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
             });
             if (!storedOpened.ok) throw new Error(`Stored Environment read refused: ${storedOpened.errorCode}`);
             expect(DeploymentEnvironmentGetResultV1Schema.parse(storedOpened.result)).toMatchObject({ ok: true,
-                environment: { projectSourceId: storedSource.source.id, owner: { kind: 'account', accountId: home.accountId } } });
+                environment: { projectSourceId: storedSource.source.id, owner: { kind: 'team', teamId: deploymentTeam.id } } });
             const storedLinked = await invoke('deployments.targets.link', {
                 serverId: home.serverId, environmentId: storedEnvironment.environmentId, expectedRevision: storedEnvironment.revision,
                 requestKey: randomUUID(), targetId: 'own-server', role: 'runtime',
@@ -2034,10 +2099,52 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
             const storedCandidate = DeploymentContentV1Schema.parse({ sourceIntent: definition,
                 machines: [home.machineId], buildMachineId: home.machineId, onFailure: 'rollbackAll',
                 images: [s0ImagesA[0]], machineResults: [], steps: [] });
-            const storedDeployed = await invoke('deployments.deploy', { serverId: home.serverId,
+            const storedDeployInput = { serverId: home.serverId,
                 environmentId: storedEnvironment.environmentId, expectedRevision: storedTarget.revision,
                 targetLinkId: storedTarget.targetLinkId, expectedTargetLinkRevision: storedTarget.targetLinkRevision,
-                requestKey: randomUUID(), ...await prepareContent(storedCandidate, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1) });
+                requestKey: randomUUID(), ...await prepareContent(storedCandidate, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1) };
+            const outsider = await db.account.create({ data: { encryptionMode: 'plain' } });
+            const outsiderToken = await createAccountTokenForTests(outsider.id, { kind: 'account', authority: 'present_user' });
+            const foreignAdmission = await fetch(`${home.baseUrl}/v1/deployments/environments/${storedEnvironment.environmentId}/deploy`, {
+                method: 'POST', headers: { Authorization: `Bearer ${outsiderToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...storedDeployInput, requestKey: randomUUID() }),
+            });
+            expect(foreignAdmission.status, 'another Account cannot admit this deployment').toBe(404);
+            expect(DeploymentReceiptResultV1Schema.parse(await foreignAdmission.json()))
+                .toMatchObject({ ok: false, error: 'deployment_unavailable' });
+            let withdrawnAfterAdmission = false;
+            beforeHomeResponse = async (response, payload) => {
+                if (response.method !== 'POST' || response.status !== 200
+                    || response.path !== `/v1/deployments/environments/${storedEnvironment.environmentId}/deploy`) return;
+                const admitted = DeploymentReceiptResultV1Schema.parse(typeof payload === 'string' ? JSON.parse(payload) : payload);
+                if (!admitted.ok || !('deploymentId' in admitted)) throw new Error('Withdrawal requires a real admitted deployment');
+                beforeHomeResponse = undefined;
+                expect(await inTx(tx => removeTeamMemberForActorInTx(tx, {
+                    teamId: deploymentTeam.id, actorAccountId: home.accountId }))).toMatchObject({ ok: true });
+                withdrawnAfterAdmission = true;
+            };
+            let storedDeployed: ActionExecuteResult;
+            try {
+                // K2 / cmwe9utga (GRANT-U4-DEPLOY-1112): withdrawal happens after Home commits the real
+                // receipt, before the installed daemon receives that response.
+                storedDeployed = await invokeWithoutHttpGuard('deployments.deploy', storedDeployInput);
+                expect(withdrawnAfterAdmission, 'Team withdrawal must occur after real receipt admission').toBe(true);
+                expect.soft(storedDeployed, 'GRANT-U4-DEPLOY-1112: admitted deploy continues after Team withdrawal')
+                    .toMatchObject({ ok: true, result: { ok: true, state: 'succeeded' } });
+                const afterWithdrawal = await fetch(`${home.baseUrl}/v1/deployments/environments/${storedEnvironment.environmentId}/deploy`, {
+                    method: 'POST', headers: { Authorization: `Bearer ${home.token}`, 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ ...storedDeployInput, requestKey: randomUUID() }),
+                });
+                expect(afterWithdrawal.status, 'withdrawal refuses a new deployment admission').toBe(404);
+                expect(DeploymentReceiptResultV1Schema.parse(await afterWithdrawal.json()))
+                    .toMatchObject({ ok: false, error: 'deployment_unavailable' });
+            } finally {
+                beforeHomeResponse = undefined;
+                // Restore only this disposable fixture's membership so the
+                // remaining template/read journeys retain their preconditions.
+                if (withdrawnAfterAdmission) await db.teamMembership.create({ data: {
+                    teamId: deploymentTeam.id, accountId: home.accountId, role: 'owner' } });
+            }
             if (!storedDeployed.ok) throw new Error(`Stored deploy Action refused: ${storedDeployed.errorCode}`);
             const storedReceipt = DeploymentReceiptResultV1Schema.parse(storedDeployed.result);
             expect(storedReceipt).toMatchObject({ ok: true, environmentId: storedEnvironment.environmentId, state: 'succeeded' });
@@ -2268,6 +2375,77 @@ describe.skipIf(process.platform !== 'linux')('personal Compose deployment conti
                     revision: { increment: 1 } } });
                 expect(restoredQueryFixture.count).toBe(1);
             }
+            // Reviewed role setup runs on the installed serving member even
+            // when the Environment controller is a different enrolled Machine.
+            const beforeRoleController = await readStoredEnvironment();
+            const roleController = await invoke('deployments.environments.controller.set', {
+                serverId: home.serverId, environmentId: storedEnvironment.environmentId,
+                expectedRevision: beforeRoleController.environment.revision, controllerMachineId,
+            });
+            if (!roleController.ok) throw new Error(`Read-role controller assignment refused: ${roleController.errorCode}`);
+            const roleEnvironment = await readStoredEnvironment();
+            const roleResourceId = randomUUID(), rolePassword = `read-role-${randomUUID()}`;
+            const roleDataKey = crypto.getRandomValues(new Uint8Array(32));
+            const roleSecret = await invoke('secrets.shared.create', { resourceId: roleResourceId, displayName: 'Database read role',
+                kind: 'token', encryptionMode: 'e2ee', storedContent: sealSavedSecretResourceStoredContentV1({
+                    resourceId: roleResourceId, mode: 'e2ee', resourceDataKey: roleDataKey,
+                    content: { v: 1, name: 'Database read role', kind: 'token', value: rolePassword },
+                    randomBytes: length => crypto.getRandomValues(new Uint8Array(length)),
+                }), keyEnvelopes: [{ recipientAccountId: home.accountId,
+                    encryptedDataKey: encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: roleDataKey,
+                        recipientPublicKey: home.encryption.publicKey, randomBytes: length => crypto.getRandomValues(new Uint8Array(length)) }), 'base64'),
+                    recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(home.encryption.publicKey),
+                }] });
+            roleDataKey.fill(0);
+            if (!roleSecret.ok) throw new Error(`Read-role Saved Secret refused: ${roleSecret.errorCode}`);
+            await s0Docker.setReadOnlyQueryOutput('value\n1\n', rolePassword);
+            const readRole = { purpose: 'dataRole', service: 'database', role: 'readOnlyPassword',
+                source: { kind: 'secret', ref: formatSharedSavedSecretRefV1(roleResourceId), resourceRevision: 1 } };
+            const beforeWrongRoleMaterials = authorMaterialRequests;
+            const wrongRoleSetup = await invokeWithoutHttpGuard('deployments.bindings.set', { serverId: home.serverId,
+                environmentId: storedEnvironment.environmentId, expectedRevision: roleEnvironment.environment.revision,
+                set: [{ ...readRole, service: 'analytics' }], remove: [] });
+            expect(wrongRoleSetup).toMatchObject({ ok: false, errorCode: 'target_mismatch' });
+            expect(await readStoredEnvironment()).toEqual(roleEnvironment);
+            expect(await s0Docker.readReadRoleBootstrapCount()).toBe(0);
+            expect(authorMaterialRequests).toBe(beforeWrongRoleMaterials);
+            const setupRole = await invoke('deployments.bindings.set', { serverId: home.serverId,
+                environmentId: storedEnvironment.environmentId, expectedRevision: roleEnvironment.environment.revision,
+                set: [readRole], remove: [] });
+            expect(setupRole.ok, setupRole.ok ? undefined : setupRole.errorCode).toBe(true);
+            if (!setupRole.ok) throw new Error(`Read-role bootstrap refused: ${setupRole.errorCode}`);
+            expect(await s0Docker.readReadRoleBootstrapCount()).toBe(1);
+            expect((await readStoredEnvironment()).environment.revision).toBe(roleEnvironment.environment.revision + 1);
+            const admittedRoleChild = roleChildObservation.admitted;
+            if (!admittedRoleChild) throw new Error('Remote role setup must reach the real installed child receiver');
+            const beforeCancelledRole = (await s0Docker.readInvocations()).filter(row => row.args.includes('exec')).length;
+            const cancelledRole = await admittedRoleChild.execute(admittedRoleChild.args[0], {
+                ...admittedRoleChild.args[1], signal: AbortSignal.abort(),
+            });
+            expect(cancelledRole).toMatchObject({ ok: false, errorCode: 'cancelled' });
+            expect((await s0Docker.readInvocations()).filter(row => row.args.includes('exec')).length).toBe(beforeCancelledRole);
+            authorMaterialOffline = true;
+            const queryEnvironment = await readStoredEnvironment();
+            const query = { serverId: home.serverId, environmentId: storedEnvironment.environmentId,
+                expectedRevision: queryEnvironment.environment.revision, targetLinkId: templateTarget.id,
+                deploymentId: templateReceipt.deploymentId, machineId: home.machineId,
+                installationId: home.installationId, service: 'database', sql: 'SELECT 1 AS value', params: {} };
+            const queried = await invoke('deployments.data.query', query);
+            expect(queried.ok, queried.ok ? undefined : queried.errorCode).toBe(true);
+            if (!queried.ok) throw new Error(`Dedicated read query refused: ${queried.errorCode}`);
+            expect(queried.result).toMatchObject({ columns: [{ name: 'value' }], rows: [['1']], complete: true });
+            const beforeWrongService = (await s0Docker.readInvocations()).filter(row => row.args.includes('exec')).length;
+            const wrongService = await invokeWithoutHttpGuard('deployments.data.query', { ...query, service: 'analytics' });
+            expect(wrongService.ok).toBe(false);
+            const wrongEnvironment = await invokeWithoutHttpGuard('deployments.data.query', { ...query,
+                environmentId: defaultedTemplateResult.environmentId, expectedRevision: defaultedEnvironment.environment.revision });
+            expect(wrongEnvironment.ok).toBe(false);
+            expect((await s0Docker.readInvocations()).filter(row => row.args.includes('exec')).length).toBe(beforeWrongService);
+            const queriedAgain = await invoke('deployments.data.query', query);
+            expect(queriedAgain.ok, queriedAgain.ok ? undefined : queriedAgain.errorCode).toBe(true);
+            expect(await s0Docker.readReadRoleBootstrapCount()).toBe(1);
+            expect(offlineMaterialRequests).toBe(0);
+
             // Run remaining read/preparation roots through this same real
             // executor and Home. Inputs come from the preceding successful
             // creation/deployment, rather than a parallel HTTP-purpose table.

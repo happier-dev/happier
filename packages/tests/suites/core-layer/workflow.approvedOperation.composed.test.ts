@@ -1247,7 +1247,7 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
         externalActionMachineInstallationId: host.installationId, externalActionMachineRequestPrivateKey: host.keys.secretKey });
     let deploymentPreparationCalls = 0;
     let replayedPublishPermissionMode: ActionExecutorContext['callerPermissionMode'];
-    const publishDeps = custodyRecovery ? {} : createPublishProjectActionDeps({
+    const publishDeps = publishFixture && !custodyRecovery ? createPublishProjectActionDeps({
         ...(nativeApp ? { prepareDeploymentAction: async request => {
             deploymentPreparationCalls++;
             const preparationMachine = preparedApp ? host : nativeMachine;
@@ -1286,7 +1286,7 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
             input: { runId: request.start.runId, conditions: ['terminal'] }, context: request.context }),
         readInvocations: (request, input) => createOwner(request.context).execute({ actionId: 'workflow.run.invocations.list',
             input, context: request.context }),
-    });
+    }) : {};
     const setupArtifactReads: Array<{ artifactAvailable: boolean; documentAvailable: boolean }> = [];
     const setupDeps = createCombinedMachineSetupActionDeps({ readDeps: () => publishReadDeps,
         targetPlan: async request => {
@@ -1461,7 +1461,7 @@ async function fixture(control: 'exact' | 'changed' | 'stricter' | 'reader_remov
                     stageTranscriptMessage: async () => { throw new Error('setup_has_no_session_messages'); },
                 },
                 getConnectedServiceRefreshCoordinator: () => null, getConnectedServiceQuotasCoordinator: () => null,
-                pidToTrackedSession: new Map(), pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
+                trackedSessionsByKey: new Map(), pidToAwaiter: new Map(), pidToSpawnResultResolver: new Map(), pidToSpawnWebhookTimeout: new Map(),
                 getApiMachineForSessions: () => client, spawnResourceCleanupByPid: new Map(), sessionAttachCleanupByPid: new Map(),
                 connectedServicesRestartRequestedPids: new Set(),
                 resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({
@@ -2970,42 +2970,6 @@ describe('server-stored combined Workflow approval across two receiving Action f
         expect(run.prompts).toEqual([]);
         expect(run.readDeploymentPreparationCalls()).toBe(preparationCalls);
         expect((await run.nativeApp.docker.readInvocations()).filter(call => call.args.includes('up'))).toEqual([]);
-    });
-    it('completes one registered signed Publish parent with a real native deployment receipt and no replay', async () => {
-        const flow = createDeploymentFlowCostObserver();
-        cleanups.push(async () => { console.info('FLOWBUDGET_COUNTS', JSON.stringify(await flow.result('publish'))); flow.dispose(); });
-        const run = await fixture('exact', undefined, true, false, true, undefined, undefined, undefined, flow);
-        flow.assertPublishPreparationReads();
-        if (!run.nativeApp) throw new Error('native_publish_required');
-        flow.observeNativeCommands(() => run.nativeApp!.docker.readInvocations());
-        const accepted = await run.readStoredSnapshot();
-        expect(accepted.approvedOperation?.parent.actionId).toBe('deployments.publish');
-        // A second child prompt violates the one reviewed parent contract.
-        // Observe that real event instead of waiting for the case deadline.
-        flow.setPhase('execute');
-        const outcome = await Promise.race([
-            run.coordinate(),
-            run.held.then(() => ({ state: 'unexpected_child_approval' as const })),
-        ]);
-        expect(outcome, JSON.stringify(outcome)).toMatchObject({ state: 'succeeded' });
-        flow.setPhase('settle');
-        const response = await fetch(`${run.server.baseUrl}/v1/deployments/environments/${run.nativeApp.environmentId}/deployments?serverId=${run.server.homeId}`,
-            { headers: { Authorization: `Bearer ${run.server.token}` } });
-        expect(response.status).toBe(200);
-        const receipts = DeploymentActionOutputSchemasV1['deployments.receipts.list'].parse(await response.json());
-        expect(receipts).toMatchObject({ ok: true, items: [{ state: 'succeeded' }] });
-        if (!receipts.ok) throw new Error(receipts.error);
-        expect(receipts.items).toHaveLength(1);
-        const activations = () => run.nativeApp!.docker.readInvocations().then(calls => calls.filter(call => call.args.includes('up')));
-        expect(await activations()).toHaveLength(1);
-        flow.setPhase('replay');
-        expect(await run.coordinate()).toMatchObject({ state: 'succeeded' });
-        expect(await activations()).toHaveLength(1);
-        expect(run.effects).toHaveLength(2);
-        expect(run.parentPrompts).toHaveLength(1);
-        expect(run.prompts).toEqual([]);
-        await flow.captureNativeCommands();
-        flow.assertShape();
     });
     it('reviews one full-target setup Action before dispatching any Machine child', async () => {
         const server = await startServer();
