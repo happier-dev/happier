@@ -3,7 +3,10 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import axios, { AxiosHeaders } from 'axios';
 import { describe, expect, it, vi } from 'vitest';
-import { StopSessionResultSchema, SessionMetadataTuplePatchV1Schema } from '@happier-dev/protocol';
+import { StopSessionResultSchema, SessionMetadataTuplePatchV1Schema, createAccountScopedCryptoMaterialSnapshotV1,
+  convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol';
+import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSessionMetadataEnvelopeCreateFields';
+import { tryDecryptSessionOwnerMetadataView } from '@/session/transport/encryption/sessionEncryptionContext';
 import { MachineSessionTerminalCaptureResponseV1Schema } from '@happier-dev/protocol/sessions/control/machineSessionTerminalV1';
 import { withConfiguredDaemonTestHome } from '../testkit/fakeDaemonLifecycle.testkit';
 import { readProcessIdentityByPid } from '../processIdentity';
@@ -20,10 +23,12 @@ import { reattachTrackedSessionsFromMarkers, readOrphanedDeadPlainRunnerMarkers 
 import { publishOrphanedStartupSessionEnds } from './publishOrphanedStartupSessionEnds';
 import { recoverStrandedTerminalControlServiceability } from './recoverStrandedTerminalControlServiceability';
 import { legacyPidSessionTrackingKey, trackedSessionsForProcess } from '@/daemon/sessions/sessionTrackingKey';
+import { retireObservedSessionRunnerMetadata } from './plainRunnerRetirement';
 
 describe.skipIf(process.platform !== 'linux')('offline Stop through physical exit, marker custody and Home recovery', () => {
   it.each(['bound', 'missing-owned-host', 'mode-only', 'mode-only-offline', 'terminal-started-offline', 'missing-marker', 'live-child',
-    'unreported-dead-runner', 'unreported-live-runner'] as const)('releases only durably recoverable dead custody: %s', async wiring => {
+    'unreported-dead-runner', 'unreported-live-runner', 'never-ready', 'ready-retired',
+    'never-ready-e2ee', 'ready-retired-e2ee'] as const)('releases only durably recoverable dead custody: %s', async wiring => {
     await withConfiguredDaemonTestHome({ prefix: 'offline-stop-' }, async ({ homeDir }) => {
       const child = spawn(process.execPath, ['-e', "process.send('ready'); setInterval(() => {}, 1000)"],
         { detached: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] });
@@ -51,7 +56,16 @@ describe.skipIf(process.platform !== 'linux')('offline Stop through physical exi
       if (wiring !== 'missing-marker') await writeSessionMarker({ trackingKey: legacyPidSessionTrackingKey(pid), pid, happySessionId: sessionId, startedBy,
         processStartTimeMs: identity.processStartTimeMs, processCommandHash: identity.processCommandHash });
       const modeOnly = wiring === 'mode-only' || wiring === 'mode-only-offline';
-      let online = wiring === 'mode-only' || unreported;
+      const alreadyAbsent = wiring.startsWith('never-ready') || wiring.startsWith('ready-retired');
+      const accountMode = wiring.endsWith('-e2ee') ? 'e2ee' : 'plain';
+      const secret = new Uint8Array(32).fill(7);
+      const credentials = { token: 'fixture', encryption: accountMode === 'e2ee' ? { type: 'legacy' as const, secret } : null };
+      const accountCurrentness = { mode: accountMode, version: 1, signingKeyFingerprint: null,
+        contentKeyFingerprint: accountMode === 'e2ee'
+          ? convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+            createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material: { type: 'legacy', secret } }).contentPublicKeyFingerprint)
+          : null, updatedAt: 1 };
+      let online = wiring === 'mode-only' || unreported || alreadyAbsent;
       let retired = false;
       let retirementResult: Awaited<ReturnType<typeof retireExactTerminalControlServiceability>> | undefined;
       const raw = createSessionRecordFixture({ id: sessionId, share: null, encryptionMode: 'plain', metadataLayoutVersion: 0,
@@ -66,8 +80,7 @@ describe.skipIf(process.platform !== 'linux')('offline Stop through physical exi
       // metadata production and strict consumer schemas below remain real.
       const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
         if (!online) throw refusal();
-        return { ...response, data: String(url).includes('/v2/sessions/') ? { session: raw } : {
-          mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+        return { ...response, data: String(url).includes('/v2/sessions/') ? { session: raw } : accountCurrentness };
       });
       const patch = vi.spyOn(axios, 'patch').mockImplementation(async (_url, body) => {
         if (!online) throw refusal();
@@ -86,11 +99,16 @@ describe.skipIf(process.platform !== 'linux')('offline Stop through physical exi
         if (modeOnly) expect.soft(parsed).toMatchObject({ mode: 'owner', ownerMetadata: { t: 'plain', v: { runtime: {
           lifecycleState: 'stopped', lifecycleStateSince: expect.any(Number), terminal: { mode: 'tmux' },
         } } } });
-        else expect.soft(parsed).toMatchObject({ mode: 'owner', ownerMetadata: { t: 'plain', v: { runtime: {
+        else if (!alreadyAbsent) expect.soft(parsed).toMatchObject({ mode: 'owner', ownerMetadata: { t: 'plain', v: { runtime: {
           terminal: { mode: wiring === 'missing-owned-host' ? 'tmux' : 'plain', controlServiceabilityV1: {
             retired: true, ...(wiring === 'missing-owned-host' ? { attachmentId: 'retired-owned-host' } : {}) } } } } } });
         raw.ownerMetadata = parsed.ownerMetadata;
         raw.agentState = parsed.agentState.ciphertext;
+        if (alreadyAbsent) expect(tryDecryptSessionOwnerMetadataView({ credentials,
+          accountEncryptionMode: accountMode, rawSession: raw })).toMatchObject({
+          lifecycleState: 'stopped', lifecycleStateSince: expect.any(Number),
+          terminal: { mode: 'plain', controlServiceabilityV1: { retired: true } },
+        });
         retired = true;
         return { ...response, data: { success: true, metadataLayoutVersion: 1,
           sharedMetadata: { version: raw.metadataVersion }, agentState: { version: raw.agentStateVersion } } };
@@ -111,11 +129,11 @@ describe.skipIf(process.platform !== 'linux')('offline Stop through physical exi
           await resolveTrackedSessionTerminalHostExitCandidate({ tracked, pid, happyHomeDir: homeDir, attachmentInfo: null });
         } });
       const retire = async (stoppedAt?: number, expectedRunner = { pid, startTimeMs: identity.processStartTimeMs }) => {
-        const input = { credentials: { token: 'fixture', encryption: null }, sessionId, terminalMode: 'plain' as const,
+        const input = { credentials, sessionId, terminalMode: 'plain' as const,
           expectedRunner, stoppedAt };
         const retirement = await retireExactTerminalControlServiceability(input);
         retirementResult = retirement;
-        expect(retirement).toBe(unreported ? 'superseded' : 'retired');
+        if (!alreadyAbsent) expect(retirement).toBe(unreported ? 'superseded' : 'retired');
         return retirement;
       };
       const observeExit = async ({ trackedPids }: { trackedPids: readonly number[] }, onExitObserved?: typeof onExit) =>
@@ -124,13 +142,31 @@ describe.skipIf(process.platform !== 'linux')('offline Stop through physical exi
       try {
         if (wiring !== 'live-child') { child.kill('SIGTERM'); await exited; }
         if (wiring === 'unreported-dead-runner') { nativeChild!.kill('SIGTERM'); await nativeExited; }
+        if (alreadyAbsent) {
+          // A never-ready launch need not publish its runner tuple. A READY
+          // runner's ordinary exit owner removes that tuple before a later Stop.
+          const metadata = wiring.startsWith('never-ready') ? { path: homeDir, machineId: 'fixture-machine' }
+            : await retireObservedSessionRunnerMetadata({ metadata: { ...JSON.parse(raw.metadata!),
+                lifecycleState: 'running', lifecycleStateSince: Date.now() }, sessionId,
+              happyHomeDir: homeDir, trackedSession: tracked,
+              expectedRunner: { pid, startTimeMs: identity.processStartTimeMs! } });
+          expect(metadata).not.toHaveProperty('hostPid');
+          const fields = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: accountMode,
+            metadata, agentState: null, ...(accountMode === 'e2ee'
+              ? { storedContentMode: 'e2ee', encryptionKey: secret, encryptionVariant: 'legacy' }
+              : { storedContentMode: 'plain' }) });
+          Object.assign(raw, { encryptionMode: accountMode, metadataLayoutVersion: fields.metadataLayoutVersion,
+            metadata: fields.sharedMetadata.ciphertext, ownerMetadata: fields.ownerMetadata, agentState: fields.agentState });
+        }
         const stop = createStopSession({ trackedSessionsByKey: sessions, areTrackedRunnersExited: observeExit,
           waitForTrackedRunnersExit: async input => await observeExit(input, onExit)
             && input.trackedPids.every(pid => trackedSessionsForProcess(sessions, pid).length === 0),
           retireAbsentTerminalControlServiceability: ({ stoppedAt }) =>
             retireStoppedPlainRunnerControlServiceability({ sessionId, trackedSession: tracked,
               publishRetirement: expectedRunner => retire(stoppedAt, expectedRunner) }),
-          recoverStrandedTerminalControlServiceability: input => recoverStrandedTerminalControlServiceability({
+          // Exact retirement must settle its own idempotent cases without the
+          // optional untracked recovery path lending a second topology proof.
+          recoverStrandedTerminalControlServiceability: alreadyAbsent ? undefined : input => recoverStrandedTerminalControlServiceability({
             ...input, credentials: { token: 'fixture', encryption: null }, currentMachineId: 'fixture-machine',
             loadTerminalHostAdapters: async () => ({}),
             retireExactTerminalControlServiceability: target => retireExactTerminalControlServiceability({
@@ -140,7 +176,13 @@ describe.skipIf(process.platform !== 'linux')('offline Stop through physical exi
           // Refuse OS effect authority for the live-child sensitivity vector.
           retireUpstreamAuthorityBeforeProcessStop: wiring === 'live-child' ? async () => false : undefined });
         const result = StopSessionResultSchema.parse(await stop(sessionId));
-        if (unreported) {
+        if (alreadyAbsent) {
+          expect(result).toEqual({ status: 'stopped' });
+          expect(retirementResult).toBe('retired');
+          expect(retired).toBe(true);
+          expect(sessions.size).toBe(0);
+          expect(child.exitCode !== null || child.signalCode !== null).toBe(true);
+        } else if (unreported) {
           expect(retirementResult).toBe('superseded');
           expect(result).toEqual(wiring === 'unreported-dead-runner' ? { status: 'stopped' }
             : { status: 'incomplete', reason: 'tracked_runner_absent' });

@@ -65,6 +65,27 @@ describe('retireExactTerminalControlServiceability', () => {
         });
     });
 
+    it.each(['replacement-runner', 'replacement-birth', 'active-attachment'] as const)(
+        'does not infer an already-absent Stop target over %s', async state => {
+        await withConfiguredDaemonTestHome({ prefix: 'stop-replacement-' }, async () => {
+            const pid = 999_123_456;
+            const metadata = { path: '/repo', ...(state === 'active-attachment'
+                ? { terminal: { mode: 'tmux', controlServiceabilityV1: { v: 1, attachmentId: 'active-host',
+                    state: 'servable', observedAt: 1 } } }
+                : { hostPid: state === 'replacement-runner' ? pid + 1 : pid, hostProcessStartTimeMs: 201 }) };
+            vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200,
+                data: String(url).includes('/v2/sessions/') ? { session: createSessionRecordFixture({ id: 'replacement-stop',
+                    encryptionMode: 'plain', metadataLayoutVersion: 0, metadataVersion: 1,
+                    metadata: JSON.stringify(metadata) }) }
+                    : { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } }));
+            const patch = vi.spyOn(axios, 'patch');
+            await expect(retireExactTerminalControlServiceability({ credentials: { token: 'fixture', encryption: null },
+                sessionId: 'replacement-stop', terminalMode: 'plain', expectedRunner: { pid, startTimeMs: 200 },
+                stoppedAt: 1234 })).resolves.toBe('superseded');
+            expect(patch).not.toHaveBeenCalled();
+        });
+    });
+
     it.each(['current', 'already-retired', 'replacement'] as const)(
         'publishes confirmed Stop only for the exact %s terminal attachment', async state => {
         vi.spyOn(axios, 'get').mockImplementation(async url => ({ status: 200,

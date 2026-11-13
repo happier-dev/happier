@@ -66,11 +66,24 @@ export async function retireExactTerminalControlServiceability(params: Readonly<
     /** Supplied only by the physical Stop owner after positive process/host retirement. */
     stoppedAt?: number;
 }> & TerminalControlServiceabilityRetirementTarget): Promise<ExactTerminalControlServiceabilityRetirement> {
-    const matchesExpectedRunner = (metadata: Readonly<Record<string, unknown>>) =>
-        params.expectedPlainRetirement !== undefined
-            ? readRetiredPlainRunnerObservation(metadata) === params.expectedPlainRetirement
-            : !params.expectedRunner || (metadata.hostPid === params.expectedRunner.pid
-                && (params.expectedRunner.startTimeMs === undefined || metadata.hostProcessStartTimeMs === params.expectedRunner.startTimeMs));
+    const matchesRetirementTarget = (metadata: Readonly<Record<string, unknown>>) => {
+        if (params.expectedPlainRetirement !== undefined) {
+            return readRetiredPlainRunnerObservation(metadata) === params.expectedPlainRetirement;
+        }
+        if (!params.expectedRunner) return true;
+        if (metadata.hostPid !== undefined || metadata.hostProcessStartTimeMs !== undefined) {
+            return metadata.hostPid === params.expectedRunner.pid
+                && (params.expectedRunner.startTimeMs === undefined || metadata.hostProcessStartTimeMs === params.expectedRunner.startTimeMs);
+        }
+        // Startup may never publish a runner tuple; confirmed exit may already
+        // retire it. Neither absence can supersede this Stop. Still require the
+        // local dead-runner/absent-host proof below, and never retire an active host.
+        if (metadata.terminal === undefined || readRetiredPlainRunnerObservation(metadata) !== null) return true;
+        const terminal = metadata.terminal;
+        return !!terminal && typeof terminal === 'object' && !Array.isArray(terminal)
+            && (terminal as Record<string, unknown>).mode === 'plain'
+            && (terminal as Record<string, unknown>).controlServiceabilityV1 === undefined;
+    };
     assertSessionMetadataMutationCurrentness(params.currentness);
     const currentnessHeaders = params.resolveAuthorizationHeaders?.({ method: 'GET', path: '/v1/account/encryption/currentness' });
     if (params.resolveAuthorizationHeaders && !currentnessHeaders) throw new Error('Terminal retirement Account authorization unavailable');
@@ -109,7 +122,7 @@ export async function retireExactTerminalControlServiceability(params: Readonly<
         updater: async (metadata) => {
             retiredAttachmentId = params.attachmentId;
             projectionAlreadyAbsent = false;
-            if (!matchesExpectedRunner(metadata)) return metadata;
+            if (!matchesRetirementTarget(metadata)) return metadata;
             if (params.expectedRunner || params.expectedPlainRetirement !== undefined) {
                 const attachment = await readTerminalHostAttachmentState({
                     happyHomeDir: configuration.happyHomeDir, sessionId: params.sessionId,
@@ -152,7 +165,7 @@ export async function retireExactTerminalControlServiceability(params: Readonly<
                 ? withStoppedLifecycle(retired) : retired;
         },
     });
-    if (!matchesExpectedRunner(updated.metadata)) return 'superseded';
+    if (!matchesRetirementTarget(updated.metadata)) return 'superseded';
     if (projectionAlreadyAbsent) return 'retired';
     const terminal = updated.metadata.terminal;
     if (!terminal || typeof terminal !== 'object' || Array.isArray(terminal)) return 'superseded';
