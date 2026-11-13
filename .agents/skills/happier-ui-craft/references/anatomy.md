@@ -94,9 +94,9 @@ Description of what the section controls, above it.
     joins the description line), so don't move it by hand per screen.
   - Footers: `HappierModalCardFooterActions` stacks three or more phone sheet actions. A row or card
     keeps at most one text action beside its sentence; the rest go under it or into "…".
-  - Tree indent comes from the tree's owner token (`resolveHappierTreeRowIndentPx`,
-    `resolveHappierCollectionTreeChildIndentPx`, `SESSION_LIST_REPORTS_INDENT_STEP_PX`), never a local
-    number or override prop.
+  - Tree indent comes from the tree's owner token: `resolveHappierTreeRowIndentPx` for disclosure trees,
+    `resolveHappierCollectionTreeChildIndentPx` for column trees (Sessions reports included), never a
+    local number or override prop.
 
 ## Hubs
 

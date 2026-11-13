@@ -459,24 +459,28 @@ function VitalsRingRow(
         size={36}
         strokeWidth={3}
       />
+      {/* The figure shares the name's line; the detail takes the whole line under both, so a narrow
+          phone never cuts it to "133 of 251 GB i…" beside the figure (phone row rule, PHONE-ROWS-HUNT). */}
       <View style={styles.ringText}>
-        <Text numberOfLines={1} style={styles.ringLabel}>
-          {t(METRIC_TITLE_KEYS[metric])}
-        </Text>
+        <View style={styles.ringHead}>
+          <Text numberOfLines={1} style={styles.ringLabel}>
+            {t(METRIC_TITLE_KEYS[metric])}
+          </Text>
+          <View style={styles.ringValue}>
+            {value ? (
+              <VitalsValue
+                value={value.value}
+                {...(value.unit ? { unit: value.unit } : {})}
+                {...(instrument.tone !== 'calm' ? { color: tone } : {})}
+              />
+            ) : (
+              <VitalsValue value={t('machineVitals.unmeasured')} />
+            )}
+          </View>
+        </View>
         <VitalsSubLine>
           {describeRowDetail(metric, summary, props.published) ?? ' '}
         </VitalsSubLine>
-      </View>
-      <View style={styles.ringValue}>
-        {value ? (
-          <VitalsValue
-            value={value.value}
-            {...(value.unit ? { unit: value.unit } : {})}
-            {...(instrument.tone !== 'calm' ? { color: tone } : {})}
-          />
-        ) : (
-          <VitalsValue value={t('machineVitals.unmeasured')} />
-        )}
       </View>
     </HappierPressable>
   );
@@ -700,13 +704,22 @@ const styles = StyleSheet.create((theme) => ({
     flex: 1,
     minWidth: 0,
   },
+  ringHead: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: theme.space.s12,
+    minWidth: 0,
+  },
   ringLabel: {
     ...Typography.variant('label', 'semiBold'),
     color: theme.colors.text.primary,
+    flexShrink: 1,
   },
   ringValue: {
     flexDirection: 'row',
     alignItems: 'baseline',
     gap: 3,
+    marginLeft: 'auto',
+    flexShrink: 0,
   },
 }));

@@ -18,3 +18,14 @@ export function resolveCockpitTrackRevealTarget(tabIds: readonly string[], activ
     if (tabIds[0] === activeId) return null;
     return tabIds.includes(activeId) ? activeId : null;
 }
+
+/**
+ * How wide each tab of a scrolling phone bar's track is, so a whole number of tabs fills the visible track and its
+ * edge falls between two tabs, never through one: no glyph stub of a half-shown tab at rest (phone row rule,
+ * PHONE-ROWS-HUNT). Null until the track is measured; tabs keep their own width meanwhile.
+ */
+export function resolveCockpitTrackItemWidth(input: Readonly<{ viewport: number; minWidth: number }>): number | null {
+    if (!(input.viewport > 0) || !(input.minWidth > 0)) return null;
+    const whole = Math.max(1, Math.floor(input.viewport / input.minWidth));
+    return input.viewport / whole;
+}

@@ -13,6 +13,7 @@ import {
 import { Text, type AppTextProps } from '@/components/ui/text/Text';
 import { Icon, type IconName } from '@/components/ui/icons/Icon';
 import { Typography } from '@/constants/Typography';
+import { useLocalSetting } from '@/sync/store/settingsReadHooks';
 import { useIsTablet, usePresentationWindowDimensions } from '@/utils/platform/responsive';
 import { VIEWPORT_CLASS_MIN_EDGE_BREAKPOINTS_PX } from '@/utils/platform/viewportClass';
 
@@ -145,9 +146,28 @@ export function CollectionRowLine({
 }
 
 /**
+ * A title line's qualifiers as one group that yields to the name (the phone row rule, PHONE-ROWS-HUNT): the name
+ * keeps line 1 and ends in one ellipsis, and a badge that no longer fits whole wraps out of this one-line group,
+ * so it never stands as a stub beside a truncated name. Pure layout, nothing measured: the zero-width lead keeps
+ * even the first badge from being forced onto the visible line. The row's accessible label still names them.
+ */
+export function CollectionRowBadges(props: Readonly<{ children: React.ReactNode }>): React.ReactElement {
+  // One micro line at the reader's text size (web scales the micro role by the same setting).
+  const scale = useLocalSetting('uiFontScale');
+  const lineHeight = Number(Typography.variant('micro').lineHeight ?? 14) * (typeof scale === 'number' && scale > 0 ? scale : 1);
+  return (
+    <View style={[badgeStyles.group, { height: lineHeight }]}>
+      {/* The lead holds the visible line's height, so a badge that wraps lands on the clipped second line. */}
+      <View style={[badgeStyles.groupLead, { height: lineHeight }]} />
+      {props.children}
+    </View>
+  );
+}
+
+/**
  * One quiet qualifier on a row's title line (lab `clctx` `.bdg`): where the work runs — its Project, branch or
- * Machine — in the tertiary micro role, with an optional glyph. It yields width before the title does and
- * ellipsizes inside its own short width.
+ * Machine — in the tertiary micro role, with an optional glyph. It lives in `CollectionRowBadges`, which yields
+ * it whole before the title gives up width, and ellipsizes inside its own short width.
  */
 export function CollectionRowBadge(props: Readonly<{ icon?: IconName; label: string; testID?: string }>): React.ReactElement {
   const { theme } = useUnistyles();
@@ -160,6 +180,20 @@ export function CollectionRowBadge(props: Readonly<{ icon?: IconName; label: str
 }
 
 const badgeStyles = StyleSheet.create((theme) => ({
+  group: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    overflow: 'hidden',
+    minWidth: 0,
+    // No width of its own: it takes only what the name leaves, so the name is never cut for a badge. At zero it
+    // takes back the title line's gap before it.
+    flexBasis: 0,
+    flexGrow: 1,
+    flexShrink: 1,
+    marginLeft: -HAPPIER_COLLECTION_ROW_METRICS.titleGap,
+  },
+  groupLead: { width: 0 },
   badge: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -169,6 +203,7 @@ const badgeStyles = StyleSheet.create((theme) => ({
     minWidth: 46,
     maxWidth: 92,
     gap: 3,
+    marginLeft: HAPPIER_COLLECTION_ROW_METRICS.titleGap,
   },
   label: { color: theme.colors.text.tertiary, flexShrink: 1, minWidth: 0 },
 }));

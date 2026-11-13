@@ -1,6 +1,6 @@
 import { useSessionArchivePending } from '@/hooks/session/useSessionArchivePending';
 import { normalizeSessionAddress } from '@/sync/domains/session/sessionAddress';
-import { HAPPIER_COLLECTION_ROW_METRICS, HAPPIER_META_COLUMN_STYLE, HappierMaterialRoleProvider, useContainingHappierMaterialRole, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_COLLECTION_ROW_METRICS, HAPPIER_META_COLUMN_STYLE, HappierMaterialRoleProvider, resolveHappierCollectionTreeChildIndentPx, useContainingHappierMaterialRole, useHappierMaterialColorResolver } from '@happier-dev/plugin-ui/presentation';
 import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
 import { readSessionLiveManagedSessionCountV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import React from 'react';
@@ -78,7 +78,7 @@ import { WorkStatusRowMark, WorkStatusRowWord } from '@/components/work/status/W
 import { resolveWorkStatusRowMark } from '@/components/work/status/workStatusRowMark';
 import { SessionRowReportsChip, SessionRowReportsDisclosure, hasSessionRowReportsChip } from './row/SessionRowReportsChip';
 import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionListIndex';
-import { CollectionRowBadge, CollectionRowContent, CollectionRowLine, CollectionRowTitle, useTouchCompactRow } from '@/components/ui/lists/collection/CollectionRowContent';
+import { CollectionRowBadge, CollectionRowBadges, CollectionRowContent, CollectionRowLine, CollectionRowTitle, useTouchCompactRow } from '@/components/ui/lists/collection/CollectionRowContent';
 import { WorkflowRunItemBody, type WorkflowRunItemProps } from './row/WorkflowRunItemBody';
 import { useWorkflowSessionOccurrence } from './row/useWorkflowSessionOccurrence';
 import { resolveWorkflowInvocationWorkStatus } from '@/components/workflows/presentation/workflowLifecyclePresentation';
@@ -90,7 +90,7 @@ import {
     resolveSessionListRowStatusTextMetrics,
 } from './resolveSessionListDensityViewState';
 import { resolveSessionRowInteractionPolicy } from './row/resolveSessionRowInteractionPolicy';
-import { SESSION_LIST_REPORTS_INDENT_STEP_PX, SESSION_LIST_SHEET_INSET_PX } from './sessionListStyles';
+import { SESSION_LIST_SHEET_INSET_PX } from './sessionListStyles';
 import { resolveSessionItemTagCollections } from './sessionTagUtils';
 import { planSessionTagDisplay } from './sessionTagPlacement';
 import { EntityDragGrip } from '@/components/ui/treeDragDrop/ui/EntityReleasePreview';
@@ -1739,7 +1739,7 @@ const SessionItemContent = React.memo(
                             testID={`session-list-item-reports-gutter-${occurrenceTestId}`}
                             accessibilityElementsHidden
                             importantForAccessibility="no-hide-descendants"
-                            style={[styles.reportsGutter, { width: normalizedReportsDepth * SESSION_LIST_REPORTS_INDENT_STEP_PX }]}
+                            style={[styles.reportsGutter, { width: normalizedReportsDepth * resolveHappierCollectionTreeChildIndentPx() }]}
                         >
                             <View style={styles.reportsConnector} />
                         </View>
@@ -1892,9 +1892,13 @@ const SessionItemContent = React.memo(
                                 />
                             </View>
                         ) : null}
+                        {/* A lead's progress hugs its title (lab `clgroups` coordinator: "3/5 done"); the context
+                            badges after it take only the room the name and progress leave. */}
+                        {reportsChip}
                         {/* Where it runs, beyond what its group implies (lab `clctx`): Project and branch. */}
-                        {rowContext && !showStandardSecondaryLine && !isSessionIdentityLoading ? (
-                            <>
+                        {rowContext && !showStandardSecondaryLine && !isSessionIdentityLoading
+                            && ((rowContext.project && !(rowContext.project.yieldsToFavicon && rowProjectFavicon)) || rowContext.checkout) ? (
+                            <CollectionRowBadges>
                                 {rowContext.project && !(rowContext.project.yieldsToFavicon && rowProjectFavicon) ? (
                                     <CollectionRowBadge testID={`session-list-row-context-project-${occurrenceTestId}`}
                                         label={rowContext.project.label} />
@@ -1903,10 +1907,8 @@ const SessionItemContent = React.memo(
                                     <CollectionRowBadge testID={`session-list-row-context-checkout-${occurrenceTestId}`}
                                         icon={rowContext.checkout.kind === 'branch' ? 'git-branch' : 'folder'} label={rowContext.checkout.label} />
                                 ) : null}
-                            </>
+                            </CollectionRowBadges>
                         ) : null}
-                        {/* A lead's progress hugs its title (lab `clgroups` coordinator: "3/5 done"). */}
-                        {reportsChip}
                 </>}
                 children={<>
                     {draft && draftPreview && !compact && draft.hasPreview ? (

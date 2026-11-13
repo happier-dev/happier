@@ -38,7 +38,8 @@ import { WORKER_KIND_GLYPHS } from '@/components/sessions/work/workerKindGlyphs'
 import { resolveSessionRowTitleColorRole, sessionRowTitleInk, type SessionListActiveColorModeV1 } from './sessionRowTitleColorRole';
 
 import { resolveCollectionRowDensity, type SessionListRowDensity } from '../resolveSessionListDensityViewState';
-import { SESSION_LIST_REPORTS_INDENT_STEP_PX, SESSION_LIST_SHEET_INSET_PX } from '../sessionListStyles';
+import { resolveHappierCollectionTreeChildIndentPx } from '@happier-dev/plugin-ui/presentation';
+import { SESSION_LIST_SHEET_INSET_PX } from '../sessionListStyles';
 import { CollectionRowContent, CollectionRowLine, CollectionRowTitle, useTouchCompactRow } from '@/components/ui/lists/collection/CollectionRowContent';
 
 export type WorkflowRunItemProps = Readonly<{
@@ -229,7 +230,7 @@ export function WorkflowRunItemBody(props: WorkflowRunItemProps): React.ReactEle
             accessibilityLabel={[name, word, context, starterLabel, editedBy].filter(Boolean).join('. ')}
             onPress={() => router.push(createWorkflowRunRoute(props.runId, props.serverId) as never)} />
     );
-    return <View testID={`workflow-run-sheet:${props.runId}`} style={[styles.row, depth > 0 ? { paddingLeft: depth * SESSION_LIST_REPORTS_INDENT_STEP_PX } : null]}>
+    return <View testID={`workflow-run-sheet:${props.runId}`} style={[styles.row, depth > 0 ? { paddingLeft: depth * resolveHappierCollectionTreeChildIndentPx() } : null]}>
         <View style={depth > 0 ? styles.guide : null}>
             <CollectionRowContent density={rowDensity} touchCompact={readablePhone} textScale={fontScale}
                 selected={props.selected} hovered={hovered}

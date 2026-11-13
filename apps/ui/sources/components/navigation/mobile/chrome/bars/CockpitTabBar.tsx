@@ -19,7 +19,7 @@ import { resolveHorizontalScrollEdgeMaskRamps, resolveHorizontalScrollEdgeMaskSt
 import { useScrollEdgeFades } from '@/components/ui/scroll/useScrollEdgeFades';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { usePublishCockpitBarScrolls } from './cockpitBarScrollState';
-import { resolveCockpitTrackRevealTarget, resolveCockpitTrackRevealX } from './cockpitTrackReveal';
+import { resolveCockpitTrackItemWidth, resolveCockpitTrackRevealTarget, resolveCockpitTrackRevealX } from './cockpitTrackReveal';
 import { CockpitBarFoldedContext } from '../pageBarChromeFold';
 
 
@@ -240,7 +240,7 @@ export function CockpitTabBarView<TSurface extends string>(props: CockpitTabBarP
                         {props.tabs[0] ? renderTab(props.tabs[0]) : null}
                         <View style={styles.trackDivider} />
                         <CockpitTabBarTrack activeId={resolveCockpitTrackRevealTarget(props.tabs.map(tab => tab.id), props.activeSurface) ?? undefined}
-                            lastId={props.tabs.at(-1)?.id}>
+                            lastId={props.tabs.at(-1)?.id} tabMinWidth={metrics.tabMinWidth}>
                             {props.tabs.slice(1).map(tab => (
                                 <CockpitTabBarTrackItem key={tab.id} id={tab.id}>{renderTab(tab)}</CockpitTabBarTrackItem>
                             ))}
@@ -274,14 +274,17 @@ const TrackRevealContext = React.createContext<((id: string, x: number, width: n
 /** Reports where a tab sits in the track, so the track can bring the selected one into view. */
 function CockpitTabBarTrackItem(props: Readonly<{ id: string; children: React.ReactNode; style?: StyleProp<ViewStyle> }>) {
     const report = React.useContext(TrackRevealContext);
+/** Each track tab's width once the track is measured: a whole number of tabs fills it (`resolveCockpitTrackItemWidth`). */
+const TrackItemWidthContext = React.createContext<number | null>(null);
     return (
-        <View style={props.style} onLayout={report ? (event) => report(props.id, event.nativeEvent.layout.x, event.nativeEvent.layout.width) : undefined}>
+        <View style={[props.style, width === null ? null : { width }]} onLayout={report ? (event) => report(props.id, event.nativeEvent.layout.x, event.nativeEvent.layout.width) : undefined}>
             {props.children}
         </View>
+    const width = React.useContext(TrackItemWidthContext);
     );
 }
 
-function CockpitTabBarTrack(props: Readonly<{ children: React.ReactNode; activeId?: string; lastId?: string }>) {
+function CockpitTabBarTrack(props: Readonly<{ children: React.ReactNode; activeId?: string; lastId?: string; tabMinWidth: number }>) {
     const fades = useScrollEdgeFades({ enabledEdges: { left: true, right: true }, overflowThreshold: 4, edgeThreshold: 2 });
     // The selected tab is scrolled into view (Plan 30 §457) when it, or the track's width, changes; a person's own
     // scroll is left alone until then.
@@ -314,6 +317,8 @@ function CockpitTabBarTrack(props: Readonly<{ children: React.ReactNode; activeI
         [fades.visibility.left, fades.visibility.right]);
     const webMask = React.useMemo(() => Platform.OS === 'web' ? resolveHorizontalScrollEdgeMaskStyle(edges, TRACK_EDGE_FADE) : undefined, [edges]);
     const nativeRamps = React.useMemo(() => Platform.OS === 'web' ? null : resolveHorizontalScrollEdgeMaskRamps(edges, TRACK_EDGE_FADE), [edges]);
+    const [viewportWidth, setViewportWidth] = React.useState(0);
+    const itemWidth = resolveCockpitTrackItemWidth({ viewport: viewportWidth, minWidth: props.tabMinWidth });
     const onViewportLayout = (event: LayoutChangeEvent) => {
         fades.onViewportLayout(event);
         viewport.current = event.nativeEvent.layout.width;
@@ -321,6 +326,7 @@ function CockpitTabBarTrack(props: Readonly<{ children: React.ReactNode; activeI
         if (Platform.OS !== 'web') setNativeWidth(event.nativeEvent.layout.width);
     };
     const track = (
+        setViewportWidth(event.nativeEvent.layout.width);
         <ScrollView
             ref={scrollRef}
             horizontal
@@ -331,7 +337,9 @@ function CockpitTabBarTrack(props: Readonly<{ children: React.ReactNode; activeI
             onScroll={onScroll}
             scrollEventThrottle={32}
         >
-            <TrackRevealContext.Provider value={report}>{props.children}</TrackRevealContext.Provider>
+            <TrackItemWidthContext.Provider value={itemWidth}>
+                <TrackRevealContext.Provider value={report}>{props.children}</TrackRevealContext.Provider>
+            </TrackItemWidthContext.Provider>
         </ScrollView>
     );
     return (
