@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { createJiti } from 'jiti';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { ErrorCode as McpErrorCode } from '@modelcontextprotocol/sdk/types.js';
 import { readEffectiveAgentSessionCompactionCapability } from '@happier-dev/agents';
 import { SessionStartupInputRefusalError } from '@/agent/runtime/session/input/sessionStartupInputRefusal';
 import { createSessionRoleContext } from '@/session/roles/sessionRoleContext';
@@ -18,6 +19,7 @@ import { HOST_SESSION_RUNTIME_PLAN_KIND, type HostSessionRuntimePlan } from '@/a
 import { createRoleActionExecutor } from '@/session/actions/roleActions';
 import { createCliPersonalSavedSecretActionExecute } from '@/settings/secrets/personalSavedSecretActionHost';
 import { createTestMetadata } from '@/testkit/backends/sessionMetadata';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createFxConfigOptionsFixture } from '@/agent/acp/testkit/fxConfigOptionsFixture';
 import { applyRegisteredSessionStateFieldMutationToMetadata } from '@/api/session/client/transport/mutations/applyRegisteredSessionStateFieldMutation';
 import { resolveAgentSessionMcpLaunchConfigs, toAgentSessionMcpLaunchConfigs } from './nativeAgentSession';
@@ -36,6 +38,7 @@ import {
     createTerminalHostFixture as createClaudeTerminalHostFixture,
 } from '../../../../../../../packages/plugins/claude/src/agent/runtime/engine.testkit';
 import * as processIdentity from '@/daemon/processIdentity';
+import * as daemonControlHttp from '@/daemon/controlHttp';
 import { CODEBUDDY_PROVIDER_BINDING_ADAPTER_V1 } from '../../../../../../../packages/plugins/codebuddy/src/agent/providerBinding/adapter';
 
 it('restricts native MCP catalogs through the session matcher without confusing server prefixes', () => {
@@ -976,27 +979,25 @@ describe('native Agent session host adapter', () => {
             const identitySpy = vi.spyOn(processIdentity, 'readProcessIdentityByPid').mockResolvedValue({
                 pid: process.pid, processStartTimeMs: 1, command,
             });
-            const originalFetch = globalThis.fetch;
             const events: string[] = [];
-            const fetchSpy = vi.fn<typeof fetch>(async (_url, init) => {
-                const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(JSON.parse(String(init?.body)));
+            const daemonHttp = vi.spyOn(daemonControlHttp, 'readDaemonControlHttpResponse').mockImplementation(async input => {
+                const request = AgentRuntimeDaemonServiceRequestV1Schema.parse(input.body);
                 expect(request.context.sessionId).toBe(sessionId);
                 if (request.operation.kind === 'mcp.request_auth.open') {
                     events.push('daemon-mcp');
-                    return new Response(JSON.stringify({ ok: true, result: { kind: 'mcp.request_auth',
-                        capabilityFile: join(directory, 'mcp-capability.json'), resource: request.operation.resource } }), { status: 200 });
+                    return { ok: true, status: 200, body: JSON.stringify({ ok: true, result: { kind: 'mcp.request_auth',
+                        capabilityFile: join(directory, 'mcp-capability.json'), resource: request.operation.resource } }) };
                 }
                 if (request.operation.kind === 'mcp.request_auth.close') {
-                    return new Response(JSON.stringify({ ok: true, result: { kind: 'mcp.request_auth.closed' } }), { status: 200 });
+                    return { ok: true, status: 200, body: JSON.stringify({ ok: true, result: { kind: 'mcp.request_auth.closed' } }) };
                 }
                 expect(request.operation.kind).toBe('turn_contributions.resolve');
                 events.push('daemon-prompt');
-                return new Response(JSON.stringify({ ok: true, result: {
+                return { ok: true, status: 200, body: JSON.stringify({ ok: true, result: {
                     kind: 'turn_contributions', status: 'resolved',
                     contributions: { kind: 'prompt', promptAssetBlocks: [], toolPromptContributions: [] },
-                } }), { status: 200 });
+                } }) };
             });
-            globalThis.fetch = fetchSpy;
             const generation = new AbortController();
             let source: Awaited<ReturnType<typeof createRunnerAgentSessionRuntimeBootstrap>> = null;
             try {
@@ -1103,7 +1104,7 @@ describe('native Agent session host adapter', () => {
                 generation.abort();
                 await source?.retire?.();
                 await issued.cleanupBootstrapFile();
-                globalThis.fetch = originalFetch;
+                daemonHttp.mockRestore();
                 identitySpy.mockRestore();
             }
         });
@@ -1486,7 +1487,17 @@ describe('native Agent session host adapter', () => {
                 const invocationLogger = createPluginInvocationLogger({ seed: invocationSeed, sink: { write(record) { logger.infoFile('Selected-Claude fixture diagnostic', record); } } });
                 const runtimePath = '../../../../../../../packages/plugins/claude/src/agent/runtime/nativeRuntime.ts';
                 const { createClaudeAgentRuntime: factory }: Readonly<{ createClaudeAgentRuntime: AgentRuntimeFactory }> = await import(runtimePath);
-                const runtime = await factory({ plugin: { id: pluginId, version: '0.0.0' }, agent: { id: 'claude' }, signal: generation.signal });
+                const nativeRuntime = await factory({ plugin: { id: pluginId, version: '0.0.0' }, agent: { id: 'claude' }, signal: generation.signal });
+                const runtime: AgentRuntime = selectedMode === 'sdk' ? { ...nativeRuntime, sessions: { ...nativeRuntime.sessions,
+                    // Substitute only the vendor JSON-stream transport. The host retains
+                    // the genuine Exec service that issues native attach authority.
+                    open: (request, context) => nativeRuntime.sessions!.open!(request, {
+                        ...context, services: { ...context.services, exec: { ...context.services.exec,
+                            systemTools: { ...context.services.exec.systemTools, resolve: async () => ({ executable: { kind: 'systemTool' as const, id: 'claude-cli' }, executablePath: nativePath }) },
+                            clients: { spawn: async () => createSdkClient() } as unknown as HostPluginServices['exec']['clients'],
+                        } },
+                    }),
+                } } : nativeRuntime;
                 const sessionId = 'selected-host-happier';
                 const attachment = await writeTerminalHostAttachmentInfo({ happyHomeDir: directory, sessionId, lifecycle: 'borrowed', handle: { kind: 'herdr', sessionName: 'selected-test', socketPath: api.socketPath, terminalId: 'p1', paneId: 'p1', attachMetadata: { attachStrategy: 'terminal_host', topology: 'shared', locality: 'same_machine', liveProbe: 'required' } } });
                 const terminal = buildTerminalMetadataFromHostHandle(attachment.handle);
@@ -1540,7 +1551,7 @@ describe('native Agent session host adapter', () => {
                     ...(selectedMode === 'unified' ? { retainedTerminalRecovery: 'adopt' } : {}),
                 });
                 const { createAdmittedPluginRuntimeFixture } = await import('@/plugins/testkit/admittedRuntime');
-                const admitted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: directory,
+                const admitted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: directory, controller: codexBootstrapController,
                     runtimeOptions: { pluginIds: [pluginId], createAgentInvocationServices: async () => ({
                         ...createUnavailablePluginServices(), settings, storage, logger: invocationLogger,
                     }) },
@@ -1587,27 +1598,21 @@ describe('native Agent session host adapter', () => {
                     });
                 }
                 const binding = buildPluginSessionBindingInput({ credentials, directory, startedBy: 'terminal', startingMode: selectedMode === 'unified' ? 'terminal' : 'remote', ...(selectedMode === 'sdk' ? { resume: 'exact-sdk-native-conversation' } : {}), environmentVariables: { HAPPIER_CLAUDE_PATH: nativePath, HERDR_BIN_PATH: herdrPath, CLAUDE_CONFIG_DIR: join(directory, 'claude-home') }, backendTarget: { kind: 'backend', backendId: 'claude' } });
-                const launchPreparation = selectedMode === 'unified' ? await createNativeAgentLaunchPreparationFixture() : null;
-                const terminalExec = launchPreparation ? createStablePluginExecService({ signal: generation.signal, isOccurrenceCurrent: () => !generation.signal.aborted,
+                const launchPreparation = await createNativeAgentLaunchPreparationFixture();
+                const terminalExec = createStablePluginExecService({ signal: generation.signal, isOccurrenceCurrent: () => !generation.signal.aborted,
+                    requesterIdentity: launchPreparation.requesterIdentity,
                     resolveExecutable: async () => { throw new Error('Terminal transport already resolved its native executable'); },
                     resolvePath: async () => directory,
                     prepareAgentNativeLaunch: launchPreparation.prepare(directory, generation.signal),
-                }) : null;
+                });
                 const plan = await createNativeAgentRuntimeSessionPlan({ runtime, lease: { ...createLease('claude'), pluginId }, backend, agent, sessionInput: { ...binding, bootstrap: { ...binding.bootstrap, runtimeDescriptorV1: selected.runtimeDescriptorV1 } }, executionSurfaces, externalSessionHostOperations: daemonFacets?.externalSessionHostOperations, generationSignal: generation.signal, createInvocationServices: async () => {
                     const unavailable = createUnavailablePluginServices();
-                    return { ...unavailable, settings, storage, logger: invocationLogger,
-                        ...(terminalExec ? { exec: terminalExec } : {}),
-                        ...(selectedMode === 'sdk' ? { exec: { ...unavailable.exec,
-                            systemTools: { ...unavailable.exec.systemTools, resolve: async () => ({ executable: { kind: 'systemTool' as const, id: 'claude-cli' }, executablePath: nativePath }) },
-                            // The vendor JSON-stream process is the external boundary; only that protocol is opened here.
-                            clients: { spawn: async () => createSdkClient() } as unknown as HostPluginServices['exec']['clients'],
-                        } } : {}),
-                    };
+                    return { ...unavailable, settings, storage, logger: invocationLogger, exec: terminalExec };
                 }, createSessionHostServiceOwners: () => ({ ...owners, sessionHooks: { ...owners.sessionHooks,
                     async startServer(request) {
                         const server = await owners.sessionHooks.startServer(request);
                         // Observe the actual authenticated HTTP endpoint used by the vendor process.
-                        if (request.lifetime !== 'invocation' && request.sessionHookSecret) sdkHook.current = { port: server.port, secret: request.sessionHookSecret };
+                        if (request.lifetime !== 'invocation' && server.sessionHookSecretFile) sdkHook.current = { port: server.port, secret: await readFile(server.sessionHookSecretFile, 'utf8') };
                         return server;
                     },
                 } }) });
@@ -2612,9 +2617,8 @@ describe('native Agent session host adapter', () => {
             watch: () => ({ dispose: () => undefined }),
             dispose: async () => undefined,
         }));
-        const attestSessionOpen = vi.fn(async (params) => {
-            expect(Reflect.get(params, 'phase')).toBe('prepare');
-            throw prepareFailure;
+        const attestSessionOpen = vi.fn(async (params: Parameters<NonNullable<Parameters<typeof createNativeAgentRuntimeSessionPlan>[0]['attestSessionOpen']>>[0]) => {
+            if (params.phase === 'prepare') throw prepareFailure;
         });
         const plan = await createNativeAgentRuntimeSessionPlan({
             createRuntime: async () => ({ sessions: { open } }),
@@ -2654,10 +2658,7 @@ describe('native Agent session host adapter', () => {
         });
 
         expect(open).not.toHaveBeenCalled();
-        expect(attestSessionOpen).toHaveBeenCalledOnce();
-        expect(attestSessionOpen).toHaveBeenCalledWith(
-            expect.objectContaining({ phase: 'prepare' }),
-        );
+        expect(attestSessionOpen.mock.calls.map(([input]) => input.phase)).toEqual(['prepare', 'refused']);
     });
 
     it('constructs the runner-owned Agent runtime only after late request-auth materialization', async () => {
@@ -6966,7 +6967,8 @@ describe('native Agent session host adapter', () => {
         expect(attestations).toContainEqual(expect.objectContaining({ phase: 'refused',
             request: { kind: 'create', sessionId: 'codex-catalog-refusal', cwd: '/repo' },
             failure: { phase: 'agent_runtime_open', code: 'mcp_tool_catalog_unavailable',
-                failureCause: { phase: 'client_start', failureReason: 'unclassified_provider_error' } } }));
+                failureCause: { phase: 'client_start', failureReason: 'unclassified_provider_error',
+                    providerErrorCode: McpErrorCode.ConnectionClosed } } }));
         expect(attestations).not.toContainEqual(expect.objectContaining({ phase: 'prepare' }));
     });
 
@@ -8769,7 +8771,7 @@ describe('native Agent session host adapter', () => {
                         providerSessionId: 'provider-session-1',
                         payload: { hook_event_name: 'SessionStart' },
                     });
-                    await services.sessionHooks.startServer({ sessionHookSecret: 'secret' });
+                    await services.sessionHooks.startServer({});
                     await services.sessionHooks.resolveForwarderAssets();
                     await services.sessionHooks.createPluginDir({ files: [] });
                     await services.sessionHooks.disposePluginDir('/tmp/plugin-dir');
@@ -9080,6 +9082,7 @@ describe('native Agent session host adapter', () => {
     });
 
     it('refreshes memory write exposure from the live host Session metadata', async () => {
+        const actionsEnvironment = createEnvKeyScope(['HAPPIER_ACTIONS_SETTINGS_V1']);
         const session = createMutableApiSessionClientFixture({ sessionId: 'tools-memory-session',
             metadata: createTestMetadata({ work: { memoryEnabled: true } }) });
         const publications = createNativeAgentSessionPublications({ agentId: 'acme-tools-memory-agent',
@@ -9097,13 +9100,17 @@ describe('native Agent session host adapter', () => {
         });
         const names = async () => (await services.happierTools?.resolveNativeBridge({ systemPrompt: '' }))?.tools.map(tool => tool.name) ?? [];
         try {
+            actionsEnvironment.patch({ HAPPIER_ACTIONS_SETTINGS_V1: undefined });
             expect(await names()).toEqual(expect.arrayContaining(['memory_remember', 'memory_update', 'memory_forget']));
             await session.updateMetadata(metadata => ({ ...metadata, work: { ...metadata.work, memoryEnabled: false } }));
             for (const name of ['memory_remember', 'memory_update', 'memory_forget']) expect(await names()).not.toContain(name);
             expect(await names()).toContain('change_title');
             await session.updateMetadata(metadata => ({ ...metadata, work: { ...metadata.work, memoryEnabled: true } }));
             expect(await names()).toContain('memory_remember');
-        } finally { await publications.dispose(); }
+        } finally {
+            try { await publications.dispose(); }
+            finally { actionsEnvironment.restore(); }
+        }
     });
 
     it('does not advertise feature-gated Action tools when the exact Session Home disables them', async () => {
@@ -10340,11 +10347,13 @@ describe('native Agent session host adapter', () => {
             // The bound waiter ends with its turn, but structured questions are retained
             // independently of turn cleanup: both rows stay answerable after completion.
             const readRequests = () => Object.values((sessionClient.getAgentStateSnapshot().requests ?? {}) as Record<string, { turnId?: string; lifetime?: string }>);
-            await vi.waitFor(() => expect(readRequests().map(request => request.lifetime).sort()).toEqual(['occurrence', 'turn']));
+            // The wire owner omits the default turn lifetime; occurrence is explicit.
+            await vi.waitFor(() => expect(readRequests().map(request => request.lifetime).sort()).toEqual(['occurrence', undefined]));
             expect(readRequests().every(request => request.turnId === 'turn-1')).toBe(true);
             retirement.abort();
             // Session retirement ends the native-owned occurrence question; the durable one remains answerable.
-            await vi.waitFor(() => expect(readRequests().map(request => request.lifetime)).toEqual(['turn']));
+            await vi.waitFor(() => expect(readRequests()).toEqual([expect.objectContaining({ turnId: 'turn-1' })]));
+            expect(readRequests()[0]?.lifetime).toBeUndefined();
             expect(sendUserMessage).not.toHaveBeenCalled();
         } finally {
             retirement.abort();

@@ -72,6 +72,7 @@ import { resolveConnectedServiceHomeDir } from '../homes/resolveConnectedService
 import { resolveConnectedServiceNativeHomeTargetRoot } from './resolveConnectedServiceNativeHomeTarget';
 import { readConnectedServiceStateSharingManifest } from '../stateSharing/connectedServiceStateSharingManifest';
 import { createConnectedAccountPurposeBindingOwner } from '../purposeBindings/ConnectedAccountPurposeBindingOwner';
+import { validateExternalSessionObservationWatchFileChanges } from '@/session/external/observationFileSetPathValidation';
 import { createExecutionRunConnectedServicesBridge } from '../runs/executionRunMaterialization';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '../requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import { writeConnectedAccountRequestAuthCapabilityFile, verifyConnectedAccountRequestAuthCapabilityFile } from '../requestAuth/capabilityFile';
@@ -134,11 +135,12 @@ it.each(['files', 'environment'] as const)('applies only the %s leaves produced 
       } },
     });
     expect(result).not.toBeNull();
-    expect(result?.unsetEnvKeys).toContain('TEST_SELECTED_API_KEY');
     if (mode === 'files') {
+      expect(result?.unsetEnvKeys).toContain('TEST_SELECTED_API_KEY');
       expect(await readFile(join(result!.env.CLAUDE_CONFIG_DIR!, '.credentials.json'), 'utf8')).toBe('{"token":"selected-B"}');
       expect(result?.env.TEST_SELECTED_API_KEY).toBeUndefined();
     } else {
+      expect(result?.unsetEnvKeys ?? []).not.toContain('TEST_SELECTED_API_KEY');
       expect(result?.env.TEST_SELECTED_API_KEY).toBe('selected-key-B');
       expect(result?.env.CLAUDE_CONFIG_DIR).toBeUndefined();
       expect(result?.env.HAPPIER_CLAUDE_NATIVE_CONFIG_DIR).toBeUndefined();
@@ -561,7 +563,7 @@ it.each([
 
 beforeAll(async () => {
   const agentIds = ['claude', 'codex', 'gemini', 'opencode', 'pi', 'antigravity'] as const;
-  const pluginIds = agentIds.map(localId => `happier.agent.${localId}`);
+  const pluginIds = [...agentIds.map(localId => `happier.agent.${localId}`), 'happier.voice.openai'];
   const bundled = loadEnabledBundledPluginLocatorResult({ pluginIds });
   const projected = projectLoadedPluginContributes({
     loadResult: {
@@ -1516,6 +1518,13 @@ describe('materializeConnectedServicesForSpawn', () => {
         agentId, contributions: runtimeFixture!.registry.contributes,
       });
       expect(declaration).not.toBeNull();
+      const catalogEntry = await runtimeFixture!.registry.acquireAgentCatalogEntry!(agentId);
+      const descriptor = await catalogEntry?.getConnectedServiceStateSharingDescriptor?.();
+      if (!descriptor) throw new Error('Expected declared native state sharing');
+      const linkedEntries = descriptor.state.entries.filter(entry =>
+        (entry.mode === 'linked' || entry.mode === 'linked_or_copied')
+        && (entry.createIfMissing === 'directory' || (entry.path === stateEntry && sourcePresent)));
+      const stateLinked = linkedEntries.some(entry => entry.path === stateEntry);
       // Keep the real account owner; this state-only fixture admits no account I/O.
       const unavailableAccountBoundary = async (): Promise<never> => {
         throw new Error('Credential-free state fixture must not access accounts');
@@ -1548,23 +1557,32 @@ describe('materializeConnectedServicesForSpawn', () => {
       const first = await materializeConnectedServicesForSpawnProduction(params);
       expect(first).not.toBeNull();
       const home = first!.env[environmentKey]!;
-      const expectedBinding = sourcePresent ? {
+      const expectedBinding = linkedEntries.length > 0 ? {
         agentId, pluginId: `happier.agent.${agentId}`,
         sourceCustody: runtimeFixture!.registry.readPluginSourceCustody!(`happier.agent.${agentId}`),
         nativeHomeRoot: await realpath(home),
-        entries: [{ entryPath: stateEntry, sourceEntryRoot: await realpath(join(nativeHome, stateEntry)),
-          materializedEntryPath: join(await realpath(home), stateEntry) }],
+        entries: await Promise.all(linkedEntries.map(async entry => ({
+          entryPath: entry.path, sourceEntryRoot: await realpath(join(nativeHome, entry.path)),
+          materializedEntryPath: join(await realpath(home), entry.path),
+        }))),
       } : undefined;
       expect(first!.materializedStateObservationBinding).toEqual(expectedBinding);
       const transcript = join(home, stateEntry, '-tmp', 's.jsonl');
       await mkdir(join(home, stateEntry, '-tmp'), { recursive: true });
       await writeFile(transcript, '{"sessionId":"s"}\n');
+      const observation = (file: string) => validateExternalSessionObservationWatchFileChanges({
+        requested: { files: [file] },
+        linkedSource: { source: { root: home }, remoteSessionId: 's', linkData: {} },
+        filesystemReadAllowedPaths: new Set([home]),
+        materializedStateObservationBinding: first!.materializedStateObservationBinding,
+      });
+      expect(observation(transcript)?.files).toEqual([await realpath(transcript)]);
       if (!sourcePresent) {
-        await expect(lstat(join(nativeHome, stateEntry))).rejects.toMatchObject({ code: 'ENOENT' });
         const foreignState = join(root, 'foreign-state');
         await mkdir(foreignState);
         await writeFile(join(foreignState, 'other.jsonl'), 'another account');
         await symlink(foreignState, join(home, stateEntry, 'foreign'), 'dir');
+        expect(observation(join(home, stateEntry, 'foreign', 'other.jsonl'))).toBeNull();
       }
 
       // The first launch remains live: refresh uses this same staged replacement owner.
@@ -1572,10 +1590,10 @@ describe('materializeConnectedServicesForSpawn', () => {
       expect(refreshed!.env[environmentKey]).toBe(home);
       expect(refreshed!.materializedStateObservationBinding).toEqual(expectedBinding);
       expect(await readFile(transcript, 'utf8')).toBe('{"sessionId":"s"}\n');
-      expect((await lstat(join(home, stateEntry))).isSymbolicLink()).toBe(sourcePresent);
+      expect((await lstat(join(home, stateEntry))).isSymbolicLink()).toBe(stateLinked);
       const manifest = await readConnectedServiceStateSharingManifest(home);
-      expect(manifest.stateEntries.includes(stateEntry)).toBe(sourcePresent);
-      if (sourcePresent) {
+      expect(manifest.stateEntries.includes(stateEntry)).toBe(stateLinked);
+      if (stateLinked) {
         expect(await realpath(join(home, stateEntry))).toBe(await realpath(join(nativeHome, stateEntry)));
         await writeFile(join(nativeHome, stateEntry, '-tmp', 's.jsonl'), '{"sessionId":"s","turn":2}\n');
       } else {

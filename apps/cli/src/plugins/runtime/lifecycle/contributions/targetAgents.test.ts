@@ -19,6 +19,7 @@ import type {
     AgentExternalSessionHookResolveInstallationRequest,
     AgentExternalSessionHooksContribution,
     AgentExternalSessionObservationContribution,
+    AgentExternalSessionObservationObserveResourceRequest,
     AgentExternalSessionObservationReconcileResultV1,
     AgentExternalSessionsContribution,
     AgentExternalSessionsManagedEndpointRead,
@@ -478,6 +479,10 @@ function declaringExternalSessionsRegistration(
                 externalSessions: Object.freeze({
                     ...externalSessionsContribution,
                     resolveManagedEndpointService,
+                    async listCandidates(request: Parameters<AgentExternalSessionsContribution['listCandidates']>[0]) {
+                        await request.managedEndpointRead({ pathAndQuery: '/session' });
+                        return externalSessionsContribution.listCandidates(request);
+                    },
                 }),
             },
         } as ContributionRuntimeRegistration,
@@ -756,6 +761,10 @@ describe('contribution-owned External Sessions managed endpoint', () => {
                         externalSessions: Object.freeze({
                             ...externalSessionsContribution,
                             resolveManagedEndpointService: () => HOST_MINTED_SPAWN_SPEC,
+                            async listCandidates(request: Parameters<AgentExternalSessionsContribution['listCandidates']>[0]) {
+                                await request.managedEndpointRead({ pathAndQuery: '/session' });
+                                return externalSessionsContribution.listCandidates(request);
+                            },
                         }),
                         externalSessionObservation: observation,
                     },
@@ -903,7 +912,15 @@ describe('contribution-owned External Sessions managed endpoint', () => {
             signal: new AbortController().signal,
         });
 
-        expect(resolveManagedEndpointService).toHaveBeenCalled();
+        expect(resolveManagedEndpointService).not.toHaveBeenCalled();
+        await expect(externalSessions.listCandidates({
+            source: { kind: 'opencodeServer', baseUrl: 'http://127.0.0.1:4096' },
+            maxItems: 50,
+            maxSerializedBytes: 262_144,
+            deadlineAtMs: Date.now() + 15_000,
+            signal: new AbortController().signal,
+        })).resolves.toMatchObject({ ok: false });
+        expect(resolveManagedEndpointService).toHaveBeenCalledOnce();
         expect(managed.supervise).not.toHaveBeenCalled();
     });
 });
@@ -958,7 +975,7 @@ describe('target Agent runtime registry', () => {
             expect(retirement.signal.aborted).toBe(false);
         } finally { await projection.dispose(); retirement.abort(); await rm(directory, { recursive: true, force: true }); }
     });
-    it('binds managed endpoint reads once before observation and reconciliation entry', async () => {
+    it('binds managed endpoint reads once on demand for each observation and reconciliation', async () => {
         const observeExactRead = vi.fn(async () => Object.freeze({
             ok: true,
             status: 200,
@@ -987,22 +1004,26 @@ describe('target Agent runtime registry', () => {
         const retainedReads: AgentExternalSessionsManagedEndpointRead[] = [];
         const observation = createObservationContribution({
             acquire: async (request) => {
-                expect(managedEndpointRead).toHaveBeenCalledOnce();
+                expect(managedEndpointRead).not.toHaveBeenCalled();
                 retainedReads.push(request.managedEndpointRead);
-                selectedRead = replacementRead;
                 observeRead(await request.managedEndpointRead({
                     pathAndQuery: '/global/event',
                     headers: { accept: 'text/event-stream' },
                 }));
+                selectedRead = replacementRead;
+                await request.managedEndpointRead({ pathAndQuery: '/global/event' });
+                expect(managedEndpointRead).toHaveBeenCalledOnce();
                 return { dispose() {} };
             },
             reconcile: async (request) => {
-                expect(managedEndpointRead).toHaveBeenCalledTimes(2);
+                expect(managedEndpointRead).toHaveBeenCalledOnce();
                 retainedReads.push(request.managedEndpointRead);
-                selectedRead = replacementRead;
                 reconcileRead(await request.managedEndpointRead({
                     pathAndQuery: '/session',
                 }));
+                selectedRead = replacementRead;
+                await request.managedEndpointRead({ pathAndQuery: '/session' });
+                expect(managedEndpointRead).toHaveBeenCalledTimes(2);
                 return {
                     purpose: 'observation_evidence' as const,
                     outcomes: request.links.map(({ linkKey }) => ({
@@ -1046,7 +1067,7 @@ describe('target Agent runtime registry', () => {
         if (!retainedObserveRead) throw new Error('Expected retained observe read');
         await expect(retainedObserveRead({ pathAndQuery: '/global/event' }))
             .rejects.toBe('disposed');
-        expect(observeExactRead).toHaveBeenCalledOnce();
+        expect(observeExactRead).toHaveBeenCalledTimes(2);
         expect(replacementRead).not.toHaveBeenCalled();
         selectedRead = reconcileExactRead;
         await lease.reconcileResource({
@@ -1100,8 +1121,8 @@ describe('target Agent runtime registry', () => {
         expect(reconcileExactRead).toHaveBeenCalledWith({
             pathAndQuery: '/session',
         });
-        expect(observeExactRead).toHaveBeenCalledOnce();
-        expect(reconcileExactRead).toHaveBeenCalledOnce();
+        expect(observeExactRead).toHaveBeenCalledTimes(2);
+        expect(reconcileExactRead).toHaveBeenCalledTimes(2);
         expect(replacementRead).not.toHaveBeenCalled();
         expect(managedEndpointRead).toHaveBeenCalledTimes(2);
     });
@@ -1329,9 +1350,15 @@ describe('target Agent runtime registry', () => {
             let bindSignal: AbortSignal | undefined;
             let current = true;
             const retirement = new AbortController();
-            const acquire = vi.fn(async () => ({ dispose() {} }));
+            const acquire = vi.fn(async (request: AgentExternalSessionObservationObserveResourceRequest) => {
+                await request.managedEndpointRead({ pathAndQuery: '/global/event' });
+                return { dispose() {} };
+            });
+            let bindStarted!: () => void;
+            const binding = new Promise<void>((resolve) => { bindStarted = resolve; });
             const managedEndpointRead = vi.fn(({ signal }: { signal: AbortSignal }) => {
                 bindSignal = signal;
+                bindStarted();
                 return new Promise<AgentExternalSessionsManagedEndpointRead>((resolve) => {
                     settleBind = resolve;
                 });
@@ -1360,7 +1387,7 @@ describe('target Agent runtime registry', () => {
                 requestTranscriptRefresh() {},
             }));
             void acquisition.catch(() => undefined);
-            await Promise.resolve();
+            await binding;
             expect(managedEndpointRead).toHaveBeenCalledOnce();
             current = false;
             retirement.abort();
@@ -1368,14 +1395,16 @@ describe('target Agent runtime registry', () => {
             expect(bindSignal?.aborted).toBe(true);
             expect(await readPromiseStateAfterMicrotasks(acquisition)).toBe('rejected');
             await expect(acquisition).rejects.toThrow(/retired generation/u);
-            expect(acquire).not.toHaveBeenCalled();
+            expect(acquire).toHaveBeenCalledOnce();
             expect(vi.getTimerCount()).toBe(0);
 
-            settleBind(async () => {
+            const lateRead = vi.fn(async () => {
                 throw new Error('Late managed endpoint read must remain unreachable');
             });
-            await Promise.resolve();
-            expect(acquire).not.toHaveBeenCalled();
+            settleBind(lateRead);
+            await readPromiseStateAfterMicrotasks(acquisition);
+            expect(lateRead).not.toHaveBeenCalled();
+            expect(acquire).toHaveBeenCalledOnce();
             await expect(acquisition).rejects.toThrow(/retired generation/u);
             await expect(acquisition).rejects.toMatchObject({ code: 'unavailable', retryable: true });
         } finally {
@@ -1389,9 +1418,16 @@ describe('target Agent runtime registry', () => {
             let settleBind!: (read: AgentExternalSessionsManagedEndpointRead) => void;
             let bindSignal: AbortSignal | undefined;
             const caller = new AbortController();
-            const reconcile = vi.fn(createObservationContribution().reconcileResource);
+            const reconcileResource = createObservationContribution().reconcileResource;
+            const reconcile = vi.fn(async (request: Parameters<typeof reconcileResource>[0]) => {
+                await request.managedEndpointRead({ pathAndQuery: '/session' });
+                return reconcileResource(request);
+            });
+            let bindStarted!: () => void;
+            const binding = new Promise<void>((resolve) => { bindStarted = resolve; });
             const managedEndpointRead = vi.fn(({ signal }: { signal: AbortSignal }) => {
                 bindSignal = signal;
+                bindStarted();
                 return new Promise<AgentExternalSessionsManagedEndpointRead>((resolve) => {
                     settleBind = resolve;
                 });
@@ -1423,7 +1459,7 @@ describe('target Agent runtime registry', () => {
                 signal: caller.signal,
             }));
             void reconciliation.catch(() => undefined);
-            await Promise.resolve();
+            await binding;
             expect(managedEndpointRead).toHaveBeenCalledOnce();
             await vi.advanceTimersByTimeAsync(46_000);
             expect(await readPromiseStateAfterMicrotasks(reconciliation)).toBe('pending');
@@ -1432,14 +1468,16 @@ describe('target Agent runtime registry', () => {
             expect(bindSignal?.aborted).toBe(true);
             expect(await readPromiseStateAfterMicrotasks(reconciliation)).toBe('rejected');
             await expect(reconciliation).rejects.toMatchObject({ code: 'cancelled' });
-            expect(reconcile).not.toHaveBeenCalled();
+            expect(reconcile).toHaveBeenCalledOnce();
             expect(vi.getTimerCount()).toBe(0);
 
-            settleBind(async () => {
+            const lateRead = vi.fn(async () => {
                 throw new Error('Late managed endpoint read must remain unreachable');
             });
-            await Promise.resolve();
-            expect(reconcile).not.toHaveBeenCalled();
+            settleBind(lateRead);
+            await readPromiseStateAfterMicrotasks(reconciliation);
+            expect(lateRead).not.toHaveBeenCalled();
+            expect(reconcile).toHaveBeenCalledOnce();
             await expect(reconciliation).rejects.toMatchObject({ code: 'cancelled' });
         } finally {
             vi.useRealTimers();

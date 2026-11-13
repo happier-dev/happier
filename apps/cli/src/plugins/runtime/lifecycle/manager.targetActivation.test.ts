@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { definePlugin } from '@happier-dev/plugin-sdk';
+import { invokeConnectedAccountAuthenticationRuntime } from '@happier-dev/cli-common/connectedAccounts';
 import type { PluginApi, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { createWorkspaceExecutionConfigClientV1 } from '@happier-dev/protocol/workspaces/workspaceExecutionConfigClientV1';
 import { PROJECT_TRUST_ROUTE_V1, ProjectTrustMutationRequestV1Schema, type ProjectTrustContentV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectTrustRowV1';
@@ -288,7 +289,7 @@ describe('target activation publication', () => {
                     resolveProjectNativeAdapter: (reference, role) => resolveProjectNativeAdapter({ reference, role, targets, registry }),
                 }, async release() {} }),
             });
-            await expect(inspectAction({ actionId: 'projects.inspect', input: { workspace: { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'workspace-a', rootPath: projectRoot } },
+            await expect(inspectAction({ actionId: 'projects.inspect', input: { workspace: { serverId: 'home-a', machineId: 'machine-a', workspaceId: 'workspace-a', rootPath: projectRoot }, read: { kind: 'create' } },
                 context: { serverId: 'home-a', surface: 'cli' } })).resolves.toMatchObject({
                 definition: { basis: { kind: 'absent' } },
                 detection: { entries: [{ source: importedPixiTask, usage: 'script' }], toolchains: [importedPixiToolchain], coverage: 'complete' },
@@ -302,7 +303,7 @@ describe('target activation publication', () => {
                 manifest: { scripts: { check: { source: importedPixiTask } }, toolchain: importedPixiToolchain },
             } });
             expect(await readFile(join(projectRoot, '.happier/project.json'), 'utf8')).toBe(persistedQualifiedArms);
-            await expect(inspectAction({ actionId: 'projects.inspect', input: { workspace },
+            await expect(inspectAction({ actionId: 'projects.inspect', input: { workspace, read: { kind: 'editor' } },
                 context: { serverId: 'home-a', surface: 'cli' },
             })).resolves.toMatchObject({ definition: { basis: { kind: 'present' }, document: {
                 status: 'valid', bytes: persistedQualifiedArms,
@@ -946,7 +947,9 @@ describe('target activation publication', () => {
                 expect(spawned).toEqual([]);
                 await expect(invoke('hold', 'native-next-request')).resolves.toMatchObject({ operation: { operationId: 'native-next-operation' } });
                 expect(await runtime.workerAdmission.load()).toMatchObject({ kind: 'known', running: 1, queued: 1 });
-                expect(await operationRuntime.handlers.cancel({ operationId: 'native-owner-operation' })).toEqual({ kind: 'requested' });
+                const stopped = await operationRuntime.handlers.cancel({ operationId: 'native-owner-operation' });
+                // Cancellation may settle the owned process before its request returns.
+                expect(['requested', 'already_settled']).toContain(stopped.kind);
                 await expect.poll(async () => {
                     let absent = false;
                     try { process.kill(pid, 0); } catch (error) {
@@ -955,10 +958,10 @@ describe('target activation publication', () => {
                     }
                     return await diagnostic('native process absent after public Stop', absent);
                 }).toContain('"ready":true');
-                expect(await operationRuntime.handlers.cancel({ operationId: 'native-owner-operation' })).toEqual({ kind: 'requested' });
                 // Tree proof must settle the SAME original invocation, rather
                 // than leave an immortal unknown reservation after public Stop.
                 await expect.poll(() => diagnostic('original operation terminal', operationRuntime.store.get(scope, 'native-owner-operation')?.state === 'cancelled')).toContain('"ready":true');
+                expect(await operationRuntime.handlers.cancel({ operationId: 'native-owner-operation' })).toEqual({ kind: 'already_settled' });
                 await waitForSpawn(1);
                 expect(completedCommandInvocations).toBeGreaterThan(completedBeforeUnknown);
                 return;
@@ -1517,12 +1520,12 @@ describe('target activation publication', () => {
     });
 
     it.each([
-        ['admits', 'manual', 'active'],
-        ['rejects before publication', 'oauthDeviceCode', 'unavailable'],
+        ['matching', 'manual'],
+        ['mismatched', 'oauthDeviceCode'],
     ] as const)(
-        '%s an external Connected Account runtime only when it matches its declared authentication mode',
-        async (_expectation, runtimeKind, expectedStatus) => {
-            const pluginId = expectedStatus === 'active'
+        'captures an external Connected Account %s mode and checks it at authentication dispatch',
+        async (_expectation, runtimeKind) => {
+            const pluginId = runtimeKind === 'manual'
                 ? 'acme.external.accounts.matched'
                 : 'acme.external.accounts.mismatch';
             const ingested = ingestCanonicalPluginManifest({
@@ -1555,6 +1558,8 @@ describe('target activation publication', () => {
                 },
             }, { sourceProvenance: 'registryCustodied' });
             if (!ingested.ok) throw new Error(ingested.diagnostics.map((item) => item.message).join('\n'));
+            const authenticate = vi.fn(async () => ({ status: 'rejected' as const,
+                diagnostic: { code: 'fixture_manual_rejected', severity: 'error' as const } }));
             const activate = vi.fn((api: PluginApi) => {
                 api.connectedAccounts.register('forge', {
                     authentication: {
@@ -1562,12 +1567,12 @@ describe('target activation publication', () => {
                             manual: runtimeKind === 'manual'
                                 ? {
                                     kind: 'manual',
-                                    async complete() { return { status: 'rejected' as const }; },
+                                    complete: authenticate,
                                 }
                                 : {
                                     kind: 'oauthDeviceCode',
-                                    async begin() { return { status: 'failed' as const }; },
-                                    async poll() { return { status: 'failed' as const }; },
+                                    begin: authenticate,
+                                    poll: authenticate,
                                     async cancel() {},
                                 },
                         },
@@ -1605,22 +1610,29 @@ describe('target activation publication', () => {
             try {
                 await activated.activatePluginsForValidation([pluginId]);
                 expect(activated.targetActivationFacts).toEqual([
-                    expect.objectContaining({ pluginId, status: expectedStatus }),
+                    expect.objectContaining({ pluginId, status: 'active' }),
                 ]);
-                if (expectedStatus === 'active') {
-                    expect(activated.targetRegistrations).toEqual([
-                        expect.objectContaining({
-                            pluginId,
-                            registration: expect.objectContaining({
-                                family: 'connectedAccountDescriptors',
-                                localId: 'forge',
-                            }),
-                        }),
-                    ]);
-                } else {
-                    expect(activated.targetRegistrations).toEqual([]);
-                    expect(activated.activatedPluginIds.has(pluginId)).toBe(false);
-                }
+                expect(activated.targetRegistrations).toEqual([
+                    expect.objectContaining({ pluginId, registration: expect.objectContaining({
+                        family: 'connectedAccountDescriptors', localId: 'forge',
+                    }) }),
+                ]);
+                const registration = activated.targetRegistrations[0]?.registration;
+                if (registration?.family !== 'connectedAccountDescriptors') throw new Error('Expected captured Connected Account runtime');
+                const descriptor = ingested.manifest.contributes.connectedAccountDescriptors[0]?.authentication.modes[0];
+                if (!descriptor) throw new Error('Expected the authored authentication mode');
+                // Activation captures trusted callbacks; the shared authentication
+                // dispatcher decides whether the selected mode can serve this request.
+                const result = await invokeConnectedAccountAuthenticationRuntime<object>({
+                    mode: registration.value.authentication.modes.manual, descriptor,
+                    operation: { kind: 'submitManual', fields: { token: 'fixture-token' } },
+                    context: {}, registerRawForRedaction() {},
+                    async invokeCallback(work) { return await work(); },
+                });
+                expect(result).toMatchObject(runtimeKind === 'manual'
+                    ? { status: 'rejected', diagnostic: { code: 'fixture_manual_rejected' } }
+                    : { status: 'unavailable', diagnostic: { code: 'connected_account_authentication_mode_unavailable' } });
+                expect(authenticate).toHaveBeenCalledTimes(runtimeKind === 'manual' ? 1 : 0);
             } finally {
                 await activated.dispose();
             }
