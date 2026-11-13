@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
-import { MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import axios from 'axios';
+import { MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema, MachineSetupReportInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { accountSettingsParse, formatSavedSecretCatalogReferenceV1, sealSavedSecretResourceStoredContentV1, machineSetupItemKeyV1 } from '@happier-dev/protocol';
 import { commitActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests,
   setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -19,6 +20,62 @@ describe('admitted Machine setup snapshot lifetime', () => {
     nativeTerminal.exit = undefined;
     nativeTerminal.onLaunch = undefined;
     nativeTerminal.autoExit = false;
+  });
+  it.each([
+    { exitCode: 0, reportFailure: 'lost', reportState: 'terminal' },
+    { exitCode: 0, reportFailure: 'refused', reportState: 'terminal' },
+    { exitCode: 23, reportFailure: 'lost', reportState: 'terminal' },
+    { exitCode: 23, reportFailure: 'refused', reportState: 'terminal' },
+    { exitCode: 0, reportFailure: 'lost', reportState: 'running' },
+  ] as const)('preserves native outcome when the $reportState report is $reportFailure (native exit $exitCode)', async ({ exitCode, reportFailure, reportState }) => {
+    const fixture = await createNativeSoftwareInstallFixture({ scenario: 'apt' });
+    const target = { homeId: 'srv_home', machineId: fixture.machine.id };
+    const sources = [{ kind: 'accountPreset' as const, presetId: 'creation-preset', presetRevision: 1,
+      setup: { scripts: [{ body: `exit ${exitCode}`, affects: 'none' as const }] } },
+      { kind: 'direct' as const, setup: {} }];
+    const reports: Array<ReturnType<typeof MachineSetupReportInputV1Schema.parse>> = [];
+    // Home transport is the boundary; planning, native tasks, and operation settlement remain real.
+    const home = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+      if (new URL(String(url)).pathname === '/v1/machines/setup/resolve') return { status: 200,
+        data: { sources, creation: { managedId: 'creation-machine', preset: { id: 'creation-preset', revision: 1 } } } };
+      expect(new URL(String(url)).pathname).toBe('/v1/machines/setup/report');
+      const report = MachineSetupReportInputV1Schema.parse(body);
+      reports.push(report);
+      if (report.state === 'running' && reportState !== 'running') return { status: 200, data: {} };
+      if (reportFailure === 'lost') throw Object.assign(new Error('Connection lost'), { code: 'ECONNRESET' });
+      return { status: 409, data: {} };
+    });
+    onTestFinished(() => home.mockRestore());
+    const plan = MachineSetupPlanResultV1Schema.parse(await fixture.machineSetupPlan({
+      input: { ...target, sources, mode: 'effects' }, context: fixture.context('machines.setup.plan'),
+    }));
+    const context = fixture.context('machines.setup.apply');
+    const authorization = context.externalActionExecutionAuthorization!;
+    const creationContext = { ...context, externalActionExecutionAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse({
+      ...authorization, binding: { ...authorization.binding, managedContinuation: {
+        managedId: 'creation-machine', creationRequestId: 'creation', expectedIntentRevision: 0,
+        controller: { machineId: 'controller', installationId: 'controller-installation' },
+        acquireRequestEnvelopeDigest: 'b'.repeat(43),
+      } },
+    }) };
+    nativeTerminal.onLaunch = () => queueMicrotask(() => nativeTerminal.exit?.(exitCode));
+    const result = await fixture.apply({ input: { ...target, desiredRevision: plan.desiredRevision,
+      sources: plan.sources, exclusions: plan.exclusions, recipePlans: plan.recipePlans ?? [] }, context: creationContext });
+    if (reportState === 'running') {
+      expect(result).toMatchObject({ ok: false, errorCode: 'ECONNRESET' });
+      expect(reports.map(report => report.state)).toEqual(['running']);
+      expect(nativeTerminal.launches).toHaveLength(0);
+      expect(fixture.metadataWrites).toHaveLength(0);
+      return;
+    }
+    expect(result).toMatchObject(exitCode === 0 ? { operationId: expect.any(String) }
+      : { ok: false, errorCode: 'machine_setup_setup_failed',
+        details: { kind: 'finiteCommand', phase: 'setup', step: 0, exitCode } });
+    expect(reports.map(report => ({ state: report.state, errorCode: report.errorCode }))).toEqual([
+      { state: 'running', errorCode: undefined },
+      { state: exitCode === 0 ? 'succeeded' : 'failed', errorCode: exitCode === 0 ? undefined : 'machine_setup_setup_failed' },
+    ]);
+    expect(nativeTerminal.launches).toHaveLength(1);
   });
   it.each(['plain', 'e2ee'] as const)('clears a direct pre-existing recipe through Apply → conflict → Remove → replacement (%s)', async accountEncryptionMode => {
     const fixture = await createNativeSoftwareInstallFixture({ scenario: 'first-present', accountEncryptionMode,

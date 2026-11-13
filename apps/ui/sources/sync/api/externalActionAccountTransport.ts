@@ -13,7 +13,8 @@ import { sealExternalActionRequesterAccountContextV1, sealManagedControllerActio
     type ExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { openExternalActionResponseV2, sealExternalActionRequestV2, type ExternalActionEncryptionBindingV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isActionOutcomeUnknownErrorCodeV1, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { withActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions';
 import type { ActionRequiredAuthority } from '@happier-dev/protocol/actions/metadata';
 import { AUTHORITY_CEILING_HEADER_V1 } from '@happier-dev/protocol/actions/invocationAuthority';
@@ -254,7 +255,9 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
         });
     } catch (error) {
         // Losing the observer after issuance cannot prove that the Action failed.
-        if (issued) return failure('outcome_unknown');
+        if (issued) return withActionFailureDiagnostic({ ...failure('outcome_unknown'),
+            failureCause: projectActionFailureCauseV1(error, 'external_action.http.execute'),
+        }, { phase: 'external_action.http.execute', causeKind: 'incomplete', error });
         if (error instanceof ServerFetchWriteTimeoutError) {
             return failure('admission_unavailable');
         }
@@ -271,7 +274,11 @@ export async function executeOriginalAccountActionTransport(params: Readonly<{
         } else {
             payload = await response.json();
         }
-    } catch { return failure(invalid); }
+    } catch (error) {
+        return withActionFailureDiagnostic({ ...failure(invalid),
+            failureCause: projectActionFailureCauseV1(error, 'external_action.http.response'),
+        }, { phase: 'external_action.http.response', causeKind: 'incomplete', error });
+    }
     if (!response.ok) {
         const refusal = ExternalActionHttpErrorSchema.safeParse(payload);
         // Only the authenticated pre-open error contract proves that no Action

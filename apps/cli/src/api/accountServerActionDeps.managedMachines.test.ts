@@ -6,7 +6,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vites
 import fastify from 'fastify';
 import { AccountSettingsSchema, ActionIdSchema, FeaturesResponseSchema, MachineSetupApplyInputV1Schema, normalizeActionsSettingsV1, deriveMachineSetupCombinedRunIdV1, openWorkflowAcceptedSnapshotStoredEnvelopeV1, parseWorkflowStoredContentEnvelopeV1, type ActionId } from '@happier-dev/protocol';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedControllerReportV1Schema, ManagedMachineActionInputSchemasV1, ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { QualifiedConnectedAccountListResponseV4Schema, QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { TeamsListInputV1Schema, TeamsPageV1Schema } from '@happier-dev/protocol/teams/projections';
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/actionExecutor';
@@ -389,9 +389,12 @@ describe('managed inventory CLI Home adapter', () => {
   });
 
   it.each([['account', false], ['account', true], ['native', false], ['native', true],
-    ['delete', false], ['delete', true], ['delete-refused-report-failed', false], ['delete-factory', false]] as const)(
+    ['delete', false], ['delete', true], ['delete-refused-report-failed', false], ['delete-factory', false],
+    ['delete-acquisition-bound', false], ['delete-acquisition-unknown', false]] as const)(
     'executes the admitted Account native intent rather than treating its Home write as native success (%s consumer, refused=%s)', async (entry, refused) => {
-    const deleting = entry === 'delete' || entry === 'delete-refused-report-failed' || entry === 'delete-factory';
+    const deleting = entry.startsWith('delete');
+    const recovering = entry === 'delete-acquisition-bound' || entry === 'delete-acquisition-unknown';
+    const identityUnknown = entry === 'delete-acquisition-unknown';
     const nativeRefused = entry === 'delete-refused-report-failed';
     const actionId = deleting ? 'machines.managed.delete' : 'machines.managed.power.set';
     const service = { pluginId: 'acme.accounts', localId: 'cloud' };
@@ -404,7 +407,7 @@ describe('managed inventory CLI Home adapter', () => {
       projectTargetAccounts: async () => { throw new Error('No account listing'); },
       assertTargetAccountMaterializable: async () => { throw new Error('No listed account use'); },
     });
-    const base = managedFixture({ credentialOwner: owner });
+    const base = managedFixture({ credentialOwner: owner, ...(recovering ? { reconciliation: true, reconciliationResource: true } : {}) });
     const provisioner = base.manifest.contributes.machineProvisioners[0]!;
     const provider = { pluginId: managedPluginId, localId: provisioner.id };
     const launch = { provider, schemaVersion: 1, name: 'Retained', choices: {}, credentials: [{
@@ -417,6 +420,9 @@ describe('managed inventory CLI Home adapter', () => {
       reviewedFacts: { launch, provisioner, optionStatus: 'current', prerequisites: [], billing: provisioner.billing,
         retentionCapabilities: provisioner.retention, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false },
       observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' },
+      ...(recovering ? { allocation: 'may-exist', resource: undefined,
+        nativeOperationRef: { contributionRef: provider, schemaVersion: 1, value: {} },
+        recovery: { reference: 'retained', reason: 'native_identity_unavailable' } } : {}),
     };
     const powerInput = { homeId: retained.homeId, managedId: retained.id, expectedRevision: 2, when: 'now' as const,
       ...(deleting ? { intent: 'delete' as const, reviewedDependencies: true } : { intent: 'start' as const }) };
@@ -458,6 +464,14 @@ describe('managed inventory CLI Home adapter', () => {
       return { machine: retained, replayed: false };
     });
     app.post('/v1/machines/managed/controller/submit-intent', async () => ({ machine: retained, submitted: true }));
+    app.post('/v1/machines/managed/controller/report', async request => {
+      const report = ManagedControllerReportV1Schema.parse(request.body);
+      retained = { ...retained, ...(report.result.kind === 'bound'
+        ? { allocation: 'bound', resource: report.result.resource, nativeOperationRef: undefined }
+        : report.result.kind === 'unknown' ? { recovery: report.result.recovery } : {}),
+        ...(report.observation ? { observation: report.observation } : {}) };
+      return { machine: retained };
+    });
     app.post('/v1/machines/managed/controller/report-intent', async (request, reply) => {
       expect(request.body).toMatchObject({ expectedIntentRevision: 3, requestId: 'original-power', result: { kind: nativeRefused ? 'refused' : 'confirmed' } });
       if (nativeRefused) return reply.code(503).send({ code: 'managed_request_failed' });
@@ -466,8 +480,11 @@ describe('managed inventory CLI Home adapter', () => {
     });
     const native: string[] = [];
     const nativeResults = { inspect: { observedAt: 2, availability: 'present' as const, power: 'stopped' as 'stopped' | 'running', storage: 'retained' as const },
+      ...(recovering ? { reconcile: identityUnknown ? { kind: 'unknown', recovery: { reference: 'retained', reason: 'native_identity_unavailable' } }
+        : { kind: 'bound', resource: { contributionRef: provider, schemaVersion: 1, value: {} } } } : {}),
       ...(nativeRefused ? { destroy: { kind: 'refused', code: 'fixture_delete_refused' } } : {}) };
     const runtime = managedFixture({ fixtureManifest: manifest, executionRealm: 'account', credentialOwner: owner, referenceManifests: [reference],
+      ...(recovering ? { reconciliation: true, reconciliationResource: true } : {}),
       onNativeRole: role => { native.push(role); if (role === 'power') nativeResults.inspect.power = 'running'; },
       onInspect: () => { native.push('inspect'); }, nativeRoleResults: nativeResults });
     const invoke = createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: async () => ({ registry: runtime.runtimeRegistry,
@@ -479,7 +496,7 @@ describe('managed inventory CLI Home adapter', () => {
       operationAcceptance: { operationId: 'original-operation', accept() {} }, operationOwnerUpdate: { update() {} } };
     // This constructs the consumer's canonical private-port boundary; it is
     // not evidence that production preparation has published the role plan.
-    const roles = deleting ? ['destroy'] : ['power', 'inspect'];
+    const roles = deleting ? recovering ? ['reconcile', 'destroy'] : ['destroy'] : ['power', 'inspect'];
     if (entry !== 'delete-factory') actionContext.hostReviewedChild = createHostReviewedChildPortV1({ actionId, input: powerInput,
       context: actionContext, reviewAdmitted: true,
       plan: { children: roles.map(role => ({ action: { pluginId: provider.pluginId, localId: role }, role })) },
@@ -489,7 +506,7 @@ describe('managed inventory CLI Home adapter', () => {
         if (!body || typeof body !== 'object' || !('action' in body) || !body.action || typeof body.action !== 'object'
           || !('localId' in body.action) || typeof body.action.localId !== 'string') throw new Error('Expected provider Action');
         if (!('input' in body)) throw new Error('Expected provider operand');
-        expect(body).toMatchObject({ input: { resource: {} } });
+        expect(body).toMatchObject({ input: body.action.localId === 'reconcile' ? { nativeOperation: {} } : { resource: {} } });
         return invoke({ action: { pluginId: provider.pluginId, localId: body.action.localId }, input: body.input, context: childContext });
       } });
     const deps = createAccountServerActionDeps({ token: 'bound', serverId: 'route-home', serverIdentityId: 'srv_home', serverHttpBaseUrl: 'http://home.test' });
@@ -524,12 +541,17 @@ describe('managed inventory CLI Home adapter', () => {
           throw error;
         });
     expect(result).toMatchObject(refused ? { ok: false, errorCode: 'managed_power_required' }
+      : identityUnknown ? { ok: false, errorCode: 'native_identity_unavailable',
+        failureCause: { errorClass: 'ManagedMachineControllerError', errorCode: 'native_identity_unavailable' } }
       : nativeRefused ? { ok: false, errorCode: 'fixture_delete_refused' }
       : { kind: 'accepted', managedId: retained.id, intentRevision: 3 });
-    expect(native).toEqual(refused || entry === 'delete-factory' ? [] : deleting ? ['destroy'] : ['inspect', 'power', 'inspect']);
+    expect(native).toEqual(refused || entry === 'delete-factory' ? [] : recovering ? identityUnknown ? ['reconcile'] : ['reconcile', 'destroy']
+      : deleting ? ['destroy'] : ['inspect', 'power', 'inspect']);
+    if (recovering) expect(retained.allocation).toBe(identityUnknown ? 'may-exist' : 'confirmed-absent');
+    if (identityUnknown) expect(retained.nativeOperationRef).toBeDefined();
     // The native power handler materializes the selected token. The fixture's
     // Inspect returns its observed state without acquiring another token.
-    expect(disclosed).toEqual(refused || nativeRefused || entry === 'delete-factory' ? [] : ['selected-account']);
+    expect(disclosed).toEqual(refused || nativeRefused || identityUnknown || entry === 'delete-factory' ? [] : ['selected-account']);
     expect(paths.filter(path => path.endsWith('/admit-control'))).toHaveLength(1);
     expect(paths.some(path => path.endsWith('/execution-authorization'))).toBe(false);
   });

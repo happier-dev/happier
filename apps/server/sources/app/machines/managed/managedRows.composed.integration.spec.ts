@@ -90,6 +90,45 @@ describe('retained managed rows across declaration changes', () => {
             : undefined);
     });
 
+    it('transfers uncertain acquisition recovery to accepted Delete cleanup custody', async () => {
+        const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const controller = { machineId: randomUUID(), installationId: randomUUID() };
+        await db.machine.create({ data: { id: controller.machineId, accountId: account.id, metadata: '{}', active: true,
+            installationId: controller.installationId, pluginMaterializationRevision: 1n } });
+        const manifest = await seedBundledManagedAvailability(account.id, homeId, controller, ['machine-lima.json']);
+        const choices = { store: '/tmp/managed-cleanup-custody', image: 'fixture:ubuntu', arch: 'x86_64' as const,
+            vmType: 'qemu' as const, cpus: 2, memoryGiB: 4, diskGiB: 16, mounts: [] };
+        const input = { enrollmentIdentity: { kind: 'existingUser' as const, role: 'adopted' as const },
+            selection: { kind: 'one-off' as const, homeId, controller,
+                launch: { provider: { pluginId: manifest.id, localId: 'lima' }, schemaVersion: 1, name: 'Cleanup custody', choices },
+                retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false } };
+        const requestId = randomUUID();
+        const created = await admitManagedAcquire({ requesterAccountId: account.id, custodianAccountId: account.id,
+            requestEnvelopeDigest: requestId, input: { requestId, input, continuationPresent: false } });
+        const current = { homeId, managedId: created.machine.id, requestId, controller, expectedIntentRevision: 0 };
+        const acquisition = { contributionRef: input.selection.launch.provider, schemaVersion: 1,
+            value: { ...limaAcquisitionResource(choices, created.machine.id), mounts: [] } };
+        await submitManagedAcquire(current);
+        await reportManagedAcquire({ ...current, result: { kind: 'unknown', recovery: {
+            reference: created.machine.id, reason: 'native_identity_unavailable' } } });
+        await reportManagedAcquire({ ...current, result: { kind: 'pending', nativeOperationRef: acquisition } });
+        const deletionId = randomUUID();
+        await admitManagedControl({ actorAccountId: account.id, custodianAccountId: account.id,
+            input: { action: 'machines.managed.delete', requestId: deletionId,
+                input: { homeId, managedId: current.managedId, expectedRevision: 0, when: 'now', intent: 'delete', reviewedDependencies: true } } });
+        const deletion = { ...current, requestId: deletionId, expectedIntentRevision: 1 };
+        await submitManagedIntent(deletion);
+        const cleanup = { ...acquisition, value: { ...acquisition.value, instance: 'cleanup-custody' } };
+        const accepted = await reportManagedIntent({ ...deletion, result: { kind: 'accepted', nativeOperationRef: cleanup } });
+        expect(accepted.machine).toMatchObject({ allocation: 'may-exist', nativeOperationRef: cleanup,
+            submittedNativeEffect: { intent: 'delete' } });
+        expect(accepted.machine.recovery).toBeUndefined();
+        const refused = await reportManagedIntent({ ...deletion, result: { kind: 'refused', code: 'provider_unavailable' } });
+        expect(refused.machine).toMatchObject({ nativeOperationRef: cleanup });
+        expect(refused.machine.submittedNativeEffect).toBeUndefined();
+        expect(refused.machine.recovery).toBeUndefined();
+    });
+
     it('reads the selected controller declaration when another Machine claims fewer provisioners', async () => {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
         const keys = tweetnacl.sign.keyPair();

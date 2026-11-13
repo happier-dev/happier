@@ -116,7 +116,7 @@ async function captureIssuedConfigurationFacts(machine: ManagedMachineV1, provis
 /** Observe an issued acquisition by its retained handle, never by issuing another allocation. */
 export async function reconcileManagedAcquisitionIdentity(input: Pick<ManagedMachineReconciliation, 'requestId' | 'provisioner' | 'signal'> & (
     | Pick<ManagedMachineReconciliation, 'action' | 'home'>
-    | Readonly<{ action: 'machines.managed.inspect'; home: Pick<ManagedReconciliationHome, 'correlation' | 'row'> }>),
+    | Readonly<{ action: 'machines.managed.inspect' | 'machines.managed.delete'; home: Pick<ManagedReconciliationHome, 'correlation' | 'row'> }>),
     machine: ManagedMachineV1, invoke: ManagedNativeInvocation): Promise<ManagedMachineV1> {
     const retained = machine.nativeOperationRef;
     if (retained && (retained.contributionRef.pluginId !== machine.launch.provider.pluginId

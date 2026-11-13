@@ -5,6 +5,7 @@ import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/extern
 import { createHash } from 'node:crypto';
 import { projectExternalActionHttpError, projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionOutputDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1, isExternalActionAuthorizationBoundToEnvelope } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -853,7 +854,31 @@ describe('captured Account Action response decoding', () => {
 
     it('keeps an issued Action uncertain when its HTTP observer loses the response', async () => {
         homes.answer(serverId, path, { dispatchThenFail: true });
-        await expect(execute()).resolves.toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
+        const result = await execute();
+        expect(result).toMatchObject({ ok: false, errorCode: 'outcome_unknown',
+            failureCause: { phase: 'external_action.http.execute', errorClass: 'TypeError', errorCode: null, httpStatus: null } });
+        expect(readActionOutputDiagnostic(result)).toMatchObject({
+            exception: { errorClass: 'TypeError', message: expect.any(String) },
+        });
+        expect(JSON.stringify(result)).not.toContain('Failed to fetch');
+    });
+
+    it('retains the response body read failure after an Action was issued', async () => {
+        let rejectBody!: (error: unknown) => void;
+        const bodyAfter = new Promise<void>((_resolve, reject) => { rejectBody = reject; });
+        homes.answer(serverId, path, { bodyAfter,
+            body: { v: 1, actionId: binding.actionId, requestId: binding.requestId,
+                execution: { ok: true, result: { completed: true } } } });
+        const pending = execute();
+        await waitForHomeGovernance(() => expect(homes.requestsFor(path)).toHaveLength(1));
+        rejectBody(new TypeError('Failed to read Action response'));
+        const result = await pending;
+        expect(result).toMatchObject({ ok: false, errorCode: 'invalid_action_output',
+            failureCause: { phase: 'external_action.http.response', errorClass: 'TypeError', errorCode: null, httpStatus: null } });
+        expect(readActionOutputDiagnostic(result)).toMatchObject({
+            exception: { errorClass: 'TypeError', message: expect.any(String) },
+        });
+        expect(JSON.stringify(result)).not.toContain('Failed to read Action response');
     });
 
     it('retains canonical uncertainty when an issued write exhausts its caller-owned budget', async () => {

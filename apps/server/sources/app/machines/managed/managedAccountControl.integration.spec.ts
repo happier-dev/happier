@@ -30,7 +30,7 @@ import { resolveManagedGuestActivityAdmissionInTx } from './managedGuestActivity
 import { readMachineDevcontainerWorkspaceSyncEndpointInTx } from './managedRows';
 import { admitManagedControl } from './managedMutations';
 import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD } from '@happier-dev/protocol/machines/managed/managedIntentV1';
-import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { managedMachineActionEndpointPathV1, type ManagedControllerIntentReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { isOriginalTerminalExecutionAction, resolveExternalActionExecutionMachineAdmissionInTx } from '@/app/auth/externalActionExecutionAuthorization';
 import { getActivePrismaRuntime } from '@/storage/prisma';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
@@ -305,7 +305,7 @@ describe('Account-owned managed control without a controller', () => {
                 retention: { kind: 'deadline', at: 1, effect: 'stop' }, wakeOnAcceptedMessage: true } });
             const purpose = { kind: 'retention' as const };
             const policy = { ...current, requestId: randomUUID(), controller: { machineId: guest.id, installationId: guest.installationId! }, purpose };
-            const policyPost = (path: string, body: typeof policy | Omit<typeof policy, 'purpose'> | Omit<typeof policy, 'purpose'> & { result: { kind: 'refused'; code: 'provider_unavailable' } },
+            const policyPost = (path: string, body: typeof policy | Omit<typeof policy, 'purpose'> | ManagedControllerIntentReportV1 & { controller: typeof policy.controller },
                 nativeResource = resource) => post(path, body, { 'x-test-auth-token-kind': 'terminal',
                     [MANAGED_POLICY_PROOF_HEADER]: encodeManagedPolicyProofV1(createManagedPolicyProofV1({ correlation: {
                         homeId: body.homeId, managedId: body.managedId, expectedIntentRevision: body.expectedIntentRevision,
@@ -319,7 +319,14 @@ describe('Account-owned managed control without a controller', () => {
             const activePolicy = { ...policy, expectedIntentRevision: ownPolicy.json().machine.intentRevision };
             const { purpose: _purpose, ...correlation } = activePolicy;
             expect((await policyPost('submit-intent', correlation)).statusCode).toBe(200);
-            expect((await policyPost('report-intent', { ...correlation, result: { kind: 'refused', code: 'provider_unavailable' } })).statusCode).toBe(200);
+            const observation = { observedAt: Date.now(), availability: 'present' as const, power: 'stopped' as const };
+            const observed = await policyPost('report-intent', { ...correlation, result: { kind: 'unknown' }, observation });
+            expect(observed.statusCode, observed.body).toBe(200);
+            expect(observed.json().machine.submittedNativeEffect).toBeUndefined();
+            const settled = await policyPost('report-intent', { ...correlation, result: { kind: 'confirmed' }, observation });
+            expect(settled.statusCode, settled.body).toBe(200);
+            expect(settled.json().machine).toMatchObject({ desired: 'stop', observation });
+            expect((await policyPost('report-intent', { ...correlation, requestId: randomUUID(), result: { kind: 'confirmed' }, observation })).statusCode).toBe(409);
         } finally { await app.close(); }
     });
 

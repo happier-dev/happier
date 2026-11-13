@@ -97,7 +97,7 @@ function signedIdle(machine: ReturnType<typeof ManagedMachineV1Schema.parse>, si
     }) };
 }
 function setup(decision: { kind: 'idle'; since: number } | { kind: 'busy' | 'unknown'; reasons: ['finite'] } = { kind: 'idle', since: 0 },
-    nativeResult: ReturnType<typeof MachineProvisionerDestroyResultV1Schema.parse> = { kind: 'confirmed' }, intent: 'start' | 'stop' | 'suspend' | 'delete' | 'rebuild' = 'delete',
+    nativeResult: ReturnType<typeof MachineProvisionerDestroyResultV1Schema.parse> = { kind: 'confirmed' }, intent: 'start' | 'resume' | 'stop' | 'suspend' | 'delete' | 'rebuild' = 'delete',
     inspectObservation?: ProviderObservationV1, onNativeEffect?: () => void,
     rebuildResult?: ReturnType<typeof MachineProvisionerRebuildResultV1Schema.parse>, recoverRebuild = false,
     cleanupObservation?: { kind: 'confirmed' | 'retryable' } | { kind: 'unknown'; code?: string },
@@ -162,8 +162,10 @@ function setup(decision: { kind: 'idle'; since: number } | { kind: 'busy' | 'unk
         if (path.endsWith('/context')) return { status: 200, data: { machine, requestId: 'control' } };
         if (path.endsWith('/report')) {
             const report = ManagedControllerReportV1Schema.parse(body);
-            if (report.result.kind === 'bound') machine = { ...machine, allocation: 'bound', resource: report.result.resource };
+            if (report.result.kind === 'bound') machine = { ...machine, allocation: 'bound', resource: report.result.resource,
+                ...(machine.allocation === 'may-exist' && machine.submittedNativeEffect?.intent !== 'delete' ? { nativeOperationRef: undefined } : {}) };
             if (report.result.kind === 'rejected') machine = { ...machine, allocation: 'confirmed-absent' };
+            if (report.result.kind === 'unknown') machine = { ...machine, recovery: report.result.recovery };
             if (report.observation) machine = { ...machine, observation: report.observation };
         }
         if (path.endsWith('/submit-intent')) {
@@ -236,6 +238,102 @@ function setup(decision: { kind: 'idle'; since: number } | { kind: 'busy' | 'unk
 }
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
 
+it.each(['start', 'resume', 'stop', 'suspend'] as const)(
+    'settles %s after another observer clears native custody and the report reply is lost', async intent => {
+    const power = intent === 'start' || intent === 'resume' ? 'running' : intent === 'stop' ? 'stopped' : 'suspended';
+    const observation: ProviderObservationV1 = { observedAt: 1, availability: 'present', power: 'stopped' };
+    const test = setup(undefined, { kind: 'confirmed' }, intent, observation, () => {
+        observation.observedAt = 2;
+        observation.power = power;
+    });
+    // Retained pre-restart power is a fact, never native-operation custody.
+    test.setMachine({ observation: { observedAt: 1, availability: 'present', power: 'running' } });
+    const transport = test.post.getMockImplementation()!;
+    test.post.mockImplementation(async (url, body, config) => {
+        if (String(url).endsWith('/report-intent')) {
+            // Another Inspect has already published this native fact and settled
+            // the same submitted tuple before this controller's report arrives.
+            const report = ManagedControllerIntentReportV1Schema.parse(body);
+            test.setMachine({ submittedNativeEffect: undefined, observation: report.observation });
+            throw new axios.AxiosError('Settlement reply lost', 'EPIPE');
+        }
+        return await transport(url, body, config);
+    });
+    const machine = test.readMachine();
+    const input = { homeId: machine.homeId, managedId: machine.id, intent, when: 'now', expectedRevision: machine.intentRevision };
+    const operations = createHostActionOperationRuntime({ machineId: machine.controller!.machineId,
+        resolveAccountId: async () => 'owner', generateOperationId: () => 'power-report-conflict' });
+    let work: ReturnType<typeof test.driver.execute> | undefined;
+    await operations.observeExecution({ actionId: 'machines.managed.power.set', input, actionRequestId: 'control',
+        execute: async context => {
+            work = test.driver.execute('machines.managed.power.set', input, { requestId: 'control', context, signal: context.signal });
+            const result = await work;
+            const failure = ActionExecuteFailureSchema.safeParse(result);
+            return failure.success ? failure.data : { ok: true, result };
+        } });
+    await expect(work).resolves.toMatchObject({ kind: 'accepted', managedId: machine.id });
+    expect(await operations.handlers.getV2({ operationId: 'power-report-conflict' })).toMatchObject({ kind: 'found',
+        operation: { state: 'succeeded' } });
+    expect(test.effects.filter(role => role === 'power')).toEqual(['power']);
+    expect(test.post.mock.calls.filter(([url]) => String(url).endsWith('/report-intent'))).toHaveLength(1);
+});
+
+it.each(['pending', 'changed-resource', 'current-refused'] as const)('preserves a lost Start report cause when exact settlement is unavailable (%s)', async state => {
+    const observation: ProviderObservationV1 = { observedAt: 1, availability: 'present', power: 'stopped' };
+    const test = setup(undefined, { kind: 'confirmed' }, 'start', observation, () => {
+        observation.observedAt = 2;
+        observation.power = 'running';
+    });
+    const transport = test.post.getMockImplementation()!;
+    let conflicted = false;
+    test.post.mockImplementation(async (url, body, config) => {
+        if (String(url).endsWith('/report-intent')) {
+            conflicted = true;
+            if (state === 'changed-resource') test.setMachine({ submittedNativeEffect: undefined, observation,
+                resource: { ...test.readMachine().resource!, value: { replacement: true } } });
+            throw new axios.AxiosError('Settlement reply lost', 'EPIPE');
+        }
+        if (conflicted && state === 'current-refused' && String(url).endsWith('/current')) {
+            return { status: 409, data: { code: 'intent_changed' } };
+        }
+        return await transport(url, body, config);
+    });
+    await expect(test.run()).resolves.toMatchObject({ ok: false, errorCode: 'action_outcome_unknown',
+        failureCause: { phase: 'managed.controller.report_intent', errorCode: 'EPIPE' } });
+    expect(test.effects.filter(role => role === 'power')).toEqual(['power']);
+    expect(test.post.mock.calls.filter(([url]) => String(url).endsWith('/report-intent'))).toHaveLength(1);
+});
+
+it('does not turn a native Start refusal into success through stale running power after a report conflict', async () => {
+    const test = setup(undefined, { kind: 'refused', code: 'native_permission_denied' }, 'start',
+        { observedAt: 2, availability: 'present', power: 'stopped' });
+    test.setMachine({ observation: { observedAt: 1, availability: 'present', power: 'running' } });
+    const transport = test.post.getMockImplementation()!;
+    test.post.mockImplementation(async (url, body, config) => {
+        if (String(url).endsWith('/report-intent')) {
+            test.setMachine({ submittedNativeEffect: undefined });
+            return { status: 409, data: { code: 'request_conflict' } };
+        }
+        return await transport(url, body, config);
+    });
+    const machine = test.readMachine();
+    const input = { homeId: machine.homeId, managedId: machine.id, intent: 'start', when: 'now', expectedRevision: machine.intentRevision };
+    const operations = createHostActionOperationRuntime({ machineId: machine.controller!.machineId,
+        resolveAccountId: async () => 'owner', generateOperationId: () => 'refused-start-report' });
+    let work: ReturnType<typeof test.driver.execute> | undefined;
+    await operations.observeExecution({ actionId: 'machines.managed.power.set', input, actionRequestId: 'control',
+        execute: async context => {
+            work = test.driver.execute('machines.managed.power.set', input, { requestId: 'control', context, signal: context.signal });
+            const result = await work;
+            const failure = ActionExecuteFailureSchema.safeParse(result);
+            return failure.success ? failure.data : { ok: true, result };
+        } });
+    await expect(work).rejects.toMatchObject({ code: 'native_permission_denied' });
+    expect(await operations.handlers.getV2({ operationId: 'refused-start-report' })).toMatchObject({ kind: 'found',
+        operation: { state: 'failed', error: { errorCode: 'native_permission_denied' } } });
+    expect(test.effects).toEqual(['power']);
+});
+
 it('preserves the authored native failure when controller outcome reporting fails and records its closed report warning', async () => {
     const failureCause = { phase: 'action.invoke', errorClass: 'Error', errorCode: 'EPIPE', httpStatus: null } as const;
     const test = setup(undefined, undefined, 'stop', undefined, () => {
@@ -252,7 +350,7 @@ it('preserves the authored native failure when controller outcome reporting fail
         .rejects.toMatchObject({ code: 'native_transport_unavailable', failureCause,
             cause: { ok: false, errorCode: 'native_transport_unavailable', error: 'Reconnect the native provider', failureCause } });
     expect(warnings).toHaveBeenCalledWith(expect.any(String), {
-        phase: 'machines.managed.power.set', errorClass: 'ManagedMachineControllerError', errorCode: 'forbidden', httpStatus: 403,
+        phase: 'managed.controller.report_intent', errorClass: 'ManagedMachineControllerError', errorCode: 'forbidden', httpStatus: 403,
     });
 });
 
@@ -286,14 +384,13 @@ it.each(['power-refused', 'delete-refused', 'rebuild-refused', 'guest-startup-fa
             ? { code: 'native_transport_unavailable', failureCause }
             : { code: refusal.code, details: { kind: 'managedNative', nativeCause } });
         expect(warnings).toHaveBeenCalledWith(expect.any(String), {
-            phase: intent === 'delete' ? 'machines.managed.delete' : intent === 'rebuild' ? 'machines.managed.rebuild' : 'machines.managed.power.set',
+            phase: 'managed.controller.report_intent',
             errorClass: 'ManagedMachineControllerError', errorCode: 'forbidden', httpStatus: 403,
         });
     } else {
         // A confirmed native result does not hide failure to report it to Home.
         await expect(work).resolves.toMatchObject({ ok: false, errorCode: 'action_outcome_unknown',
             failureCause: { phase: 'managed.controller.report_intent', errorCode: 'forbidden', httpStatus: 403 } });
-        expect(warnings).not.toHaveBeenCalled();
     }
     const report = test.post.mock.calls.find(([url]) => String(url).endsWith('/report-intent'));
     expect(report?.[1]).toMatchObject({ result: refused ? refusal : { kind: 'confirmed' } });
@@ -322,7 +419,7 @@ it('preserves the native pre-handler refusal and submitted custody when refusal 
     expect(test.effects).toEqual([]);
     expect(test.reopen).not.toHaveBeenCalled();
     expect(warnings).toHaveBeenCalledWith(expect.any(String), {
-        phase: 'machines.managed.delete', errorClass: 'ManagedMachineControllerError', errorCode: 'forbidden', httpStatus: 403,
+        phase: 'managed.controller.report_intent', errorClass: 'ManagedMachineControllerError', errorCode: 'forbidden', httpStatus: 403,
     });
 });
 
@@ -2693,6 +2790,35 @@ describe('managed native intent through the accepted Action', () => {
         expect(test.readMachine()).toMatchObject({ allocation: 'confirmed-absent', resource: { value: {} },
             observation: { availability: 'absent' } });
     });
+    it.each(['bound', 'unknown', 'pending', 'rejected'] as const)('reconciles a failed acquisition handle before Delete when identity is %s', async kind => {
+        const handle = { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1,
+            value: { requestId: 'managed' } };
+        const resource = { ...handle, value: { guest: 'recovered' } };
+        const test = setup(undefined, undefined, 'delete', undefined, undefined, undefined, true, undefined, {
+            reconciliationResource: false,
+            nativeRoleResults: {
+                reconcile: kind === 'bound' ? { kind, resource } : kind === 'pending' ? { kind, nativeOperationRef: handle }
+                    : kind === 'rejected' ? { kind, code: 'managed_not_found' }
+                        : { kind, recovery: { reference: 'managed', reason: 'native_identity_unavailable' } },
+                destroy: body => body && typeof body === 'object' && !Array.isArray(body) && 'resource' in body
+                    ? { kind: 'confirmed' } : { kind: 'refused', code: 'invalid_request' },
+            },
+        });
+        test.setMachine({ allocation: 'may-exist', resource: undefined, enrolledMachineId: undefined,
+            nativeOperationRef: handle, recovery: { reference: 'managed', reason: 'native_identity_unavailable' } });
+        if (kind === 'bound' || kind === 'rejected') {
+            await expect(test.run()).resolves.toMatchObject({ kind: 'accepted', managedId: 'managed' });
+            expect(test.effects).toEqual(kind === 'bound' ? ['reconcile', 'destroy'] : ['reconcile']);
+            if (kind === 'bound') expect(test.nativeInputs[1]).toEqual({ resource: resource.value });
+            expect(test.readMachine()).toMatchObject({ allocation: 'confirmed-absent' });
+        } else {
+            await expect(test.run()).rejects.toMatchObject({ name: 'ManagedMachineControllerError',
+                code: kind === 'pending' ? 'native_acquisition_pending' : 'native_identity_unavailable' });
+            expect(test.effects).toEqual(['reconcile']);
+            expect(test.readMachine()).toMatchObject({ allocation: 'may-exist', nativeOperationRef: handle });
+            expect(test.readMachine().submittedNativeEffect).toBeUndefined();
+        }
+    });
     it('recovers an unbound canceled native operation before entering the shared Delete path', async () => {
         const test = setup(undefined, undefined, 'delete', undefined, undefined, undefined, true);
         const machine = test.readMachine();
@@ -2711,15 +2837,19 @@ describe('managed native intent through the accepted Action', () => {
         expect(test.nativeInputs[1]).toMatchObject({ resource: {} });
     });
     it.each(['active', 'canceled'] as const)('deletes proven-owned pending native attachments from an %s row without a Machine id', async creationState => {
-        const test = setup(undefined, undefined, 'delete', undefined, undefined, undefined, true);
+        const handle = { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} };
+        const test = setup(undefined, undefined, 'delete', undefined, undefined, undefined, true, undefined, {
+            nativeRoleResults: { reconcile: { kind: 'pending', nativeOperationRef: handle } },
+        });
         test.setMachine({ creationState, allocation: 'may-exist', resource: undefined, enrolledMachineId: undefined,
-            nativeOperationRef: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} } });
+            nativeOperationRef: handle });
         const machine = test.readMachine();
         const work = creationState === 'canceled'
             ? test.driver.executePolicy(machine, { kind: 'creation-cleanup' }, test.options)
             : test.run();
         await expect(work).resolves.toMatchObject({ kind: 'accepted', managedId: machine.id });
-        expect(test.effects).toEqual(['destroy']);
+        expect(test.effects).toEqual(creationState === 'canceled' ? ['reconcile', 'destroy'] : ['destroy']);
+        expect(test.nativeInputs.at(-1)).toEqual({ nativeOperation: handle.value });
         expect(test.reports).toContainEqual(expect.objectContaining({ result: { kind: 'confirmed' },
             observation: expect.objectContaining({ availability: 'absent' }) }));
     });
@@ -2742,9 +2872,12 @@ describe('managed native intent through the accepted Action', () => {
         expect(test.reports.some(report => report && typeof report === 'object' && 'observation' in report)).toBe(false);
     });
     it('resumes canceled owned pending cleanup from the controller census without scheduling unknown or active pending purchases', async () => {
-        const test = setup(undefined, undefined, 'delete', undefined, undefined, undefined, true);
+        const handle = { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} };
+        const test = setup(undefined, undefined, 'delete', undefined, undefined, undefined, true, undefined, {
+            nativeRoleResults: { reconcile: { kind: 'pending', nativeOperationRef: handle } },
+        });
         test.setMachine({ creationState: 'canceled', allocation: 'may-exist', resource: undefined, enrolledMachineId: undefined,
-            nativeOperationRef: { contributionRef: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1, value: {} } });
+            nativeOperationRef: handle });
         const owned = test.readMachine();
         const failures: unknown[] = [];
         let settled = false;
@@ -2763,7 +2896,8 @@ describe('managed native intent through the accepted Action', () => {
             runtime.notifyChanged();
             await vi.waitFor(() => expect(settled).toBe(true));
             expect(failures).toEqual([]);
-            expect(test.effects).toEqual(['destroy']);
+            expect(test.effects).toEqual(['reconcile', 'destroy']);
+            expect(test.nativeInputs.at(-1)).toEqual({ nativeOperation: handle.value });
             expect(test.reports).toContainEqual(expect.objectContaining({ result: { kind: 'confirmed' },
                 observation: expect.objectContaining({ availability: 'absent' }) }));
         } finally { await runtime.stop(); }

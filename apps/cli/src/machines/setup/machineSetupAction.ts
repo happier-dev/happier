@@ -4,7 +4,7 @@ import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/action
 import { MachineSetupResolveResultV1Schema, MachineSetupReportInputV1Schema, MachineSetupApplyResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineSetupNativeSshHostKeyV1 } from '@happier-dev/protocol/machines/setup/backupReceiverV1';
 import type { MachineSetupApplyTargetV1, MachineSetupRemoveInputV1, MachineSetupPlanResultV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { listSecretReferenceOverlayV1BindingNames, readSecretReferenceOverlayV1Reference } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -236,11 +236,18 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
       let reportedRunning = false;
       let nativeStarted = false;
       let receiverHostKeys: readonly MachineSetupNativeSshHostKeyV1[] = [];
+      const phase = mode === 'remove' ? 'machines.setup.remove' : 'machines.setup.apply';
       const report = async (state: 'running' | 'succeeded' | 'failed', errorCode?: string) => {
         if (!creation) return;
-        await request('/v1/machines/setup/report', MachineSetupReportInputV1Schema.parse({ homeId: input.homeId, machineId: input.machineId,
-          presetId: creation.preset.id, presetRevision: creation.preset.revision, managedId: creation.managedId, state,
-          operation: { operationId }, ...(errorCode ? { errorCode } : {}) }));
+        try {
+          await request('/v1/machines/setup/report', MachineSetupReportInputV1Schema.parse({ homeId: input.homeId, machineId: input.machineId,
+            presetId: creation.preset.id, presetRevision: creation.preset.revision, managedId: creation.managedId, state,
+            operation: { operationId }, ...(errorCode ? { errorCode } : {}) }));
+        } catch (error) {
+          if (state === 'running') throw error;
+          // Publishing a settled outcome cannot replace the native result.
+          logger.warn('[Machine setup] Native outcome report failed', projectActionFailureCauseV1(error, phase));
+        }
       };
       try {
         const desired = params.apiMachine.captureMachineSetupDesired();
@@ -497,11 +504,7 @@ function createMachineSetupTargetAction(params: MachineSetupActionParameters, mo
         await custody.release();
         const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
           ? error.code : cancellationSignal.aborted ? 'cancelled' : 'machine_setup_apply_failed';
-        const phase = mode === 'remove' ? 'machines.setup.remove' : 'machines.setup.apply';
-        try { if (reportedRunning) await report('failed', code); }
-        catch (reportError) {
-          return { ok: false, ...normalizeActionExecutorThrownError(reportError, phase), errorCode: 'machine_setup_report_failed' };
-        }
+        if (reportedRunning) await report('failed', code);
         return { ok: false, ...normalizeActionExecutorThrownError(error, phase), errorCode: code };
       } finally {
         try { await recipeLease?.release(); }
