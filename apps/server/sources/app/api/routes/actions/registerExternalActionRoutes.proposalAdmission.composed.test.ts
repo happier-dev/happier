@@ -155,7 +155,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
                 payload: { v: 2, requestId: 'protected-refused', target: { kind: 'machine', machineId: 'machine' },
                     payload: { t: 'encrypted', c: 'opaque' } } });
             expect(response.statusCode, response.body).toBe(403);
-            expect(response.json()).toEqual({ error: 'credential_scope_denied',
+            expect(response.json()).toEqual({ error: 'credential_scope_denied', requestId: 'protected-refused',
                 diagnostic: { admissionStage: 'daemon_rpc', errorCode: 'RPC_FORBIDDEN' } });
             expect(response.body).not.toContain('private-error-marker');
             expect(response.headers['cache-control']).toBe('no-store');
@@ -826,7 +826,8 @@ describe('installed Session proposal admission at the Home mint route', () => {
         const source = { id: 'source', revision: 1 };
         const input = DeploymentPrepareInputV1Schema.parse({ projectSourceId: source.id, sourceRevision: source.revision,
             repository: { kind: 'github', deployment: 'https://github.com', repository: 'private/project' },
-            baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId, id: 'workspace' }, environmentId: 'staging' });
+            baseCommit: 'a'.repeat(40), workspace: { kind: 'workspace-ref', serverId, id: 'workspace' }, environmentId: 'staging',
+            sessionRef: { serverId, sessionId: 'session' } });
         const admission = { operation: 'prepare', source, environment: { id: 'staging' }, workspace: { kind: 'workspace-ref', id: 'workspace' } };
         const { app, mint } = createApp('account');
         try {
@@ -1032,25 +1033,27 @@ describe('installed Session proposal admission at the Home mint route', () => {
                     `/v1/deployments/environments/staging?serverId=${serverId}`, undefined,
                     'deployments.environments.get', 'GET', { serverId, environmentId: 'staging' }));
                 const rows = storage.state.deploymentRead;
+                // Finite health/drift reads retain admission; open logs recheck access.
+                const expectRetainedRead = async () => expect.soft(Boolean(await readEnvironment())).toBe(actionId !== 'deployments.logs.read');
                 rows.sourceReadable = false;
-                expect.soft(await readEnvironment()).toBeNull();
-                expect.soft(await readRelay(), 'revoked Source cannot re-enter the transport').toBeNull();
+                await expectRetainedRead();
+                expect.soft(Boolean(await readRelay()), 'finite admitted transport continues; open logs stop').toBe(actionId !== 'deployments.logs.read');
+                expect((await mint(actionId, requested)).statusCode).toBe(403);
                 rows.sourceReadable = true;
                 rows.receipt.environmentId = 'another-environment';
-                expect.soft(await readEnvironment(), 'receipt must belong to the admitted Environment').toBeNull();
+                await expectRetainedRead();
                 rows.receipt.environmentId = 'staging';
                 rows.receipt.targetLinkId = 'another-link';
-                expect.soft(await readEnvironment(), 'receipt must belong to the admitted target link').toBeNull();
+                await expectRetainedRead();
                 rows.receipt.targetLinkId = 'runtime';
                 rows.environment.revision = 2;
-                expect.soft(Boolean(await readEnvironment()), 'drift pins its reviewed revision; other reads use current authority')
-                    .toBe(actionId !== 'deployments.drift.read');
+                expect.soft(Boolean(await readEnvironment()), 'finite admission and current open-log authority survive an unrelated revision').toBe(true);
                 rows.environment.revision = 1;
                 rows.link.id = 'substituted-link';
-                expect.soft(await readEnvironment()).toBeNull();
+                await expectRetainedRead();
                 rows.link.id = 'runtime';
                 rows.link.machines[0]!.installationId = 'substituted-installation';
-                if (actionId !== 'deployments.logs.read') expect.soft(await readEnvironment()).toBeNull();
+                if (actionId !== 'deployments.logs.read') await expectRetainedRead();
                 rows.link.machines[0]!.installationId = 'installation';
                 rows.environment.deletedAt = new Date(1);
                 rows.link.activeDeploymentId = 'newer-receipt';
@@ -1063,7 +1066,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
                     expect.soft(Boolean(await verifyExternalActionDomainExecutionRequest(signedRequestProof(historicalAuthorization,
                         `/v1/deployments/receipts/active-receipt?serverId=${serverId}`, undefined, 'deployments.receipts.get',
                         'GET', { serverId, deploymentId: 'active-receipt' })))).toBe(true);
-                } else expect.soft(await readEnvironment()).toBeNull();
+                } else await expectRetainedRead();
             } finally {
                 const rows = storage.state.deploymentRead;
                 rows.enabled = false; rows.sourceReadable = true; rows.link.id = 'runtime';
@@ -1386,8 +1389,11 @@ describe('installed Session proposal admission at the Home mint route', () => {
                     path, undefined, 'deployments.environments.get', 'GET', { serverId, environmentId: 'staging' })))).toBe(actionId !== 'machines.services.logs.read');
                 if (actionId !== 'machines.services.logs.read') {
                     const rows = { kinds: ['workspace-ref'], serverId };
-                    const candidateCreate = { id: crypto.randomUUID(), kind: DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1,
-                        header: 'sealed-header', body: 'sealed-body', dataEncryptionKey: 'sealed-key' };
+                    const candidateCreate = ArtifactJsonCreateHttpInputV1Schema.parse({
+                        id: authorization.binding.deploymentCandidatePublication?.contentArtifactId ?? randomUUID(),
+                        kind: DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1,
+                        header: encodePlainArtifactStoredContent({ title: 'Reviewed receipt' }),
+                        body: encodePlainArtifactStoredContent({ body: '{}' }), dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER });
                     const admission = { ...input, actionOperationId: 'deployment-operation' };
                     const transitionBody = { serverId, environmentId: 'staging', deploymentId: 'receipt', expectedRevision: 1,
                         actionOperationId: 'deployment-operation', machineId: 'machine', installationId: 'installation',
@@ -1403,7 +1409,6 @@ describe('installed Session proposal admission at the Home mint route', () => {
                         ['/v1/artifacts/candidate', undefined, actionId, 'GET', { id: 'candidate' }],
                         ['/v1/account/encryption/currentness', undefined, actionId, 'GET', {}],
                         [`/v1/deployments/environments/staging/${actionId.slice('deployments.'.length)}`, admission, actionId, 'POST', admission],
-                        ['/v1/deployments/environments/staging/deployments/receipt/transitions', transition, actionId, 'POST', transition],
                     ] as const) {
                         expect.soft(Boolean(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
                             readPath, body, effect, method, routeInput))), readPath).toBe(true);
@@ -1412,11 +1417,16 @@ describe('installed Session proposal admission at the Home mint route', () => {
                         // The registered Source route uses :id, not the Action's sourceId operand.
                         [`/v1/projects/sources/source?serverId=${serverId}`, undefined, 'projects.sources.read', 'GET', { serverId, id: 'source' }],
                         ['/v1/account/project-rows/list', rows, actionId, 'POST', rows],
-                        ['/v1/artifacts', candidateCreate, actionId, 'POST', candidateCreate],
                     ] as const) {
                         expect.soft(Boolean(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
                             readPath, body, effect, method, routeInput))), readPath).toBe(actionId !== 'deployments.teardown');
                     }
+                    // Every admitted native operation, including teardown, owns its canonical receipt candidate.
+                    expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
+                        '/v1/artifacts', candidateCreate, actionId, 'POST', candidateCreate))).not.toBeNull();
+                    // Native transitions require an accepted receipt, beyond this preparation mint.
+                    expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
+                        '/v1/deployments/environments/staging/deployments/receipt/transitions', transition, actionId, 'POST', transition))).toBeNull();
                     for (const routeInput of [{ serverId, id: 'different-source' }, { serverId, sourceId: 'source' }]) {
                         expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
                             `/v1/projects/sources/source?serverId=${serverId}`, undefined,
@@ -1428,9 +1438,10 @@ describe('installed Session proposal admission at the Home mint route', () => {
                     const unhintedCandidate = { id: candidateCreate.id, header: candidateCreate.header,
                         body: candidateCreate.body, dataEncryptionKey: candidateCreate.dataEncryptionKey };
                     expect(Boolean(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
-                        '/v1/artifacts', unhintedCandidate)))).toBe(actionId !== 'deployments.teardown');
+                        '/v1/artifacts', unhintedCandidate)))).toBe(true);
                     expect(Boolean(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
-                        '/v1/artifacts', { ...candidateCreate, kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1 }))))
+                        '/v1/artifacts', { ...candidateCreate, id: authorization.binding.deploymentCandidatePublication?.environmentContentArtifactId ?? randomUUID(),
+                            kind: DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1 }))))
                         .toBe(actionId === 'deployments.promote');
                     expect(await verifyExternalActionDomainExecutionRequest(signedRequestProof(authorization,
                         '/v1/artifacts/candidate', { header: 'replacement' }))).toBeNull();
@@ -1888,10 +1899,10 @@ describe('installed Session proposal admission at the Home mint route', () => {
         registerExternalActionRoutes(app, { dispatch });
         const actionId = 'teams.list';
         const body = proposal(actionId);
-        const signed = (candidate: typeof body, accountId = 'account') => ({ ...candidate,
+        const signed = (candidate: typeof body, accountId = 'account', homeId = 'srv_proposal_admission') => ({ ...candidate,
             installationProof: signMachineInstallationProof({ privateKey: installation.secretKey,
                 payload: { version: 1, accountId, ...candidate.sessionActionSource, externalActionOrigin: {
-                    homeId: 'srv_proposal_admission', actionId, requestId: candidate.envelope.requestId,
+                    homeId, actionId, requestId: candidate.envelope.requestId,
                     requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(candidate.envelope), origin: candidate.sessionActionOrigin } } }) });
         const mint = (payload: unknown, credential = token) => app.inject({ method: 'POST',
             url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId), headers: { authorization: `Bearer ${credential}` }, payload });
@@ -1950,9 +1961,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
             const tampered = token.split('.');
             tampered[1] = Buffer.from(JSON.stringify({ ...decoded, sub: 'other-account' })).toString('base64url');
             expect((await mint(body, tampered.join('.'))).statusCode).toBe(401);
-            storage.state.homeId = 'srv_other_home';
-            expect((await mint(body)).statusCode).toBe(403);
-            storage.state.homeId = 'srv_proposal_admission';
+            expect((await mint(signed(body, 'account', 'srv_other_home'))).statusCode).toBe(403);
             storage.state.bound = false;
             expect((await mint(body)).statusCode).toBe(403);
             storage.state.bound = true;
@@ -2249,6 +2258,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
                     : { previous: { ...invitation, state: 'revoked' }, replacement: invitation,
                         joinUrl: `https://home.invalid/join/${bearer}` };
                 let effects = 0;
+                const sessionDeliveries: unknown[] = [];
                 const path = actionId === 'teams.invitations.create'
                     ? '/v1/teams/invitations/create' : '/v1/teams/invitations/reissue';
                 domain.post(path, { preHandler: domain.authenticate }, async (request, reply) => {
@@ -2271,9 +2281,19 @@ describe('installed Session proposal admission at the Home mint route', () => {
                 // Artifact persistence and the Home domain HTTP effect are
                 // boundaries; the approval, signature and egress owners are real.
                 const deps = {
+                    sessionSendMessage: async (args: Parameters<NonNullable<ActionExecutorDeps['sessionSendMessage']>>[0]) => {
+                        sessionDeliveries.push(args);
+                        expect(args.sessionId).toBe('session');
+                        expect(args.context).toMatchObject({ authority: 'account_automation', serverIdentityId: 'srv_proposal_admission' });
+                        expect(JSON.stringify(args).includes(bearer)).toBe(false);
+                        return { status: 'accepted' as const, localId: args.localId };
+                    },
                     homeDomainAction: async (args: Parameters<NonNullable<ActionExecutorDeps['homeDomainAction']>>[0]) => {
-                        expect(args.context).toMatchObject({ surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
-                        expect(args.context.externalActionExecutionAuthorization === undefined).toBe(true);
+                        // Account replay executes the validated proposal as the
+                        // deciding person; immutable authoring proof stays on the Artifact.
+                        expect(args.context).toMatchObject({ surface: 'ui', authority: 'present_user',
+                            actionCaller: { kind: 'host' } });
+                        expect(args.context.externalActionExecutionAuthorization).toBeUndefined();
                         expect(args.context.externalActionCredential === undefined).toBe(true);
                         expect(args.context.rpcSessionAuthorization === undefined).toBe(true);
                         const response = await domain.inject({ method: 'POST', url: path,
@@ -2313,26 +2333,29 @@ describe('installed Session proposal admission at the Home mint route', () => {
                         signExternalActionApprovalInputV1({ authorizationToken: args.authorization.token,
                             actionId: args.actionId, input: args.input, target: args.target, privateKey: installation.secretKey }),
                 };
-                const pending = await executor.execute(actionId, body.envelope.input, context);
-                expect(pending, pending.ok ? undefined : `${pending.errorCode}: ${pending.error}`).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+                const original = await executor.execute(actionId, body.envelope.input, context);
+                expect(original).toMatchObject({ ok: true, result: {
+                    kind: 'approval_request_created', artifactId: 'proposal-approval',
+                } });
+                expect(JSON.stringify(original).includes(bearer)).toBe(false);
                 expect(effects).toBe(0);
-                expect(JSON.stringify(pending).includes(bearer)).toBe(false);
                 const request = ApprovalRequestV2Schema.parse(stored);
                 expect(request.executionOriginV1.authority).toBe('account_automation');
+                expect(request.executionOriginV1.externalActionExecutionAuthorization).toEqual(authorization);
                 expect(verifyExternalActionApprovalInputV1({ authorizationToken: authorization.token,
                     actionId, target: body.envelope.target, input: request.actionArgs,
                     signature: request.executionOriginV1.externalActionInputSignature!, publicKey: installation.publicKey })).toBe(true);
                 const decide = (authority: 'account_automation' | 'present_user', surface: 'ui' | 'api' = 'ui') => executor.execute(
                     'approval.request.decide', { artifactId: 'proposal-approval', decision: 'approve' },
-                    { surface, authority, serverId: 'profile', runtimeAccountId: 'account', actionCaller: { kind: 'host' },
+                    { surface, authority, serverId: 'profile', serverIdentityId: 'srv_proposal_admission', runtimeAccountId: 'account', actionCaller: { kind: 'host' },
                         actionRequestId: `human-${actionId}` });
                 // API automation retains the credential decision floor. Native host automation
                 // follows the ordinary approval preference rather than a blanket human floor.
                 expect(await decide('account_automation', 'api')).toMatchObject({ ok: false, errorCode: 'present_user_required' });
                 expect(effects).toBe(0);
                 const human = await decide('present_user');
-                expect(human.ok).toBe(true);
-                expect(human).toMatchObject({ result: { status: 'executed' } });
+                expect(human.ok, JSON.stringify(human)).toBe(true);
+                expect(human, JSON.stringify(human)).toMatchObject({ result: { status: 'executed', liveExecution: { ok: true, result: output } } });
                 expect(JSON.stringify(human).includes(bearer)).toBe(true);
                 expect(effects).toBe(1);
                 const repeated = await decide('present_user');
@@ -2346,6 +2369,7 @@ describe('installed Session proposal admission at the Home mint route', () => {
                 expect(observed.ok, observed.ok ? undefined : observed.errorCode).toBe(true);
                 expect(JSON.stringify(observed).includes(bearer)).toBe(false);
                 expect(JSON.stringify(persisted).includes(bearer)).toBe(false);
+                expect(sessionDeliveries.length).toBeGreaterThan(0);
             } finally { await domain.close(); await app.close(); }
         },
     );

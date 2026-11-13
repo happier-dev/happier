@@ -12,7 +12,8 @@ import {
 } from './actionSettings.js';
 import { resolveActionApprovalFlow, type ActionApprovalFlow, type ActionApprovalResult } from './actionApprovalMetadata.js';
 import { getActionSpec, resolveActionExecutionPlacementForInput, type ActionSpec } from './actionSpecs.js';
-import { isAgentOrUnresolvedSurface, resolveApprovalSurface } from './actionApprovalSurface.js';
+import { lazyActionSpecArray } from './lazyActionSpecValue.js';
+import { isAgentOrUnresolvedSurface, resolveApprovalSurface, type ApprovalSurfaceResolution } from './actionApprovalSurface.js';
 import { readBuiltInSettingDeclarationV1, readBuiltInSettingsPermissionChangingV1 } from './settings/settingsDeclarations.js';
 import { readRecord } from '../inputs/inputRecords.js';
 import { matchesApprovedOperationStepV1 } from './approvedOperationV1.js';
@@ -27,6 +28,8 @@ export type ActionApprovalRoutingDecision = Readonly<{
   required: boolean;
   /** Local product review, presented by the UI host without an approval Artifact. */
   uiConfirmationRequired?: true;
+  /** Actual missing confidential operands or binding choices use their existing acquisition lifecycle. */
+  inputRequired?: true;
   flow: ActionApprovalFlow;
   result: ActionApprovalResult;
   profile?: ApprovalProfileResolutionV1;
@@ -56,7 +59,7 @@ function isOwnUiInvocation(actionId: ActionSettingsActionId, ctx?: ApprovalInvoc
 
 export type ResolveActionApprovalRoutingArgs = Readonly<{
   actionId: ActionId;
-  /** Resolved contributed identity when the host Action delegates target classification. */
+  /** Resolved contributed identity when the host Action delegates classification and Settings policy. */
   profileActionId?: ActionSettingsActionId;
   spec: ActionSpec;
   input?: unknown;
@@ -69,6 +72,10 @@ export type ResolveActionApprovalRoutingArgs = Readonly<{
   explicitApprovalRequest?: true;
   /** Prepared child review belongs to this parent; a parent waiver does not answer it. */
   childReviewRequired?: boolean;
+  /** A consequence discovered by the host, independent of a configurable confirmation default. */
+  reviewRequired?: boolean;
+  /** The input owner still needs a choice; a boolean review answer cannot supply it. */
+  inputRequired?: boolean;
   /** The executor's exact admitted review answers this operation's approval. Never caller input. */
   reviewAdmitted?: boolean;
   /** Host-proved contextual classification, resolved through the same settings/waiver owner. */
@@ -110,13 +117,17 @@ function isApprovalAction(actionId: ActionId): boolean {
   return getActionSpec(actionId).approvalPolicy?.control === true;
 }
 
-/** Published projections of the declaration-owned confirmation defaults. */
-export const EGRESS_SENSITIVE_AGENT_FLOOR: readonly ActionId[] = ACTION_IDS.filter(id => getActionSpec(id).approvalPolicy?.agentDefault === "egress");
-export const SURFACE_AUTHORITY_AGENT_FLOOR: readonly ActionId[] = ACTION_IDS.filter(id => getActionSpec(id).approvalPolicy?.agentDefault === "authority");
-export const AGENT_INITIATED_APPROVAL_REQUIRED_ACTION_IDS: readonly ActionId[] = ACTION_IDS.filter(id => {
-  const spec = getActionSpec(id);
-  return spec.approvalPolicy?.agentDefault !== undefined || (spec.safety === "danger" && spec.surfaces.agent && spec.approvalPolicy?.scopeAdmissionOwnsConfirmation !== true);
-});
+/**
+ * Published projections of the declaration-owned confirmation defaults. They are derived on
+ * first read: importing approval policy must not resolve every Action spec (module top level
+ * stays cheap to evaluate).
+ */
+export const EGRESS_SENSITIVE_AGENT_FLOOR: readonly ActionId[] = lazyActionSpecArray(() => Object.freeze(
+  ACTION_IDS.filter(id => getActionSpec(id).approvalPolicy?.agentDefault === "egress")));
+export const SURFACE_AUTHORITY_AGENT_FLOOR: readonly ActionId[] = lazyActionSpecArray(() => Object.freeze(
+  ACTION_IDS.filter(id => getActionSpec(id).approvalPolicy?.agentDefault === "authority")));
+export const AGENT_INITIATED_APPROVAL_REQUIRED_ACTION_IDS: readonly ActionId[] = lazyActionSpecArray(() => Object.freeze(
+  ACTION_IDS.filter(isAgentInitiatedApprovalRequiredByDefault)));
 
 /**
  * True when an Action result leaving the host on this surface must be redacted before it can
@@ -197,7 +208,26 @@ function requiresDefaultApprovalFloor(
   }
   // Agent and external MCP share the declared agent default once here. Surface
   // Require/Waive preferences are resolved above this floor (owner 2026-10-12/29).
-  return (surface.kind !== 'non_agent' || surface.surface === 'mcp') && policy?.agentDefault !== undefined;
+  return sharesAgentApprovalDefault(surface)
+    && (policy?.agentDefault !== undefined || policy?.agentDefaultForInput?.(input) === true);
+}
+
+function sharesAgentApprovalDefault(surface: ApprovalSurfaceResolution): boolean {
+  return surface.kind !== 'non_agent' || surface.surface === 'mcp';
+}
+
+/**
+ * True when this surface's inherited answer asks only for some inputs (a declared
+ * `agentDefaultForInput` consequence). Settings presents that default and lets the person
+ * waive it explicitly, because the input-free answer alone reads as "does not ask".
+ */
+export function hasInputDependentAgentApprovalDefaultV1(
+  actionId: ActionSettingsActionId,
+  ctx?: Readonly<{ surface?: ActionExecutorContext['surface'] | null }> | null,
+): boolean {
+  const builtIn = ActionIdSchema.safeParse(actionId);
+  return builtIn.success && getActionSpec(builtIn.data).approvalPolicy?.agentDefaultForInput !== undefined
+    && sharesAgentApprovalDefault(resolveApprovalSurface(ctx));
 }
 
 /**
@@ -310,9 +340,10 @@ function resolveUnwiredApprovalDefault(
 
 export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingArgs): ActionApprovalRoutingDecision {
   const policy = args.spec.approvalPolicy;
+  const policyActionId = args.profileActionId ?? args.actionId;
   const ownUiInvocation = isOwnUiInvocation(args.actionId, args.context);
   const explicitPreference = ownUiInvocation && args.settings ? readExplicitActionApprovalPreferenceV1(
-    args.profileActionId ?? args.actionId, args.settings, args.context, args.approvalScope) : undefined;
+    policyActionId, args.settings, args.context, args.approvalScope) : undefined;
   // Changing the carrier must not escape its selected profile through a broad
   // child-start/Run-control waiver. All carriers share the existing profile
   // control's preference and surface defaults, at this one routing owner.
@@ -332,14 +363,16 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
       args.context, undefined, undefined, args.input, undefined, undefined, undefined, args.approvalScope);
   // The person's profile-control Ask joins the carrier's native confirmation;
   // a carrier waiver cannot waive that consequence or create self-approval.
-  const uiConfirmationRequired = !args.reviewAdmitted && !args.context?.bypassApprovals
-    && ownUiInvocation
-    && args.context?.presentUserConfirmation?.actionId !== args.actionId
-    && (args.childReviewRequired || profileControlRequired || explicitPreference !== false
-    && (explicitPreference === true || (args.defaultUiConfirmation ?? policy?.uiConfirmationForInput?.(args.input)
-      ?? (policy?.uiConfirmation === 'policy'
-        || policy?.uiConfirmation !== 'direct' && args.spec.irreversible === true))
-      || args.defaultSafety === 'danger' || args.defaultConfirmation === true));
+  const preparedReviewRequired = args.reviewRequired === true && !args.reviewAdmitted;
+  const uiConfirmationRequired = !args.inputRequired && ownUiInvocation && (preparedReviewRequired
+    || !args.reviewAdmitted && !args.context?.bypassApprovals
+    && (args.requiredByPolicy === true || args.childReviewRequired || profileControlRequired || explicitPreference === true
+      // A legacy marker answers only the default; exact admitted consent answers Ask above.
+      || explicitPreference !== false && args.context?.presentUserConfirmation?.actionId !== args.actionId
+      && (args.defaultUiConfirmation ?? policy?.uiConfirmationForInput?.(args.input)
+        ?? (policy?.uiConfirmation === 'policy'
+          || policy?.uiConfirmation !== 'direct' && args.spec.irreversible === true
+          || args.defaultSafety === 'danger' || args.defaultConfirmation === true))));
   const presentUserRequest = defaultsPersonClassActionToAsk(args.context, args.spec, args.input);
   const computerAction = args.spec.approvalPolicy?.computerConsent === true;
   const computerConsent = computerAction && args.computerConsentGranted === true
@@ -354,18 +387,18 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
     : args.requiredByPolicy === true ? true : computerConsent
     ? explicitComputerApproval
     : args.defaultConfirmation === true
-    ? hasPolicyContext ? isApprovalRequiredByActionsSettings(args.actionId, args.settings ?? { v: 1, actions: {} }, args.context,
-      args.defaultSafety, undefined, args.input, args.defaultUiConfirmation, true, args.approvedOperation, args.approvalScope) : true
+    ? hasPolicyContext ? isApprovalRequiredByActionsSettings(policyActionId, args.settings ?? { v: 1, actions: {} }, args.context,
+      args.defaultSafety, args.defaultConfirmation, args.input, args.defaultUiConfirmation, true, args.approvedOperation, args.approvalScope) : true
     : typeof args.requiredByPolicy === 'boolean'
     ? args.requiredByPolicy
     : hasPolicyContext
-      ? isApprovalRequiredByActionsSettings(args.actionId, args.settings ?? { v: 1, actions: {} }, args.context, args.defaultSafety, undefined, args.input, args.defaultUiConfirmation, undefined, args.approvedOperation, args.approvalScope)
+      ? isApprovalRequiredByActionsSettings(policyActionId, args.settings ?? { v: 1, actions: {} }, args.context, args.defaultSafety, args.defaultConfirmation, args.input, args.defaultUiConfirmation, undefined, args.approvedOperation, args.approvalScope)
       : presentUserRequest || (args.defaultSafety !== undefined || args.defaultUiConfirmation !== undefined
         ? requiresDefaultApprovalFloor(args.actionId, args.context, args.defaultSafety, args.input)
         : resolveUnwiredApprovalDefault(args.actionId, args.context, args.input));
   const selectedProfile = args.context?.approvalProfileId
     ? readApprovalProfileV1(args.settings, args.context.approvalProfileId) : undefined;
-  const profileActionId = args.profileActionId ?? args.actionId;
+  const profileActionId = policyActionId;
   const profileMode = selectedProfile && (selectedProfile.profile.actions?.[profileActionId]
     ?? selectedProfile.profile.categories?.[args.defaultSafety ?? args.spec.safetyForInput?.(args.input) ?? args.spec.safety]
     ?? selectedProfile.profile.defaultMode);
@@ -376,9 +409,9 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
     && !(args.settings && readExplicitActionApprovalPreferenceV1(profileActionId, args.settings, args.context, args.approvalScope) === false)));
   // Approval replay answers the admitted operation once; a profile is never a new authority.
   const required = !isApprovalAction(args.actionId)
-    && (args.context?.bypassApprovals === true
+    && (args.inputRequired || !ownUiInvocation && preparedReviewRequired || (args.context?.bypassApprovals === true
       ? false
-      : requiredByPolicy || (!ownUiInvocation && profileControlRequired) || profileRequired);
+      : requiredByPolicy || (!ownUiInvocation && profileControlRequired) || profileRequired));
 
   // The public Action API reports a created approval artifact to its caller;
   // it cannot retain an HTTP or server-relay request as the blocking waiter.
@@ -388,13 +421,17 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
   // while the original invocation returns immediately. CLI commands likewise
   // need the Artifact id before exiting, rather than a silent daemon HTTP
   // waiter whose response expires before a human can discover the approval.
-  // Private inputs keep the exact invocation. CLI live-only results instead
-  // execute at the approved origin and retain only their observation projection
-  // on the Artifact; the deciding person can receive the live result directly.
+  // Private inputs keep the exact invocation. A live-only result stays there
+  // only for the original person; automated durable-input requests defer so
+  // the deciding person receives the fresh result on their approval screen.
   // Keep required-result metadata for replay/settlement. Durable Agent/MCP
   // requests also return the Artifact unless this host retains live custody.
+  // Explicit proposal creation returns an Artifact and has no target invocation to retain.
+  const originalPersonOwnsLiveResult = args.explicitApprovalRequest !== true && !!args.context
+    && (isPresentUserHostInvocation(args.context)
+    || isHomeAdmittedPresentUserHostInvocation(args.context, args.actionId));
   const custodyStaysOnLiveInvocation = args.spec.approvalInputCustody === 'live_only'
-    || args.spec.approvalResultCustody === 'live_only' && args.context?.surface !== 'cli';
+    || args.spec.approvalResultCustody === 'live_only' && originalPersonOwnsLiveResult;
   // A mounted Settings field already owns an exact declaration/target intent.
   // Retain that same closure with the incumbent human waiter; Artifact replay
   // cannot restore a host-private field assertion. Other UI/CLI callers keep
@@ -416,14 +453,15 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
     && !(args.actionId === 'machines.services.logs.read' && args.context.machineServiceLogsResource);
   const retainsLiveInvocation = custodyStaysOnLiveInvocation || retainPluginSettingsFieldIntent
     || args.retainHostOperationApproval === true && !retainedNativeRead;
-  const flow = required || args.explicitApprovalRequest ? retainsLiveInvocation ? 'blocking' : 'deferred'
+  const flow = args.inputRequired || preparedReviewRequired ? 'deferred' : required || args.explicitApprovalRequest ? retainsLiveInvocation ? 'blocking' : 'deferred'
     : resolveActionApprovalFlow(args.spec.approval);
 
   return {
-    required,
+    required: required === true,
     ...(uiConfirmationRequired ? { uiConfirmationRequired: true as const } : {}),
+    ...(args.inputRequired ? { inputRequired: true as const } : {}),
     flow,
-    result: args.spec.approval.result,
+    result: args.inputRequired || preparedReviewRequired ? 'required' : args.spec.approval.result,
     ...(selectedProfile ? { profile: selectedProfile.resolution } : {}),
   };
 }

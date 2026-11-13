@@ -13,6 +13,7 @@ import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { NO_TEAM_CAPABILITIES_V1 } from '../teams/capabilities.js';
 import { TeamSummaryV1Schema } from '../teams/projections.js';
 import type { ActionId } from './actionIds.js';
+import { createBlockingApprovalCoordinator } from './blockingApprovalCoordinator.js';
 
 const roleSetInput = { accountId: 'account-2', homeRole: 'admin' } as const;
 
@@ -27,7 +28,7 @@ it('requires the ordinary person confirmation before claiming Personal Home owne
     personalHomeOperation: { accountId: 'owner' } });
   const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
   expect(await executor.execute('relay.runtime.personal_home.claim', input, context))
-    .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
   expect(effects).toBe(0);
   expect(await executor.execute('relay.runtime.personal_home.claim', input, {
     ...context, presentUserConfirmation: { actionId: 'relay.runtime.personal_home.claim' },
@@ -698,6 +699,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
         ok: false,
         errorCode: 'approval_context_unavailable',
         error: 'approval_context_unavailable',
+        requestId: 'request-unpresentable-1',
       });
       expect(approvalsUpdate).not.toHaveBeenCalled();
       expect(storedRequest).toBeNull();
@@ -732,6 +734,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
       ok: false,
       errorCode: 'cancelled',
       error: 'cancelled',
+      requestId: 'request-canceled-1',
     });
     expect(approvalsCreate).not.toHaveBeenCalled();
   });
@@ -780,6 +783,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
     } as unknown as ActionExecutorDeps);
 
     await expect(executor.execute('teams.archive', { v: 1, teamId: 'team-1' }, {
+      presentUserConfirmation: { actionId: 'teams.archive' },
       surface: 'ui',
       authority: 'present_user',
       actionCaller: { kind: 'host' },
@@ -992,10 +996,12 @@ describe('createActionExecutor (Home governance and Teams)', () => {
     const joinUrl = 'https://home.example/join/live-human-only-bearer';
     const output = actionId === 'teams.invitations.create' ? { invitation, joinUrl }
       : { previous: { ...invitation, state: 'revoked' as const }, replacement: invitation, joinUrl };
+    getActionSpec(actionId).inputSchema.parse(input);
+    getActionSpec(actionId).outputSchema!.parse(output);
     let stored: ApprovalRequest | null = null;
     const persisted: ApprovalRequest[] = [];
     const homeDomainAction = vi.fn(async () => output);
-    const executor = createActionExecutor({
+    const boundary = {
       homeDomainAction,
       approvalsCreate: async ({ request }: { request: ApprovalRequest }) => {
         stored = ApprovalRequestV2Schema.parse(request);
@@ -1011,30 +1017,45 @@ describe('createActionExecutor (Home governance and Teams)', () => {
         return { ok: true as const };
       },
       isApprovalExecutionOriginCurrent: async () => true,
-    } as unknown as ActionExecutorDeps);
+    } as unknown as ActionExecutorDeps;
+    const executor = createActionExecutor(boundary);
+    const remoteDecider = createActionExecutor({ ...boundary,
+      // Exact-daemon RPC boundary; replay and local custody remain real.
+      approvalRequestApprovedReplay: async ({ artifactId, context }) => executor.replayApprovedApprovalRequest({
+        artifactId, callerAuthority: context.authority,
+      }),
+    });
+    let completedEffects = 0;
 
-    for (const surface of ['agent', 'mcp'] as const) {
+    for (const surface of ['agent', 'mcp'] as const) for (const viaReplay of [false, true]) {
       const requester = { surface, authority: 'account_automation' as const, serverId: 'home-1',
         runtimeAccountId: 'account-1', actionRequestId: `request-${surface}`,
         actionCaller: { kind: 'host' as const } };
       const result = await executor.execute(actionId, input, requester);
-      expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
-      expect(JSON.stringify(result)).not.toContain(joinUrl);
-      expect(homeDomainAction).toHaveBeenCalledTimes(surface === 'agent' ? 0 : 1);
-      const decision = await executor.execute('approval.request.decide', {
-        artifactId: 'invitation-approval', decision: 'approve',
-      }, { surface: 'ui', authority: 'present_user', serverId: 'home-1', runtimeAccountId: 'account-1',
-        actionCaller: { kind: 'host' } });
-      expect(decision).toMatchObject({ ok: true, result: { liveExecution: { ok: true, result: output } } });
-      // Approval snapshots are host-internal RPC reads, not another Agent tool.
-      const observed = await executor.execute('approval.request.get', { artifactId: 'invitation-approval' },
-        { ...requester, surface: 'rpc' });
-      expect(observed).toMatchObject({ ok: true });
-      expect(JSON.stringify(observed)).not.toContain(joinUrl);
-      expect(persisted.at(-1)?.execution).toMatchObject({ ok: true, result: { joinUrl: null } });
-      expect(JSON.stringify(persisted)).not.toContain(joinUrl);
+      expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'invitation-approval' } });
+      {
+        expect(homeDomainAction).toHaveBeenCalledTimes(completedEffects);
+        const deciding = viaReplay ? remoteDecider : executor;
+        const decision = await deciding.execute('approval.request.decide', {
+          artifactId: 'invitation-approval', decision: 'approve',
+        }, { surface: 'ui', authority: 'present_user', serverId: 'home-1', runtimeAccountId: 'account-1',
+          actionCaller: { kind: 'host' } });
+        completedEffects++;
+        expect(JSON.stringify(result).includes(joinUrl)).toBe(false);
+        expect(decision).toMatchObject({ ok: true, result: { liveExecution: { ok: true, result: output } } });
+        // Approval snapshots are host-internal RPC reads, not another Agent tool.
+        const observed = await executor.execute('approval.request.get', { artifactId: 'invitation-approval' },
+          { ...requester, surface: 'rpc' });
+        expect(observed).toMatchObject({ ok: true });
+        expect(JSON.stringify(observed)).not.toContain(joinUrl);
+        expect(persisted.at(-1)?.execution).toMatchObject({ ok: true, result: getActionSpec(actionId).projectObservationOutput!(output) });
+        const repeat = await executor.execute('approval.request.decide', { artifactId: 'invitation-approval', decision: 'approve' },
+          { surface: 'ui', authority: 'present_user', serverId: 'home-1', runtimeAccountId: 'account-1', actionCaller: { kind: 'host' } });
+        expect(JSON.stringify(repeat).includes(joinUrl)).toBe(false);
+        expect(JSON.stringify(persisted)).not.toContain(joinUrl);
+      }
     }
-    expect(homeDomainAction).toHaveBeenCalledTimes(2);
+    expect(homeDomainAction).toHaveBeenCalledTimes(4);
   });
 
   it.each([
@@ -1136,7 +1157,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
       { v: 1, teamId: 'team-1', connectionId: 'connection-1', intent: 'sso' },
       { url: 'https://setup.workos.com/portal' },
     ],
-  ] as const)('returns the immediate one-time result after blocking approval for %s', async (actionId, input, output) => {
+  ] as const)('returns %s through its declared approval custody', async (actionId, input, output) => {
     let storedRequest: ApprovalRequest | null = null;
     const homeDomainAction = vi.fn(async () => output);
     const executor = createActionExecutor({
@@ -1160,7 +1181,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
       homeDomainAction,
     } as unknown as ActionExecutorDeps);
 
-    await expect(executor.execute(actionId, input, {
+    const result = await executor.execute(actionId, input, {
       surface: 'agent',
       authority: 'account_automation',
       serverId: 'home-1',
@@ -1168,7 +1189,17 @@ describe('createActionExecutor (Home governance and Teams)', () => {
       actionRequestId: `request-${actionId}`,
       defaultSessionMachineId: 'machine-1',
       actionCaller: { kind: 'host' },
-    })).resolves.toEqual({ ok: true, result: output });
+    });
+    expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(homeDomainAction).not.toHaveBeenCalled();
+    const decision = await executor.execute('approval.request.decide', { artifactId: `approval-${actionId}`, decision: 'approve' },
+      { surface: 'ui', authority: 'present_user', serverId: 'home-1', runtimeAccountId: 'account-1',
+        actionCaller: { kind: 'host' } });
+    expect(decision).toMatchObject({ ok: true, result: { status: 'executed',
+      ...(getActionSpec(actionId).approvalResultCustody === 'live_only' ? { liveExecution: { ok: true, result: output } } : {}) } });
+    expect(storedRequest).toMatchObject({ execution: { ok: true,
+      result: getActionSpec(actionId).approvalResultCustody === 'live_only'
+        ? getActionSpec(actionId).projectObservationOutput!(output) : output } });
     expect(homeDomainAction).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ actionId, input }));
   });
 
@@ -1192,7 +1223,11 @@ describe('createActionExecutor (Home governance and Teams)', () => {
         decisionAuthority: 'present_user' as const,
         request,
       }),
-      isApprovalExecutionOriginCurrent: async () => scenario !== 'stale',
+      isApprovalExecutionOriginCurrent: async ({ reportStale }) => {
+        if (scenario !== 'stale') return true;
+        reportStale?.('origin_not_current');
+        return false;
+      },
       homeDomainAction,
     } as unknown as ActionExecutorDeps);
 
@@ -1211,9 +1246,12 @@ describe('createActionExecutor (Home governance and Teams)', () => {
       actionCaller: { kind: 'host' },
     });
 
-    expect(result).toMatchObject({
-      ok: false,
-      errorCode: scenario === 'reject' ? 'approval_rejected' : 'approval_stale',
+    expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    const decision = await executor.execute('approval.request.decide', { artifactId: `approval-${scenario}`, decision: scenario === 'reject' ? 'reject' : 'approve' },
+      { surface: 'ui', authority: 'present_user', serverId: 'home-1', runtimeAccountId: 'account-1', actionCaller: { kind: 'host' } });
+    expect(decision).toMatchObject({
+      ok: scenario === 'reject',
+      ...(scenario === 'reject' ? { result: { status: 'rejected' } } : { errorCode: 'approval_stale' }),
     });
     expect(homeDomainAction).not.toHaveBeenCalled();
   });
@@ -1228,6 +1266,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
     const persisted: ApprovalRequest[] = [];
     const homeDomainAction = vi.fn(async () => liveResult);
     const executor = createActionExecutor({
+      presentUserActionConfirmation: async () => true,
       approvalsCreate: async ({ request }: { request: ApprovalRequest }) => {
         persisted.push(ApprovalRequestV2Schema.parse(request));
         return { artifactId: `ui-live-only-${actionId}` };
@@ -1258,12 +1297,7 @@ describe('createActionExecutor (Home governance and Teams)', () => {
     })).resolves.toEqual({ ok: true, result: liveResult });
 
     expect(homeDomainAction).toHaveBeenCalledOnce();
-    expect(persisted.at(-1)?.execution).toEqual({
-      executedAtMs: expect.any(Number),
-      effectAttempted: true,
-      ok: true,
-      result: { redacted: true },
-    });
+    expect(persisted).toEqual([]);
     expect(JSON.stringify(persisted)).not.toContain(secret);
   });
 
@@ -1275,6 +1309,9 @@ describe('createActionExecutor (Home governance and Teams)', () => {
       expectedRevision: 3,
       clientSecret,
     };
+    const coordinator = createBlockingApprovalCoordinator();
+    let signalWaiting!: () => void;
+    const waiting = new Promise<void>(resolve => { signalWaiting = resolve; });
     const persisted: ApprovalRequest[] = [];
     let stored: ApprovalRequest | null = null;
     const homeDomainAction = vi.fn(async () => ({}));
@@ -1292,25 +1329,27 @@ describe('createActionExecutor (Home governance and Teams)', () => {
         persisted.push(stored);
         return { ok: true as const };
       },
+      approvalsResolveBlockingDecision: (args: Parameters<NonNullable<ActionExecutorDeps['approvalsResolveBlockingDecision']>>[0]) => coordinator.resolveBlockingDecision(args),
+      approvalsWaitForDecision: async (args: Parameters<NonNullable<ActionExecutorDeps['approvalsWaitForDecision']>>[0]) => {
+        const pending = coordinator.waitForDecision(args); signalWaiting(); return pending;
+      },
       isApprovalExecutionOriginCurrent: async () => true,
       isActionApprovalRequired: (actionId: string) => actionId === 'identity.providers.secret.replace',
       homeDomainAction,
     } as unknown as ActionExecutorDeps);
 
-    await expect(executor.execute('identity.providers.secret.replace', input, {
-      surface: 'ui',
+    const pending = executor.execute('identity.providers.secret.replace', input, {
+      surface: 'cli',
       authority: 'present_user',
       serverId: 'home-1',
       runtimeAccountId: 'account-1',
       actionRequestId: 'request-secret-replace',
       actionCaller: { kind: 'host' },
-    })).resolves.toMatchObject({
-      ok: true,
-      result: { kind: 'approval_request_created', artifactId: 'approval-secret-replace' },
     });
-
-    // Deferred replay still needs the raw input while the request is open.
-    expect(persisted.at(-1)?.actionArgs).toMatchObject({ clientSecret });
+    expect(await Promise.race([pending.then(result => ({ kind: 'completed', result })),
+      waiting.then(() => ({ kind: 'waiting' }))])).toEqual({ kind: 'waiting' });
+    // The live invocation owns private input, including while review is open.
+    expect(JSON.stringify(persisted)).not.toContain(clientSecret);
 
     await expect(executor.execute('approval.request.decide', {
       artifactId: 'approval-secret-replace',
@@ -1323,6 +1362,8 @@ describe('createActionExecutor (Home governance and Teams)', () => {
       actionCaller: { kind: 'host' },
     })).resolves.toMatchObject({ ok: true });
 
+    expect(await pending).toMatchObject({ ok: false, errorCode: 'approval_rejected' });
+    coordinator.dispose();
     const settled = persisted.at(-1);
     expect(settled?.status).toBe('rejected');
     expect(settled?.actionArgs).toEqual({

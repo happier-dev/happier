@@ -18,6 +18,7 @@ import type { ApprovalStaleReason } from '../../approvals/approvalExecutionFailu
 import { normalizeActionExecutorThrownError } from './resultProjection.js';
 import { ActionExecuteResultSchema, isActionOutcomeUnknownErrorCodeV1 } from '../actionExecutionResult.js';
 import { RpcError } from '../../rpc/errors.js';
+import { isHomeAdmittedPresentUserHostInvocation, isPresentUserHostInvocation } from '../invocationAuthority.js';
 
 /** Project settled producer evidence and dispatch uncertainty into one receipt. */
 export function projectSettledApprovalExecution(args: Readonly<{
@@ -83,6 +84,16 @@ export function readApprovalReplayResult(result: unknown): ActionExecuteResult {
 export function projectActionExecutionObservation(actionId: ActionId, result: ActionExecuteResult): ActionExecuteResult {
   const project = getActionSpec(actionId).projectObservationOutput;
   return result.ok && project ? { ...result, result: project(result.result) } : result;
+}
+
+/** Consent permits the effect; the original caller still owns result custody. */
+export function projectApprovalInvocationResult(actionId: ActionId, result: ActionExecuteResult,
+  context: ActionExecutorContext): ActionExecuteResult {
+  return result.ok && getActionSpec(actionId).approvalResultCustody === 'live_only'
+    && !isPresentUserHostInvocation(context) && !isHomeAdmittedPresentUserHostInvocation(context, actionId)
+    ? { ok: false, errorCode: 'approval_result_held', error: 'approval_result_held',
+      ...(result.operationCredentialUses?.length ? { operationCredentialUses: result.operationCredentialUses } : {}) }
+    : result;
 }
 
 /** The input-side sibling: this Action's own observation-safe view of its input. */

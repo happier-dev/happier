@@ -46,7 +46,7 @@ import { deploymentMoveToRepositoryChildRoleV1 } from '../scm/repositoryFilesPul
 import { DeploymentEnvironmentCreationReviewV1Schema } from '../deployments/deploymentActionsV1.js';
 import { SESSION_TRANSCRIPT_ACTION_ID_SET, delegatesApprovalClassificationToResolvedAction, isPluginExternalSessionActionId, isHostExternalSessionActionId, isSessionPermissionRemoteActionId, isScmActionId, isActionFamilyId } from './executor/actionFamilies.js';
 import { resolveSessionIdFromInput, resolveExecutionRunScope, withoutExecutionRunScope, projectSessionReferenceFailure, resolveServerIdForSession, resolveServerIdForExecutionRunScope } from './executor/sessionScope.js';
-import { projectActionExecutionObservation, projectActionObservationInput, readUnavailableApprovalReplayOrigin, buildApprovalDecisionResult, buildActionExecuteResultFromRecordedApprovalExecution, projectApprovalRequestPluginCaller, classifyApprovalExecutionOriginCurrentness, projectSettledApprovalExecution } from './executor/approvalResults.js';
+import { projectApprovalInvocationResult, projectActionExecutionObservation, projectActionObservationInput, readUnavailableApprovalReplayOrigin, buildApprovalDecisionResult, buildActionExecuteResultFromRecordedApprovalExecution, projectApprovalRequestPluginCaller, classifyApprovalExecutionOriginCurrentness, projectSettledApprovalExecution } from './executor/approvalResults.js';
 export { buildActionExecuteResultFromRecordedApprovalExecution, classifyApprovalExecutionOriginCurrentness } from './executor/approvalResults.js';
 import { mapApprovalCreatedBySurface, buildApprovalSummary, buildApprovalPreviewSummary, projectPreparedActionOperation, resolveComputerActionSelection, readDeploymentPreparation, prepareApprovalRequest } from './executor/approvalPreparation.js';
 export { buildApprovalPreviewSummary, projectPreparedActionOperation } from './executor/approvalPreparation.js';
@@ -3652,7 +3652,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
                 ...(tokenExecution ? { tokenExecution } : {}),
                 ...retainedFieldIntent,
               }).finally(() => tokenExecution?.dispose());
-              return executed.ok ? executed.exec : executed;
+              return executed.ok ? projectApprovalInvocationResult(actionId, executed.exec, ctx) : executed;
             });
           }
 
@@ -3669,7 +3669,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             ...(tokenExecution ? { tokenExecution } : {}),
             ...retainedFieldIntent,
           }).finally(() => tokenExecution?.dispose());
-          return executed.ok ? executed.exec : executed;
+          return executed.ok ? projectApprovalInvocationResult(actionId, executed.exec, ctx) : executed;
         }
         return {
           ok: true,
@@ -6643,8 +6643,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
           return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
         }
         // Explicit creation returns an Artifact, never a retained invocation.
-        // Use the same surface/custody owner as ordinary Action admission;
-        // private live-only result custody still keeps its declared flow.
+        // The routing owner defers durable input even when the target result
+        // is live-only, so its deciding person can receive the fresh result.
         const approvalRouting = resolveActionApprovalRouting({
           actionId: targetActionId,
           spec: targetSpec,

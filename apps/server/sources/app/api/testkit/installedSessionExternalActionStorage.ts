@@ -52,6 +52,7 @@ export function createInstalledSessionExternalActionStorage() {
     const machine = () => ({ id: state.machineId, accountId: state.accountId, kind: 'persistent',
         installationId: state.installationId, installationPublicKey: state.publicKey,
         revokedAt: state.revokedAt, replacedByMachineId: null, active: true,
+        lastActiveAt: new Date(2), createdAt: new Date(1), updatedAt: new Date(2),
         metadata: state.metadata, daemonState: null, dataEncryptionKey: state.dataEncryptionKey,
         operationProtocolCapabilities: state.operationProtocolCapabilities,
         operationProtocolCapabilitiesRevision: state.operationProtocolCapabilitiesRevision,
@@ -139,6 +140,9 @@ export function createInstalledSessionExternalActionStorage() {
             findMany: async ({ where }: { where: unknown }) => sourceRows().filter(row => matchesDbMockWhere(row, where)),
         },
         projectDeploymentDefaults: { findUnique: async () => null, findFirst: async () => null },
+        artifactAccountGrant: { findMany: async () => [] },
+        artifactTeamGrant: { findMany: async () => [] },
+        artifactGroupGrant: { findMany: async () => [] },
         artifact: {
             findUnique: async ({ where }: { where: { id: string } }) => where.id === state.creation.artifact.id
                 ? state.creation.artifact : state.deploymentRead.enabled && where.id === state.deploymentRead.candidate.id

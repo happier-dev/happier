@@ -3819,6 +3819,10 @@ with visible provenance; a usage query does not trigger an outward refresh.
 The bundled offline snapshot carries its upstream revision, timestamp and MIT
 licence. Only standard text-token tariffs are projected; unsupported models or
 missing tariffs remain unpriced.
+Agent and MCP price Actions return the model count and provenance by default.
+Supply `modelIds` to read exact catalog entries; unknown ids remain absent.
+UI and CLI calls without selectors, and the native price HTTP routes, retain
+the full catalog.
 Malformed external entries are skipped individually so valid model prices can
 still refresh. A file with no valid prices remains a failed refresh and retains
 the previous cached or bundled catalog with error provenance.
@@ -9557,7 +9561,7 @@ they do not silently retain the daemon HTTP request while waiting for a human de
 Explicit `approval.request.create` uses the same surface and custody policy for its
 target Action; an ordinary CLI/UI proposal can therefore execute after the requesting
 invocation ends. Live-only input remains ineligible for explicit durable creation,
-and live-only result custody retains its existing continuation requirement.
+and live-only results reach the deciding person through deferred execution.
 The operation has not executed when that result returns. In development source,
 the mounted experimental Provider-model confirmation retains its exact invocation
 through the existing blocking approval owner. Changing its Agent target, Home,
@@ -9588,11 +9592,12 @@ The shared decision-result owner selects that custody once. Repeated decisions
 and recorded reads retain the observation projection; a receipt-only CLI caller
 receives `approval_result_held` rather than an incomplete authentication result.
 
-The result-custody exception is
-`approvalResultCustody: 'live_only'`, where the exact invocation stays the blocking waiter because
-its raw result must never become durable artifact custody; such a row must declare both a required
-result and a safe observation projection, which the spec schema enforces. Three rows declare it for
-a show-once bearer:
+The result-custody exception is `approvalResultCustody: 'live_only'`: its raw result
+must never become durable Artifact custody. An original present-user invocation
+retains blocking result custody; an automated request with durable input defers
+the result to the deciding person. Explicit proposal creation also defers because
+it has no target invocation to retain. Each such row declares a required result
+and a safe observation projection, which the spec schema enforces. Examples include:
 
 - `teams.credentials.externalKeys.create`. Its result is `{ token, key }`. The bearer token
   reaches only the live caller, and the observation projection keeps just the non-secret `key`
@@ -9621,8 +9626,12 @@ a show-once bearer:
   the existing Webhooks credential-rotation flow, not another endpoint or secret store.
 
 For a present-user invocation, these rows retain the blocking result rather than
-durable raw-result custody. Agent/MCP present-user requests remain deferred and
+durable raw-result custody. Agent/MCP requests with durable input remain deferred and
 return their Artifact reference; only the deciding human receives fresh live custody.
+Private-input requests still retain their original invocation. In 0.3 development,
+a successful approved effect returns `approval_result_held` to an automated caller
+without live-result custody; the Artifact keeps the observation-safe execution receipt.
+Obtaining a fresh live result uses the feature's existing retry or credential-rotation flow.
 If the live invocation is lost, the secret is intentionally unrecoverable: revoke or
 rotate it through the existing credential owner.
 

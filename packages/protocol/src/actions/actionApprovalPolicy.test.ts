@@ -30,6 +30,46 @@ function expectOwnUiReview(
   expect(decision.uiConfirmationRequired === true, message).toBe(confirmationRequired);
 }
 
+it('routes a host-prepared review through the same own-UI disposition while retaining input acquisition', () => {
+  const actionId = 'workspace.sync.relationship.replace';
+  const own = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+  const args = { actionId, spec: getActionSpec(actionId), context: own,
+    settings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: ['ui'] } }) } as const;
+  expect(resolveActionApprovalRouting({ ...args, reviewRequired: true }))
+    .toMatchObject({ required: false, uiConfirmationRequired: true });
+  expect(resolveActionApprovalRouting({ ...args, reviewRequired: true, reviewAdmitted: true }))
+    .toMatchObject({ required: false });
+  expect(resolveActionApprovalRouting({ ...args, inputRequired: true }))
+    .toMatchObject({ required: true, inputRequired: true });
+  expect(resolveActionApprovalRouting({ ...args, reviewRequired: true,
+    context: { ...own, surface: 'agent', authority: 'account_automation' } })).toMatchObject({ required: true });
+});
+
+it('uses the selected contributed identity for Settings Ask, waiver and declaration defaults', () => {
+  const actionId = 'action.invoke';
+  const profileActionId = 'acme.notes/actions/save-note';
+  const args = { actionId, profileActionId, spec: getActionSpec(actionId),
+    context: { surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' } },
+    defaultSafety: 'safe', defaultConfirmation: false } as const;
+  expect(resolveActionApprovalRouting({ ...args,
+    settings: normalizeActionsSettingsV1({ v: 1, actions: { [profileActionId]: { approvalRequiredSurfaces: ['agent'] } } }) }).required).toBe(true);
+  expect(resolveActionApprovalRouting({ ...args, defaultConfirmation: true,
+    settings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [profileActionId]: ['agent'] } }) }).required).toBe(false);
+  expect(resolveActionApprovalRouting({ ...args, defaultConfirmation: true,
+    settings: normalizeActionsSettingsV1({ v: 1 }) }).required).toBe(true);
+});
+
+it.each([false, true])('honors a contributed UI confirmation exemption with explicit Ask=%s', ask => {
+  const actionId = 'action.invoke';
+  const profileActionId = 'acme.notes/actions/save-note';
+  const decision = resolveActionApprovalRouting({ actionId, profileActionId, spec: getActionSpec(actionId),
+    context: { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } },
+    defaultSafety: 'danger', defaultConfirmation: false, defaultUiConfirmation: false,
+    settings: normalizeActionsSettingsV1({ v: 1,
+      ...(ask ? { actions: { [profileActionId]: { approvalRequiredSurfaces: ['ui'] } } } : {}) }) });
+  expectOwnUiReview(decision, ask);
+});
+
 it.each(['deployments.bindings.set', 'deployments.teardown'] as const)(
   'uses the person\'s own UI admission for %s while keeping automation and other callers on Ask', actionId => {
     const settings = normalizeActionsSettingsV1({ v: 1, actions: {
@@ -109,11 +149,11 @@ it.each(['ui', 'cli', 'agent', 'mcp', 'rpc', 'api', 'plugin', 'voice'] as const)
       requiredByPolicy: true, context: { surface } }).flow).toBe('deferred');
   },
 );
-it('returns CLI live-only results through deferred approval decision custody', () => {
+it('retains CLI live-only results on the original approval waiter', () => {
   const actionId = 'connectedServices.authentication.beginConnect';
   expect(resolveActionApprovalRouting({ actionId, spec: getActionSpec(actionId),
     requiredByPolicy: true, context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } } }))
-    .toMatchObject({ required: true, flow: 'deferred' });
+    .toMatchObject({ required: true, flow: 'blocking' });
 });
 
 // Approved FIN 03 ยง5.4/ยง5.7 exception; every other danger row retains its floor.
@@ -249,12 +289,16 @@ describe('isApprovalRequiredByActionsSettings', () => {
       context: { surface: 'agent', authority: 'account_automation' } }).required).toBe(true);
   });
 
-  it('P40-Ae keeps declared redeploy direct, new information meaningful, and exact completed review single', () => {
+  it('reviews receiver-prepared rollouts by default and retains one completed review or an explicit waiver', () => {
     const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
-    for (const actionId of ['deployments.deploy', 'deployments.rollback'] as const) {
+    for (const actionId of ['deployments.deploy', 'deployments.promote', 'deployments.rollback'] as const) {
       const spec = getActionSpec(actionId);
       expect(spec.requiredAuthority).toBe('account_automation');
       expect(resolveActionApprovalRouting({ actionId, spec, context, settings: EMPTY_SETTINGS }).required).toBe(false);
+      expectOwnUiReview(resolveActionApprovalRouting({ actionId, spec, context, settings: EMPTY_SETTINGS }),
+        actionId !== 'deployments.rollback');
+      expectOwnUiReview(resolveActionApprovalRouting({ actionId, spec, context,
+        settings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: ['ui'] } }) }), false);
       expectOwnUiReview(resolveActionApprovalRouting({ actionId, spec, context, settings: EMPTY_SETTINGS,
         defaultUiConfirmation: true }), true);
       const reviewed = { ...context, presentUserConfirmation: { actionId } };
@@ -263,7 +307,8 @@ describe('isApprovalRequiredByActionsSettings', () => {
       expectOwnUiReview(resolveActionApprovalRouting({ actionId, spec, context: reviewed, settings: EMPTY_SETTINGS,
         defaultUiConfirmation: true }), false);
       const stricter = normalizeActionsSettingsV1({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } });
-      expect(resolveActionApprovalRouting({ actionId, spec, context: reviewed, settings: stricter }).required).toBe(false);
+      expectOwnUiReview(resolveActionApprovalRouting({ actionId, spec, context: reviewed, settings: stricter }), true);
+      expectOwnUiReview(resolveActionApprovalRouting({ actionId, spec, context: reviewed, settings: stricter, reviewAdmitted: true }), false);
       for (const surface of ['agent', 'api'] as const) {
         expect(resolveActionApprovalRouting({ actionId, spec, context: { ...context, surface,
         authority: 'account_automation' }, settings: EMPTY_SETTINGS }).required).toBe(true);
@@ -3171,7 +3216,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
         requiredByPolicy: true,
         context: { surface: 'ui', authority: 'account_automation' },
       }),
-    ).toEqual({ required: true, flow: 'blocking', result: 'required' });
+    ).toEqual({ required: true, flow: 'deferred', result: 'required' });
   });
 
   it('keeps the current managed Power Ask on a retained host operation while ordinary CLI remains deferred', () => {
@@ -4373,7 +4418,9 @@ describe('isApprovalRequiredByActionsSettings', () => {
         isApprovalRequiredByActionsSettings(actionId, required, completed),
       ).toBe(true);
       expectOwnUiReview(resolveActionApprovalRouting({ actionId, spec, settings: required, context }), true);
-      expectOwnUiReview(resolveActionApprovalRouting({ actionId, spec, settings: required, context: completed }), false);
+      expectOwnUiReview(resolveActionApprovalRouting({ actionId, spec, settings: required, context: completed }), true);
+      expectOwnUiReview(resolveActionApprovalRouting({ actionId, spec, settings: required, context: completed,
+        reviewAdmitted: true }), false);
     },
   );
 
@@ -4502,12 +4549,12 @@ describe('isApprovalRequiredByActionsSettings', () => {
           presentUserConfirmation: { actionId },
         }),
       ).toBe(true);
-      if (surface === 'ui') expectOwnUiReview(resolveActionApprovalRouting({
-        actionId,
-        spec: getActionSpec(actionId),
-        settings: required,
-        context: { surface, authority: 'present_user', presentUserConfirmation: { actionId } },
-      }), false);
+      if (surface === 'ui') {
+        const args = { actionId, spec: getActionSpec(actionId), settings: required,
+          context: { surface, authority: 'present_user', presentUserConfirmation: { actionId } } } as const;
+        expectOwnUiReview(resolveActionApprovalRouting(args), true);
+        expectOwnUiReview(resolveActionApprovalRouting({ ...args, reviewAdmitted: true }), false);
+      }
 
       const waived = normalizeActionsSettingsV1({
         v: 1,
@@ -4546,10 +4593,8 @@ describe('isApprovalRequiredByActionsSettings', () => {
       }),
     ).toMatchObject({ required: false, uiConfirmationRequired: true });
 
-    // One-time invitation bearers have live-only result custody: the exact
-    // mounted UI invocation waits, while CLI requests defer and collect
-    // the safe observation projection. Agent/MCP requests retain the same
-    // original live recipient; the deciding app cannot take its bearer.
+    // Original people retain live custody; durable automated requests give
+    // the deciding person the fresh bearer (docs/actions.md, approval custody).
     expect(
       resolveActionApprovalRouting({
         actionId: 'teams.invitations.create' as any,
@@ -4557,7 +4602,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
         requiredByPolicy: true,
         context: { surface: 'cli', authority: 'present_user' } as any,
       }),
-    ).toEqual({ required: true, flow: 'deferred', result: 'required' });
+    ).toEqual({ required: true, flow: 'blocking', result: 'required' });
     for (const surface of ['agent', 'mcp'] as const) {
       expect(
         resolveActionApprovalRouting({
@@ -4566,7 +4611,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
           requiredByPolicy: true,
           context: { surface, authority: 'account_automation' },
         }),
-      ).toEqual({ required: true, flow: 'blocking', result: 'required' });
+      ).toEqual({ required: true, flow: 'deferred', result: 'required' });
     }
     expect(
       resolveActionApprovalRouting({
@@ -4575,7 +4620,7 @@ describe('isApprovalRequiredByActionsSettings', () => {
         requiredByPolicy: true,
         context: { surface: 'api', authority: 'account_automation' } as any,
       }),
-    ).toEqual({ required: true, flow: 'blocking', result: 'required' });
+    ).toEqual({ required: true, flow: 'deferred', result: 'required' });
   });
 
   it.each([
@@ -4601,7 +4646,6 @@ describe('isApprovalRequiredByActionsSettings', () => {
         resolveActionApprovalRouting({
           actionId,
           spec,
-          requiredByPolicy: true,
           context: { surface: 'ui', authority: 'present_user' },
         }),
       ).toEqual({ required: false, ...(uiConfirmationRequired ? { uiConfirmationRequired: true } : {}), flow: 'blocking', result: 'required' });
@@ -4968,7 +5012,6 @@ describe('agent-initiated dangerous-action approval default (FINALIZATION-PLAN ย
         resolveActionApprovalRouting({
           actionId: actionId as any,
           spec: getActionSpec(actionId),
-          requiredByPolicy: true,
           context: { surface: 'ui', authority: 'present_user' } as any,
         }),
         actionId,
@@ -4996,7 +5039,7 @@ describe('agent-initiated dangerous-action approval default (FINALIZATION-PLAN ย
         resolveActionApprovalRouting({
           actionId: 'teams.identity.connections.test.start' as any,
           spec: getActionSpec('teams.identity.connections.test.start' as any),
-          requiredByPolicy: true,
+          ...(context.surface === 'api' ? { requiredByPolicy: true } : {}),
           context: context as any,
         }),
       ).toEqual(context.surface === 'ui'
