@@ -258,7 +258,12 @@ describe('the mounted configured entry action controls', () => {
       surface,
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
-      handlers: { executeAction: async ({ action }) => {
+      handlers: { readSession: async ({ sessionId }) => ({
+        sessionId, serverId: 'home-a', lifecycle: 'active', runtime: 'idle', operational: 'ready',
+        workStatus: { state: 'ready', bucket: 'finished', tone: 'neutral', attentionType: null, word: 'Ready' },
+        pendingPermissions: [],
+        acceptedWorkspace: { checkout: { serverId: 'home-a', workspaceId: 'workspace-a', machineId: 'machine-a', rootPath: '/workspaces/qa' } },
+      }), executeAction: async ({ action }) => {
         const id = typeof action === 'string' ? action : action.localId;
         if (id === 'agents.backends.list') return { defaultTargetKey: null, items: [] } as never;
         if (id === 'projects.list') return { items: [], truncated: false } as never;
@@ -316,7 +321,12 @@ describe('the mounted configured entry action controls', () => {
       surface,
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
-      handlers: { executeAction: async ({ action }) => {
+      handlers: { readSession: async ({ sessionId }) => ({
+        sessionId, serverId: 'home-a', lifecycle: 'active', runtime: 'idle', operational: 'ready',
+        workStatus: { state: 'ready', bucket: 'finished', tone: 'neutral', attentionType: null, word: 'Ready' },
+        pendingPermissions: [],
+        acceptedWorkspace: { checkout: { serverId: 'home-a', workspaceId: 'workspace-a', machineId: 'machine-a', rootPath: '/workspaces/qa' } },
+      }), executeAction: async ({ action }) => {
         const id = typeof action === 'string' ? action : action.localId;
         if (id === 'agents.backends.list') return { defaultTargetKey: null, items: [] } as never;
         if (id === 'projects.list') return { items: [], truncated: false } as never;
@@ -582,6 +592,30 @@ describe("the source's own write in the header", () => {
     await expect(fixture.getByText('This branch has conflicts with the base branch.')).resolves.toBeDefined();
     await expect(fixture.getByText('Merged by someone else a moment ago.')).resolves.toBeDefined();
     expect(calls).toEqual([]);
+  });
+
+  it('offers the source\'s re-read beside a write that waits on a failed read', async () => {
+    let retries = 0;
+    const fixture = await mountSourceWrite({
+      title: 'Merge', disabledReason: 'Needs a fresh read of this pull request.', pending: false,
+      retry: () => { retries += 1; }, execute: async () => { throw new Error('Merge must not run'); },
+    }, 'write-retry');
+    expect((await fixture.getByRole('button', { name: 'Merge' })).state?.disabled).toBe(true);
+    await expect(fixture.getByText('Needs a fresh read of this pull request.')).resolves.toBeDefined();
+    await fixture.press(await fixture.getByRole('button', { name: 'Retry' }));
+    expect(retries).toBe(1);
+  });
+
+  it('keeps that reason and its re-read with Merge on a phone, not as a second line under the band', async () => {
+    let retries = 0;
+    const fixture = await mountSourceWrite({
+      title: 'Merge', disabledReason: 'Needs a fresh read of this pull request.', pending: false,
+      retry: () => { retries += 1; }, execute: async () => { throw new Error('Merge must not run'); },
+    }, 'write-retry-compact', true);
+    await expect(fixture.queryByText('Needs a fresh read of this pull request.')).resolves.toBeUndefined();
+    await fixture.press(await fixture.getByRole('button', { name: 'More actions' }));
+    await fixture.press(await fixture.getByRole('menuitem', { name: 'Retry' }));
+    expect(retries).toBe(1);
   });
 
   it('cannot be pressed again while its write is pending', async () => {
