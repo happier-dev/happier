@@ -1,4 +1,4 @@
-import { isScmRunStartRpcPurpose } from './externalActionScmRunPurpose';
+import { isScmRunStartRpcPurpose } from '@happier-dev/protocol/actions/actionSpecs';
 import { readAdmittedManagedCreationChildInTx, hasAdmittedManagedCreationRootInTx, readSelectedManagedCreationChildAdmission, type ManagedCreationChildAdmission } from './externalActionManagedAdmission';
 import { readTeamCredentialActionHttpPurposeV1 } from '@happier-dev/protocol/teams/credentials/actionHttpPurposeV1';
 import { TeamCredentialDirectMaterialOpenRequestV1Schema, TeamCredentialDirectMaterialRouteParamsV1Schema } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
@@ -106,7 +106,7 @@ import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_M
 
 import { classifyMachineAvailabilityState } from "@/app/machines/machineStateGuards";
 import { ManagedControllerResizeReportV1Schema, type ManagedControllerResizeReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
-import { requireActiveManagedResizeInTx } from '@/app/machines/managed/managedRows';
+import { requireActiveManagedResizeInTx, readManagedIntentReportAuthority } from '@/app/machines/managed/managedRows';
 import { MANAGED_RESIZE_ACTION_ID_V1, isManagedControlAdmissionActionIdV1, isManagedCreationMutationActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { MANAGED_MACHINE_CREATION_CHILD_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { resolveMachineAdmission, resolveMachineAdmissionInTx } from "@/app/machines/machineAccess";
@@ -294,13 +294,17 @@ export type WorkflowExternalActionAdmission = Readonly<{
 /** Public spawn operands bind their destination through the existing API owner. */
 export function readExternalActionSessionSpawnAdmission(
     envelope: ExternalActionRequestEnvelope,
-    context: Readonly<{ serverId: string; target: ExternalActionTargetV1 | undefined }>,
+    context: Readonly<{ serverId: string | null; target: ExternalActionTargetV1 | undefined }>,
 ): ApiTokenSessionSpawnAdmissionV1 | undefined {
     if (envelope.v !== 1) return envelope.sessionSpawnAdmission;
     const internal = SessionSpawnNewActionInputV2Schema.safeParse(envelope.input);
-    const canonical = internal.success ? internal.data : SessionSpawnNewActionInputV2Schema.parse(
+    if (internal.success) return projectApiTokenSessionSpawnAdmissionV1(admitSessionSpawnNewActionInputV2(internal.data));
+    // Only API input binding needs the server identity; without it the input is as unbindable as a malformed one.
+    const serverId = context.serverId;
+    if (serverId === null) throw new Error('Server identity is unavailable for Session spawn input binding');
+    const canonical = SessionSpawnNewActionInputV2Schema.parse(
         bindApiSessionSpawnNewInput(envelope.input, { actionId: SESSION_SPAWN_NEW_ACTION_ID_V1,
-            surface: 'api', caller: { kind: 'host' }, serverId: context.serverId, externalActionTarget: context.target }));
+            surface: 'api', caller: { kind: 'host' }, serverId, externalActionTarget: context.target }));
     return projectApiTokenSessionSpawnAdmissionV1(admitSessionSpawnNewActionInputV2(canonical));
 }
 
@@ -588,14 +592,6 @@ type RetainedDiscussionPublicationPurpose = Readonly<{ kind: 'retained-discussio
 type ExternalActionVerificationPurpose = IssuedAcquireNativeFactPurpose | IssuedIntentNativeFactPurpose | IssuedNativeCredentialFactPurpose
     | RetainedDiscussionPublicationPurpose;
 
-function readDeploymentChildReceiptContinuation(binding: ExternalActionExecutionAuthorizationBindingV1,
-    routing: DeploymentChildRoutingV1): DeploymentReceiptContinuation | undefined {
-    return routing.kind === 'dataRole' || routing.kind === 'prepare' || routing.kind === 'review' || routing.kind === 'domain' || routing.kind === 'domainDiscover' || routing.kind === 'domainDns' ? undefined : {
-        deploymentId: routing.deploymentId, actionOperationId: routing.actionOperationId,
-        environmentId: routing.input.environmentId, installationId: binding.installationId,
-    };
-}
-
 /** Consumption may end after submission; only that installed operation may report its disposition. */
 async function isIssuedNativeCredentialFactReportInTx(reader: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
     report: IssuedNativeCredentialFactPurpose['report']): Promise<boolean> {
@@ -663,7 +659,7 @@ async function isIssuedResizeNativeFactReportInTx(reader: Tx, binding: ExternalA
     }
 }
 
-/** Retirement closes effects, not reports of the one already-submitted native tuple. */
+/** Retirement closes effects, not facts of the submitted or still-current admitted command. */
 async function isIssuedIntentNativeFactReportInTx(reader: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
     report: ManagedControllerIntentReportV1): Promise<boolean> {
     if (!isManagedPowerOrDeleteActionIdV1(binding.actionId)
@@ -672,10 +668,8 @@ async function isIssuedIntentNativeFactReportInTx(reader: Tx, binding: ExternalA
             || binding.installationId !== report.controller.installationId))) return false;
     try {
         const row = await readManagedMachineInTx(reader, report);
-        const pending = readManagedAdmissionState(row.admittedInput).submittedEffect;
+        const pending = readManagedIntentReportAuthority(row, report);
         return row.custodianAccountId === binding.custodianAccountId && pending !== undefined
-            && pending.expectedIntentRevision === report.expectedIntentRevision && pending.requestId === report.requestId
-            && sameManagedInput(pending.controller, report.controller)
             && (binding.actionId === 'machines.managed.delete' ? pending.intent === 'delete' : pending.intent === 'stop' || pending.intent === 'suspend' || pending.intent === 'start' || pending.intent === 'resume');
     } catch (error) {
         if (!(error instanceof ManagedMachineError)) throw error;
@@ -761,7 +755,8 @@ export async function hasCurrentExternalActionWorkflowOriginInTx(reader: Tx, inp
         const target = await readCurrentMachineWorkflowOriginInTx(reader, input, phase);
         return target?.accountId === input.accountId;
     }
-    if (isInstalledSessionClientAction(getActionSpec(input.actionId), { workflowActionOrigin: origin })) {
+    const catalogAction = ActionIdSchema.safeParse(input.actionId);
+    if (catalogAction.success && isInstalledSessionClientAction(getActionSpec(catalogAction.data), { workflowActionOrigin: origin })) {
         return await readCurrentMachineWorkflowOriginInTx(reader, input, phase) !== null;
     }
     const publisher = await isAutomationOriginRunPublisherTx(reader, { accountId: input.accountId, machineId: input.machineId,
@@ -794,15 +789,18 @@ async function readCurrentExternalActionPrincipal(
         if (!await readAdmittedExternalActionHandoffMachineInTx(reader, binding)) return null;
         // The signed root owns bounded work. Credential/grant withdrawal is
         // observed by the next admission; the daemon owns Stop and cancellation.
-        const authority = readExternalActionBindingAuthority(binding);
-        return 'authentication' in binding
-            ? { accountId: binding.accountId, authentication: binding.authentication, authority,
-                ...(binding.authentication.evidence ? { authenticationEvidence: binding.authentication.evidence } : {}),
-                ...(binding.sessionActionOrigin ? { sessionActionOrigin: binding.sessionActionOrigin } : {}) }
-            : { accountId: binding.accountId, principalId: binding.principalId, credentialId: binding.credentialId,
-                authority: 'account_automation', grant: binding.grant,
-                // These live-bearer fields do not govern a retained signed admission.
-                expiresAt: null, parentTokenId: null, embedConfig: null };
+        if (!('authentication' in binding)) return { accountId: binding.accountId, principalId: binding.principalId,
+            credentialId: binding.credentialId, authority: 'account_automation', grant: binding.grant,
+            // These live-bearer fields do not govern a retained signed admission.
+            expiresAt: null, parentTokenId: null, embedConfig: null };
+        const evidence = binding.authentication.evidence ? { authenticationEvidence: binding.authentication.evidence } : {};
+        // Session-origin and terminal bindings are automation by the binding-authority owner's rule.
+        if (binding.sessionActionOrigin) return { accountId: binding.accountId, authentication: binding.authentication,
+            authority: 'account_automation', sessionActionOrigin: binding.sessionActionOrigin, ...evidence };
+        return binding.authentication.kind === 'terminal'
+            ? { accountId: binding.accountId, authentication: binding.authentication, authority: 'account_automation', ...evidence }
+            : { accountId: binding.accountId, authentication: binding.authentication,
+                authority: readExternalActionBindingAuthority(binding), ...evidence };
     }
     if (binding.accountEncryptionMode !== undefined) {
         const account = await reader.account.findUnique({ where: { id: binding.accountId }, select: { encryptionMode: true } });
@@ -4443,10 +4441,11 @@ export async function verifyExternalActionMachineRpcExecution(
         const destination = await resolveMachineAdmission({ actorAccountId: binding.accountId, machineId, requiredRole: setupPlanChild ? 'manage' : 'use' });
         const current = await verifyCurrentExternalActionPrincipal(binding);
         const principal = current && projectVerifiedExternalActionBoundPrincipal(binding, current);
+        const bindingAction = ActionIdSchema.safeParse(binding.actionId);
         if (!machine?.installationPublicKey || machine.installationId !== binding.installationId
             || classifyMachineAvailabilityState(machine) !== 'available' || destination.kind !== 'admitted'
-            || !principal || !await hasCurrentExecutionMachineAdmission(binding)
-            || !resolveCredentialActionAdmissionV1({ spec: getActionSpec(binding.actionId), authority: principal.authority,
+            || !principal || !await hasCurrentExecutionMachineAdmission(binding) || !bindingAction.success
+            || !resolveCredentialActionAdmissionV1({ spec: getActionSpec(bindingAction.data), authority: principal.authority,
                 grant: 'grant' in binding ? binding.grant : null }).ok
             || !verifyExternalActionMachineRpcRequestV1({ reviewedChild: execution.reviewedChild, authorizationToken: execution.authorization.token,
                 requesterAccountContext: execution.authorization.requesterAccountContext, effectActionId: execution.effectActionId,
@@ -4528,7 +4527,8 @@ export async function verifyExternalActionMachineRpcExecution(
         return admitted.verified;
     }
 
-    const scmRunStartPurpose = isScmRunStartRpcPurpose(binding, execution, request);
+    const scmRunStartPurpose = isScmRunStartRpcPurpose(binding.actionId, execution.effectActionId, request.method)
+        && (request.event === undefined || request.event === SOCKET_RPC_EVENTS.CALL);
     const sessionRule = resolveSocketRpcSessionAuthorization(request.method);
     const scopedSessionId = separator > 0 && request.method.slice(0, separator) !== binding.machineId
         && sessionRule?.routeToSessionOwnerDaemon && sessionRule.machineScope === true

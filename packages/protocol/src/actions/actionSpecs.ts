@@ -1046,8 +1046,9 @@ export function resolveActionPermissionChangingV1(
 export function resolveActionExecutionPlacementForInput(
   spec: Pick<ActionSpec, 'executionPlacement' | 'executionPlacementForInput'>,
   input: unknown,
+  caller?: Readonly<{ kind: string }>,
 ): ActionExecutionPlacement {
-  return spec.executionPlacementForInput?.(input) ?? spec.executionPlacement;
+  return spec.executionPlacementForInput?.(input, caller) ?? spec.executionPlacement;
 }
 
 function normalizeActionPublicExposure(spec: PreNormalizedActionSpec): NormalizedActionSpec {
@@ -2355,4 +2356,4 @@ export function resolveVoiceClientToolNameAlias(value: string): string | null {
 
   return null;
 }
-export { requiresExplicitScmMachineTarget, isScmDiffSummaryRunAction } from './scmGitActionSpecs.js';
+export { requiresExplicitScmMachineTarget, isScmDiffSummaryRunAction, isScmRunStartRpcPurpose } from './scmGitActionSpecs.js';

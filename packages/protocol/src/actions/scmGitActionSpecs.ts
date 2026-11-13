@@ -56,7 +56,7 @@ import {
 } from '../scm/diffSummaryResult.js';
 import { ScmReviewedMarkInputSchema, ScmReviewedUnmarkInputSchema, ScmReviewedMarkResponseSchema } from '../scm/reviewedMarks.js';
 import { ScmCommitPlanAcceptInputSchema, ScmCommitPlanControlInputSchema, ScmCommitPlanIncludeHookChangesInputSchema } from '../scm/diffSummaryCommitPlan.js';
-import { RPC_METHODS } from '../rpc/methods.js';
+import { RPC_METHODS, SESSION_RPC_METHODS } from '../rpc/methods.js';
 import * as scm from '../scm/index.js';
 import * as branches from '../scm/branches.js';
 import * as stash from '../scm/stash.js';
@@ -88,10 +88,18 @@ export function requiresExplicitScmMachineTarget(actionId: string): boolean {
 }
 
 /** These SCM operations admit or continue an Agent Run using the original requester's custody. */
-export function isScmDiffSummaryRunAction(actionId: string): boolean {
+export function isScmDiffSummaryRunAction(actionId: string): actionId is 'scm.diffSummary.generate' | 'scm.diffSummary.draftPullRequest'
+  | 'scm.diffSummary.refine' | 'scm.diffSummary.addOutputs' | 'scm.diffSummary.discuss' {
   return actionId === 'scm.diffSummary.generate' || actionId === 'scm.diffSummary.draftPullRequest'
     || actionId === 'scm.diffSummary.refine' || actionId === 'scm.diffSummary.addOutputs'
     || actionId === 'scm.diffSummary.discuss';
+}
+
+/** Home and the receiving host share the SCM root's declared nested Run effect. */
+export function isScmRunStartRpcPurpose(actionId: string, effectActionId: string | null, method: string): boolean {
+  const separator = method.indexOf(':');
+  return isScmDiffSummaryRunAction(actionId) && effectActionId === 'execution.run.start'
+    && separator > 0 && method.slice(separator + 1) === SESSION_RPC_METHODS.EXECUTION_RUN_START;
 }
 
 /** Named metadata keeps declaration emission bounded without widening the wire schemas. */

@@ -1,5 +1,5 @@
 import { isPluginError, type PluginErrorContractData } from '@happier-dev/protocol/plugins/errors';
-import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
+import { isScmRunStartRpcPurpose, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import { isSessionStopChildRootV1 } from '@happier-dev/protocol/actions/sessionSections';
 /**
@@ -721,9 +721,11 @@ export class RpcHandlerManager {
             const expectedAuthority = resolveExternalActionRootInvocationAuthority(parsedInputAuthorization.data);
             // Session roots use the same declared method/effect owner as
             // Machine roots. Keep transition's existing composite input phase.
+            const effectActionId = resolveMachineRpcExternalActionEffectV1(targetMethod, binding);
             const methodMatches = sessionTransitionInput
                 || resolveSocketRpcSessionAuthorization(targetMethod)?.routeToSessionOwnerDaemon === true
-                    && resolveMachineRpcExternalActionEffectV1(targetMethod, binding) === binding.actionId;
+                    && (effectActionId === binding.actionId
+                        || isScmRunStartRpcPurpose(binding.actionId, effectActionId, request.method));
             return methodMatches && binding.machineId === this.localMachineId
                 && (binding.target.kind === 'machine' && binding.target.machineId === this.localMachineId
                     || binding.target.kind === 'session' && binding.target.sessionId === this.scopePrefix)

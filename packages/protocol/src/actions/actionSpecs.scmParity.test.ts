@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { ActionIdSchema } from './actionIds.js';
-import { SCM_GIT_ACTION_SPECS } from './scmGitActionSpecs.js';
+import { isScmRunStartRpcPurpose, SCM_GIT_ACTION_SPECS } from './scmGitActionSpecs.js';
+import { SESSION_RPC_METHODS } from '../rpc/methods.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 
 // Load the real Action graph during collection, outside observable dispatch budgets.
@@ -38,6 +39,16 @@ const mutations = [
 ] as const;
 
 describe('SCM Action parity', () => {
+  it.each(['scm.diffSummary.generate', 'scm.diffSummary.draftPullRequest', 'scm.diffSummary.refine',
+    'scm.diffSummary.addOutputs', 'scm.diffSummary.discuss'])('binds the nested Run Start purpose for %s', actionId => {
+    const method = `session:${SESSION_RPC_METHODS.EXECUTION_RUN_START}`;
+    expect(isScmRunStartRpcPurpose(actionId, 'execution.run.start', method)).toBe(true);
+    expect(isScmRunStartRpcPurpose(actionId, 'execution.run.send', method)).toBe(false);
+    expect(isScmRunStartRpcPurpose(actionId, 'execution.run.start', `session:${SESSION_RPC_METHODS.EXECUTION_RUN_SEND}`)).toBe(false);
+    expect(isScmRunStartRpcPurpose(actionId, 'execution.run.start', SESSION_RPC_METHODS.EXECUTION_RUN_START)).toBe(false);
+    expect(isScmRunStartRpcPurpose('scm.diffSummary.result.read', 'execution.run.start', method)).toBe(false);
+  });
+
   it.each(['scm.status.snapshot', 'scm.remote.pull', 'scm.pullRequest.get', 'scm.suggestion.apply'] as const)('routes %s to its admitted Session without borrowing another Machine or default Session', async actionId => {
     type Deps = import('./executor/types.js').ActionExecutorDeps;
     const calls: unknown[] = [];
@@ -79,7 +90,8 @@ describe('SCM Action parity', () => {
     const context = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
     expect(resolveActionApprovalRouting({ actionId, spec, context }).required).toBe(false);
     const settings = ActionsSettingsV1Schema.parse({ v: 1, actions: { [actionId]: { approvalRequiredSurfaces: ['ui'] } } });
-    expect(resolveActionApprovalRouting({ actionId, spec, context, settings }).required).toBe(true);
+    expect(resolveActionApprovalRouting({ actionId, spec, context, settings }))
+      .toMatchObject({ required: false, uiConfirmationRequired: true });
   });
 
   it('rejects a multi-Session pull before SCM effects and preserves an omitted Session operand', async () => {

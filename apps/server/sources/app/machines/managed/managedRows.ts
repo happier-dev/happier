@@ -1,15 +1,15 @@
 import { resolvePluginLocalizedStringV2Text } from "@happier-dev/protocol/plugins/contributions/publicTypes";
 import { readManagedController, readManagedAdmissionState, projectManagedMachine } from './managedMachineProjection';
-import { isManagedResizeActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
+import { isManagedResizeActionIdV1, isManagedPowerOrDeleteActionIdV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 export { readManagedController, readManagedAdmissionState, projectManagedMachine } from './managedMachineProjection';
 import type { Prisma } from "@prisma/client";
 import * as z from "zod/mini";
 import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSchema';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { ManagedCreationScopeRetentionV1Schema, createManagedMachineV1Schema, RetainedManagedLaunchSnapshotV1Schema, type ManagedMachineV1, type ValidatedLaunchSnapshotV1, type RetainedManagedLaunchSnapshotV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { ManagedAdmissionComputeInputV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControlAdmissionInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAdmissionComputeInputV1Schema, ManagedControllerCurrentnessV1Schema, ManagedControlAdmissionInputV1Schema, type ManagedControllerCurrentnessV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedPolicyAdmissionInputV1Schema, type ManagedMachinePolicyChangeHintV1 } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
-import { SupportedNativeIntentSchema, ManagedResourceV1Schema, type ManagedRefusalCodeV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
+import { SupportedNativeIntentSchema, ManagedResourceV1Schema, type SupportedNativeIntent, type ManagedRefusalCodeV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { deriveManagedDevcontainerChildProjectionV1, type DevcontainerChildProjectionV1, managedDevcontainerChildProjectionsEqualV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
 import { resolvePluginActionConnectedAccountUseRequestsV2, type PluginActionConnectedAccountUseRequestV2 } from "@happier-dev/protocol/plugins/manifest/v2";
 import { MachineProvisionerContributionV1Schema, type MachineProvisionerContributionV1 } from "@happier-dev/protocol/plugins/contributions/machineProvisioners";
@@ -165,6 +165,35 @@ export function readManagedEnrollmentAccountId(row: Pick<StoredManagedMachine, '
 }
 export function readManagedCurrentRequestId(row: Pick<StoredManagedMachine, "admittedInput" | "admittedActionRequestId">): string {
     return readManagedAdmissionState(row.admittedInput).currentAdmission?.request.requestId ?? row.admittedActionRequestId;
+}
+
+/** Observing native truth can retire custody before the same admitted command reports. */
+export function readManagedIntentReportAuthority(row: StoredManagedMachine,
+    report: ManagedControllerCurrentnessV1): StoredManagedAdmission['submittedEffect'] {
+    const admitted = readManagedAdmissionState(row.admittedInput);
+    let authority = admitted.submittedEffect;
+    if (!authority) {
+        const admission = admitted.currentAdmission;
+        if (!admission) return;
+        let intent: SupportedNativeIntent;
+        if (admission.kind === 'control') {
+            const request = admission.request;
+            if (!isManagedPowerOrDeleteActionIdV1(request.action) || !('intent' in request.input)) return;
+            intent = request.input.intent;
+        } else {
+            const desired = SupportedNativeIntentSchema.safeParse(row.desired);
+            if (!desired.success) return;
+            intent = desired.data;
+        }
+        // Replacement identity has separate settlement semantics.
+        if (intent === 'rebuild') return;
+        authority = { homeId: row.homeId, managedId: row.id, expectedIntentRevision: row.intentRevision,
+            requestId: admission.request.requestId, intent,
+            controller: readManagedController(row) ?? (admission.kind === 'policy' ? admission.request.controller : undefined) };
+    }
+    return authority.homeId === report.homeId && authority.managedId === report.managedId
+        && authority.expectedIntentRevision === report.expectedIntentRevision && authority.requestId === report.requestId
+        && sameManagedInput(authority.controller, report.controller) ? authority : undefined;
 }
 
 /** Finite resize follow-ups consume this admitted request, not current intent or policy. */
