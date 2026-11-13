@@ -8,7 +8,7 @@ import { protocolError, questionInput, readMuseNativeJson, readMuseRecord, requi
 import type { MuseMsp, MuseMspOpenOptions } from './msp.js';
 
 type NativeRecord = ReturnType<typeof readMuseRecord>;
-type Occurrence = { params: NativeRecord; signature: string; controller: AbortController };
+type Occurrence = { params: NativeRecord; signature: string; controller: AbortController; applying?: boolean; nextStage?: NativeRecord };
 type NativeMessage = Readonly<{ method: string; params?: JsonValue }>;
 const QUESTION_SOURCE = 'muse.userInput';
 
@@ -95,7 +95,11 @@ export function createMuseInteractions(options: Readonly<{
         const nativeChoices = kind === 'approval' ? approvalChoices(merged, options.readNativeChildOrigin) : undefined;
         const signature = JSON.stringify(kind === 'approval' ? nativeChoices : merged.questions);
         if (previous?.signature === signature) { previous.params = merged; return; }
-        const occurrence = { params: merged, signature, controller: previous?.controller ?? new AbortController() };
+        // Native stage updates can precede the decision command ACK. Publish the
+        // next stage after the host settles this answer, or that settlement
+        // retires the new offer under the same transcript call identity.
+        if (previous?.applying) { previous.nextStage = merged; return; }
+        const occurrence: Occurrence = { params: merged, signature, controller: previous?.controller ?? new AbortController() };
         map.set(id, occurrence);
         const signal = AbortSignal.any([options.context.signal, occurrence.controller.signal]);
         let catalogGrant: { choiceId: string; nativeChoiceId: string } | undefined;
@@ -120,16 +124,28 @@ export function createMuseInteractions(options: Readonly<{
             if (kind === 'approval') {
                 const answer = decision.nativeChoice;
                 if (!answer) throw protocolError('The host returned no offered native approval choice');
-                await options.command('approval/decide', { sessionId: merged.sessionId!, approvalId: id,
-                    requirementId: merged.currentRequirementId!,
-                    choiceId: catalogGrant?.choiceId === answer.choiceId ? catalogGrant.nativeChoiceId : answer.choiceId,
-                    ...(answer.feedback !== undefined ? { feedback: answer.feedback } : {}) }, { signal });
+                occurrence.applying = true;
+                try {
+                    await options.command('approval/decide', { sessionId: merged.sessionId!, approvalId: id,
+                        requirementId: merged.currentRequirementId!,
+                        choiceId: catalogGrant?.choiceId === answer.choiceId ? catalogGrant.nativeChoiceId : answer.choiceId,
+                        ...(answer.feedback !== undefined ? { feedback: answer.feedback } : {}) }, { signal });
+                } catch (error) {
+                    occurrence.applying = false;
+                    const nextStage = occurrence.nextStage;
+                    occurrence.nextStage = undefined;
+                    if (nextStage && !signal.aborted) present(kind, nextStage);
+                    throw error;
+                }
             } else {
                 await options.command('userInput/answer', { sessionId: merged.sessionId!, userInputId: id,
                     answers: nativeAnswers(merged, decision) }, { signal });
             }
         } }).catch(error => { if (!signal.aborted) report(error, occurrence.params); }).finally(() => {
-            if (map.get(id) === occurrence) map.delete(id);
+            if (map.get(id) === occurrence) {
+                map.delete(id);
+                if (occurrence.nextStage && !signal.aborted) present(kind, occurrence.nextStage);
+            }
         });
     }
     function settle(kind: 'approval' | 'question', params: NativeRecord) {

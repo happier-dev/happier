@@ -12,7 +12,7 @@ export type MuseMspPlaybackStep = Readonly<{
     receiveUntilRow: number;
 }>;
 
-export type MuseMspProcessScenario = 'approval-abort' | 'approval-late-child' | 'approval-allow-once' | 'approval-local-persistent' | 'question-single-choice';
+export type MuseMspProcessScenario = 'approval-abort' | 'approval-late-child' | 'approval-stages' | 'approval-allow-once' | 'approval-local-persistent' | 'question-single-choice';
 
 export async function createMuseMspProcessFixture(options?: Readonly<{
     schema?: JsonValue;

@@ -1,0 +1,99 @@
+[
+  {
+    "direction": "host_to_native",
+    "frame": {
+      "jsonrpc": "2.0",
+      "id": 13,
+      "method": "approval/decide",
+      "params": {
+        "sessionId": "sessionId-0",
+        "approvalId": "approvalId-1",
+        "requirementId": {
+          "approvalId": "approvalId-1",
+          "sourceIndex": 0
+        },
+        "choiceId": "allow_once",
+        "commandId": "commandId-2"
+      }
+    }
+  },
+  {
+    "direction": "native_to_host",
+    "frame": {
+      "jsonrpc": "2.0",
+      "method": "approval/updated",
+      "params": {
+        "approvalId": "approvalId-1",
+        "availableChoices": [
+          {
+            "choiceId": "allow_once",
+            "decision": "approved",
+            "scope": "once"
+          },
+          {
+            "choiceId": "allow_local_prefix",
+            "decision": "approvedPolicyAmendment",
+            "scope": "localPersistent"
+          },
+          {
+            "choiceId": "abort",
+            "decision": "abort",
+            "scope": "once"
+          }
+        ],
+        "currentRequirementId": {
+          "approvalId": "approvalId-1",
+          "sourceIndex": 1
+        },
+        "sessionId": "sessionId-0"
+      }
+    }
+  },
+  {
+    "direction": "native_to_host",
+    "frame": {
+      "id": 13,
+      "jsonrpc": "2.0",
+      "result": {
+        "approvalId": "approvalId-1",
+        "commandId": "commandId-2",
+        "status": "accepted"
+      }
+    }
+  },
+  {
+    "direction": "native_to_host",
+    "frame": {
+      "id": 6,
+      "jsonrpc": "2.0",
+      "method": "approval/request",
+      "params": {
+        "approvalId": "approvalId-1",
+        "availableChoices": [
+          {
+            "choiceId": "allow_once",
+            "decision": "approved",
+            "scope": "once"
+          },
+          {
+            "choiceId": "allow_local_prefix",
+            "decision": "approvedPolicyAmendment",
+            "scope": "localPersistent"
+          },
+          {
+            "choiceId": "abort",
+            "decision": "abort",
+            "scope": "once"
+          }
+        ],
+        "currentRequirementId": {
+          "approvalId": "approvalId-1",
+          "sourceIndex": 1
+        },
+        "sessionId": "sessionId-0",
+        "toolCallId": "toolCallId-3",
+        "toolName": "bash"
+      }
+    }
+  }
+]

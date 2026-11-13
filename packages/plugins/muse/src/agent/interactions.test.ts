@@ -536,3 +536,60 @@ it('interrupts the owning Muse turn for a pending input through the active-input
                 turnId: expect.any(String) });
     } finally { await fixture.dispose(); }
 });
+
+
+it('keeps each remaining shell requirement answerable after a nonterminal native decision', async () => {
+    const scratch = await mkdtemp(join(tmpdir(), 'muse-shell-stages-'));
+    const recordingPath = join(scratch, 'recording.json');
+    // Reuse the create handshake composition of the MCP catalog test above;
+    // lifecycle itself begins with resume and cannot serve a create request.
+    const lifecycle = JSON.parse(await readFile(new URL('./testkit/fixtures/lifecycle.json', import.meta.url), 'utf8'));
+    const advanced = JSON.parse(await readFile(new URL('./testkit/fixtures/advanced.json', import.meta.url), 'utf8'));
+    const sourceId = lifecycle.rows[5].message.result.session.sessionId;
+    const targetId = advanced.rows[8].message.result.session.sessionId;
+    const turnRows = JSON.parse(JSON.stringify(lifecycle.rows.slice(12, 49)).replaceAll(sourceId, targetId));
+    const rows = [0, 1, 2, 6, 7, 8].map(index => advanced.rows[index]).concat(turnRows);
+    // Field-allowlisted native capture from FIN-DIAG-NATIVE-APPROVED-1113:
+    // decide -> updated stage -> accepted ACK -> request, same call identity.
+    const wire = JSON.parse(await readFile(new URL('./testkit/fixtures/shell-stage-transition.json', import.meta.url), 'utf8'));
+    const observed = wire[0].frame.params;
+    const initial = rows.find(row => row.message?.method === 'approval/request').message.params;
+    const decision = rows[19].message.params;
+    const stageTransition = JSON.parse(JSON.stringify(wire.slice(1))
+        .replaceAll(observed.sessionId, decision.sessionId)
+        .replaceAll(observed.approvalId, decision.approvalId)
+        .replaceAll(observed.commandId, decision.commandId)
+        .replaceAll(wire[3].frame.params.toolCallId, initial.toolCallId));
+    // The diagnostic allowlist omits display labels; restore harmless fixture labels.
+    for (const row of stageTransition) for (const choice of row.frame.params?.availableChoices ?? []) choice.label = choice.choiceId;
+    await writeFile(recordingPath, JSON.stringify({ rows, stageTransition }));
+    const fixture = await createAdmittedMuseSessionFixture({ native: { scenario: 'approval-stages', recordingPath } });
+    const events = createAgentSessionRuntimeHarness();
+    try {
+        const session = await fixture.open({ kind: 'create', sessionId: 'host-admitted-muse', cwd: process.cwd() });
+        session.watch(events.recordRuntimeEvent);
+        await session.send({ inputIds: ['staged-shell'], input: { text: 'Run the controlled shell.' },
+            delivery: { kind: 'newTurn', turnId: 'staged-shell-turn' } });
+        await fixture.waitForAudit(audit => audit.receiptCount === 1);
+        const pendingId = () => Object.keys(fixture.host.getAgentStateSnapshot()?.requests ?? {})[0];
+        await vi.waitFor(() => expect(pendingId()).toBeDefined());
+        const id = pendingId()!;
+        for (let sourceIndex = 0; sourceIndex < 3; sourceIndex++) {
+            await vi.waitFor(() => {
+                const offer = fixture.host.getAgentStateSnapshot()?.requests?.[id]?.nativeChoices;
+                expect(offer).toBeDefined();
+                expect(JSON.parse(offer!.requirementId).sourceIndex).toBe(sourceIndex);
+            });
+            const offer = fixture.host.getAgentStateSnapshot()!.requests![id]!.nativeChoices!;
+            expect(await invokeHomeRpc(fixture, RPC_METHODS.SESSION_PERMISSION_RESPOND, {
+                id, approved: true, decision: 'approved',
+                nativeChoice: { requirementId: offer.requirementId, choiceId: 'allow_once' },
+            })).toBeUndefined();
+            if (sourceIndex < 2) expect(events.canonicalEvents().some(event => event.kind === 'turn-complete')).toBe(false);
+        }
+        await events.until('turn-complete');
+        expect(await fixture.readAudit()).toMatchObject({ decisionCount: 3, released: true });
+        events.expectExactlyOneTerminalEvent({ turnId: 'staged-shell-turn' });
+        await fixture.closeSession();
+    } finally { events.dispose(); await fixture.dispose(); await rm(scratch, { recursive: true, force: true }); }
+});
