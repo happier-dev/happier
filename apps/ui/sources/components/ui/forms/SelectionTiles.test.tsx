@@ -139,12 +139,19 @@ describe('SelectionTiles', () => {
     ).toBe(false);
     expect(screen.findByTestId('identity:a')!.props['aria-checked']).toBe(true);
   });
-  it('marks a chosen single-choice card with the filled radio of its group, keeping the check for multiple choice', async () => {
+  it('marks only the chosen card, with a check on its ink outline; unchosen cards carry no mark (lab f1src)', async () => {
     const { SelectionTiles } = await import('./SelectionTiles');
     const options = [
       { id: 'fsn1', title: 'Falkenstein' },
       { id: 'hel1', title: 'Helsinki' },
     ];
+    const checks = (screen: Awaited<ReturnType<typeof renderScreen>>, id: string) =>
+      screen.findByTestId(`radio:${id}`)!.findAll((node) => node.props.name === 'check').length;
+    const none = await renderScreen(
+      <SelectionTiles options={options} value={null} onChange={vi.fn()} testIdPrefix="radio" />,
+    );
+    expect(checks(none, 'fsn1') + checks(none, 'hel1')).toBe(0);
+    await none.unmount();
     const single = await renderScreen(
       <SelectionTiles
         options={options}
@@ -153,9 +160,8 @@ describe('SelectionTiles', () => {
         testIdPrefix="radio"
       />,
     );
-    expect(
-      single.root.findAll((node) => node.props.name === 'check'),
-    ).toHaveLength(0);
+    expect(checks(single, 'fsn1')).toBeGreaterThan(0);
+    expect(checks(single, 'hel1')).toBe(0);
     await single.unmount();
     const multiple = await renderScreen(
       <SelectionTiles

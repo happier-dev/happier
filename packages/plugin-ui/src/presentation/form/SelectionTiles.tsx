@@ -870,10 +870,11 @@ function CardSelectionTiles<T extends string, I extends string>(props: HappierCh
                   </View>
                 </View>
                 <View style={styles.selectionAccessory} pointerEvents="none" aria-hidden>
-                  {selected && props.selectionMode === 'multiple'
-                    ? props.renderGlyph({ glyph: { kind: 'check' }, size: 16, color: props.colors.selection })
-                    // The one single-choice mark (`RadioMark`): the same drawing as a table's or a list's radio.
-                    : <View style={resolveHappierRadioMarkStyle({ selected, ink: props.colors.selection, quiet: props.colors.glyph, surface: 'transparent' })} />}
+                  {/* A tile marks only the chosen card, with a check beside its ink outline (lab f1src); a sheet's
+                      cells keep the one single-choice mark (`RadioMark`) that a table's or a list's radio draws. */}
+                  {sheet && !(selected && props.selectionMode === 'multiple')
+                    ? <View style={resolveHappierRadioMarkStyle({ selected, ink: props.colors.selection, quiet: props.colors.glyph, surface: 'transparent' })} />
+                    : selected ? props.renderGlyph({ glyph: { kind: 'check' }, size: 16, color: props.colors.selection }) : null}
                 </View>
               </View>
             </SelectionTilePressable>

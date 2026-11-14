@@ -58,6 +58,8 @@ import {
   type StarterCreateInput,
 } from './newAppDraft';
 import { projectCheckoutParentPath } from '../activation/projectOpenChoices';
+import { buildProjectRepositoryOpenRoute } from '../activation/projectOpenRoute';
+import type { ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { StoreItemMark } from '@/components/store/catalog/StoreItemMark';
 import { useOpenStoreListing } from '@/components/store/StoreListing';
 import {
@@ -67,6 +69,9 @@ import {
 } from '@/components/projects/deployments/deploymentNavigation';
 import { NewAppCodeSources } from './NewAppCodeSources';
 import { buildPluginsHomeRoute } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
+import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
+import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import type { QualifiedMachineV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 
 import type { MachineCreationContinuationDraft } from '@/components/machines/add/MachineCreationContinuation';
@@ -79,6 +84,8 @@ const STEPS: readonly Step[] = ['start', 'describe', 'create'];
 type Door = `built:${DeploymentNewDefinitionKind}` | `catalog:${string}`;
 /** The lab's From the catalog row: three apps, the rest one press away in the Store. */
 const CATALOG_TILES = 3;
+/** A catalog tile says what the app is in its listing's own first sentence (lab: two whole lines); the listing has the rest. */
+const leadSentence = (text: string) => /^.+?[.!?](?=\s|$)/.exec(text.trim())?.[0] ?? text.trim();
 const catalogDoor = (item: RegistryCatalogItemSummary): Door => `catalog:${JSON.stringify([item.sourceId, item.itemId])}`;
 
 /** The Action each control uses (lab s1 NOTES "actions"). */
@@ -154,11 +161,14 @@ export const NewAppScreen = React.memo(function NewAppScreen(
   const [codeSourceId, setCodeSourceId] = React.useState<string | null>(null);
   // Already built and From the catalog (lab f1src): a way that continues outside this dialog, chosen like the others.
   const [door, setDoor] = React.useState<Door | null>(null);
+  // Your code → a pasted link to a repository that is not a Project here yet (owner ruling 20:50Z).
+  const [pastedRepository, setPastedRepository] = React.useState<ProjectSourceRepositorySelectorV1 | null>(null);
   const chooseCode = React.useCallback((next: string | null) => {
     setCodeSourceId(next);
     if (next) {
       setStarterId(null);
       setDoor(null);
+      setPastedRepository(null);
     }
   }, []);
   const chooseStarter = React.useCallback((next: string | null) => {
@@ -166,6 +176,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     if (next) {
       setCodeSourceId(null);
       setDoor(null);
+      setPastedRepository(null);
     }
   }, []);
   const chooseDoor = React.useCallback((next: Door | null) => {
@@ -173,7 +184,14 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     if (next) {
       setStarterId(null);
       setCodeSourceId(null);
+      setPastedRepository(null);
     }
+  }, []);
+  const choosePastedRepository = React.useCallback((selector: ProjectSourceRepositorySelectorV1) => {
+    setPastedRepository(selector);
+    setStarterId(null);
+    setCodeSourceId(null);
+    setDoor(null);
   }, []);
   // The catalog's first apps, read only while the person is choosing a way in.
   const appCatalog = useRegistryItems({ kind: 'app' }, step === 'start');
@@ -189,7 +207,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     id: catalogDoor(item),
     testID: `newApp.catalog.${item.itemId}`,
     title: item.title,
-    ...(item.description ? { subtitle: item.description } : {}),
+    ...(item.description ? { subtitle: leadSentence(item.description) } : {}),
     mark: <StoreItemMark facts={{ kind: item.kind, title: item.title, brand: item.brandMark }} size={ICON_SIZE.md} />,
   })), [catalogApps]);
   const [description, setDescription] = React.useState('');
@@ -298,6 +316,22 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     openStoreListing({ type: 'registryItem', kind: item.kind, sourceId: item.sourceId, itemId: item.itemId,
       ...(item.version === undefined ? {} : { version: item.version }) });
   };
+  // Lab f1src footer: hand the whole job to an agent. New Session opens with the request written, on the door's
+  // Machine when there is one; the person reads it, picks the agent and sends it.
+  const askAgent = () => {
+    const lifetime = captureActiveServerAccountScopeLifetime();
+    if (!lifetime) return;
+    stepAside();
+    seedAndOpenNewSession({
+      seed: { prompt: t('newApp.askAgentPrompt'),
+        ...(props.machine ? { placement: { kind: 'exactTarget', serverId: props.machine.serverId, machineId: props.machine.machineId } } : {}) },
+      scope: lifetime.scope,
+      isCurrent: lifetime.isCurrent,
+      navigateToNewSession: ({ draftId }) => router.push({ pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId }) } as never),
+    });
+  };
+  const askAgentRef = React.useRef(askAgent);
+  askAgentRef.current = askAgent;
   const browseCatalog = () => {
     stepAside();
     router.push(buildPluginsHomeRoute('app', { view: 'kind', kind: 'app', machine: props.machine ?? null }) as never);
@@ -430,8 +464,13 @@ export const NewAppScreen = React.memo(function NewAppScreen(
     step === 'start'
       ? {
           title: t('common.continue'),
-          disabled: !starter && codeSourceId === null && door === null,
+          disabled: !starter && codeSourceId === null && door === null && pastedRepository === null,
           onPress: () => {
+            if (pastedRepository !== null && scope) {
+              stepAside();
+              router.push(buildProjectRepositoryOpenRoute(scope.serverId, pastedRepository) as never);
+              return;
+            }
             if (door !== null) {
               continueThroughDoor(door);
               return;
@@ -477,7 +516,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             }
           : null;
   const footerNote = addingMachine ? null :
-    step === 'start' && !starter && codeSourceId === null && door === null
+    step === 'start' && !starter && codeSourceId === null && door === null && pastedRepository === null
       ? t('newApp.startPick')
       : step === 'describe'
         ? t('newApp.reviewNote')
@@ -531,6 +570,7 @@ export const NewAppScreen = React.memo(function NewAppScreen(
         {scope ? (
           <View>
             <NewAppCodeSources scope={scope} value={codeSourceId} onChange={chooseCode} columns={phone ? 1 : 2}
+              chosenRepository={pastedRepository} onChooseRepository={choosePastedRepository}
               insetStyle={dialog ? styles.dialogInset : null} />
           </View>
         ) : null}
@@ -865,7 +905,8 @@ export const NewAppScreen = React.memo(function NewAppScreen(
             subtitle: headingDescription,
             actions: <WizardStepDots currentStepIndex={stepIndex} stepCount={STEPS.length} />,
             footer: (
-              <ModalCardFooterActions note={footerNote}>
+              <ModalCardFooterActions note={footerNote}
+                noteAction={step === 'start' && !addingMachine ? { label: t('newApp.askAgent'), onPress: () => askAgentRef.current(), testID: 'newApp.askAgent' } : null}>
                 {step === 'start' && !addingMachine ? (
                   <RoundButton
                     testID="newApp.cancel"
@@ -922,7 +963,9 @@ export const NewAppScreen = React.memo(function NewAppScreen(
       {dialog || !primary ? null : (
         <KeyboardStickyFooter>
           <PagePinnedBar style={styles.phoneFooter}>
-            {footerNote ? (
+            {step === 'start' && !addingMachine ? (
+              <TextLinkButton testID="newApp.askAgent" size="meta" label={t('newApp.askAgent')} onPress={askAgent} />
+            ) : footerNote ? (
               <Text
                 variant="meta"
                 numberOfLines={1}
