@@ -28,14 +28,16 @@ describe('classifyPrimarySessionRuntimeIssue', () => {
   it.each([
     ['Authentication required PRIVATE_DEVICE_CODE', 'acp_session_start_failed', 'provider_endpoint_auth_required', 'authentication_required'],
     ['FX requires an access token with a known, current expiry. Refresh the Connected Account and retry. PRIVATE_TOKEN', 'fx_connected_account_expiry_unavailable', 'provider_endpoint_auth_required', 'auth_expired'],
-    ['The selected Muse model is unavailable in the native catalog. PRIVATE_MODEL', 'model_selection_required', 'agent_startup_model_reconciliation_failed', 'model_selection_required'],
+    // A typed Provider refusal retains its canonical code instead of being reclassified from native prose.
+    ['The selected Muse model is unavailable in the native catalog. PRIVATE_MODEL', 'model_selection_required', 'model_selection_required', undefined],
     ['OpenCode model "PRIVATE_MODEL" is not selectable', undefined, 'agent_startup_model_reconciliation_failed', 'model_selection_required'],
   ] as const)('classifies native construction without persisting provider prose (%s)', (message, code, expectedCode, failureReason) => {
     const error = code === 'acp_session_start_failed'
       ? { code, severity: 'error', message, details: { requestErrorCode: -32000 } }
       : code ? new PluginError({ code, message }) : new Error(message);
     const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', startupPhase: 'client_start', error, occurredAt: 100 });
-    expect(issue).toMatchObject({ code: expectedCode, failureCause: { phase: 'client_start', failureReason,
+    expect(issue).toMatchObject({ code: expectedCode, failureCause: { phase: 'client_start',
+      ...(failureReason === undefined ? {} : { failureReason }),
       ...(message.startsWith('OpenCode model') ? { code: 'native_model_not_selectable' } : {}),
     } });
     expect(JSON.stringify(issue)).not.toContain('PRIVATE_');

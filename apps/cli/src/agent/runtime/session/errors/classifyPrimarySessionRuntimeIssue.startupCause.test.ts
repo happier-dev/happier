@@ -11,10 +11,23 @@ import { createRuntimeFailureTranscriptProjector } from '../transcripts/runtimeF
 describe('native startup failure cause retention', () => {
   it.each(['client_start', 'turn_start'] as const)('retains Provider launch causes at the known %s boundary', phase => {
     const failureCause = { phase: 'dispatch', errorClass: 'TypeError', errorCode: 'ECONNRESET', httpStatus: 503 } as const;
-    const error = createProviderErrorV1('provider_materialization_failed', { failureCause });
+    const error = Object.assign(new Error('PRIVATE_PROVIDER_BODY'), createProviderErrorV1('provider_materialization_failed', { failureCause }));
     const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', startupPhase: phase, error });
     expect(issue.failureCause).toMatchObject({ phase, code: error.code, providerErrorCode: 'ECONNRESET', httpStatus: 503 });
+    expect(JSON.stringify(issue)).not.toContain('PRIVATE_PROVIDER_BODY');
   });
+
+  it.each(['provider_materialization_failed', 'provider_endpoint_unavailable'] as const)(
+    'keeps unstructured prose private for the typed Provider startup refusal %s', code => {
+      const error = Object.assign(new Error('PRIVATE_PROVIDER_BODY'), createProviderErrorV1(code));
+      const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', startupPhase: 'client_start', error, occurredAt: 100 });
+      expect(issue.code).toBe(code);
+      expect(JSON.stringify(issue)).not.toContain('PRIVATE_PROVIDER_BODY');
+      expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', occurredAt: 100, error: {
+        code: issue.code, details: { v: 1, source: issue.source, failureCause: issue.failureCause },
+      } })).toEqual(issue);
+    },
+  );
 
   it.each([['root', false], ['root', true], ['details', false], ['details', true]] as const)(
     'redacts a typed %s cause while dropping unrelated native context (forced=%s)', (envelope, forceSafeShape) => {

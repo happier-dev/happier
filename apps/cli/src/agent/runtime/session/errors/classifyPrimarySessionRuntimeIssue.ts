@@ -598,7 +598,8 @@ export function classifyPrimarySessionRuntimeIssue(
   const teamCredential = teamCredentialDenial?.details ?? null;
   const providerCode = !teamCredentialDenial && input.cause === 'session_error' && errorCode.kind === 'string'
     ? ProviderErrorCodeV1Schema.safeParse(errorCode.value) : null;
-  const nativeStartupDetail = input.startupPhase === 'client_start' && !teamCredentialDenial
+  // Closed Provider refusals use their static policy; native prose is not a structured cause.
+  const nativeStartupDetail = input.startupPhase === 'client_start' && !teamCredentialDenial && !providerCode?.success
     ? readNativeStartupFailureDetail(input.error) : {};
   const nativeConstructionFailure = input.startupPhase === 'client_start' && !teamCredentialDenial
     && !providerCode?.success && !(errorCode.kind === 'string' && readAgentStartupFailureCode(errorCode.value))
