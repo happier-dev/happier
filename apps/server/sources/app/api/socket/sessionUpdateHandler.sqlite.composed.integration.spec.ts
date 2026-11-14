@@ -1188,7 +1188,7 @@ describe("session update handler on SQLite", () => {
         }
     });
 
-    it("delivers an active released heartbeat to the shared audience as activity, with no Account cursor", async () => {
+    it("persists an active released heartbeat as the liveness deadline only: no fan-out to the owner or shared audience", async () => {
         let clockMs = Date.parse("2026-07-22T08:00:00.000Z");
         const now = vi.spyOn(Date, "now").mockImplementation(() => clockMs);
         const ephemerals = vi.spyOn(eventRouter, "emitEphemeral").mockImplementation(() => undefined);
@@ -1220,14 +1220,13 @@ describe("session update handler on SQLite", () => {
             expect(await readSeqs()).toEqual(seqsBefore);
             expect(await db.accountChange.count()).toBe(changesBefore);
             expect(updates).not.toHaveBeenCalled();
-            const viewerHeartbeats = ephemerals.mock.calls.map(([event]) => event)
-                .filter(event => event.userId === viewer.id);
-            expect(viewerHeartbeats).toHaveLength(heartbeats);
-            expect(viewerHeartbeats.at(-1)).toEqual({
-                userId: viewer.id,
-                payload: { type: "activity", id: sessionId, active: true, activeAt: clockMs },
-                recipientFilter: { type: "user-scoped-only" },
-            });
+            // 2026-11-04 heartbeat ruling: online/offline transitions fan out
+            // (registration, close and the deadline carry activeAt); an
+            // active→active beat only moves the deadline. Per-beat UI work is zero.
+            const activityFrames = ephemerals.mock.calls.map(([event]) => event)
+                .filter(event => event.payload.type === "activity");
+            expect(activityFrames.filter(event => event.userId === viewer.id)).toHaveLength(0);
+            expect(activityFrames.filter(event => event.userId === binding.accountId)).toHaveLength(0);
         } finally {
             now.mockRestore();
             ephemerals.mockRestore();

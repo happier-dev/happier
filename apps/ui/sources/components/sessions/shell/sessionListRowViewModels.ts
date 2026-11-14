@@ -13,10 +13,7 @@ import {
 } from '@/sync/domains/session/listing/sessionListRenderable';
 import { resolveSessionListRenderableMeaningfulActivityAt } from '@/sync/domains/session/listing/sessionListRenderableSorting';
 import type { SessionListGuardState } from '@/sync/domains/session/listing/sessionListRenderable';
-import {
-    readSessionRuntimePresentationFreshnessExpirations,
-    SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS,
-} from '@/sync/domains/session/attention/runtimePresentation';
+import { readSessionRuntimePresentationFreshnessExpirations } from '@/sync/domains/session/attention/runtimePresentation';
 import { buildSessionListServerScopedRowKey } from '@/sync/domains/session/listing/sessionListKeyNormalization';
 import {
     buildSessionContextFacts,
@@ -688,8 +685,6 @@ function resolveNextRuntimeFreshnessAtMs(session: SessionListRenderableSession, 
         pendingRequestObservedAt: session.pendingRequestObservedAt ?? null,
     }, nowMs);
 
-    const staleAtMs = session.activeAt + SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS + 1;
-    const deadlines = [...expirations, ...(session.active && staleAtMs > nowMs ? [staleAtMs] : [])];
-    if (deadlines.length === 0) return null;
-    return Math.min(...deadlines);
+    if (expirations.length === 0) return null;
+    return Math.min(...expirations);
 }

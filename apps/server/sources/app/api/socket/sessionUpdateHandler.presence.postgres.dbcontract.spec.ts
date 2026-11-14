@@ -65,7 +65,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('R
             const [result] = await heartbeatOutcome;
             if (result!.status === 'rejected') throw result!.reason;
             expect(result!.value).toMatchObject({ status: 'touched',
-                recipientCursors: [], heartbeatRecipientAccountIds: [account.id], activeAt: observedAt });
+                recipientCursors: [], activeAt: observedAt });
             const retained = await db.session.findUniqueOrThrow({ where: { id: session.id }, select: {
                 metadata: true, metadataVersion: true, updatedAt: true, lastActiveAt: true,
             } });

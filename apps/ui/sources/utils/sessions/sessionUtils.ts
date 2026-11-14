@@ -286,11 +286,6 @@ function resolveRuntimeStatusFreshnessRefreshDelayMs(
         hasPendingUserActionRequests: input.hasPendingUserActionRequests,
         pendingRequestObservedAt: input.pendingRequestObservedAt,
     }, nowMs)];
-    // Freshness is presentation time, distinct from the persistent active-turn fact.
-    if (session.active === true && typeof session.activeAt === 'number' && session.activeAt > 0) {
-        const staleAtMs = session.activeAt + SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS + 1;
-        if (staleAtMs > nowMs) expirations.push(staleAtMs);
-    }
 
     // Only a deadline still ahead of this observation can change what is already rendered, and a
     // past deadline clamped to zero would re-arm the refresh immediately, forever.

@@ -1820,6 +1820,11 @@ export function sessionUpdateHandler(
                 observation.observedAtMs + observationRefreshWindowMs,
             );
 
+            // 2026-11-04 heartbeat ruling, applied to Sessions: fan-out only on
+            // online/offline transitions. An active→active beat has no cursor and
+            // only moved the liveness deadline above; offline (deadline, close)
+            // carries activeAt. Per-beat audience and UI work is zero.
+            if (presenceResult.status === "touched" && presenceResult.recipientCursors.length === 0) return;
             const session = await loadSessionTranscriptPublicationRecipientProjection(sid);
             if (session) await Promise.all(
                 presenceResult.recipientCursors.map(async ({ accountId, cursor }) => {
@@ -1868,26 +1873,6 @@ export function sessionUpdateHandler(
                     }
                 }),
             );
-            // An active→active heartbeat has no Account cursor. Its audience
-            // reads the new activeAt from the same realtime activity heartbeat
-            // the owner receives below, under the realtime publication policy.
-            if (session && presenceResult.status === "touched") {
-                for (const accountId of presenceResult.heartbeatRecipientAccountIds) {
-                    if (accountId === userId) continue;
-                    const heartbeat = projectSessionTranscriptPublicationRealtimeProjection(
-                        { active: true, activeAt: presenceResult.activeAt.getTime() },
-                        session,
-                        accountId,
-                    );
-                    if (heartbeat.kind !== "publish" || heartbeat.value.active !== true
-                        || typeof heartbeat.value.activeAt !== "number") continue;
-                    eventRouter.emitEphemeral({
-                        userId: accountId,
-                        payload: buildSessionActivityEphemeral(sid, true, heartbeat.value.activeAt),
-                        recipientFilter: { type: 'user-scoped-only' },
-                    });
-                }
-            }
             if (presenceResult.badgeAttentionChanged) {
                 scheduleTrackedSessionBadgeRefresh({
                     badgeAttentionChanged: true,

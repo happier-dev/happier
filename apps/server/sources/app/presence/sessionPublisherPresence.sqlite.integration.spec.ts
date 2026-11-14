@@ -1017,9 +1017,8 @@ describe("session publisher presence on SQLite", () => {
         const changesBefore = await readChanges();
         let fence = registered.committedFence;
         const touches: Extract<Awaited<ReturnType<typeof presence.touchPublisher>>, { status: "touched" }>[] = [];
-        // An active publisher's heartbeat extends only its liveness fence. The
-        // audience reads the new activeAt from the realtime heartbeat; no
-        // Account cursor, AccountChange row or catch-up read follows from it.
+        // An active publisher's heartbeat extends only its liveness fence: no
+        // audience, Account cursor, AccountChange row or catch-up read follows.
         for (let heartbeat = 0; heartbeat < 5; heartbeat += 1) {
             clock = new Date(fence.getTime() + 60_000);
             const touched = await presence.touchPublisher({ socket });
@@ -1031,8 +1030,6 @@ describe("session publisher presence on SQLite", () => {
         expect(await readAccounts()).toEqual(accountsBefore);
         expect(touches.map(touched => touched.recipientCursors.length)).toEqual([0, 0, 0, 0, 0]);
         expect(await readChanges()).toEqual(changesBefore);
-        expect(touches.map(touched => [...touched.heartbeatRecipientAccountIds].sort()))
-            .toEqual(Array.from({ length: 5 }, () => seeded.participantIds));
         await expect(db.session.findUniqueOrThrow({ where: { id: seeded.binding.sessionId }, select: {
             active: true, lastActiveAt: true, publisherGeneration: true, publisherGenerationLastActiveAt: true,
         } })).resolves.toEqual({ active: true, lastActiveAt: fence,
@@ -1063,7 +1060,6 @@ describe("session publisher presence on SQLite", () => {
         const touchedAfterRecovery = await presence.touchPublisher({ socket });
         if (touchedAfterRecovery.status !== "touched") throw new Error("expected heartbeat after recovery");
         expect(touchedAfterRecovery.recipientCursors).toHaveLength(0);
-        expect([...touchedAfterRecovery.heartbeatRecipientAccountIds].sort()).toEqual(seeded.participantIds);
         expect(await readAccounts()).toEqual(recoveredAccounts);
         expect(await readChanges()).toEqual(recoveryChanges);
         const accountsBeforeClose = await readAccounts();

@@ -143,7 +143,11 @@ export function toAwarenessRuntimeInput(input: SessionRuntimePresentationInput) 
             resumingAtMs: input.resumingAt,
             controlServiceability: input.controlServiceability,
             active: input.active,
-            lastObservedAtMs: input.activeAt,
+            // Session presence is transition-driven (2026-11-04 heartbeat ruling):
+            // the server publishes online and offline (with activeAt) and never
+            // active→active beats, so an online Session has no observation clock
+            // here. activeAt dates only the offline transition.
+            lastObservedAtMs: readAwarenessPresence(input.presence) === 'online' ? null : input.activeAt,
             thinking: input.thinking,
             thinkingAtMs: input.thinkingAt,
             optimisticThinkingAtMs: input.optimisticThinkingAt,

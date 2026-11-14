@@ -17,7 +17,6 @@ import { getActivePrismaRuntime, getDbProviderFromEnv } from "@/storage/db";
 import { markSessionProjectionRecipientsChanged, type SessionRecipientCursor } from "@/app/session/changeTracking/markSessionProjectionRecipientsChanged";
 import { sessionRecipientPublicationResult, type SessionRecipientPublicationResult } from "@/app/session/changeTracking/sessionRecipientPublicationResult";
 import { acquireSessionAccountCursorLocksInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
-import { readCurrentSessionPublicationAudienceInTx } from "@/app/session/access/sessionRecipients";
 import {
     updateSessionRuntimeActivityProjection,
     writeSessionRuntimeActivityObserverLossInTx,
@@ -113,14 +112,12 @@ export type TouchSessionPublisherResult =
         status: "touched";
         committedFence: Date;
         activeAt: Date;
-        /** Durable publication, only when the touch made an inactive Session active. */
-        recipientCursors: readonly SessionRecipientCursor[];
         /**
-         * Current audience for an active→active heartbeat. It changes only the
-         * liveness fence, so it is delivered as a realtime activity heartbeat
-         * rather than an Account cursor every recipient must catch up on.
+         * Durable publication, only when the touch made an inactive Session active.
+         * An active→active heartbeat moves only the liveness deadline and has no
+         * audience: online/offline transitions are what readers observe.
          */
-        heartbeatRecipientAccountIds: readonly string[];
+        recipientCursors: readonly SessionRecipientCursor[];
         badgeAttentionChanged: boolean;
       }
     | { status: "unregistered" | "superseded" }
@@ -655,15 +652,11 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
                     followSourceChanged: true,
                     followReceiverAvailabilityChanged: true,
                 });
-                const heartbeatRecipientAccountIds = session.active
-                    ? (await readCurrentSessionPublicationAudienceInTx(tx, { sessionId: registration.binding.sessionId })).recipientAccountIds
-                    : [];
                 return sessionRecipientPublicationResult({
                     status: "touched",
                     committedFence,
                     activeAt: committedFence,
                     recipientCursors,
-                    heartbeatRecipientAccountIds,
                     badgeAttentionChanged: didSessionActivityBadgeSignalChange(
                         session satisfies SessionActivityBadgeInputs,
                         { ...session, active: true },

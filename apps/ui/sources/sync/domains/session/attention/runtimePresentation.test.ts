@@ -7,6 +7,15 @@ import {
 } from './runtimePresentation';
 
 describe('projectUiSessionRuntimeAwareness', () => {
+    it('keeps an online Session live without per-beat activity: the server publishes online/offline transitions', () => {
+        const nowMs = 10_000_000;
+        // 2026-11-04 heartbeat ruling applied to Sessions: active→active beats are
+        // not delivered, so activeAt is the online transition time, not a clock.
+        const input = { active: true, activeAt: nowMs - 10 * SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS, presence: 'online' as const };
+        expect(projectUiSessionRuntimeAwareness({ nowMs, ...input }).freshness).toBe('live');
+        expect(readSessionRuntimePresentationFreshnessExpirations(input, nowMs)).toEqual([]);
+    });
+
     it('preserves unknown runtime evidence independently of operational activity', () => {
         const result = projectUiSessionRuntimeAwareness({ nowMs: 1_000_000 });
         expect(result).toMatchObject({ runtime: 'unknown', freshness: 'unknown' });

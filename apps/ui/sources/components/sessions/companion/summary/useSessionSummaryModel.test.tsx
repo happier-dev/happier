@@ -163,14 +163,16 @@ describe('useSessionSummaryModel', () => {
         vi.useFakeTimers();
         vi.setSystemTime(1_000);
         observeServerTimestamp(1_000);
-        const row = session(homeA);
+        // Thinking freshness is a presentation clock; online liveness is not.
+        const row = session(homeA, { thinking: true, thinkingAt: 1_000 });
         const hook = await renderHook(() => useSessionSummaryModel({ session: row, serverId: homeA }));
+        const before = hook.getCurrent().status;
         expect(hook.getCurrent().stale).toBe(false);
         await flushHookEffects({
             advanceTimersMs: SESSION_AWARENESS_RUNTIME_STALE_SIGNAL_MS + SESSION_LIST_RELATIVE_TIME_CLOCK_INTERVAL_MS,
             cycles: 1, turns: 2,
         });
-        expect(hook.getCurrent().stale).toBe(true);
+        expect(hook.getCurrent().status).not.toEqual(before);
         await hook.unmount();
     });
 
@@ -187,11 +189,12 @@ describe('useSessionSummaryModel', () => {
             metadata: { ...shellSession.metadata!, name: 'Updated live session' },
             activeAt: shellSession.activeAt,
         }) } }));
-        expect(hook.getCurrent()).toMatchObject({ title: 'Updated live session', stale: true, plan: null });
+        // Online liveness is the server transition: presence age never makes it stale.
+        expect(hook.getCurrent()).toMatchObject({ title: 'Updated live session', stale: false, plan: null });
         await act(async () => storage.setState({ sessions: { [shellSession.id]: session(homeB, {
             metadata: { ...shellSession.metadata!, name: 'Other Home session' },
         }) } }));
-        expect(hook.getCurrent()).toMatchObject({ title: 'Shell session', stale: true });
+        expect(hook.getCurrent()).toMatchObject({ title: 'Shell session', stale: false });
         await hook.unmount();
     });
 

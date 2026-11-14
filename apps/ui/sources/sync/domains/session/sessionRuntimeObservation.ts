@@ -105,7 +105,7 @@ export function didSessionRuntimeObservationRecover(
         lifecycle: { archivedAtMs: value.archivedAt },
         runtime: { active: value.active, thinking: value.thinking,
             presence: value.presence === 'online' ? 'online' : typeof value.presence === 'number' ? 'offline' : 'unknown',
-            lastObservedAtMs: value.activeAt },
+            lastObservedAtMs: value.presence === 'online' ? null : value.activeAt },
         pending: {},
     }).freshness;
     return freshness(previous) === 'stale' && freshness(next) === 'live';

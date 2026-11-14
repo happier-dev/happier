@@ -55,15 +55,13 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
         let fence = registered.committedFence;
         const changeBefore = await readChange();
         const publications: number[] = [];
-        const heartbeatAudiences: string[][] = [];
-        // An active heartbeat extends only the liveness fence; its audience
-        // reads activeAt from the realtime heartbeat, not an Account cursor.
+        // An active heartbeat extends only the liveness fence: no audience read
+        // and no Account cursor.
         for (let heartbeat = 0; heartbeat < 5; heartbeat += 1) {
             clock = new Date(fence.getTime() + 60_000);
             const touched = await presence.touchPublisher({ socket });
             if (touched.status !== 'touched') throw new Error('expected heartbeat touch');
             publications.push(touched.recipientCursors.length);
-            heartbeatAudiences.push([...touched.heartbeatRecipientAccountIds]);
             expect(touched.committedFence.getTime()).toBeGreaterThan(fence.getTime());
             fence = touched.committedFence;
             expect.soft(await readContentClocks()).toEqual(contentBefore);
@@ -71,7 +69,6 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
         expect(await readAccount()).toEqual({ seq: accountBefore.seq });
         expect(publications).toEqual([0, 0, 0, 0, 0]);
         expect(await readChange()).toEqual(changeBefore);
-        expect(heartbeatAudiences).toEqual(Array.from({ length: 5 }, () => [owner.id]));
         await expect(db.session.findUniqueOrThrow({ where: { id: session.id }, select: {
             active: true, lastActiveAt: true, publisherGeneration: true, publisherGenerationLastActiveAt: true,
         } })).resolves.toEqual({ active: true, lastActiveAt: fence,
@@ -96,7 +93,6 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('M
         const touchedAfterRecovery = await presence.touchPublisher({ socket });
         if (touchedAfterRecovery.status !== 'touched') throw new Error('expected heartbeat after recovery');
         expect(touchedAfterRecovery.recipientCursors).toHaveLength(0);
-        expect(touchedAfterRecovery.heartbeatRecipientAccountIds).toEqual([owner.id]);
         expect(await readAccount()).toEqual({ seq: accountExpired.seq + 1 });
         expect(await readChange()).toEqual(recoveryChanges);
         const accountBeforeClose = await readAccount();

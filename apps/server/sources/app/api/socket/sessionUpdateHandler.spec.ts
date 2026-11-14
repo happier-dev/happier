@@ -895,7 +895,6 @@ describe("sessionUpdateHandler", () => {
                 committedFence: new Date(observedAt + 4_001),
                 activeAt: new Date(observedAt + 4_001),
                 recipientCursors: [],
-                heartbeatRecipientAccountIds: [],
                 badgeAttentionChanged: false,
             });
             now.mockReturnValue(observedAt + 4_001);
@@ -930,7 +929,6 @@ describe("sessionUpdateHandler", () => {
             committedFence: new Date(observedAt),
             activeAt: new Date(observedAt),
             recipientCursors: [],
-            heartbeatRecipientAccountIds: [],
             badgeAttentionChanged: false,
         });
         const alive = getSocketHandler(socket, "session-alive");

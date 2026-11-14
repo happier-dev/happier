@@ -327,10 +327,12 @@ describe('getSessionStatus', () => {
             state: 'unknown', statusText: '—', isPulsing: false, shouldShowStatus: false,
         });
     });
-    it('stops working motion while the runtime observation is stale', async () => {
+    it('does not let presence age stop working motion: Session liveness is the server transition', async () => {
         const { getSessionStatus } = await import('./sessionUtils');
+        // 2026-11-04 heartbeat ruling applied to Sessions: online/offline are
+        // published as transitions; there is no per-beat clock to age out.
         const session = createBaseSession({ activeAt: 1, latestTurnStatus: 'in_progress' });
-        expect(getSessionStatus(session, 200_000)).toMatchObject({ state: 'stale', isPulsing: false });
+        expect(getSessionStatus(session, 200_000)).toMatchObject({ state: 'thinking', isPulsing: true });
     });
 
     it('returns disconnected when presence is not online', async () => {
@@ -900,7 +902,7 @@ describe('getSessionStatus', () => {
         expect(status.awareness?.runtime).toBe('background_active');
     });
 
-    it('keeps delayed background observations in Working with an awaiting-updates label', async () => {
+    it('keeps old background observations of an online Session in Working; awaiting-updates is for stale awareness', async () => {
         const { getSessionStatus, presentSessionAwarenessV1 } = await import('./sessionUtils');
         const now = 1_000_000;
         const session = createBaseSession({
@@ -916,10 +918,10 @@ describe('getSessionStatus', () => {
         });
         const status = getSessionStatus(session, now);
         expect(status).toMatchObject({
-            state: 'background_active', bucket: 'working', statusText: 'status.awaitingUpdates',
-            isPulsing: false, awareness: { runtime: 'background_active', freshness: 'stale' },
+            state: 'background_active', bucket: 'working', statusText: 'status.backgroundActive',
+            isPulsing: false, awareness: { runtime: 'background_active', freshness: 'live' },
         });
-        expect(presentSessionAwarenessV1(status.awareness)).toMatchObject({
+        expect(presentSessionAwarenessV1({ ...status.awareness!, freshness: 'stale' })).toMatchObject({
             state: 'background_active', statusText: 'status.awaitingUpdates',
         });
         expect(getSessionStatus({ ...session, activeAt: now, runtimeActivityObservedAt: now }, now)).toMatchObject({
@@ -1850,22 +1852,24 @@ describe('useSessionStatus', () => {
         vi.setSystemTime(1_000_000);
         try {
             const { useSessionStatus, SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS } = await import('./sessionUtils');
+            const { SESSION_OPTIMISTIC_PENDING_THINKING_MS } = await import('@/sync/domains/session/attention/runtimePresentation');
             // Immutable facts: the two deadlines below are the only things that change.
             const thinkingAt = Date.now() - SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS + 5;
-            const activeAt = Date.now() - SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS + 1_005;
-            const hook = await renderHook(() => useSessionStatus(createBaseSession({
+            const optimisticThinkingAt = Date.now() - SESSION_OPTIMISTIC_PENDING_THINKING_MS + 1_005;
+            const hook = await renderHook(() => useSessionStatus({ ...createBaseSession({
                 thinking: true,
                 thinkingAt,
-                activeAt,
-            })));
-
-            expect(hook.getCurrent().state).toBe('thinking');
+                optimisticThinkingAt,
+                activeAt: 1,
+            }), pendingCount: 1 } as never));
+            const first = hook.getCurrent().state;
+            expect(first).toBe('thinking');
 
             await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 5 });
-            expect(hook.getCurrent().state).toBe('waiting');
+            expect(hook.getCurrent().state).toBe('thinking');
 
             await flushHookEffects({ cycles: 1, turns: 0, advanceTimersMs: 1_002 });
-            expect(hook.getCurrent().state).toBe('stale');
+            expect(hook.getCurrent().state).not.toBe('thinking');
         } finally {
             vi.useRealTimers();
         }
@@ -1907,26 +1911,6 @@ describe('useSessionStatus', () => {
             })));
 
             expect(hook.getCurrent().state).toBe('thinking');
-        } finally {
-            vi.useRealTimers();
-        }
-    });
-
-    it('shows stale status without motion when runtime heartbeat has expired', async () => {
-        vi.useFakeTimers();
-        vi.setSystemTime(1_000_000);
-        try {
-            const { useSessionStatus, SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS } = await import('./sessionUtils');
-            const hook = await renderHook(() => useSessionStatus(createBaseSession({
-                activeAt: Date.now() - SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS - 1_000,
-                thinking: false,
-                latestTurnStatus: 'in_progress',
-                latestTurnStatusObservedAt: Date.now() - SESSION_RUNTIME_STATUS_STALE_SIGNAL_MS - 1_000,
-                meaningfulActivityAt: Date.now() - 5,
-            })));
-
-            expect(hook.getCurrent().state).toBe('stale');
-            expect(hook.getCurrent().isPulsing).toBe(false);
         } finally {
             vi.useRealTimers();
         }
