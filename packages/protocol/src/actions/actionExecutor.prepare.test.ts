@@ -18,6 +18,7 @@ import { waitForSessionAwarenessV1 } from '../sessions/awareness/waitV1.js';
 import { CurrentUiContextSnapshotV1Schema } from '../plugins/ui/currentUiContext.js';
 import { createDeploymentApprovalScopeResolverV1 } from '../deployments/deploymentApprovalScopeV1.js';
 import { DeploymentEnvironmentGetResultV1Schema } from '../deployments/deploymentActionsV1.js';
+import { DaemonLocalServiceLauncherStartResponseV1Schema, LocalServiceStartApprovalReviewV1Schema } from '../local/services/launcher/v1.js';
 
 function createExecutor(overrides: Partial<ActionExecutorDeps> = {}) {
   return createActionExecutor({
@@ -48,38 +49,175 @@ describe('a review carried back by a host without a presenter', () => {
       target: homeAdmitted ? { kind: 'machine', machineId: 'controller' } : null } } : {}) });
   const reviewOf = (result: unknown) => (result as { details: { review: unknown; reviewDigest: string } }).details;
 
-  it.each([false, true])('carries its exact review, admits only its confirmation, and asks again when it changes (Home admitted: %s)', async homeAdmitted => {
-    const ownPress = (requestId: string, digest?: string) => press(requestId, digest, homeAdmitted);
+  it.each([
+    { homeAdmitted: false, mounted: false }, { homeAdmitted: true, mounted: false },
+    { homeAdmitted: false, mounted: true }, { homeAdmitted: true, mounted: true },
+  ].flatMap(context => (['execute', 'prepare'] as const).map(entry => ({ ...context, entry }))))(
+    'carries its exact review and admits only fresh confirmation (Home: $homeAdmitted, mounted: $mounted, entry: $entry)',
+    async ({ homeAdmitted, mounted, entry }) => {
+    const ownPress = (requestId: string, digest?: string) => ({ ...press(requestId, digest, homeAdmitted),
+      ...(mounted ? { interactivePresentation: undefined } : {}) });
     let destination = 'alerts-room';
     const sent: unknown[] = [];
     const approvalsCreate = vi.fn(async () => ({ artifactId: 'must-not-exist' }));
     // The host's delivery and its discovered destination are the boundaries; review, admission and digests stay real.
     const executor = createExecutor({ approvalsCreate,
+      ...(mounted ? { presentUserActionConfirmation: async () => { throw new Error('A carried confirmation must consume its exact review'); } } : {}),
       prepareNotificationTestApproval: async ({ input: request }) => ({ request, controllerMachineId: 'controller',
         destination, disclosure: 'slack' }),
       notificationConfigurationAction: async ({ input: request }) => {
         sent.push(request);
         return { status: 'sent', controllerMachineId: 'controller', channelId: (request as { channelId: string }).channelId };
       } } as Partial<ActionExecutorDeps>);
-    const refused = await executor.execute(actionId, input, ownPress('press-1'));
+    const run = async (context: ActionExecutorContext) => {
+      if (entry === 'execute') return executor.execute(actionId, input, context);
+      const prepared = await executor.prepare(actionId, input, context);
+      return prepared.kind === 'ready' ? prepared.invocation.run() : prepared.result;
+    };
+    const refused = await run( { ...ownPress('press-1'), interactivePresentation: 'unavailable' });
     expect(refused).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required', details: {
       review: { actionArgs: input, preview: { notificationTestReview: { destination: 'alerts-room' } } },
       reviewDigest: expect.stringMatching(/^[A-Za-z0-9_-]{43}$/u) } });
     const firstDigest = reviewOf(refused).reviewDigest;
     // A confirmation of some other review is not this one.
-    const stale = await executor.execute(actionId, input, ownPress('press-2', 'A'.repeat(43)));
+    const stale = await run(ownPress('press-2', 'A'.repeat(43)));
     expect(stale).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required', details: { reviewDigest: firstDigest } });
     // The person confirmed the old destination; the host now would send elsewhere, so it asks again with that.
     destination = 'other-room';
-    const changed = await executor.execute(actionId, input, ownPress('press-3', firstDigest));
+    const changed = await run(ownPress('press-3', firstDigest));
     expect(changed).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required',
       details: { review: { preview: { notificationTestReview: { destination: 'other-room' } } } } });
     expect(reviewOf(changed).reviewDigest).not.toBe(firstDigest);
     expect(sent).toEqual([]);
-    await expect(executor.execute(actionId, input, ownPress('press-4', reviewOf(changed).reviewDigest)))
+    await expect(run(ownPress('press-4', reviewOf(changed).reviewDigest)))
       .resolves.toMatchObject({ ok: true, result: { status: 'sent' } });
     expect(sent).toEqual([input]);
     expect(approvalsCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe('one own-UI review disposition', () => {
+  it('launches a declared Service with its exact native setup review only after mounted confirmation', async () => {
+    const workspace = { serverId: 'home', machineId: 'machine', workspaceId: 'workspace', rootPath: '/project' };
+    const review = LocalServiceStartApprovalReviewV1Schema.parse({
+      request: { machineId: 'machine', targetId: 'web', workspace,
+        declaration: { workspaceRefId: 'workspace', selection: { kind: 'manifest', name: 'web' } } },
+      target: workspace,
+      reviewedEffect: { command: 'serve web' }, reviewedEffectDigest: 'a'.repeat(64),
+      setup: { required: true, project: { serverId: 'home', projectId: 'project' },
+        reviewedEffect: { commands: ['install dependencies'] }, reviewedEffectDigest: 'setup-effect' },
+    });
+    let accepted = false;
+    const launches: unknown[] = [];
+    const launchConsent: unknown[] = [];
+    const executor = createExecutor({
+      isActionApprovalRequired: () => true,
+      // These ports are the addressed native host and mounted human presenter.
+      prepareLocalServiceStartApproval: async () => review,
+      presentUserActionConfirmation: async confirmation => {
+        expect(launches).toEqual([]);
+        expect(confirmation).toMatchObject({ input: review.request, preview: { serviceStartReview: review } });
+        return accepted;
+      },
+      runtimeActionExecute: async ({ input, context }) => {
+        launchConsent.push(context.nativeServiceStartApproval);
+        launches.push(input);
+        return DaemonLocalServiceLauncherStartResponseV1Schema.parse({ protocolVersion: 1, machineId: 'machine',
+          targetId: 'web', status: 'succeeded', snapshot: { v: 1, machineId: 'machine', updatedAt: 1, targets: [] } });
+      },
+    });
+    const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      serverId: 'home', runtimeAccountId: 'alice' };
+    await expect(executor.execute('localServices.launcher.start', review.request, { ...context, actionRequestId: 'declined' }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'approval_canceled' });
+    expect(launches).toEqual([]);
+    accepted = true;
+    const result = await executor.execute('localServices.launcher.start', review.request, { ...context, actionRequestId: 'accepted' });
+    expect(launchConsent).toEqual([review]);
+    expect(result).toMatchObject({ ok: true });
+    expect(launches).toEqual([review.request]);
+  });
+
+  it.each((['execute', 'prepare'] as const).flatMap(entry =>
+    (['settings', 'host policy'] as const).map(policy => ({ entry, policy }))))(
+    'presents mounted Ask and carries headless Ask through $entry from $policy', async ({ entry, policy }) => {
+    for (const mounted of [true, false]) {
+      let effects = 0;
+      let artifacts = 0;
+      const reviews: unknown[] = [];
+      const executor = createActionExecutor({
+        // The HTTP reader, persisted approval writer and native presenter are system boundaries.
+        sessionList: async () => { effects++; return { sessions: [] }; },
+        ...(policy === 'host policy' ? { isActionApprovalRequired: () => true } : {}),
+        approvalsCreate: async () => { artifacts++; return { artifactId: 'unexpected-self-approval' }; },
+        ...(mounted ? { presentUserActionConfirmation: async request => { reviews.push(request); return true; } } : {}),
+      });
+      const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        serverId: 'home', runtimeAccountId: 'alice', actionRequestId: `ask-${entry}-${mounted}`,
+        ...(policy === 'settings' ? { actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
+          actions: { 'session.list': { approvalRequiredSurfaces: ['ui'] } } }) } : {}) };
+      const prepared = entry === 'prepare' ? await executor.prepare('session.list', {}, context) : null;
+      const result = prepared ? prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result
+        : await executor.execute('session.list', {}, context);
+      expect(result).toMatchObject(mounted ? { ok: true, result: { sessions: [] } }
+        : { ok: false, errorCode: 'action_interactive_review_required', details: { reviewDigest: expect.any(String), review: expect.any(Object) } });
+      expect(reviews).toHaveLength(mounted ? 1 : 0);
+      expect(effects).toBe(mounted ? 1 : 0);
+      expect(artifacts).toBe(0);
+    }
+  });
+
+  it.each(['execute', 'prepare'] as const)('retains missing computer target acquisition through %s', async entry => {
+    let effects = 0;
+    let confirmations = 0;
+    let acquiredInput: unknown;
+    const executor = createActionExecutor({
+      // The native computer and Artifact writer are the process boundaries; selection admission remains real.
+      runtimeActionExecute: async ({ actionId }) => {
+        if (actionId === 'computer.target.get') return { consentGranted: false,
+          approvalDisplay: { machineDisplayName: 'Workstation', requiresTargetSelection: true } };
+        effects++;
+        return { status: 'target_selection_required',
+          approvalDisplay: { machineDisplayName: 'Workstation', requiresTargetSelection: true } };
+      },
+      approvalsCreate: async ({ request }) => { acquiredInput = request; return { artifactId: 'computer-target-acquisition' }; },
+      presentUserActionConfirmation: async () => { confirmations++; return true; },
+    });
+    const input = { machineId: 'workstation', captureId: 'capture', operation: { kind: 'press' as const, key: 'Enter' } };
+    const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      serverId: 'home', runtimeAccountId: 'alice', actionRequestId: `computer-${entry}`,
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'computer.input': { approvalRequiredSurfaces: ['ui'] } } }) };
+    const prepared = entry === 'prepare' ? await executor.prepare('computer.input', input, context) : null;
+    const result = prepared ? prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result
+      : await executor.execute('computer.input', input, context);
+    expect({ effects, confirmations }, JSON.stringify(result)).toEqual({ effects: 0, confirmations: 0 });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'computer-target-acquisition' } });
+    expect(acquiredInput).toMatchObject({ actionArgs: input,
+      preview: { computerApprovalDisplay: { requiresTargetSelection: true } } });
+  });
+
+  it.each(['execute', 'prepare'] as const)('retains value-free confidential input acquisition through mounted and headless %s', async entry => {
+    for (const mounted of [true, false]) {
+      let effects = 0;
+      let artifacts = 0;
+      let confirmations = 0;
+      let acquiredInput: unknown;
+      const executor = createActionExecutor({
+        homeDomainAction: async () => { effects++; return {}; },
+        approvalsCreate: async ({ request }) => { artifacts++; acquiredInput = request; return { artifactId: 'confidential-input-acquisition' }; },
+        ...(mounted ? { presentUserActionConfirmation: async () => { confirmations++; return true; } } : {}),
+      });
+      const input = { name: 'Deployment token', kind: 'token' };
+      const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        serverId: 'home', runtimeAccountId: 'alice', actionRequestId: `input-${entry}-${mounted}` };
+      const prepared = entry === 'prepare' ? await executor.prepare('secrets.create', input, context) : null;
+      const result = prepared ? prepared.kind === 'ready' ? await prepared.invocation.run() : prepared.result
+        : await executor.execute('secrets.create', input, context);
+      expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'confidential-input-acquisition' } });
+      expect(acquiredInput).toMatchObject({ actionArgs: input,
+        preview: { confidentialInputs: { kind: 'action_inputs', paths: ['value'] } } });
+      expect({ effects, artifacts, confirmations }).toEqual({ effects: 0, artifacts: 1, confirmations: 0 });
+    }
   });
 });
 
@@ -108,7 +246,11 @@ describe('ActionExecutor prepared invocation', () => {
       contentHeaderVersion: 1, contentBodyVersion: 1 };
     const context = { serverId: 'home', surface: 'ui', authority: 'present_user',
       actionCaller: { kind: 'host' }, interactivePresentation: 'unavailable', actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) } as const;
-    expect(await executor.execute('deployments.deploy', input, context))
+    // The stored Deploy press already confirmed this exact input in its own UI flow.
+    const confirmedContext = { ...context, runtimeAccountId: 'owner', actionRequestId: 'native-redeploy',
+      presentUserConfirmation: { actionId: 'deployments.deploy' as const, requestId: 'native-redeploy',
+        accountId: 'owner', serverId: 'home', target: null, inputDigest: computeActionInputApprovalDigestV1('deployments.deploy', input) } };
+    expect(await executor.execute('deployments.deploy', input, confirmedContext))
       .toMatchObject({ ok: false, errorCode: 'deployment_boundary_observed' });
     expect(dispatches).toBe(1);
     for (const surface of ['agent', 'api'] as const) {
@@ -588,7 +730,7 @@ describe('ActionExecutor prepared invocation', () => {
     })).resolves.toEqual({
       kind: 'settled',
       result: { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters',
-        details: { issues: [{ code: 'invalid_type', path: ['limit'], expected: 'number' }] } },
+        details: { issues: [{ code: 'invalid_type', path: ['limit'], expected: 'number', message: expect.any(String) }] } },
     });
     expect(sessionList).not.toHaveBeenCalled();
   });
@@ -782,7 +924,7 @@ describe('ActionExecutor prepared invocation', () => {
     }, expect.objectContaining({ surface: 'rpc', authority: 'present_user', serverId: 'server-1' }));
   });
 
-  it.each(['Session MCP', 'mounted plugin'] as const)('completes %s blocking approval admission before dispatch', async (origin) => {
+  it.each(['Session MCP', 'mounted plugin'] as const)('returns a durable %s approval handle before dispatch', async (origin) => {
     let storedRequest: ApprovalRequest | null = null;
     const approvalsCreate = vi.fn(async ({ request }: { request: ApprovalRequest }) => {
       storedRequest = request;
@@ -825,23 +967,13 @@ describe('ActionExecutor prepared invocation', () => {
         sourceCustody: { kind: 'development', registeredRootId: 'board-root' } },
     });
 
-    expect(prepared.kind, JSON.stringify(prepared)).toBe('ready');
+    expect(prepared).toMatchObject({ kind: 'settled', result: { ok: true, result: {
+      kind: 'approval_request_created', artifactId: 'approval-1', actionId: 'session.list',
+    } } });
     expect(approvalsCreate).toHaveBeenCalledTimes(1);
-    expect(approvalsWaitForDecision).toHaveBeenCalledTimes(1);
+    expect(approvalsWaitForDecision).not.toHaveBeenCalled();
     expect(sessionList).not.toHaveBeenCalled();
-    if (prepared.kind !== 'ready') throw new Error('Expected a ready invocation');
-
-    const firstRun = prepared.invocation.run();
-    expect(prepared.invocation.run()).toBe(firstRun);
-    await expect(firstRun).resolves.toEqual({
-      ok: true,
-      result: { sessions: [{ id: 'session-1', active: false, presence: 'offline', updatedAt: 10 }], nextCursor: null },
-    });
-    expect(sessionList).toHaveBeenCalledTimes(1);
-    expect(storedRequest).toMatchObject({
-      status: 'executed',
-      execution: { ok: true, result: { sessions: [{ id: 'session-1', active: false, presence: 'offline', updatedAt: 10 }], nextCursor: null } },
-    });
+    expect(storedRequest).toMatchObject({ status: 'open', approval: { flow: 'deferred' } });
     if (origin === 'mounted plugin') expect(storedRequest).toMatchObject({ executionOriginV1: {
       authority: 'account_automation', surface: 'plugin', sessionListAccess: 'mounted_ui',
       caller: { kind: 'plugin', pluginId: 'acme.board', contributionLocalId: 'sessions-panel' },
@@ -849,6 +981,8 @@ describe('ActionExecutor prepared invocation', () => {
   });
 
   it('keeps blocking waiter ownership when approval is decided concurrently', async () => {
+    // A live plugin report retains its real source lifetime; durable MCP work returns an Artifact.
+    const lifetime = new AbortController();
     let storedRequest: ApprovalRequest | null = null;
     let resolveWaiter: ((request: ApprovalRequest) => void) | null = null;
     let markWaiterReady: (() => void) | null = null;
@@ -878,6 +1012,7 @@ describe('ActionExecutor prepared invocation', () => {
     });
     const sessionList = vi.fn(async () => ({ sessions: [{ id: 'session-1', active: false, presence: 'offline', updatedAt: 10 }], nextCursor: null }));
     const executor = createExecutor({
+      hostActionApprovalLifetime: { actionId: 'session.list', surface: 'plugin', signal: lifetime.signal, isCurrent: () => true },
       approvalsCreate,
       approvalsGet,
       approvalsUpdate,
@@ -888,11 +1023,11 @@ describe('ActionExecutor prepared invocation', () => {
     });
 
     const preparedPromise = executor.prepare('session.list', {}, {
-      surface: 'mcp',
-      serverId: 'server-1',
-      actionRequestId: 'request-2',
-      defaultSessionId: 'session-1',
-      sessionListAccess: 'current_session',
+      surface: 'plugin', authority: 'account_automation', serverId: 'server-1', serverIdentityId: 'stable-home',
+      runtimeAccountId: 'account', actionRequestId: 'request-2', signal: lifetime.signal,
+      sessionListAccess: 'mounted_ui', defaultSessionMachineId: 'machine-1',
+      actionCaller: { kind: 'plugin', pluginId: 'acme.board', contributionLocalId: 'sessions-panel',
+        sourceCustody: { kind: 'development', registeredRootId: 'board-root' } },
     });
     await Promise.race([waiterReady, preparedPromise.then(prepared => {
       if (prepared.kind === 'settled') throw new Error(`Approval settled before its waiter: ${JSON.stringify(prepared.result)}`);
@@ -901,8 +1036,8 @@ describe('ActionExecutor prepared invocation', () => {
       artifactId: 'approval-concurrent-1',
       decision: 'approve',
     }, {
-      surface: 'mcp',
-      authority: 'present_user',
+      surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      serverId: 'server-1', serverIdentityId: 'stable-home', runtimeAccountId: 'account',
     });
     const prepared = await preparedPromise;
 

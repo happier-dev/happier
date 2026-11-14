@@ -619,6 +619,15 @@ function widgetRemovalDeletesStoredContent(instance: ReturnType<typeof WidgetIns
   return !instance || instance.definition.kind === 'inline';
 }
 
+function readNativeServiceStartApproval(actionId: string, actionArgs: unknown, preview: unknown) {
+  if (actionId !== 'localServices.launcher.start' || readRecord(actionArgs).declaration === undefined) return null;
+  const review = LocalServiceStartApprovalReviewV1Schema.safeParse(readRecord(preview).serviceStartReview);
+  if (!review.success || !sameStrictJsonValue(review.data.request, actionArgs)) {
+    return { ok: false as const, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
+  }
+  return { ok: true as const, review: review.data };
+}
+
 export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
   prepare: (actionId: ActionId, input: unknown, context?: ActionExecutorContext,
     options?: import('./executor/types.js').ActionPrepareOptions) => Promise<ActionPrepareResult>;
@@ -1584,14 +1593,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
     // original live invocation. Durable approval state cannot restore either
     // the private input or the lost result recipient.
     const custodyReplayActionId = ActionIdSchema.safeParse(args.request.actionId);
-    const serviceStartReview = args.request.actionId === 'localServices.launcher.start'
-      && readRecord(args.request.actionArgs).declaration !== undefined
-      ? LocalServiceStartApprovalReviewV1Schema.safeParse(readRecord(args.request.preview).serviceStartReview) : null;
-    if (serviceStartReview && (!serviceStartReview.success
-      || !sameStrictJsonValue(serviceStartReview.data.request, args.request.actionArgs))) {
-      return await persistExecutionFailure(args.request, {
-        ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable',
-      });
+    const serviceStartReview = readNativeServiceStartApproval(args.request.actionId, args.request.actionArgs, args.request.preview);
+    if (serviceStartReview?.ok === false) {
+      return await persistExecutionFailure(args.request, serviceStartReview);
     }
     const custodySpec = custodyReplayActionId.success ? getActionSpec(custodyReplayActionId.data) : null;
     if (
@@ -1819,7 +1823,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       ...(origin?.success && origin.data.callerPermissionMode !== undefined
         ? { callerPermissionMode: origin.data.callerPermissionMode } : {}),
       ...(retainedLogsContext ? { machineServiceLogsResource: retainedLogsContext.machineServiceLogsResource } : {}),
-      ...(serviceStartReview?.success ? { nativeServiceStartApproval: serviceStartReview.data } : {}),
+      ...(serviceStartReview?.ok ? { nativeServiceStartApproval: serviceStartReview.review } : {}),
       ...(args.ctx.signal ? { signal: args.ctx.signal } : {}),
       ...(retainsHostOperation ? {
         operationAcceptance: args.ctx.operationAcceptance,
@@ -3329,6 +3333,9 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
       if (!review) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
       if ('ok' in review) return review;
       if (computeActionReviewDigestV1(actionId, review) !== confirmedReviewDigest) return reviewRefusal(review);
+      const serviceStartReview = readNativeServiceStartApproval(actionId, review.actionArgs, review.preview);
+      if (serviceStartReview?.ok === false) return serviceStartReview;
+      if (serviceStartReview?.ok) ctx = { ...ctx, nativeServiceStartApproval: serviceStartReview.review };
       const pluginInstallReview = actionId === 'plugins.install'
         ? readPluginInstallApprovalPendingReview(review.preview) : null;
       if (pluginInstallReview) ctx = { ...ctx, approvedActionReplay: {
@@ -3420,6 +3427,8 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             }
             if ('ok' in policyReview) return policyReview;
             const confirmationInput = policyReview.actionArgs;
+            const serviceStartReview = readNativeServiceStartApproval(actionId, confirmationInput, policyReview.preview);
+            if (serviceStartReview?.ok === false) return serviceStartReview;
             const pluginInstallReview = actionId === 'plugins.install'
               ? readPluginInstallApprovalPendingReview(policyReview.preview) : null;
             const confirmed = await confirm({ actionId, input: confirmationInput, context: ctx, preview: policyReview.preview });
@@ -3429,6 +3438,7 @@ export function createActionExecutor(deps: ActionExecutorDeps): Readonly<{
             // the admitted invocation, just as blocking approvals do.
             const executionInput = spec.approvalInputCustody === 'live_only' ? admittedInput : confirmationInput;
             const executionContext = { ...confirmedContext,
+              ...(serviceStartReview?.ok ? { nativeServiceStartApproval: serviceStartReview.review } : {}),
               ...(pluginInstallReview ? { approvedActionReplay: { pluginInstallReview } } : {}),
               ...(requiredHandoffTargetApproval ? { handoffTargetReplacementApproval: requiredHandoffTargetApproval } : {}),
               ...(requiredDirectoryApproval ? { sessionCreationDirectoryApproval: requiredDirectoryApproval } : {}),
