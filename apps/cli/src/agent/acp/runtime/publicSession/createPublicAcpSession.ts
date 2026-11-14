@@ -1154,10 +1154,14 @@ async function createPublicAcpConversationFromAwaitableAdapter(
           publish({ kind: 'turn-cancelled', turnId: turn.turnId, cause: current.cancelCause ?? 'unknown',
             diagnostic: { code: 'acp_unknown_stop_reason', severity: 'warning', details: { stopReason: outcome.stopReason } } });
         } else if (outcome?.kind === 'refused') {
+          const refusal = diagnostic('acp_turn_refused', outcome.error?.message,
+            outcome.error ?? { code: outcome.stopReason });
           publish({
             kind: 'turn-failed',
             turnId: turn.turnId,
-            diagnostic: diagnostic('acp_turn_refused'),
+            diagnostic: { ...refusal, details: {
+              ...(isRecord(refusal.details) ? refusal.details : {}), stopReason: outcome.stopReason,
+            } },
           });
         } else if (outcome?.kind === 'failed' || outcome?.kind === 'timed_out') {
           publish({

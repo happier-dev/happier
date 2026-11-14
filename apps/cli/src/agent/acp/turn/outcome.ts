@@ -8,7 +8,7 @@ export type AcpTurnCompletedStopReason = Extract<
 export type AcpTurnOutcome =
   | { kind: 'completed'; stopReason: AcpTurnCompletedStopReason }
   | { kind: 'aborted'; stopReason: Extract<StopReason, 'cancelled'> }
-  | { kind: 'refused'; stopReason: Extract<StopReason, 'refusal'> }
+  | { kind: 'refused'; stopReason: Extract<StopReason, 'refusal'>; error?: Error }
   | { kind: 'unknown'; stopReason: string }
   | { kind: 'failed'; error: Error }
   | { kind: 'timed_out'; capMs: number };

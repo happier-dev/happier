@@ -156,7 +156,87 @@ it('retains the native process refusal when its ACP transport closes during star
     }).then(async session => { await session.dispose(); throw new Error('Unexpected startup success'); }, error => error);
     const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', startupPhase: 'client_start',
       error: sanitizeNativeAgentSessionBoundaryError(failure, true) });
-    expect(issue.failureCause).toMatchObject({ phase: 'client_start', providerErrorMessage: expect.stringContaining('No such device or address') });
+    expect(issue.failureCause).toMatchObject({ phase: 'client_start', providerErrorCode: 'os_error_6', providerErrorMessage: expect.stringContaining('No such device or address') });
     expect(JSON.stringify(issue)).not.toContain('synthetic-private-token');
+  });
+});
+
+
+it('retains the authentication timeout stage through public ACP opening', async () => {
+  await withTempDir('acp-auth-timeout-cause-', async directory => {
+    const script = writeAcpTestAgentScript({ dir: directory, fileName: 'auth.mjs', source: `
+      import { createInterface } from 'node:readline';
+      for await (const line of createInterface({ input: process.stdin })) {
+        const r = JSON.parse(line); if (r.id === undefined || r.method === 'authenticate') continue;
+        process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: r.id, result: {
+          protocolVersion: 1, agentCapabilities: {}, authMethods: [{ id: 'login', name: 'Login' }]
+        } }) + '\\n');
+      }
+    ` });
+    const failure: unknown = await createPublicAcpSession({ kind: 'create', sessionId: 'startup', cwd: directory }, {
+      transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'fixture-cli' } },
+      definition: { auth: { methodId: 'login' }, mcp: { policy: 'drop' }, timeouts: { initMs: 2_000 } },
+    }, {
+      pluginId: 'acme.startup', agentId: 'startup', signal: new AbortController().signal, isCurrent: () => true,
+      systemTools: { resolve: async () => ({ toolId: 'fixture-cli', launch: { kind: 'binary', executablePath: process.execPath, args: [script] } }) },
+      interactions: { async request() { throw new Error('Unexpected interaction'); } },
+      media: { async registerSourceRoot() { throw new Error('Unexpected media'); } },
+      models: { bind: () => ({ dispose() {} }) }, modes: { bind: () => ({ dispose() {} }) },
+    }).then(async session => { await session.dispose(); throw new Error('Unexpected startup success'); }, error => error);
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', startupPhase: 'client_start',
+      error: sanitizeNativeAgentSessionBoundaryError(failure, true) });
+    expect(issue.failureCause).toMatchObject({ phase: 'authentication', providerErrorCode: 'acp_authenticate_timeout' });
+  });
+});
+
+it.each([false, true])('publishes native refusal stop reason and sanitized error, then recovers (error=%s)', async hasError => {
+  await withTempDir('acp-refusal-cause-', async directory => {
+    const script = writeAcpTestAgentScript({ dir: directory, fileName: 'refusal.mjs', source: `
+      import { createInterface } from 'node:readline';
+      let prompts = 0;
+      for await (const line of createInterface({ input: process.stdin })) {
+        const r = JSON.parse(line); if (r.id === undefined) continue;
+        let result = {};
+        if (r.method === 'initialize') result = { protocolVersion: 1, agentCapabilities: {} };
+        if (r.method === 'session/new') result = { sessionId: 'native-refusal' };
+        if (r.method === 'session/prompt') result = ++prompts === 1
+          ? { stopReason: 'refusal', ...(${hasError} ? { error: { code: 'vendor_refused', message: 'Native refusal token=synthetic-private-token', data: 'PRIVATE_BODY' } } : {}) }
+          : { stopReason: 'end_turn' };
+        process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: r.id, result }) + '\\n');
+      }
+    ` });
+    const session = await createPublicAcpSession({ kind: 'create', sessionId: 'session', cwd: directory }, {
+      transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'fixture-cli' } },
+    }, {
+      pluginId: 'acme.refusal', agentId: 'refusal', signal: new AbortController().signal, isCurrent: () => true,
+      systemTools: { resolve: async () => ({ toolId: 'fixture-cli', launch: { kind: 'binary', executablePath: process.execPath, args: [script] } }) },
+      interactions: { async request() { throw new Error('Unexpected interaction'); } },
+      media: { async registerSourceRoot() { throw new Error('Unexpected media'); } },
+      models: { bind: () => ({ dispose() {} }) }, modes: { bind: () => ({ dispose() {} }) },
+    });
+    const events: AgentSessionRuntimeEvent[] = [];
+    const watch = session.watch(event => { events.push(event); });
+    try {
+      await session.send({ inputIds: ['first'], input: { text: 'Hello' }, delivery: { kind: 'newTurn', turnId: 'first' } });
+      await expect.poll(() => events.some(event => event.kind === 'turn-failed')).toBe(true);
+      const failure = events.find(event => event.kind === 'turn-failed');
+      if (!failure || failure.kind !== 'turn-failed') throw new Error('Missing native refusal');
+      expect(failure.diagnostic).toMatchObject({ code: 'acp_turn_refused', details: { stopReason: 'refusal' } });
+      const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: failure.diagnostic });
+      expect(issue.failureCause).toMatchObject({ providerErrorCode: hasError ? 'vendor_refused' : 'refusal' });
+      if (hasError) expect(issue.failureCause?.providerErrorMessage).toContain('Native refusal');
+      const writes: unknown[] = [];
+      const project = createRuntimeFailureTranscriptProjector({ provider: 'codebuddy', providerName: 'CodeBuddy',
+        session: { sessionId: 'session', enqueueAgentMessageCommitted: async (_provider, body, options) => {
+          writes.push({ body, meta: options.meta });
+          return { persisted: true, delivered: true, committedSequence: writes.length };
+        } } });
+      await project(failure);
+      expect(writes).toContainEqual(expect.objectContaining({ meta: expect.objectContaining({ runtimeIssueV1:
+        expect.objectContaining({ failureCause: expect.objectContaining({ providerErrorCode: hasError ? 'vendor_refused' : 'refusal' }) }) }) }));
+      expect(JSON.stringify({ failure, issue, writes })).not.toMatch(/synthetic-private-token|PRIVATE_BODY/);
+      await session.send({ inputIds: ['next'], input: { text: 'Again' }, delivery: { kind: 'newTurn', turnId: 'next' } });
+      await expect.poll(() => events.some(event => event.kind === 'turn-complete' && event.turnId === 'next')).toBe(true);
+    } finally { watch.dispose(); await session.dispose(); }
   });
 });

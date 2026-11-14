@@ -736,9 +736,17 @@ export class AcpBackend implements CatalogAcpBackend {
   }
 
   private createStartupTimeoutError(operation: string, timeoutMs: number): Error {
-    return new AcpStartupTimeoutError(
+    const error = new AcpStartupTimeoutError(
       `${operation} timeout after ${timeoutMs}ms - ${this.transport.agentName} did not respond${this.buildStartupFailureDiagnosticSuffix()}`,
     );
+    // The timeout owner knows which handshake step failed. Keep that fact
+    // when the host removes native prose from its public startup attestation.
+    return Object.assign(error, { failureCause: {
+      phase: operation === 'Authenticate' ? 'authentication' : operation === 'Initialize' ? 'client_start' : 'thread_open',
+      failureReason: 'unclassified_provider_error',
+      ...readNativeStartupFailureDetail(error),
+      providerErrorCode: `acp_${operation.toLowerCase().replaceAll(' ', '_')}_timeout`,
+    } });
   }
 
   private buildAcpMcpServersForSessionRequest(): McpServerStdio[] {
@@ -1382,6 +1390,7 @@ export class AcpBackend implements CatalogAcpBackend {
     );
     // The connection owner knows that the native transport closed. Preserve
     // explicit RPC/auth refusals and cancellation instead of parsing their text.
+    const nativeOsError = /\(os error (\d+)\)/u.exec(this.recentStderrDiagnostics.join(' | '))?.[1];
     const failure = !this.disposed && this.connection?.signal.aborted
       && error instanceof Error && error.name !== 'AbortError' && !('code' in error)
       ? Object.assign(new Error(AGENT_STARTUP_FAILURE_PREVIEWS.agent_startup_transport_failed, { cause: error }),
@@ -1389,7 +1398,10 @@ export class AcpBackend implements CatalogAcpBackend {
           // The closed connection loses the process's native refusal. Reuse the
           // startup owner's sanitized stderr/exit projection before cleanup.
           failureCause: { phase: 'client_start' as const, failureReason: 'unclassified_provider_error' as const,
-            ...readNativeStartupFailureDetail(new Error(`${error.message}${this.buildStartupFailureDiagnosticSuffix()}`)) },
+            ...readNativeStartupFailureDetail(new Error(`${error.message}${this.buildStartupFailureDiagnosticSuffix()}`)),
+            // Native OS errors are content-free evidence that survives the
+            // startup attestation's removal of private native prose.
+            ...(nativeOsError ? { providerErrorCode: `os_error_${nativeOsError}` } : {}) },
         })
       : error;
     await this.cleanupInitializedProcessConnection({ graceMs: 250 });
@@ -2449,7 +2461,15 @@ export class AcpBackend implements CatalogAcpBackend {
       return false;
     }
 
-    this.finalizeTurnOutcome(mapStopReasonToAcpTurnOutcome(stopReason, this.options.projectPromptStopReason));
+    const outcome = mapStopReasonToAcpTurnOutcome(stopReason, this.options.projectPromptStopReason);
+    if (outcome.kind === 'refused') {
+      const detail = readNativeStartupFailureDetail(asRecord(promptResponse)?.error);
+      if (detail.providerErrorMessage || detail.providerErrorCode !== undefined) {
+        outcome.error = Object.assign(new Error(detail.providerErrorMessage ?? 'ACP prompt refused'),
+          detail.providerErrorCode === undefined ? {} : { code: detail.providerErrorCode });
+      }
+    }
+    this.finalizeTurnOutcome(outcome);
     return true;
   }
 
