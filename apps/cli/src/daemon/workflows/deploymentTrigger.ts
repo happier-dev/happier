@@ -1,5 +1,5 @@
 import type { ActionExecutorContext, WorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol';
-import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol';
+import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { AutomationRunCause } from '@happier-dev/protocol/automations/run-cause';
 import { AutomationRunPluginEventTriggerEvidenceV1Schema } from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
 import { deriveAutomationOccurrenceKeyV1 } from '@happier-dev/protocol/automations/automationOccurrenceV1';

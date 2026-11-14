@@ -5,8 +5,8 @@ import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountA
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readMachineDeploymentReferencesV1, MachineDeploymentReferencesPageV1Schema } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
-import { DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptListResultV1Schema,
-    type ActionExecutorContext } from '@happier-dev/protocol';
+import { DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { getDeploymentTargetLinkLineageV1, readDeploymentTargetLinkArtifactV1,
     type DeploymentEnvironmentDetailV1, type DeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol';
 import type { StoredCredentials } from '@/persistence';

@@ -1,4 +1,4 @@
-import { resolveMachineAgentExecutionPlacementV1 } from '@happier-dev/protocol';
+import { resolveMachineAgentExecutionPlacementV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import { realpath } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';

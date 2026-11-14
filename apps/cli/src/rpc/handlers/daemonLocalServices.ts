@@ -20,7 +20,7 @@ import type { LocalServicePreviewRoutes } from '@/daemon/local/services/preview/
 import type { LocalServicePublicPreviewRoutes } from '@/daemon/local/services/public/routes';
 import { registerDaemonLocalServicePreviewSnapshotHandler, type DaemonLocalServicePreviewSnapshotHandlerOptions } from './daemonLocalServicePreviewSnapshot';
 import { registerActionSpecRpcHandlers, type RegisterActionSpecRpcHandlersParams } from './registerActionSpecRpcHandlers';
-import { MACHINE_SERVICE_FRONTDOOR_ACTION_IDS } from '@happier-dev/protocol';
+import { MACHINE_SERVICE_FRONTDOOR_ACTION_IDS } from '@happier-dev/protocol/local/services/actionIdsV1';
 import { assertLocalServiceReadCustody } from '@/daemon/local/services/credentialAdmission';
 import { buildActionExecutorContextForRpc } from './_actionDispatchAdapter';
 import { createLocalServiceLauncherSnapshotReader } from '@/daemon/local/services/launch/snapshotReader';

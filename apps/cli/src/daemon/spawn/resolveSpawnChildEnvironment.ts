@@ -7,7 +7,7 @@ import { ConnectedServiceBindingsV2IngressSchema } from '@happier-dev/protocol/c
 import { SessionEnvOverlayV1Schema } from '@happier-dev/protocol/spawn/envOverlay';
 import { SessionIdentityAdditionsV1Schema } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import type { ProviderErrorV1, SessionEnvOverlayV1 } from '@happier-dev/protocol';
-import { resolveMachineAgentExecutionPlacementV1 } from '@happier-dev/protocol';
+import { resolveMachineAgentExecutionPlacementV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import type { HostAgentIsolationLaunchContext } from '../agentIsolation/agentIsolationLaunchPolicy';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import type { ProviderBindingLaunchHandoffV1 } from '@/plugins/runtime/providerBindings/handoff';

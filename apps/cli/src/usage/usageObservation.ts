@@ -1,12 +1,6 @@
 import { SessionContextUsageSnapshotV1Schema } from '@happier-dev/protocol/usage/contextUsage';
-import {
-    UsagePromptCacheSchema,
-    type UsagePromptCache,
-    type SessionContextUsageSnapshotV1,
-    type UsageObservationCost,
-    type UsageObservationScope,
-    type UsageObservationTokens,
-} from '@happier-dev/protocol';
+import { UsagePromptCacheSchema, type UsagePromptCache, type UsageObservationCost, type UsageObservationScope, type UsageObservationTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import type { SessionContextUsageSnapshotV1 } from '@happier-dev/protocol/usage/contextUsage';
 import type { RuntimeOutboundTranscriptUsageObservationV1 } from '@happier-dev/agents';
 
 export type { UsageObservationScope } from '@happier-dev/protocol';

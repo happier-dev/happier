@@ -1,6 +1,6 @@
 import { createMachineSetupEffectPlan, applyMachineSetupEffectPlan, checkMachineSetupEffectPlan, createMachineSetupNativeBackend, readMachineSetupObservationFailureV1, type MachineSetupBackend } from '@happier-dev/cli-common/machineSetup';
-import { resolveMachineAgentExecutionPlacementV1, readMachineAgentIsolationPolicyV1, type AgentIsolationEffectPlanV1, type MachineAgentIsolationPolicyV1,
-  type MachineAgentIsolationPreviewResultV1, type MachineAgentIsolationStatusV1, type MachineElevatedResultV1 } from '@happier-dev/protocol';
+import { resolveMachineAgentExecutionPlacementV1, readMachineAgentIsolationPolicyV1, type AgentIsolationEffectPlanV1, type MachineAgentIsolationPolicyV1, type MachineAgentIsolationPreviewResultV1, type MachineAgentIsolationStatusV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
+import type { MachineElevatedResultV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { MachineAgentIsolationUnavailableStatusV1Schema } from '@happier-dev/protocol/machines/agentIsolationV1';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';

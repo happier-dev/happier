@@ -25,7 +25,7 @@ import { DeploymentActionInputSchemasV1, DeploymentReceiptResultV1Schema, Deploy
   readDeploymentActionOperationRequestIdV1, isDeploymentTemplatePreviewInputV1,
   type DeploymentDeployInputV1, type DeploymentDeployIntentInputV1,
   type DeploymentPendingAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
-import { isDeploymentChildEffectActionIdV1, isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol';
+import { isDeploymentChildEffectActionIdV1, isDeploymentDomainChildActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentDomainFailureDetailsV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/protocol/crypto/canonicalDigest';

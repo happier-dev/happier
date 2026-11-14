@@ -1,4 +1,4 @@
-import { MachineAgentIsolationSetResultV1Schema } from '@happier-dev/protocol';
+import { MachineAgentIsolationSetResultV1Schema } from '@happier-dev/protocol/machines/agentIsolationV1';
 
 import type { ActionOperationStore } from './actionOperationStore';
 import type { ActionOperationScope, ResolvedTrackedAction } from './actionOperationTypes';

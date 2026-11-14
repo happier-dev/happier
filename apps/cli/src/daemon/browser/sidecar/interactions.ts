@@ -2,13 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { mkdtemp, mkdir, open, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-    BrowserUploadFileV1Schema,
-    type BrowserAutomationActionKindV1,
-    type BrowserAutomationErrorCodeV1,
-    type BrowserInteractionResultV1,
-    type BrowserInteractionStateV1,
-} from '@happier-dev/protocol';
+import { BrowserUploadFileV1Schema, type BrowserInteractionStateV1 } from '@happier-dev/protocol/browser/input/v1';
+import type { BrowserAutomationActionKindV1, BrowserInteractionResultV1 } from '@happier-dev/protocol/browser/automation/v1';
+import type { BrowserAutomationErrorCodeV1 } from '@happier-dev/protocol/browser/automation/errors';
 import { browserAutomationInteractionPayloadSchema } from '@happier-dev/protocol/browser/automation/v1';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import type {

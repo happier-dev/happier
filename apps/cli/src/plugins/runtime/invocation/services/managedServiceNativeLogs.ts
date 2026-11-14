@@ -1,6 +1,6 @@
 import { PluginError, type Disposable } from '@happier-dev/plugin-sdk';
 import type { ManagedServiceNativeLogReadV1, ManagedServiceNativeLogWatchV1 } from '@happier-dev/plugin-sdk/managed-services';
-import { ManagedServiceNativeLogResultV1Schema, type ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol';
+import { ManagedServiceNativeLogResultV1Schema, type ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol/local/services/nativeLogsV1';
 import { isPresentUserHostInvocation } from '@happier-dev/protocol/actions/invocationAuthority';
 import { sanitizeExecDiagnosticText } from '../../exec/errors';
 import { projectVerifiedExternalActionHostInvocation } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';

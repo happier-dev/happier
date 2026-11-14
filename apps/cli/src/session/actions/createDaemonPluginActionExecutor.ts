@@ -1,5 +1,5 @@
 import type { ActionExecuteResult, ActionExecutorContext, ActionId, ActionCaller, ActionExecutorDeps, WorkflowRunStartedByV1 } from '@happier-dev/protocol';
-import { ActionIdSchema } from '@happier-dev/protocol';
+import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { resolveWorkflowRunStartedByForActionCallerV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { parseQualifiedPluginActionId, formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { buildQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';

@@ -2,7 +2,7 @@ import { logger } from '@/ui/logger';
 import { sanitizeConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/sanitizeConnectedServiceRuntimeFailureClassification';
 import type { ConnectedServiceRuntimeFailureClassification } from '@/daemon/connectedServices/runtimeAuth/types';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
-import { AgentIdV1Schema } from '@happier-dev/protocol';
+import { AgentIdV1Schema } from '@happier-dev/protocol/agents/agentIdV1';
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { readAgentStartupFailureDetails, sanitizeSessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';

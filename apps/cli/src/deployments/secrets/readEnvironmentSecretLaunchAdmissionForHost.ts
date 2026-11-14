@@ -2,8 +2,9 @@ import { readDeploymentAuthorizationFailure, refuseDeploymentAuthorization } fro
 import { randomUUID } from 'node:crypto';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { WorkspaceSyncSourceExecutionV1Schema } from '@happier-dev/protocol/socketRpc';
-import { projectDeploymentChildRoutingV1, type DeploymentDomainChildRpcV1,
-    type DeploymentDomainHeaderV1 } from '@happier-dev/protocol';
+import { projectDeploymentChildRoutingV1 } from '@happier-dev/protocol/deployments/deploymentChildRoutingV1';
+import type { DeploymentDomainChildRpcV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
+import type { DeploymentDomainHeaderV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizationHttpFailure';
 import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { parseActionExecuteFailure, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';

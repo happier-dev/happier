@@ -1,4 +1,5 @@
-import { MachineServicesListResultV1Schema, RPC_METHODS, type MachineServiceRowV1 } from '@happier-dev/protocol';
+import { MachineServicesListResultV1Schema, type MachineServiceRowV1 } from '@happier-dev/protocol/actions/specs/machine/services';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readSharedPrivateNetworkAddresses } from '@/machines/reachability/sharedPrivateNetworkAddresses';
 import { TcpTunnelServiceExportBindingV1Schema, type TcpTunnelServiceExportBindingV1 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantScopesV1';
 import type { DeploymentServiceExportV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';

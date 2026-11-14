@@ -1,5 +1,6 @@
-import { DeploymentEnvironmentGetResultV1Schema, type ActionExecutorContext, type ActionExecuteFailure,
-    type DeploymentEnvironmentGetResultV1, type DeploymentEnvironmentUpdateInputV1 } from '@happier-dev/protocol';
+import { DeploymentEnvironmentGetResultV1Schema, type DeploymentEnvironmentGetResultV1, type DeploymentEnvironmentUpdateInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { StoredCredentials } from '@/persistence';

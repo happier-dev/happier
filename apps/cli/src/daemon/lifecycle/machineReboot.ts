@@ -11,7 +11,7 @@ import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/live
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import type { createManagedServicesOwner } from '@/plugins/runtime/invocation/services/managedServicesOwner';
 import { assertMachineSystemTaskResponseCurrent } from '@/capabilities/service';
-import { MachineSudoPasswordPromptV1Schema } from '@happier-dev/protocol';
+import { MachineSudoPasswordPromptV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks';
 import type { MachineServiceDisclosureRequest } from '@/daemon/local/services/launch/machineServiceDisclosure';
 

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import type { ActionExecutorDeps, ApprovalRequest, ApprovalRequestV2 } from '@happier-dev/protocol';
-import { resolveAccountScopedArtifactIdV1 } from '@happier-dev/protocol';
+import { resolveAccountScopedArtifactIdV1 } from '@happier-dev/protocol/artifacts/idScope';
 import { approvalArtifactBodyMatchesHeaderV1, buildApprovalRequestArtifactHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { createApprovalRequestArtifact, assertApprovalRequestCreationBinding, ApprovalRequestConflict } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import type { ApprovalRequesterConfirmationV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';

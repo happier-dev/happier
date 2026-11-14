@@ -8,7 +8,7 @@ import type { MachineContentCodec } from './machineStoredContent';
 import { emitSocketWithAck } from '@/session/transport/shared/socketAck';
 import { MachineUpdateMetadataResponseSchema } from '@happier-dev/protocol/machines/metadataUpdate';
 import { parseMachinePublishedMetadataV1, StoredMachinePublishedMetadataV1Schema, projectMachinePublishedMetadataFromRowV1 } from '@happier-dev/protocol/machines/machinePublishedContentV1';
-import { MachineServiceWatchesFieldV1 } from '@happier-dev/protocol';
+import { MachineServiceWatchesFieldV1 } from '@happier-dev/protocol/machines/machineServiceWatchesV1';
 
 export type MachineMetadataChange = Readonly<{ serviceWatchesChanged: boolean }>;
 

@@ -12,7 +12,7 @@ import { readHostReviewedChildRootV1 } from '@happier-dev/protocol/actions/execu
 import { inputTypeResourceReference } from '@happier-dev/protocol/inputs/runtime';
 import { PluginActionExecutionV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk/errors';
-import { ManagedServiceNativeLogResultV1Schema } from '@happier-dev/protocol';
+import { ManagedServiceNativeLogResultV1Schema } from '@happier-dev/protocol/local/services/nativeLogsV1';
 
 import type { ResolvedActionContribution, ResolvedActionDefinition } from '@/plugins/projection/registry/types';
 import { readResolvedActionContribution } from '@/plugins/projection/registry/actions';

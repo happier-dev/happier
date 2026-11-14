@@ -1,7 +1,7 @@
 import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { isSocketRpcMachineAccessLossServerOriginAuthorizationContext } from '@happier-dev/protocol/socketRpc';
-import { MachineSudoPasswordPromptV1Schema, type MachineSudoPasswordPromptV1 } from '@happier-dev/protocol';
+import { MachineSudoPasswordPromptV1Schema, type MachineSudoPasswordPromptV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import { assertMachineSystemTaskResponseCurrent } from '@/capabilities/service';

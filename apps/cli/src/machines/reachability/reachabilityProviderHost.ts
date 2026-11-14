@@ -1,7 +1,7 @@
 import { getRelayAccessProvider, type RelayAccessExecutionContext, type BuiltinAccessProviderRoleResult } from '@happier-dev/cli-common/relayAccess';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
 import type { HostReviewedChildrenPlanV1 } from '@happier-dev/protocol/actions/actionExecutor';
-import { MachineReachabilityConfigureInputV1Schema, MachineReachabilityInspectInputV1Schema } from '@happier-dev/protocol';
+import { MachineReachabilityConfigureInputV1Schema, MachineReachabilityInspectInputV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import { AccessProviderRoleResultV1Schema, accessProviderRefsEqualV1, type AccessProviderRoleV1,
   type AccessProviderSelectionV1 } from '@happier-dev/protocol/plugins/contributions/accessProviders';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';

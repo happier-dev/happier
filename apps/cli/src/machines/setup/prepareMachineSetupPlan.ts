@@ -1,12 +1,9 @@
 import { z } from '@happier-dev/protocol/zodRuntimePolicy';
-import {
-  MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema, MachineSetupObservationReasonV1Schema,
-  machineSetupSourceOriginKeyV1, machineSetupItemKeyV1, reviewMachineSetupSourceChangeV1,
-  projectMachineSetupSourceChangeExecutionV1, areMachineSetupExclusionsBoundV1,
-  isMachineSetupRecipeExcludedV1, mergeMachineSetupsV1,
-  MachineSetupSourceV1Schema, type MachineSetupV1, type getMachineSetupDesiredV1,
-  type MachineSetupObservationV1,
-} from '@happier-dev/protocol';
+import { MachineSetupPlanInputV1Schema, MachineSetupPlanResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { MachineSetupObservationReasonV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupObservationReasonV1';
+import { machineSetupSourceOriginKeyV1, machineSetupItemKeyV1, reviewMachineSetupSourceChangeV1, projectMachineSetupSourceChangeExecutionV1, areMachineSetupExclusionsBoundV1, isMachineSetupRecipeExcludedV1, MachineSetupSourceV1Schema, type getMachineSetupDesiredV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
+import { mergeMachineSetupsV1, type MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
+import type { MachineSetupObservationV1 } from '@happier-dev/protocol/machines/setup/machineSetupObservationV1';
 import { readMachineSetupAppOriginsV1, selectMachineSetupRecipeItemsV1 } from '@happier-dev/protocol/machines/setup/machineSetupSourcesV1';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';

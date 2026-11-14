@@ -1,4 +1,4 @@
-import { BrowserEditableTargetV1Schema, type BrowserEditableTargetV1, type BrowserInputEventV1, type BrowserViewportV1 } from '@happier-dev/protocol';
+import { BrowserEditableTargetV1Schema, type BrowserEditableTargetV1, type BrowserInputEventV1, type BrowserViewportV1 } from '@happier-dev/protocol/browser/input/v1';
 import { browserViewKey } from '@happier-dev/protocol/browser/view/key';
 import { BROWSER_VIEWPORT_PRESETS, type BrowserViewportEmulationV1 } from '@happier-dev/protocol/browser/control/v1';
 

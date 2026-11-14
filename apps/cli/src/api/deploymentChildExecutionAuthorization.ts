@@ -1,5 +1,5 @@
 import { refuseDeploymentArtifactRead } from '@/deployments/deploymentFailure';
-import { projectDeploymentChildRoutingV1 } from '@happier-dev/protocol';
+import { projectDeploymentChildRoutingV1 } from '@happier-dev/protocol/deployments/deploymentChildRoutingV1';
 import type { ActionExecutorContext, DeploymentChildRpcV1 } from '@happier-dev/protocol';
 import type { WorkspaceSyncSourceExecutionV1 } from '@happier-dev/protocol/socketRpc';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';

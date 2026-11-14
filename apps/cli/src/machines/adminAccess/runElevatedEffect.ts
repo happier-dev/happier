@@ -3,8 +3,7 @@ import { spawn } from 'node:child_process';
 import { accessSync, constants } from 'node:fs';
 import type { Readable, Writable } from 'node:stream';
 import type { InteractiveSystemTaskContext } from '@happier-dev/cli-common/systemTasks/interactiveTaskKinds';
-import { MachineAdminAccessFieldV1, MachineAdminAccessV1Schema,
-    type MachineAdminAccessV1, type MachineAdminAccessObservationV1, type MachineElevatedResultV1 } from '@happier-dev/protocol';
+import { MachineAdminAccessFieldV1, MachineAdminAccessV1Schema, type MachineAdminAccessV1, type MachineAdminAccessObservationV1, type MachineElevatedResultV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import type { MachineFirewallRecoveryV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import type { MachineElevatedEffectV1, MachineSetupEffectPlanV1, MachineRecipeStepV1, MachineRecipeCheckV1,
     MachineFirewallTransitionIntentV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';

@@ -1,7 +1,8 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
-import { MachineServiceWatchV1Schema, MachineServiceWatchesFieldV1, machineServiceNativeIdentityKeyV1,
-    type MachineServiceWatchV1, type ManagedServiceNativeLogResultV1, type MachineServiceNativeRuntimeFactsV1 } from '@happier-dev/protocol';
+import { MachineServiceWatchV1Schema, MachineServiceWatchesFieldV1, machineServiceNativeIdentityKeyV1, type MachineServiceWatchV1 } from '@happier-dev/protocol/machines/machineServiceWatchesV1';
+import type { ManagedServiceNativeLogResultV1 } from '@happier-dev/protocol/local/services/nativeLogsV1';
+import type { MachineServiceNativeRuntimeFactsV1 } from '@happier-dev/protocol/local/services/nativeRuntimeFactsV1';
 import type { ManagedServiceHandle, ManagedServiceNativeInstanceV1, ManagedServiceNativeLifecycleV1,
     ManagedServiceSnapshot, ManagedServiceNativeObservationV1 } from '@happier-dev/plugin-sdk/managed-services';
 import type { MachineNativeEffectKey, MachineNativeEffectOperation } from '@/daemon/local/services/launch/machineNativeEffectAdmission';

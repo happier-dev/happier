@@ -3,10 +3,8 @@ import { carryActionFailureDiagnostic, normalizeActionExecutorThrownError } from
 import axios from '@/api/client/credentialAxios';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { DeploymentBindingsSetInputV1Schema, DeploymentBindingsPreparedInputV1Schema, DeploymentEnvironmentGetResultV1Schema,
-    DeploymentEnvironmentGetInputV1Schema, captureDeploymentBindingSavedSecretRevisionsV1,
-    matchesDeploymentBindingSavedSecretCapturesV1, applyEnvironmentSecretBindingsPatchV1,
-    } from '@happier-dev/protocol';
+import { DeploymentBindingsSetInputV1Schema, DeploymentBindingsPreparedInputV1Schema, captureDeploymentBindingSavedSecretRevisionsV1, matchesDeploymentBindingSavedSecretCapturesV1, applyEnvironmentSecretBindingsPatchV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
+import { DeploymentEnvironmentGetResultV1Schema, DeploymentEnvironmentGetInputV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { createDeploymentEnvironmentContentArtifactIdV1, createDeploymentLinkContentArtifactIdV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -40,7 +38,7 @@ function failure(error: unknown): ActionExecuteFailure {
     const { errorCode } = normalizeActionExecutorThrownError(error);
     return projectDeploymentFailure(errorCode, error, 'deployment.bindings.prepare');
 }
-export { captureDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol';
+export { captureDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 
 /** The native data owner resolves exact service destinations before any selected secret is acquired. */
 export type PrepareDataRoleBindingsForHost = (input: Readonly<{

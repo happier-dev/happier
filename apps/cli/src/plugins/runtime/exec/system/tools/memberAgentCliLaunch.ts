@@ -1,5 +1,5 @@
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { resolveMachineAgentExecutionPlacementV1 } from '@happier-dev/protocol';
+import { resolveMachineAgentExecutionPlacementV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import type { AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 import { z } from 'zod';
 

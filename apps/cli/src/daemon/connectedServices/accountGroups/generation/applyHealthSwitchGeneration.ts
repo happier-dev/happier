@@ -1,4 +1,5 @@
-import { buildQualifiedPluginContributionKey, type QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contributionKey';
+import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import type { ConnectedServiceAuthGroupGenerationApplyInput, ConnectedServiceAuthGroupGenerationApplyResult } from '../switching/ConnectedServiceAuthGroupSwitchCoordinator';
 import type { ConnectedServiceRuntimeRegistry } from '../../runtimeRegistry/registry';
 import { buildConnectedServiceAuthGroupCommittedGenerationFact, buildConnectedServiceAuthGroupTargetEpochIdentity } from '../../sessionAuthSwitch/connectedServiceAuthSwitchOutcome';

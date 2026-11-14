@@ -4,7 +4,7 @@ import { createMachineAdminAccessObserver, type MachineAdminAccessNativeDependen
 import { createMachineAdminAccessHost } from './machineAdminAccessHost';
 import type { MachineElevationSpawn } from './runElevatedEffect';
 import { resolveMachineEffectCli } from './machineEffectCli';
-import { getMachineAdminAccessV1 } from '@happier-dev/protocol';
+import { getMachineAdminAccessV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 
 /** Compose the unprivileged native reader with its incumbent daemon-state writer. */
 export function createDaemonMachineAdminAccessRoutes(input: Readonly<{

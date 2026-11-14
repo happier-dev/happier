@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto';
 import { isPluginError, type Disposable } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { ManagedServiceNativeLogResultV1Schema, MachineServicesListResultV1Schema, DeploymentActionOutputSchemasV1,
-    DeploymentHealthCurrentResultV1Schema } from '@happier-dev/protocol';
+import { ManagedServiceNativeLogResultV1Schema } from '@happier-dev/protocol/local/services/nativeLogsV1';
+import { MachineServicesListResultV1Schema } from '@happier-dev/protocol/actions/specs/machine/services';
+import { DeploymentActionOutputSchemasV1, DeploymentHealthCurrentResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { PluginUiHostReadReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
 import { resolvePluginUiHostReadActionIdV1 } from '@happier-dev/protocol/plugins/ui/subscriptions';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';

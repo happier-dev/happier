@@ -1,5 +1,5 @@
 import { basename } from 'node:path';
-import { readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol';
+import { readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol/deployments/deploymentArchiveRpcV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { FilesystemDownloadInputSchema, FilesystemPreparedCopyInputSchema } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import type { RpcHandlerContext } from '@/api/rpc/types';

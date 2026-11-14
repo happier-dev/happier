@@ -1,9 +1,9 @@
 import axios from '@/api/client/credentialAxios';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { DeploymentEnvironmentGetInputV1Schema, DeploymentEnvironmentGetResultV1Schema,
-    omitDeploymentEnvironmentPrivateContentPatchV1, applyEnvironmentSecretBindingsPatchV1,
-    } from '@happier-dev/protocol';
+import { DeploymentEnvironmentGetInputV1Schema, DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { omitDeploymentEnvironmentPrivateContentPatchV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentContentPatchV1';
+import { applyEnvironmentSecretBindingsPatchV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import type { ActionExecutorContext, DeploymentActionIdV1, DeploymentEnvironmentCreateInputV1,
     DeploymentEnvironmentUpdateInputV1 } from '@happier-dev/protocol';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';

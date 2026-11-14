@@ -27,8 +27,8 @@ import { isProjectReadinessActionIdV1 } from '@happier-dev/protocol/actions/proj
 import type { RecordedApprovalExecutionObservationArgs } from '@/session/actions/createCliActionExecutorHarness';
 export { mintExternalActionExecutionAuthorization, type ExternalActionAuthorizationHttpResult } from './externalActionAuthorizationHttp';
 import axios from '@/api/client/credentialAxios';
-import { MachineAdminAccessSetInputV1Schema, MachineAgentIsolationPreviewInputV1Schema, MachineAgentIsolationSetInputV1Schema,
-  type MachineAgentIsolationPreviewInputV1, type MachineAgentIsolationSetInputV1 } from '@happier-dev/protocol';
+import { MachineAdminAccessSetInputV1Schema } from '@happier-dev/protocol/actions/specs/machine/adminAccess';
+import { MachineAgentIsolationPreviewInputV1Schema, MachineAgentIsolationSetInputV1Schema, type MachineAgentIsolationPreviewInputV1, type MachineAgentIsolationSetInputV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import { type ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { MachineSetupApplyInputV1Schema, managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { readManagedMachine } from '@/machines/managed/readManagedMachine';
@@ -121,8 +121,10 @@ import { buildDiscussionModelSessionCreationProofPayloadV1, type SessionCreation
 import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
 import { projectDiscussionModelParticipantLaunchV1 } from '@happier-dev/protocol/discussions/modelParticipantLaunch';
 import { isSessionStopChildRootV1, isSessionStopChildV1 } from '@happier-dev/protocol/actions/sessionSections';
-import { isDeploymentChildEffectActionIdV1, deploymentChildEffectActionIdForRootV1, readDeploymentChildRpcV1, type DeploymentChildRpcV1,
-  type DeploymentChildRoutingV1, doesDeploymentChildInputMatchRootV1, DeploymentDeployActionInputV1Schema } from '@happier-dev/protocol';
+import { isDeploymentChildEffectActionIdV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { readDeploymentChildRpcV1, type DeploymentChildRpcV1, doesDeploymentChildInputMatchRootV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
+import type { DeploymentChildRoutingV1 } from '@happier-dev/protocol/deployments/deploymentChildRoutingV1';
+import { DeploymentDeployActionInputV1Schema } from '@happier-dev/protocol/deployments/deploymentDeployIntentV1';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { SessionTeamCredentialBindingIntentV1 } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
 import { ActionOperationAddressV1Schema } from '@happier-dev/protocol/actions/specs/actionOperations';

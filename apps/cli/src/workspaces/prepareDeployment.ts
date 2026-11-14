@@ -3,8 +3,8 @@ import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/action
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { SessionSendMessageInputSchema } from '@happier-dev/protocol/actions/actionSpecs';
 import { SessionMessageSendResultV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
-import { DeploymentPrepareResultV1Schema,
-  type ActionExecutorDeps, type DeploymentPrepareInputV1 } from '@happier-dev/protocol';
+import { DeploymentPrepareResultV1Schema, type DeploymentPrepareInputV1 } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { dispatchOriginalAccountAction } from '@/api/externalActionExecutionAuthorization';
 import { normalizeServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { decodeJwtPayload, readAccountIdFromToken } from '@/cloud/decodeJwtPayload';

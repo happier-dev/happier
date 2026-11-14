@@ -1,6 +1,6 @@
 import { z } from 'zod/mini';
 import { createDeploymentTargetCatalogV1 } from '@happier-dev/deployments';
-import { DeploymentOwnServerTargetMachinesV1Schema } from '@happier-dev/protocol';
+import { DeploymentOwnServerTargetMachinesV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentCreateV1';
 import { readDeploymentTargetReferenceRolesV1 } from '@happier-dev/protocol/plugins/contributions/v2';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';

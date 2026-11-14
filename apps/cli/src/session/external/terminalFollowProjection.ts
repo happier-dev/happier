@@ -2,7 +2,8 @@ import type { AgentSessionRuntime } from '@happier-dev/plugin-sdk/agents/runtime
 import { resolveTranscriptBodySemanticEvent } from '@happier-dev/protocol/sessions/messages/sessionMessageRole';
 import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import type { AgentSessionRuntimeEvent } from '@happier-dev/protocol/runtime';
-import { readTranscriptPeerSenderV1, type ExternalSessionsSource } from '@happier-dev/protocol';
+import { readTranscriptPeerSenderV1 } from '@happier-dev/protocol/sessions/messages/transcriptPeerSenderV1';
+import type { ExternalSessionsSource } from '@happier-dev/protocol/sessions/external/sourceCatalog';
 
 import type { CommittedTranscriptAdmission } from '@/api/session/transcriptPort';
 

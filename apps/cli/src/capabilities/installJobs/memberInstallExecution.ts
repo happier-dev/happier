@@ -1,4 +1,4 @@
-import { resolveMachineAgentExecutionPlacementV1 } from '@happier-dev/protocol';
+import { resolveMachineAgentExecutionPlacementV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { ExecFileTerminationError } from '@happier-dev/cli-common/process';

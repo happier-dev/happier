@@ -1,8 +1,7 @@
 import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { CHROMIUM_FOR_TESTING_PRODUCT_SOURCE, resolveChromiumForTestingAssetVersion,
-  resolveChromiumForTestingPlatform, type BrowserExtensionPermissionReviewV1,
-  type BrowserExtensionRecordV1 } from '@happier-dev/protocol';
+import { CHROMIUM_FOR_TESTING_PRODUCT_SOURCE, resolveChromiumForTestingAssetVersion, resolveChromiumForTestingPlatform } from '@happier-dev/protocol/browser/sidecar/chromiumForTesting';
+import type { BrowserExtensionPermissionReviewV1, BrowserExtensionRecordV1 } from '@happier-dev/protocol/browser/profile/extensionsV1';
 import type { BrowserExtensionActionIdV1, BrowserExtensionActionInputV1, BrowserExtensionActionResultV1,
   BrowserProfileExtensionV1 } from '@happier-dev/protocol/actions';
 import type { BrowserProfileStore } from '../profiles/store';

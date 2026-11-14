@@ -50,7 +50,8 @@ import { verifyExternalActionExecutionAuthorizationCurrent } from '@/api/externa
 import { refuseExternalActionPhase, runTracedExternalActionStage, readSessionInputAdmissionDiagnostic } from '../externalActions/externalActionPhase';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { isSessionStopChildRootV1, isSessionStopChildV1, readSessionStopChildTargetV1 } from '@happier-dev/protocol/actions/sessionSections';
-import { readDeploymentChildRpcV1, deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol';
+import { readDeploymentChildRpcV1 } from '@happier-dev/protocol/deployments/deploymentChildRpcV1';
+import { deploymentChildEffectActionIdForRootV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { MachineSetupPlanInputV1Schema, isMachineSetupPlanRpcChildV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
 

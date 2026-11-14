@@ -13,7 +13,8 @@ import {
     type DirectRouteGrantV2VerifyReasonCode,
 } from '../verifyDirectRouteGrant';
 import type { AtomicRouteGrantConsumption } from './grantConsumption';
-import { createCanonicalJsonSigningInput, createTcpTunnelServiceExportCommitmentV1, type TcpTunnelServiceExportBindingV1 } from '@happier-dev/protocol';
+import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+import { createTcpTunnelServiceExportCommitmentV1, type TcpTunnelServiceExportBindingV1 } from '@happier-dev/protocol/machines/peer/mediation/directRouteGrantScopesV1';
 import type { PeerTcpTunnelStreamConnection } from './frames';
 
 export type PeerTcpTunnelTcpConnection = PeerTcpTunnelStreamConnection;

@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { getFirstPartyComponentCatalogEntry, resolveFirstPartyInstallLayout, resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/firstPartyRuntime';
-import { getMachineAdminAccessV1 } from '@happier-dev/protocol';
+import { getMachineAdminAccessV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { DaemonMachineAdminAccessRoutes } from '@/rpc/handlers/daemonMachineAdminAccess';
 import { logger } from '@/ui/logger';

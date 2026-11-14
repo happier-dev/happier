@@ -8,16 +8,16 @@ import { projectHomeAuthorizationHttpFailure } from '@/api/client/homeAuthorizat
 import { deploymentOutputValidationFailure } from './outputValidation';
 import axios from '@/api/client/credentialAxios';
 import { readHttpStatus } from '@/api/client/httpStatusError';
-import {
-  DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentReceiptResultV1Schema, DeploymentDeployInputV1Schema,
-  DeploymentTargetLinkInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentTeardownInputV1Schema, DeploymentPromoteInputV1Schema,
-  DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateStorageInputV1Schema, DeploymentEnvironmentCreateResultV1Schema,
-  createDeploymentApprovalScopeResolverV1,
-  hasDeploymentEnvironmentContentPatchV1,
-  type ActionExecutorContext, type ActionExecutorDeps, type DeploymentTransportActionIdV1,
-  type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentReceiptHeaderV1, type DeploymentBindingsSetInputV1, type DeploymentBindingsPreparedInputV1,
-  type DeploymentTeardownInputV1, type DeploymentReceiptResultV1, type DeploymentEnvironmentCreationReviewV1,
-} from '@happier-dev/protocol';
+import { DeploymentActionInputSchemasV1, DeploymentActionOutputSchemasV1, DeploymentReceiptResultV1Schema, DeploymentTargetLinkInputV1Schema, DeploymentEnvironmentCreateResultV1Schema, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentReceiptHeaderV1, type DeploymentReceiptResultV1, type DeploymentEnvironmentCreationReviewV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentDeployInputV1Schema, DeploymentRollbackInputV1Schema } from '@happier-dev/protocol/deployments/deploymentDeployIntentV1';
+import { DeploymentTeardownInputV1Schema, type DeploymentTeardownInputV1 } from '@happier-dev/protocol/deployments/deploymentTeardownRequestV1';
+import { DeploymentPromoteInputV1Schema } from '@happier-dev/protocol/deployments/deploymentPromoteIntentV1';
+import { DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentCreateV1';
+import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
+import { hasDeploymentEnvironmentContentPatchV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentContentPatchV1';
+import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
+import type { DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import type { DeploymentBindingsSetInputV1, DeploymentBindingsPreparedInputV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import type { DeploymentBindingsSetStorageInputV1, MachineSecretGrantV1 } from '@happier-dev/deployment-protocol';
 import { isDeploymentPromoteActionIdV1, isDeploymentApprovalMetadataPreparationActionIdV1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentApprovalEnvironmentResultV1Schema, type DeploymentApprovalEnvironmentResultV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';

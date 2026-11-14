@@ -3,7 +3,8 @@ import { projectUsageSessionTimingV1, type UsageSessionTimingV1 } from '@happier
 
 import { SESSION_METADATA_LAYOUT_VERSION_V1, createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
-import { projectSessionDisplayV1, sealSessionSharedDisplayEnvelopeV1Sync, sealSessionOwnerDisplayEnvelopeV1 } from '@happier-dev/protocol';
+import { projectSessionDisplayV1 } from '@happier-dev/protocol/sessions/metadata/sessionDisplayProjectionV1';
+import { sealSessionSharedDisplayEnvelopeV1Sync, sealSessionOwnerDisplayEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionDisplayEnvelopesV1';
 import type { AccountScopedCryptoMaterial, SessionOwnerMetadataEnvelopeV1, SessionOwnerMetadataV1, SessionDisplayProjectionV1 } from '@happier-dev/protocol';
 
 import { encodeBase64, encrypt } from '@/api/encryption';

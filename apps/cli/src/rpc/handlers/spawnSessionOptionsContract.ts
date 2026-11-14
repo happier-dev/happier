@@ -34,7 +34,7 @@ import { SpawnSessionExecutionAuthorizationSchema } from '@happier-dev/protocol/
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { AgentExecutionTargetV1, BackendTargetRefV2 } from '@happier-dev/protocol';
 import { SessionTeamCredentialBindingIntentsV1Schema } from '@happier-dev/protocol/teams/credentials/sessionBindingIntentV1';
-import { PluginUiNewSessionSeedOriginV1Schema } from '@happier-dev/protocol/plugins/ui';
+import { PluginUiNewSessionSeedOriginV1Schema } from '@happier-dev/protocol/plugins/ui/newSessionSeedOrigin';
 
 import { PERMISSION_MODES } from '@/api/types';
 import type { CatalogAgentId } from '@/agent/catalog/ids';

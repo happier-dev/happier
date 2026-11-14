@@ -2,7 +2,7 @@ import { homedir } from 'node:os';
 import type { InteractiveSystemTaskContext } from '@happier-dev/cli-common/systemTasks/interactiveTaskKinds';
 import { getLiveSystemTasksRunnerAdapter } from '@/capabilities/systemTasks/liveSystemTasksRunner';
 import { assertMachineSystemTaskResponseCurrent } from '@/capabilities/service';
-import { MachineSudoPasswordPromptV1Schema, type MachineSudoPasswordPromptV1 } from '@happier-dev/protocol';
+import { MachineSudoPasswordPromptV1Schema, type MachineSudoPasswordPromptV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 import { configuration } from '@/configuration';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
@@ -13,9 +13,9 @@ import type { HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/ag
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { getMachineAdminAccessV1, MACHINE_REACHABILITY_ACTION_IDS_V1,
-  MACHINE_REACHABILITY_ACTION_INPUT_SCHEMAS_V1, MACHINE_REACHABILITY_ACTION_OUTPUT_SCHEMAS_V1,
-  type MachineAdminAccessV1 } from '@happier-dev/protocol';
+import { getMachineAdminAccessV1, type MachineAdminAccessV1 } from '@happier-dev/protocol/machines/adminAccessV1';
+import { MACHINE_REACHABILITY_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
+import { MACHINE_REACHABILITY_ACTION_INPUT_SCHEMAS_V1, MACHINE_REACHABILITY_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';

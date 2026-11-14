@@ -1,8 +1,7 @@
-import { MACHINE_ADMIN_ACCESS_ACTION_IDS, MACHINE_ADMIN_ACCESS_ACTION_INPUT_SCHEMAS,
-  MachineAdminAccessInspectResultV1Schema, MachineAdminAccessMutationResultV1Schema,
-  mutateMachineAdminAccessV1, readMachineAdminAccessV1, getMachineAdminAccessV1, MachineAdminAccessFieldV1,
-  MachineSudoPasswordPromptV1Schema,
-  type ActionExecutorDeps, type MachineAdminAccessV1, type MachineElevatedResultV1 } from '@happier-dev/protocol';
+import { MACHINE_ADMIN_ACCESS_ACTION_IDS } from '@happier-dev/protocol/machines/adminAccessActionIdsV1';
+import { MACHINE_ADMIN_ACCESS_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machine/adminAccess';
+import { MachineAdminAccessInspectResultV1Schema, MachineAdminAccessMutationResultV1Schema, mutateMachineAdminAccessV1, readMachineAdminAccessV1, getMachineAdminAccessV1, MachineAdminAccessFieldV1, MachineSudoPasswordPromptV1Schema, type MachineAdminAccessV1, type MachineElevatedResultV1 } from '@happier-dev/protocol/machines/adminAccessV1';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';

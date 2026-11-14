@@ -1,7 +1,8 @@
 import axios from '@/api/client/credentialAxios';
-import { ProjectDeploymentDefaultsOutputV1Schema, ProjectDeploymentDefaultsPayloadV1Schema,
-    type ActionExecutorContext, type DeploymentEnvironmentGetResultV1, type DeploymentEnvironmentUpdateInputV1,
-    type DeploymentTemplateInstantiationReviewV1 } from '@happier-dev/protocol';
+import { ProjectDeploymentDefaultsOutputV1Schema, ProjectDeploymentDefaultsPayloadV1Schema } from '@happier-dev/protocol/projects/projectDeploymentDefaultsV1';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { DeploymentEnvironmentGetResultV1, DeploymentEnvironmentUpdateInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import type { DeploymentTemplateInstantiationReviewV1 } from '@happier-dev/protocol/deployments/deploymentTemplateInstantiationV1';
 import type { ProjectSourceOwnerV1, ProjectSourcesCreateInputV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { resolveDeploymentCreationDefaultsV1, type DeploymentCreationDefaultsInputV1 } from '@happier-dev/deployments';
 import type { DeploymentArtifactDocumentV1 } from '@happier-dev/deployment-protocol';

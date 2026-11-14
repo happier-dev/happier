@@ -15,8 +15,8 @@ import {
 } from '@happier-dev/cli-common/sessionMetadata';
 import { createPlainSessionOwnerMetadataEnvelopeV1, projectSessionMetadataAgentVocabularyWriteCompatibilityV1, projectSessionOwnerCompatibilityViewV1, SESSION_METADATA_LAYOUT_VERSION_V1, StoredSessionSharedMetadataV1Schema } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { openSessionOwnerMetadataEnvelopeV1, sealSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataEnvelopesV1';
-import { SessionDisplayProjectionV1Schema, sealSessionSharedDisplayEnvelopeV1Sync, sealSessionOwnerDisplayEnvelopeV1,
-  openSessionSharedDisplayEnvelopeV1Sync, openSessionOwnerDisplayEnvelopeV1, type SessionOwnerDisplayV1 } from '@happier-dev/protocol';
+import { SessionDisplayProjectionV1Schema, type SessionOwnerDisplayV1 } from '@happier-dev/protocol/sessions/metadata/sessionDisplaySchemasV1';
+import { sealSessionSharedDisplayEnvelopeV1Sync, sealSessionOwnerDisplayEnvelopeV1, openSessionSharedDisplayEnvelopeV1Sync, openSessionOwnerDisplayEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionDisplayEnvelopesV1';
 import { readSessionAccessProjectionRoleV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';

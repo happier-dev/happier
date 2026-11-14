@@ -3,8 +3,7 @@ import { ActionApprovalRequestCreatedResultSchema, ActionOperationAcceptedResult
 import { MACHINE_SERVICE_CONTROL_ACTION_ID } from '@happier-dev/protocol/local/services/actionIdsV1';
 import { MachineReachabilityNativeFailureDetailsV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import { MACHINE_REACHABILITY_ACTION_IDS_V1 } from '@happier-dev/protocol/machines/reachability/actionIdsV1';
-import { MachineReachabilityConfigureFailureDetailsV1Schema,
-    MachineReachabilityBusyFailureDetailsV1Schema } from '@happier-dev/protocol';
+import { MachineReachabilityConfigureFailureDetailsV1Schema, MachineReachabilityBusyFailureDetailsV1Schema } from '@happier-dev/protocol/machines/reachability/actionsV1';
 import { ActionCurrentSessionScopeFailureDetailsV1Schema } from '@happier-dev/protocol/actions/executor/sessionListAccess';
 import { FilesystemEffectFailureDetailsV1Schema } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';

@@ -1,4 +1,4 @@
-import { projectPluginStoreKindDeclarationV1 } from '@happier-dev/protocol';
+import { projectPluginStoreKindDeclarationV1 } from '@happier-dev/protocol/plugins/contributions/storeKinds';
 import { definePluginProjectionFamilyV2 } from '@/plugins/projection/families';
 
 /** Cold declarations reuse their supplying occurrence; invocation remains Action-owned. */

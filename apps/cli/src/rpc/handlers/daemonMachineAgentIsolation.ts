@@ -1,9 +1,8 @@
-import { MACHINE_AGENT_ISOLATION_ACTION_IDS, MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS,
-  MachineAgentIsolationPreviewResultV1Schema, MachineAgentIsolationSetResultV1Schema,
-  MachineAgentIsolationOwnStatusV1Schema, type MachineAgentIsolationOwnStatusV1,
-  agentIsolationMetadataFieldV1, readMachineAgentIsolationPolicyV1, resolveMachineAgentExecutionPlacementV1,
-  type MachineAgentIsolationStatusV1, type MachineAgentIsolationPolicyV1, type MachineElevatedResultV1,
-  type ActionExecutorDeps } from '@happier-dev/protocol';
+import { MACHINE_AGENT_ISOLATION_ACTION_IDS } from '@happier-dev/protocol/actions/specs/machine/agentIsolationActionIdsV1';
+import { MACHINE_AGENT_ISOLATION_ACTION_INPUT_SCHEMAS } from '@happier-dev/protocol/actions/specs/machine/agentIsolation';
+import { MachineAgentIsolationPreviewResultV1Schema, MachineAgentIsolationSetResultV1Schema, MachineAgentIsolationOwnStatusV1Schema, type MachineAgentIsolationOwnStatusV1, agentIsolationMetadataFieldV1, readMachineAgentIsolationPolicyV1, resolveMachineAgentExecutionPlacementV1, type MachineAgentIsolationStatusV1, type MachineAgentIsolationPolicyV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
+import type { MachineElevatedResultV1 } from '@happier-dev/protocol/machines/adminAccessV1';
+import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { mutateMachineMetadataFieldV1, type MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import { projectMachineAgentIsolationUnavailableStatusV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import { RPC_ERROR_CODES, RpcError } from '@happier-dev/protocol/rpcErrors';

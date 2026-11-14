@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { resolveMachineAgentExecutionPlacementV1 } from '@happier-dev/protocol';
+import { resolveMachineAgentExecutionPlacementV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import {
   AGENT_SIGN_IN_PREPARE_RPC_METHOD,
   AGENT_SIGN_IN_STATUS_RPC_METHOD,
