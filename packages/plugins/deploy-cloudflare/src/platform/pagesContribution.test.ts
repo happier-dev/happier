@@ -21,7 +21,7 @@ it('prepares and links a direct upload without requiring provider Git access', a
   const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry, services: { http } });
   try {
     const prepared = await kit.invokeAction('pages-inspect', { ...preparation, repository, sourceMethod: 'upload' });
-    expect(prepared).toMatchObject({ providerIdentity: preparation.providerIdentity,
+    expect(prepared).toMatchObject({ sourceMethod: 'upload', providerIdentity: preparation.providerIdentity,
       preparedNative: { reviewNotice: expect.stringContaining('Wrangler'), pages: { projectMode: 'directUpload' } } });
     expect(prepared).not.toHaveProperty('repositoryAccess');
     if (!prepared || typeof prepared !== 'object' || Array.isArray(prepared)) throw new Error('Expected prepared Pages project');

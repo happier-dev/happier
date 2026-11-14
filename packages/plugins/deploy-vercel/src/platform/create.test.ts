@@ -22,7 +22,7 @@ it('returns the native identity after one create without a follow-up read or dep
   try {
     expect(await kit.invokeAction('project-create', input)).toEqual({ credentialPrincipal: input.credentialPrincipal,
       providerIdentity: { providerAccountId: 'team_exact', providerResourceId: 'prj_created', providerEnvironment: 'production' },
-      providerEnvironment: { kind: 'production' }, preparedNative: { projectName: 'reviewed-app' } });
+      sourceMethod: 'upload', providerEnvironment: { kind: 'production' }, preparedNative: { projectName: 'reviewed-app' } });
     expect(requests.map(request => [request.method, request.url])).toEqual([
       ['POST', 'https://api.vercel.com/v11/projects?teamId=team_exact'],
     ]);

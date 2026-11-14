@@ -55,8 +55,7 @@ export function createDeploymentTargetsTestPlugin(pluginId: string, runInspect: 
     connectedAccountPurposeBindings: [{ path: 'credentialRef', purpose: `${name}.manage` }],
     inputSchema: { ...DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema,
       properties: { ...DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema.properties, [name]: { type: 'string' },
-        repository: ScmHostingRepositoryIdentityV1ProtocolSchema.jsonSchema,
-        sourceMethod: { anyOf: [DeploymentTargetRoleInputProtocolSchemasV1.deploy.jsonSchema.properties!.sourceMethod!, DeploymentTargetRoleInputProtocolSchemasV1.uploadDeploy.jsonSchema.properties!.sourceMethod!] } } },
+        repository: ScmHostingRepositoryIdentityV1ProtocolSchema.jsonSchema } },
     resultSchema: DeploymentTargetLinkProviderContentV1ProtocolSchema.jsonSchema,
     inputHints: { fields: [{ path: name, title: `${name} region`, widget: 'select', required: true,
       ...(options.emptyChoices ? { inputType: { pluginId, localId: 'region-choice' } }

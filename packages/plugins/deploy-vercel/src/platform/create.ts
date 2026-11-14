@@ -66,6 +66,6 @@ export const projectCreateAction: AccountAction = {
     if (!record(body) || !text(body.id) || !text(body.accountId) || !text(body.name)) return unknownOutcome();
     return projectNativeJsonValueForTransport({ credentialPrincipal: input.credentialPrincipal,
       providerIdentity: { providerAccountId: body.accountId, providerResourceId: body.id, providerEnvironment: 'production' },
-      providerEnvironment: { kind: 'production' }, preparedNative: { projectName: body.name } });
+      providerEnvironment: { kind: 'production' }, sourceMethod: input.sourceMethod, preparedNative: { projectName: body.name } });
   },
 };

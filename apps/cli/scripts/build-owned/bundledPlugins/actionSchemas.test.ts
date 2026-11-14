@@ -82,6 +82,8 @@ describe('published Action schema compaction', () => {
 
   it.each([
     { name: 'provisioner', load: () => import('../../../../../packages/plugins/machine-cua/src/manifest.ts') },
+    { name: 'Vercel deployment', load: () => import('../../../../../packages/plugins/deploy-vercel/src/manifest.ts') },
+    { name: 'Cloudflare deployment', load: () => import('../../../../../packages/plugins/deploy-cloudflare/src/manifest.ts') },
     { name: 'Event Automation', load: () => import('../../../../../packages/plugins/sentry/src/manifest.ts') },
     { name: 'Health Event Automation', load: () => import('../../../../../packages/plugins/machine-services/src/manifest.ts') },
   ])('retains exact $name schema agreements during manifest publication', async ({ load }) => {

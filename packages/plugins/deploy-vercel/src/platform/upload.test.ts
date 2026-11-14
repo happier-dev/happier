@@ -70,7 +70,7 @@ describe('Vercel activated controller upload', () => {
       const prepared = await kit.invokeAction('targets-inspect-v1', {
         ...selection, repository: input.repositoryAccess.repository,
       });
-      expect(prepared).toMatchObject({ providerIdentity: input.providerIdentity, preparedNative: { projectName: 'example', reviewNotice: expect.stringContaining('Vercel builds uploaded source remotely') } });
+      expect(prepared).toMatchObject({ sourceMethod: 'upload', providerIdentity: input.providerIdentity, preparedNative: { projectName: 'example', reviewNotice: expect.stringContaining('Vercel builds uploaded source remotely') } });
       expect(prepared).not.toHaveProperty('repositoryAccess');
       if (!prepared || typeof prepared !== 'object' || Array.isArray(prepared)) throw new Error('Expected prepared project');
       const { sourceMethod, ...linkInput } = selection;

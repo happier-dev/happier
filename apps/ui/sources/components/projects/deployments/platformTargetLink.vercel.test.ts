@@ -40,7 +40,7 @@ it.each(['daemon-root', 'portable-account'] as const)('admits pre-Save sheet cho
     expect(readPlatformInspectOutcome({ ok: true, value: result })).toMatchObject({ kind: 'needsGitAccess' });
     const uploadDraft = { ...draft, sourceMethod: 'upload' };
     const uploadResult = await kit.invokeAction('targets-inspect-v1', uploadDraft as JsonValue);
-    const inspected = readPlatformInspectOutcome({ ok: true, value: uploadResult }, 'upload');
+    const inspected = readPlatformInspectOutcome({ ok: true, value: uploadResult });
     expect(inspected).toMatchObject({ kind: 'ready', provider: { sourceMethod: 'upload' } });
     if (inspected.kind !== 'ready') throw new Error('Expected the reviewed Upload target');
     expect(buildPlatformTargetLinkInput({ target: platform, environment: { id: 'environment', revision: 1 },

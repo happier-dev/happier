@@ -1,3 +1,4 @@
+import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs,
   DeploymentTargetLinkProviderContentV1ProtocolSchema as output, type JsonValue } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
@@ -34,7 +35,8 @@ async function create(input: CreateInput, context: PluginAccountActionContext, p
   const reply = await request({ http, signal: context.signal, now: Date.now }, input.providerAccountId,
     product === 'pages' ? '/pages/projects' : '/workers/workers', 'link', 'POST',
     { name: input.resourceName, ...(product === 'pages' ? { production_branch: input.productionBranch } : {}) });
-  if ('code' in reply) throw new PluginError({ code: reply.code, retryable: reply.retryable, details: { phase: reply.phase } });
+  if ('code' in reply) throw withActionFailureDiagnostic(new PluginError({ code: reply.code, retryable: reply.retryable, details: { phase: reply.phase } }), { phase: `deployment.cloudflare.${reply.phase}`,
+      causeKind: 'native_failure', error: reply });
   const native = reply.value;
   if (!isObject(native) || !text(native.id) || !text(native.name)
     || product === 'pages' && !text(native.production_branch)) return unknownOutcome();
@@ -42,7 +44,7 @@ async function create(input: CreateInput, context: PluginAccountActionContext, p
   return projectNativeJsonValueForTransport({ credentialPrincipal: input.credentialPrincipal,
     providerIdentity: { providerAccountId: input.providerAccountId, providerResourceId: native.id,
       providerEnvironment: product === 'pages' ? 'production' : workerEnvironmentKey(native.name) },
-    providerEnvironment: environment,
+    providerEnvironment: environment, sourceMethod: input.sourceMethod,
     ...(product === 'pages' ? { providerUrl: `https://dash.cloudflare.com?to=/${encodeURIComponent(input.providerAccountId)}/pages/view/${encodeURIComponent(native.name)}` } : {}),
     preparedNative: { projectName: native.name,
       ...(product === 'pages' ? { pages: { projectMode: 'directUpload', productionBranch: native.production_branch } } : {}) } });

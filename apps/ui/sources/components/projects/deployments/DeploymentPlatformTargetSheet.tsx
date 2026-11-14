@@ -462,7 +462,7 @@ export function DeploymentPlatformTargetEditor(
     );
     if (!shouldContinue()) return;
     setBusy(null);
-    const inspected = readPlatformInspectOutcome(result, sourceMethod);
+    const inspected = readPlatformInspectOutcome(result);
     setOutcome(inspected);
     props.onPrepared?.(inspected.kind === 'ready' ? inspected.provider : null);
   };

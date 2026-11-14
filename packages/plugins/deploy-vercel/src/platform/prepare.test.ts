@@ -34,10 +34,13 @@ it.each([
       credentialRef: account, credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: {
         consumer: { pluginId: entry.manifest.id, localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' }, target: { kind: 'account', account } },
       providerIdentity: { providerAccountId: 'team_exact', providerResourceId: 'prj_exact', providerEnvironment: 'preview' },
-      providerEnvironment, repository: { kind: 'github', deployment: 'https://github.com', repository: 'example/app' } });
+      providerEnvironment, ...(sample.target === 'portable-account' ? { sourceMethod: 'gitIntegration' } : {}),
+      repository: { kind: 'github', deployment: 'https://github.com', repository: 'example/app' } });
     expect(inspection).toMatchObject({ repositoryAccess: { status: 'ready' },
       providerEnvironment: sample.hasProduction ? providerEnvironment : { kind: 'production' },
       providerIdentity: { providerEnvironment: sample.hasProduction ? 'preview:"feature/qa"' : 'production' } });
+    if (sample.target === 'portable-account') expect(inspection).toHaveProperty('sourceMethod', 'gitIntegration');
+    else expect(inspection).not.toHaveProperty('sourceMethod');
     if (!sample.hasProduction) expect(inspection).toMatchObject({ preparedNative: {
       reviewNotice: "Vercel will make this the project's first Production deployment.",
     } });
@@ -223,7 +226,7 @@ it('contributes executable runtime roles consuming captured preparation without 
   try {
     expect(entry.manifest.contributes.deploymentTargets).toContainEqual(expect.objectContaining({ role: 'runtime',
       targetKind: 'vercel', actions: expect.objectContaining({ inspect: 'targets-inspect-v1', link: 'project-link',
-        deploy: 'deploy', uploadDeploy: 'deploy-upload-v1', observe: 'observe', cancel: 'cancel', logs: { build: 'build-logs-read' } }) }));
+        deploy: 'deploy', uploadDeploy: 'deploy-upload-v1', observe: 'observe', cancel: 'cancel', logs: expect.objectContaining({ build: 'build-logs-read' }) }) }));
     const account = { service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId: 'connected-project-pat' };
     const common = { v: 1, serverId: 'home', environmentId: 'environment', expectedRevision: 1, credentialRef: account,
       credentialPrincipal: { kind: 'account', accountId: 'owner', purpose: { consumer: { pluginId: entry.manifest.id,

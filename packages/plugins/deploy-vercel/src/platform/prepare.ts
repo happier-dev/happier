@@ -1,4 +1,5 @@
-import { DeploymentTargetRoleInputProtocolSchemasV1 as inputs, type DeploymentTargetDeployInputV1, type DeploymentTargetUploadDeployInputV1, type DeploymentTargetPreparationBaseV1, type JsonValue } from '@happier-dev/plugin-sdk';
+import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
+import type { DeploymentTargetPreparationBaseV1, JsonValue } from '@happier-dev/plugin-sdk';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetPreparationBaseV1ProtocolSchema, ScmHostingRepositoryIdentityV1ProtocolSchema, projectNativeJsonValueForTransport, type PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginAccountActionContext, PluginActionDeclaration } from '@happier-dev/plugin-sdk/actions';
@@ -8,8 +9,7 @@ import { targetInputHints } from './options.js';
 const base = DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema;
 const repositorySchema = ScmHostingRepositoryIdentityV1ProtocolSchema.jsonSchema;
 export const projectPrepareInputSchema: PluginJsonSchema = { type: 'object', additionalProperties: false,
-  properties: { ...base.properties, repository: repositorySchema, projectId: { type: 'string', minLength: 1 },
-    sourceMethod: { anyOf: [inputs.deploy.jsonSchema.properties!.sourceMethod!, inputs.uploadDeploy.jsonSchema.properties!.sourceMethod!] } },
+  properties: { ...base.properties, repository: repositorySchema, projectId: { type: 'string', minLength: 1 } },
   required: [...base.required ?? []],
   // Preparation selects native coordinates; only Inspect produces the comparison identity.
   // Complete identities remain accepted for existing CLI and reinspection callers.
@@ -17,6 +17,7 @@ export const projectPrepareInputSchema: PluginJsonSchema = { type: 'object', add
 export const projectPrepareResultSchema: PluginJsonSchema = { type: 'object', additionalProperties: false,
   properties: { credentialPrincipal: base.properties!.credentialPrincipal!,
     providerIdentity: base.properties!.providerIdentity!, providerEnvironment: base.properties!.providerEnvironment!,
+    sourceMethod: base.properties!.sourceMethod!,
     repositoryAccess: base.properties!.repositoryAccess!, preparedNative: base.properties!.preparedNative! },
   required: ['credentialPrincipal', 'providerIdentity', 'providerEnvironment', 'preparedNative'] };
 
@@ -37,7 +38,6 @@ export const projectPrepareAction: ProjectAccountAction = {
     // Canonical shared custody and product input were validated by Action admission.
     const request = input as unknown as Omit<DeploymentTargetPreparationBaseV1, 'providerIdentity' | 'providerAccountId'> & {
       repository?: ReturnType<typeof ScmHostingRepositoryIdentityV1ProtocolSchema.parse>;
-      sourceMethod?: (DeploymentTargetDeployInputV1 | DeploymentTargetUploadDeployInputV1)['sourceMethod'];
     } & ({ providerIdentity: NonNullable<DeploymentTargetPreparationBaseV1['providerIdentity']> }
       | { providerAccountId: string; projectId: string });
     // Both native Git and upload deploys consume a reviewed repository commit.
@@ -49,10 +49,12 @@ export const projectPrepareAction: ProjectAccountAction = {
     const prepared = await prepareVercelProject({ providerIdentity,
       providerEnvironment: request.providerEnvironment, repository: request.repository, sourceMethod: request.sourceMethod },
     { http: context.services.http, signal: context.signal, now: () => Date.now() });
-    if ('code' in prepared) throw new PluginError({ code: prepared.code, retryable: prepared.retryable,
-      details: { phase: prepared.phase } });
+    if ('code' in prepared) throw withActionFailureDiagnostic(new PluginError({ code: prepared.code, retryable: prepared.retryable,
+      details: { phase: prepared.phase } }), { phase: `deployment.vercel.${prepared.phase}`,
+      causeKind: 'native_failure', error: prepared });
     return projectNativeJsonValueForTransport({ credentialPrincipal: request.credentialPrincipal,
       providerIdentity: prepared.providerIdentity, providerEnvironment: prepared.providerEnvironment,
+      ...(request.sourceMethod !== undefined ? { sourceMethod: request.sourceMethod } : {}),
       ...(prepared.repositoryAccess ? { repositoryAccess: prepared.repositoryAccess } : {}),
       preparedNative: { projectName: prepared.projectName, ...(prepared.gitSource ? { gitSource: prepared.gitSource } : {}),
         ...(prepared.reviewNotice ? { reviewNotice: prepared.reviewNotice } : {}) } });
@@ -73,6 +75,7 @@ export const projectLinkAction: ProjectAccountAction = {
     }
     return projectNativeJsonValueForTransport({ credentialPrincipal: request.credentialPrincipal, providerIdentity: request.providerIdentity,
       providerEnvironment: request.providerEnvironment, ...(request.repositoryAccess ? { repositoryAccess: request.repositoryAccess } : {}),
+      ...(request.sourceMethod !== undefined ? { sourceMethod: request.sourceMethod } : {}),
       preparedNative: request.preparedNative });
   },
 };

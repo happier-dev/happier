@@ -23,7 +23,7 @@ it.each(['pages-create', 'workers-create'])('retains %s exact native identity be
   } });
   try {
     const result = await kit.invokeAction(actionId, input(actionId));
-    expect(result).toMatchObject({ credentialPrincipal: input(actionId).credentialPrincipal,
+    expect(result).toMatchObject({ sourceMethod: 'upload', credentialPrincipal: input(actionId).credentialPrincipal,
       providerIdentity: { providerAccountId: 'account', providerResourceId: 'native-id',
         providerEnvironment: actionId === 'workers-create' ? 'script:reviewed-app' : 'production' },
       preparedNative: { projectName: 'reviewed-app' } });

@@ -98,9 +98,10 @@ it('inspects and links explicit Workers upload without native Git access or a bu
     const inspected = await h.kit.invokeAction('workers-inspect', { ...preparation, product: 'workers', sourceMethod: 'upload',
       providerIdentity: { ...preparation.providerIdentity, providerEnvironment: 'stale-selection' },
       repository: { kind: 'gitlab', deployment: 'https://gitlab.com', repository: 'example/app' } });
-    expect(inspected).toMatchObject({ providerIdentity: preparation.providerIdentity, preparedNative: { projectName: 'app' } });
+    expect(inspected).toMatchObject({ sourceMethod: 'upload', providerIdentity: preparation.providerIdentity, preparedNative: { projectName: 'app' } });
     expect(inspected).not.toHaveProperty('repositoryAccess');
-    expect(await h.kit.invokeAction('workers-link', preparation)).toMatchObject({ providerIdentity: preparation.providerIdentity });
+    if (!inspected || typeof inspected !== 'object' || Array.isArray(inspected)) throw new Error('Expected prepared Worker');
+    expect(await h.kit.invokeAction('workers-link', { ...preparation, ...inspected })).toEqual(inspected);
     expect(h.requests).toEqual([]);
   } finally { await h.dispose(); }
 });

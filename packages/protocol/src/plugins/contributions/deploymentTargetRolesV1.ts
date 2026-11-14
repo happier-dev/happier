@@ -120,6 +120,7 @@ export const DeploymentTargetPreparationBaseV1Schema = lazyZodSchema(() => z.ext
     environmentId: z.optional(id), expectedRevision: z.optional(revision),
     providerAccountId: z.optional(id), providerIdentity: z.optional(DeploymentTargetProviderIdentityV1Schema),
     targetLinkId: z.optional(id), expectedTargetLinkRevision: z.optional(revision),
+    sourceMethod: z.optional(DeploymentSourceMethodV1Schema),
 }));
 export type DeploymentTargetPreparationBaseV1 = z.infer<typeof DeploymentTargetPreparationBaseV1Schema>;
 export const DeploymentTargetPreparationBaseV1ProtocolSchema = projectZodProtocolSchema(DeploymentTargetPreparationBaseV1Schema);
@@ -146,7 +147,6 @@ export const DeploymentTargetCreateInputV1Schema = lazyZodSchema(() => z.extend(
     expectedTargetLinkRevision: z.optional(z.never()),
     repository: z.optional(ScmHostingRepositoryIdentityV1Schema),
     productionBranch: z.optional(ScmBranchSourceRefSchema),
-    sourceMethod: z.optional(DeploymentSourceMethodV1Schema),
 }));
 export type DeploymentTargetCreateInputV1 = z.infer<typeof DeploymentTargetCreateInputV1Schema>;
 export const DeploymentTargetCreateInputV1ProtocolSchema = projectZodProtocolSchema(DeploymentTargetCreateInputV1Schema);

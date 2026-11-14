@@ -216,7 +216,6 @@ export function readPlatformInspectOutcome(
   result:
     | Readonly<{ ok: true; value: unknown }>
     | Readonly<{ ok: false; code: string }>,
-  sourceMethod?: DeploymentSourceMethodV1,
 ): PlatformInspectOutcome {
   if (!result.ok) return readDeploymentRefusal(result.code);
   const parsed = DeploymentTargetLinkProviderContentV1Schema.safeParse(
@@ -224,7 +223,7 @@ export function readPlatformInspectOutcome(
   );
   if (!parsed.success)
     return readDeploymentRefusal('provider_response_invalid');
-  const provider = { ...parsed.data, ...(sourceMethod !== undefined ? { sourceMethod } : {}) };
+  const provider = parsed.data;
   const access = provider.repositoryAccess;
   return access?.status === 'needsGitAccess'
     ? {

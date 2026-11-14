@@ -1,3 +1,4 @@
+import { withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { DeploymentTargetPreparationBaseV1ProtocolSchema as preparation, DeploymentTargetRoleInputProtocolSchemasV1 as inputs,
   DeploymentTargetRoleResultV1ProtocolSchema as output, PluginError, type DeploymentTargetPreparationBaseV1,
   type DeploymentTargetDeployInputV1, type DeploymentTargetUploadDeployInputV1, type DeploymentTargetObserveInputV1, type DeploymentTargetCancelInputV1,
@@ -14,7 +15,7 @@ import { deployPreview, observePreview, cancelPreview, observeUploadedPreview, i
 const base = preparation.jsonSchema;
 const uploadReviewNotice = `Uploads build on the controller using ${CLOUDFLARE_BUILD_IMAGE} and Wrangler ${CLOUDFLARE_WRANGLER_VERSION}.`;
 const prepareProperties = { ...base.properties, product: targetProductSchema, repository: ScmHostingRepositoryIdentityV1ProtocolSchema.jsonSchema,
-  triggerUuid: { type: 'string', minLength: 1 }, sourceMethod: { anyOf: [inputs.deploy.jsonSchema.properties!.sourceMethod!, inputs.uploadDeploy.jsonSchema.properties!.sourceMethod!] } } satisfies NonNullable<PluginJsonSchema['properties']>;
+  triggerUuid: { type: 'string', minLength: 1 } } satisfies NonNullable<PluginJsonSchema['properties']>;
 const prepareRequired = [...base.required ?? [], 'providerIdentity', 'repository'];
 const prepareVariants: PluginJsonSchema[] = [
   { type: 'object', additionalProperties: false, required: [...prepareRequired, 'triggerUuid'], properties: { ...prepareProperties, sourceMethod: inputs.deploy.jsonSchema.properties!.sourceMethod!,
@@ -30,6 +31,7 @@ export const workerPrepareInput = { type: 'object', additionalProperties: false,
   properties: prepareProperties, required: prepareRequired, oneOf: prepareVariants } satisfies PluginJsonSchema;
 export const workerLinkSchema: PluginJsonSchema = { type: 'object', additionalProperties: false,
   properties: { credentialPrincipal: base.properties!.credentialPrincipal!, providerIdentity: base.properties!.providerIdentity!,
+    sourceMethod: base.properties!.sourceMethod!,
     providerEnvironment: base.properties!.providerEnvironment!, repositoryAccess: base.properties!.repositoryAccess!, preparedNative: base.properties!.preparedNative! },
   required: ['credentialPrincipal', 'providerIdentity', 'providerEnvironment', 'preparedNative'] };
 type PreparationAction = Extract<PluginActionDeclaration, { execution: { target: 'account' } }> & {
@@ -44,7 +46,8 @@ function io(context: PluginAccountActionContext) {
   return { http: context.services.http, signal: context.signal, now: () => Date.now() };
 }
 function result(outcome: DeploymentTargetRoleResultV1 | DeploymentTargetRoleFailureV1) {
-  if ('code' in outcome) throw new PluginError({ code: outcome.code, retryable: outcome.retryable, details: { phase: outcome.phase } });
+  if ('code' in outcome) throw withActionFailureDiagnostic(new PluginError({ code: outcome.code, retryable: outcome.retryable, details: { phase: outcome.phase } }), { phase: `deployment.cloudflare.${outcome.phase}`,
+      causeKind: 'native_failure', error: outcome });
   return outcome;
 }
 export { common as workersCommon, io as workersIo, result as workersResult };
@@ -68,7 +71,7 @@ export const workersPrepare: PreparationAction = { ...common, title: 'Prepare th
   async run(value: JsonValue, context: PluginAccountActionContext) {
     const request = value as unknown as DeploymentTargetPreparationBaseV1 & {
       providerIdentity: NonNullable<DeploymentTargetPreparationBaseV1['providerIdentity']>;
-      repository: ReturnType<typeof ScmHostingRepositoryIdentityV1ProtocolSchema.parse>; triggerUuid: string; sourceMethod?: DeploymentTargetDeployInputV1['sourceMethod'] | DeploymentTargetUploadDeployInputV1['sourceMethod'];
+      repository: ReturnType<typeof ScmHostingRepositoryIdentityV1ProtocolSchema.parse>; triggerUuid: string;
     };
     if (request.sourceMethod === 'upload') {
       if (request.providerEnvironment.kind !== 'script'
@@ -78,9 +81,11 @@ export const workersPrepare: PreparationAction = { ...common, title: 'Prepare th
       const environment = request.providerEnvironment;
       const preview = environment.kind === 'preview' ? await inspectPreviewIdentity({ accountId: request.providerIdentity.providerAccountId,
         scriptName: environment.scriptName, previewName: environment.previewName }, io(context)) : null;
-      if (preview && 'code' in preview) throw new PluginError({ code: preview.code, retryable: preview.retryable, details: { phase: preview.phase } });
+      if (preview && 'code' in preview) throw withActionFailureDiagnostic(new PluginError({ code: preview.code, retryable: preview.retryable, details: { phase: preview.phase } }), { phase: `deployment.cloudflare.${preview.phase}`,
+      causeKind: 'native_failure', error: preview });
       return projectNativeJsonValueForTransport({ credentialPrincipal: request.credentialPrincipal,
         providerIdentity: { ...request.providerIdentity, providerEnvironment: workerEnvironmentKey(environment.scriptName, preview?.previewName) },
+        sourceMethod: request.sourceMethod,
         providerEnvironment: request.providerEnvironment, preparedNative: { projectName: environment.scriptName,
           ...(preview ? { previewId: preview.previewId, scriptName: environment.scriptName } : {}),
           reviewNotice: uploadReviewNotice } });
@@ -91,9 +96,11 @@ export const workersPrepare: PreparationAction = { ...common, title: 'Prepare th
       const prepared = await preparePreview({ accountId: request.providerIdentity.providerAccountId,
         workerTag: request.providerIdentity.providerResourceId, scriptName: environment.scriptName,
         previewName: environment.previewName, repository: request.repository }, contextIo);
-      if ('code' in prepared) throw new PluginError({ code: prepared.code, retryable: prepared.retryable, details: { phase: prepared.phase } });
+      if ('code' in prepared) throw withActionFailureDiagnostic(new PluginError({ code: prepared.code, retryable: prepared.retryable, details: { phase: prepared.phase } }), { phase: `deployment.cloudflare.${prepared.phase}`,
+      causeKind: 'native_failure', error: prepared });
       return projectNativeJsonValueForTransport({ credentialPrincipal: request.credentialPrincipal,
         providerIdentity: { ...request.providerIdentity, providerEnvironment: workerEnvironmentKey(environment.scriptName, prepared.previewName) },
+        ...(request.sourceMethod !== undefined ? { sourceMethod: request.sourceMethod } : {}),
         providerEnvironment: environment, repositoryAccess: prepared.repositoryAccess,
         preparedNative: { projectName: environment.scriptName, previewId: prepared.previewId, gitBranch: prepared.gitBranch,
           workerTag: request.providerIdentity.providerResourceId, scriptName: environment.scriptName, reviewNotice: uploadReviewNotice } });
@@ -102,8 +109,10 @@ export const workersPrepare: PreparationAction = { ...common, title: 'Prepare th
     const prepared = await prepareWorker({ accountId: request.providerIdentity.providerAccountId,
       workerTag: request.providerIdentity.providerResourceId, scriptName: request.providerEnvironment.scriptName,
       triggerUuid: request.triggerUuid, repository: request.repository }, contextIo);
-    if ('code' in prepared) throw new PluginError({ code: prepared.code, retryable: prepared.retryable, details: { phase: prepared.phase } });
+    if ('code' in prepared) throw withActionFailureDiagnostic(new PluginError({ code: prepared.code, retryable: prepared.retryable, details: { phase: prepared.phase } }), { phase: `deployment.cloudflare.${prepared.phase}`,
+      causeKind: 'native_failure', error: prepared });
     return projectNativeJsonValueForTransport({ credentialPrincipal: request.credentialPrincipal, providerIdentity: prepared.providerIdentity,
+      ...(request.sourceMethod !== undefined ? { sourceMethod: request.sourceMethod } : {}),
       providerEnvironment: prepared.providerEnvironment, repositoryAccess: prepared.repositoryAccess,
       // The required human resource name is the actual script name, not a
       // fabricated Pages/Vercel project. Operational script scope remains above.
@@ -125,6 +134,7 @@ const link: PreparationAction = { ...common, title: 'Link the prepared Cloudflar
       throw new PluginError({ code: 'unsupported_action' });
     }
     return projectNativeJsonValueForTransport({ credentialPrincipal: request.credentialPrincipal, providerIdentity: request.providerIdentity,
+      ...(request.sourceMethod !== undefined ? { sourceMethod: request.sourceMethod } : {}),
       providerEnvironment: request.providerEnvironment, repositoryAccess: request.repositoryAccess, preparedNative: request.preparedNative });
   },
 };
