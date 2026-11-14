@@ -1922,8 +1922,17 @@ describe('GitHub task creation places', () => {
     const stub = createStubGithubTransport({ respond: () => ({ status: 200, body: [GITHUB_REPOSITORY_RESPONSE] }) });
     const result = await listGithubCreationPlaces({ v: 1, instance: configuredInstance({ scope: 'account' }) }, stub.context);
     expect(result).toMatchObject({ kind: 'page', status: 'complete', places: [{
-      id: REPOSITORY_KEY, label: REPOSITORY_KEY, childScopeId: REPOSITORY_KEY, fields: { scopeId: REPOSITORY_KEY },
+      id: REPOSITORY_KEY, label: REPOSITORY_KEY, fields: { scopeId: REPOSITORY_KEY },
     }] });
+    expect(stub.requests).toHaveLength(1);
+  });
+  it.each([
+    [{ archived: true, has_issues: true }, 'repository_archived'],
+    [{ archived: false, has_issues: false }, 'repository_unsupported'],
+  ])('lists creation refusals with repository facts without per-repository reads %j', async (facts, reason) => {
+    const stub = createStubGithubTransport({ respond: () => ({ status: 200, body: [{ ...GITHUB_REPOSITORY_RESPONSE, ...facts }] }) });
+    const result = await listGithubCreationPlaces({ v: 1, instance: configuredInstance({ scope: 'account' }) }, stub.context);
+    expect(result).toMatchObject({ kind: 'page', places: [{ id: REPOSITORY_KEY, refusal: { reason, message: expect.any(String) } }] });
     expect(stub.requests).toHaveLength(1);
   });
   it.each([

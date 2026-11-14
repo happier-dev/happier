@@ -1,5 +1,5 @@
 import { TriageSourceCredentialInputsV1, TriageTaskCreationPlacesResultV1Schema, type TriageTaskCreationPlacesResultV1 } from '@happier-dev/triage-protocol/v1';
-import { listGithubTriageScopeUnits, openGithubTriageClient, resolveGithubTriageInstance } from './operations.js';
+import { readGithubTriageScopeDirectory, openGithubTriageClient, resolveGithubTriageInstance } from './operations.js';
 import { createGithubRepositoryReader } from './repositories.js';
 import { parseGithubRoutingToken } from './locator.js';
 import { toTriageFailure } from './mapping/protocol.js';
@@ -13,14 +13,15 @@ export async function listGithubCreationPlaces(raw: unknown, context: GithubTria
   const selection = resolved.configuration.selection;
   const included = (id: string) => selection.kind === 'all' || selection.unitIds.includes(id);
   if (input.scopeId === undefined) {
-    const result = await listGithubTriageScopeUnits({ v: 1,
+    const result = await readGithubTriageScopeDirectory({ v: 1,
       draft: { v: 1, binding: input.instance.binding, configuration: input.instance.configuration, localInstanceKey: input.instance.localInstanceKey },
       ...(input.query === undefined ? {} : { query: input.query }), ...(input.cursor === undefined ? {} : { cursor: input.cursor }) }, context);
     if (result.kind === 'failed') return result;
-    const { units, selection: _selection, ...page } = result;
+    const { units, selection: _selection, repositories, ...page } = result;
+    const facts = new Map(repositories?.map(repository => [repository.repositoryKey, repository]));
     return TriageTaskCreationPlacesResultV1Schema.parse({ ...page,
       places: units.map(unit => ({ id: unit.id, label: unit.label, kindId: 'issue', fields: { scopeId: unit.id },
-        ...(included(unit.id) ? { childScopeId: unit.id } : { refusal: { reason: 'github_repository_not_included', message: 'Not part of this connection' } }),
+        ...(included(unit.id) ? creationRefusal(facts.get(unit.id)) : { refusal: { reason: 'github_repository_not_included', message: 'Not part of this connection' } }),
       })) });
   }
   const route = parseGithubRoutingToken(input.scopeId);
@@ -29,10 +30,15 @@ export async function listGithubCreationPlaces(raw: unknown, context: GithubTria
   if (!opened.ok) return { kind: 'failed', failure: opened.failure };
   const repository = await createGithubRepositoryReader({ client: opened.client, now: () => context.invokedAtMs }).read(route);
   if (repository.kind === 'unreadable') return { kind: 'failed', failure: toTriageFailure(repository.failure) };
-  const availability = projectGithubRepositoryWriteAvailability(repository, 'issue');
   return TriageTaskCreationPlacesResultV1Schema.parse({ kind: 'page', status: 'complete', places: [{
     id: input.scopeId, label: repository.repositoryKey ?? input.scopeId, kindId: 'issue', fields: { scopeId: input.scopeId },
-    ...(availability.kind === 'available' ? {} : { refusal: { reason: availability.code,
-      message: availability.code === 'repository_archived' ? 'This repository is archived' : 'Issues are turned off for this repository' } }),
+    ...creationRefusal(repository),
   }] });
+}
+
+function creationRefusal(repository: Parameters<typeof projectGithubRepositoryWriteAvailability>[0] | undefined) {
+  if (repository === undefined) return {};
+  const availability = projectGithubRepositoryWriteAvailability(repository, 'issue');
+  return availability.kind === 'available' ? {} : { refusal: { reason: availability.code,
+    message: availability.code === 'repository_archived' ? 'This repository is archived' : 'Issues are turned off for this repository' } };
 }

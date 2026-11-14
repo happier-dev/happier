@@ -41,14 +41,19 @@ source facts, not cached write permission; the existing create Action remains
 authoritative.
 
 Each picker read consumes one native directory page, with continuation through
-the same operation. There is no eager per-place read or whole-directory drain.
+the same operation. The selected place’s children follow continuation so every
+project or issue type is available in the existing menu. Root search sends the
+query to the source and follows its pages; sources without native search are
+filtered after paging. There is no eager per-place repository read.
 Jira's existing full-directory consumers still traverse the same page owner.
 
 Linear places supply the team and optional project fields. Jira's issue-type
 places supply an opaque `placeId` for the existing create Action; the source
 resolves it inside the configured project selection. A Jira project with a
-configured issue type remains directly selectable. GitHub supplies repository
-fields and, on selected-repository expansion, archived/issues-disabled reasons.
+configured issue type remains directly selectable, with that type as the starting
+value; the existing Where menu offers the project’s other issue types. GitHub
+supplies repository fields and archived/issues-disabled reasons from the same
+directory facts, before selection.
 The picker consumes these operands rather than parsing labels or accepting raw
 native IDs. A refusal carries the source's own `message`, which the picker shows
 as the place's reason.
@@ -56,12 +61,14 @@ as the place's reason.
 New task's Where list (`ui/detail/taskFields.tsx`, read by
 `ui/detail/taskCreationPlaces.ts`) reads each source's root page when the list
 or the place chip's menu opens, and shows "Show more places" while a page has a
-continuation. A place's children are read once, when it is chosen or, for a
-refused place with `childScopeId`, when it is expanded. Children are presented
+continuation. A place's children are read when it is chosen or, for a
+refused place with `childScopeId`, when it is expanded. The selected place's
+children continue through the source's remaining pages. Children are presented
 by their shape: a single child with the parent's id is that place's own
 creation details (its refusal holds Create); children adding exactly one create
 field become that field's choice in the draft (a Linear team's Project);
-otherwise they are narrower places listed under the parent (Jira issue types).
+otherwise they are narrower places listed under the parent (Jira issue types)
+and offered in the draft's existing Where menu.
 The draft never offers `scopeId` or `projectId` as typed ids for a source that
 names its places. Recent is the place of the newest entry the viewer authored
 in the current window, with no extra read. Sources without the role keep one

@@ -336,16 +336,16 @@ it('creates at the place the source names, narrowed by its own places, with the 
       handlers: { executeAction: ({ action, input }) => {
         if (action === 'tasks/create-v1') { saved.push(TriageCreateTaskActionInputV1Schema.parse(input)); return { kind: 'refused', reason: 'unavailable' }; }
         expect(action).toMatchObject({ localId: 'list-creation-places' });
-        const scopeId = (input as { scopeId?: string }).scopeId ?? null;
+        const request = input as { scopeId?: string; cursor?: { token: string } };
+        const scopeId = request.scopeId ?? null;
         placeReads.push(scopeId);
+        if (request.cursor !== undefined) return page([{ id: 'project-q4', label: 'Q4 checkout reliability', kindId: 'issue', fields: { scopeId: 'team-chk', projectId: 'project-q4' } }]);
         if (scopeId === null) return page([
           { id: 'team-chk', label: 'Checkout', kindId: 'issue', fields: { scopeId: 'team-chk' }, childScopeId: 'team-chk' },
           { id: 'project-ops', label: 'Platform Ops', kindId: 'issue', fields: {}, childScopeId: 'project-ops', refusal: { reason: 'example/typeRequired' } },
           { id: 'team-mob', label: 'Mobile', kindId: 'issue', fields: {}, refusal: { reason: 'example/excluded', message: 'Not part of this connection' } },
         ]);
-        if (scopeId === 'team-chk') return page([
-          { id: 'project-q4', label: 'Q4 checkout reliability', kindId: 'issue', fields: { scopeId: 'team-chk', projectId: 'project-q4' } },
-        ]);
+        if (scopeId === 'team-chk') return { kind: 'page', status: 'partial', places: [{ id: 'first', label: 'First project', kindId: 'issue', fields: { scopeId: 'team-chk', projectId: 'first' } }], nextCursor: { v: 1, token: 'projects-next' } };
         return page([{ id: 'project-ops/bug', placeId: 'project-ops/bug', label: 'Bug', kindId: 'issue', fields: {} }]);
       } },
     });
@@ -366,13 +366,13 @@ it('creates at the place the source names, narrowed by its own places, with the 
   // A place the source must narrow first opens its own places; the narrower place's opaque id goes to the source unchanged.
   await act(async () => { document.querySelector<HTMLElement>('[aria-label^="Where: "]')!.click(); });
   await act(async () => { document.querySelector<HTMLElement>('[role="menuitemradio"][aria-label^="Platform Ops"]')!.click(); });
-  expect(placeReads).toEqual([null, 'team-chk', 'project-ops']);
+  expect(placeReads).toEqual([null, 'team-chk', 'team-chk', 'project-ops']);
   await act(async () => { await fixture.press(await fixture.findByRole('button', { name: 'Bug' })); });
   await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Create task' })); });
   expect(saved.at(-1)).toMatchObject({ kindId: 'issue', placeId: 'project-ops/bug', fields: { title: 'Show the server total' } });
   expect(saved.at(-1)?.fields).not.toHaveProperty('scopeId');
   expect(saved).toHaveLength(2);
-  expect(placeReads).toEqual([null, 'team-chk', 'project-ops']);
+  expect(placeReads).toEqual([null, 'team-chk', 'team-chk', 'project-ops']);
 });
 
 it('creates with the typed properties the chosen place accepts, in one write', async () => {
@@ -1180,4 +1180,58 @@ it('opens the source workflow from the row glyph when no single completing trans
   await act(async () => { done!.click(); });
   expect(transitioned).toHaveLength(1);
   expect(transitioned[0]).toMatchObject({ transitionId: 'done' });
+});
+
+async function mountPlaceGapDraft(mode: 'search' | 'type') {
+  const source = createTriageSourceV1Fixture();
+  const requests: unknown[] = [];
+  const saved: unknown[] = [];
+  let fixture!: Awaited<ReturnType<typeof createPluginUiTestkit>>;
+  await act(async () => {
+    fixture = await createPluginUiTestkit({ identity: { instanceId: `place-gap-${mode}`, mountNonce: 'one' },
+      authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+      surface: defineUiSurface(() => <TriageCreateTaskFields sources={[{ configured: source.configuredInstance,
+        sourceInstanceId: source.configuredInstance.instance.sourceInstanceId, displayLabel: 'Engineering' }]}
+        sourcesLoaded sourcesUnavailableReason={null} draft={{ title: 'Fix it' }} onApplied={async () => undefined} onClose={() => undefined} />),
+      surfaceContext: createSurfaceContextFixture({ targetedContributions: withCreationPlaces(targetedTaskSource(source.configuredInstance.instance.source,
+        'issue', 'create', false, ['title'])) }),
+      adapter: controls => createPluginUiRnwSemanticSurfaceAdapter({ actionBindings: { commit: controls.commit }, overlays: true,
+        ephemeralSharedScope: createTriageEphemeralSharedScopeFixture() }),
+      handlers: { executeAction: ({ action, input }) => {
+        if (action === 'tasks/create-v1') { saved.push(input); return { kind: 'refused', reason: 'unavailable' }; }
+        requests.push(input);
+        const request = input as { query?: string; scopeId?: string; cursor?: { token: string } };
+        if (mode === 'search' && request.query && request.cursor === undefined) return { kind: 'page', status: 'partial',
+          places: [{ id: 'elsewhere', label: 'Other project', kindId: 'issue', fields: {} }], nextCursor: { v: 1, token: 'search-next' } };
+        const places = request.scopeId !== undefined
+          ? [{ id: '100/bug', placeId: '100/bug', label: 'Bug', kindId: 'issue', fields: {} }, { id: '100/story', placeId: '100/story', label: 'Story', kindId: 'issue', fields: {} }]
+          : [{ id: '100', label: request.query ? 'Remote match' : 'Checkout', kindId: 'issue', fields: {},
+            ...(mode === 'type' ? { childScopeId: '100', placeId: '100/bug' } : {}) }];
+        return { kind: 'page', status: 'complete', places };
+      } },
+    });
+  });
+  mounted.push(fixture);
+  return { fixture, requests, saved };
+}
+it('searches the source directory beyond places already loaded', async () => {
+  const { fixture, requests } = await mountPlaceGapDraft('search');
+  const input = document.querySelector<HTMLInputElement>('input[aria-label="Search places"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, 'Remote match');
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  });
+  expect(requests).toHaveLength(3);
+  expect(requests[2]).toMatchObject({ query: 'Remote match', cursor: { token: 'search-next' } });
+  expect(requests[1]).toMatchObject({ query: 'Remote match' });
+  await expect(fixture.getByRole('button', { name: 'Remote match' })).resolves.toBeDefined();
+});
+it('starts with the configured issue type and permits switching it before create', async () => {
+  const { fixture, saved } = await mountPlaceGapDraft('type');
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Checkout' })); });
+  expect(document.querySelector<HTMLElement>('[aria-label^="Where: "]')?.textContent).toContain('Bug');
+  await act(async () => { document.querySelector<HTMLElement>('[aria-label^="Where: "]')!.click(); });
+  await act(async () => { await fixture.press(await fixture.getByRole('menuitemradio', { name: 'Story' })); });
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Create task' })); });
+  expect(saved).toEqual([expect.objectContaining({ placeId: '100/story', fields: { title: 'Fix it' } })]);
 });

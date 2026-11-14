@@ -194,6 +194,14 @@ async function openClient(
  * from the configured scan scope.
  */
 export async function listGithubTriageScopeUnits(input: unknown, context: GithubTriageInvocationContext): Promise<TriageListScopeUnitsResultV1> {
+  const { repositories: _repositories, ...result } = await readGithubTriageScopeDirectory(input, context);
+  return result;
+}
+
+/** Retain decoded repository facts for creation places without another provider read. */
+export async function readGithubTriageScopeDirectory(input: unknown, context: GithubTriageInvocationContext): Promise<
+  TriageListScopeUnitsResultV1 & { repositories?: Extract<Awaited<ReturnType<typeof readGithubRepositoryDirectoryPage>>, { kind: 'page' }>['repositories'] }
+> {
   const parsed = TriageSourceCredentialInputsV1.listScopeUnits.safeParse(input);
   if (!parsed.success) return { kind: 'failed', failure: INVALID_INPUT_FAILURE };
   const { draft, mode, cursor } = parsed.data;
@@ -239,9 +247,9 @@ export async function listGithubTriageScopeUnits(input: unknown, context: Github
       v: 1, binding: draft.binding, localInstanceKey: draft.localInstanceKey, query, url: next,
     }) : null;
     const incomplete = listed.length !== page.repositories.length || page.partial || next !== null;
-    return TriageListScopeUnitsResultV1Schema.parse(incomplete
+    return { ...TriageListScopeUnitsResultV1Schema.parse(incomplete
       ? { kind: 'page', status: 'partial', selection, units: listed, ...(nextToken === null ? {} : { nextCursor: { v: 1, token: nextToken } }) }
-      : { kind: 'page', status: 'complete', selection, units: listed });
+      : { kind: 'page', status: 'complete', selection, units: listed }), repositories: page.repositories };
   } catch (error) {
     context.signal.throwIfAborted();
     return { kind: 'failed', failure: toTriageFailure(classifyGithubTransportFailure(error)) };

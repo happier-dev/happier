@@ -32,6 +32,7 @@ export type TriageTaskCreationPlacesReadV1 = Readonly<{
       instance: TriageConfiguredSourceInstanceV1;
       operation: PluginUiTargetedContributionOperationV1;
       scopeId?: string;
+      query?: string;
       more?: boolean;
     }>,
   ): void;
@@ -40,8 +41,9 @@ export type TriageTaskCreationPlacesReadV1 = Readonly<{
 export function triageTaskCreationPlacesKeyV1(
   sourceInstanceId: string,
   scopeId?: string,
+  query?: string,
 ): string {
-  return JSON.stringify([sourceInstanceId, scopeId ?? null]);
+  return JSON.stringify([sourceInstanceId, scopeId ?? null, query?.trim() || null]);
 }
 
 /**
@@ -67,6 +69,7 @@ export function useTriageTaskCreationPlaces(): TriageTaskCreationPlacesReadV1 {
       const key = triageTaskCreationPlacesKeyV1(
         input.instance.instance.sourceInstanceId,
         input.scopeId,
+        input.query,
       );
       const current = pagesRef.current.get(key);
       if (current?.status === 'loading') return;
@@ -91,6 +94,7 @@ export function useTriageTaskCreationPlaces(): TriageTaskCreationPlacesReadV1 {
             v: 1,
             instance: input.instance,
             ...(input.scopeId === undefined ? {} : { scopeId: input.scopeId }),
+            ...(input.query?.trim() ? { query: input.query.trim() } : {}),
             ...(cursor === undefined ? {} : { cursor }),
           },
           { signal: controller.signal },

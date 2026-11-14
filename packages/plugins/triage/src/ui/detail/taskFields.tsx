@@ -299,6 +299,7 @@ export function TriageCreateTaskFields(props: Readonly<{
   // A source that names its places (a repository, team or project) offers those; any other offers one place per task
   // kind it creates. The source decides every place, its operands and why one can't be used.
   const placeReads = useTriageTaskCreationPlaces();
+  const [placeQuery, setPlaceQuery] = React.useState('');
   const sourceEntries = React.useMemo(() => props.sources.map((source) => {
     const create = resolveTriageSourceTaskOperationV1(context.targetedContributions, source.configured.instance.source, 'create');
     return { source, create, descriptor: resolveTriageSourceDescriptorV1(context.targetedContributions, source.configured.instance.source),
@@ -325,11 +326,11 @@ export function TriageCreateTaskFields(props: Readonly<{
   const choices = React.useMemo(() => sourceEntries.flatMap((entry): PlaceChoice[] => {
     const kinds = (entry.descriptor?.kinds ?? []).filter((kind) => kind.task === true);
     if (entry.places === undefined) return kinds.map(kind => makeChoice(entry, kind));
-    return (placeReads.pages.get(triageTaskCreationPlacesKeyV1(entry.source.sourceInstanceId))?.places ?? []).flatMap((place) => {
+    return (placeReads.pages.get(triageTaskCreationPlacesKeyV1(entry.source.sourceInstanceId, undefined, placeQuery))?.places ?? []).flatMap((place) => {
       const kind = kinds.find(candidate => candidate.id === place.kindId);
       return kind === undefined ? [] : [makeChoice(entry, kind, place)];
     });
-  }), [sourceEntries, placeReads.pages, machineUnavailable, text, context.locale]);
+  }), [sourceEntries, placeReads.pages, placeQuery, machineUnavailable, text, context.locale]);
   const creatable = choices.filter(choice => choice.supportsCreate && choice.place === undefined).map(choice => ({
     source: choice.source.configured.instance.source, sourceInstanceId: choice.source.sourceInstanceId, kindId: choice.kind.id,
   }));
@@ -362,17 +363,25 @@ export function TriageCreateTaskFields(props: Readonly<{
     if (scopeId !== undefined && entry?.places !== undefined) placeReads.read({ instance: entry.source.configured, operation: entry.places, scopeId });
   };
   React.useEffect(() => {
-    if (child === undefined) readChildren(childScopeId, chosenEntry);
-  }, [childScopeId, chosenEntry?.places, child === undefined]);
+    if (childScopeId === undefined || chosenEntry?.places === undefined) return;
+    if (childPage?.status === 'ready' && childPage.nextCursor !== undefined) {
+      placeReads.read({ instance: chosenEntry.source.configured, operation: chosenEntry.places, scopeId: childScopeId, more: true });
+    } else if (childPage === undefined) readChildren(childScopeId, chosenEntry);
+  }, [childScopeId, chosenEntry?.places, childPage, placeReads.read]);
   // A source's places are read while the person is choosing one: the Where list, or the place chip's menu.
   const [placeOpen, setPlaceOpen] = React.useState(false);
   const choosing = chosen === undefined || placeOpen;
   React.useEffect(() => {
     if (!choosing) return;
     for (const entry of sourceEntries) {
-      if (entry.places !== undefined) placeReads.read({ instance: entry.source.configured, operation: entry.places });
+      if (entry.places !== undefined) {
+        const page = placeReads.pages.get(triageTaskCreationPlacesKeyV1(entry.source.sourceInstanceId, undefined, placeQuery));
+        if (page !== undefined && !(placeQuery.trim() && page.status === 'ready' && page.nextCursor !== undefined)) continue;
+        placeReads.read({ instance: entry.source.configured, operation: entry.places, query: placeQuery,
+          ...(placeQuery.trim() && page?.status === 'ready' && page.nextCursor !== undefined ? { more: true } : {}) });
+      }
     }
-  }, [choosing, sourceEntries, placeReads.read]);
+  }, [choosing, sourceEntries, placeReads.read, placeQuery, placeReads.pages]);
   // A source with a directory reads it for an existing entry; before the task exists there is none to read yet.
   const assigneeDirectory = useTriageTaskAssigneeDirectory({ scope: context.accountScope,
     happier: chosen !== undefined && sameTriageSourceIdentity(chosen.source.configured.instance.source, INTERNAL_TASK_SOURCE_V1),
@@ -402,7 +411,6 @@ export function TriageCreateTaskFields(props: Readonly<{
   // The place sets where the task goes; the draft never offers those fields as typed ids.
   const draftFields = fields.filter(field => chosen?.place === undefined || (field !== 'scopeId' && field !== 'projectId'));
   const unsupportedBody = typeof draft.body === 'string' && draft.body.length > 0 && !fields.includes('body');
-  const [placeQuery, setPlaceQuery] = React.useState('');
   const [expanded, setExpanded] = React.useState<string | null>(null);
   // A row is the place; the connection is named only where two connections would otherwise read alike.
   const connectionShown = (choice: PlaceChoice) => new Set(choices.filter(other => other.family === choice.family)
@@ -468,7 +476,7 @@ export function TriageCreateTaskFields(props: Readonly<{
     const placesStatus = (page: TriageTaskCreationPlacesPageV1 | undefined, entry: SourceEntry | undefined, scopeId?: string) => {
       if (entry?.places === undefined || page === undefined) return null;
       const again = (more?: true) => placeReads.read({ instance: entry.source.configured, operation: entry.places!,
-        ...(scopeId === undefined ? {} : { scopeId }), ...(more === undefined ? {} : { more }) });
+        ...(scopeId === undefined ? { query: placeQuery } : { scopeId }), ...(more === undefined ? {} : { more }) });
       if (page.status === 'loading') return <LoadingState key={`${entry.source.sourceInstanceId}-${scopeId ?? ''}-status`} layout="line"
         title={text('plugins.triage.tasks.where.loading', 'Reading places…')} />;
       if (page.status === 'failed') return <ErrorState key={`${entry.source.sourceInstanceId}-${scopeId ?? ''}-status`} kind="unavailable" layout="line"
@@ -481,7 +489,7 @@ export function TriageCreateTaskFields(props: Readonly<{
       groupOf(entry, (entry.descriptor?.kinds ?? []).find(kind => kind.task === true))), ...choices.map(choice => choice.group)])];
     const shownGroups = groups.filter(group => choices.some(choice => choice.group === group && found(choice))
       || sourceEntries.some(entry => entry.places !== undefined && groupOf(entry, (entry.descriptor?.kinds ?? []).find(kind => kind.task === true)) === group
-        && placeReads.pages.get(triageTaskCreationPlacesKeyV1(entry.source.sourceInstanceId))?.status !== 'ready'));
+        && placeReads.pages.get(triageTaskCreationPlacesKeyV1(entry.source.sourceInstanceId, undefined, placeQuery))?.status !== 'ready'));
     return <Stack gap="none" style={TASK_DRAFT_FILL_STYLE}>
       <ScrollArea style={TASK_DRAFT_FILL_STYLE}><Stack gap="medium">
         {originContext}
@@ -504,7 +512,7 @@ export function TriageCreateTaskFields(props: Readonly<{
             {shownGroups.map((group) => <ItemGroup key={group} title={group} surface="none">
               {choices.filter((choice) => choice.group === group && found(choice)).flatMap((choice) => [placeRow(choice, choice.value), refinements(choice)])}
               {sourceEntries.filter(entry => entry.places !== undefined && groupOf(entry, (entry.descriptor?.kinds ?? []).find(kind => kind.task === true)) === group)
-                .map(entry => placesStatus(placeReads.pages.get(triageTaskCreationPlacesKeyV1(entry.source.sourceInstanceId)), entry))}
+                .map(entry => placesStatus(placeReads.pages.get(triageTaskCreationPlacesKeyV1(entry.source.sourceInstanceId, undefined, placeQuery)), entry))}
             </ItemGroup>)}
           </>}
       </Stack></ScrollArea>
@@ -570,11 +578,13 @@ export function TriageCreateTaskFields(props: Readonly<{
     });
     return result;
   };
-  const narrower = refineField === undefined ? child : undefined;
+  const narrowerPlaces = self === undefined && refineField === undefined ? children : [];
+  const narrower = refineField === undefined ? child ?? narrowerPlaces.find(candidate => candidate.placeId === chosen.place?.placeId) : undefined;
+  const narrowerId = (place: TriageTaskCreationPlaceV1) => JSON.stringify([chosen.value, place.id]);
   const placeName = [chosen.family, ...(chosen.family === chosen.source.displayLabel || chosen.place !== undefined ? [] : [chosen.source.displayLabel]),
     ...(chosen.place === undefined ? [] : [chosen.place.label]), ...(narrower === undefined ? [] : [narrower.label])].join(' · ');
   const placeLocked = settled;
-  const menuGroups = [...new Set(choices.map(choice => choice.group))];
+  const menuGroups = [...new Set([...choices.map(choice => choice.group), ...(narrowerPlaces.length === 0 ? [] : [chosen.group])])];
   // The draft is the task's detail before it exists (lab `tasks-form`, decision 10): where it goes as one chip that
   // offers the places, the title and notes written in place as the document they become, then the place's own
   // properties. Create is pinned at the foot with what it does; nothing reaches the source before it.
@@ -596,15 +606,19 @@ export function TriageCreateTaskFields(props: Readonly<{
               disabled={placeLocked} trigger={placeName} triggerAppearance="control" triggerMark={mark(chosen)}
               triggerAccessibilityLabel={text('plugins.triage.tasks.where.changeNamed', 'Where: {place}. Change', { place: placeName })}
               groups={menuGroups.map(group => ({ id: group, accessibilityLabel: group,
-                items: choices.filter(choice => choice.group === group).map(choice => {
+                items: [...choices.filter(choice => choice.group === group).map(choice => {
                   const subtitle = placeSubtitle(choice);
                   return { id: choice.value, label: choice.title, kind: 'radio' as const, radioGroupId: TASK_PLACE_GROUP_ID,
                     disabled: choice.disabled, ...(subtitle === undefined ? {} : { subtitle }) };
-                }) }))}
+                }), ...(group !== chosen.group ? [] : narrowerPlaces.map(place => ({ id: narrowerId(place), label: place.label,
+                  kind: 'radio' as const, radioGroupId: TASK_PLACE_GROUP_ID, disabled: place.refusal !== undefined,
+                  ...(place.refusal?.message === undefined ? {} : { subtitle: place.refusal.message }) })))] }))}
               showGroupLabels
-              radioGroups={[{ id: TASK_PLACE_GROUP_ID, accessibilityLabel: text('plugins.triage.tasks.where.label', 'Where'), selectedId: chosen.value }]}
+              radioGroups={[{ id: TASK_PLACE_GROUP_ID, accessibilityLabel: text('plugins.triage.tasks.where.label', 'Where'), selectedId: narrower === undefined ? chosen.value : narrowerId(narrower) }]}
               search={{ value: placeQuery, onValueChange: setPlaceQuery, when: 'long' }}
               onSelect={(id) => {
+                const refinement = narrowerPlaces.find(place => narrowerId(place) === id);
+                if (refinement !== undefined && !placeLocked && refinement.refusal === undefined) { choose(chosen, refinement); return; }
                 const next = choices.find(choice => choice.value === id);
                 if (next === undefined || id === chosen.value || placeLocked) return;
                 if (next.expandable) {
