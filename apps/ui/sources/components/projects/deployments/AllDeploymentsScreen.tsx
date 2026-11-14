@@ -10,9 +10,10 @@ import {
 } from '@/components/appShell/workspace/destinationRoute';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { useOpenNewApp } from '@/components/projects/starters/newAppPresentation';
-import { Icon } from '@/components/ui/icons/Icon';
-import { PageHeader } from '@/components/ui/layout/PageHeader';
-import { Item } from '@/components/ui/lists/Item';
+import { MainScreenHeader, type MainScreenSearch } from '@/components/navigation/shell/MainScreenHeader';
+import type { PageCreateAction } from '@/components/navigation/mobile/chrome/pageCreateAction';
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
 import { SectionActionButton } from '@/components/ui/lists/SectionActionButton';
@@ -26,12 +27,13 @@ import { useDeploymentPresentationDemand } from './useDeploymentPresentationDema
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { t } from '@/text';
 
-import { isSameDeploymentName, useDeploymentEnvironmentRowParts, useDeploymentEnvironmentRowSelection } from './DeploymentEnvironmentCollection';
+import { DeploymentEnvironmentRows } from './DeploymentEnvironmentRows';
 import { useDeviceType } from '@/utils/platform/responsive';
-import { deploymentEnvironmentRoute } from './deploymentNavigation';
 import { useDeploymentInventory } from './useDeploymentProject';
-import { readServicesView, ServicesDatabasesView, ServicesDomainsView, ServicesViewTabs, type ServicesView } from './ServicesViews';
-import { ServiceCheckDetail, ServicesChecksView, ServicesWatchedView } from './ServicesChecks';
+import { readServicesView, ServicesDatabasesView, ServicesDomainsView, ServicesViewTabs, type ServicesView, type ServicesViewCount } from './ServicesViews';
+import { deploymentRailState } from './deploymentPresentation';
+import { ServiceCheckDetail } from './ServiceCheckDetail';
+import { ServicesChecksView, ServicesWatchedView } from './ServicesChecks';
 import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
 import { DetailsPaneHost } from '@/components/appShell/panes/details/DetailsPaneHost';
 import { useDetailsPaneAvailable } from '@/components/appShell/panes/details/detailsPaneAvailability';
@@ -39,8 +41,6 @@ import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/Cor
 import { DetailsPaneOpenAsPageButton } from '@happier-dev/plugin-ui/components';
 import type { DeploymentReadControllerV1, DeploymentReadDemandV1 } from '@happier-dev/deployments';
 import { useVisibleBackupCoverage } from './useVisibleBackupCoverage';
-
-export const ALL_DEPLOYMENTS_ROUTE = '/projects/deployments';
 
 type EnvironmentItem = DeploymentEnvironmentCollectionV1['items'][number];
 const NO_ITEMS: readonly EnvironmentItem[] = Object.freeze([]);
@@ -168,7 +168,7 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
   const filtering = notBackedUpOnly && backups.coverage !== null;
   // Inline under the header, one press away: a header action would fold into the phone's ⋯ (DEPLOY-REACCEPT-1113 D3).
   const notBackedUpFilter = filtering || uncovered.size > 0 ? (
-    <ItemGroup surface="none" testID="all-deployments.filters">
+    <View testID="all-deployments.filters">
       <SelectionListFilterChips placement="inline" filters={[{
       id: 'all-deployments.notBackedUp',
       testID: 'all-deployments.notBackedUp',
@@ -179,34 +179,69 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
       selected: filtering,
       onToggle: toggleNotBackedUp,
     }]} />
-    </ItemGroup>
+    </View>
   ) : null;
   const openNewApp = useOpenNewApp();
   const openDeployApp = React.useCallback(() => openNewApp(), [openNewApp]);
   // One create on Services (reuse map §4): Deploy an app, the flow every entry opens. The empty page's scene carries it
   // instead, so the page never shows two.
-  const deployApp = React.useMemo(() => ({ title: t('newApp.title'), icon: 'plus' as const, onPress: openDeployApp,
+  const deployCreate = React.useMemo<PageCreateAction>(() => ({ label: t('newApp.title'), onPress: openDeployApp,
     testID: 'all-deployments.deployApp' }), [openDeployApp]);
-  const header = (create: boolean) => (
-    <PageHeader
-      testID="all-deployments.header"
-      title={t('projects.deployments.services.title')}
-      description={t('projects.deployments.services.description')}
-      alwaysShowTitle
-      {...(create ? { primaryAction: deployApp } : {})}
-    />
-  );
   const view = props.controller && props.demand ? props.view ?? 'apps' : 'apps';
   const viewDemand = props.demand!;
   const phone = useDeviceType() === 'phone';
   const viewTabs = props.controller && props.demand ? (
     <ServicesViewTabs active={view} onSelect={(next) => props.onSelectView?.(next)} />
   ) : null;
+  // The main-screen head (lab svcHead): the title row's magnifier and create, the views and their filter right under
+  // it, then the count line from the shown view's own reported counts.
+  const [query, setQuery] = React.useState('');
+  const search = React.useMemo<MainScreenSearch>(() => ({ value: query, onChangeText: setQuery,
+    placeholder: t('projects.deployments.services.searchPlaceholder'), testID: 'all-deployments.search' }), [query]);
+  const [viewCount, setViewCount] = React.useState<ServicesViewCount | null>(null);
+  const appsCount = React.useMemo(() => view === 'apps' ? describeAppsCount(items) : null, [items, view]);
+  const count = view === 'apps' ? appsCount : viewCount?.view === view ? viewCount.parts : null;
+  const header = (create: boolean) => (
+    <MainScreenHeader
+      testID="all-deployments.header"
+      title={t('projects.deployments.services.title')}
+      {...(phone ? {} : { description: t('projects.deployments.services.description') })}
+      alwaysShowTitle
+      // Wide, the Services column carries the search (one per page); a phone's head keeps its magnifier.
+      search={create && phone ? search : null}
+      create={create ? deployCreate : null}
+      {...(create && !phone ? { createTrigger: <DeployAppButton onPress={openDeployApp} /> } : {})}
+      band={viewTabs || (view === 'apps' && notBackedUpFilter) ? <>{viewTabs}{view === 'apps' ? notBackedUpFilter : null}</> : undefined}
+      {...(create && count ? { count } : {})}
+    />
+  );
   const retry = React.useCallback(() => {
     void read.refresh();
   }, [read]);
-  const shownItems = React.useMemo(() => filtering ? items.filter((item) => uncovered.has(item.environment.id)) : items,
-    [filtering, items, uncovered]);
+  // The search narrows the rows already read by the names they show (Environment and Project).
+  const needle = query.trim().toLocaleLowerCase();
+  const shownItems = React.useMemo(() => items.filter((item) => (!filtering || uncovered.has(item.environment.id))
+    && (needle === '' || item.title.toLocaleLowerCase().includes(needle)
+      || (item.projectSourceName ?? '').toLocaleLowerCase().includes(needle))),
+  [filtering, items, needle, uncovered]);
+
+  // Each view owns its read state; an empty or unavailable Apps page cannot withhold another view.
+  const selectedView = view === 'databases' && props.controller && serverId ? (
+    <ServicesDatabasesView controller={props.controller} demand={viewDemand} serverId={serverId}
+      lifetime={props.lifetime ?? null} onCount={setViewCount} />
+  ) : view === 'domains' && props.controller && serverId ? (
+    <ServicesDomainsView controller={props.controller} demand={viewDemand} serverId={serverId}
+      accountId={props.lifetime?.scope.accountId ?? ''} phone={phone} />
+  ) : view === 'checks' && props.checks ? (
+    <ServicesChecksView scope={props.lifetime?.scope ?? null} presented={viewDemand.visible}
+      selectedKey={props.checks.selectedKey} onSelect={props.checks.onSelect} onSelectedRow={props.checks.onSelectedRow}
+      onCount={setViewCount} />
+  ) : view === 'watched' ? (
+    <ServicesWatchedView scope={props.lifetime?.scope ?? null} presented={viewDemand.visible} onCount={setViewCount} />
+  ) : null;
+  if (selectedView) {
+    return <ItemList testID="all-deployments" pageColumn="wide">{header(true)}{selectedView}</ItemList>;
+  }
 
   if (!snapshot.value && snapshot.status === 'unavailable') {
     const withdrawn = snapshot.failure
@@ -214,6 +249,7 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
       : false;
     return (
       <ItemList
+        pageColumn="wide"
         testID={withdrawn ? 'all-deployments.denied' : 'all-deployments.error'}
       >
         {header(false)}
@@ -239,13 +275,16 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
   }
   if (!snapshot.value || !serverId) {
     return (
-      <PageLoadingRows testID="all-deployments.loading" header />
+      <ItemList testID="all-deployments.loading">
+        {header(false)}
+        <PageLoadingRows />
+      </ItemList>
     );
   }
   const paged = read.hasNextPage || read.hasPreviousPage;
   if (items.length === 0 && !paged) {
     return (
-      <ItemList testID="all-deployments.empty">
+      <ItemList testID="all-deployments.empty" pageColumn="wide">
         {header(false)}
         <EmptyState
           layout="page"
@@ -262,21 +301,8 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
   return (
     <>
     {backups.readers}
-    <ItemList testID="all-deployments">
+    <ItemList testID="all-deployments" pageColumn="wide">
       {header(true)}
-      {viewTabs}
-      {view === 'databases' && props.controller ? (
-        <ServicesDatabasesView controller={props.controller} demand={viewDemand} serverId={serverId} />
-      ) : view === 'domains' && props.controller ? (
-        <ServicesDomainsView controller={props.controller} demand={viewDemand} serverId={serverId}
-          accountId={props.lifetime?.scope.accountId ?? ''} phone={phone} />
-      ) : view === 'checks' && props.checks ? (
-        <ServicesChecksView scope={props.lifetime?.scope ?? null} presented={viewDemand.visible}
-          selectedKey={props.checks.selectedKey} onSelect={props.checks.onSelect} onSelectedRow={props.checks.onSelectedRow} />
-      ) : view === 'watched' ? (
-        <ServicesWatchedView scope={props.lifetime?.scope ?? null} presented={viewDemand.visible} />
-      ) : (<>
-      {notBackedUpFilter}
       {snapshot.status === 'unavailable' ? (
         <SurfaceFreshnessLine
           testID="all-deployments.stale"
@@ -341,13 +367,12 @@ export const AllDeploymentsView = React.memo(function AllDeploymentsView(
           </View>
         </ItemGroup>
       ) : null}
-      </>)}
     </ItemList>
     </>
   );
 });
 
-/** Environment rows grouped by Project: the one row (DeploymentEnvironmentCollection parts), also a Machine's What runs here. */
+/** Environment rows banded by Project: the one Environment row (DeploymentEnvironmentRows), also a Machine's What runs here. */
 export function AllDeploymentsGroups(
   props: Readonly<{
     items: readonly EnvironmentItem[];
@@ -359,73 +384,42 @@ export function AllDeploymentsGroups(
     hereMachine?: boolean;
   }>,
 ) {
-  const { theme } = useUnistyles();
-  const router = useRouter();
-  // A phone row keeps its status to one short line; the Environment it opens names the Machine.
-  const phone = useDeviceType() === 'phone';
-  const parts = useDeploymentEnvironmentRowParts(
-    props.items,
-    'all-deployments.row',
-    props.lifetime,
-    phone || props.hereMachine ? 'rail' : 'row',
-  );
-  const serverId = props.serverId;
-  const openBackups = props.openBackups === true;
-  const selectRow = React.useCallback((row: typeof parts[number]) => {
-    router.push(deploymentEnvironmentRoute({ serverId, projectSourceId: row.projectSourceId, environmentId: row.environmentId,
-      ...(openBackups ? { tab: 'settings' as const, section: 'backups' as const, setup: 'backups' as const } : {}) }));
-  }, [router, serverId, openBackups]);
-  const rows = useDeploymentEnvironmentRowSelection(parts, row => row.environmentId, selectRow);
-  const icon = React.useMemo(() => <Icon name="hard-drives" size={18} color={theme.colors.text.secondary} />,
-    [theme.colors.text.secondary]);
-  // Projects keep the page's own order: the first Environment of each Project places its group. The name is the
-  // admitted Source name the read carries; Projects whose name is unavailable or withdrawn share one last group,
-  // so one placeholder is never repeated down the page. A Project whose only Environment carries its name needs no
-  // header to say it again: all such Projects share one untitled sheet that leads the page, because an untitled
-  // sheet below a titled group reads as part of that group.
-  const groups = React.useMemo(() => {
-    const named = new Map<string, { title: string; rows: typeof rows }>();
-    const unnamed: typeof rows = [];
-    for (const row of rows) {
-      if (!row.projectName) { unnamed.push(row); continue; }
-      const group = named.get(row.projectSourceId);
-      if (group) group.rows.push(row);
-      else named.set(row.projectSourceId, { title: row.projectName, rows: [row] });
-    }
-    const list: { key: string; title: string | undefined; rows: typeof rows }[] = [];
-    let untitled: { key: string; title: undefined; rows: typeof rows } | null = null;
-    for (const [key, group] of named) {
-      if (!(group.rows.length === 1 && isSameDeploymentName(group.rows[0]!.title, group.title))) list.push({ key, ...group });
-      else if (untitled) untitled.rows.push(...group.rows);
-      else untitled = { key, title: undefined, rows: [...group.rows] };
-    }
-    if (untitled) list.unshift(untitled);
-    return unnamed.length ? [...list, { key: 'unnamed', title: t('projects.deployments.allOtherProject'), rows: unnamed }] : list;
-  }, [rows]);
   return (
-    <>
-      {groups.map((group) => (
-        <ItemGroup
-          key={group.key}
-          testID={`all-deployments.project.${group.key}`}
-          title={group.title}
-        >
-          {group.rows.map((row) => (
-            <Item
-              key={row.environmentId}
-              testID={`all-deployments.row.${row.environmentId}`}
-              title={row.title}
-              titleQualifier={row.titleQualifier}
-              subtitle={row.subtitle}
-              subtitleLeading={row.subtitleLeading}
-              detail={row.detail}
-              icon={icon}
-              onPress={row.onPress}
-            />
-          ))}
-        </ItemGroup>
-      ))}
-    </>
+    <DeploymentEnvironmentRows
+      items={props.items}
+      serverId={props.serverId}
+      lifetime={props.lifetime}
+      testID="all-deployments"
+      accessibilityLabel={t('projects.deployments.services.apps')}
+      {...(props.openBackups ? { openBackups: true } : {})}
+      {...(props.hereMachine ? { hereMachine: true } : {})}
+    />
+  );
+}
+
+/** The Apps count line from the read's own rows and their readiness owner's states (lab svcApps status line). */
+function describeAppsCount(items: readonly EnvironmentItem[]): readonly (string | null)[] {
+  let needYou = 0;
+  let deploying = 0;
+  for (const item of items) {
+    const state = item.currentDeployment ? deploymentRailState(item.currentDeployment.state) : null;
+    if (state?.tone) needYou += 1;
+    else if (state) deploying += 1;
+  }
+  const projects = new Set(items.map((item) => item.environment.projectSourceId)).size;
+  return [
+    items.length > 0 ? t('projects.deployments.services.countEnvironments', { environments: items.length, projects }) : null,
+    needYou > 0 ? t('projects.deployments.services.needYou', { count: needYou }) : null,
+    deploying > 0 ? t('projects.deployments.services.countDeploying', { count: deploying }) : null,
+  ];
+}
+
+/** The wide head's labelled create (lab "+ Deploy an app"); a phone keeps the title row's "+". */
+function DeployAppButton(props: Readonly<{ onPress: () => void }>) {
+  const { theme } = useUnistyles();
+  return (
+    <RoundButton testID="all-deployments.deployApp:header" size="small" display="secondary" title={t('newApp.title')}
+      leading={<Icon name="plus" size={ICON_SIZE.sm} color={theme.colors.text.primary} />} onPress={props.onPress} />
   );
 }
 

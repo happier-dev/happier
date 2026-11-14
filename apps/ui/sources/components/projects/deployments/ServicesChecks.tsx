@@ -1,17 +1,22 @@
 import * as React from 'react';
-import { View } from 'react-native';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { Heatmap } from '@happier-dev/plugin-ui/presentation';
+import { useUnistyles } from 'react-native-unistyles';
 
 import { MachineManagedInventorySection } from '@/components/machines/page/MachineManagedInventorySection';
-import { projectPluginUiTheme } from '@/components/plugins/surfaces/pluginUiThemeProjection';
-import {
-  ManagedInventoryDirectory,
-  RowMark,
-} from '@/components/store/inventory/ManagedInventoryDirectory';
+import { RowMark } from '@/components/store/inventory/ManagedInventoryDirectory';
 import type { ManagedInventorySectionsState } from '@/components/store/inventory/ManagedInventorySections';
 import type { ManagedConfiguredCheckRow } from '@/components/store/inventory/managedOperationalInventory';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
+import { Status, useHappierCollection, type CollectionAnatomy } from '@happier-dev/plugin-ui';
+import type { MachineServiceRowV1 } from '@happier-dev/protocol';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { MachineServiceByline, machineServiceColumnFields, renderMachineServicePort } from '@/components/machines/services/machineServiceColumns';
+import { machineServiceDisplayName, machineServiceIcon } from '@/components/machines/services/machineServicesPresentation';
+import { useMachineServicesList } from '@/components/machines/services/useMachineServices';
+import type { ManagedWatchedServiceRow } from '@/components/store/inventory/managedOperationalInventory';
+import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
+import { Text } from '@/components/ui/text/Text';
+import { Typography } from '@/constants/Typography';
+import { useMachineDisplayNamesById } from '@/sync/store/hooks';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
@@ -21,30 +26,19 @@ import { t } from '@/text';
 
 import {
   readServiceCheckFacts,
-  serviceCheckHistoryStrip,
-  type ServiceCheckDay,
   type ServiceCheckStatus,
 } from './serviceCheckPresentation';
+import { serviceCheckStatusWord } from './ServiceCheckDetail';
+import { SERVICES_ONE_SHEET, ServicesPageList } from './DeploymentEnvironmentRows';
+import { useReportViewCount, type ServicesViewCount } from './ServicesViews';
 
 const NO_OPEN = () => {};
 const CHECK_KINDS = ['configuredCheck'] as const;
 const WATCHED_KINDS = ['watchedService'] as const;
 
-function statusWord(status: ServiceCheckStatus): string {
-  switch (status) {
-    case 'up':
-      return t('projects.deployments.healthUp');
-    case 'down':
-      return t('projects.deployments.healthDown');
-    case 'degraded':
-      return t('projects.deployments.healthDegraded');
-    case 'notChecked':
-      return t('projects.deployments.healthNotChecked');
-    case 'loading':
-      return t('common.loading');
-    default:
-      return t('projects.deployments.healthUnknown');
-  }
+/** The uptime figure alone, under the Last 30 days column that already says the span. */
+function uptimePercentText(percent: number | null): string | null {
+  return percent === null ? null : `${Math.round(percent * 10) / 10}%`;
 }
 
 function uptimeText(percent: number | null): string | null {
@@ -92,9 +86,9 @@ export function ServicesChecksView(
     onSelect: (row: ManagedConfiguredCheckRow) => void;
     /** The selected Check's current row (its results move on), for the details pane the page hosts. */
     onSelectedRow: (row: ManagedConfiguredCheckRow | null) => void;
+    onCount: (count: ServicesViewCount) => void;
   }>,
 ) {
-  const { theme } = useUnistyles();
   const query = React.useMemo(
     () => ({
       scope: props.scope,
@@ -138,42 +132,9 @@ export function ServicesChecksView(
         return (
           <>
             {pending}
-            <ItemGroup testID="services.checks">
-              <SelectedRowReport rows={rows} selectedKey={props.selectedKey} onSelectedRow={props.onSelectedRow} />
-              {rows.map((row) => {
-                const facts = readServiceCheckFacts(row.lastResults);
-                return (
-                  <Item
-                    key={row.key}
-                    testID={`services.checks.row.${row.automationId}.${row.triggerId}`}
-                    title={row.native.name}
-                    subtitle={[
-                      row.native.enabled
-                        ? statusWord(facts.status)
-                        : t('projects.deployments.healthNotChecked'),
-                      uptimeText(facts.uptimePercent),
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
-                    icon={
-                      <RowMark
-                        row={row}
-                        title={row.native.name}
-                        input={input}
-                      />
-                    }
-                    selected={props.selectedKey === row.key}
-                    onPress={() => props.onSelect(row)}
-                    subtitleStyle={!row.native.enabled ? undefined : facts.status === 'down'
-                        ? { color: theme.colors.state.danger.textForeground }
-                        : facts.status === 'degraded'
-                          ? { color: theme.colors.state.warning.textForeground }
-                          : undefined
-                    }
-                  />
-                );
-              })}
-            </ItemGroup>
+            <SelectedRowReport rows={rows} selectedKey={props.selectedKey} onSelectedRow={props.onSelectedRow} />
+            <ChecksList rows={rows} input={input} selectedKey={props.selectedKey} onSelect={props.onSelect}
+              onCount={props.onCount} />
           </>
         );
       }}
@@ -181,104 +142,6 @@ export function ServicesChecksView(
   );
 }
 
-function dayColor(
-  day: ServiceCheckDay,
-  colors: Readonly<{
-    up: string;
-    down: string;
-    degraded: string;
-    empty: string;
-  }>,
-): string {
-  return day.tone === 'down'
-    ? colors.down
-    : day.tone === 'degraded'
-      ? colors.degraded
-      : day.tone === 'up'
-        ? colors.up
-        : colors.empty;
-}
-
-/** One Check's detail, the same body in the details pane and as its page: each target's state and its 30 days. */
-export function ServiceCheckDetail(
-  props: Readonly<{ row: ManagedConfiguredCheckRow; nowMs?: number }>,
-) {
-  const { theme } = useUnistyles();
-  const facts = readServiceCheckFacts(props.row.lastResults);
-  const nowMs = props.nowMs ?? Date.now();
-  const pluginTheme = React.useMemo(() => projectPluginUiTheme(theme), [theme]);
-  const colors = {
-    up: theme.colors.state.success.foreground,
-    down: theme.colors.state.danger.foreground,
-    degraded: theme.colors.state.warning.foreground,
-    empty: theme.colors.surface.inset,
-  };
-  return (
-    <View
-      testID={`services.check.${props.row.automationId}.${props.row.triggerId}`}
-    >
-      <ItemGroup
-        title={props.row.native.name}
-        description={props.row.native.description ?? undefined}
-      >
-        <Item
-          title={statusWord(facts.status)}
-          subtitle={uptimeText(facts.uptimePercent) ?? undefined}
-          mode="info"
-        />
-      </ItemGroup>
-      {facts.checks.map((check) => {
-        const strip = check.history
-          ? serviceCheckHistoryStrip(check.history, nowMs)
-          : null;
-        return (
-          <ItemGroup
-            key={check.checkId}
-            testID={`services.check.history.${check.checkId}`}
-            title={t('projects.deployments.services.lastDays')}
-            description={
-              uptimeText(check.history?.uptimePercent ?? null) ??
-              t('projects.deployments.healthNotChecked')
-            }
-            surface="none"
-          >
-            {strip ? (
-              <View style={styles.strip}>
-                <Heatmap
-                  theme={pluginTheme}
-                  label={t('projects.deployments.services.lastDays')}
-                  layout="strip"
-                  size="full"
-                  rows={STRIP_ROWS}
-                  columns={strip.map((day) => ({
-                    id: String(day.dayStartAt),
-                    label: '',
-                  }))}
-                  cells={strip.map((day) => ({
-                    id: String(day.dayStartAt),
-                    row: 'days',
-                    column: String(day.dayStartAt),
-                    label: new Date(day.dayStartAt).toLocaleDateString(
-                      undefined,
-                      { month: 'short', day: 'numeric', timeZone: 'UTC' },
-                    ),
-                    value: day.uptimePercent,
-                    valueLabel:
-                      day.uptimePercent === null
-                        ? t('projects.deployments.healthNotChecked')
-                        : `${day.uptimePercent}%`,
-                    color: dayColor(day, colors),
-                  }))}
-                />
-              </View>
-            ) : null}
-          </ItemGroup>
-        );
-      })}
-    </View>
-  );
-}
-const STRIP_ROWS = [{ id: 'days', label: '' }] as const;
 
 /** Publishes the selected row whenever its identity changes (a new result), so the pane shows current facts. */
 function SelectedRowReport(props: Readonly<{ rows: readonly ManagedConfiguredCheckRow[]; selectedKey: string | null;
@@ -289,9 +152,76 @@ function SelectedRowReport(props: Readonly<{ rows: readonly ManagedConfiguredChe
   return null;
 }
 
-/** Services → Watched (svcWatch): services already running on a Machine that someone watches, the inventory's rows. */
+/**
+ * The Checks list (lab svcChk): one row per saved Check with its description, the lowest 30-day uptime its results
+ * report and its state word, on the Services list's one sheet; the open Check is the selected row.
+ */
+function ChecksList(props: Readonly<{
+  rows: readonly ManagedConfiguredCheckRow[];
+  input: Readonly<{ scope: ServerAccountScope | null; machine: null; projectKey: null }>;
+  selectedKey: string | null;
+  onSelect: (row: ManagedConfiguredCheckRow) => void;
+  onCount: (count: ServicesViewCount) => void;
+}>) {
+  const { theme } = useUnistyles();
+  const { rows, onSelect } = props;
+  const facts = React.useMemo(() => new Map(rows.map((row) => [row.key, readServiceCheckFacts(row.lastResults)])), [rows]);
+  const open = React.useCallback((key: string | number | null) => {
+    const row = key === null ? undefined : rows.find((candidate) => candidate.key === String(key));
+    if (row) onSelect(row);
+  }, [onSelect, rows]);
+  const model = useHappierCollection<ManagedConfiguredCheckRow>({ items: rows, keyOf: keyOfCheck,
+    openKey: props.selectedKey, onOpenChange: open });
+  const anatomy = React.useMemo<CollectionAnatomy<ManagedConfiguredCheckRow>>(() => {
+    const meta = { ...Typography.variant('meta'), color: theme.colors.text.secondary, flexShrink: 1 } as const;
+    const stateWord = (row: ManagedConfiguredCheckRow) => <CheckStateWord row={row} status={facts.get(row.key)?.status ?? 'unknown'} />;
+    return {
+      glyph: (row) => <RowMark row={row} title={row.native.name} input={props.input} />,
+      title: (row) => row.native.name,
+      // Line 2 says what it checks; a phone also says its uptime.
+      byline: (row, layout) => {
+        const uptime = layout?.fieldColumns === true ? null : uptimeText(facts.get(row.key)?.uptimePercent ?? null);
+        const line = [row.native.description, uptime].filter(Boolean).join(' · ');
+        return line ? <Text style={meta} numberOfLines={1}>{line}</Text> : null;
+      },
+      titleMeta: stateWord,
+      titleMetaAlign: 'row',
+      fields: [
+        { key: 'uptime', title: t('projects.deployments.services.columnUptime'), minWidth: 160, priority: 2, align: 'end',
+          listColumn: true, render: (row) => uptimePercentText(facts.get(row.key)?.uptimePercent ?? null) },
+        { key: 'state', title: t('projects.deployments.services.columnState'), minWidth: 128, priority: 1, align: 'end',
+          listColumn: true, render: stateWord },
+      ],
+      accessibilityLabel: (row) => [row.native.name, serviceCheckStatusWord(facts.get(row.key)?.status ?? 'unknown')].join(', '),
+      testID: (row) => `services.checks.row.${row.automationId}.${row.triggerId}`,
+      columnTitles: { title: t('projects.deployments.services.columnCheck') },
+    };
+  }, [facts, props.input, theme.colors.text.secondary]);
+  const failing = rows.filter((row) => row.native.enabled && facts.get(row.key)?.status === 'down').length;
+  const count = React.useMemo(() => [t('projects.deployments.services.countChecks', { count: rows.length }),
+    failing > 0 ? t('projects.deployments.services.countFailing', { count: failing }) : null], [failing, rows.length]);
+  useReportViewCount('checks', count, props.onCount);
+  return (
+    <ServicesPageList<ManagedConfiguredCheckRow> testID="services.checks" model={model} anatomy={anatomy}
+      accessibilityLabel={t('projects.deployments.services.checks')} />
+  );
+}
+const keyOfCheck = (row: ManagedConfiguredCheckRow) => row.key;
+
+/** A Check's state word from its results: failing and degraded speak, a switched-off Check says so quietly. */
+function CheckStateWord(props: Readonly<{ row: ManagedConfiguredCheckRow; status: ServiceCheckStatus }>) {
+  if (!props.row.native.enabled) return <Status tone="muted" label={t('projects.deployments.healthNotChecked')} presentation="inline" />;
+  const tone = props.status === 'down' ? 'danger' : props.status === 'degraded' ? 'warning' : 'secondary';
+  return <Status tone={tone} label={serviceCheckStatusWord(props.status)} presentation="inline" />;
+}
+
+/**
+ * Services → Watched (lab svcWatch): the services someone watches on their Machines, banded by Machine, each drawn as
+ * the Machine's own Services list draws it (its byline and its Ports, Memory and Up) from that Machine's service read;
+ * a row opens the service on its Machine.
+ */
 export function ServicesWatchedView(
-  props: Readonly<{ scope: ServerAccountScope | null; presented: boolean }>,
+  props: Readonly<{ scope: ServerAccountScope | null; presented: boolean; onCount: (count: ServicesViewCount) => void }>,
 ) {
   const query = React.useMemo(
     () => ({
@@ -322,20 +252,104 @@ export function ServicesWatchedView(
             />
           ))
         ) : (
-          <ManagedInventoryDirectory
-            state={state}
-            input={query}
-            groupBy="machine"
-            columns={1}
-            preview={null}
-            testIDPrefix="services.watched"
-          />
+          <WatchedList state={state} serverId={props.scope?.serverId ?? null} presented={props.presented}
+            onCount={props.onCount} />
         )
       }
     </MachineManagedInventorySection>
   );
 }
 
-const styles = StyleSheet.create((theme) => ({
-  strip: { paddingHorizontal: theme.space.s16, paddingTop: theme.space.s4 },
-}));
+type WatchedItem = Readonly<{
+  key: string;
+  machineId: string;
+  name: string;
+  nativeResourceId: string;
+  service: MachineServiceRowV1 | null;
+  href: string | null;
+}>;
+const keyOfWatched = (item: WatchedItem) => item.key;
+const groupOfWatched = (item: WatchedItem) => item.machineId;
+const NO_SERVICE_LISTS: ReadonlyMap<string, readonly MachineServiceRowV1[]> = new Map();
+
+function WatchedList(props: Readonly<{
+  state: ManagedInventorySectionsState;
+  serverId: string | null;
+  presented: boolean;
+  onCount: (count: ServicesViewCount) => void;
+}>) {
+  const { theme } = useUnistyles();
+  const router = useRouter();
+  const watches = React.useMemo(() => props.state.rows.filter((row): row is ManagedWatchedServiceRow =>
+    row.kind === 'watchedService'), [props.state.rows]);
+  const machineIds = React.useMemo(() => [...new Set(watches.map((row) => row.machineId))], [watches]);
+  const names = useMachineDisplayNamesById(machineIds);
+  // Each Machine's own service read, once per Machine that has watches, while the view is shown.
+  const [lists, setLists] = React.useState(NO_SERVICE_LISTS);
+  const report = React.useCallback((machineId: string, rows: readonly MachineServiceRowV1[] | null) => {
+    setLists((current) => {
+      if (rows === null || current.get(machineId) === rows) return current;
+      const next = new Map(current);
+      next.set(machineId, rows);
+      return next;
+    });
+  }, []);
+  const items = React.useMemo<readonly WatchedItem[]>(() => watches.map((row) => ({
+    key: row.key,
+    machineId: row.machineId,
+    name: row.native.name,
+    nativeResourceId: row.native.nativeResourceId,
+    service: lists.get(row.machineId)?.find((service) => service.serviceId === row.native.watchId
+      || service.nativeInstance?.nativeResourceId === row.native.nativeResourceId) ?? null,
+    href: (props.state.presentations.get(row.key)?.home.href as string | undefined) ?? null,
+  })), [lists, props.state.presentations, watches]);
+  const groups = React.useMemo(() => ({
+    axis: machineIds.map((machineId) => ({ key: machineId, title: names[machineId] ?? t('machineServices.groups.watched'),
+      section: SERVICES_ONE_SHEET })),
+    groupOf: groupOfWatched,
+  }), [machineIds, names]);
+  const open = React.useCallback((key: string | number | null) => {
+    const item = key === null ? undefined : items.find((candidate) => candidate.key === String(key));
+    if (item?.href) router.push(item.href as never);
+  }, [items, router]);
+  const model = useHappierCollection<WatchedItem>({ items, keyOf: keyOfWatched, groups, openKey: null, onOpenChange: open });
+  const anatomy = React.useMemo<CollectionAnatomy<WatchedItem>>(() => ({
+    glyph: (item) => <Icon name={item.service ? machineServiceIcon(item.service) : 'eye'} size={ICON_SIZE.md}
+      color={theme.colors.text.secondary} />,
+    title: (item) => item.service ? machineServiceDisplayName(item.service) : item.name,
+    byline: (item, layout) => item.service
+      ? <MachineServiceByline row={item.service} runFactsInColumns={layout?.fieldColumns === true} />
+      : <Text style={{ ...Typography.variant('meta'), color: theme.colors.text.secondary, flexShrink: 1 }} numberOfLines={1}>
+          {item.nativeResourceId}
+        </Text>,
+    titleMeta: (item) => item.service ? renderMachineServicePort(item.service) : null,
+    titleMetaAlign: 'row',
+    fields: machineServiceColumnFields<WatchedItem>((item) => item.service),
+    accessibilityLabel: (item) => [item.service ? machineServiceDisplayName(item.service) : item.name, names[item.machineId]]
+      .filter(Boolean).join(', '),
+    testID: (item) => `services.watched.row.${item.key}`,
+    columnTitles: { title: t('machineServices.columns.service') },
+  }), [names, theme.colors.text.secondary]);
+  const count = React.useMemo(() => [t('projects.deployments.services.countWatched',
+    { services: items.length, machines: machineIds.length })], [items.length, machineIds.length]);
+  useReportViewCount('watched', count, props.onCount);
+  return (
+    <>
+      {props.serverId ? machineIds.map((machineId) => (
+        <WatchedMachineReader key={machineId} serverId={props.serverId!} machineId={machineId} active={props.presented}
+          onRows={report} />
+      )) : null}
+      <ServicesPageList<WatchedItem> testID="services.watched" model={model} anatomy={anatomy}
+        accessibilityLabel={t('projects.deployments.services.watched')} />
+    </>
+  );
+}
+
+/** One Machine's service read (no UI of its own), reported up so the Watched rows draw its facts. */
+function WatchedMachineReader(props: Readonly<{ serverId: string; machineId: string; active: boolean;
+  onRows: (machineId: string, rows: readonly MachineServiceRowV1[] | null) => void }>) {
+  const list = useMachineServicesList({ serverId: props.serverId, machineId: props.machineId, active: props.active });
+  const { onRows, machineId } = props;
+  React.useEffect(() => { onRows(machineId, list.rows ?? null); }, [list.rows, machineId, onRows]);
+  return null;
+}

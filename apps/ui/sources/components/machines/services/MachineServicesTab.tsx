@@ -18,8 +18,6 @@ import type {
   MachinePageTabParams,
 } from '@/components/machines/page/machinePageTabQuery';
 import { MachinePortActionsProvider } from '@/components/machines/localServices/MachinePortActions';
-import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
-import { describeMachineUptime, describeMachineUptimeSpan } from '@/components/machines/vitals/vitalsFormat';
 import { useOpenNewApp } from '@/components/projects/starters/newAppPresentation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { IconButton } from '@/components/ui/buttons/IconButton';
@@ -33,7 +31,6 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import { useMachineTabFacts } from '@/components/machines/page/useMachineTabFacts';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { deploymentEnvironmentRoute } from '@/components/projects/deployments/deploymentNavigation';
-import { InlineCode } from '@/components/ui/text/InlineCode';
 import { MachineTabSubHead } from '@/components/machines/page/MachineTabSubHead';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
@@ -49,16 +46,14 @@ import {
   machineServiceGroupKeys,
   machineServiceIcon,
   machineServiceGroupOf,
-  machineServiceIdentityLine,
   machineServiceStateSpeaks,
-  machineServiceHealthQualifier,
   machineServiceStateTone,
-  machineServiceRunFacts,
   machineServiceExpectedStop,
 } from './machineServicesPresentation';
 import { useMachineDeploymentRoles, useMachineServiceEnvironments, useMachineServiceSourceName } from './useMachineServiceEnvironments';
 import { MachineDeploymentRolesSection, machineDeploymentRoleRows } from './MachineDeploymentRolesSection';
 import { MachineServicePage } from './MachineServicePage';
+import { MachineServiceByline, machineServiceColumnFields, renderMachineServicePort } from './machineServiceColumns';
 import { MachineServiceWatchMenu } from './MachineServiceWatchMenu';
 import {
   useMachineServicesList,
@@ -253,25 +248,10 @@ function MachineServicesList(
         ? <EnvironmentByline rows={item.rows} />
         : <MachineServiceByline row={item.row} runFactsInColumns={layout?.fieldColumns === true} />,
       // The port it listens on: a mono chip in the row's end column on a phone, the Ports column on a wide page.
-      titleMeta: (item) => item.kind === 'service' ? renderServicePort(item.row) : null,
+      titleMeta: (item) => item.kind === 'service' ? renderMachineServicePort(item.row) : null,
       titleMetaAlign: 'row',
       // Ports, Memory and Up line up in tabular columns (lab `services/list`); the shared list drops them on a phone.
-      fields: [
-        { key: 'port', title: t('machineServices.columns.port'), minWidth: 64, priority: 3, listColumn: true,
-          render: (item) => item.kind === 'service' ? renderServicePort(item.row) : null },
-        { key: 'memory', title: t('machineServices.columns.memory'), align: 'end', minWidth: 64, priority: 2, listColumn: true,
-          render: (item) => {
-            if (item.kind !== 'service') return null;
-            const memoryBytes = machineServiceRunFacts(item.row, Date.now()).memoryBytes;
-            return memoryBytes === null ? null : formatMachineBytes(memoryBytes, 'memory');
-          } },
-        { key: 'up', title: t('machineServices.columns.up'), align: 'end', minWidth: 64, priority: 1, listColumn: true,
-          render: (item) => {
-            if (item.kind !== 'service') return null;
-            const upMs = machineServiceRunFacts(item.row, Date.now()).upMs;
-            return upMs === null ? null : describeMachineUptimeSpan(Date.now() - upMs, Date.now());
-          } },
-      ],
+      fields: machineServiceColumnFields<ServicesListItem>((item) => item.kind === 'service' ? item.row : null),
       action: (item) => item.kind === 'environment' && !phone ? environmentLink(item.environmentId) : null,
       accessibilityLabel: (item) => item.kind === 'environment'
         ? `${environmentTitle(item.environmentId)}, ${t('machineServices.environmentRow.services', { count: item.rows.length })}`
@@ -445,47 +425,7 @@ function MachineServiceSourceNameReader(props: Readonly<{
   return null;
 }
 
-/** The port a service listens on, as a mono chip: the phone row's end column and the wide page's Ports column. */
-function renderServicePort(row: MachineServiceRowV1): React.ReactNode {
-  return row.port == null ? null : <InlineCode testID={`machine-service-${row.serviceId}:port`}>{String(row.port)}</InlineCode>;
-}
 
-/** The list row's second line: the state only when it needs the person, then what the service is. */
-function MachineServiceByline(props: Readonly<{ row: MachineServiceRowV1; runFactsInColumns: boolean }>) {
-  const { row } = props;
-  const { theme } = useUnistyles();
-  const identity = machineServiceIdentityLine(row);
-  // A running service its own health source hasn't verified says so quietly (lab: "running, no health check").
-  const qualifier = machineServiceHealthQualifier(row);
-  const health = qualifier ? t('machineServices.health.running', { health: t(`machineServices.health.${qualifier}`) }) : null;
-  // What its source reported about the run (lab Memory and Up): only known values, never a zero for unknown.
-  // Its own columns say them on a wide page.
-  const run = props.runFactsInColumns ? NO_RUN_FACTS : machineServiceRunFacts(row, Date.now());
-  const memory = run.memoryBytes === null ? null : formatMachineBytes(run.memoryBytes, 'memory');
-  // Up reads like the Machine header's own Up ("Up 1 d 4 h"), from the service's last start.
-  const up = run.upMs === null ? null : describeMachineUptime(Date.now() - run.upMs, Date.now());
-  const native = [identity, health, memory, up].filter(Boolean).join(' · ') || null;
-  // A stop the person asked for reads as that stop, quiet (lab `services/states` "Stopped by you"), never as a failure.
-  const expectedStop = machineServiceExpectedStop(row);
-  const speaks = expectedStop !== null || machineServiceStateSpeaks(row.state);
-  if (!speaks && !native) return null;
-  return (
-    // Bounded to the row's text column so a long line ends in an ellipsis at the card edge on a phone, never past it;
-    // the full facts are on the service's page.
-    <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s4, minWidth: 0, maxWidth: '100%', alignSelf: 'stretch' }}>
-      {speaks ? (
-        <Status
-          tone={expectedStop ? 'secondary' : machineServiceStateTone(row.state)}
-          label={expectedStop ? t(`machineServices.expectedDown.${expectedStop}`) : t(`machineServices.state.${row.state}`)}
-          presentation="inline"
-        />
-      ) : null}
-      {native ? <Text style={{ ...Typography.variant('meta'), color: theme.colors.text.secondary, flexShrink: 1 }} numberOfLines={1}>
-        {speaks ? `· ${native}` : native}
-      </Text> : null}
-    </View>
-  );
-}
 
 /** An Environment row's second line: how many services it holds, led by the state of one that needs the person. */
 function EnvironmentByline(props: Readonly<{ rows: readonly MachineServiceRowV1[] }>) {
@@ -577,7 +517,6 @@ function StateCard(
 }
 
 const NO_ROWS: readonly MachineServiceRowV1[] = [];
-const NO_RUN_FACTS = Object.freeze({ memoryBytes: null, upMs: null });
 const NO_NAMES: ReadonlyMap<string, string> = new Map();
 
 /** A Services list row: one deployed Environment (its services are its children), or one service. */
