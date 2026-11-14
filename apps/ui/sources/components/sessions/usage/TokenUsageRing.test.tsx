@@ -42,12 +42,16 @@ describe('TokenUsageRing', () => {
                 testID="goal-budget-token-usage"
                 ringTestID="goal-budget-token-usage-ring"
                 valueTestID="goal-budget-token-usage-value"
+                progressTestID="goal-budget-token-usage-progress"
                 size={48}
             />,
         );
 
         expect(tree.root.findByProps({ accessibilityLabel: 'Goal budget' })).toBeTruthy();
         expect(tree.root.findByProps({ testID: 'goal-budget-token-usage-value' }).props.children).toBe('125k / 500k');
+        const progress = tree.root.findByProps({ testID: 'goal-budget-token-usage-progress' });
+        const circumference = 2 * Math.PI * progress.props.r;
+        expect(1 - progress.props.strokeDashoffset / circumference).toBeCloseTo(0.25);
     });
 
     it('clamps visual progress to the ring circumference', () => {
