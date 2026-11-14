@@ -22,7 +22,7 @@ function createNotificationDeliveryActionSpecs() {
     examples: {
       voice: { argsExample: '{"title":"Tests finished","message":"The test run on the API branch passed."}' },
     },
-    surfaces: { ui: false, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
     inputHints: {
       title: 'Notify me',
       fields: [

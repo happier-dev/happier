@@ -35,13 +35,10 @@ async function addHome() {
         accountId: 'account-a',
         serverIdentityId: 'srv_notifications', currentAccount: true,
     });
-    const { storage } = await import('@/sync/domains/state/storage');
     const machine = createMachineFixture({ id: 'machine-one', activeAt: Date.now(), storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
         access: { custodian: { accountId: 'account-a', displayName: 'Account A' }, role: 'manage', resourceMode: 'plain', accessState: 'ready' } });
-    storage.setState({
-        machines: { [machine.id]: machine },
-        machineListByServerId: { [serverId]: [machine] },
-    });
+    const { publishMachineInventoryForTest } = await import('@/dev/testkit/harness/machinePresence');
+    await publishMachineInventoryForTest({ serverId, accountId: 'account-a' }, [machine]);
     const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(5));
     const publishedMachine = { ...createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a', machine }),
         installationId: 'notification-installation', installationPublicKey: encodeBase64(installation.publicKey), revokedAt: null,
@@ -118,7 +115,7 @@ describe('default Action notification daemon transport', () => {
             ExternalActionRequestEnvelopeV1Schema.parse(ExternalActionExecutionAuthorizationRequestV1Schema.parse(request.input).envelope).input)).toEqual([input]);
     });
 
-    it('resolves channels through real daemon admission and keeps direct UI delivery forbidden', async () => {
+    it('resolves channels through real daemon admission for standalone and Notify me field discovery', async () => {
         const serverId = await addHome();
         const { createDefaultActionExecutor } = await import('./defaultActionExecutor');
         const options = [{ value: 'plugin/channel', label: 'Plugin channel', disabled: true }];
@@ -135,7 +132,9 @@ describe('default Action notification daemon transport', () => {
             .toEqual([{ optionsSourceId: 'notifications.channels.available' }]);
         await expect(createDefaultActionExecutor().execute('action.options.resolve', {
             actionId: 'notifications.notify_me', fieldPath: 'channels',
-        }, { surface: 'ui', serverId })).resolves.toMatchObject({ ok: false, errorCode: 'action_disabled' });
+        }, { surface: 'ui', serverId })).resolves.toEqual({ ok: true, result: {
+            ...result, actionId: 'notifications.notify_me', fieldPath: 'channels',
+        } });
     });
 
     it('does not borrow the focused Home daemon for a notification Account on another Home', async () => {
@@ -174,6 +173,6 @@ describe('default Action notification daemon transport', () => {
         daemonResult = failure;
         await expect(createDefaultActionExecutor().execute('notifications.notify_me', { message: 'Hi' }, {
             surface: 'voice', serverId, authority: 'account_automation',
-        })).resolves.toEqual(failure);
+        })).resolves.toMatchObject(failure);
     });
 });

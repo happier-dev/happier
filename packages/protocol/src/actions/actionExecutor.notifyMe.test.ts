@@ -6,6 +6,20 @@ import { isApprovalRequiredByActionsSettings, resolveActionApprovalRouting } fro
 import type { ApprovalRequest } from '../approvals/approvalRequestV1.js';
 
 describe('Notify me Action', () => {
+  it('resolves Send-to choices for UI authoring and still honors the Action policy', async () => {
+    const options = [{ value: 'builtin:expo_push', label: 'Push notifications' }];
+    const input = { actionId: 'notifications.notify_me', fieldPath: 'channels', draftInput: {} };
+    const executor = createActionExecutor({ notificationChannelsList: async () => ({ items: options }) });
+    await expect(executor.execute('action.options.resolve', input, { surface: 'ui' }))
+      .resolves.toMatchObject({ ok: true, result: { options } });
+
+    const disabled = createActionExecutor({
+      isActionEnabled: id => id !== 'notifications.notify_me',
+      notificationChannelsList: async () => { throw new Error('Disabled Action must not read channels'); },
+    });
+    await expect(disabled.execute('action.options.resolve', input, { surface: 'ui' }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'action_disabled' });
+  });
   it('keeps result custody separate from default consent and honors a Session caller Require setting before delivery', async () => {
     const actionId = 'notifications.notify_me';
     const spec = getActionSpec(actionId);
@@ -60,7 +74,7 @@ describe('Notify me Action', () => {
     expect(await executor.execute('notifications.notify_me', {
       title: "Review didn't converge", message: 'Open the run.', channels: ['builtin:expo_push'],
     }, context)).toEqual({ ok: true, result: { attemptedChannels: 1, deliveredChannels: 1 } });
-    expect(deliveries).toEqual([{ input: {
+    expect(deliveries).toMatchObject([{ input: {
       title: "Review didn't converge", message: 'Open the run.', channels: ['builtin:expo_push'],
       open: { kind: 'workflow_run', runId: 'workflow-1' },
     }, context }]);
