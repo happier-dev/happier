@@ -205,8 +205,7 @@ function WorkspaceSyncAddMachineModal(props: AddMachineProps) {
         setPhase('idle');
         setError(null);
     }, []);
-    const placement = selectedMachine && hub
-        ? resolveWorkspaceSyncDestinationPlacement({ sourceMachineId: hub.machineId, destination: selectedMachine }) : null;
+    const placement = selectedMachine && hub ? resolveWorkspaceSyncDestinationPlacement(selectedMachine) : null;
     const blockedReason = hubConflict || !hub
         ? t('workspaceSync.error.needsAttention')
         : !selectedMachine

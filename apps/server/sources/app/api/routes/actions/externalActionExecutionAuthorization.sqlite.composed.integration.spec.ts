@@ -7133,6 +7133,23 @@ describe("external Action execution authorization", () => {
                 await call();
                 expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({ ok: false, errorCode: 'RPC_FORBIDDEN' }));
                 socket.data = socketData;
+                // Can use on the destination (owner ruling 2026-11-14): the source-run relationship write keeps
+                // needing Manage there, while Add Machine's Project Open Sync on that Machine is admitted with Use.
+                await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: targetCustodian.id, machineId: target.id,
+                    principal: { kind: 'account', accountId: fixture.account.id }, level: 'view' }));
+                await call();
+                expect(callback).toHaveBeenLastCalledWith(expect.objectContaining({ ok: false, errorCode: 'RPC_FORBIDDEN' }));
+                const openInput = OpenProjectInputV1Schema.parse({ serverId: homeId, machineId: target.id,
+                    source: { kind: 'workspace', workspaceId: sourceRefId }, materialization: { kind: 'sync', targetPath: '/worker-copy',
+                        workspaceAction: { kind: 'create_relationship', mode: 'keep_synced',
+                            contentPolicy: createFixtureCopyOnceWorkspaceAction().contentPolicy, flushBeforeCommit: true } } });
+                const openTarget = { kind: 'machine' as const, machineId: target.id };
+                const opened = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('projects.open'),
+                    headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: target.id, envelope:
+                        ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: crypto.randomUUID(), target: openTarget, input: openInput }) } });
+                expect(opened.statusCode, opened.body).toBe(200);
+                expect(ExternalActionExecutionAuthorizationV1Schema.parse(opened.json()).binding)
+                    .toMatchObject({ actionId: 'projects.open', machineId: target.id, admittedMachineRole: 'use' });
                 await inTx(tx => removeMachineAccessGrantInTx(tx, { actorAccountId: targetCustodian.id, machineId: target.id,
                     principal: { kind: 'account', accountId: fixture.account.id } }));
                 await call();

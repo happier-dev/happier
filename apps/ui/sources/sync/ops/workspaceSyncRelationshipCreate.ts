@@ -72,19 +72,18 @@ function readApprovedCreateResult(raw: unknown): WorkspaceSyncRelationshipCreate
 
 /**
  * Where Add Machine runs, decided once from the published Machine access fact.
- * Manage (and the source Machine itself) keeps the source-run relationship
- * Action. A Can use destination on another Machine opens the source Workspace
- * there through Project Open Sync, whose native member owner admits only the
- * person's own member folder (owner ruling 2026-11-14).
+ * Manage keeps the source-run relationship Action, whose target admission
+ * needs Manage even on the source Machine itself. A Can use destination, the
+ * source Machine included, opens the source Workspace there through Project
+ * Open Sync, whose native member owner admits only the person's own member
+ * folder (owner ruling 2026-11-14).
  */
 export type WorkspaceSyncDestinationPlacement = 'source_relationship' | 'destination_open';
 
-export function resolveWorkspaceSyncDestinationPlacement(input: Readonly<{
-    sourceMachineId: string;
-    destination: Pick<Machine, 'id' | 'isShared' | 'access'>;
-}>): WorkspaceSyncDestinationPlacement {
-    return input.destination.id === input.sourceMachineId || canManageMachine(input.destination)
-        ? 'source_relationship' : 'destination_open';
+export function resolveWorkspaceSyncDestinationPlacement(
+    destination: Pick<Machine, 'isShared' | 'access'>,
+): WorkspaceSyncDestinationPlacement {
+    return canManageMachine(destination) ? 'source_relationship' : 'destination_open';
 }
 
 /** Project Open Sync result in this adapter's outcome; refusals keep their typed code. */

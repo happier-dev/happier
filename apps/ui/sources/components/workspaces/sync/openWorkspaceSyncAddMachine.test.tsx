@@ -562,8 +562,8 @@ describe('Project Add machine modal', () => {
     describe('Can use destination (owner ruling 2026-11-14)', () => {
         const memberRoot = '/members/machine-b/workspace';
         const openRequests = () => workspace.home.requestsFor('/v1/actions/projects.open');
-        const shareTargetAsUse = () => act(async () => {
-            const machines = Object.values(storage.getState().machines).map(machine => machine.id === 'machine-b'
+        const shareTargetAsUse = (machineId = 'machine-b') => act(async () => {
+            const machines = Object.values(storage.getState().machines).map(machine => machine.id === machineId
                 ? { ...machine, isShared: true, access: { custodian: { accountId: 'guest-owner', displayName: 'Guest owner' },
                     role: 'use' as const, resourceMode: 'plain' as const, accessState: 'ready' as const } } : machine);
             storage.getState().applyMachines(machines, true, { sourceServerId: workspace.serverId, sourceAccountId: workspace.accountId });
@@ -578,18 +578,19 @@ describe('Project Add machine modal', () => {
                     requestId: request.requestId, execution: { ok: true, result } }) };
             } });
         };
-        const openUseDestination = async (options: Parameters<typeof owner.openWorkspaceSyncAddMachine>[2] = {}) => {
+        const openUseDestination = async (options: Parameters<typeof owner.openWorkspaceSyncAddMachine>[2] = {}, machineId = 'machine-b') => {
+            const root = `/members/${machineId}/workspace`;
             const incumbent = daemonRpc.getMockImplementation()!;
             daemonRpc.mockImplementation(request => request.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIPS_LIST
-                && (request.payload as { requesterAvailability?: true }).requesterAvailability && request.machineId === 'machine-b' ? {
+                && (request.payload as { requesterAvailability?: true }).requesterAvailability && request.machineId === machineId ? {
                     ...createWorkspaceSyncRelationshipsListFixture([], request.machineId),
-                    requesterAvailability: { kind: 'available', homeDir: '/members/machine-b', workspaceRoot: memberRoot,
+                    requesterAvailability: { kind: 'available', homeDir: `/members/${machineId}`, workspaceRoot: root,
                         preparation: 'member_not_prepared' },
                 } : incumbent(request));
-            await shareTargetAsUse();
+            await shareTargetAsUse(machineId);
             owner.openWorkspaceSyncAddMachine(source(), vi.fn(), options);
             const modal = await renderOpenedModal();
-            await chooseTarget(modal.screen, `${memberRoot}/copy`);
+            await chooseTarget(modal.screen, `${root}/copy`, machineId);
             return modal;
         };
 
@@ -623,12 +624,27 @@ describe('Project Add machine modal', () => {
             expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)).toEqual([]);
         });
 
-        it('says a worker clean copy needs Manage instead of offering it', async () => {
-            const modal = await openUseDestination({ targetMachineId: 'machine-b', purpose: 'worker_clean_copy' });
+        it.each(['machine-b', 'machine-a'])('says a worker clean copy needs Manage instead of offering it (%s)', async machineId => {
+            const modal = await openUseDestination({ targetMachineId: machineId, purpose: 'worker_clean_copy' }, machineId);
             await vi.waitFor(() => expect(modal.submit().props).toMatchObject({ disabled: true,
                 accessibilityHint: 'workspaceSync.error.manageRequired' }));
             expect(openRequests()).toEqual([]);
             expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)).toEqual([]);
+        });
+
+        it('opens a sibling own folder on the Can use source Machine instead of the Manage-only relationship', async () => {
+            const root = '/members/machine-a/workspace';
+            await answerOpen({ kind: 'opened', directory: `${root}/copy`, setup: 'notRequired',
+                workspace: { serverId: workspace.serverId, workspaceId: 'copy', machineId: 'machine-a', rootPath: `${root}/copy` } });
+            const modal = await openUseDestination({}, 'machine-a');
+            await vi.waitFor(() => expect(modal.submit().props.disabled).toBe(false));
+            await act(async () => { modal.submit().props.onPress(); });
+            await vi.waitFor(() => expect(openRequests()).toHaveLength(1));
+            expect(ExternalActionRequestEnvelopeV1Schema.parse(openRequests()[0]!.input).input).toMatchObject({
+                machineId: 'machine-a', source: { kind: 'workspace', workspaceId: source().id },
+                materialization: { kind: 'sync', targetPath: `${root}/copy`, workspaceAction: { kind: 'create_relationship' } } });
+            expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_RELATIONSHIP_CREATE)).toEqual([]);
+            expect(callsFor(RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_REPLACEMENT_PREFLIGHT)).toEqual([]);
         });
     });
 
