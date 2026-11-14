@@ -100,7 +100,7 @@ function harness(options: { unmarked?: boolean; online?: boolean; revokeFails?: 
 
 describe('MCP sign-in through canonical Connected Services', () => {
   it.each([
-    { stage: 'begin_connect', options: { beginConnectFailure: new Error('private transport diagnostic') }, code: 'mcp_sign_in_begin_connect_failed' },
+    { stage: 'begin_connect', options: { beginConnectFailure: Object.assign(new Error('private transport diagnostic'), { code: 'ECONNREFUSED' }) }, code: 'mcp_sign_in_begin_connect_failed' },
     { stage: 'begin_connect', options: { beginConnectFailure: new RpcError('private transport diagnostic', RPC_ERROR_CODES.OUTCOME_UNKNOWN) }, code: RPC_ERROR_CODES.OUTCOME_UNKNOWN },
     { stage: 'service_description', options: { describeFailure: new Error('private transport diagnostic') }, code: 'mcp_sign_in_service_description_failed' },
     { stage: 'configuration_read', options: { inconsistentConfigurationPeer: true }, code: 'qualified_connected_accounts_inconsistent_peer' },
@@ -109,6 +109,11 @@ describe('MCP sign-in through canonical Connected Services', () => {
     const result = await owner.execute({ actionId: 'mcp.servers.signIn.start', input: { serverId: 'server' }, context })
       .catch(projectMcpServerActionFailureV1);
     expect(result).toMatchObject({ ok: false, errorCode: code, error: code, details: { stage } });
+    if ('beginConnectFailure' in options) expect(result).toMatchObject({ failureCause: {
+      phase: 'mcp.sign_in.begin_connect', errorClass: options.beginConnectFailure.name,
+      errorCode: 'code' in options.beginConnectFailure ? options.beginConnectFailure.code : RPC_ERROR_CODES.OUTCOME_UNKNOWN,
+      httpStatus: null,
+    } });
     expect(JSON.stringify(result)).not.toContain('private transport diagnostic');
     expect(owner.read().catalog.servers).toHaveLength(1);
   });

@@ -1,6 +1,6 @@
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { ActionExecuteFailureSchema, ClientActionRpcFailureCodeV1Schema, readUnexpectedActionErrorDiagnosticV1, type ActionExecuteFailure, type ActionExecuteResult } from '../../actions/actionExecutionResult.js';
+import { ActionExecuteFailureSchema, ClientActionRpcFailureCodeV1Schema, projectActionFailureCauseV1, readUnexpectedActionErrorDiagnosticV1, type ActionExecuteFailure, type ActionExecuteResult } from '../../actions/actionExecutionResult.js';
 import { readRpcErrorCode } from '../../rpc/errors.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from '../../actions/executor/types.js';
 import type { PluginAgentToolsCapabilityV2 } from '../../plugins/contributions/v2.js';
@@ -69,7 +69,7 @@ export type McpSignInFailureStageV1 = 'host_admission' | 'catalog_read' | 'machi
 
 /** This code has already been admitted as a public Connected Service Action refusal. */
 class ConnectedServiceActionRefusal extends Error {
-  constructor(readonly errorCode: string) { super('Connected Service Action refused'); }
+  constructor(readonly refusal: ActionExecuteFailure) { super('Connected Service Action refused'); }
 }
 
 const catalogFailureCodes = new Set<string>([
@@ -89,13 +89,14 @@ export function projectMcpServerActionFailureV1(cause: unknown, signInStage?: Mc
   const rpcFailure = ClientActionRpcFailureCodeV1Schema.safeParse(readRpcErrorCode(cause) ?? code);
   const aborted = cause && typeof cause === 'object' && 'name' in cause && cause.name === 'AbortError';
   const projectedCode = code === 'action_account_scope_changed' ? 'scope-retired' : aborted ? 'cancelled'
-    : cause instanceof ConnectedServiceActionRefusal ? cause.errorCode
+    : cause instanceof ConnectedServiceActionRefusal ? cause.refusal.errorCode
     : typeof code === 'string' && catalogFailureCodes.has(code) ? code
     : rpcFailure.success ? rpcFailure.data : 'mcp_catalog_operation_failed';
   const errorCode = signInStage && projectedCode === 'mcp_catalog_operation_failed'
     ? `mcp_sign_in_${signInStage}_failed` : projectedCode;
   return { ok: false, errorCode, error: errorCode,
-    ...(signInStage ? { details: { stage: signInStage, errorClass: readUnexpectedActionErrorDiagnosticV1(cause).errorClass } } : {}) };
+    ...(signInStage ? { details: { stage: signInStage, errorClass: readUnexpectedActionErrorDiagnosticV1(cause).errorClass },
+      failureCause: projectActionFailureCauseV1(cause instanceof ConnectedServiceActionRefusal ? cause.refusal : cause, `mcp.sign_in.${signInStage}`) } : {}) };
 }
 
 /** The shared Action adapter selects semantic operations; catalog decisions stay at its owner. */
@@ -106,7 +107,7 @@ export function createMcpServerActionExecuteV1(ports: McpServerActionPortsV1) {
       if (!ports.connectedServiceAction) throw Object.assign(new Error('Connected Services unavailable'), { code: 'mcp_sign_in_not_supported' });
       const response = await ports.connectedServiceAction({ actionId: id, input: operands, context: operationContext, signal: operationContext.signal });
       const refusal = ActionExecuteFailureSchema.safeParse(response);
-      if (refusal.success) throw new ConnectedServiceActionRefusal(refusal.data.errorCode);
+      if (refusal.success) throw new ConnectedServiceActionRefusal(refusal.data);
       return connectedOutputs[id].parse(response) as z.infer<(typeof connectedOutputs)[TId]>;
     };
     const describe = async (machineId: string, requiredOperation: 'credential_write' | 'credential_delete') => {
