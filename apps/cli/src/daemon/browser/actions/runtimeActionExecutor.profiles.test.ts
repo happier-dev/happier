@@ -107,6 +107,7 @@ it('selects a saved profile through the existing close/open owner and leaves vie
     let views: BrowserDaemonViewV1[] = [{ browserSessionId: 'session', viewId: 'old', sourceId: 'source', target,
       platform: 'web', adapterKind: 'chromiumSidecar', events: [] }];
     let selectedProfile: string | undefined;
+    let sandboxUnavailable = false;
     const broker = createBrowserDaemonControlBroker();
     // Substitute the browser process boundary; catalog, admission, routes, broker and profile store stay real.
     broker.registerAdapter({ adapterKind: 'chromiumSidecar', supportsOpenView: command => command.target.kind === 'externalUrl',
@@ -115,6 +116,8 @@ it('selects a saved profile through the existing close/open owner and leaves vie
         if (command.kind === 'closeView') views = views.filter(view => view.viewId !== command.viewId);
         if (command.kind === 'openView') {
           if (views.length > 0) throw new Error('Previous profile still owns a view.');
+          if (sandboxUnavailable) return { v: 1, commandId: command.commandId, status: 'failed',
+            error: { code: 'sandbox_unavailable', message: 'Managed Chromium sandbox is unavailable.' } };
           selectedProfile = command.profileId;
           views = [{ browserSessionId: command.browserSessionId, viewId: command.viewId,
             sourceId: 'source', target: command.target, platform: command.platform, adapterKind: 'chromiumSidecar', events: [] }];
@@ -147,5 +150,11 @@ it('selects a saved profile through the existing close/open owner and leaves vie
     expect(selectedProfile).toBe('work');
     expect(views[0]?.target).toEqual(target);
     expect(views.map(view => view.viewId)).toEqual(['old']);
+    sandboxUnavailable = true;
+    expect(await executor.execute('browser.profile.select', { ...request, profileId: 'work' },
+      { ...context, actionRequestId: 'profile-sandbox-request' })).toMatchObject({ ok: false,
+      errorCode: 'sandbox_unavailable', requestId: 'profile-sandbox-request',
+      failureCause: { phase: 'browser.profile.select', errorCode: 'sandbox_unavailable' } });
+    expect(views).toEqual([]);
   } finally { await rm(root, { recursive: true, force: true }); }
 });

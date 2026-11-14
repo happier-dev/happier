@@ -16,6 +16,7 @@ import { discussionFailureLabel } from '@/components/discussions/discussionFailu
 import { getSessionInputFailureLabelKey } from '@/components/sessions/pending/pendingMessageVisualState';
 import { readTransientAvailabilityFailure } from '@/utils/errors/transientAvailability';
 import { resolveSessionSpawnNewResultFailureMessage } from './sessionSpawnFailurePresentation';
+import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
     return value !== null && typeof value === 'object' ? (value as Record<string, unknown>) : null;
@@ -163,6 +164,7 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
     if (code === 'machine_admin_access_required') return t('errors.machineAdminAccessRequired');
     if (code === 'machine_network_review_required') return t('errors.machineNetworkReviewRequired');
     if (code === 'managed_cli_unavailable') return t('errors.machineManagedCliUnavailable');
+    if (code === 'sandbox_unavailable') return resolveReasonCopy({ kind: 'browserFrame', reasonCode: code }).body;
     if (code === 'profile_exists') return t('browserShell.profile.management.profileExists');
     if (code === 'profile_not_found') return t('browserShell.profile.management.profileNotFound');
     if (code === 'profile_unavailable') return t('browserShell.profile.management.profileUnavailable');

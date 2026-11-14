@@ -5,6 +5,7 @@ import {
 } from '../actionIds.js';
 import type { RuntimeActionDispatchArgs } from './types.js';
 import { BrowserCommandDispatchResultV1Schema } from '../../browser/control/v1.js';
+import { projectActionFailureCauseV1 } from '../actionExecutionResult.js';
 
 export const BROWSER_RUNTIME_ACTION_IDS = [
   ...ACTION_ID_FAMILIES_V1.browser_control,
@@ -41,7 +42,8 @@ export async function executeBrowserRuntimeAction(args: RuntimeActionDispatchArg
   // once here so every Action caller and durable approval records the same result.
   const command = BrowserCommandDispatchResultV1Schema.safeParse(result);
   if (command.success && command.data.status === 'failed') {
-    return { ok: false, errorCode: command.data.error.code, error: command.data.error.message, details: command.data };
+    return { ok: false, errorCode: command.data.error.code, error: command.data.error.message, details: command.data,
+      failureCause: projectActionFailureCauseV1({ name: 'Error', code: command.data.error.code }, args.actionId) };
   }
   return result;
 }

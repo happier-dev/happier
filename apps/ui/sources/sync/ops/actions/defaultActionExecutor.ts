@@ -961,7 +961,7 @@ function finishSessionArchiveInvocation(invocation: SessionArchiveInvocation | u
     const target = args.context.externalActionTarget;
     if (!accountContext || target?.kind !== 'machine' || !target.machineId.trim()) return { ok: false, errorCode: 'runtime_action_disabled', error: 'browser_automation_unavailable' };
     const result = await executeOriginalAccountMachineAction({ account: accountContext, actionId: args.actionId,
-      requestId: randomUUID(), machineId: target.machineId, machineTarget: target, input: args.input,
+      requestId: args.context.actionRequestId ?? randomUUID(), machineId: target.machineId, machineTarget: target, input: args.input,
       actionCaller: args.context.actionCaller,
       authority: args.context.authority, signal: args.context.signal });
     return result.ok ? result.result : result;

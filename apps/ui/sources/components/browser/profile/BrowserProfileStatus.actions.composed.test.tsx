@@ -31,7 +31,7 @@ const harness = createWebListDomHarness({ rowSelector: '[data-testid^="profiles-
 afterEach(async () => { await standardCleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); await homes.reset(); });
 afterAll(async () => { await network.dispose(); });
 
-it.each(['none', 'select', 'delete', 'unavailable', 'refused', 'closed'] as const)('delivers saved-profile mutations and reasons during %s', async (retireDuring) => {
+it.each(['none', 'select', 'delete', 'unavailable', 'refused', 'closed', 'sandbox'] as const)('delivers saved-profile mutations and reasons during %s', async (retireDuring) => {
     vi.stubGlobal('crypto', globalThis.crypto ?? webcrypto);
     const serverUrl = 'https://saved-profile-controls.test';
     const serverIdentityId = 'srv_saved_profile_controls';
@@ -53,6 +53,13 @@ it.each(['none', 'select', 'delete', 'unavailable', 'refused', 'closed'] as cons
             const request = ExternalActionRequestEnvelopeV1Schema.parse(body);
             expect(request.target).toEqual({ kind: 'machine', machineId: 'machine' });
             const input = request.input as { profileId: string; displayName: string; commandId: string };
+            if (actionId === 'browser.profile.select' && retireDuring === 'sandbox') {
+                return { body: { v: 1, actionId, requestId: request.requestId, execution: {
+                    ok: false, errorCode: 'sandbox_unavailable', error: 'Managed Chromium sandbox is unavailable.',
+                    failureCause: { phase: 'browser.profile.select', errorClass: 'Error', errorCode: 'sandbox_unavailable', httpStatus: null },
+                    details: { privatePath: '/private/profile', privateText: 'producer-only detail' },
+                } } };
+            }
             if (actionId === 'browser.profile.create' && (retireDuring === 'unavailable' || retireDuring === 'refused')) {
                 return { body: { v: 1, actionId, requestId: request.requestId, execution: retireDuring === 'refused'
                     ? { ok: false, errorCode: 'permission_denied', error: 'permission_denied' }
@@ -114,7 +121,7 @@ it.each(['none', 'select', 'delete', 'unavailable', 'refused', 'closed'] as cons
         if (retireDuring === 'unavailable' || retireDuring === 'refused') {
             const { t } = await import('@/text');
             await waitForHomeGovernance(() => expect(alert).toHaveBeenCalledWith(t('common.error'),
-                retireDuring === 'refused' ? t('errors.permissionDenied') : t('browserShell.profile.management.profileExists')));
+                retireDuring === 'refused' ? t('errors.permissionDenied') : t('browserShell.profile.management.profileExists'), expect.any(Array)));
             expect(profiles).toEqual([]);
             return;
         }
@@ -127,6 +134,21 @@ it.each(['none', 'select', 'delete', 'unavailable', 'refused', 'closed'] as cons
         });
         await act(async () => harness.container.querySelector<HTMLElement>(`[data-testid="profiles-profile-select-${profileId}"]`)!.click());
         await waitForHomeGovernance(() => expect(homes.requestsFor('/v1/actions/browser.profile.select')).toHaveLength(1));
+        if (retireDuring === 'sandbox') {
+            const { t } = await import('@/text');
+            await waitForHomeGovernance(() => expect(alert.mock.calls.at(-1)?.[2]?.some(
+                button => button.text === t('approvals.technicalDetails'))).toBe(true));
+            expect(alert.mock.calls.at(-1)?.[1]).toBe(t('browserShell.unavailable.sandboxUnavailable'));
+            expect(onSelected).not.toHaveBeenCalled();
+            const request = ExternalActionRequestEnvelopeV1Schema.parse(homes.requestsFor('/v1/actions/browser.profile.select')[0]!.input);
+            expect(alert.mock.calls.at(-1)?.[1]).not.toContain(request.requestId);
+            await act(async () => { alert.mock.calls.at(-1)![2]!.find(button => button.text === t('approvals.technicalDetails'))!.onPress!(); });
+            expect(JSON.parse(String(alert.mock.calls.at(-1)?.[1]))).toMatchObject({ code: 'sandbox_unavailable',
+                causePhase: 'browser.profile.select', causeCode: 'sandbox_unavailable', requestId: request.requestId });
+            expect(alert.mock.calls.at(-1)?.[1]).not.toContain('/private/profile');
+            expect(alert.mock.calls.at(-1)?.[1]).not.toContain('producer-only detail');
+            return;
+        }
         if (retireDuring === 'select') {
             // A profile switch closes the old native view before its terminal HTTP receipt.
             await act(async () => harness.root.render(null));
