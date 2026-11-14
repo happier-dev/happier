@@ -147,6 +147,17 @@ async function openTab(detail: PluginUiTestkit, name: string): Promise<void> {
 }
 
 describe('the mounted GitLab detail-panel lifecycle', () => {
+  it.each([true, false])('does not claim empty Activity when a substream failed (all failed: %s)', async allFailed => {
+    const detail = await mountDetail(async ({ action }) => {
+      const localId = typeof action === 'string' ? action : action.localId;
+      if (!allFailed && localId === GITLAB_TRIAGE_DETAIL_ACTION_IDS.listNotes) return {
+        kind: 'notes', rows: [], omittedRowCount: 0, projectionTruncated: false,
+      };
+      return unavailableChanges();
+    }, 'activity');
+    expect(document.body.textContent).toContain('Part of the activity is unavailable');
+    await expect(detail.queryByText('No activity')).resolves.toBeUndefined();
+  });
   it('reads merge-request Activity as one stream with each remark once and no story step', async () => {
     const note = { id: 'note-1', author: 'Mara', body: 'Source-only discussion.', system: false, atMs: 1_760_000_100_000 };
     const detail = await mountDetail(async ({ action, input }) => {

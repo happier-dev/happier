@@ -777,15 +777,6 @@ function ActivityStreamPanel({
     return <LoadingState title="Reading this activity from Bitbucket" titleKey="plugins.bitbucket.ui.readingActivity" />;
   }
   const readFailed = text('plugins.bitbucket.ui.readFailed', 'Bitbucket could not complete this read.');
-  if (activity.state.kind === 'unavailable' && comments.state.kind === 'unavailable') {
-    return (
-      <><ErrorState
-        title="The activity is unavailable"
-        titleKey="plugins.bitbucket.ui.activityUnavailable"
-        description={failureDescription(activity.state.failure, readFailed, text)}
-      /><TriageSourceReadFailureDetails failures={[activity.state.failure, comments.state.failure]} /></>
-    );
-  }
   return (
     <TriageActivityTimeline
       events={events}
@@ -814,14 +805,14 @@ function ActivityStreamPanel({
           <BitbucketReviewCommentReplyControls input={input} comments={commentRows} />
         </Stack>
       )}
-      empty={(
+      empty={activity.state.kind === 'ready' && comments.state.kind === 'ready' ? (
         <EmptyState
           title="No recorded activity"
           titleKey="plugins.bitbucket.ui.noActivity"
           description="Bitbucket has recorded nothing on this pull request yet."
           descriptionKey="plugins.bitbucket.ui.noActivity.description"
         />
-      )}
+      ) : null}
       continuations={[
         ...(activity.state.kind === 'ready' && activity.state.canLoadMore ? [{
           key: 'activity',

@@ -84,6 +84,24 @@ afterEach(async () => {
 });
 
 describe('the mounted Bitbucket pull-request detail tablist', () => {
+  it.each([true, false])('retries cold Activity failures on page Refresh without claiming emptiness (both failed: %s)', async bothFailed => {
+    const reads = new Map<string, number>();
+    const detail = await mountDetail({ ...FIXTURE.detailInput, panel: 'activity' } as unknown as JsonValue, {}, localId => {
+      const kind = localId === BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listActivity ? 'activity'
+        : localId === BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listComments ? 'comments' : null;
+      if (kind === null) return undefined;
+      const count = (reads.get(kind) ?? 0) + 1;
+      reads.set(kind, count);
+      return count === 1 && (bothFailed || kind === 'activity')
+        ? { kind: 'unavailable', failure: { class: 'transient', code: 'fixture-read-failed' } }
+        : { kind, rows: [], omittedRowCount: 0, projectionTruncated: false };
+    });
+    await expect(detail.getByText('The activity is unavailable')).resolves.toBeDefined();
+    await expect(detail.queryByText('No recorded activity')).resolves.toBeUndefined();
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Refresh page' })); });
+    await expect(detail.getByText('No recorded activity')).resolves.toBeDefined();
+    expect(Object.fromEntries(reads)).toEqual({ activity: 2, comments: 2 });
+  });
   it('settles a lost diff receipt without crashing and recovers on the page refresh', async () => {
     let reads = 0;
     const detail = await mountDetail({ ...FIXTURE.detailInput, panel: 'files' } as unknown as JsonValue, {}, (localId) => {

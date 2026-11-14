@@ -5,9 +5,9 @@ import type { JsonValue } from '@happier-dev/plugin-sdk';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
-import { defineUiSurface, Tabs } from '@happier-dev/plugin-ui';
+import { Button, defineUiSurface, Tabs } from '@happier-dev/plugin-ui';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
-import { TriagePostMutationCompletionProvider } from '@happier-dev/triage-sources/ui';
+import { TriageActivityAgentProvider, TriagePostMutationCompletionProvider } from '@happier-dev/triage-sources/ui';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { AZURE_DEVOPS_PLUGIN_ID } from '../../azureDevopsContracts.js';
@@ -60,6 +60,13 @@ const PAGE_REFUSED = {
 
 const changeInputs: unknown[] = [];
 const mounted: PluginUiTestkit[] = [];
+function RefreshPage({ children }: Readonly<{ children: React.ReactNode }>) {
+  const [refreshGeneration, setRefreshGeneration] = React.useState(0);
+  return <TriageActivityAgentProvider value={{ events: [], tail: null, refreshGeneration }}>
+    <Button title="Refresh page" onPress={() => setRefreshGeneration(value => value + 1)} />
+    {children}
+  </TriageActivityAgentProvider>;
+}
 /** Successive answers for the iteration-changes walk, by request order. */
 let changesAnswers: readonly JsonValue[] = [];
 /** The review threads read, when a case needs one. */
@@ -68,6 +75,7 @@ let threadsAnswer: JsonValue | undefined;
 async function mountDetail(panel?: string, policies?: JsonValue, commits?: JsonValue, rootOptions: Readonly<{
   visible: () => boolean;
   readIterations: (signal: AbortSignal) => Promise<JsonValue>;
+  readActivity?: (localId: string) => JsonValue | undefined;
 }> | null = null): Promise<PluginUiTestkit> {
   let fixture!: PluginUiTestkit;
   await act(async () => {
@@ -75,13 +83,13 @@ async function mountDetail(panel?: string, policies?: JsonValue, commits?: JsonV
       identity: { instanceId: 'fixture-instance-161', mountNonce: 'fixture-mount-161' },
       authorPlugin: { id: AZURE_DEVOPS_PLUGIN_ID, version: '0.0.0' },
       surface: defineUiSurface((context) => (
-        <TriagePostMutationCompletionProvider onComplete={async () => {}}>
+        <RefreshPage><TriagePostMutationCompletionProvider onComplete={async () => {}}>
           {rootOptions === null ? renderSurface(context) : <Tabs value={rootOptions.visible() ? 'source' : 'session'}
             onValueChange={() => {}} ariaLabel="Detail planes" tabList="host">
             <Tabs.Item value="source" title="Source" retention="retain">{renderSurface(context)}</Tabs.Item>
             <Tabs.Item value="session" title="Session" />
           </Tabs>}
-        </TriagePostMutationCompletionProvider>
+        </TriagePostMutationCompletionProvider></RefreshPage>
       )),
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
@@ -89,6 +97,8 @@ async function mountDetail(panel?: string, policies?: JsonValue, commits?: JsonV
       handlers: {
         executeAction: async ({ action, input, signal }) => {
           const localId = (action as Readonly<{ localId?: string }>).localId ?? '';
+          const activityAnswer = rootOptions?.readActivity?.(localId);
+          if (activityAnswer !== undefined) return activityAnswer;
           if (localId === AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readIterations) {
             if (rootOptions !== null) return await rootOptions.readIterations(signal);
             return ITERATIONS_RESULT;
@@ -130,6 +140,27 @@ afterEach(async () => {
 });
 
 describe('the mounted Azure DevOps Files walk after a refused page', () => {
+  it.each([true, false])('retries cold Activity failures without claiming emptiness (both failed: %s)', async bothFailed => {
+    const reads = new Map<string, number>();
+    const detail = await mountDetail('activity', undefined, undefined, {
+      visible: () => true,
+      readIterations: async () => ({ kind: 'iterations', rows: [], omittedRowCount: 0, projectionTruncated: false }),
+      readActivity: localId => {
+        const kind = localId === AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.listCommits ? 'commits'
+          : localId === AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readThreads ? 'threads' : null;
+        if (kind === null) return undefined;
+        const count = (reads.get(kind) ?? 0) + 1;
+        reads.set(kind, count);
+        return count === 1 && (bothFailed || kind === 'commits') ? PAGE_REFUSED
+          : { kind, rows: [], omittedRowCount: 0, projectionTruncated: false };
+      },
+    });
+    await expect(detail.getByText('The activity is unavailable')).resolves.toBeDefined();
+    await expect(detail.queryByText('No commits')).resolves.toBeUndefined();
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Refresh page' })); });
+    await expect(detail.getByText('No commits')).resolves.toBeDefined();
+    expect(Object.fromEntries(reads)).toEqual({ commits: 2, threads: 2 });
+  });
   it('keeps the settled shared root iteration while the source is hidden', async () => {
     let visible = true;
     let reads = 0;

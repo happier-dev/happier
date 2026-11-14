@@ -635,14 +635,14 @@ function GitlabActivityStream({
             : <PageFailureBanner key={key} state={controller.state} />)}
         </Stack>
       )}
-      empty={(
+      empty={walks.every(({ controller }) => controller.state.kind === 'ready') ? (
         <EmptyState
           title="No activity"
           titleKey="plugins.gitlab.ui.noActivity"
           description="GitLab has recorded no activity on this entry yet."
           descriptionKey="plugins.gitlab.ui.noActivity.description"
         />
-      )}
+      ) : null}
       continuations={walks.flatMap((walk) => walk.controller.state.kind === 'ready'
         && walk.controller.state.canLoadMore
         ? [{

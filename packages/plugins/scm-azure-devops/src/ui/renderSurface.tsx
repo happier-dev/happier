@@ -930,15 +930,6 @@ function ActivityStreamPanel({
     return <LoadingState title="Reading the commits from Azure DevOps" titleKey="plugins.azureDevops.ui.readingCommits" />;
   }
   const readFailed = text('plugins.azureDevops.ui.readFailed', 'Azure DevOps could not complete this read.');
-  if (commits.state.kind === 'unavailable' && threadState.kind === 'unavailable') {
-    return (
-      <ErrorState
-        title="The activity is unavailable"
-        titleKey="plugins.azureDevops.ui.activityUnavailable"
-        description={failureDescription(commits.state.failure, readFailed, text)}
-      />
-    );
-  }
 
   return (
     <TriageActivityTimeline
@@ -976,14 +967,14 @@ function ActivityStreamPanel({
           ) : <SettledReadEvidence state={threadState} />}
         </Stack>
       )}
-      empty={(
+      empty={commits.state.kind === 'ready' && threadState.kind === 'ready' && iterations.kind === 'ready' ? (
         <EmptyState
           title="No commits"
           titleKey="plugins.azureDevops.ui.noCommits"
           description="Azure DevOps reports no commit on this pull request yet."
           descriptionKey="plugins.azureDevops.ui.noCommits.description"
         />
-      )}
+      ) : null}
       continuations={[
         // Azure lists a pull request's commits newest first, so the next page is older.
         ...(commits.state.kind === 'ready' && commits.state.canLoadMore ? [{
