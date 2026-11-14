@@ -27,7 +27,7 @@ import { HappierScrollArea } from '../layout/Layout.js';
 import { useOptionalPluginUiPresentationHost } from '../../presentationHost/context.js';
 import { HappierScrollHeadContextInternal, type HappierScrollHeadInternal } from '../layout/scrollHead.js';
 import { happierFocusRingStyle } from '../interaction/focusVisible.js';
-import { listWebFocusableElements } from '../interaction/webFocusableElements.js';
+import { hasWebFocusableElement } from '../interaction/webFocusableElements.js';
 import { HappierPressable } from '../interaction/Pressable.js';
 import { HappierText } from '../text/Text.js';
 import { readHappierTypeRoleTabular, resolveHappierTypeRoleStyle } from '../text/typeRole.js';
@@ -153,7 +153,7 @@ function HappierTabPanel(props: Readonly<{
     if (Platform.OS !== 'web' || !active || props.labelledBy === undefined
       || typeof HTMLElement === 'undefined' || !(panel instanceof HTMLElement)) return;
     const updateTabStop = (): void => {
-      const tabIndex = listWebFocusableElements(panel).length === 0 ? '0' : null;
+      const tabIndex = hasWebFocusableElement(panel) ? null : '0';
       if (panel.getAttribute('tabindex') === tabIndex) return;
       if (tabIndex === null) panel.removeAttribute('tabindex');
       else panel.setAttribute('tabindex', tabIndex);

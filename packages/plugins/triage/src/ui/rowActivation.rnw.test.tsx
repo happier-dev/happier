@@ -38,6 +38,7 @@ import { refreshTriageListWindow } from './window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderShellSurface } from './surface.js';
 import { triageListRowTestId } from './list/rows.js';
+import { buildTriageRouteSubPathV1, TRIAGE_ROUTE_DEFAULT_LENS_V1 } from './navigation/location.js';
 import { pressToolbarMenuItem } from './shell/toolbarMenus.test-support.js';
 
 /**
@@ -246,12 +247,13 @@ describe('opening a PRs & Issues row', () => {
 
         const written = locations.slice(before);
         expect(written.length).toBeGreaterThan(0);
-        // The canonical encoding names every component of the entry reference,
-        // percent-encoded, so a copied location selects the same entry rather
-        // than a different one whose components happen to join to the same
-        // string.
+        // A copied location preserves both the selected entry and its connection.
         expect(written[written.length - 1]).toBe(
-            'e,happier.example.source,example-forge,pull-request,example%2Frepository,17',
+            buildTriageRouteSubPathV1({
+                ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
+                selection: { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' },
+                selectionSourceInstanceId: INSTANCE,
+            }),
         );
     });
 

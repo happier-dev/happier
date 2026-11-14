@@ -153,7 +153,7 @@ describe('the way out of an unconfigured PRs & Issues', () => {
         await uiKit!.press(await uiKit!.getByRole('button', { name: 'Add acme/ledger to PRs & Issues' }));
       });
       expect(administered).toEqual([{
-        v: 1, kind: 'create', draft: {
+        v: 1, kind: 'create', source: { pluginId: externalManifest.id, localId: source.id }, draft: {
           v: 1,
           binding: { purpose: LEDGER_ACCOUNT_PURPOSE, account },
           localInstanceKey: 'acme/ledger', keyStability: 'stable',

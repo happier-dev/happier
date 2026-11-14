@@ -43,9 +43,10 @@ export function PullRequestReadFailure(props: Readonly<{
 export function PullRequestFailureDetails(props: Readonly<{
   codes: readonly (string | undefined)[];
   requestId?: string;
+  detail?: string;
   title?: string;
 }>): React.ReactElement | null {
   const details = [...new Set(props.codes.filter(code => code !== undefined))].join('\n');
-  return !details ? null : <ActionFailureDetails code={details} requestId={props.requestId}
+  return !details ? null : <ActionFailureDetails code={details} requestId={props.requestId} detail={props.detail}
     title={props.title} showReason={false} />;
 }

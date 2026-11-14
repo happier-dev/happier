@@ -77,6 +77,7 @@ import { planTriageDetailTabsV1 } from '../detail/tabs.js';
 import type { TriageDetailAvailableTabV1 } from '../detail/body.js';
 import { projectTriageDetailHeaderV1 } from '../detail/header.js';
 import { useTriagePostMutationRow } from '../detail/useTriagePostMutationRow.js';
+import { presentInternalTaskReadFailure } from '../../internalTasks/readFailure.js';
 import {
   renderTriageDetailHeaderV1,
   TriageDetailRegion,
@@ -1219,6 +1220,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     surface.selection,
     window.readOwner,
   );
+  const selectedReadRefusal = presentInternalTaskReadFailure(selectedReadFailure?.code, text);
   // The page's one refresh (lab: "Updated · ⟳"): a press re-reads the list and, once, the open entry through its
   // existing exact read; the generation tells the mounted detail's Activity to re-read its source as well.
   const [detailRefreshGeneration, setDetailRefreshGeneration] = React.useState(0);
@@ -2487,13 +2489,15 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         onClose={dismissDetail}
       />
     ) : readFailed ? <Stack gap="small"><ErrorState
-        titleKey="plugins.triage.surface.detail.accountError.title" title="These details could not be read"
-        descriptionKey="plugins.triage.surface.detail.accountError.description"
-        description="This entry's details are unavailable right now. Try again when the connection is available."
+        titleKey={selectedReadRefusal === null ? 'plugins.triage.surface.detail.accountError.title' : undefined}
+        title={selectedReadRefusal ?? 'These details could not be read'}
+        descriptionKey={selectedReadRefusal === null ? 'plugins.triage.surface.detail.accountError.description' : undefined}
+        description={selectedReadRefusal === null ? "This entry's details are unavailable right now. Try again when the connection is available." : undefined}
         action={<Button titleKey="plugins.triage.surface.actions.retry" title="Retry" variant="secondary" onPress={completePostMutation} />}
       /><PullRequestFailureDetails
         codes={[selectedReadFailure?.code, ...(selectedReadFailure?.diagnostics?.map(diagnostic => diagnostic.code) ?? [])]}
         requestId={readPluginErrorRequestIdV1(selectedReadFailure)}
+        detail={selectedReadFailure?.data.message}
       /></Stack> : <LoadingState titleKey="plugins.triage.surface.detail.reading" title="Reading this entry" />
   );
 

@@ -15,6 +15,14 @@ export function listWebFocusableElements(container: HTMLElement): WebFocusableEl
   return Array.from(container.querySelectorAll<WebFocusableElement>(WEB_FOCUSABLE_SELECTOR)).filter(isEligibleFocusTarget);
 }
 
+/** Panels only need the first reachable target to establish their Tab stop. */
+export function hasWebFocusableElement(container: HTMLElement): boolean {
+  for (const target of container.querySelectorAll<WebFocusableElement>(WEB_FOCUSABLE_SELECTOR)) {
+    if (isEligibleFocusTarget(target)) return true;
+  }
+  return false;
+}
+
 export function isEligibleFocusTarget(target: unknown): target is WebFocusableElement {
   const isHtmlElement = typeof HTMLElement !== 'undefined' && target instanceof HTMLElement;
   const isSvgElement = typeof SVGElement !== 'undefined' && target instanceof SVGElement;

@@ -641,10 +641,10 @@ describe('the selected entry once the window stops holding it', () => {
         // selection: why it was asking for the reader, its state, its scope and
         // the connection it was read through.
         await expect(shell.getByText('Review requested')).resolves.toBeDefined();
-        // Where it lives and when it was opened are one quiet context line
-        // under the title, not a label/value form repeating the row.
+        // The context keeps both facts when the host wraps them onto separate lines.
+        await expect(shell.getByText('example/repository #17')).resolves.toBeDefined();
         await expect(shell.getByText(
-            `example/repository #17 · Opened ${formatTriageTimestampV1('en', testkitSnapshot().createdAtMs ?? 0, 'relative', Date.now())}`,
+            `Opened ${formatTriageTimestampV1('en', testkitSnapshot().createdAtMs ?? 0, 'relative', Date.now())}`,
         )).resolves.toBeDefined();
         // Marked, never presented as current.
         await expect(shell.getByText(

@@ -1140,7 +1140,7 @@ describe('the mounted PRs & Issues surface', () => {
             expect(await invokeTriageMountedUiAction(harness.ephemeralSharedScope, input.mountId, input.operation,
                 new AbortController().signal)).toEqual({ status: 'applied' });
         });
-        const expected = { ...lens, filters: TRIAGE_ROUTE_DEFAULT_LENS_V1.filters };
+        const expected = { ...lens, filters: TRIAGE_ROUTE_DEFAULT_LENS_V1.filters, selectionSourceInstanceId: INSTANCE_A };
         if (legacy) {
             expect(harness.surfaceOpens).toEqual([expect.objectContaining({
                 view: { pluginId: 'happier.triage', localId: 'triage' }, subPath: buildTriageRouteSubPathV1(expected),

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { act } from 'react';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { mountThroughReactNativeWeb } from '../rnwMount.testSupport.js';
 import { createHostApiStub, createSurfaceContext } from '../surfaceFixture.testSupport.js';
@@ -20,6 +20,38 @@ async function focusTrigger(trigger: HTMLElement | undefined): Promise<void> {
 }
 
 describe('Tabs focus recovery when a conditional tab disappears', () => {
+  it('stops checking panel controls once a reachable Tab target is found, and observes its withdrawal', async () => {
+    const context = createSurfaceContext();
+    const mount = mountThroughReactNativeWeb(<PluginUiProvider hostApi={createHostApiStub(context)} context={context}>
+      <Tabs value="overview" onValueChange={() => {}} ariaLabel="Issue detail">
+        <Tabs.Item value="overview" title="Overview"><button>First control</button></Tabs.Item>
+      </Tabs>
+    </PluginUiProvider>);
+    const panel = mount.container.querySelector<HTMLElement>('[role="tabpanel"]')!;
+    const first = panel.querySelector('button')!;
+    const computedStyle = vi.spyOn(window, 'getComputedStyle');
+    try {
+      const later = [document.createElement('button'), document.createElement('button')];
+      await act(async () => { panel.append(...later); });
+      expect(panel.hasAttribute('tabindex')).toBe(false);
+      // This mutation only needs to establish existence. Later controls do not
+      // contribute another fact once the first reachable control answers it.
+      expect(computedStyle.mock.calls.map(([element]) => element)).toEqual([first]);
+
+      await act(async () => {
+        first.disabled = true;
+        later[0]!.hidden = true;
+        later[1]!.remove();
+      });
+      expect(panel.getAttribute('tabindex')).toBe('0');
+      await act(async () => { first.disabled = false; });
+      expect(panel.hasAttribute('tabindex')).toBe(false);
+    } finally {
+      computedStyle.mockRestore();
+      mount.unmount();
+    }
+  });
+
   function mountConditionalTabs(input: Readonly<{
     tabs: readonly TabSpec[];
     value: string;

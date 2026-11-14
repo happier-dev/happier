@@ -159,6 +159,7 @@ const CONTRIBUTOR_GENERATION = 'contributor-generation-a';
 const TARGET_GENERATION = 'target-generation-a';
 const DETAIL_RENDERER_ID = 'example-detail';
 const DETAIL_BODY_TEXT = 'The example forge detail body';
+const DETAIL_READ_FAILURE_DETAIL = 'The configured source account could not be reached.';
 /**
  * One entry whose canonical reference is as large as the contract allows.
  *
@@ -690,7 +691,7 @@ function createHarness(options: Readonly<{
             // Selection re-observation can replace an in-flight detail read. An
             // Account outage affects that replacement too, until the test restores it.
             if (detailInput.linkedSessionsCursor === undefined && detailReadsUnavailable) {
-                throw new PluginError({ code: 'unavailable', retryable: true });
+                throw new PluginError({ code: 'unavailable', message: DETAIL_READ_FAILURE_DETAIL, retryable: true });
             }
             if (detailInput.linkedSessionsCursor !== undefined && failNextLinkedSessionPage) {
                 failNextLinkedSessionPage = false;
@@ -2791,6 +2792,8 @@ describe('opening a row into the source detail', () => {
         await expect(shell.getByText('These details could not be read')).resolves.toBeDefined();
         await expect(shell.getByRole('heading', { name: 'Replace the duplicated normalizer' }))
             .resolves.toBeDefined();
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Details' })); });
+        await expect(shell.getByText(DETAIL_READ_FAILURE_DETAIL)).resolves.toBeDefined();
         harness.setDetailReadsUnavailable(false);
         await act(async () => {
             pressDetailButton('Retry');
@@ -3260,7 +3263,6 @@ describe('opening a row into the source detail', () => {
             requestId: '25bc3cf6-b2b6-49b3-a01e-2b6927276834' };
         const shell = await mountShell({ subPath, securityAlert: true, activeSurface: true,
             deferLinkedEntry: true, exactReadFailure: failure });
-        await expect(shell.getByText('This entry could not be read from the source.')).resolves.toBeDefined();
         await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Details' })); });
         await expect(shell.getByText(failure.code)).resolves.toBeDefined();
         await expect(shell.getByText('Request ID')).resolves.toBeDefined();
@@ -3272,8 +3274,11 @@ describe('opening a row into the source detail', () => {
         [404, 'github_not_found', false],
         [410, 'github_gone', true],
     ] as const)('settles restored alert HTTP %s through one exact read (%s; unresumable: %s)', async (_status, code, partialScan) => {
-        const entryRef = { source: SOURCE, kindId: 'dependabot-alert', collisionScope: 'example/repository', entryId: '4' };
+        const entryId = '4';
+        const entryRef = { source: SOURCE, kindId: 'dependabot-alert', collisionScope: 'example/repository', entryId };
         const subPath = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1, selection: entryRef });
+        const qualifiedSubPath = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
+            selection: entryRef, selectionSourceInstanceId: INSTANCE });
         const requestId = 'A89C:E6813:2EE25D2:4481C49:6AEB94CC';
         // The native GitHub get reports HTTP404/410 as unresolved, preserving
         // its bounded provider detail rather than asserting source absence.
@@ -3283,8 +3288,7 @@ describe('opening a row into the source detail', () => {
             exactReadFailure: { class: 'unknown', code, detail } });
         expect(readTriageListWindowSnapshot(shell.context.hostApi, currentHarness!.ephemeralSharedScope).loadMore?.kind)
             .toBe(partialScan ? 'unresumable' : 'available');
-        await vi.waitFor(() => { expect(currentHarness?.getEntryIds).toEqual(['4']); });
-        await expect(shell.getByText('This entry could not be read from the source.')).resolves.toBeDefined();
+        await vi.waitFor(() => { expect(currentHarness?.getEntryIds).toEqual([entryId]); });
         await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Details' })); });
         await expect(shell.getByText(code)).resolves.toBeDefined();
         await expect(shell.getByText(detail)).resolves.toBeDefined();
@@ -3293,11 +3297,11 @@ describe('opening a row into the source detail', () => {
         expect(currentHarness?.exactReads).toHaveLength(1);
         expect(currentHarness?.readDetailInstanceIds).toEqual([]);
         expect(currentHarness?.continuedScanPages).toEqual([]);
-        expect(lastPageLocation?.subPath ?? subPath).toEqual(subPath);
+        expect(lastPageLocation?.subPath ?? subPath).toEqual(qualifiedSubPath);
         // A context publication cannot retire the route or repeat the settled read.
         await act(async () => { await shell.updateSurface(surfaceContext({ securityAlert: true })); });
-        expect(currentHarness?.getEntryIds).toEqual(['4']);
-        expect(lastPageLocation?.subPath ?? subPath).toEqual(subPath);
+        expect(currentHarness?.getEntryIds).toEqual([entryId]);
+        expect(lastPageLocation?.subPath ?? subPath).toEqual(qualifiedSubPath);
         await expect(shell.getByText(detail)).resolves.toBeDefined();
     });
 
@@ -3315,12 +3319,11 @@ describe('opening a row into the source detail', () => {
         const shell = await mountShell({ subPath, securityAlert: true, activeSurface: true, partialScan: true,
             onPageLocationRequest: location => { requestedLocations.push(location); },
             exactReadFailure: { class: 'unknown', code, detail } });
-        await expect(shell.getByText('This entry could not be read from the source.')).resolves.toBeDefined();
+        await expect(shell.getByRole('button', { name: 'Details' })).resolves.toBeDefined();
         await act(async () => { await shell.press(await shell.getByRole('button', { name: 'PRs & Issues' })); });
         await act(async () => { await shell.updatePageLocation(''); });
         requestedLocations.length = 0;
         await act(async () => { await shell.updatePageLocation(subPath); });
-        await expect(shell.getByText('This entry could not be read from the source.')).resolves.toBeDefined();
         await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Details' })); });
         await expect(shell.getByText(code)).resolves.toBeDefined();
         await expect(shell.getByText(detail)).resolves.toBeDefined();
@@ -3565,14 +3568,18 @@ describe('opening a row into the source detail', () => {
     });
 
     it('presents an exact revoked task refusal without blaming its available connection', async () => {
+        const entryId = '532';
         const subPath = buildTriageRouteSubPathV1({ ...TRIAGE_ROUTE_DEFAULT_LENS_V1,
-            selection: { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '532' } });
-        const shell = await mountShell({ subPath, explicitOpen: true, revokedEntryIds: ['532'], activeSurface: true });
+            selection: { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId } });
+        const shell = await mountShell({ subPath, explicitOpen: true, revokedEntryIds: [entryId], activeSurface: true });
         await vi.waitFor(async () => {
             await expect(shell.getByText('This task isn’t shared with you anymore')).resolves.toBeDefined();
         });
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Details' })); });
+        await expect(shell.getByText('task_not_found')).resolves.toBeDefined();
+        await expect(shell.queryByText("This entry's details are unavailable right now. Try again when the connection is available.")).resolves.toBeUndefined();
         await expect(shell.queryByText('No connection to open this through')).resolves.toBeUndefined();
-        expect(currentHarness?.getEntryIds).toEqual(['532']);
+        expect(currentHarness?.getEntryIds).toEqual([entryId]);
         expect(currentHarness?.exactReads).toHaveLength(1);
         expect(currentHarness?.readDetailInstanceIds).toEqual([]);
     });
@@ -3647,10 +3654,9 @@ describe('opening a row into the source detail', () => {
         await openTheRow(shell);
 
         await expect(shell.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
-        // Where it lives and when it was opened are one context line, not independently labelled header fields;
-        // the source mark and the kind glyph say the source and the state, and one connection is not named.
-        await expect(shell.getByText(`example/repository #17 · ${openedFixtureEntry()}`))
-            .resolves.toBeDefined();
+        // The header keeps the address and opening time as separate facts so it can wrap between them.
+        await expect(shell.getByText('example/repository #17')).resolves.toBeDefined();
+        await expect(shell.getByText(openedFixtureEntry())).resolves.toBeDefined();
     });
 
     it('returns to the list when the detail is closed', async () => {
@@ -3926,15 +3932,15 @@ describe('opening a row into the source detail', () => {
         const firstLabel = configured.find(source => source.sourceInstanceId === INSTANCE)?.displayLabel;
         expect(secondLabel).toContain('Second account');
         expect(firstLabel).toContain('Example account');
-        await expect(shell.getByText(`example/repository #17 · ${openedFixtureEntry()} · via ${secondLabel}`))
-            .resolves.toBeDefined();
+        await expect(shell.getByText('example/repository #17')).resolves.toBeDefined();
+        await expect(shell.getByText(openedFixtureEntry())).resolves.toBeDefined();
+        await expect(shell.getByText(`via ${secondLabel}`)).resolves.toBeDefined();
         await expect(shell.getByText('No connection to open this through')).resolves.toBeDefined();
         // Exact-only opens may prepare the launched connection, but never the window's tie-break connection.
         expect(harness.readDetailInstanceIds).toEqual([SECOND_INSTANCE]);
         // The header and refusal both stay on the launched connection; neither
         // silently falls through to the window's qualified account.
-        await expect(shell.queryByText(`example/repository #17 · ${openedFixtureEntry()} · via ${firstLabel}`))
-            .resolves.toBeUndefined();
+        await expect(shell.queryByText(`via ${firstLabel}`)).resolves.toBeUndefined();
     });
 
     it('falls through to the page location when the launch input is not admitted', async () => {
