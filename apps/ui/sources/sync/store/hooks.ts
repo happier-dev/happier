@@ -189,7 +189,7 @@ import {
   type SessionOrganizationProjection,
 } from '../domains/session/organization';
 import type { MachinePresenceCounts } from '@/utils/sessions/machineUtils';
-import { getSettledMachineDisplayName, isMachineDisplayHydrating } from '@/utils/sessions/machineDisplayNames';
+import { getSettledMachineDisplayName, isMachineDisplayHydrating, readDisplayedMachineName } from '@/utils/sessions/machineDisplayNames';
 import { useMachinePresenceSummary, useMachinePresenceSummaries, useMachinePresenceMembership } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import {
@@ -1486,8 +1486,8 @@ export function readMachineDisplayNamesById(
 ): Record<string, string> {
   const names: Record<string, string> = {};
   for (const machineId of machineIds) {
-    const metadata = state.machineDisplayById?.[machineId]?.metadata;
-    const name = metadata?.displayName?.trim() || metadata?.host?.trim() || '';
+    // The name the Machine list shows, same-named Machines told apart (R3-3); none while it has nothing to show.
+    const name = readDisplayedMachineName(state.machineDisplayById?.[machineId]);
     if (name) names[machineId] = name;
   }
   return names;
