@@ -26,6 +26,100 @@ import {
 } from './compose';
 
 describe('provider binding host materialization', () => {
+  it('retains FX v2 journals across disposed Provider launches without retaining Provider configuration', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'happier-fx-provider-resume-'));
+    const source = join(base, 'native');
+    const materializationBaseDir = join(base, 'materialized');
+    const compose = () => composeProviderBindingMaterialization({
+      materialization: { v: 1, kind: 'configFile', nativeHome: true, env: [],
+        files: [{ relativePath: '.fx/settings.json', utf8: '{"provider":"happier"}', merge: 'jsonObject' }] },
+      nativeHome: { descriptor: { providerId: 'fx', ...FX_STATE_SHARING },
+        sourceEnvironment: { HOME: source }, homeDir: source },
+      sessionId: 'fx-provider-session', materializationBaseDir,
+    });
+    const results: Awaited<ReturnType<typeof compose>>[] = [];
+    try {
+      const initial = await compose(); results.push(initial);
+      const home = initial.providerEnvironmentOverlay.find(entry => entry.name === 'HOME')?.value;
+      if (!home || initial.launchMaterialization.kind !== 'configFile') throw new Error('Expected native Provider home');
+      const journal = join(home, '.fx/sessions/v2/0ZXj6QS3ceqa');
+      await mkdir(join(journal, 'blobs'), { recursive: true });
+      await writeFile(join(journal, 'log.jsonl'), 'journal retained after upstream HTTP 400');
+      await writeFile(join(journal, 'blobs/native-snapshot'), 'native blob');
+      const released = initial.takeCleanupOwnership();
+      // The child reconstructs cleanup from the handed-off launch descriptor.
+      createProviderBindingLaunchMaterializationCleanup({ materialization: initial.launchMaterialization,
+        materializationBaseDir })?.();
+      released?.();
+      expect(await readFile(join(journal, 'log.jsonl'), 'utf8')).toBe('journal retained after upstream HTTP 400');
+      await expect(stat(join(home, '.fx/settings.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(stat(initial.launchMaterialization.rootPath)).rejects.toMatchObject({ code: 'ENOENT' });
+      const resumed = await compose(); results.push(resumed);
+      expect(resumed.providerEnvironmentOverlay.find(entry => entry.name === 'HOME')?.value).toBe(home);
+      expect(await readFile(join(journal, 'blobs/native-snapshot'), 'utf8')).toBe('native blob');
+      expect(await realpath(join(home, '.fx/sessions'))).toBe(join(home, '.fx/sessions'));
+      await expect(stat(join(source, '.fx/sessions/v2/0ZXj6QS3ceqa'))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { for (const result of results) result.takeCleanupOwnership()?.(); await rm(base, { recursive: true, force: true }); }
+  });
+  it('keeps replacement FX configuration when the preceding Provider launch releases cleanup', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'happier-fx-provider-replacement-'));
+    const compose = (model: string) => composeProviderBindingMaterialization({
+      materialization: { v: 1, kind: 'configFile', nativeHome: true, env: [],
+        files: [{ relativePath: '.fx/settings.json', utf8: JSON.stringify({ model }), merge: 'jsonObject' }] },
+      nativeHome: { descriptor: { providerId: 'fx', ...FX_STATE_SHARING },
+        sourceEnvironment: { HOME: join(base, 'native') }, homeDir: base },
+      sessionId: 'fx-provider-session', materializationBaseDir: join(base, 'materialized'),
+    });
+    try {
+      const sourceJournal = join(base, 'native/.fx/sessions/v2/native-session');
+      await mkdir(sourceJournal, { recursive: true });
+      await writeFile(join(sourceJournal, 'log.jsonl'), 'older native source journal');
+      const old = await compose('first');
+      const oldHome = old.providerEnvironmentOverlay.find(entry => entry.name === 'HOME')?.value;
+      if (!oldHome) throw new Error('Expected native Provider home');
+      await mkdir(join(oldHome, '.fx/sessions/v2/native-session/blobs'), { recursive: true });
+      await writeFile(join(oldHome, '.fx/sessions/v2/native-session/log.jsonl'), 'first journal');
+      await writeFile(join(oldHome, '.fx/provider-versions'), 'native provider metadata');
+      const next = await compose('second');
+      try {
+        const home = next.providerEnvironmentOverlay.find(entry => entry.name === 'HOME')?.value;
+        if (!home) throw new Error('Expected native Provider home');
+        if (old.launchMaterialization.kind !== 'configFile') throw new Error('Expected Provider configuration');
+        createProviderBindingLaunchMaterializationCleanup({ materialization: old.launchMaterialization,
+          materializationBaseDir: join(base, 'materialized') })?.();
+        old.takeCleanupOwnership()?.();
+        expect(JSON.parse(await readFile(join(home, '.fx/settings.json'), 'utf8'))).toMatchObject({ model: 'second' });
+        expect(await readFile(join(home, '.fx/sessions/v2/native-session/log.jsonl'), 'utf8')).toBe('first journal');
+        expect(await readFile(join(home, '.fx/provider-versions'), 'utf8')).toBe('native provider metadata');
+        expect(await readFile(join(sourceJournal, 'log.jsonl'), 'utf8')).toBe('older native source journal');
+      } finally { next.takeCleanupOwnership()?.(); }
+    } finally { await rm(base, { recursive: true, force: true }); }
+  });
+
+  it('removes obsolete Provider credential files when the same Session replaces its config paths', async () => {
+    const base = await mkdtemp(join(tmpdir(), 'happier-provider-config-paths-'));
+    const materializationBaseDir = join(base, 'materialized');
+    const compose = (relativePath: string) => composeProviderBindingMaterialization({
+      materialization: { v: 1, kind: 'configFile', nativeHome: true, env: [],
+        files: [{ relativePath, utf8: 'private Provider credential fixture' }] },
+      nativeHome: { descriptor: { providerId: 'fx', ...FX_STATE_SHARING },
+        sourceEnvironment: { HOME: join(base, 'native') }, homeDir: base },
+      sessionId: 'same-session', materializationBaseDir,
+    });
+    try {
+      const old = await compose('previous-provider.json');
+      const home = old.providerEnvironmentOverlay.find(entry => entry.name === 'HOME')?.value;
+      if (!home) throw new Error('Expected native Provider home');
+      const next = await compose('replacement-provider.json');
+      try {
+        await expect(stat(join(home, 'previous-provider.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+        old.takeCleanupOwnership()?.();
+        expect(await readFile(join(home, 'replacement-provider.json'), 'utf8')).toBe('private Provider credential fixture');
+      } finally { next.takeCleanupOwnership()?.(); }
+      await expect(stat(join(home, 'replacement-provider.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally { await rm(base, { recursive: true, force: true }); }
+  });
+
   it.each([
     { agentId: 'pi', descriptor: PI_STATE_SHARING, entryPath: 'sessions' },
     { agentId: 'ohMyPi', descriptor: OH_MY_PI_STATE_SHARING, entryPath: 'sessions' },

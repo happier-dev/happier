@@ -2,6 +2,7 @@ import { logProviderUnexpectedFailure } from '@/providers/diagnostics';
 import {
   chmodSync,
   closeSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   openSync,
@@ -18,6 +19,8 @@ import {
   resolve,
 } from 'node:path';
 import { homedir } from 'node:os';
+
+import { cleanupRetainedProviderNativeHome, retainProviderNativeHome } from './nativeHomeLifetime';
 
 import { AgentProviderBindingLaunchMaterializationV1Schema } from '@happier-dev/protocol/providers/materialization/v1';
 import { AgentProviderBindingMaterializationV1Schema } from '@happier-dev/protocol/providers/materialization/v1';
@@ -114,7 +117,7 @@ export function createProviderBindingLaunchMaterializationCleanup(
       throw error;
     }
     if (dirname(realRoot) !== realBase) return;
-    rmSync(root, { recursive: true, force: true });
+    if (!cleanupRetainedProviderNativeHome(root, realRoot)) rmSync(root, { recursive: true, force: true });
   };
 }
 
@@ -151,6 +154,7 @@ export async function composeProviderBindingMaterialization(input: Readonly<{
 
   mkdirSync(input.materializationBaseDir, { recursive: true, mode: 0o700 });
   const rootPath = mkdtempSync(join(input.materializationBaseDir, 'provider-binding-'));
+  let nativeHomeRoot = rootPath;
   let launchMaterialization:
     AgentProviderBindingLaunchMaterializationV1;
   let physicalCleanup: () => void;
@@ -200,16 +204,30 @@ export async function composeProviderBindingMaterialization(input: Readonly<{
       const sourceEnvironment = context.sourceEnvironment ?? process.env;
       const sourceRoot = resolveConnectedServiceNativeHomeRoot({ nativeHome: declaration,
         sourceEnvironment, homeDir: context.homeDir ?? homedir() });
+      if (input.sessionId && context.descriptor.state.entries.some(entry => entry.requiresRealDirectory)) {
+        nativeHomeRoot = retainProviderNativeHome({
+          generationRoot: rootPath, materializationBaseDir: input.materializationBaseDir,
+          sessionId: input.sessionId, agentId: context.descriptor.providerId,
+          configPaths: [...new Set([...materialization.files.map(file => file.relativePath),
+            ...context.descriptor.config.entries.map(entry => entry.path)].map(path => path.replaceAll('\\', '/')))],
+        });
+      }
       const stateSharing = await applyConnectedServiceStateSharingDescriptor({
         descriptor: context.descriptor,
         nativeSourceContext: { sourceRoot, sourceEnv: Object.fromEntries(Object.entries(sourceEnvironment).filter((entry): entry is [string, string] => typeof entry[1] === 'string')) },
-        target: { targetMaterializedRoot: rootPath, targetMaterializedEnv: { [declaration.environmentKey]: rootPath } },
+        target: { targetMaterializedRoot: nativeHomeRoot, targetMaterializedEnv: { [declaration.environmentKey]: nativeHomeRoot } },
         configMode: context.descriptor.config.supported ? 'copied' : 'isolated',
         requestedStateMode: 'shared', effectiveStateMode: 'shared', cwd: process.cwd(),
+        // Real directories already retained here are the native authority.
+        // Import the user's history once; never overwrite later native writes
+        // from an older source-home snapshot on replacement or resume.
+        ...(nativeHomeRoot !== rootPath ? { stateEntryNames: context.descriptor.state.entries
+          .filter(entry => !entry.requiresRealDirectory || !existsSync(join(nativeHomeRoot, entry.path)))
+          .map(entry => entry.path) } : {}),
         copyTransformByEntry: overlays,
       });
       copiedConfigEntries = stateSharing.manifest.configEntries;
-      const projected = { ...stateSharing.envOverrides, [declaration.environmentKey]: rootPath };
+      const projected = { ...stateSharing.envOverrides, [declaration.environmentKey]: nativeHomeRoot };
       const projectedNames = new Set(Object.keys(projected).map(name => name.toUpperCase()));
       providerEnvironmentOverlay = [
         ...materialization.env.filter(entry => !projectedNames.has(entry.name.toUpperCase())),

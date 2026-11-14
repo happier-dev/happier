@@ -275,9 +275,14 @@ In 0.3 development, FX Provider bindings also use a private
 `HOME/.fx/settings.json` to select an `openai-chat-completions` endpoint and model.
 Bearer credentials use a child-only environment key; credential-free endpoints
 remain credential-free. Native settings and shared session state follow
-`FX_STATE_SHARING`, and custom routing headers are unsupported. The characterized
-native contract is upstream source `481104f`; loaded native verification remains
-required. The exact Vercel contribution, template and URL retain FX's native
+`FX_STATE_SHARING`, and custom routing headers are unsupported. In 0.3 development,
+Session-bound Provider launches retain a real native HOME across Stop and resume.
+Provider configuration is removed on launch cleanup; the native journal and blobs
+remain in that Session's home. Replacement launches retain those writes and own
+their configuration cleanup. Connected Account rematerialization likewise retains
+writes made inside its real native state directories. The characterized native
+contract is upstream source `481104f`; loaded native verification remains required.
+The exact Vercel contribution, template and URL retain FX's native
 Vercel gateway route.
 
 Before a Provider-bound FX spawn, native status must confirm authentication,
