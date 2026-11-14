@@ -604,3 +604,22 @@ describe('setNewSessionPickerReturnParams', () => {
         });
     });
 });
+
+describe('completeNewSessionPickerReturn to a docked composer from a pane', () => {
+    it('steps the pane back once when the picker lives in the pane history, not a navigator stack (#5)', () => {
+        // Live shape (13:33Z, 14:02Z): Add hosted in a workspace pane sees only the root stack.
+        const hostParams: Record<string, unknown> = { draftId: 'original' };
+        const dispatch = vi.fn();
+        const back = vi.fn();
+        const add = { draftId: 'original', newSessionHostDraftId: 'original' };
+        completeNewSessionPickerReturn({
+            navigation: { dispatch, getState: () => ({ index: 0, routes: [{ key: 'root', name: '__root' }] }) },
+            router: { replace: vi.fn(), back }, currentParams: add,
+            returnToHost: (id, patch) => { if (id !== 'original') return false; Object.assign(hostParams, patch); return true; },
+            routeParams: { machineId: 'joined', spawnServerId: 'home' },
+        });
+        expect(hostParams).toMatchObject({ machineId: 'joined', spawnServerId: 'home' });
+        expect(back).toHaveBeenCalledOnce();
+        expect(dispatch).not.toHaveBeenCalledWith(expect.objectContaining({ type: 'POP' }));
+    });
+});

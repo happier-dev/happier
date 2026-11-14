@@ -8,6 +8,7 @@ import { isMobileLayoutWidth } from '@/components/sessions/layout/isMobileLayout
 import { useResolveNewSessionOrdinaryEntryRoute } from './newSessionOrdinaryEntryRoute';
 import { newSessionBackgroundLaunches } from '@/components/sessions/new/modules/newSessionBackgroundLaunches';
 import { useNewSessionEmbeddedHostState } from './useNewSessionEmbeddedHostState';
+import { holdNewSessionPickerReturn } from './newSessionPickerReturns';
 import type { NewSessionEmbeddedHost, NewSessionHostParams } from './newSessionHost';
 
 export type NewSessionShellHost = Readonly<{
@@ -102,11 +103,12 @@ export function NewSessionShellHostProvider(props: React.PropsWithChildren) {
         const entry = resolveOrdinaryEntry({ forceFresh });
         appRouter.push({ pathname: '/new', params: seededParams ?? { draftId: entry.draftId, draftOrigin: entry.draftOrigin } });
     }, [enabled, markDemanded, replaceParams, resolveOrdinaryEntry, scope, visible]);
+    // One return owner keyed by the draft that opened the picker, docked or inline (ruling 2026-11-13 15:07Z): the
+    // composer holding that draft takes the result, so no route replacement reopens the dock as a side effect.
     const returnToHost = React.useCallback((draftId: string, patch: Readonly<Record<string, unknown>>) => {
-        if (!visible || embeddedHost.params.draftId !== draftId) return false;
-        embeddedHost.setParams(patch);
+        holdNewSessionPickerReturn(draftId, patch);
         return true;
-    }, [embeddedHost.params.draftId, embeddedHost.setParams, visible]);
+    }, []);
     const onHandedOff = React.useCallback((destination: Href, outcome?: Readonly<{ opened: boolean }>) => {
         embeddedHost.onHandedOff(destination);
         if (outcome?.opened) setCollapsed(true);

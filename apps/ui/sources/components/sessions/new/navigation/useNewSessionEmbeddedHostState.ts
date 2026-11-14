@@ -9,6 +9,12 @@ import {
 } from './newSessionHost';
 import { useResolveNewSessionOrdinaryEntryRoute } from './newSessionOrdinaryEntryRoute';
 import { resolveNewSessionDraftRouteIdentity } from './newSessionDraftRouteIdentity';
+import {
+    clearOrdinaryNewSessionPickerOrigin,
+    readOrdinaryNewSessionPickerOrigin,
+    subscribeNewSessionPickerReturns,
+    takeNewSessionPickerReturn,
+} from './newSessionPickerReturns';
 
 function paramsForDraft(entry: NewSessionHostDraftEntry): NewSessionHostParams {
     return entry.draftOrigin ? { draftId: entry.draftId, draftOrigin: entry.draftOrigin } : { draftId: entry.draftId };
@@ -35,8 +41,13 @@ export function useNewSessionEmbeddedHostState(initialParams?: NewSessionHostPar
     const freshParams = React.useCallback((): NewSessionHostParams => initialParams
         ? { ...initialParams, draftId: resolveNewSessionDraftRouteIdentity({ routeDraftId: undefined }).draftId }
         : paramsForDraft(resolveOrdinaryEntry({ forceFresh: true })), [initialParams, resolveOrdinaryEntry]);
-    const [params, setParamsState] = React.useState<NewSessionHostParams>(() => initialParams
-        ? freshParams() : paramsForDraft(resolveOrdinaryEntry()));
+    // The page's ordinary composer (not the shell's renewing dock) comes back to the draft that opened a picker.
+    const ordinaryPage = !initialParams && options?.renewOnHandOff !== true;
+    const [params, setParamsState] = React.useState<NewSessionHostParams>(() => {
+        if (initialParams) return freshParams();
+        const pickerOrigin = ordinaryPage ? readOrdinaryNewSessionPickerOrigin() : null;
+        return pickerOrigin ? { draftId: pickerOrigin, draftOrigin: 'ordinary' } : paramsForDraft(resolveOrdinaryEntry());
+    });
     const [demanded, setDemanded] = React.useState(false);
     const handedOffRef = React.useRef(false);
     const targetServerId = typeof initialParams?.spawnServerId === 'string' ? initialParams.spawnServerId : undefined;
@@ -61,6 +72,20 @@ export function useNewSessionEmbeddedHostState(initialParams?: NewSessionHostPar
     const markDemanded = React.useCallback(() => {
         setDemanded(true);
     }, []);
+
+    // A picker result comes back to the composer whose draft opened the picker: while it is mounted, or when its pane
+    // steps back to it (UI refinements ruling 2026-11-13 15:07Z).
+    const draftId = typeof params.draftId === 'string' ? params.draftId : null;
+    React.useEffect(() => {
+        if (!draftId) return;
+        clearOrdinaryNewSessionPickerOrigin(draftId);
+        const take = () => {
+            const returned = takeNewSessionPickerReturn(draftId);
+            if (returned) setParamsState((current) => current.draftId === draftId ? mergeNewSessionHostParams(current, returned) : current);
+        };
+        take();
+        return subscribeNewSessionPickerReturns(take);
+    }, [draftId]);
 
     useFocusEffect(React.useCallback(() => {
         if (!handedOffRef.current) return;

@@ -2,6 +2,8 @@ import * as React from 'react';
 import { useIsFocused } from '@react-navigation/native';
 import { useLocalSearchParams, useNavigation, useRouter, type HrefObject } from 'expo-router';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useWorkspaceRouterFacts, type WorkspaceRouterFacts } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { noteOrdinaryNewSessionPickerOrigin } from './newSessionPickerReturns';
 import { isNewSessionPickerSubflowPath, pickNewSessionRouteParams, type NewSessionRouteParams } from './setNewSessionPickerReturnParams';
 
 import type { View } from 'react-native';
@@ -188,6 +190,18 @@ function isOwnSetParamsAction(action: unknown): action is SetParamsAction {
  * surface uses only to hand its draft to the created session — pushes the destination instead,
  * so the embedding page stays behind it, then tells the host its draft left.
  */
+/**
+ * The desktop workspace pane a composer's picker opens in: its focused group's tab, which holds the page (Home's inline
+ * composer, or the page the dock seats on). A phone owns no pane navigation.
+ */
+function readOriginPaneNavigation(workspace: WorkspaceRouterFacts | null) {
+    if (!workspace || workspace.hasPhone) return null;
+    const current = workspace.read();
+    if (!current.active) return null;
+    const tabId = current.state.groups[current.state.focusedGroupId]?.activeTabId;
+    return tabId ? workspace.navigationForTab(tabId) : null;
+}
+
 export function useNewSessionHostNavigation(): Readonly<{
     embedded: boolean;
     router: RouterLike;
@@ -197,12 +211,14 @@ export function useNewSessionHostNavigation(): Readonly<{
 }> {
     const router = useRouter();
     const navigation = useDefaultNavigation();
+    const workspace = useWorkspaceRouterFacts();
     const host = React.useContext(NewSessionEmbeddedHostContext);
     const setParams = host?.setParams;
     const openHostDraft = host?.openDraft;
     const onHandedOff = host?.onHandedOff;
     const presentsInPlace = host?.createdSessionPresentation === 'inPlace';
     const docked = host?.kind === 'docked';
+    const ordinaryDraft = host?.params.draftOrigin === 'ordinary';
     const hostDraftId = typeof host?.params.draftId === 'string'
         ? host.params.draftId : null;
 
@@ -232,8 +248,15 @@ export function useNewSessionHostNavigation(): Readonly<{
                     const pickerHref = isPicker
                         ? { ...objectHref, params: { ...objectHref.params, newSessionHostDraftId: hostDraftId } }
                         : href;
-                    // The route is unchanged; only this host's picker-return marker is added.
-                    router.push(pickerHref as Parameters<RouterLike['push']>[0], options);
+                    // A picker opens inside the pane that holds the page whose composer opened it, docked or inline, so its
+                    // return steps that pane back to that composer with the choice applied (UI refinements rulings
+                    // 2026-11-13 14:10Z, 15:07Z). Without a workspace pane the route is unchanged; only this host's
+                    // picker-return marker is added.
+                    const pane = isPicker ? readOriginPaneNavigation(workspace) : null;
+                    // Home's ordinary composer leaves with its pane; its next mount resumes this draft for the return.
+                    if (pane && !docked && ordinaryDraft) noteOrdinaryNewSessionPickerOrigin(hostDraftId);
+                    if (pane) pane.push(pickerHref as Parameters<RouterLike['push']>[0]);
+                    else router.push(pickerHref as Parameters<RouterLike['push']>[0], options);
                     return;
                 }
                 // Preflight machine links must not navigate an in-place chat into the app shell.
@@ -265,7 +288,7 @@ export function useNewSessionHostNavigation(): Readonly<{
             navigation: embeddedNavigation,
             openDraft: (entry: NewSessionHostDraftEntry) => openHostDraft(entry),
         };
-    }, [hostDraftId, docked, navigation, onHandedOff, openHostDraft, presentsInPlace, router, setParams]);
+    }, [hostDraftId, docked, navigation, onHandedOff, openHostDraft, ordinaryDraft, presentsInPlace, router, setParams, workspace]);
 }
 
 /** Applies a `router.setParams`-style patch: `undefined` removes a key. */

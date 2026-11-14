@@ -273,4 +273,65 @@ describe('newSessionHost', () => {
             expect(routeBoundary.push).toHaveBeenCalledTimes(1);
         } finally { await hook.unmount(); }
     });
+
+    it('docked in a workspace, opens a picker inside the pane that holds the page (#5, UI refinements ruling 14:10Z)', async () => {
+        routeBoundary.push.mockClear();
+        const { WorkspaceNavigationProvider } = await import('@/components/appShell/workspace/WorkspaceNavigationContext');
+        const { createWorkspaceState } = await import('@/components/appShell/workspace/workspaceState');
+        const panePush = vi.fn();
+        const navigationForTab = vi.fn(() => ({ push: panePush, replace: vi.fn(), back: vi.fn() }));
+        const workspace = {
+            active: true,
+            state: createWorkspaceState({ id: 'page-tab', target: { kind: 'sessions', params: {} } as never, pinned: false, preview: false }),
+            canGoBack: true, canGoForward: false, openHref: () => true,
+            activateTab: () => {}, closeTab: () => {}, closeTabs: () => {}, dispatch: () => {}, back: () => {}, forward: () => {},
+            navigationForTab, registerBackStep: () => () => {},
+        };
+        const host: NewSessionEmbeddedHost = { kind: 'docked', params: { draftId: 'dock-draft' }, demanded: true,
+            setParams: vi.fn(), openDraft: vi.fn(), onHandedOff: vi.fn() };
+        const hook = await renderHook(useHostSurface, {
+            wrapper: ({ children }: React.PropsWithChildren) => <WorkspaceNavigationProvider value={workspace}>
+                <NewSessionEmbeddedHostProvider host={host}>{children}</NewSessionEmbeddedHostProvider>
+            </WorkspaceNavigationProvider>,
+        });
+        try {
+            hook.getCurrent().navigation.router.push({ pathname: '/settings/machines/add', params: { draftId: 'dock-draft' } });
+            // The pane keeps the page in its history, so the picker's return pops back to it.
+            expect(navigationForTab).toHaveBeenCalledWith('page-tab');
+            expect(panePush).toHaveBeenCalledWith({ pathname: '/settings/machines/add', params: {
+                draftId: 'dock-draft', newSessionHostDraftId: 'dock-draft',
+            } });
+            expect(routeBoundary.push).not.toHaveBeenCalled();
+        } finally { await hook.unmount(); }
+    });
+
+    it('inline on a page (Home), opens a picker inside the same pane, the one opener for every origin (#5, ruling 15:07Z)', async () => {
+        routeBoundary.push.mockClear();
+        const { WorkspaceNavigationProvider } = await import('@/components/appShell/workspace/WorkspaceNavigationContext');
+        const { createWorkspaceState } = await import('@/components/appShell/workspace/workspaceState');
+        const panePush = vi.fn();
+        const navigationForTab = vi.fn(() => ({ push: panePush, replace: vi.fn(), back: vi.fn() }));
+        const workspace = {
+            active: true,
+            state: createWorkspaceState({ id: 'home-tab', target: { kind: 'home', params: {} } as never, pinned: false, preview: false }),
+            canGoBack: true, canGoForward: false, openHref: () => true,
+            activateTab: () => {}, closeTab: () => {}, closeTabs: () => {}, dispatch: () => {}, back: () => {}, forward: () => {},
+            navigationForTab, registerBackStep: () => () => {},
+        };
+        const host: NewSessionEmbeddedHost = { params: { draftId: 'home-draft' }, demanded: true,
+            setParams: vi.fn(), openDraft: vi.fn(), onHandedOff: vi.fn() };
+        const hook = await renderHook(useHostSurface, {
+            wrapper: ({ children }: React.PropsWithChildren) => <WorkspaceNavigationProvider value={workspace}>
+                <NewSessionEmbeddedHostProvider host={host}>{children}</NewSessionEmbeddedHostProvider>
+            </WorkspaceNavigationProvider>,
+        });
+        try {
+            hook.getCurrent().navigation.router.push({ pathname: '/settings/machines/add', params: { draftId: 'home-draft' } });
+            expect(navigationForTab).toHaveBeenCalledWith('home-tab');
+            expect(panePush).toHaveBeenCalledWith({ pathname: '/settings/machines/add', params: {
+                draftId: 'home-draft', newSessionHostDraftId: 'home-draft',
+            } });
+            expect(routeBoundary.push).not.toHaveBeenCalled();
+        } finally { await hook.unmount(); }
+    });
 });

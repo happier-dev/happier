@@ -35,6 +35,8 @@ type NavigationLike = Readonly<{
 
 type RouterLike = Readonly<{
     replace: (...args: any[]) => unknown;
+    /** A docked composer's picker lives in its pane's history; returning steps that pane back. */
+    back?: () => unknown;
 }>;
 
 const NEW_SESSION_PARAM_KEYS = new Set([
@@ -299,5 +301,8 @@ export function completeNewSessionPickerReturn(params: Parameters<typeof setNewS
         target = first - 1;
     }
     if (target >= 0 && index > target) params.navigation.dispatch({ type: 'POP', payload: { count: index - target } });
+    // Opened from a docked composer, the picker was pushed into the pane that holds the page (ruling 14:10Z), not onto
+    // a navigator stack: step that pane back to the page, where the composer already holds the choice.
+    else if (target < 0 && isNonEmptyString(params.currentParams?.newSessionHostDraftId)) params.router.back?.();
     return result;
 }

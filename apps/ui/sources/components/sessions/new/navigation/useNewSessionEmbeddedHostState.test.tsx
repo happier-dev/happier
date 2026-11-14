@@ -122,3 +122,34 @@ it('keeps untouched ordinary entries off the Account and persists exactly one dr
         configureSessionDraftRepository({ syncEnabled: false });
     }
 });
+
+it('takes the picker result held for its own draft, mounted or after its pane steps back to it (#5, ruling 15:07Z)', async () => {
+    const { holdNewSessionPickerReturn } = await import('./newSessionPickerReturns');
+    const hook = await renderHook(() => useNewSessionEmbeddedHostState());
+    try {
+        const draftId = hook.getCurrent().host.params.draftId as string;
+        // Another composer's result is not this one's.
+        await act(async () => holdNewSessionPickerReturn('another-draft', { machineId: 'not-mine' }));
+        expect(hook.getCurrent().host.params.machineId).toBeUndefined();
+        // Arrives while this composer is mounted (the dock, or a retained page).
+        await act(async () => holdNewSessionPickerReturn(draftId, { machineId: 'joined', spawnServerId: 'home' }));
+        expect(hook.getCurrent().host.params).toMatchObject({ draftId, machineId: 'joined', spawnServerId: 'home' });
+    } finally { await hook.unmount(); }
+});
+
+it('resumes the untouched ordinary draft that opened a picker and takes its result when Home mounts again', async () => {
+    const { holdNewSessionPickerReturn, noteOrdinaryNewSessionPickerOrigin, readOrdinaryNewSessionPickerOrigin } = await import('./newSessionPickerReturns');
+    const first = await renderHook(() => useNewSessionEmbeddedHostState());
+    const draftId = first.getCurrent().host.params.draftId as string;
+    // Home's composer opened Add machine; its pane steps to Add and Home unmounts.
+    noteOrdinaryNewSessionPickerOrigin(draftId);
+    await first.unmount();
+    holdNewSessionPickerReturn(draftId, { machineId: 'joined-while-away' });
+    // The pane steps back: Home mounts on the same draft, not a fresh one.
+    const again = await renderHook(() => useNewSessionEmbeddedHostState());
+    try {
+        expect(again.getCurrent().host.params.draftId).toBe(draftId);
+        expect(again.getCurrent().host.params.machineId).toBe('joined-while-away');
+        expect(readOrdinaryNewSessionPickerOrigin()).toBeNull();
+    } finally { await again.unmount(); }
+});
