@@ -16,6 +16,7 @@ import { classifyProviderCliInstall, resolvePlatformFromNodePlatform, isProvider
 import { resolveWindowsCommandInvocation, resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 
 import { CliVersionCache } from './cliVersionCache';
+import { logger } from '@/ui/logger';
 
 const execFileAsync = promisify(execFile);
 type ExecFileBestEffortOptions = ExecOptions & Readonly<{ windowsVerbatimArguments?: boolean }>;
@@ -410,7 +411,15 @@ async function detectCliVersion(params: {
         name: params.name, resolvedPath: params.resolvedPath, nativeInstall,
         fresh: params.bypassCache || params.verifyVersion,
         probeKey: JSON.stringify([params.probeTimeoutMs, params.probeKey]),
-        probe: () => probeCliVersion(params),
+        probe: async () => {
+            // The shared operation must settle within the existing inventory budget even
+            // when execFile's child ignores its termination signal. The outer deadline
+            // also covers filesystem identity lookup and is not shared between callers.
+            const version = await withCliSnapshotProbeTimeout(probeCliVersion(params), params.probeTimeoutMs);
+            if (version !== CLI_SNAPSHOT_PROBE_TIMEOUT) return version;
+            logger.warn('[capabilities] CLI version probe exceeded its inventory budget', { name: params.name });
+            return null;
+        },
     });
 }
 

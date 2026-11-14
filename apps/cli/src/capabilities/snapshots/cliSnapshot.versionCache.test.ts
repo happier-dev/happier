@@ -18,7 +18,7 @@ vi.mock('child_process', async (importOriginal) => {
         await processBoundary.beforeProbe?.();
       }
       const version = processBoundary.version;
-      await processBoundary.wait;
+      if (file.includes('opencode')) await processBoundary.wait;
       return { stdout: version ? `opencode ${version}\n` : 'no version\n', stderr: '' };
     },
   });
@@ -118,6 +118,28 @@ describe('CLI version reuse', () => {
       const snapshots = await Promise.all([detect(request), detect({ requestedCliNames: ['opencode', 'codex'] })]);
       expect(snapshots.map(s => s.clis.opencode.version)).toEqual(['1.2.3', '1.2.3']);
       expect(processBoundary.calls).toBe(1);
+    });
+  });
+
+  it('retries ordinary discovery after a process never settles within the probe budget', async () => {
+    await withNativeCli(async ({ detect }) => {
+      const env = createEnvKeyScope(['HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS']);
+      let release!: () => void;
+      processBoundary.wait = new Promise<void>(resolve => { release = resolve; });
+      env.patch({ HAPPIER_CLI_SNAPSHOT_PROBE_TIMEOUT_MS: '25' });
+      try {
+        expect((await detect(request)).clis.opencode.version).toBeUndefined();
+        processBoundary.wait = Promise.resolve();
+        processBoundary.version = '2.0.0';
+        vi.useFakeTimers({ toFake: ['Date'] });
+        vi.setSystemTime(Date.now() + 31_000);
+        expect((await detect(request)).clis.opencode.version).toBe('2.0.0');
+        // A late successful completion must not become a reusable version fact.
+        release();
+        await new Promise(resolve => setTimeout(resolve, 0));
+        vi.setSystemTime(Date.now() + 31_000);
+        expect((await detect(request)).clis.opencode.version).toBe('2.0.0');
+      } finally { release(); env.restore(); }
     });
   });
 
