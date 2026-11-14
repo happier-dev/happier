@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { useDestinationFocus, useDestinationInstanceKey } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { useMachineDaemonReadTarget } from '../useMachineDaemonReadTarget';
-import { EMPTY_MACHINE_RESOURCE_STATE, EMPTY_MACHINE_RESOURCE_HISTORY_STATE, isMachineResourceStateStale, machineResourceStore } from './machineResourceStore';
+import { EMPTY_MACHINE_RESOURCE_STATE, isMachineResourceStateStale, machineResourceStore } from './machineResourceStore';
+import { useMachineVitalsHistory } from './useMachineVitalsHistory';
 import type { MachineResourceKey, MachineVitalsRange } from './machineRpc';
 import { useMachineResourceLiveDemand } from './useMachineResourceLiveDemand';
 import { useMachineResourceRefreshing } from './useMachineResourceSummary';
@@ -20,25 +21,16 @@ export function useMachineVitalsOverview(input: MachineResourceKey & Readonly<{ 
     const key = React.useMemo(() => ({ ...target.key, view: 'overview' as const }), [target.key]);
     const refreshingInputs = React.useMemo(() => [key], [key]);
     const refreshing = useMachineResourceRefreshing(refreshingInputs, 'overview');
-    const historyKey = React.useMemo(() => ({ ...target.key, range: input.range }), [input.range, target.key]);
     useMachineResourceLiveDemand([{ ...target.key, daemonStateVersion: target.daemonStateVersion }], { detail: 'overview', enabled });
     const subscribe = React.useCallback((listener: () => void) => machineResourceStore.observe(key, listener), [key]);
     const getSnapshot = React.useCallback(() => target.accountMatches ? machineResourceStore.getState(key) : EMPTY_MACHINE_RESOURCE_STATE, [key, target.accountMatches]);
-    const subscribeHistory = React.useCallback((listener: () => void) => machineResourceStore.observeHistory(historyKey, listener), [historyKey]);
-    const getHistory = React.useCallback(() => target.accountMatches ? machineResourceStore.getHistory(historyKey) : EMPTY_MACHINE_RESOURCE_HISTORY_STATE, [historyKey, target.accountMatches]);
     const state = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
-    const historyState = React.useSyncExternalStore(subscribeHistory, getHistory, getHistory);
-    React.useEffect(() => {
-        if (!enabled || !target.accountBinding) return;
-        const release = machineResourceStore.demandHistory(historyKey);
-        const retirement = target.accountBinding.onRetire(release);
-        return () => { retirement.dispose(); release(); };
-    }, [enabled, historyKey, target.accountBinding]);
+    const { state: historyState, retry: retryHistory } = useMachineVitalsHistory(target, { range: input.range }, enabled);
     const retry = React.useCallback(() => {
         if (!enabled) return;
         machineResourceStore.retry(key);
-        machineResourceStore.retryHistory(historyKey);
-    }, [enabled, historyKey, key]);
+        retryHistory();
+    }, [enabled, key, retryHistory]);
     const stale = isMachineResourceStateStale(state, Date.now());
     return React.useMemo(() => ({ ...state, stale, refreshing, history: historyState.history, historyStatus: historyState.status, retry }), [historyState, refreshing, retry, stale, state]);
 }

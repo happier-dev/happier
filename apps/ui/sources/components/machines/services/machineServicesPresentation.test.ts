@@ -171,14 +171,48 @@ describe('Machine services presentation', () => {
       healthcheck: 'configured',
     });
     const s = 'machineServices.configuration' as const;
-    expect(rows.map((row) => [row.key, row.values])).toEqual([
-      ['ports', [`8080/tcp · ${t(`${s}.notPublished`)}`, `5432/tcp · ${t(`${s}.publishedOn`, { address: '127.0.0.1:15432' })}`]],
-      ['mounts', ['uploads → /app/uploads', `bind → /etc/app · ${t(`${s}.readOnly`)}`]],
-      ['healthCheck', [t(`${s}.healthConfigured`)]],
+    // Each entry is its value (a port, a mount) with what qualifies it beneath (lab dCtr): published or not, the mount's kind.
+    expect(rows.map((row) => [row.key, row.entries])).toEqual([
+      ['ports', [{ value: '8080/tcp', note: t(`${s}.notPublished`) },
+        { value: '5432/tcp', note: t(`${s}.publishedOn`, { address: '127.0.0.1:15432' }) }]],
+      ['mounts', [{ value: 'uploads → /app/uploads', note: 'volume' },
+        { value: 'bind → /etc/app', note: t(`${s}.readOnly`) }]],
+      ['healthCheck', [{ value: t(`${s}.healthConfigured`), note: null }]],
     ]);
     // Nothing declared says so; it never reads as an empty row.
-    expect(machineServiceConfigurationRows({ ports: [], mounts: [], healthcheck: 'absent' }).map((row) => row.values))
+    expect(machineServiceConfigurationRows({ ports: [], mounts: [], healthcheck: 'absent' }).map((row) => row.entries.map((entry) => entry.value)))
       .toEqual([[t(`${s}.none`)], [t(`${s}.none`)], [t(`${s}.healthAbsent`)]]);
+  });
+  it('adds what each container reports it runs: image and its ID, command, networks, health check and variable names', () => {
+    const s = 'machineServices.configuration' as const;
+    const detail = (nativeResourceId: string) => ({ nativeResourceId, image: 'ghcr.io/acme/billing-api:v1.42',
+      imageDigest: 'sha256:4f1c2b3a9e8d7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d9a2e', command: ['node', 'dist/server.js'],
+      networks: ['billing_default'], networkMode: 'billing_default', variableNames: ['DATABASE_URL', 'LOG_LEVEL'],
+      healthcheck: { test: ['CMD-SHELL', 'curl -f http://localhost:8080/healthz'], intervalNs: 10_000_000_000 } });
+    // Two replicas of one service report the same configuration once.
+    const rows = machineServiceConfigurationRows({ ports: [], mounts: [], healthcheck: 'configured' }, [detail('api-1'), detail('api-2')]);
+    expect(rows.map((row) => [row.key, row.entries])).toEqual([
+      ['image', [{ value: 'ghcr.io/acme/billing-api:v1.42', note: t(`${s}.imageId`, { id: 'sha256:4f1c2b3a9e8d' }) }]],
+      ['command', [{ value: 'node dist/server.js', note: null }]],
+      ['ports', [{ value: t(`${s}.none`), note: null }]],
+      ['networks', [{ value: 'billing_default', note: null }]],
+      ['mounts', [{ value: t(`${s}.none`), note: null }]],
+      ['healthCheck', [{ value: 'curl -f http://localhost:8080/healthz',
+        note: t(`${s}.healthEvery`, { interval: t('machineVitals.monitoring.seconds', { count: 10 }) }) }]],
+      ['variables', [{ value: 'DATABASE_URL · LOG_LEVEL', note: t(`${s}.namesOnly`) }]],
+    ]);
+    // Host networking is said; an inherited interval (0) and a missing image ID are left out, never "every 0 s".
+    const host = machineServiceConfigurationRows({ ports: [], mounts: [], healthcheck: 'configured' }, [{ ...detail('a'),
+      imageDigest: null, command: null, networks: [], networkMode: 'host', variableNames: [],
+      healthcheck: { test: ['CMD', 'pg_isready', '-q'], intervalNs: 0 } }]);
+    expect(host.map((row) => [row.key, row.entries])).toEqual([
+      ['image', [{ value: 'ghcr.io/acme/billing-api:v1.42', note: null }]],
+      ['ports', [{ value: t(`${s}.none`), note: null }]],
+      ['networks', [{ value: t(`${s}.networkMode`, { mode: 'host' }), note: null }]],
+      ['mounts', [{ value: t(`${s}.none`), note: null }]],
+      ['healthCheck', [{ value: 'pg_isready -q', note: null }]],
+      ['variables', [{ value: t(`${s}.none`), note: null }]],
+    ]);
   });
   it('offers each discovered service once, by kind then name, with what is already watched held back', () => {
     const adapter = (localId: string) => ({ pluginId: 'happier.machine.services', localId });

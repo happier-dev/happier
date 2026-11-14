@@ -18,6 +18,7 @@ import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
+import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
@@ -30,6 +31,7 @@ import { describeActionExecutionPrerequisite, resolveActionExecutionErrorMessage
 import type { MachineServicesReadError } from './useMachineServices';
 
 import { MachineServiceLogs } from './MachineServiceLogs';
+import { MachineServiceUsageHistory } from './MachineServiceUsageHistory';
 import { MachineServiceControlOutcomeNotice } from './MachineServiceControlOutcomeNotice';
 import { showServiceCommandSheet } from './command/ServiceCommandSheet';
 import { canAdoptMachineService } from './adoption/machineServiceAdoptionPresentation';
@@ -178,10 +180,9 @@ function MachineServicePresent(props: Readonly<{
   const usage = React.useMemo(() => usageFacts(detail), [detail]);
   // Configuration (pfc-redesign dCtr): what the Machine reports this service was started with; absent until it does.
   const configurationSource = detail?.runtimeFacts?.configuration ?? null;
+  const configurationDetails = detail?.runtimeFacts?.configurationDetails;
   const configuration = React.useMemo(() => configurationSource
-    ? machineServiceConfigurationRows(configurationSource).map((row) => ({ key: row.key, label: row.label,
-      value: row.values.join(' · ') }))
-    : null, [configurationSource]);
+    ? machineServiceConfigurationRows(configurationSource, configurationDetails) : null, [configurationSource, configurationDetails]);
   // The service's Environment, by the address its admitted header names (the Services list's Open environment).
   const router = useRouter();
   const openEnvironment = React.useMemo(() => environmentId && header ? () => router.push(deploymentEnvironmentRoute({
@@ -334,10 +335,11 @@ function MachineServicePresent(props: Readonly<{
         {control.outcome ? <MachineServiceControlOutcomeNotice outcome={control.outcome}
           service={serviceName} machine={machineName} testID="machine-service-control-outcome" style={styles.outcome} /> : null}
       </ItemGroup>
+      {/* Usage (lab `services/usage`): each replica's usage measured now, then the service's own CPU and memory history
+          over the Machine's range. The history reads while this page is presented, with or without a sample. */}
+      <ItemGroup title={t('machineServices.usage.title')} surface="none" testID="machine-service-usage">
       {usage && detail ? (
-        // Usage (lab `services/usage`): each replica's usage from the detail's one sample, measured on open
-        // and again only when asked; the last figures stay while a new measurement reads.
-        <ItemGroup title={t('machineServices.usage.title')} surface="none" testID="machine-service-usage">
+        <>
           <FactStrip facts={usage} testID="machine-service-usage-facts" />
           {/* One quiet line under the figures (lab `services/usage`): when they were measured, and Measure again. */}
           <View style={styles.measured} testID="machine-service-usage-measured">
@@ -349,12 +351,25 @@ function MachineServicePresent(props: Readonly<{
             <TextLinkButton testID="machine-service-measure" size="meta" tone="strong" disabled={measuring}
               label={t('machineServices.usage.measure')} onPress={measure} />
           </View>
-        </ItemGroup>
+        </>
       ) : null}
+        <View style={usage && detail ? styles.history : null}>
+          <MachineServiceUsageHistory serverId={props.serverId} machineId={props.machineId} serviceId={service.serviceId}
+            active={props.active} />
+        </View>
+      </ItemGroup>
       {configuration ? (
+        // Configuration (lab dCtr): a label beside each reported value, what qualifies it beneath; several values list.
         <ItemGroup title={t('machineServices.configuration.title')}
-          description={t('machineServices.configuration.description')} surface="none" testID="machine-service-configuration">
-          <FactStrip facts={configuration} testID="machine-service-configuration-facts" />
+          description={t('machineServices.configuration.description')} testID="machine-service-configuration">
+          {configuration.map((row) => row.entries.length === 1 ? (
+            <Item key={row.key} testID={`machine-service-configuration.${row.key}`} mode="info" title={row.label}
+              detail={row.entries[0]!.value} {...(row.entries[0]!.note ? { subtitle: row.entries[0]!.note } : {})} />
+          ) : (
+            <Item key={row.key} testID={`machine-service-configuration.${row.key}`} mode="info" title={row.label}
+              subtitleLines={0}
+              subtitle={row.entries.map((entry) => entry.note ? `${entry.value} · ${entry.note}` : entry.value).join('\n')} />
+          ))}
         </ItemGroup>
       ) : null}
       <ItemGroup
@@ -531,6 +546,9 @@ const styles = StyleSheet.create((theme) => ({
     marginTop: theme.space.s12,
   },
   facts: {
+    marginTop: theme.space.s16,
+  },
+  history: {
     marginTop: theme.space.s16,
   },
   measured: {

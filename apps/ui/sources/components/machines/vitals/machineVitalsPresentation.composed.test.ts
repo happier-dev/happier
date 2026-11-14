@@ -9,6 +9,7 @@ import type {
 import { downsampleMachineVitalsHistory } from '../../../../../cli/src/daemon/vitals/history/downsample';
 
 import {
+  buildMachineServiceTimeline,
   buildMachineVitalsTimeline,
   formatMachinePartOfWhole,
   resolveMachineCoreCount,
@@ -438,5 +439,26 @@ describe('the Disk headline and More from', () => {
     const extras = selectMachineVitalsExtras(latest, older);
     expect(extras.battery?.pct).toBe(82);
     expect(extras.gpu).toBeUndefined();
+  });
+});
+
+describe('a service\'s usage history (service page)', () => {
+  const point = (t: number, cpu: number | null, memory: number | null) => ({ t, cpuPercent: cpu, cpuMaxPercent: cpu === null ? null : cpu + 5,
+    memoryBytes: memory, memoryMaxBytes: memory });
+  const history = (service: MachineVitalsHistoryV1['service']): MachineVitalsHistoryV1 => ({
+    range: '24h', bucketMs: 300_000, points: [], today: { rxBytes: 0, txBytes: 0 }, ...(service ? { service } : {}) });
+
+  it('draws the service\'s own points, keeping gaps and figures above one core', () => {
+    const timeline = buildMachineServiceTimeline({ range: '24h', serviceId: 'svc-1', history: history({ serviceId: 'svc-1',
+      points: [point(1_000_000, 12, 200), null, point(1_600_000, 140, 210)] }) });
+    expect(timeline?.points.map((entry) => [entry.cpu, entry.cpuMax, entry.usedBytes])).toEqual([[12, 17, 200], [null, null, null], [140, 145, 210]]);
+    // The Machine's own figures never stand in for the service's.
+    expect(timeline?.points.every((entry) => entry.rxBps === null && entry.txBps === null)).toBe(true);
+  });
+
+  it('has nothing to draw for another service, a Machine-only answer or a range with no measured minute', () => {
+    expect(buildMachineServiceTimeline({ range: '24h', serviceId: 'svc-1', history: history({ serviceId: 'svc-2', points: [point(1, 3, 4)] }) })).toBeNull();
+    expect(buildMachineServiceTimeline({ range: '24h', serviceId: 'svc-1', history: history(undefined) })).toBeNull();
+    expect(buildMachineServiceTimeline({ range: '24h', serviceId: 'svc-1', history: history({ serviceId: 'svc-1', points: [null, null] }) })).toBeNull();
   });
 });

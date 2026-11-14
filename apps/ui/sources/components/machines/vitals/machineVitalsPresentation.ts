@@ -442,6 +442,39 @@ export function buildMachineVitalsTimeline(
   };
 }
 
+/**
+ * A service's CPU and memory over a range (service page), from the history's per-service points: drawn through the
+ * Machine's own timeline rules (gaps, buckets, range start). Null when the answer carries no point for this service.
+ * A service's CPU may exceed one core (100%); its network is the Machine's and is never drawn as the service's.
+ */
+export function buildMachineServiceTimeline(input: Readonly<{
+  range: MachineVitalsRange;
+  serviceId: string;
+  history: MachineVitalsHistoryV1 | null;
+}>): MachineVitalsTimeline | null {
+  const service = input.history?.service;
+  if (!input.history || !service || service.serviceId !== input.serviceId) return null;
+  return buildMachineVitalsTimeline({
+    range: input.range,
+    samples: NO_LIVE_TIMELINE_SAMPLES,
+    history: { ...input.history, points: service.points.map((point) => point && {
+      t: point.t, cpu: point.cpuPercent, cpuMax: point.cpuMaxPercent, mem: point.memoryBytes, memMax: point.memoryMaxBytes,
+      lvl: 'not_reported' as const, swp: null, rx: null, tx: null,
+    }) },
+  });
+}
+
+/** A service chart's scale: CPU at least one core (0–100 %) and up to the next round step above it; memory to its round step. */
+export function resolveMachineServiceUsageScales(timeline: MachineVitalsTimeline) {
+  const peak = (values: readonly (number | null)[]) => Math.max(0, ...values.map((value) => value ?? 0));
+  const cpuMax = Math.max(100, resolveRateCeiling(peak(timeline.points.flatMap((point) => [point.cpu, point.cpuMax]))));
+  const memoryMax = resolveRateCeiling(peak(timeline.points.flatMap((point) => [point.usedBytes, point.usedBytesMax])));
+  return {
+    cpu: { domain: { min: 0, max: cpuMax }, ticks: [0, cpuMax / 2, cpuMax] as const },
+    memory: { domain: { min: 0, max: memoryMax }, ticks: [0, memoryMax / 2, memoryMax] as const },
+  };
+}
+
 function foldToMinutes(
   points: readonly MachineVitalsTimelinePoint[],
   end: number,

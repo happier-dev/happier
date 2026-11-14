@@ -1,5 +1,5 @@
 import { machineServiceNativeIdentityKeyV1 } from '@happier-dev/protocol/machines/machineServiceWatchesV1';
-import { type DeploymentReviewServiceV1 } from '@happier-dev/protocol/local/services/nativeRuntimeFactsV1';
+import { type DeploymentReviewServiceV1, type MachineServiceNativeRuntimeFactsV1 } from '@happier-dev/protocol/local/services/nativeRuntimeFactsV1';
 import { type MachineServiceDiscoveryCandidateV1, type MachineServiceRowV1 } from '@happier-dev/protocol/actions/specs/machine/services';
 import type { IconName } from '@/components/ui/icons/Icon';
 import { isMachineUnreachableFailureCode, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
@@ -218,33 +218,94 @@ export function machineServiceDeclaredFacts(
   };
 }
 
-export type MachineServiceConfigurationRow = Readonly<{ key: 'ports' | 'mounts' | 'healthCheck'; label: string; values: readonly string[] }>;
+export type MachineServiceConfigurationEntry = Readonly<{ value: string; note: string | null }>;
+export type MachineServiceConfigurationRow = Readonly<{
+  key: 'image' | 'command' | 'ports' | 'networks' | 'mounts' | 'healthCheck' | 'variables';
+  label: string;
+  entries: readonly MachineServiceConfigurationEntry[];
+}>;
+type ConfigurationDetail = NonNullable<MachineServiceNativeRuntimeFactsV1['configurationDetails']>[number];
+
+/** Docker's short form of an ID: its algorithm and first 12 hex digits. */
+function shortImageId(digest: string): string {
+  const [algorithm, hex] = digest.includes(':') ? digest.split(':', 2) as [string, string] : ['', digest];
+  return `${algorithm ? `${algorithm}:` : ''}${hex.slice(0, 12)}`;
+}
+
+/** A health check's test as written: the command after CMD / CMD-SHELL; NONE turns the image's own check off. */
+function healthTest(test: readonly string[]): string | null {
+  const [kind, ...rest] = test;
+  if (kind === 'NONE' || test.length === 0) return null;
+  return kind === 'CMD' || kind === 'CMD-SHELL' ? rest.join(' ') : test.join(' ');
+}
+
+/** Distinct entries in order: replicas of one service report the same configuration once. */
+function distinct(entries: readonly (MachineServiceConfigurationEntry | null)[]): readonly MachineServiceConfigurationEntry[] {
+  const seen = new Set<string>();
+  return entries.filter((entry): entry is MachineServiceConfigurationEntry => {
+    if (!entry) return false;
+    const key = `${entry.value}\u0000${entry.note ?? ''}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 
 /**
- * The service's Configuration section (pfc-redesign dCtr): what the Machine reports it was started with. Ports say
- * whether they are published and where, mounts say source → target, and the health check only whether one exists;
- * nothing here is a variable value.
+ * The service's Configuration section (pfc-redesign dCtr): what the Machine reports it was started with, each entry as
+ * its value with what qualifies it beneath, in the lab's order. The compose-level facts (ports, mounts, whether a health
+ * check exists) come from `configuration`; what each container runs (image and its local image ID, command, networks,
+ * the health check's test and interval, variable names) from `details`, when the Machine reports them. A row the
+ * Machine reports nothing for is left out; nothing here is a variable value.
  */
 export function machineServiceConfigurationRows(
   configuration: Pick<DeploymentReviewServiceV1, 'ports' | 'mounts' | 'healthcheck'>,
+  details: readonly ConfigurationDetail[] = [],
 ): readonly MachineServiceConfigurationRow[] {
   const s = 'machineServices.configuration' as const;
-  const ports = configuration.ports.map((port) => {
-    const target = `${port.target ?? '?'}${port.protocol ? `/${port.protocol}` : ''}`;
-    return port.published === null
-      ? `${target} · ${t(`${s}.notPublished`)}`
-      : `${target} · ${t(`${s}.publishedOn`, { address: `${port.bindAddress ?? '0.0.0.0'}:${port.published}` })}`;
+  const none: readonly MachineServiceConfigurationEntry[] = [{ value: t(`${s}.none`), note: null }];
+  const reported = details.length > 0;
+  const ports = configuration.ports.map((port): MachineServiceConfigurationEntry => ({
+    value: `${port.target ?? '?'}${port.protocol ? `/${port.protocol}` : ''}`,
+    note: port.published === null ? t(`${s}.notPublished`)
+      : t(`${s}.publishedOn`, { address: `${port.bindAddress ?? '0.0.0.0'}:${port.published}` }),
+  }));
+  const mounts = configuration.mounts.map((mount): MachineServiceConfigurationEntry => {
+    // A mount with no named source is named by its kind, so its kind isn't said twice.
+    const note = [mount.source !== null ? mount.type : null, mount.readOnly ? t(`${s}.readOnly`) : null].filter(Boolean).join(' · ');
+    return { value: `${mount.source ?? mount.type ?? '?'} → ${mount.target ?? '?'}`, note: note || null };
   });
-  const mounts = configuration.mounts.map((mount) => [
-    `${mount.source ?? mount.type ?? '?'} → ${mount.target ?? '?'}`,
-    mount.readOnly ? t(`${s}.readOnly`) : null,
-  ].filter(Boolean).join(' · '));
-  return [
-    { key: 'ports', label: t(`${s}.ports`), values: ports.length > 0 ? ports : [t(`${s}.none`)] },
-    { key: 'mounts', label: t(`${s}.mounts`), values: mounts.length > 0 ? mounts : [t(`${s}.none`)] },
-    { key: 'healthCheck', label: t(`${s}.healthCheck`),
-      values: [t(configuration.healthcheck === 'configured' ? `${s}.healthConfigured` : `${s}.healthAbsent`)] },
+  const images = distinct(details.map((detail) => detail.image === null ? null
+    : { value: detail.image, note: detail.imageDigest ? t(`${s}.imageId`, { id: shortImageId(detail.imageDigest) }) : null }));
+  const commands = distinct(details.map((detail) => detail.command && detail.command.length > 0
+    ? { value: detail.command.join(' '), note: null } : null));
+  // The networks it joined, or its network mode where it joined none by name (host, none); observed, not who reaches it.
+  const networks = distinct(details.map((detail) => detail.networks && detail.networks.length > 0
+    ? { value: detail.networks.join(' · '), note: detail.networkMode && !detail.networks.includes(detail.networkMode)
+      && detail.networkMode !== 'default' && detail.networkMode !== 'bridge' ? t(`${s}.networkMode`, { mode: detail.networkMode }) : null }
+    : detail.networkMode ? { value: t(`${s}.networkMode`, { mode: detail.networkMode }), note: null } : null));
+  // A test the container reports says what it runs; a zero interval is Docker's inherited default and isn't said.
+  const checks = distinct(details.map((detail) => {
+    if (!detail.healthcheck) return null;
+    const test = healthTest(detail.healthcheck.test);
+    if (test === null) return { value: t(`${s}.healthAbsent`), note: null };
+    const seconds = detail.healthcheck.intervalNs ? Math.round(detail.healthcheck.intervalNs / 1_000_000_000) : 0;
+    return { value: test, note: seconds > 0
+      ? t(`${s}.healthEvery`, { interval: t('machineVitals.monitoring.seconds', { count: seconds }) }) : null };
+  }));
+  const variables = distinct(details.map((detail) => detail.variableNames === null ? null
+    : detail.variableNames.length > 0 ? { value: detail.variableNames.join(' · '), note: t(`${s}.namesOnly`) } : none[0]!));
+  const rows: (MachineServiceConfigurationRow | null)[] = [
+    images.length > 0 ? { key: 'image', label: t(`${s}.image`), entries: images } : null,
+    commands.length > 0 ? { key: 'command', label: t(`${s}.command`), entries: commands } : null,
+    { key: 'ports', label: t(`${s}.ports`), entries: ports.length > 0 ? ports : none },
+    networks.length > 0 ? { key: 'networks', label: t(`${s}.networks`), entries: networks } : null,
+    { key: 'mounts', label: t(`${s}.mounts`), entries: mounts.length > 0 ? mounts : none },
+    { key: 'healthCheck', label: t(`${s}.healthCheck`), entries: checks.length > 0 ? checks
+      : [{ value: t(configuration.healthcheck === 'configured' ? `${s}.healthConfigured` : `${s}.healthAbsent`), note: null }] },
+    reported && variables.length > 0 ? { key: 'variables', label: t(`${s}.variables`), entries: variables } : null,
   ];
+  return rows.filter((row): row is MachineServiceConfigurationRow => row !== null);
 }
 
 export type MachineServiceWatchChoice = Readonly<{
