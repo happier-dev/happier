@@ -52,6 +52,17 @@ const MAX_CAPTURE_PAGES = 10_000;
 const CAPTURE_MAX_ITEMS = 200;
 const CAPTURE_MAX_BYTES = 512 * 1024;
 
+// Continuation pages may omit the optional source tail. Read-after and final
+// validation still verify the captured boundary after paging.
+function preservesCapturedTranscriptTail(
+  page: ExternalSessionTranscriptPage,
+  capturedTail: string | null,
+  pageIndex: number,
+) {
+  return !page.truncated
+    && (page.tailCursor === capturedTail || (pageIndex > 0 && page.tailCursor === null));
+}
+
 type MaterializeRequest =
   | Extract<ExternalSessionOperationRecordV1['request'], { plan: 'materialize' }>
   | (
@@ -712,8 +723,7 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
       let page = capture.firstPage;
       let pageIndex = 0;
       for (; pageIndex < MAX_CAPTURE_PAGES; pageIndex += 1) {
-        const stillCurrent = !page.truncated
-          && page.tailCursor === capture.capturedTailCursor;
+        const stillCurrent = preservesCapturedTranscriptTail(page, capture.capturedTailCursor, pageIndex);
         const prepared = await stageRequiredHistoricalItems({
           transcriptItems: page.items,
           workingDirectory,
@@ -882,10 +892,7 @@ export function createDefaultExternalSessionMaterializeActionExecutor(input: Rea
         if (finalTail === null) return;
         const seenCursors = new Set<string>();
         for (let pageIndex = 0; pageIndex < MAX_CAPTURE_PAGES; pageIndex += 1) {
-          if (
-            page.truncated
-            || page.tailCursor !== finalTail
-          ) {
+          if (!preservesCapturedTranscriptTail(page, finalTail, pageIndex)) {
             throw new ExternalSessionMaterializeSourceInterruptionError(
               'source_changed',
               'External session source changed during final catch-up.',

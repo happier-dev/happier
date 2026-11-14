@@ -149,6 +149,7 @@ function inspectAuthorityResponse(
 
 function createRealContributionProviderOps(input: Readonly<{
   contribution: AgentExternalSessionsContribution;
+  omitContinuationTail?: boolean;
   managedEndpointRead?: AgentExternalSessionsManagedEndpointRead;
   source: AgentExternalSessionSource;
   remoteSessionId: string;
@@ -180,7 +181,7 @@ function createRealContributionProviderOps(input: Readonly<{
     return {
       ...result.value,
       items: [...result.value.items],
-      tailCursor: result.value.tailCursor ?? null,
+      tailCursor: input.omitContinuationTail && request.cursor ? null : result.value.tailCursor ?? null,
       hasMore: result.value.hasMore ?? false,
       truncated: result.value.truncated ?? false,
     };
@@ -208,6 +209,7 @@ async function runRealContributionMaterialization(input: Readonly<{
   activeServerDir: string;
   agentId: string;
   contribution: AgentExternalSessionsContribution;
+  omitContinuationTail?: boolean;
   id: string;
   managedEndpointRead?: AgentExternalSessionsManagedEndpointRead;
   onFirstBatch?: () => Promise<void>;
@@ -1218,7 +1220,7 @@ describe('default external session materialize capture', () => {
     expect(materialized.providerOps.readAfterTranscript).toHaveBeenCalled();
   });
 
-  it('imports more than 1,000 real Codex rollout messages exactly once in source order', async () => {
+  it.each([false, true])('imports 1,001 real Codex messages exactly once in source order (omitted continuation tail: %s)', async (omitContinuationTail) => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'happier-materialize-codex-large-'));
     roots.push(activeServerDir);
     const codexHome = join(activeServerDir, 'codex-home');
@@ -1275,6 +1277,7 @@ describe('default external session materialize capture', () => {
       agentId: 'codex',
       contribution,
       id: 'codex-large-import',
+      omitContinuationTail,
       qualifiedIdentity: {
         v: 1,
         agent: { pluginId: 'happier.agent.codex', localId: 'codex' },
@@ -1422,7 +1425,7 @@ describe('default external session materialize capture', () => {
     expect(unknown.providerOps.readAfterTranscript).toHaveBeenCalled();
   });
 
-  it('feeds each empty-source final catch-up page through staging before reading the next page and preserves chronological replay', async () => {
+  it.each([false, true])('streams empty-source catch-up chronologically (omitted continuation tail: %s)', async (omitContinuationTail) => {
     const activeServerDir = await mkdtemp(join(
       tmpdir(),
       'happier-materialize-empty-final-catch-up-streaming-',
@@ -1484,7 +1487,7 @@ describe('default external session materialize capture', () => {
         return {
           items: [{ id: 'older-final-item' }],
           nextCursor: null,
-          tailCursor: 'tail-final-1',
+          tailCursor: omitContinuationTail ? null : 'tail-final-1',
           hasMore: false,
           truncated: false,
         };
