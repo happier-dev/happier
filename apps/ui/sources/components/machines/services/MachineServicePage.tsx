@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { View, useWindowDimensions } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { MachineServiceRowV1 } from '@happier-dev/protocol';
 
@@ -18,6 +18,7 @@ import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ICON_SIZE, Icon } from '@/components/ui/icons/Icon';
 import { FactStrip, type FactStripFact } from '@/components/ui/lists/FactStrip';
+import { FieldLayout, FieldValue } from '@/components/ui/lists/FieldRow';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SubjectTriggersSection } from '@/components/workflows/triggers/SubjectTriggersSection';
@@ -26,6 +27,7 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
+import { resolveViewportClass } from '@/utils/platform/viewportClass';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { describeActionExecutionPrerequisite, resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import type { MachineServicesReadError } from './useMachineServices';
@@ -181,6 +183,9 @@ function MachineServicePresent(props: Readonly<{
   // Configuration (pfc-redesign dCtr): what the Machine reports this service was started with; absent until it does.
   const configurationSource = detail?.runtimeFacts?.configuration ?? null;
   const configurationDetails = detail?.runtimeFacts?.configurationDetails;
+  // Wider than a phone, the configuration's labels share one column beside their values (the approval Details rule).
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  const fieldColumns = resolveViewportClass({ width: windowWidth, height: windowHeight }) !== 'compact';
   const configuration = React.useMemo(() => configurationSource
     ? machineServiceConfigurationRows(configurationSource, configurationDetails) : null, [configurationSource, configurationDetails]);
   // The service's Environment, by the address its admitted header names (the Services list's Open environment).
@@ -378,13 +383,14 @@ function MachineServicePresent(props: Readonly<{
         // Configuration (lab dCtr, after Logs): a label beside each reported value, what qualifies it beneath; several values list.
         <ItemGroup title={t('machineServices.configuration.title')}
           description={t('machineServices.configuration.description')} testID="machine-service-configuration">
-          {configuration.map((row) => row.entries.length === 1 ? (
-            <Item key={row.key} testID={`machine-service-configuration.${row.key}`} mode="info" title={row.label}
-              detail={row.entries[0]!.value} {...(row.entries[0]!.note ? { subtitle: row.entries[0]!.note } : {})} />
-          ) : (
-            <Item key={row.key} testID={`machine-service-configuration.${row.key}`} mode="info" title={row.label}
-              subtitleLines={0}
-              subtitle={row.entries.map((entry) => entry.note ? `${entry.value} · ${entry.note}` : entry.value).join('\n')} />
+          {configuration.map((row) => (
+            // The shared field anatomy (approval Details): label column, the value in the code face when it is a
+            // literal, what qualifies it right beneath; a phone sets the label above.
+            <Item key={row.key} testID={`machine-service-configuration.${row.key}`} mode="info" showChevron={false}
+              title={<FieldLayout label={row.label} columns={fieldColumns}>
+                {row.entries.map((entry) => <FieldValue key={`${entry.value}:${entry.note ?? ''}`} value={entry.value}
+                  note={entry.note} code={entry.literal === true} />)}
+              </FieldLayout>} />
           ))}
         </ItemGroup>
       ) : null}

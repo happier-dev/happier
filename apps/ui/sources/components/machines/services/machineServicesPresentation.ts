@@ -218,7 +218,8 @@ export function machineServiceDeclaredFacts(
   };
 }
 
-export type MachineServiceConfigurationEntry = Readonly<{ value: string; note: string | null }>;
+/** `literal`: a port, path, image, command or names, set in the code face; a word (None, Configured) is not. */
+export type MachineServiceConfigurationEntry = Readonly<{ value: string; note: string | null; literal?: true }>;
 export type MachineServiceConfigurationRow = Readonly<{
   key: 'image' | 'command' | 'ports' | 'networks' | 'mounts' | 'healthCheck' | 'variables';
   label: string;
@@ -269,20 +270,22 @@ export function machineServiceConfigurationRows(
     value: `${port.target ?? '?'}${port.protocol ? `/${port.protocol}` : ''}`,
     note: port.published === null ? t(`${s}.notPublished`)
       : t(`${s}.publishedOn`, { address: `${port.bindAddress ?? '0.0.0.0'}:${port.published}` }),
+    literal: true,
   }));
   const mounts = configuration.mounts.map((mount): MachineServiceConfigurationEntry => {
     // A mount with no named source is named by its kind, so its kind isn't said twice.
     const note = [mount.source !== null ? mount.type : null, mount.readOnly ? t(`${s}.readOnly`) : null].filter(Boolean).join(' · ');
-    return { value: `${mount.source ?? mount.type ?? '?'} → ${mount.target ?? '?'}`, note: note || null };
+    return { value: `${mount.source ?? mount.type ?? '?'} → ${mount.target ?? '?'}`, note: note || null, literal: true };
   });
   const images = distinct(details.map((detail) => detail.image === null ? null
-    : { value: detail.image, note: detail.imageDigest ? t(`${s}.imageId`, { id: shortImageId(detail.imageDigest) }) : null }));
+    : { value: detail.image, note: detail.imageDigest ? t(`${s}.imageId`, { id: shortImageId(detail.imageDigest) }) : null, literal: true as const }));
   const commands = distinct(details.map((detail) => detail.command && detail.command.length > 0
-    ? { value: detail.command.join(' '), note: null } : null));
+    ? { value: detail.command.join(' '), note: null, literal: true as const } : null));
   // The networks it joined, or its network mode where it joined none by name (host, none); observed, not who reaches it.
   const networks = distinct(details.map((detail) => detail.networks && detail.networks.length > 0
     ? { value: detail.networks.join(' · '), note: detail.networkMode && !detail.networks.includes(detail.networkMode)
-      && detail.networkMode !== 'default' && detail.networkMode !== 'bridge' ? t(`${s}.networkMode`, { mode: detail.networkMode }) : null }
+      && detail.networkMode !== 'default' && detail.networkMode !== 'bridge' ? t(`${s}.networkMode`, { mode: detail.networkMode }) : null,
+      literal: true as const }
     : detail.networkMode ? { value: t(`${s}.networkMode`, { mode: detail.networkMode }), note: null } : null));
   // A test the container reports says what it runs; a zero interval is Docker's inherited default and isn't said.
   const checks = distinct(details.map((detail) => {
@@ -290,11 +293,11 @@ export function machineServiceConfigurationRows(
     const test = healthTest(detail.healthcheck.test);
     if (test === null) return { value: t(`${s}.healthAbsent`), note: null };
     const seconds = detail.healthcheck.intervalNs ? Math.round(detail.healthcheck.intervalNs / 1_000_000_000) : 0;
-    return { value: test, note: seconds > 0
+    return { value: test, literal: true as const, note: seconds > 0
       ? t(`${s}.healthEvery`, { interval: t('machineVitals.monitoring.seconds', { count: seconds }) }) : null };
   }));
   const variables = distinct(details.map((detail) => detail.variableNames === null ? null
-    : detail.variableNames.length > 0 ? { value: detail.variableNames.join(' · '), note: t(`${s}.namesOnly`) } : none[0]!));
+    : detail.variableNames.length > 0 ? { value: detail.variableNames.join(' · '), note: t(`${s}.namesOnly`), literal: true as const } : none[0]!));
   const rows: (MachineServiceConfigurationRow | null)[] = [
     images.length > 0 ? { key: 'image', label: t(`${s}.image`), entries: images } : null,
     commands.length > 0 ? { key: 'command', label: t(`${s}.command`), entries: commands } : null,

@@ -172,11 +172,12 @@ describe('Machine services presentation', () => {
     });
     const s = 'machineServices.configuration' as const;
     // Each entry is its value (a port, a mount) with what qualifies it beneath (lab dCtr): published or not, the mount's kind.
+    // A literal (port, path, image, command, names) is marked so the row sets it in the code face; words are not.
     expect(rows.map((row) => [row.key, row.entries])).toEqual([
-      ['ports', [{ value: '8080/tcp', note: t(`${s}.notPublished`) },
-        { value: '5432/tcp', note: t(`${s}.publishedOn`, { address: '127.0.0.1:15432' }) }]],
-      ['mounts', [{ value: 'uploads → /app/uploads', note: 'volume' },
-        { value: 'bind → /etc/app', note: t(`${s}.readOnly`) }]],
+      ['ports', [{ value: '8080/tcp', note: t(`${s}.notPublished`), literal: true },
+        { value: '5432/tcp', note: t(`${s}.publishedOn`, { address: '127.0.0.1:15432' }), literal: true }]],
+      ['mounts', [{ value: 'uploads → /app/uploads', note: 'volume', literal: true },
+        { value: 'bind → /etc/app', note: t(`${s}.readOnly`), literal: true }]],
       ['healthCheck', [{ value: t(`${s}.healthConfigured`), note: null }]],
     ]);
     // Nothing declared says so; it never reads as an empty row.
@@ -192,25 +193,25 @@ describe('Machine services presentation', () => {
     // Two replicas of one service report the same configuration once.
     const rows = machineServiceConfigurationRows({ ports: [], mounts: [], healthcheck: 'configured' }, [detail('api-1'), detail('api-2')]);
     expect(rows.map((row) => [row.key, row.entries])).toEqual([
-      ['image', [{ value: 'ghcr.io/acme/billing-api:v1.42', note: t(`${s}.imageId`, { id: 'sha256:4f1c2b3a9e8d' }) }]],
-      ['command', [{ value: 'node dist/server.js', note: null }]],
+      ['image', [{ value: 'ghcr.io/acme/billing-api:v1.42', note: t(`${s}.imageId`, { id: 'sha256:4f1c2b3a9e8d' }), literal: true }]],
+      ['command', [{ value: 'node dist/server.js', note: null, literal: true }]],
       ['ports', [{ value: t(`${s}.none`), note: null }]],
-      ['networks', [{ value: 'billing_default', note: null }]],
+      ['networks', [{ value: 'billing_default', note: null, literal: true }]],
       ['mounts', [{ value: t(`${s}.none`), note: null }]],
-      ['healthCheck', [{ value: 'curl -f http://localhost:8080/healthz',
+      ['healthCheck', [{ value: 'curl -f http://localhost:8080/healthz', literal: true,
         note: t(`${s}.healthEvery`, { interval: t('machineVitals.monitoring.seconds', { count: 10 }) }) }]],
-      ['variables', [{ value: 'DATABASE_URL · LOG_LEVEL', note: t(`${s}.namesOnly`) }]],
+      ['variables', [{ value: 'DATABASE_URL · LOG_LEVEL', note: t(`${s}.namesOnly`), literal: true }]],
     ]);
     // Host networking is said; an inherited interval (0) and a missing image ID are left out, never "every 0 s".
     const host = machineServiceConfigurationRows({ ports: [], mounts: [], healthcheck: 'configured' }, [{ ...detail('a'),
       imageDigest: null, command: null, networks: [], networkMode: 'host', variableNames: [],
       healthcheck: { test: ['CMD', 'pg_isready', '-q'], intervalNs: 0 } }]);
     expect(host.map((row) => [row.key, row.entries])).toEqual([
-      ['image', [{ value: 'ghcr.io/acme/billing-api:v1.42', note: null }]],
+      ['image', [{ value: 'ghcr.io/acme/billing-api:v1.42', note: null, literal: true }]],
       ['ports', [{ value: t(`${s}.none`), note: null }]],
       ['networks', [{ value: t(`${s}.networkMode`, { mode: 'host' }), note: null }]],
       ['mounts', [{ value: t(`${s}.none`), note: null }]],
-      ['healthCheck', [{ value: 'pg_isready -q', note: null }]],
+      ['healthCheck', [{ value: 'pg_isready -q', note: null, literal: true }]],
       ['variables', [{ value: t(`${s}.none`), note: null }]],
     ]);
   });

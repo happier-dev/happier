@@ -10,18 +10,17 @@ import {
     type HappierApprovalFieldRow,
     type HappierApprovalFieldsLook,
     type HappierApprovalFieldsTextRender,
-    happierPageTextMetrics,
 } from '@happier-dev/plugin-ui/presentation';
 
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
+import { FieldLayout, FieldValue } from '@/components/ui/lists/FieldRow';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { TechnicalDetailsDisclosure, type TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { readPluginUiHostTypography } from '@/components/plugins/surfaces/pluginUiThemeProjection';
 import { Text } from '@/components/ui/text/Text';
-import { InlineCode } from '@/components/ui/text/InlineCode';
 import { resolveViewportClass } from '@/utils/platform/viewportClass';
 import { Typography } from '@/constants/Typography';
 import { getTranslationValue, t, tLoose } from '@/text';
@@ -41,8 +40,6 @@ import { isDiscussionReplyActionIdV1 } from '@happier-dev/protocol/discussions';
 export type ApprovalFieldsRequest = Pick<ApprovalRequest, 'actionId' | 'actionArgs' | 'preview'> & Partial<Pick<ApprovalRequest, 'status'>>;
 
 const EXACT_READ = { exactRead: true } as const;
-/** The page's label column: wide enough for a short phrase ("Before it starts"), so every value shares one edge. */
-const PAGE_FIELD_LABEL_WIDTH_PX = 128;
 
 /**
  * What a domain review adds to one of its facts on the approval page (lab d3 review): the names it lists, each
@@ -153,9 +150,9 @@ const ApprovalFieldsReading = React.memo(function ApprovalFieldsReading(props: R
                     // argument's name as the label and its entries in the value's place.
                     <Item
                         key={row.key}
-                        title={<ApprovalFieldLayout label={row.label} columns={columns}>
+                        title={<FieldLayout label={row.label} columns={columns}>
                             <HappierApprovalFieldEntries {...look} entries={row.entries} density="page" />
-                        </ApprovalFieldLayout>}
+                        </FieldLayout>}
                         mode="info"
                         showChevron={false}
                     />
@@ -290,40 +287,13 @@ function ApprovalValueItem(props: Readonly<{
     const reading = useApprovalReferenceReading(source?.reference, row.value, source?.serverId ?? null, source?.exactRead ? EXACT_READ : undefined);
     const label = nameApprovalReferenceLabel(row.label, source?.reference, reading.named);
     const title = (
-        <ApprovalFieldLayout label={label} columns={columns}>
-            <ApprovalFieldValue value={reading.text} names={extras.names} note={extras.note}
+        <FieldLayout label={label} columns={columns}>
+            <FieldValue value={reading.text} names={extras.names} note={extras.note}
                 code={extras.kind === 'value' && extras.valueFormat === 'code'} />
-        </ApprovalFieldLayout>
+        </FieldLayout>
     );
     if (reading.session) return <ApprovalSessionLinkItem title={title} session={reading.session} />;
     return <Item title={title} mode="info" showChevron={false} testID={props.testID} />;
-}
-
-/**
- * The label stays quiet and the value reads first, at every width. Wide, the labels share one column and the
- * values one edge down the section; a phone sets each label above its value.
- */
-function ApprovalFieldLayout(props: Readonly<{ label: string; columns: boolean; children: React.ReactNode }>) {
-    return (
-        <View style={props.columns ? styles.columns : styles.stacked}>
-            <Text style={props.columns ? styles.columnLabel : styles.stackedLabel}>{props.label}</Text>
-            <View style={styles.columnValue}>{props.children}</View>
-        </View>
-    );
-}
-
-/** A value, the names it lists as chips, then the quieter line that finishes it. */
-function ApprovalFieldValue(props: Readonly<{ value: string; names?: readonly string[]; note?: string; code?: boolean }>) {
-    return (
-        <View style={styles.value}>
-            {props.names?.length ? (
-                <View style={styles.names}>
-                    {props.names.map(name => <InlineCode key={name}>{name}</InlineCode>)}
-                </View>
-            ) : <Text style={props.code ? styles.codeValueText : styles.valueText}>{props.value}</Text>}
-            {props.note ? <Text style={styles.noteText}>{props.note}</Text> : null}
-        </View>
-    );
 }
 
 /** A Session the page could read is a way to it: its row opens that Session. */
@@ -433,53 +403,6 @@ const styles = StyleSheet.create((theme) => ({
     },
     disclosureBody: {
         paddingTop: theme.space.s8,
-    },
-    columns: {
-        flexDirection: 'row',
-        gap: theme.space.s16,
-    },
-    // The label sits on the value's first line: the steps differ, so it drops by half their difference.
-    columnLabel: {
-        ...happierPageTextMetrics('rowDescription'),
-        width: PAGE_FIELD_LABEL_WIDTH_PX,
-        flexShrink: 0,
-        paddingTop: (happierPageTextMetrics('rowTitle').lineHeight - happierPageTextMetrics('rowDescription').lineHeight) / 2,
-        color: theme.colors.text.tertiary,
-    },
-    stacked: {
-        gap: theme.space.s4,
-    },
-    stackedLabel: {
-        ...happierPageTextMetrics('rowDescription'),
-        color: theme.colors.text.tertiary,
-    },
-    columnValue: {
-        flex: 1,
-        minWidth: 0,
-    },
-    value: {
-        gap: theme.space.s4,
-    },
-    valueText: {
-        ...happierPageTextMetrics('rowTitle'),
-        ...Typography.default(),
-        color: theme.colors.text.primary,
-    },
-    /** A literal compared character by character (a host key fingerprint): the code face at the row's size. */
-    codeValueText: {
-        ...happierPageTextMetrics('rowTitle'),
-        ...Typography.mono(),
-        color: theme.colors.text.primary,
-    },
-    noteText: {
-        ...happierPageTextMetrics('rowDescription'),
-        ...Typography.default(),
-        color: theme.colors.text.secondary,
-    },
-    names: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        gap: theme.space.s4,
     },
 }));
 
