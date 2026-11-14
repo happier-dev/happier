@@ -175,6 +175,7 @@ export function readExternalActionManagedAcquireAdmission(envelope: ExternalActi
 export async function resolveManagedActionMachineAdmissionInTx(reader: Tx,
     input: ExternalActionManagedAdmissionContext & Readonly<{
         actorAccountId: string; machineId: string; actionId: string; requireOnline?: boolean;
+        ordinaryAdmission?: Extract<MachineAdmission, { kind: 'admitted' }>;
     }>): Promise<MachineAdmission & ManagedActionMachineAdmissionFacts> {
     const denied = { kind: 'denied', code: 'access_denied' } as const;
     try {
@@ -211,6 +212,9 @@ export async function resolveManagedActionMachineAdmissionInTx(reader: Tx,
         const acquiring = input.actionId === 'machines.managed.acquire';
         const projected = acquiring && input.envelope ? readExternalActionManagedAcquireAdmission(input.envelope) : null;
         if (acquiring && input.envelope && !projected) return denied;
+        // One-off work keeps the caller's existing Manage admission; only
+        // presets have a separate admitted custody/review fact to qualify.
+        if (acquiring && projected?.input.selection.kind === 'one-off' && input.ordinaryAdmission) return input.ordinaryAdmission;
         const binding = input.executionBinding;
         const recovery = acquiring ? undefined : input.envelope ? readExternalActionManagedRecoveryAdmission(input.actionId, input.envelope)
             : binding?.managedAdmission;
@@ -251,17 +255,22 @@ export async function resolveManagedActionMachineAdmissionInTx(reader: Tx,
                 })) return denied;
             custodianAccountId = retained.custodianAccountId;
             installationId = retained.controllerInstallationId ?? undefined;
+            // This is accepted cross-custody preset work, not a reconstruction
+            // of its historical Team delegation policy or a fresh grant.
+            if (acquiring && projected?.input.selection.kind === 'preset'
+                && retained.custodianAccountId !== input.actorAccountId) managedAcquireDelegation = true;
         } else {
             if (!acquiring || !projected || projected.input.selection.kind !== 'preset') return denied;
             const selected = await resolveMachinePresetForAcquireInTx(reader, { accountId: input.actorAccountId,
                 authentication: input.authentication, ...projected.input.selection, checkCapacity: false,
                 boundController: resolveManagedAcquireReviewV1(projected.input).controller });
             const review = resolveManagedAcquireReviewV1(projected.input);
-            if (selected.kind !== 'ready' || !selected.delegated || !review.controller || !sameManagedInput(selected.preset.controller, review.controller)
+            if (selected.kind !== 'ready' || !selected.delegated && !input.ordinaryAdmission
+                || !review.controller || !sameManagedInput(selected.preset.controller, review.controller)
                 || review.controller.machineId !== input.machineId) return denied;
             custodianAccountId = selected.custodianAccountId;
             installationId = review.controller.installationId;
-            managedAcquireDelegation = true;
+            managedAcquireDelegation = selected.delegated ? true : undefined;
         }
         // Custody retains the canonical installation, encryption and availability
         // checks, without publishing controller contents or keys to the requester.

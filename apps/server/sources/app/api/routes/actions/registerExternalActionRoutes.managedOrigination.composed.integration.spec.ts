@@ -842,7 +842,44 @@ describe('composed CLI managed Action origination', () => {
         }
     });
 
-    it.each([['plain', 'none'], ['e2ee', 'none'], ['plain', 'member'], ['plain', 'owner'], ['plain', 'member-archived'], ['plain', 'member-equal']] as const)(
+    it('preserves foreign controller Manage for one-off acquire admission', async () => {
+        const selected = await fixture(true);
+        const requester = await fixture(true);
+        await db.machineGrant.create({ data: { principalKind: 'account', machineId: selected.controller.machineId,
+            accountId: requester.account.id, accessLevel: 'admin', createdByAccountId: selected.account.id } });
+        const target = { kind: 'machine' as const, machineId: selected.controller.machineId };
+        const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input: selected.input };
+        const instance = await app(async () => { throw new Error('Only native HTTP admission is exercised'); }, () => {}, []);
+        try {
+            const issued = await instance.inject({ method: 'POST', url: '/v1/actions/machines.managed.acquire/execution-authorization',
+                headers: { authorization: `Bearer ${requester.token}` }, payload: { v: 1, machineId: target.machineId, envelope } });
+            expect(issued.statusCode, issued.body).toBe(200);
+            let authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+            expect(authorization.binding.managedAcquireDelegation).toBeUndefined();
+            const body = { requestId: envelope.requestId, input: selected.input, continuationPresent: false };
+            const admitted = await instance.inject({ method: 'POST', url: '/v1/machines/managed/controller/admit', payload: body,
+                headers: createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: 'machines.managed.acquire', target,
+                    installationId: selected.controller.installationId, method: 'POST', path: '/v1/machines/managed/controller/admit',
+                    body, privateKey: selected.keys.secretKey }) });
+            expect(admitted.statusCode, admitted.body).toBe(200);
+            expect(admitted.json()).toMatchObject({ replayed: false, machine: {
+                enrollmentAccountId: requester.account.id, custodianAccountId: selected.account.id } });
+            await db.machineGrant.deleteMany({ where: { machineId: selected.controller.machineId, accountId: requester.account.id } });
+            const reissued = await instance.inject({ method: 'POST', url: '/v1/actions/machines.managed.acquire/execution-authorization',
+                headers: { authorization: `Bearer ${requester.token}` }, payload: { v: 1, machineId: target.machineId, envelope } });
+            expect(reissued.statusCode, reissued.body).toBe(200);
+            authorization = ExternalActionExecutionAuthorizationV1Schema.parse(reissued.json());
+            expect(authorization.binding.managedAcquireDelegation).toBeUndefined();
+            const replayed = await instance.inject({ method: 'POST', url: '/v1/machines/managed/controller/admit', payload: body,
+                headers: createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: 'machines.managed.acquire', target,
+                    installationId: selected.controller.installationId, method: 'POST', path: '/v1/machines/managed/controller/admit',
+                    body, privateKey: selected.keys.secretKey }) });
+            expect(replayed.statusCode, replayed.body).toBe(200);
+            expect(replayed.json()).toMatchObject({ replayed: true, machine: { id: admitted.json().machine.id } });
+        } finally { await instance.close(); }
+    });
+
+    it.each([['plain', 'none'], ['e2ee', 'none'], ['plain', 'member'], ['plain', 'owner'], ['plain', 'member-archived'], ['plain', 'member-equal'], ['plain', 'pool-manager'], ['plain', 'manager']] as const)(
         'admits omitted preset policy only from the exact signed native root (%s, Session source=%s)', async (mode, sessionSource) => {
         const selected = await fixture(true);
         const requester = sessionSource === 'owner' ? selected : await fixture(true, mode);
@@ -851,12 +888,23 @@ describe('composed CLI managed Action origination', () => {
             { teamId: team.id, accountId: selected.account.id, role: 'owner' },
             ...(requester.account.id === selected.account.id ? [] : [{ teamId: team.id, accountId: requester.account.id, role: 'member' }]),
         ] });
+        const poolId = sessionSource === 'pool-manager' ? crypto.randomUUID() : undefined;
+        if (poolId) {
+            await db.machinePool.create({ data: { id: poolId, accountId: selected.account.id, teamId: team.id,
+                name: 'Managed controller pool', members: { create: { machineId: selected.controller.machineId, priorityTier: 0 } } } });
+        }
+        if (poolId || sessionSource === 'manager') {
+            await db.machineGrant.create({ data: { principalKind: 'account', machineId: selected.controller.machineId,
+                accountId: requester.account.id, accessLevel: 'admin', createdByAccountId: selected.account.id } });
+            expect(await resolveMachineAccess({ actorAccountId: requester.account.id, machineId: selected.controller.machineId }))
+                .toMatchObject({ role: 'manage' });
+        }
         const id = crypto.randomUUID();
         const content = { t: 'plain' as const, v: { v: 1, name: 'Private native policy', launch: selected.input.selection.launch } };
         expect(await createMachinePreset({ accountId: selected.account.id,
             authentication: { authenticationAuthority: 'present_user' }, input: {
                 id, homeId, owner: { kind: 'team', teamId: team.id }, contentEncryptionMode: 'plain', content, recipients: [],
-                controller: selected.controller, teamAcquireDelegated: true,
+                ...(poolId ? { controllerPoolId: poolId } : { controller: selected.controller }), teamAcquireDelegated: true,
             } })).toMatchObject({ kind: 'saved' });
         const policy = resolveMachineRetentionPolicyV1({ billing: { location: 'cloud', stoppedBilling: 'billed' },
                 nativeCapabilities: { supportedIntents: ['delete'], finiteOnly: true } });
@@ -898,8 +946,10 @@ describe('composed CLI managed Action origination', () => {
                 issued = await issue();
             } finally { presetDelegate.findFirst = originalFindFirst; }
             expect(issued.statusCode, issued.body).toBe(200);
-            expect(presetReads).toBe(requester.account.id === selected.account.id ? 0 : 1);
+            const initialPresetReads = presetReads;
             let authorization = ExternalActionExecutionAuthorizationV1Schema.parse(issued.json());
+            if (sessionSource !== 'pool-manager') expect(authorization.binding.managedAcquireDelegation)
+                .toBe(requester.account.id !== selected.account.id && sessionSource !== 'manager' ? true : undefined);
             let sourceKeys: typeof selected.keys | undefined;
             if (sessionSource !== 'none') {
                 const source = sessionSource === 'owner' ? await fixture(true) : requester;
@@ -937,7 +987,8 @@ describe('composed CLI managed Action origination', () => {
                     authorization = ExternalActionExecutionAuthorizationV1Schema.parse(sourced.json());
                 }
                 expect(authorization.binding).toMatchObject({ sessionActionOrigin: origin,
-                    ...(sessionSource === 'member' || sessionSource === 'member-equal' ? { managedAcquireDelegation: true } : {}) });
+                    ...(sessionSource === 'member' || sessionSource === 'member-equal'
+                        ? { managedAcquireDelegation: true } : {}) });
                 if (sessionSource === 'member-archived') {
                     expect(authorization.binding.managedAcquireDelegation).toBeUndefined();
                     expect(await restoreMachinePreset({ accountId: selected.account.id,
@@ -957,11 +1008,32 @@ describe('composed CLI managed Action origination', () => {
                 const origin = authorization.binding.sessionActionOrigin;
                 const source = authorization.binding.sessionActionSource;
                 if (origin && (!source || !sourceKeys)) throw new Error('Missing installed Session source');
-                const reissued = await issue(origin && source && sourceKeys
-                    ? { origin, source, privateKey: sourceKeys.secretKey } : undefined);
+                presetReads = 0;
+                let reissued;
+                presetDelegate.findFirst = ((...args: Parameters<typeof originalFindFirst>) => {
+                    presetReads += 1;
+                    return originalFindFirst.apply(presetDelegate, args);
+                }) as typeof originalFindFirst;
+                try {
+                    reissued = await issue(origin && source && sourceKeys
+                        ? { origin, source, privateKey: sourceKeys.secretKey } : undefined);
+                } finally { presetDelegate.findFirst = originalFindFirst; }
                 expect(reissued.statusCode, reissued.body).toBe(200);
+                expect(presetReads).toBe(0);
                 authorization = ExternalActionExecutionAuthorizationV1Schema.parse(reissued.json());
-                expect(authorization.binding.managedAcquireDelegation).toBeUndefined();
+                expect(authorization.binding.managedAcquireDelegation).toBe(requester.account.id !== selected.account.id ? true : undefined);
+                expect((await send(body, unrelated.keys.secretKey)).statusCode).toBe(401);
+                if (sourceKeys && sessionSource !== 'owner' && sessionSource !== 'member-equal') {
+                    const row = await db.managedMachine.findUniqueOrThrow({ where: { homeId_admittedActionRequestId: {
+                        homeId, admittedActionRequestId: binding.requestId } } });
+                    await db.managedMachine.update({ where: { id: row.id }, data: { custodianAccountId: unrelated.account.id } });
+                    try {
+                        expect((await send(body, sourceKeys.secretKey)).statusCode).toBe(401);
+                        expect(await db.managedMachine.count({ where: { homeId, admittedActionRequestId: binding.requestId } })).toBe(1);
+                    } finally {
+                        await db.managedMachine.update({ where: { id: row.id }, data: { custodianAccountId: row.custodianAccountId } });
+                    }
+                }
                 const replayed = await send(body, sourceKeys?.secretKey ?? selected.keys.secretKey);
                 expect(replayed.statusCode, replayed.body).toBe(200);
                 expect(replayed.json()).toMatchObject({ replayed: true });
@@ -1013,6 +1085,9 @@ describe('composed CLI managed Action origination', () => {
             await db.managedMachinePreset.update({ where: { id }, data: { retentionOverride: null } });
             const accepted = await send(body);
             expect(accepted.statusCode, accepted.body).toBe(200);
+            expect(initialPresetReads).toBe(requester.account.id === selected.account.id ? 0 : 1);
+            expect(authorization.binding.managedAcquireDelegation).toBe(requester.account.id !== selected.account.id
+                && sessionSource !== 'manager' ? true : undefined);
             expect(ManagedAdmissionOutputV1Schema.parse(accepted.json()).machine).toMatchObject({
                 retention: policy.retention, wakeOnAcceptedMessage: false, custodianAccountId: selected.account.id,
                 enrollmentAccountId: requester.account.id });

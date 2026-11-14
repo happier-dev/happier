@@ -391,8 +391,8 @@ export async function resolveExternalActionExecutionMachineAdmissionInTx(reader:
             ? { rpcMethod: RPC_METHODS.APPROVAL_REQUEST_REPLAY_APPROVED }
             : accountPlaced ? {} : { actionId: input.actionId }) });
     if (ordinary.kind === 'admitted' && ordinary.custodianAccountId !== input.actorAccountId
-        && (input.actionId === 'machines.managed.cancel' || input.actionId === 'machines.managed.delete')) {
-        return resolveManagedActionMachineAdmissionInTx(reader, input);
+        && (input.actionId === 'machines.managed.acquire' || input.actionId === 'machines.managed.cancel' || input.actionId === 'machines.managed.delete')) {
+        return resolveManagedActionMachineAdmissionInTx(reader, { ...input, ordinaryAdmission: ordinary });
     }
     return ordinary.kind === 'admitted' || input.actionId !== 'machines.managed.acquire'
         && !isExternalActionManagedResourceAction(input.actionId) && !isManagedControlAdmissionActionIdV1(input.actionId)
@@ -778,6 +778,7 @@ async function readCurrentExternalActionPrincipal(
     reader: Tx,
     purpose?: ExternalActionVerificationPurpose,
     deploymentContinuation?: DeploymentReceiptContinuation,
+    retainedCreationAdmission?: Awaited<ReturnType<typeof hasAdmittedManagedCreationRootInTx>>,
 ): Promise<VerifiedExternalActionPrincipal | null> {
     // Fresh reviewer roots obey the replay owner's provenance policy at mint
     // and principal projection; local host approval waivers do not grant replay custody.
@@ -816,7 +817,8 @@ async function readCurrentExternalActionPrincipal(
     if (binding.managedContinuation) {
         return await readAdmittedManagedCreationChildInTx(reader, binding) ? projectAcceptedDeploymentPrincipal(binding) : null;
     }
-    const retainedCreation = await hasAdmittedManagedCreationRootInTx(reader, binding);
+    const retainedCreation = retainedCreationAdmission === undefined
+        ? await hasAdmittedManagedCreationRootInTx(reader, binding) : retainedCreationAdmission;
     if (retainedCreation !== null) return retainedCreation ? projectAcceptedDeploymentPrincipal(binding) : null;
     if (binding.sessionActionOrigin) {
         const nativeReleaseSourceCurrent = await readNativeCredentialReleaseSourceCurrentInTx(reader, binding);
@@ -877,11 +879,12 @@ async function verifyCurrentExternalActionPrincipalForPurpose(
     binding: ExternalActionExecutionAuthorizationBindingV1,
     purpose?: ExternalActionVerificationPurpose,
     deploymentContinuation?: DeploymentReceiptContinuation,
+    retainedCreationAdmission?: Awaited<ReturnType<typeof hasAdmittedManagedCreationRootInTx>>,
 ): Promise<VerifiedExternalActionPrincipal | null> {
     if (binding.handoffAdmission || binding.workflowActionOrigin?.sessionLeaf) {
-        return readCurrentExternalActionPrincipal(binding, db, purpose, deploymentContinuation);
+        return readCurrentExternalActionPrincipal(binding, db, purpose, deploymentContinuation, retainedCreationAdmission);
     }
-    const principal = await readCurrentExternalActionPrincipal(binding, db, purpose, deploymentContinuation);
+    const principal = await readCurrentExternalActionPrincipal(binding, db, purpose, deploymentContinuation, retainedCreationAdmission);
     if (!principal) return null;
     const eligibility = await enforceLoginEligibility({ accountId: principal.accountId, env: process.env });
     if (!eligibility.ok && eligibility.statusCode === 503) {
@@ -1004,12 +1007,14 @@ async function readNativeCredentialReleaseSourceCurrentInTx(reader: Tx,
 }
 
 export async function hasCurrentExternalActionSessionSource(binding: ExternalActionExecutionAuthorizationBindingV1,
-    resolveCurrentSessionMachine: ExternalActionExecutionRequestProof['resolveCurrentSessionMachine']): Promise<boolean> {
+    resolveCurrentSessionMachine: ExternalActionExecutionRequestProof['resolveCurrentSessionMachine'],
+    retainedCreationAdmission?: Awaited<ReturnType<typeof hasAdmittedManagedCreationRootInTx>>): Promise<boolean> {
     const nativeReleaseSourceCurrent = await readNativeCredentialReleaseSourceCurrentInTx(db, binding);
     if (nativeReleaseSourceCurrent !== null) return nativeReleaseSourceCurrent;
     if (binding.handoffAdmission) return hasAdmittedExternalActionHandoffScope(binding);
     if (binding.managedContinuation) return Boolean(await readAdmittedManagedCreationChildInTx(db, binding));
-    if (await hasAdmittedManagedCreationRootInTx(db, binding)) return true;
+    if (retainedCreationAdmission === undefined
+        ? await hasAdmittedManagedCreationRootInTx(db, binding) : retainedCreationAdmission) return true;
     return !binding.sessionActionOrigin || Boolean(binding.sessionActionSource
         && await hasCurrentSessionActionRpcSourceBinding({ accountId: binding.accountId,
             ...binding.sessionActionSource, sourceSessionId: binding.sessionActionOrigin.caller.sessionId,
@@ -1566,6 +1571,13 @@ async function verifyCommon(
         publicKey,
         signature: proof.machineSignature,
     });
+    const acquireAdmissionRequest = binding.actionId === 'machines.managed.acquire'
+        && proof.method.toUpperCase() === 'POST' && proof.path.split('?')[0] === '/v1/machines/managed/controller/admit';
+    // Move the existing accepted-root read before signer selection. Its result
+    // also feeds source/principal projection below; an accepted acquire only
+    // replays the retained identity and never admits another native effect.
+    const retainedCreationAdmission = acquireAdmissionRequest
+        ? await hasAdmittedManagedCreationRootInTx(db, binding) : undefined;
     let signatureCurrent = custody
         ? verifySignature(decodeBase64(custody.installationPublicKey, 'base64url'))
         : Boolean(machine?.installationPublicKey && verifySignature(machine.installationPublicKey));
@@ -1577,7 +1589,7 @@ async function verifyCommon(
     const nativeControllerPurpose = binding.actionId === 'machines.managed.credentials.install'
         && proof.path.split('?')[0].startsWith('/v1/machines/managed/controller/')
         || binding.managedAcquireDelegation === true && proof.method.toUpperCase() === 'POST'
-            && proof.path.split('?')[0] === '/v1/machines/managed/controller/admit';
+            && proof.path.split('?')[0] === '/v1/machines/managed/controller/admit' && retainedCreationAdmission !== true;
     // Guest key publication and delegated policy qualification belong to controller custody.
     if ((!signatureCurrent || binding.handoffPreflight) && !custodyTarget && !managedGuestMetadata && !nativeControllerPurpose && !reviewedMachineSetupChild) {
         const sourceKey = await readCurrentExternalActionSourceSigningPublicKey(binding);
@@ -1707,7 +1719,7 @@ async function verifyCommon(
             ...(proof.reviewedChild ? { reviewedChildAdmission: proof.reviewedChild } : {}) } : null;
     }
     if (deploymentContinuation) return null;
-    if (!purpose && !nativeTransition && !domainContinuation && !admittedFiniteOperation && !await hasCurrentExternalActionSessionSource(binding, proof.resolveCurrentSessionMachine)) return refuse('source_before_principal');
+    if (!purpose && !nativeTransition && !domainContinuation && !admittedFiniteOperation && !await hasCurrentExternalActionSessionSource(binding, proof.resolveCurrentSessionMachine, retainedCreationAdmission)) return refuse('source_before_principal');
 
     // The installed generic issuer carries reviewed child consent on the original
     // credential. Create children consume the allocated Environment; retention
@@ -1768,7 +1780,7 @@ async function verifyCommon(
 
     // One signed request admits each fact once. A change after this point applies
     // at the next request; the holder stops already-admitted work on its local signal.
-    const currentPrincipal = await verifyCurrentExternalActionPrincipalForPurpose(binding, purpose, deploymentContinuation);
+    const currentPrincipal = await verifyCurrentExternalActionPrincipalForPurpose(binding, purpose, deploymentContinuation, retainedCreationAdmission);
     const principal = currentPrincipal && projectVerifiedExternalActionBoundPrincipal(binding, currentPrincipal);
     if (!principal) return refuse('principal');
     const machineNpmProfileAdmission = machineNpmProfilePurpose
@@ -1779,7 +1791,7 @@ async function verifyCommon(
     if (!machineNpmProfileAdmission && !reviewedMachineSetupChild
         && !await hasCurrentExecutionMachineAdmission(binding, machine)) return refuse('machine_admission_after_principal');
     // A transition without accepted custody skipped the Session source check above.
-    if (!purpose && nativeTransition && !await hasCurrentExternalActionSessionSource(binding, proof.resolveCurrentSessionMachine)) return refuse('source_after_principal');
+    if (!purpose && nativeTransition && !await hasCurrentExternalActionSessionSource(binding, proof.resolveCurrentSessionMachine, retainedCreationAdmission)) return refuse('source_after_principal');
     return { binding, signedChildPurpose, effectActionId: effectActionId.data, target, principal, effectiveAuthority: principal.authority,
         ...(machineNpmProfileAdmission ? { machineNpmProfileAdmission } : {}),
         ...reviewedAdmission,
