@@ -145,8 +145,10 @@ describe('requester HTTP authority on the existing external Action carrier', () 
   it.each([{ accountEncryptionMode: 'plain' as const, custodianAccountId: 'alice', terminalTransport: false, privateChild: false },
     { accountEncryptionMode: 'e2ee' as const, custodianAccountId: 'bob', terminalTransport: false, privateChild: false },
     { accountEncryptionMode: 'e2ee' as const, custodianAccountId: 'bob', terminalTransport: true, privateChild: false },
+    // A spawn-reviewed Run keeps its own identity even when its live Run admits an exact leaf.
+    { accountEncryptionMode: 'e2ee' as const, custodianAccountId: 'bob', terminalTransport: true, privateChild: false, leafInReviewedRun: true },
     { accountEncryptionMode: 'plain' as const, custodianAccountId: 'bob', terminalTransport: true, privateChild: true },
-    { accountEncryptionMode: 'e2ee' as const, custodianAccountId: 'bob', terminalTransport: true, privateChild: true }])('delivers only invocation codec for reviewed setup ($accountEncryptionMode)', async ({ accountEncryptionMode, custodianAccountId, terminalTransport, privateChild }) => {
+    { accountEncryptionMode: 'e2ee' as const, custodianAccountId: 'bob', terminalTransport: true, privateChild: true }])('delivers only invocation codec for reviewed setup ($accountEncryptionMode)', async ({ accountEncryptionMode, custodianAccountId, terminalTransport, privateChild, leafInReviewedRun }) => {
     const requestId = crypto.randomUUID();
     const publisherTarget = privateChild ? { kind: 'machine' as const, machineId: 'publisher-machine' } : target;
     const parent = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'captured-parent', binding: {
@@ -158,11 +160,15 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     const childInput = MachineSetupApplyInputV1Schema.parse({ homeId: 'srv_bob_home', machineId: target.machineId,
       targets: [{ homeId: 'srv_bob_home', machineId: target.machineId, desiredRevision: 0, recipePlans: [],
         sources: [{ kind: 'direct', setup: { items: [] } }] }] });
-    const reviewedChild = { actionId: SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.apply.action,
-      role: privateChild ? 'setup-invocation' : SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.apply.role,
-      inputDigest: computeActionInputApprovalDigestV1('machines.setup.apply', childInput) };
+    const inputDigest = computeActionInputApprovalDigestV1('machines.setup.apply', childInput);
+    // The live Run reader admits each exact leaf under its own invocation role.
+    const leaf = { actionId: SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.apply.action, role: 'setup-invocation', inputDigest };
+    const runIdentity = { actionId: SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.apply.action,
+      role: SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1.apply.role, inputDigest };
+    const reviewedChild = privateChild ? leaf : runIdentity;
+    // A root's own Run is derived from the root alone (composeMachineSetup); a spawn child's Run from its reviewed child.
     const runId = deriveMachineSetupCombinedRunIdV1({ homeId: 'srv_bob_home', accountId: 'bob',
-      requestId: parent.binding.requestId, reviewedChild });
+      requestId: parent.binding.requestId, ...(privateChild ? {} : { reviewedChild: runIdentity }) });
     const context = { runtimeAccountId: 'bob', externalActionExecutionAuthorization: parent, externalActionTarget: publisherTarget, surface: 'agent', authority: 'account_automation', actionRequestId: requestId,
       executionRunWorkflowRunId: runId, actionCaller: { kind: 'workflowRun', runId, authorization: {
         principal: { kind: 'host' }, admittedPermissionCeiling: 'default',
@@ -218,10 +224,10 @@ describe('requester HTTP authority on the existing external Action carrier', () 
       serverHttpBaseUrl: 'https://home.test', serverIdentityId: 'srv_bob_home',
       installedWorkflow: { context: admittedContext, machineId: publisherTarget.machineId, installationId: 'alice-installation', privateKey: keys.secretKey },
     });
-    const result = privateChild ? await invokeHostReviewedChildV1({
+    const result = privateChild || leafInReviewedRun ? await invokeHostReviewedChildV1({
       parent: { actionId: 'machines.setup.apply', input: { ...childInput, machineId: publisherTarget.machineId } },
-      child: { action: 'machines.setup.apply', role: reviewedChild.role, input: childInput }, context,
-      approvedBy: { accountId: 'bob' }, admittedReview: { action: 'machines.setup.apply', role: reviewedChild.role, surface: 'agent' },
+      child: { action: 'machines.setup.apply', role: leaf.role, input: childInput }, context,
+      approvedBy: { accountId: 'bob' }, admittedReview: { action: 'machines.setup.apply', role: leaf.role, surface: 'agent' },
       execute: (_input, admittedContext) => dispatch(admittedContext),
     }) : await dispatch(context);
     expect(result).toMatchObject({ ok: false, errorCode: 'target_unavailable' });

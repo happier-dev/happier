@@ -855,6 +855,24 @@ describe('ordinary Account managed Action origination', () => {
             expect(child.binding).not.toHaveProperty('sessionActionSource');
             expect(child.binding).not.toHaveProperty('authenticationEvidence');
             expect(await auth.verifyExternalActionExecutionAuthorization(child.token)).toEqual(child.binding);
+            // The root's own Run carries the live Run's exact leaf proof for the receiver.
+            // That proof is not the Run's identity; the Run stays derived from the root alone.
+            const leafRequestId = crypto.randomUUID();
+            const leafOrigin = { runId: workflowActionOrigin.runId, requestId: leafRequestId, reviewedChild: {
+                actionId, role: crypto.randomUUID(), inputDigest: computeActionInputApprovalDigestV1(actionId, input) } };
+            const verifyLeaf = (origin: typeof leafOrigin) => verifyWorkflowExternalActionRequesterAuthorization({
+                authorization: parent, origin, publisherAccountId: selected.account.id,
+                publisherCustodianAccountId: selected.account.id, publisherMachineId: selected.controller.machineId,
+                publisherInstallationId: selected.controller.installationId,
+                target, preparationAdmission: projectExternalActionDeploymentPreparationEnvelopeAdmissionV1({
+                    actionId, envelope: { ...envelope, requestId: leafRequestId } }) });
+            const leafAdmission = await verifyLeaf(leafOrigin);
+            expect(leafAdmission?.principal).toMatchObject({ accountId: selected.account.id, workflowActionOrigin: leafOrigin });
+            // A Run id the root never admitted stays refused, with or without a leaf proof.
+            expect(await verifyLeaf({ ...leafOrigin, runId: crypto.randomUUID() })).toBeNull();
+            // A leaf of another Action never stands in for the root's own Run.
+            expect(await verifyLeaf({ ...leafOrigin, reviewedChild: { ...leafOrigin.reviewedChild,
+                actionId: 'machines.setup.updates.rollout' } })).toBeNull();
         } finally { await instance.close(); }
     });
 
