@@ -413,6 +413,7 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       ...(approvalProfileId === undefined ? {} : { approvalProfileId }),
       ...(input.visibleTeamId === undefined ? {} : { visibleTeamId: input.visibleTeamId }),
       ...(input.onComplete === undefined ? {} : { onComplete: input.onComplete }),
+      ...(input.deploymentPreview === undefined ? {} : { deploymentPreview: input.deploymentPreview }),
       ...(target.kind === 'inline' ? { inlineDefinition: target.definition } : {}) });
   };
   const withoutTriggerApprovals = (context: WorkflowTriggerContextV1) => {

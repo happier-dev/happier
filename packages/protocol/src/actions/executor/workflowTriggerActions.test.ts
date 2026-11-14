@@ -853,6 +853,33 @@ const deploymentEventTrigger = { kind: 'pluginEvent' as const, enabled: true,
   filter: null, maximumObservationAgeMs: null };
 
 describe('Account source watcher assignment', () => {
+  it.each(['plain', 'e2ee'] as const)('retains the %s preview Environment identity through trigger add, cold readback and update', async mode => {
+    const f = fixture();
+    const encryption: AvailableAutomationAccountEncryptionV1 = mode === 'plain'
+      ? { kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }
+      : { kind: 'available', witness: { mode: 'e2ee', version: 1, contentKeyFingerprint: 'current' },
+        material: createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+          material: { type: 'legacy', secret: new Uint8Array(32).fill(7) } }) };
+    const params = { automations: f.deps.automations, resolveEncryption: async () => encryption,
+      randomBytes: (length: number) => new Uint8Array(length).fill(3), resolveWorkflow: f.deps.resolveWorkflow,
+      newId: () => crypto.randomUUID() };
+    const deploymentPreview = { serverId: 'home', environmentId: 'preview-template' };
+    const actions = createAccountWorkflowTriggerActions(params);
+    const saved = await actions.add({ target: { kind: 'inline', definition }, project,
+      executionTarget: { kind: 'detached_run' }, deploymentPreview, trigger: deploymentEventTrigger });
+    const reloaded = createAccountWorkflowTriggerActions(params);
+    const listed = WorkflowTriggerListResultV1Schema.parse(await reloaded.list({ scope: 'account_inline' }));
+    const incumbent = listed.sets.find(set => set.context?.deploymentPreview?.serverId === deploymentPreview.serverId
+      && set.context.deploymentPreview.environmentId === deploymentPreview.environmentId);
+    expect(incumbent).toMatchObject({ automationId: saved.set.automationId, context: { deploymentPreview } });
+    if (!incumbent) throw new Error('Preview enrollment must find its saved Environment');
+    await reloaded.update({ automationId: incumbent.automationId, expectedRevision: incumbent.revision,
+      triggerId: saved.triggerId, patch: { enabled: true } });
+    expect(await createAccountWorkflowTriggerActions(params).list({ scope: 'account_inline' }))
+      .toMatchObject({ sets: [{ automationId: incumbent.automationId, context: { deploymentPreview } }] });
+    expect(f.rows.size).toBe(1);
+  });
+
   it.each(['plain', 'e2ee'] as const)('updates a person-chosen %s platform observation period without replacing its enrollment or checkpoint identity', async mode => {
     const f = fixture();
     const encryption: AvailableAutomationAccountEncryptionV1 = mode === 'plain'
