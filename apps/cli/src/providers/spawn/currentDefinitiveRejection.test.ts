@@ -3,12 +3,64 @@ import { accountSettingsParse, DEFAULT_PROVIDER_SETTINGS_V1, ProviderContributio
 import { splitProviderSettingsV1 } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
-import { getActiveAccountSettingsSnapshot, resetActiveAccountSettingsSnapshotForTests,
+import { join } from 'node:path';
+import { withConfiguredDaemonTestHome } from '@/daemon/testkit/fakeDaemonLifecycle.testkit';
+import { createManagedRunLaunchFixture } from '@/providers/lifecycle/managedRunLaunch.testkit';
+import { resolveAgentSpawnPurposeDeclarations } from '@/daemon/connectedServices/requestAuth/agentPurposeDeclarations';
+import { commitActiveConnectedAccountCatalog, getActiveAccountSettingsSnapshot, getActiveAccountSettingsSnapshotLifetimeToken,
+  resetActiveAccountSettingsSnapshotForTests,
   setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 
 import { resolveAgentNativeSpawnDefinitiveRejection, resolveCurrentProviderSpawnDefinitiveRejection } from './currentDefinitiveRejection';
 
 describe('resolveCurrentProviderSpawnDefinitiveRejection', () => {
+  it('refuses a known managed source without a model before continuation, preserving explicit and native choices', async () => {
+    await withConfiguredDaemonTestHome({ prefix: 'continuation-purpose-model-' }, async ({ homeDir }) => {
+      const service = { pluginId: 'acme.shared-registry', localId: 'accounts' };
+      const fixture = await createManagedRunLaunchFixture({ directory: join(homeDir, 'fixture'), happyHomeDir: homeDir,
+        physicalGateway: true, includeBundledDeclarations: true,
+        connectedAccounts: [{ purpose: 'inference', service, materializationKinds: ['httpHeaders'],
+          managedProviderEndpoint: { provider: { pluginId: 'acme.shared-registry', localId: 'gateway' },
+            purpose: 'upstream', modelIdPrefix: 'native/' } }] });
+      try {
+        const purpose = { consumer: { pluginId: 'acme.managed-run', localId: 'agent' }, purpose: 'inference' };
+        const snapshot = { ...fixture.snapshot, connectedPurposeCatalog: { status: 'ready' as const, revision: 1,
+          record: { key: 'purposes' as const, value: { v: 1 as const, bindings: [{ purpose,
+            target: { kind: 'account' as const, account: { service, accountId: 'upstream-account' } } }] } } } };
+        setActiveAccountSettingsSnapshot(snapshot);
+        const purposePublication = { scopeKey: snapshot.scopeKey,
+          lifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(), key: 'purposes' as const };
+        const deps = { getActiveAccountSettingsSnapshot,
+          tryAcquireAuthoritativePluginRuntimeRegistryLease: () => fixture.gateway!.controller.tryAcquireRuntimeRegistry() };
+        const target = { agentId: fixture.agentId, agentTargetKey: fixture.agentTargetKey, deps };
+        await expect(resolveCurrentProviderSpawnDefinitiveRejection({ ...target, selection: {} }))
+          .resolves.toMatchObject({ ok: false });
+        await expect(resolveCurrentProviderSpawnDefinitiveRejection({ ...target, selection: { modelId: 'native/example' } }))
+          .resolves.toMatchObject({ ok: true, ref: { modelId: 'native/example' } });
+        expect(commitActiveConnectedAccountCatalog({ ...purposePublication,
+          catalog: { status: 'unavailable', reason: 'unreachable' } })).toBe(true);
+        await expect(resolveCurrentProviderSpawnDefinitiveRejection({ ...target, selection: {} }))
+          .resolves.toEqual({ ok: true, ref: null });
+        expect(commitActiveConnectedAccountCatalog({ ...purposePublication,
+          catalog: { ...snapshot.connectedPurposeCatalog,
+            record: { key: 'purposes', value: { v: 1, bindings: [] } } } })).toBe(true);
+        await expect(resolveCurrentProviderSpawnDefinitiveRejection({ ...target, selection: {} }))
+          .resolves.toEqual({ ok: true, ref: null });
+        // Pi's native OpenAI purpose has its own startupModel. A managed-only
+        // model requirement must not override that Agent-owned native default.
+        const native = resolveAgentSpawnPurposeDeclarations({ agentId: 'pi', contributions: fixture.contributes })
+          ?.declarations.find(row => row.purpose === 'openai-api-key');
+        if (!native) throw new Error('Expected Pi native OpenAI declaration');
+        expect(commitActiveConnectedAccountCatalog({ ...purposePublication, catalog: { ...snapshot.connectedPurposeCatalog,
+          record: { key: 'purposes', value: { v: 1, bindings: [{
+            purpose: { consumer: { pluginId: 'happier.agent.pi', localId: 'pi' }, purpose: native.purpose },
+            target: { kind: 'account', account: { service: native.service, accountId: 'native-account' } },
+          }] } } } })).toBe(true);
+        await expect(resolveCurrentProviderSpawnDefinitiveRejection({ agentId: 'pi', agentTargetKey: 'agent:happier.agent.pi/pi',
+          selection: {}, deps })).resolves.toEqual({ ok: true, ref: null });
+      } finally { resetActiveAccountSettingsSnapshotForTests(); await fixture.cleanup(); }
+    });
+  });
   it('uses an offered Provider model instead of a static native model catalog while retaining mode and syntax checks', () => {
     const input = { agentId: 'qwen', selection: { modelId: 'team-only-model', providerConnectionId: null },
       sourceModel: { id: 'team-only-model', name: 'Team model' } };

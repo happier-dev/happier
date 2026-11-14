@@ -1,4 +1,5 @@
 import type { ConnectedServiceBindingsV2, SessionModelSelectionV1 } from '@happier-dev/protocol';
+import { createProviderErrorV1, type ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { resolveAgentSpawnPurposeDeclarations, type AgentSpawnPurposeContributions } from '@/daemon/connectedServices/requestAuth/agentPurposeDeclarations';
 import { projectConnectedServiceBindingsToQualifiedPurposeBindingSnapshot } from '@/daemon/connectedServices/requestAuth/firstPartyConnectedAccountRequestAuthAdapter';
 
@@ -30,4 +31,15 @@ export function resolveAgentManagedPurposeSelections(input: Parameters<typeof re
     return route !== undefined && (!input.selection || !route.modelIdPrefix
       || !input.selection.ref.modelId.includes('/') || input.selection.ref.modelId.startsWith(route.modelIdPrefix));
   });
+}
+
+/** A selected managed source needs a model; native purposes own their defaults. */
+export function resolveManagedPurposeModelSelectionRejection(input: Readonly<{
+  candidates: ReturnType<typeof resolveAgentManagedPurposeSelections>;
+  selection?: SessionModelSelectionV1;
+  machineId?: string;
+}>): ProviderErrorV1 | null {
+  return input.candidates.length > 0 && !input.selection
+    ? createProviderErrorV1('model_selection_required', input.machineId ? { machineId: input.machineId } : {})
+    : null;
 }

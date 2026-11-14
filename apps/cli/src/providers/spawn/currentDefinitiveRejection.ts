@@ -19,6 +19,8 @@ import {
 
 import { resolveProviderSpawnDefinitiveRejection } from './resolve';
 import { readProviderSettingsForCli } from '../settings/read';
+import { resolveSpawnConnectedServicesDefaultDisposition } from '@/session/services/spawnConnectedServicesDefaults';
+import { resolveAgentManagedPurposeSelections, resolveManagedPurposeModelSelectionRejection } from '../managed/agentPurposeSelections';
 
 export type ProviderLaunchSelectionInput = Readonly<{
   modelId?: unknown;
@@ -122,18 +124,15 @@ export async function resolveCurrentProviderSpawnDefinitiveRejection(input: Read
 
   const modelId = input.selection.modelId;
   const providerConnectionId = input.selection.providerConnectionId;
-  if (modelId === undefined) {
-    return providerConnectionId === undefined || providerConnectionId === null
-      ? { ok: true, ref: null }
-      : { ok: false };
-  }
+  if (modelId === undefined && providerConnectionId != null) return { ok: false };
 
-  const parsed = ProviderBoundModelRefSchema.safeParse({
+  const parsed = modelId === undefined ? null : ProviderBoundModelRefSchema.safeParse({
     agentTargetKey: input.agentTargetKey,
     providerConnectionId: providerConnectionId ?? null,
     modelId,
   });
-  if (!parsed.success) return { ok: false };
+  if (parsed && !parsed.success) return { ok: false };
+  const ref = parsed?.success ? parsed.data : null;
 
   const deps: CurrentProviderSpawnDefinitiveRejectionDeps = {
     getActiveAccountSettingsSnapshot,
@@ -146,20 +145,33 @@ export async function resolveCurrentProviderSpawnDefinitiveRejection(input: Read
   try {
     const snapshot = deps.getActiveAccountSettingsSnapshot();
     lease = deps.tryAcquireAuthoritativePluginRuntimeRegistryLease();
-    if (!snapshot || !lease) return { ok: true, ref: parsed.data };
+    if (!snapshot || !lease) return { ok: true, ref };
+    if (ref === null) {
+      // Only an already-published purpose catalog can establish a missing
+      // managed model here. Cold projections remain the launch owner's work.
+      if (snapshot.connectedPurposeCatalog?.status !== 'ready') return { ok: true, ref };
+      const disposition = resolveSpawnConnectedServicesDefaultDisposition({ agentId: input.agentId,
+        accountSettings: snapshot.settings, contributions: lease.registry.contributes,
+        catalogEntry: lease.registry.contributes.catalogEntriesById[input.agentId] ?? null,
+        purposeCatalog: snapshot.connectedPurposeCatalog });
+      if (disposition.kind !== 'connected') return { ok: true, ref };
+      const candidates = resolveAgentManagedPurposeSelections({ agentId: input.agentId,
+        contributions: lease.registry.contributes, connectedServices: disposition.bindings });
+      return resolveManagedPurposeModelSelectionRejection({ candidates }) ? { ok: false } : { ok: true, ref };
+    }
     const definitive = resolveProviderSpawnDefinitiveRejection({
-      selection: parsed.data,
+      selection: ref,
       agentTargetKey: input.agentTargetKey,
       agentId: input.agentId,
       providerSettings: readProviderSettingsForCli(snapshot).settings,
       registry: lease.registry.contributes,
     });
-    return definitive.ok ? { ok: true, ref: parsed.data } : { ok: false };
+    return definitive.ok ? { ok: true, ref } : { ok: false };
   } catch {
     // A malformed or replaced projection is not locally definitive.  Preserve
     // the launch owner's dynamic error path instead of inventing a readiness
     // cache or a second failure authority here.
-    return { ok: true, ref: parsed.data };
+    return { ok: true, ref };
   } finally {
     if (lease) await lease.release().catch(() => undefined);
   }
