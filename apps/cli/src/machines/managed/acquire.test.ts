@@ -2801,7 +2801,7 @@ describe('managed acquisition durable custody', () => {
                 work = nativeDriver.execute('machines.managed.bootstrap.retry', retry, { requestId: 'update-request', context, signal: context.signal });
                 return { ok: true, result: await work };
             } })).resolves.toMatchObject({ ok: true, result: { managedId: retained.id, operation: { operationId: 'native-update' } } });
-        await expect(work).rejects.toMatchObject({ code: 'provider_unavailable' });
+        await expect(work).rejects.toMatchObject({ code: 'remote_command_failed' });
         expect(await operations.handlers.getV2({ operationId: 'native-update', waitForTerminal: true })).toMatchObject({
             kind: 'found', operation: { state: 'failed', domainRef: { kind: 'managedMachine', id: retained.id,
                 controller: retained.controller, resource: retained.resource } },
@@ -3776,20 +3776,43 @@ describe('managed acquisition durable custody', () => {
         }
         for (const changed of change === null ? [] : [change]) {
             refusal = changed;
-            materialRevision = 1;
-            materialStatus = 'ready';
-            currentMode = mode;
-            leasePublished = false;
+            restartLifetime = new AbortController();
             const restarted = createManagedMachineAcquisitionDriver({ token, serverUrl: 'https://home.example', homeId: nativeHomeId,
                 controller, runtimeRegistry: native.runtimeRegistry, ...accountInputs, credentials: { token, encryption }, homeTarget });
-            const work = restarted.execute('machines.managed.bootstrap.retry', retry, { requestId: changed,
+            // 3ff32eaabea: bootstrap and enrollment share one admitted credential.
+            // Withdrawal during bootstrap applies at the next acquisition, not
+            // by reopening the credential before publishing its protected file.
+            await expect(restarted.execute('machines.managed.bootstrap.retry', retry, { requestId: changed,
+                signal: restartLifetime.signal,
                 context: { operationAcceptance: { operationId: changed, accept() {} }, operationOwnerUpdate: { update() {} } },
+            })).rejects.toMatchObject({ code: 'enrollment_retired' });
+            expect(createdFiles).toHaveLength(1);
+            await expect(stat(createdFiles[0]!)).rejects.toMatchObject({ code: 'ENOENT' });
+            expect(nativeCalls).toEqual(['bootstrap']);
+            refusal = null;
+            leasePublished = false;
+            restartLifetime = new AbortController();
+            const nextOperation = restarted.execute('machines.managed.bootstrap.retry', retry, { requestId: `${changed}-next`,
+                signal: restartLifetime.signal,
+                context: { operationAcceptance: { operationId: `${changed}-next`, accept() {} }, operationOwnerUpdate: { update() {} } },
             });
-            // Owner ruling A′ preserves active E2EE custody and names an unverified downgrade explicitly.
-            await expect(work).rejects.toMatchObject(changed === 'mode-changed' ? {
-                code: mode === 'e2ee' ? 'account_mode_downgrade_unverified' : 'credential_unavailable',
-            } : { reason: changed === 'stale' ? 'reference_stale' : 'reference_forbidden' });
-            expect(createdFiles).toHaveLength(0);
+            if (changed === 'stale') {
+                // A fresh operation admits the new revision, rather than retaining
+                // the previous operation's material or expected revision.
+                await expect(nextOperation).rejects.toMatchObject({ code: 'enrollment_retired' });
+                expect(createdFiles).toHaveLength(2);
+                expect(createdFiles[0]).not.toBe(createdFiles[1]);
+                await expect(stat(createdFiles[1]!)).rejects.toMatchObject({ code: 'ENOENT' });
+                expect(nativeCalls).toEqual(['bootstrap', 'bootstrap']);
+            } else {
+                // Fresh acquisition still refuses revoked or incompatible material
+                // before any subsequent native role or private-file publication.
+                await expect(nextOperation).rejects.toMatchObject(changed === 'mode-changed'
+                    ? { code: mode === 'e2ee' ? 'account_mode_downgrade_unverified' : 'credential_unavailable' }
+                    : { reason: 'reference_forbidden' });
+                expect(createdFiles).toHaveLength(1);
+                expect(nativeCalls).toEqual(['bootstrap']);
+            }
         }
         expect(writes.some((path) => /\/(submit|create-bootstrap-credential)$/u.test(path))).toBe(false);
         expect(machineKey.every((byte) => byte === 7)).toBe(true);
@@ -4651,7 +4674,7 @@ describe('managed acquisition durable custody', () => {
             return { ok: true, result: await work };
         } })).resolves.toMatchObject({ ok: true, result: { managedId: retained.id, operation: { operationId: 'late-resource' } } });
         await expect(work).rejects.toMatchObject({ code: resultKind === 'pending' ? 'native_acquisition_unconfirmed'
-            : retirement === 'operation-cancel' ? 'intent_changed' : 'admission_unavailable' });
+            : retirement === 'operation-cancel' ? 'cancelled' : 'admission_unavailable' });
         if (retirement === 'operation-cancel') expect(cancellation).toEqual({ kind: 'requested' });
         expect(reports).toHaveLength(1);
         expect(reports[0]).toMatchObject({ homeId: nativeHomeId, managedId: retained.id, expectedIntentRevision: 0,
