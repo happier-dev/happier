@@ -1,3 +1,4 @@
+import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { deploymentOutputValidationFailure } from './outputValidation';
 import { DeploymentEnvironmentCreateResultV1Schema, DeploymentBindingsSetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentTemplateInstantiationPartialV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -7,9 +8,10 @@ import type { ActionExecuteFailure, ActionExecutorContext, ActionExecutorDeps } 
 import { isRecord } from '@happier-dev/protocol/common/records';
 import { projectDeploymentFailureRecoveryV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
-import { projectDeploymentFailure } from './deploymentFailure';
+import { deploymentUnavailableError, projectDeploymentFailure } from './deploymentFailure';
 import { copyEnvironmentDataForHost } from './copyEnvironmentDataForHost';
 import type { readDeploymentEnvironmentForHost } from './readEnvironmentForHost';
+import { sameBindingIntent } from './secrets/sameBindingIntent';
 
 export const COPY_ENVIRONMENT_BINDINGS_ROLE = 'copy-bindings';
 type PartialResult = ReturnType<typeof DeploymentTemplateInstantiationPartialV1Schema.parse>;
@@ -53,23 +55,23 @@ export async function createEnvironmentWithCopyForHost(request: Readonly<{
         const errorCode = typeof cause === 'string' ? cause : cause.errorCode;
         const inherited = typeof cause === 'string' ? undefined
             : projectDeploymentFailureRecoveryV1(isRecord(cause.details) ? cause.details : {}, cause.errorCode);
-        return { ...(typeof cause === 'string' ? failure(cause) : cause), effectAttempted: true, details: {
+        return carryActionFailureDiagnostic({ ...(typeof cause === 'string' ? failure(cause) : cause), effectAttempted: true, details: {
             kind: 'partial', phase: 'bindings', errorCode, savedSecrets: [],
             environmentId: created.environmentId, revision: created.revision, ...(continuation ? { continuation } : {}),
             ...(inherited ? { requiredFact: inherited.requiredFact, remedy: inherited.remedy } : {}),
             ...(plan.data?.length ? { requiredFact: [inherited?.requiredFact, ...plan.data.map(row => `data:${row.targetLinkId}:createEmpty`)].filter(Boolean).join(', '),
                 remedy: `${inherited ? `${inherited.remedy} ` : ''}Recover bindings, then open the Environment Overview and add/manage a managed database. Explicitly create/configure these unattempted resources; inspect the provider and link exact resources already created. Do not replay Duplicate.` } : {}),
-        } satisfies PartialResult };
+        } satisfies PartialResult }, cause);
     };
     try {
         const current = await host.readEnvironment({ environmentId: created.environmentId, context });
         const bindings = plan.bindings.map(binding => {
             if (binding.purpose !== 'registry') return binding;
             if (binding.targetLinkId !== plan.sourceRuntimeTargetLinkId || !current.environment.runtimeTargetLinkId)
-                throw Object.assign(new Error('deployment_unavailable'), { code: 'deployment_unavailable' });
+                throw deploymentUnavailableError('deployment.environment.copy.registry_binding', 'binding_missing');
             return { ...binding, targetLinkId: current.environment.runtimeTargetLinkId };
         });
-        if (sameStrictJsonValue(current.content.bindings, bindings)) return finish(current.environment.revision);
+        if (sameBindingIntent(current.content.bindings, bindings)) return finish(current.environment.revision);
         const bindingInput = { serverId: input.serverId, environmentId: created.environmentId,
             expectedRevision: current.environment.revision, set: bindings, remove: [] };
         continuation = { actionId: 'deployments.bindings.set', input: bindingInput };
@@ -94,6 +96,6 @@ export async function createEnvironmentWithCopyForHost(request: Readonly<{
     } catch (error) {
         return partial(projectDeploymentFailure(context.signal?.aborted ? 'cancelled'
             : error instanceof Error && 'code' in error && typeof error.code === 'string'
-                ? error.code : 'deployment_content_unavailable', error));
+                ? error.code : 'deployment_content_unavailable', error, 'deployment.environment.copy.bindings'));
     }
 }

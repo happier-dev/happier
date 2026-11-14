@@ -9,7 +9,7 @@ import { ActionsSettingsV1Schema, MachineInstallationIdentityV1Schema,
     MachineServicesDiscoveryResultV1Schema, MachineServicesListResultV1Schema, accountSettingsParse,
     type MachineMetadataFieldReadV1, type MachineMetadataFieldPortV1 } from '@happier-dev/protocol';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentEnvironmentContentV1Schema } from '@happier-dev/deployment-protocol';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
@@ -220,7 +220,8 @@ else process.exit(23);
             expect(documents.size).toBe(0);
             const apply = { ...base, mode: 'apply', reviewedDigest: review.reviewedDigest, bindingsConfirmed: true,
                 destination: { projectSourceId: 'source', name: 'Adopted', protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers' },
-                bindings: review.variables.map(row => ({ purpose: 'variable', name: row.name, phase: row.phase, source: { kind: 'value', value: 'confirmed-public' } })) };
+                bindings: review.variables.map(row => createDeploymentVariableBindingV1({ name: row.name, phase: row.phase,
+                    source: { kind: 'value', value: 'confirmed-public' } })) };
             phase = 'protected adoption approval';
             const approvals: unknown[] = [];
             const reviewExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...deps,
@@ -280,7 +281,9 @@ else process.exit(23);
             if (!environmentArtifact || typeof environmentArtifact.body !== 'string') throw new Error('Expected opened Environment content');
             const content = DeploymentEnvironmentContentV1Schema.parse(JSON.parse(environmentArtifact.body));
             expect(content.definition).toMatchObject({ kind: 'stored', contentRevision: 1, profiles: [] });
-            expect(content.bindings).toEqual(apply.bindings);
+            // The bindings writer owns persisted addresses; the reviewed values
+            // survive unchanged, and the strict content schema requires each UUID.
+            expect(content.bindings).toEqual(apply.bindings.map(binding => ({ ...binding, grantRef: expect.any(String) })));
             const originId = environment.targetLinks[0]!.targetLink.contentArtifactId;
             const originArtifact = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => store.read(originId,
                 { prepareRecipients: false, includeSharedAudience: false }));

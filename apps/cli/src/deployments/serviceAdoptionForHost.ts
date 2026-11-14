@@ -18,6 +18,7 @@ import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/run
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import type { createDaemonDeploymentActionDeps } from './createDaemonDeploymentActionDeps';
 import type { readDeploymentEnvironmentForHost } from './readEnvironmentForHost';
+import { sameBindingIntent } from './secrets/sameBindingIntent';
 
 const failure = (errorCode: string): ActionExecuteFailure => ({ ok: false, errorCode, error: errorCode });
 type Host = Readonly<{
@@ -139,7 +140,7 @@ export async function prepareServiceAdoptionForHost(request: Parameters<NonNulla
                     revision = current.environment.revision;
                     targetLinkId = current.environment.runtimeTargetLinkId ?? undefined;
                     if (!targetLinkId) return partial(failure('target_mismatch'));
-                    if (!sameStrictJsonValue(current.content.bindings, input.bindings)) {
+                    if (!sameBindingIntent(current.content.bindings, input.bindings)) {
                         if (current.environment.contentArtifactId !== prepared.contentArtifactId
                             || current.environment.contentHeaderVersion !== prepared.contentHeaderVersion
                             || current.environment.contentBodyVersion !== prepared.contentBodyVersion) return partial(failure('deployment_conflict'));

@@ -3,10 +3,43 @@ import { describe, expect, it } from 'vitest';
 import { DeploymentEnvironmentCreateInputV1Schema, DeploymentBindingsSetInputV1Schema, DeploymentTemplateInstantiationPartialV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { EnvironmentSecretBindingV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
-import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentVariableBindingV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createEnvironmentWithCopyForHost } from './copyEnvironmentForHost';
 
 describe('Copy acknowledged step result', () => {
+    it.each(['applied', 'changedValue', 'changedName', 'changedPhase', 'missing', 'extra'] as const)(
+        'recognizes writer-minted references without accepting %s binding drift', async state => {
+            const base = createDeploymentEnvironmentDetailV1();
+            const binding = createDeploymentVariableBindingV1({ name: 'PUBLIC', phase: 'runtime', source: { kind: 'value', value: 'reviewed' } });
+            const stored = createDeploymentVariableBindingV1({ ...binding,
+                grantRef: 'a3706c68-cd7e-4201-a9b0-71df13984152',
+                ...(state === 'changedValue' ? { source: { kind: 'value' as const, value: 'changed' } } : {}),
+                ...(state === 'changedName' ? { name: 'OTHER' } : {}),
+                ...(state === 'changedPhase' ? { phase: 'build' as const } : {}),
+            });
+            const bindings = state === 'missing' ? [] : state === 'extra'
+                ? [stored, createDeploymentVariableBindingV1({ ...stored, name: 'EXTRA', grantRef: crypto.randomUUID() })] : [stored];
+            const input = DeploymentEnvironmentCreateInputV1Schema.parse({ serverId: 'home', projectSourceId: 'destination',
+                requestKey: 'copy', protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+                controllerMachineId: 'controller', contentArtifactId: base.environment.contentArtifactId,
+                contentHeaderVersion: base.environment.contentHeaderVersion, contentBodyVersion: base.environment.contentBodyVersion,
+                copyIntentCommitment: 'A'.repeat(43), copyFrom: { environmentId: 'source', expectedRevision: 7,
+                    choices: { secrets: [], values: [{ kind: 'include', binding: { purpose: 'variable', name: 'PUBLIC', phase: 'runtime' } }], data: [] } },
+                copyPlan: { bindings: [binding] } });
+            // Home has committed the binding write, but its acknowledgement was lost.
+            const result = await createEnvironmentWithCopyForHost({ input, context: { hostReviewedChild: { async invoke() {
+                throw new Error('A committed or independently changed binding must not be written again');
+            } } } }, {
+                async create() { return { ok: true, environmentId: base.environment.id, revision: 1, replayed: true }; },
+                async readEnvironment() { return { environment: { ...base.environment, revision: 2,
+                    contentBodyVersion: base.environment.contentBodyVersion + 1 },
+                    content: { ...base.content, bindings }, targetLinks: [] }; },
+            });
+            expect(result).toMatchObject(state === 'applied'
+                ? { ok: true, environmentId: base.environment.id, revision: 2 }
+                : { ok: false, errorCode: 'deployment_conflict', details: { phase: 'bindings' } });
+        });
+
     it('carries a pre-grant stored reference through Create to the fresh bindings Action', async () => {
         const base = createDeploymentEnvironmentDetailV1();
         const binding = { purpose: 'variable', name: 'DATABASE_URL', phase: 'runtime',
