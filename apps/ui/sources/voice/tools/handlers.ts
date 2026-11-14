@@ -560,7 +560,8 @@ export function createVoiceToolHandlers(
     }
 
     const targetServerId = resolvePreferredServerIdForSessionId(sessionId);
-    const res = await actionExecute(
+    const res = await executeSpokenAction(
+      actionExecute,
       'session.user_action.answer',
       {
         sessionId,
@@ -573,6 +574,8 @@ export function createVoiceToolHandlers(
       },
       {
         surface: 'voice',
+        ...(deps.readVoiceAgentHandle?.()?.accountLifetime.scope.accountId
+          ? { expectedAccountId: deps.readVoiceAgentHandle()?.accountLifetime.scope.accountId } : {}),
         serverId: targetServerId,
         defaultSessionId: await deps.resolveSessionId(null),
         ...(resolveVoiceActionRequestId(context)
@@ -580,6 +583,8 @@ export function createVoiceToolHandlers(
           : {}),
         ...(context?.signal ? { signal: context.signal } : {}),
       },
+      context?.turnOrigin,
+      deps.playHostText,
     );
     return serializeVoiceActionExecuteResult('session.user_action.answer', res, {
       failurePayload: { sessionId, requestId },

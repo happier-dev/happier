@@ -2485,6 +2485,60 @@ describe('voice tool handlers', () => {
     }
   });
 
+  it.each([
+    { name: 'person answer', tool: 'named', decision: 'reject', enabled: true, origin: 'person', playback: 'completed', expected: 'done' },
+    { name: 'consequential complete', tool: 'generic', decision: 'approve', enabled: true, origin: 'person', playback: 'completed', expected: 'done' },
+    { name: 'consequential cancel', tool: 'named', decision: 'approve', enabled: true, origin: 'person', playback: 'cancelled', expected: 'cancelled' },
+    { name: 'OFF', tool: 'generic', decision: 'approve', enabled: false, origin: 'person', playback: 'completed', expected: 'approval' },
+    { name: 'synthetic', tool: 'named', decision: 'approve', enabled: true, origin: 'synthetic', playback: 'completed', expected: 'approval' },
+    { name: 'End', tool: 'generic', decision: 'approve', enabled: true, origin: 'person', playback: 'end', expected: 'cancelled' },
+  ] as const)('uses shared spoken confirmation for a question answer ($name)', async scenario => {
+    account.replaceVoice({ ...storage.getState().settings.voice, canApproveRequests: scenario.enabled });
+    account.replaceSettings(settingsParse({ ...storage.getState().settings, actionsSettingsV1: { v: 1 } }));
+    state = storage.getState();
+    state.sessions.s1.agentState.requests = {
+      req_plan: { id: 'req_plan', tool: 'ExitPlanMode', kind: 'user_action' },
+    };
+    daemonRpc.mockImplementation(async request => {
+      if (request.method === RPC_METHODS.SESSION_USER_ACTION_ANSWER) return { ok: true };
+      throw new Error(`Unexpected Voice daemon RPC: ${request.method}`);
+    });
+    const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: 'answer-call',
+      status: 'connected', mode: 'listening', canStop: true });
+    let readBack = false;
+    const tools = createVoiceToolHandlers({ resolveSessionId: () => 's1', playHostText: async ({ text }) => {
+      expect(text).toBeTruthy();
+      expect(daemonRpc).not.toHaveBeenCalled();
+      readBack = true;
+      if (scenario.playback === 'end') resetVoiceSessionStoreForTests();
+      return { status: scenario.playback === 'cancelled' ? 'cancelled' as const : 'completed' as const };
+    } });
+    const input = { decision: scenario.decision };
+    const context = { callId: 'spoken-answer', turnOrigin: scenario.origin };
+    try {
+      const response = JSON.parse(await (scenario.tool === 'named'
+        ? tools.answerUserActionRequest(input, context)
+        : tools.action_execute!({ actionId: 'session.user_action.answer', input }, context)));
+      const result = scenario.tool === 'generic' && response.ok ? { ok: true, ...response.result } : response;
+      expect(readBack).toBe(scenario.enabled && scenario.origin === 'person' && scenario.decision === 'approve');
+      if (scenario.expected === 'done') {
+        expect(result).toMatchObject({ ok: true, status: 'done', sessionId: 's1', requestId: 'req_plan' });
+        expect(daemonRpc.mock.calls.map(([request]) => request)).toEqual([{
+          serverUrl: homeUrlA, sessionId: 's1', method: RPC_METHODS.SESSION_USER_ACTION_ANSWER,
+          payload: { id: 'req_plan', approved: scenario.decision === 'approve', answeringClientCategory: undefined },
+        }]);
+        expect(artifactCreateRequests).not.toHaveBeenCalled();
+      } else {
+        expect(result).toMatchObject(scenario.expected === 'approval'
+          ? { ok: true, kind: 'approval_request_created', actionId: 'session.user_action.answer' }
+          : { ok: false, errorCode: 'cancelled' });
+        expect(daemonRpc).not.toHaveBeenCalled();
+        expect(state.sessions.s1.agentState.requests.req_plan).toBeDefined();
+      }
+    } finally { resetVoiceSessionStoreForTests(); }
+  });
+
   describe('question answers with a saved Voice Action waiver', () => {
   beforeEach(() => {
     // Voice opt-out removes present-user authority; the saved Action waiver
@@ -2926,6 +2980,11 @@ describe('voice tool handlers', () => {
 
   it.each(['session_stop', 'action_execute'] as const)(
     'carries the daemon Stop refusal through the real Voice front door (%s)', async toolName => {
+      // Admit the Stop effect through its real Settings policy; the default
+      // Voice approval request does not contact the daemon.
+      account.replaceSettings(settingsParse({ ...account.settings, actionsSettingsV1: ActionsSettingsV1Schema.parse({
+        v: 1, actions: {}, approvalWaivedSurfaces: { 'session.stop': ['voice'] },
+      }) }));
       const previous = daemonRpc.getMockImplementation();
       daemonRpc.mockImplementation(async request => {
         if (request.method === RPC_METHODS.STOP_SESSION) {

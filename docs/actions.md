@@ -8050,6 +8050,10 @@ In 0.3 development source, `session.turn.cancel` requests cancellation of the
 current turn through the existing `abort` RPC. It keeps the Session process
 available; `session.stop` requests process shutdown. Both the composer Stop
 button and Agent/MCP/CLI requests enter the canonical Action executor.
+Session Stop is consequential in 0.3 development: automation asks by default;
+the person's Voice request receives a spoken read-back when
+`voice.canApproveRequests` is on, or an inline decision when it is off.
+Current-turn cancellation keeps its safe default.
 An embed's Send grant includes current-turn cancellation, and an abort-only
 grant does not authorize sending messages or stopping the Session process.
 Permission decisions continue through `session.permission.respond` and retain
@@ -8315,10 +8319,11 @@ input: tokens need the exact Action grant or Send (which implies answering),
 rather than `approve`. An answer-only grant does not permit message sending or
 a child grant that adds Send. Other automation
 callers outside those host Agent/MCP decision paths still need present-user
-authority for these rows. In 0.3 development, Voice can propose a question answer
-or rejection through the existing person approval flow. It remains Account
-automation until the person approves; replay reaches the same question answer
-owner and is attributed to the authenticated person. Waiving the prompt grants
+authority for these rows. In 0.3 development, the person's Voice answer uses shared
+spoken confirmation when `voice.canApproveRequests` is on; an approving decision
+receives read-back before execution. OFF and synthetic turns retain the existing
+person approval flow; replay reaches the same question answer owner and is
+attributed to the authenticated person. Waiving the prompt grants
 no execution authority. `disposition: pass_up` remains an authenticated manager
 disposition at that owner and does not use this Voice proposal path.
 Discussion create, rename, archive, restore and private
