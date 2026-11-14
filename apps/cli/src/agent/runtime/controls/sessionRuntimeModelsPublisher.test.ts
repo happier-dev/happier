@@ -179,6 +179,28 @@ describe('createSessionRuntimeModelsPublisher', () => {
     publisher.dispose();
   });
 
+  it('publishes nothing when a later observation repeats the same catalog and current model', async () => {
+    const source = createSource();
+    const session = createSession({} as Metadata);
+    const publisher = createSessionRuntimeModelsPublisher({ agentId: 'claude', session, source });
+    try {
+      source.publish({ observedAt: 10, currentModelId: 'listed', models: [{ id: 'listed', name: 'Listed' }] });
+      await publisher.flush();
+      const written = session.updateCount();
+      // Each Turn re-observes the unchanged runtime catalog; only a real change is published.
+      for (const observedAt of [20, 30, 40]) {
+        source.publish({ observedAt, currentModelId: 'listed', models: [{ id: 'listed', name: 'Listed' }] });
+        await publisher.flush();
+      }
+      expect(session.updateCount() - written).toBe(0);
+      expect(session.getMetadataSnapshot().sessionModelsV1).toMatchObject({ updatedAt: 10 });
+      source.publish({ observedAt: 50, currentModelId: 'listed', models: [{ id: 'listed', name: 'Listed' }, { id: 'new', name: 'New' }] });
+      await publisher.flush();
+      expect(session.updateCount() - written).toBe(1);
+      expect(session.getMetadataSnapshot().sessionModelsV1).toMatchObject({ updatedAt: 50 });
+    } finally { publisher.dispose(); }
+  });
+
   it('preserves catalog observation time through current facts and same-Agent source unbind', async () => {
     const source = createSource();
     const session = createSession({} as Metadata);

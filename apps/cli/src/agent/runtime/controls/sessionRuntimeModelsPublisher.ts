@@ -434,8 +434,13 @@ export function createSessionRuntimeModelsPublisher(params: Readonly<{
   const unsubscribe = params.source.subscribe((snapshot) => {
     if (stopped) return;
     const fingerprint = catalogFingerprint(snapshot);
-    if (snapshot.observedAt !== undefined) runtimeObservedAt = snapshot.observedAt;
-    else if (snapshot.models !== null && fingerprint !== runtimeCatalogFingerprint) runtimeObservedAt = Date.now();
+    // The observation time dates the catalog, not each re-observation: a repeated identical
+    // catalog keeps its time so an unchanged Turn publishes nothing. Zero (static/current-only
+    // facts) and a first catalog are always taken.
+    const catalogChanged = fingerprint !== runtimeCatalogFingerprint;
+    if (snapshot.observedAt === 0 || (snapshot.observedAt !== undefined && (catalogChanged || runtimeObservedAt === 0))) {
+      runtimeObservedAt = snapshot.observedAt;
+    } else if (snapshot.observedAt === undefined && snapshot.models !== null && catalogChanged) runtimeObservedAt = Date.now();
     runtimeCatalogFingerprint = fingerprint;
     runtime = snapshot;
     publish();
