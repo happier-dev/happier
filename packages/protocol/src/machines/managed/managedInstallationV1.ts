@@ -7,7 +7,8 @@ import { ManagedResourceV1Schema } from './providerFactsV1.js';
 const id = () => z.string().check(z.trim(), z.minLength(1));
 const purpose = () => ({ homeId: id(), managedId: id(), requestId: id(), operationId: id(), taskId: id(),
     controller: z.optional(ManagedControllerV1Schema), expectedIntentRevision: z.number().check(z.int(), z.nonnegative()),
-    resource: ManagedResourceV1Schema,
+    // Opaque preset creation binds the retained row; its native identity stays sealed.
+    resource: z.optional(ManagedResourceV1Schema),
     expectedPromptKind: z.enum(['auth.approveRemoteProvisioning', 'ssh.trustHost', 'ssh.replaceHostKey',
         'daemon.replaceRemoteBackgroundServices', 'administrator.establish']), expectedPromptId: z.optional(id()) });
 /** Exact nonsecret creation/task correlation; current task ownership remains with the installed runner. */

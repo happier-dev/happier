@@ -607,6 +607,11 @@ export function sameManagedInput(left: unknown, right: unknown): boolean {
     return left === undefined || right === undefined ? left === right : pluginJsonValuesEqual(left, right);
 }
 
+/** The retained carrier owns whether enrollment compares public native identity or keeps it sealed. */
+export function matchesManagedEnrollmentResource(row: Pick<StoredManagedMachine, 'presetId' | 'launch'> & { resource: unknown }, resource: unknown): boolean {
+    return isStoredOpaquePresetMachine(row) ? resource === undefined : sameManagedInput(row.resource, resource);
+}
+
 /** The same audience is prepared by enclosing lifecycle mutations before locks. */
 export async function readManagedMachinePolicyPublicationAudienceInTx(tx: Tx, row: StoredManagedMachine,
     admittedInput = row.admittedInput) {

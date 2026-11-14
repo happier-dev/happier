@@ -14,7 +14,7 @@ import { BugReportMachineDiagnosticsSnapshotSchema } from '../../bugs/reports/ma
 import { SharedSavedSecretCreateInputV1Schema } from '../../account/settings/savedSecretResourceActionsV1.js';
 import { MachineRetentionPolicyV1Schema } from '../../account/settings/machineRetentionDefaultsV1.js';
 import { ManagedAcquireAgentStartV1Schema } from './agentStartV1.js';
-import { ManagedControllerV1Schema, ManagedCredentialSelectionsV1Schema, RetainedManagedCredentialSelectionsV1Schema, ManagedMachinePublicFullV1Schema, ManagedMachineV1Schema, ManagedOpaquePresetMachineV1Schema, RetentionV1Schema, ValidatedLaunchSnapshotV1Schema, type ManagedMachineV1 } from './managedMachineV1.js';
+import { isManagedOpaquePresetMachineV1, ManagedControllerV1Schema, ManagedCredentialSelectionsV1Schema, RetainedManagedCredentialSelectionsV1Schema, ManagedMachinePublicFullV1Schema, ManagedMachineV1Schema, ManagedOpaquePresetMachineV1Schema, RetentionV1Schema, ValidatedLaunchSnapshotV1Schema, type ManagedMachineV1 } from './managedMachineV1.js';
 import { AcquireResultV1Schema, ManagedOpaquePresetObservationV1Schema, ManagedRefusalCodeV1Schema, ManagedResourceV1Schema, ProviderObservationV1Schema, MachineProvisionerSizeV1Schema, type AcquireResultV1 } from './providerFactsV1.js';
 import { MANAGED_MACHINE_ACTION_IDS_V1, type ManagedMachineActionIdV1 } from './actionIdsV1.js';
 export { MANAGED_CONTROL_ACTION_IDS_V1, type ManagedControlActionIdV1 } from './actionIdsV1.js';
@@ -596,6 +596,14 @@ export const ManagedEnrollmentCorrelationV1Schema = lazyZodSchema(() => z.union(
   ManagedEnrollmentFullCorrelationV1Schema,
   z.strictObject({ ...current() }),
 ]));
+/** Project from the original Home row; opening a private snapshot never makes its native resource public. */
+export function projectManagedEnrollmentCorrelationV1<T extends Pick<ManagedEnrollmentFullCorrelationV1, 'resource'>>(
+  machine: ManagedMachineV1, correlation: T,
+): T | Omit<T, 'resource'> {
+  if (!isManagedOpaquePresetMachineV1(machine)) return correlation;
+  const { resource: _resource, ...structural } = correlation;
+  return structural;
+}
 /** Controller admission never receives ordinary composer text or startup instructions. */
 export const ManagedAdmissionComputeInputV1Schema = lazyZodSchema(() => z.union([
   z.omit(ManagedAcquireInputV1Schema._zod.def.options[0], { agentStart: true }),

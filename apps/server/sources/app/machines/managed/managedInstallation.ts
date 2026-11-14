@@ -2,7 +2,7 @@ import { ManagedInstallationPurposeV1Schema, ManagedInstallationServerOriginV1Sc
     type ManagedInstallationPurposeV1, type ManagedInstallationServerOriginV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { inReadSnapshot, type Tx } from '@/storage/inTx';
 import { ManagedMachineError, readManagedController, readManagedEnrollmentAccountId, readManagedCurrentRequestId, readManagedMachineInTx,
-    requireManagedControllerInTx, sameManagedInput, type StoredManagedMachine } from './managedRows';
+    requireManagedControllerInTx, sameManagedInput, matchesManagedEnrollmentResource, type StoredManagedMachine } from './managedRows';
 
 /** Account enrollment custody authorizes this exact pending installer, never its controller Machine. */
 async function requireManagedInstallationPurposeInTx(tx: Tx, row: StoredManagedMachine, actorAccountId: string, purpose: ManagedInstallationPurposeV1) {
@@ -11,7 +11,7 @@ async function requireManagedInstallationPurposeInTx(tx: Tx, row: StoredManagedM
         || purpose.phase === 'delivery' && row.enrolledMachineId !== null
         || row.intentRevision !== purpose.expectedIntentRevision || readManagedCurrentRequestId(row) !== purpose.requestId
         || !sameManagedInput(readManagedController(row), purpose.controller)
-        || !sameManagedInput(row.resource, purpose.resource)) throw new ManagedMachineError('permission_denied');
+        || !matchesManagedEnrollmentResource(row, purpose.resource)) throw new ManagedMachineError('permission_denied');
     await requireManagedControllerInTx(tx, { homeId: purpose.homeId, custodianAccountId: row.custodianAccountId, controller: purpose.controller });
     return row;
 }

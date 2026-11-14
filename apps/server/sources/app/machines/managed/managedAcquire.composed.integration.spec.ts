@@ -30,12 +30,19 @@ import { resolveMachineAccessInTx } from '@/app/machines/machineAccess';
 import { createAuthenticatedRouteRequest } from '@/app/api/testkit/requestFixtures';
 import { machinesRoutes } from '@/app/api/routes/machines/machinesRoutes';
 import { projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { ManagedAdmissionOutputV1Schema, ManagedControllerContextOutputV1Schema, ManagedControllerMachineOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAdmissionOutputV1Schema, ManagedControllerContextOutputV1Schema, ManagedControllerMachineOutputV1Schema, projectManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedPolicyCensusOutputV1Schema } from '@happier-dev/protocol/machines/managed/managedPolicyV1';
 import { LUME_PLUGIN } from '../../../../../../packages/plugins/machine-lume/src/manifest';
 import { createLumeNativeClient } from '../../../../../../packages/plugins/machine-lume/src/machine/nativeClient';
 import { createLumeProvider } from '../../../../../../packages/plugins/machine-lume/src/machine/provider';
 import { resolveMachineSetup, reportMachineSetup } from './machineSetup';
+import { createManagedPresetHydrator, openManagedPresetCarrier } from '../../../../../cli/src/machines/managed/presetHydration';
+import type { Socket } from 'socket.io';
+import { registerSocketRpcHandlers } from '@/app/api/socket/rpc/registerSocketRpcHandlers';
+import { createFakeSocket, createSocketRoomDiscoveryHarness, triggerSocketHandler } from '@/app/api/testkit/socketHarness';
+import { evaluateAccountStoredContentSocketCompatibility } from '@/app/clientCompatibility/accountStoredContentCompatibility';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 
 describe("managed acquisition durable authority", () => {
     let harness: LightSqliteHarness;
@@ -921,35 +928,41 @@ describe("managed acquisition durable authority", () => {
         expect(denied.json()).toMatchObject({ code: 'permission_denied' });
     });
 
-    it.each(['one-off', 'preset'] as const)('retains reviewed enrollment identity through %s admission, cold read and bootstrap retry after policy admission', async kind => {
+    it.each(['one-off', 'preset', 'preset-default'] as const)('retains reviewed enrollment identity through %s admission, cold read and bootstrap retry after policy admission', async kind => {
         const fixture = await createManagedComputeFixture(`identity-${kind}`);
         const { homeId, account, controller } = fixture;
+        await db.account.update({ where: { id: account.id }, data: createSignedAccountContentBinding() });
         const enrollmentIdentity = { kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user',
             role: 'server', adminAccessAtCreation: 'ask', administrator: { username: 'reviewed-admin' } } as const;
-        const baseContent = { t: 'plain' as const, v: { v: 1, name: 'Reviewed preset', launch: fixture.input.selection.launch } };
+        const baseContent = { t: 'plain' as const, v: { v: 1, name: 'Reviewed preset', launch: fixture.input.selection.launch,
+            ...(kind === 'preset-default' ? { enrollmentIdentity } : {}) } };
         const admittedContent = { t: 'plain' as const, v: { ...baseContent.v, enrollmentIdentity } };
-        const preset = kind === 'preset' ? await db.managedMachinePreset.create({ data: {
-            homeId, custodianAccountId: account.id, name: '', launch: storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', content: baseContent, recipients: [] }),
+        const enrollingAccount = kind !== 'one-off' ? await db.account.create({ data: createSignedAccountContentBinding() }) : account;
+        const preset = kind !== 'one-off' ? await db.managedMachinePreset.create({ data: {
+            homeId, custodianAccountId: enrollingAccount.id, name: '', launch: storeOpaquePresetLaunch({ contentEncryptionMode: 'plain', content: baseContent, recipients: [] }),
             controllerMachineId: controller.machineId, controllerInstallationId: controller.installationId,
         } }) : undefined;
+        if (preset) await db.machineGrant.create({ data: { principalKind: 'account', machineId: controller.machineId,
+            accountId: enrollingAccount.id, accessLevel: 'admin', createdByAccountId: account.id } });
         const computeInput = preset
             ? { selection: { kind: 'preset' as const, homeId, id: preset.id, revision: preset.revision }, controller,
-                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false, presetContentOverride: { content: admittedContent } }
+                retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
+                ...(kind === 'preset' ? { presetContentOverride: { content: admittedContent } } : {}) }
             : { ...fixture.input, enrollmentIdentity };
-        const request = { ...fixture.request, input: { ...fixture.request.input, input: computeInput } };
+        const request = { ...fixture.request, requesterAccountId: enrollingAccount.id, input: { ...fixture.request.input, input: computeInput } };
         const app = fastify().withTypeProvider<ZodTypeProvider>();
         app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
         let action = 'machines.managed.acquire';
         // Authentication is the boundary; acquisition, cold row, currentness and serializers stay real.
         app.decorate('authenticate', async (incoming: FastifyRequest) => {
-            Object.assign(incoming, createAuthenticatedRouteRequest({ userId: account.id,
+            Object.assign(incoming, createAuthenticatedRouteRequest({ userId: enrollingAccount.id,
                 externalActionExecutionAuthorized: true, externalActionExecutionMachineId: controller.machineId,
                 externalActionEffectActionId: action, externalActionExecutionRequestId: request.input.requestId,
                 externalActionExecutionCustodianAccountId: account.id,
             }), { externalActionExecutionRequestEnvelopeDigest: request.requestEnvelopeDigest,
                 headers: incoming.headers, params: incoming.params, query: incoming.query });
         });
-        registerManagedMachineRoutes(app);
+        machinesRoutes(app);
         onTestFinished(() => app.close());
         const admitted = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/admit', payload: request.input });
         expect(admitted.statusCode, admitted.body).toBe(200);
@@ -984,15 +997,77 @@ describe("managed acquisition durable authority", () => {
             payload: { homeId, managedId: cold.id, controller, expectedIntentRevision: 2 } });
         expect(context.statusCode, context.body).toBe(200);
         expect(ManagedControllerContextOutputV1Schema.parse(context.json())).toMatchObject({
-            requestId: original.requestId, machine: { enrollmentAccountId: account.id, ...(preset ? {} : { enrollmentIdentity }) },
+            requestId: original.requestId, machine: { enrollmentAccountId: enrollingAccount.id, ...(preset ? {} : { enrollmentIdentity }) },
             ...(preset ? { presetContent: { content: { t: 'plain', v: { enrollmentIdentity } } } } : {}) });
+        const pairingEffect = vi.fn(async () => ({ paired: true }));
+        const method = `${controller.machineId}:${RPC_METHODS.CAPABILITIES_INVOKE}`;
+        const target = { id: `identity-${kind}-socket`, data: { clientType: 'machine-scoped', userId: account.id,
+            machineId: controller.machineId, verifiedMachineInstallationId: controller.installationId,
+            accountStoredContentCompatibility: evaluateAccountStoredContentSocketCompatibility({
+                accountStoredContentCompatibility: { v: 1, protocolVersion: 2 },
+            }).evaluation }, timeout: () => ({ emitWithAck: pairingEffect }) };
+        const io = createSocketRoomDiscoveryHarness(async room => room === target.id || room === `rpc:${account.id}:${method}` ? [target] : []);
+        const caller = createFakeSocket({ data: { userId: enrollingAccount.id, authTokenKind: 'account', authAuthority: 'present_user' } });
+        registerSocketRpcHandlers({ userId: enrollingAccount.id, socket: caller as unknown as Socket, io });
+        const pairing = async (binding: object, socket = caller) => {
+            const response = vi.fn();
+            await triggerSocketHandler(socket, SOCKET_RPC_EVENTS.CALL, { method, params: { id: 'tool.systemTasks', method: 'respond',
+                params: { ...binding, operationId: 'identity-pairing-operation', taskId: 'identity-pairing-task',
+                    requestId: undefined, // The UI producer lets Home select the current admitted request.
+                    expectedPromptKind: 'auth.approveRemoteProvisioning', delivery: { kind: 'terminalPairing' } } } }, response);
+            return response.mock.calls[0]?.[0];
+        };
+        // Authentication is substituted at HTTP; project from Home's actual
+        // retained row after opening its admitted snapshot for local native IO.
+        const hydrator = createManagedPresetHydrator({ credentials: {
+            token: `fixture.${Buffer.from(JSON.stringify({ sub: account.id })).toString('base64url')}.signature`,
+        }, serverUrl: 'https://fixture-home.invalid' });
+        const retainedContext = ManagedControllerContextOutputV1Schema.parse(context.json());
+        const opened = await openManagedPresetCarrier(retainedContext, hydrator);
+        const fullCorrelation = { ...original, expectedIntentRevision: 2, resource: opened.machine.resource! };
+        const correlation = projectManagedEnrollmentCorrelationV1(retainedContext.machine, fullCorrelation);
+        expect('resource' in correlation).toBe(!preset);
+        expect(await pairing(correlation)).toEqual({ ok: true, result: { paired: true } });
         const bootstrap = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/enrollment-context',
-            payload: { ...original, expectedIntentRevision: 2, ...(preset ? {} : { resource }) } });
+            payload: correlation });
         expect(bootstrap.statusCode, bootstrap.body).toBe(200);
         expect(ManagedControllerMachineOutputV1Schema.parse(bootstrap.json())).toMatchObject({
-            machine: { enrollmentAccountId: account.id, ...(preset ? {} : { enrollmentIdentity }) } });
+            machine: { enrollmentAccountId: enrollingAccount.id, ...(preset ? {} : { enrollmentIdentity }) } });
         if (preset) expect(bootstrap.json()).not.toHaveProperty('presetContent');
         if (preset) expect(JSON.stringify(cold.admittedInput)).not.toContain('reviewed-admin');
+        const { resource: _privateResource, ...structuralCorrelation } = fullCorrelation;
+        const wrongShape = preset ? fullCorrelation : structuralCorrelation;
+        expect(await pairing(wrongShape)).toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
+        expect(await pairing({ ...correlation, controller: { ...controller, installationId: 'other-installation' } }))
+            .toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
+        const stranger = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const strangerSocket = createFakeSocket({ data: { userId: stranger.id, authTokenKind: 'account', authAuthority: 'present_user' } });
+        registerSocketRpcHandlers({ userId: stranger.id, socket: strangerSocket as unknown as Socket, io });
+        expect(await pairing(correlation, strangerSocket)).toMatchObject({ ok: false, errorCode: 'RPC_FORBIDDEN' });
+        expect(pairingEffect).toHaveBeenCalledOnce();
+        const leaked = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/enrollment-context', payload: wrongShape });
+        expect(leaked.statusCode, leaked.body).toBe(409);
+        expect(leaked.json()).toMatchObject({ code: 'invalid_request' });
+        const keys = tweetnacl.sign.keyPair();
+        const machineId = `identity-${kind}-guest`;
+        const register = (id: string, managedEnrollment: typeof correlation) => app.inject({ method: 'POST', url: '/v1/machines', payload: {
+            id, metadata: 'ciphertext', installationId: `${id}-installation`,
+            installationPublicKey: Buffer.from(keys.publicKey).toString('base64url'),
+            installationProof: signMachineInstallationProof({ payload: { version: 1, machineId: id, installationId: `${id}-installation`,
+                accountId: enrollingAccount.id }, privateKey: keys.secretKey }), managedEnrollment,
+        } });
+        const refusedRegistration = await register(machineId, wrongShape);
+        expect(refusedRegistration.statusCode, refusedRegistration.body).toBe(409);
+        expect(refusedRegistration.json()).toMatchObject({ reason: 'invalid_request' });
+        expect(await db.machine.findUnique({ where: { id: machineId } })).toBeNull();
+        const registered = await register(machineId, correlation);
+        expect(registered.statusCode, registered.body).toBe(200);
+        expect((await db.managedMachine.findUniqueOrThrow({ where: { id: cold.id } })).enrolledMachineId).toBe(machineId);
+        expect((await register(machineId, correlation)).statusCode).toBe(200);
+        const substitutedGuest = await register(`${machineId}-other`, correlation);
+        expect(substitutedGuest.statusCode, substitutedGuest.body).toBe(409);
+        expect(substitutedGuest.json()).toMatchObject({ reason: 'resource_mismatch' });
+        expect(await db.machine.findUnique({ where: { id: `${machineId}-other` } })).toBeNull();
     });
 
     it('reads retained enrollment without a redundant identity review while strict acquire input remains required', async () => {

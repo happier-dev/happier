@@ -30,7 +30,7 @@ import { doesManagedNativeObservationSettleIntent } from './managedNativeObserva
 import {
     ManagedMachineError, requireCurrentManagedMachineInTx, resolveManagedRowDeclarationInTx, resolveManagedDeclarationInTx,
     requireActiveManagedResizeInTx, readManagedIntentReportAuthority,
-    projectManagedMachine, invalidateManagedMachineInTx, sameManagedInput,
+    projectManagedMachine, invalidateManagedMachineInTx, sameManagedInput, matchesManagedEnrollmentResource,
     createManagedMachineRetainedSchema,
     readManagedLaunchSnapshot,
     projectManagedMachineInTx,
@@ -914,14 +914,14 @@ export async function requireManagedEnrollmentInTx(tx: Tx, input: ManagedEnrollm
     if (isStoredOpaquePresetMachine(row)) {
         // The enrolled native identity is sealed in the admitted preset
         // snapshot; bound lifecycle/custody is the server-owned enrollment fact.
-        if ('resource' in canonical) throw new ManagedMachineError('invalid_request');
+        if (!matchesManagedEnrollmentResource(row, 'resource' in canonical ? canonical.resource : undefined)) throw new ManagedMachineError('invalid_request');
         return row;
     }
     if (!('resource' in canonical)) throw new ManagedMachineError('invalid_request');
     const declaration = await resolveManagedRowDeclarationInTx(tx, row);
     if (!declaration || declaration.schemaVersion !== readManagedLaunchSnapshot(row.launch).schemaVersion) throw new ManagedMachineError("provider_unavailable");
     const incoming = createManagedMachineRetainedSchema(declaration.resourceSchema, declaration.reconciliation?.nativeOperationSchema).safeParse({ ...stored, resource: canonical.resource });
-    if (!incoming.success || !sameManagedInput(stored.resource, incoming.data.resource)) throw new ManagedMachineError("resource_mismatch");
+    if (!incoming.success || !matchesManagedEnrollmentResource({ presetId: row.presetId, launch: row.launch, resource: stored.resource }, incoming.data.resource)) throw new ManagedMachineError("resource_mismatch");
     return row;
 }
 
