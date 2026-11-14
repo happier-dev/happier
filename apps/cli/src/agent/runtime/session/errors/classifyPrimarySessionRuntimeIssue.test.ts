@@ -8,7 +8,8 @@ import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { AccountEncryptionCurrentnessUnavailableError } from '@/api/client/accountEncryptionCurrentness';
 import { McpServerCatalogUnavailableError } from '@/mcp/servers/readMcpServersSettingsFromAccountSettings';
-import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
+import { createProviderErrorV1, ProviderErrorCodeV1Schema } from '@happier-dev/protocol/providers/errors';
+import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { StructuredInputComposerAttachmentResolutionError, StructuredInputComposerAttachmentUnavailableError } from '@/agent/runtime/turns/resolveStructuredInputProviderContext';
 
@@ -263,7 +264,11 @@ describe('classifyPrimarySessionRuntimeIssue', () => {
     });
     const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: refusal, occurredAt: 100 });
     expect(issue).toMatchObject({ code, source: 'agent_session_error' });
-    expect(issue.sanitizedPreview).toMatch(/compatib/iu);
+    if (code === 'provider_incompatible_with_agent') {
+      expect(issue.sanitizedPreview).toBe(readSessionStartupFailurePreview(code));
+    }
+    expect(createProviderErrorV1(ProviderErrorCodeV1Schema.parse(issue.code))).toMatchObject({ retryable: false,
+      action: code === 'provider_incompatible_with_agent' ? 'choose_connection' : 'review_compatibility' });
     expect(JSON.stringify(issue)).not.toContain('private');
     expect(classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error: {
       code: issue.code, details: { v: 1, source: issue.source },

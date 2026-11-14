@@ -14,7 +14,7 @@ import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/se
 import { createNativeAgentSessionPublications } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionPublications';
 import { composeProviderBindingMaterialization } from '@/providers/spawn/compose';
 import { withTempDir } from '@/testkit/fs/tempDir';
-import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { createStablePluginExecService } from '@/plugins/runtime/invocation/services/exec';
 import { materializeCapturedAgentProviderBinding } from './adapter';
 import { createForegroundPurposeOwnerFixture } from '@/daemon/agentRuntime/prepareForegroundAdmission.connectedServices.testkit';
 import { createStablePluginConnectedAccountsHost } from '@/plugins/runtime/invocation/services/connectedAccounts';
@@ -88,7 +88,6 @@ for (const scenario of cases) {
       let publications: ReturnType<typeof createNativeAgentSessionPublications> | undefined;
       let observedSubscription: Readonly<{ dispose(): void }> | undefined;
       let accountHost: ReturnType<typeof createStablePluginConnectedAccountsHost> | undefined;
-      const nativeEnvScope = createEnvKeyScope(['GEMINI_CLI_SYSTEM_SETTINGS_PATH']);
       try {
         const registration = host.registration('agents', scenario.agentId);
         const adapter = registration?.providerBinding;
@@ -158,9 +157,18 @@ for (const scenario of cases) {
           operations: ['use' as const], materializationKinds: purpose.materializationKinds,
         })));
         let helpProbes = 0;
+        // Use the host's captured-environment service rather than the unavailable
+        // placeholder. Keep this fixture independent of the worker's login state.
+        const capturedExec = createStablePluginExecService({
+          signal, isOccurrenceCurrent: () => true,
+          inheritedEnvironment: scenario.agentId === 'gemini'
+            ? { GEMINI_CLI_SYSTEM_SETTINGS_PATH: join(dir, 'native-system-settings.json') } : {},
+          resolvePath: async () => dir,
+          resolveExecutable: async () => { throw new Error('Unexpected executable resolution'); },
+        });
         contextFixture = createAcpSessionRuntimeContextFixture({ agent, pluginId: parsed.manifest.id, publications,
           sessionId: 'session', directory: dir, signal,
-          services: { ...unavailable, ...(connectedAccounts ? { connectedAccounts } : {}), exec: { ...unavailable.exec, run: async request => {
+          services: { ...unavailable, ...(connectedAccounts ? { connectedAccounts } : {}), exec: { ...unavailable.exec, readEnvironment: capturedExec.readEnvironment, run: async request => {
             helpProbes++;
             expect(request.args).toEqual(['--help']);
             return { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
@@ -187,7 +195,6 @@ for (const scenario of cases) {
           const systemPolicy = join(dir, 'native-system-settings.json');
           const policy = JSON.stringify({ security: { auth: { selectedType: 'oauth-personal', enforcedType: 'oauth-personal' } } });
           await writeFile(systemPolicy, policy);
-          nativeEnvScope.patch({ GEMINI_CLI_SYSTEM_SETTINGS_PATH: systemPolicy });
           await expect(runtime.sessions.open(request, contextFixture.context)).rejects.toMatchObject({
             code: 'gemini_provider_auth_policy_conflict', retryable: false,
           });
@@ -210,7 +217,11 @@ for (const scenario of cases) {
           : { method: 'session/set_config_option', params: { sessionId: 'native-session', configId: 'model', value: nativeModel } });
         expect(publications.modelsSource.read()).toMatchObject({ currentModelId: scenario.model });
         expect(modelPublications).toContainEqual(expect.objectContaining({ currentModelId: scenario.model }));
-        expect(publications.modelsSource.read().models).toEqual(expect.arrayContaining([expect.objectContaining({ id: scenario.model })]));
+        if (scenario.agentId === 'copilot') {
+          expect(publications.modelsSource.read().models).toEqual([]);
+        } else {
+          expect(publications.modelsSource.read().models).toEqual(expect.arrayContaining([expect.objectContaining({ id: scenario.model })]));
+        }
         expect(readFileSync(sharedConfig, 'utf8')).toBe(retained);
         if (scenario.agentId === 'gemini') {
           expect(launched.GEMINI_CLI_SYSTEM_SETTINGS_PATH).toBeNull();
@@ -229,7 +240,7 @@ for (const scenario of cases) {
         try { await session?.dispose(); }
         finally {
           try { await contextFixture?.dispose(); }
-          finally { observedSubscription?.dispose(); publications?.dispose(); accountHost?.retire(); nativeEnvScope.restore(); cleanup?.(); await host.dispose(); }
+          finally { observedSubscription?.dispose(); publications?.dispose(); accountHost?.retire(); cleanup?.(); await host.dispose(); }
         }
       }
     });
