@@ -751,6 +751,12 @@ If you deploy with Dokploy, the recommended shape is:
 
 Prometheus should scrape the internal API and worker service names directly. Expose Grafana publicly only behind authentication. Keep Prometheus and Alertmanager private unless you have a specific reason to expose them.
 
+## Logs
+
+The server images set `NODE_ENV=production`, so the server writes JSON to stdout, one object per line, so `docker logs` and log collectors (Loki, Datadog, CloudWatch, Fluent Bit) can parse it directly. JSON output needs no extra thread and stays idle while the server is idle.
+
+For human-readable lines, set `HAPPIER_SERVER_LOG_FORMAT=pretty` in Home settings, or pass it as an environment variable (`-e HAPPIER_SERVER_LOG_FORMAT=pretty`). An environment value takes precedence over Home settings. Pretty output runs a formatting worker thread that wakes about once a second even when nothing is logged. The format applies on restart. Use `HAPPIER_SERVER_LOG_LEVEL` to change verbosity; see [Environment variables](/self-hosting/env#logging).
+
 ## Migrations
 
 The source-built `server` target and prebuilt `relay-server` image run migrations by default. `HAPPIER_DB_PROVIDER` selects the database independently of flavor. Packaged SQLite uses its in-process startup migration owner; keep that database on persistent single-node storage.

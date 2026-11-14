@@ -303,14 +303,13 @@ export const SERVER_RUNTIME_SERVER_CONFIG = defineServerConfigRegistry({
     },
     HAPPIER_SERVER_LOG_FORMAT: {
         type: 'enum',
-        default: 'pretty',
         bounds: { values: ['pretty', 'json'] },
         sensitivity: 'plain',
         apply: 'restart',
         editable: 'home',
         section: 'server',
         group: 'logging',
-        description: 'Node stdout log format. JSON writes one object per line for log collectors; Bun always uses JSON. Unrecognized env values use pretty.',
+        description: 'Node stdout log format. When unset or unrecognized: `json` under `NODE_ENV=production` (the Docker images), `pretty` otherwise (source and stack runs). JSON writes one object per line on the main thread; pretty adds a formatting worker thread. Bun always uses JSON.',
     },
     DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING: {
         type: 'boolean',

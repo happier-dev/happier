@@ -69,11 +69,20 @@ export function resolveServerLogLevelFromEnv(
     : 'info';
 }
 
+/**
+ * An explicit setting (Home or env) wins. Otherwise a production runtime (the Docker images set
+ * NODE_ENV=production) writes JSON with no worker thread, and development (source, stacks) stays pretty.
+ */
+export function resolveServerLogFormat(env: NodeJS.ProcessEnv): 'pretty' | 'json' {
+  return readServerConfig(env, SERVER_CONFIG.HAPPIER_SERVER_LOG_FORMAT)
+    ?? (readServerConfig(env, SERVER_CONFIG.NODE_ENV) === 'production' ? 'json' : 'pretty');
+}
+
 export function createLoggingTransportTargets(env: NodeJS.ProcessEnv = process.env): pino.TransportTargetOptions[] {
   const transports: pino.TransportTargetOptions[] = [];
 
   // Bun-compiled binaries can't reliably resolve pino transport targets.
-  if (!isBunRuntime() && readServerConfig(env, SERVER_CONFIG.HAPPIER_SERVER_LOG_FORMAT) === 'pretty') {
+  if (!isBunRuntime() && resolveServerLogFormat(env) === 'pretty') {
     transports.push({
       target: 'pino-pretty',
       options: {

@@ -31,10 +31,39 @@ describe('createLoggingTransportTargets', () => {
     mod.initializeServerLogging({ HAPPIER_SERVER_LOG_LEVEL: 'warn' });
     expect(mod.logger.level).toBe('warn');
   });
-  it('includes pino-pretty transport when not running under Bun', async () => {
+  it('defaults a production Node server (the Docker images) to JSON stdout with no transport worker', async () => {
     setBunRuntime(false);
     const mod = await import('./log');
-    const targets = mod.createLoggingTransportTargets({});
+    expect(mod.createLoggingTransportTargets({ NODE_ENV: 'production' } as NodeJS.ProcessEnv)).toEqual([]);
+  });
+
+  it('keeps pretty output by default for development Node servers (source and stack runs)', async () => {
+    setBunRuntime(false);
+    const mod = await import('./log');
+    expect(mod.createLoggingTransportTargets({}).map(t => t.target)).toEqual(['pino-pretty']);
+    expect(mod.createLoggingTransportTargets({ NODE_ENV: 'development' } as NodeJS.ProcessEnv).map(t => t.target)).toEqual(['pino-pretty']);
+  });
+
+  it('runs every server image with the production log default', async () => {
+    const mod = await import('./log');
+    const dockerfile = readFileSync(new URL('../../../../../Dockerfile', import.meta.url), 'utf8');
+    // ENV lines of one stage, following its FROM parents inside this Dockerfile.
+    const stageEnv = (stage: string): NodeJS.ProcessEnv => {
+      const blocks = dockerfile.split(/^FROM /m).slice(1);
+      const block = blocks.find(text => new RegExp(`\\bAS ${stage}\\s*$`, 'm').test(text.split('\n')[0]!));
+      if (!block) throw new Error(`missing stage ${stage}`);
+      const parent = block.split('\n')[0]!.trim().split(/\s+/).filter(word => !word.startsWith('--'))[0]!;
+      const inherited = blocks.some(text => new RegExp(`\\bAS ${parent}\\s*$`, 'm').test(text.split('\n')[0]!)) ? stageEnv(parent) : {};
+      const own = Object.fromEntries([...block.matchAll(/^ENV (\w+)=(\S*)/gm)].map(match => [match[1]!, match[2]!]));
+      return { ...inherited, ...own };
+    };
+    for (const stage of ['server', 'server-worker', 'relay-server']) expect([stage, mod.resolveServerLogFormat(stageEnv(stage))]).toEqual([stage, 'json']);
+  });
+
+  it('includes pino-pretty transport when pretty is selected on a production Node server', async () => {
+    setBunRuntime(false);
+    const mod = await import('./log');
+    const targets = mod.createLoggingTransportTargets({ NODE_ENV: 'production', HAPPIER_SERVER_LOG_FORMAT: 'pretty' } as NodeJS.ProcessEnv);
     expect(targets.some(t => t?.target === 'pino-pretty')).toBe(true);
   });
 
@@ -52,11 +81,11 @@ describe('createLoggingTransportTargets', () => {
     expect(targets.some(t => t?.target === 'pino-pretty')).toBe(false);
   });
 
-  it('keeps the pino-pretty transport for unrecognized log formats', async () => {
+  it('uses the runtime default for unrecognized log formats', async () => {
     setBunRuntime(false);
     const mod = await import('./log');
-    const targets = mod.createLoggingTransportTargets({ HAPPIER_SERVER_LOG_FORMAT: 'yaml' } as NodeJS.ProcessEnv);
-    expect(targets.some(t => t?.target === 'pino-pretty')).toBe(true);
+    expect(mod.resolveServerLogFormat({ HAPPIER_SERVER_LOG_FORMAT: 'yaml', NODE_ENV: 'production' } as NodeJS.ProcessEnv)).toBe('json');
+    expect(mod.resolveServerLogFormat({ HAPPIER_SERVER_LOG_FORMAT: 'yaml' } as NodeJS.ProcessEnv)).toBe('pretty');
   });
 
   it('selects the log format from the effective Home startup configuration', async () => {
@@ -64,11 +93,12 @@ describe('createLoggingTransportTargets', () => {
     const { buildStartupHomeEnv } = await import('@/app/home/settings/startupHomeEnv');
     const { SERVER_CONFIG_REGISTRY } = await import('@/config/serverConfigRegistry');
     const mod = await import('./log');
-    const stored = { values: { HAPPIER_SERVER_LOG_FORMAT: 'json' }, secrets: {} };
-    const startup = buildStartupHomeEnv({ env: {}, stored, registry: SERVER_CONFIG_REGISTRY, now: new Date(0) });
-    expect(mod.createLoggingTransportTargets(startup.env).some(t => t.target === 'pino-pretty')).toBe(false);
-    const locked = buildStartupHomeEnv({ env: { HAPPIER_SERVER_LOG_FORMAT: 'pretty' }, stored, registry: SERVER_CONFIG_REGISTRY, now: new Date(0) });
-    expect(mod.createLoggingTransportTargets(locked.env).some(t => t.target === 'pino-pretty')).toBe(true);
+    const stored = { values: { HAPPIER_SERVER_LOG_FORMAT: 'pretty' }, secrets: {} };
+    // The production default does not lock the Home setting: a stored choice still applies.
+    const startup = buildStartupHomeEnv({ env: { NODE_ENV: 'production' }, stored, registry: SERVER_CONFIG_REGISTRY, now: new Date(0) });
+    expect(mod.createLoggingTransportTargets(startup.env).some(t => t.target === 'pino-pretty')).toBe(true);
+    const locked = buildStartupHomeEnv({ env: { HAPPIER_SERVER_LOG_FORMAT: 'json' }, stored, registry: SERVER_CONFIG_REGISTRY, now: new Date(0) });
+    expect(mod.createLoggingTransportTargets(locked.env)).toEqual([]);
   });
 
   it('defaults the server log level to info', async () => {
@@ -166,6 +196,46 @@ describe('structured errors', () => {
   });
 });
 
+
+describe('idle log output', () => {
+  // Counts log transport worker threads and their event-loop wakes over an idle window
+  // after real startup logging. A pino transport worker polls its ring buffer (~1/s).
+  async function countIdleLogWorkerWakes(env: NodeJS.ProcessEnv) {
+    const result = await promisify(execFile)(process.execPath, [
+      '--conditions=happier-source', '--import', pathToFileURL(createRequire(import.meta.url).resolve('tsx')).href, '--eval',
+      `(async () => {
+       const { createRequire } = await import('node:module');
+       const threads = createRequire(${JSON.stringify(import.meta.url)})('node:worker_threads');
+       // A thread the process owns besides the logger (a runner or loader worker): never a log worker.
+       const unrelated = new threads.Worker('setInterval(() => {}, 200)', { eval: true });
+       const mod = await import(${JSON.stringify(new URL('./log.ts', import.meta.url).href)});
+       mod.initializeServerLogging(process.env);
+       mod.logger.info('startup line');
+       // The logger's own transport: pino's destination stream is a thread-stream that owns its worker.
+       const destination = mod.logger[createRequire(${JSON.stringify(import.meta.url)})('pino').symbols.streamSym];
+       const workers = destination && destination.worker ? [destination.worker] : [];
+       await new Promise(resolve => setTimeout(resolve, 500));
+       const before = workers.map(w => w.performance.eventLoopUtilization());
+       await new Promise(resolve => setTimeout(resolve, 2500));
+       const activeMs = workers.reduce((sum, w, i) => sum + w.performance.eventLoopUtilization(before[i]).active, 0);
+       unrelated.terminate();
+       process.stderr.write('IDLE ' + JSON.stringify({ workers: workers.length, activeMs }) + '\\n');
+       process.exit(0);
+      })();`,
+    ], { encoding: 'utf8', env: { ...process.env, DANGEROUSLY_LOG_TO_SERVER_FOR_AI_AUTO_DEBUGGING: '', HAPPIER_SERVER_LOG_LEVEL: 'info', ...env } });
+    const line = result.stderr.split('\n').find(entry => entry.startsWith('IDLE '));
+    return JSON.parse(line!.slice('IDLE '.length)) as { workers: number; activeMs: number };
+  }
+
+  it('starts no log worker by default in production, so an idle Docker server is never woken by logging', async () => {
+    // An empty value is unset for the server config codec.
+    const production = await countIdleLogWorkerWakes({ HAPPIER_SERVER_LOG_FORMAT: '', NODE_ENV: 'production' });
+    expect(production).toEqual({ workers: 0, activeMs: 0 });
+    const development = await countIdleLogWorkerWakes({ HAPPIER_SERVER_LOG_FORMAT: '', NODE_ENV: '' });
+    console.info(`idle-log-worker production=${JSON.stringify(production)} development=${JSON.stringify(development)}`);
+    expect(development.workers).toBe(1);
+  }, 30_000);
+});
 
 describe('pretty stdout', () => {
   it('writes one line per request event while retaining warning, slow and failed request diagnostics', async () => {
