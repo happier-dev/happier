@@ -1,4 +1,4 @@
-import { plainPrivateLabel, preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
+import { plainPrivateLabel, prepareE2eeAccountApiTokenLabel, preparePlainAccountApiTokenLabel } from "@/testkit/privateLabelFixture";
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import Fastify from "fastify";
 import axios from 'axios';
@@ -8717,7 +8717,11 @@ describe("external Action execution authorization", () => {
         }
         const callerInputConstraints = { models: [{ agentTargetKey: 'agent:codex', providerConnectionId: null,
             modelId: 'allowed-model' }], permissionModes: ['default' as const] };
-        const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId: crypto.randomUUID(), label: await preparePlainAccountApiTokenLabel(fixture.account.id, 'source-writer-target'),
+        const tokenId = crypto.randomUUID();
+        const label = material
+            ? await prepareE2eeAccountApiTokenLabel(fixture.account.id, tokenId, 'source-writer-target')
+            : plainPrivateLabel('source-writer-target');
+        const pat = await auth.createApiToken({ accountId: fixture.account.id, tokenId, label,
             grant: { ...API_TOKEN_FULL_GRANT_V1,
                 ...(scope === 'scoped' ? { actions: { families: [], ids: ['session.handoff'] } } : {}), ...callerInputConstraints } });
         const sourceCustodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
@@ -8810,7 +8814,7 @@ describe("external Action execution authorization", () => {
                 accountServerId: homeId, sourceMachineId: child.id, sourceSessionId: session.id, sourceRootPath: '/child/source' }), sourceContext };
             const custodianToken = await auth.createToken(sourceCustodian.id, undefined, { kind: 'account', authority: 'present_user' });
             const createInstalledSocket = (machine: typeof child, id: string) => Object.assign(createFakeSocket({ id,
-                data: { clientType: 'machine-scoped', machineId: machine.id, verifiedMachineInstallationId: machine.installationId,
+                data: { clientType: 'machine-scoped', userId: sourceCustodian.id, machineId: machine.id, verifiedMachineInstallationId: machine.installationId,
                     authTokenKind: 'account', authAuthority: 'present_user' } }), { handshake: { auth: { token: custodianToken } } });
             const childSocket = createInstalledSocket(child, 'original-child-sender');
             qualifyCurrentAccountStoredContentSocket(childSocket);
@@ -8899,7 +8903,7 @@ describe("external Action execution authorization", () => {
                 binding: retainedRoot.binding, principal: { accountId: fixture.account.id, authority: 'account_automation' },
             });
             const chosenTargetSocket = Object.assign(createFakeSocket({ id: 'actual-chosen-target-second-hop', data: {
-                clientType: 'machine-scoped', machineId: chosenTarget.id, verifiedMachineInstallationId: chosenTarget.installationId,
+                clientType: 'machine-scoped', userId: targetCustodian.id, machineId: chosenTarget.id, verifiedMachineInstallationId: chosenTarget.installationId,
                 authTokenKind: 'account', authAuthority: 'present_user' } }), { handshake: { auth: { token: targetCustodianToken } } });
             qualifyCurrentAccountStoredContentSocket(chosenTargetSocket);
             registerSocketRpcHandlers({ userId: targetCustodian.id, socket: chosenTargetSocket as unknown as Socket,
@@ -13447,7 +13451,7 @@ describe("external Action execution authorization", () => {
             randomBytes: length => new Uint8Array(length).fill(19),
         });
         const parent = await auth.createApiToken({ accountId: fixture.account.id, tokenId,
-            label: await preparePlainAccountApiTokenLabel(fixture.account.id, 'Settings-built E2EE embed parent'), grant, embedConfig, encryption: { access: encryptionAccess } });
+            label: await prepareE2eeAccountApiTokenLabel(fixture.account.id, tokenId, 'Settings-built E2EE embed parent'), grant, embedConfig, encryption: { access: encryptionAccess } });
         const credential = formatAccountApiTokenCredentialV1({ bearer: parent.token, serverIdentityId,
             accountId: fixture.account.id, contentPublicKey: encodeBase64(contentPublicKey),
             wrappingSecret: Buffer.from(wrappingSecret).toString('base64url') });
