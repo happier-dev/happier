@@ -134,7 +134,7 @@ export function describeManagedLifecycleState(
     case 'creationWaiting':
       return present(
         'neutral',
-        { detail: t('managedMachines.creation.waiting', { name: state.name }) },
+        { detail: t('managedMachines.inspect.notCreated') },
         [],
       );
     case 'creating':

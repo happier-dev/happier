@@ -59,7 +59,7 @@ export type ManagedConfigurationReceiptInput = Readonly<{
     savedLaunchPresentation?: Readonly<{ schema: JsonSchemaObject; inputHints?: ActionInputHints }>;
     /** The declared service title; null when no current or bundled declaration can name it. */
     providerTitle: string | null;
-    /** The managing computer's name; `null` while it is still being read (shown as a pending value, never as words). */
+    /** The managing computer's name: `null` while reading it, omitted when unavailable. */
     controllerName?: string | null; caption?: string; mark?: React.ReactNode;
     /** `account`: no computer manages it (an Account-created machine), so there is no Managed from row (58d U4). */
     managedBy?: 'computer' | 'account';
@@ -108,8 +108,8 @@ export function managedAgentSignInReceiptFacts(agentSignIn: ManagedConfiguration
 
 export function buildManagedConfigurationReceipt(input: ManagedConfigurationReceiptInput): ManagedReceiptModel {
     const facts = input.reviewedFacts;
-    // Every receipt names its controller as a labelled fact: pending while read, explicitly unknown when unnamed.
-    const controllerName = input.controllerName === null ? null : input.controllerName ?? t('common.unknown');
+    // Retain a pending name, but omit an unavailable name rather than inventing one.
+    const controllerName = input.controllerName;
     const rows: ManagedReceiptModel['facts'][number][] = [];
     const nativeLabels: string[] = [];
     const localized = (value: PluginLocalizedStringV2) => input.localized
@@ -170,7 +170,7 @@ export function buildManagedConfigurationReceipt(input: ManagedConfigurationRece
     // A local machine runs on the computer that manages it, and its cost already says "Runs on" that computer (or pool):
     // that one line names it. A machine that runs elsewhere (a cloud guest) keeps its Managed from row.
     const runsOnLine = cost.kind === 'local' && !input.absent;
-    if (input.managedBy !== 'account' && !runsOnLine) rows.push({ id: 'controller', label: t('managedMachines.config.managedFrom'), value: controllerName });
+    if (input.managedBy !== 'account' && !runsOnLine && controllerName !== undefined) rows.push({ id: 'controller', label: t('managedMachines.config.managedFrom'), value: controllerName });
     rows.push(...managedAgentSignInReceiptFacts(input.agentSignIn));
     if (input.homeName) rows.push({ id: 'home', label: t('managedMachines.receipt.joins'), value: input.homeName });
     // The provider's native duration is a contract, not a Keep choice: a resource that only ends says when it

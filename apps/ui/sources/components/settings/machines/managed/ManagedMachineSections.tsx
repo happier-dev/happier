@@ -118,14 +118,14 @@ type FullSectionProps = Omit<SectionProps, 'machine'> & Readonly<{ machine: Mana
  */
 const PENDING_READ = Object.freeze({ kind: 'loading' } as const);
 
-/** The managing computer's name, `null` while the machine list is still reading it, or "Unknown" once read without it. */
-function controllerNameOrPending(controller: Parameters<typeof getMachineDisplayName>[0], list: readonly unknown[] | null | undefined): string | null {
+/** The managing computer's name: `null` while reading it, `undefined` when the settled list has no name. */
+function controllerNameOrPending(controller: Parameters<typeof getMachineDisplayName>[0], list: readonly unknown[] | null | undefined): string | null | undefined {
     if (controller ? isMachineDisplayHydrating(controller) : !list) return null;
-    return getMachineDisplayName(controller) ?? t('common.unknown');
+    return getMachineDisplayName(controller) ?? undefined;
 }
 
-function controllerRequired(name: string | null): string {
-    return name === null ? t('managedMachines.controller.requiredUnnamed') : t('managedMachines.controller.required', { controller: name });
+function controllerRequired(name: string | null | undefined): string {
+    return name == null ? t('managedMachines.controller.requiredUnnamed') : t('managedMachines.controller.required', { controller: name });
 }
 
 export function ManagedMachineSections(props: SectionProps) {
@@ -696,7 +696,7 @@ function ManagedMachineFullSections(props: FullSectionProps) {
             activeAt: (enrolledActivity ?? readMachineActivity(enrolledMachine)).activeAt ?? undefined,
         } } : {}),
         providerAvailable: (!machine.controller || requiredController) && provisionerPresentation.projectionReady ? provisionerPresentation.title !== null : undefined,
-        ...(controller && controllerPresence && controllerName !== null ? { controller: { name: controllerName, online: controllerPresence.online } } : {}) };
+        ...(controller && controllerPresence && typeof controllerName === 'string' ? { controller: { name: controllerName, online: controllerPresence.online } } : {}) };
     // Asleep with its disk kept, Start is the next step: it moves to the state row that opens the page, the same action
     // and the same offer, so it is one press from where the person looks on every width.
     const startAction = allReceiptActions.find(action => action.testID === 'managed-machine.start' && !action.disabled);
@@ -889,7 +889,7 @@ function ManagedMachineFullSections(props: FullSectionProps) {
                     keepSheetRef.current = showManagedKeepSheet(keepChannel, 'managed-machine.policy-sheet');
                 } } : undefined} />}
         {/* A resource that no longer exists has nothing left to manage; the receipt keeps where it was managed from. */}
-        {resourceEnded || !machine.controller ? null : requiredController ? <ManagedMachineControllerSection testID="managed-machine.controller"
+        {resourceEnded || !machine.controller ? null : requiredController && controllerName !== undefined ? <ManagedMachineControllerSection testID="managed-machine.controller"
             description={controllerRequired(controllerName)}
             controller={{ name: controllerName, icon: machineMark, online: controllerPresence!.online,
                 presence: controllerPresence!.label, move: billing?.location === 'local' ? { kind: 'fixed' }
@@ -897,7 +897,7 @@ function ManagedMachineFullSections(props: FullSectionProps) {
                         : { kind: 'unavailable' } }} />
             : controllerName === null ? <ItemGroup title={t('managedMachines.config.managedFrom')} description={controllerRequired(null)}>
                 <ItemLoadStateRows state={PENDING_READ} rows={1} lines={2} testID="managed-machine.controller.pending" /></ItemGroup>
-            : <ItemGroup title={t('managedMachines.config.managedFrom')}><Item title={controllerName}
+            : <ItemGroup title={t('managedMachines.config.managedFrom')}><Item title={controllerName ?? t('common.unavailable')}
                 subtitle={controllerRequired(controllerName)} mode="info" showChevron={false}
                 testID="managed-machine.controller-unavailable" accessoryLayout="adaptive" rightElement={canMove ?
                     <RoundButton title={t('managedController.moveShort')} display="secondary" size="small"

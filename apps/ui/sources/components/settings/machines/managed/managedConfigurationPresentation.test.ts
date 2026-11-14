@@ -152,7 +152,7 @@ describe('one managed configuration receipt projection', () => {
         const unavailable = presentQualifiedConnectedAccountTarget({ target: { kind: 'account', account: personal.account },
             accounts: [], groups: [], labelsByKey: {}, serviceTitle: null }).primaryLabel;
         expect(accounts.map(fact => fact.value)).toEqual([unavailable, unavailable]);
-        expect(receipt.facts.find(fact => fact.id === 'controller')?.value).toBe(t('common.unknown'));
+        expect(receipt.facts.find(fact => fact.id === 'controller')).toBeUndefined();
         expect(JSON.stringify(receipt)).not.toContain('original-host');
         expect(JSON.stringify(receipt)).not.toContain('opaque-work-id');
         expect(JSON.stringify(receipt)).not.toContain('opaque-personal-id');

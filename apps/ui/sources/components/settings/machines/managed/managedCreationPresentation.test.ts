@@ -53,13 +53,19 @@ const machine = {
 } satisfies ManagedMachineV1;
 
 describe('managed creation presentation', () => {
+  it('does not claim an unsubmitted allocation is waiting for active creation', () => {
+    const unsubmitted = { ...machine, allocation: 'unsubmitted' as const, resource: undefined };
+    expect(describeManagedCreation(unsubmitted).line).toBe(t('managedMachines.inspect.notCreated'));
+  });
+
   it.each(['unsubmitted', 'may-exist'] as const)('classifies an unreadable preset row for list/work status without private launch (%s)', allocation => {
     const { launch: _launch, resource: _resource, ...structural } = machine;
     const opaque = { ...structural, allocation, preset: { id: 'sealed', revision: 1, contentEncryptionMode: 'e2ee' as const } };
     expect(managedCreationState(opaque)).toMatchObject({
       kind: allocation === 'unsubmitted' ? 'creationWaiting' : 'mayExist', name: t('common.machine'),
     });
-    expect(describeManagedCreation(opaque).line).toContain(t('common.machine'));
+    if (allocation === 'unsubmitted') expect(describeManagedCreation(opaque).line).toBe(t('managedMachines.inspect.notCreated'));
+    else expect(describeManagedCreation(opaque).line).toContain(t('common.machine'));
   });
 
   it.each(['machines.managed.acquire', 'machines.managed.bootstrap.retry'] as const)(

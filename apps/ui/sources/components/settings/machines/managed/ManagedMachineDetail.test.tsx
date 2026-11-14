@@ -733,6 +733,37 @@ describe('managed Machine detail', () => {
         expect(screen.findByTestId('managed-machine.read-state')).toBeNull();
         await screen.unmount();
     });
+    it('shows an unsubmitted allocation without an invented controller name or active creation', async () => {
+        const target = await upsertAndActivateServer({ serverUrl: 'https://managed-unsubmitted-controller.test', scope: 'tab' });
+        const homeId = 'srv_managed_unsubmitted_controller';
+        await setServerProfileIdentityForUrl(target.serverUrl, homeId);
+        await TokenStorage.setCredentialsForServerUrl(target.serverUrl, { serverId: target.id }, {
+            token: createAccountTokenForTests('owner', { currentAccount: true }),
+        });
+        const machine: ManagedMachineV1 = { id: 'unsubmitted-managed', homeId, custodianAccountId: 'owner',
+            launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Guest', choices: {} },
+            controller: { machineId: 'unlisted-controller', installationId: 'installation' },
+            allocation: 'unsubmitted', creationState: 'active', desired: 'start', desiredWhen: 'now', intentRevision: 0,
+            retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false };
+        const serverId = resolveServerProfileScopeIdForIdentifier(target.id) || target.id;
+        setRuntimeFetch(async input => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v2/account/settings') return Response.json({ content: { t: 'plain', v: {} }, version: 1 });
+            if (path === '/v1/machines/managed/actions/get') return Response.json(machine);
+            return Response.json({ error: 'not_found' }, { status: 404 });
+        });
+        await publishMachineInventoryForTest({ serverId, accountId: 'owner' }, []);
+        const screen = await renderScreen(<ManagedMachineDetail managedId={machine.id} serverId={target.id}
+            executeAction={createFrontDoorActionExecute(createDefaultActionExecutor())} />);
+        try {
+            await flushHookEffects({ cycles: 30 });
+            expect(screen.getTextContent()).toContain(t('managedMachines.inspect.notCreated'));
+            expect(screen.getTextContent()).not.toContain(t('managedMachines.creation.waiting', { name: 'Guest' }));
+            expect(screen.getTextContent()).not.toContain(t('common.unknown'));
+            expect(screen.findByTestId('managed-machine.controller.pending')).toBeNull();
+        } finally { await screen.unmount(); }
+    });
     it('holds the managing computer as a pending value, never "Loading…" in its sentences, until its name is read', async () => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-controller-pending.test', scope: 'tab' });
         await setServerProfileIdentityForUrl(target.serverUrl, 'srv_managed_controller_pending');
