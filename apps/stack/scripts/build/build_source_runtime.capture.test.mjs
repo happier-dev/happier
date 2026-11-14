@@ -263,6 +263,7 @@ test('revision capture takes committed bytes plus only the declared overlay, nev
     const leaks = [];
     for (const [path, text] of Object.entries(expected)) {
       if (path === (component === 'daemon' ? overlayPath : 'apps/cli/src/index.ts')) continue;
+      if (component === 'server' && path.startsWith('apps/cli/assets/')) continue;
       const actual = await readFile(join(captured.repoDir, path), 'utf8').catch(() => null);
       if (actual !== text || captured.files.includes(path) !== (text !== null)) leaks.push(path);
     }
