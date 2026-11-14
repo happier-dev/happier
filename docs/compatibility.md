@@ -970,6 +970,14 @@ stale. The bounded Action HTTP error vocabulary now carries that conflict (409
 at the authorization endpoint) through matching unpublished 0.3 components;
 unreadable and deleted sources retain `credential_scope_denied`. No 0.2
 deployment predecessor or compatibility adapter is involved.
+Create preparation also retains `source_access_denied` when the requester lacks
+management of an explicitly selected owner or readable Source. The same closed
+Action HTTP vocabulary carries that existing Source refusal as HTTP 403 through
+mint and re-presented roots. Matching unpublished 0.3 Home, CLI and UI components
+refresh together; older strict development readers reject the additional code.
+This adds no permission, credential, persisted field or released adapter. The
+scoped `../0.2` frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf`
+has neither the deployment preparation nor Action HTTP error owner.
 Own-server template selections optionally retain
 `copyFrom` source capture coordinates and explicit `destinationBackup` authoring
 inputs. Child preparation owns fresh generated bindings; source credentials and

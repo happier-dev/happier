@@ -314,7 +314,8 @@ async function readAdmittedRootRelay(app: Fastify, request: FastifyRequest, acti
     catch { return null; }
     const { readCurrentDeploymentRootEnvironmentAdmissionInTx } = await import('@/app/deployments/deploymentRootEnvironmentAdmission');
     const deployment = await readCurrentDeploymentRootEnvironmentAdmissionInTx(db, root, nativeAdmission, current.authenticationEvidence);
-    if (!deployment.ok) return deployment.code === 'source_changed' ? { refusalCode: 'source_changed' as const } : null;
+    if (!deployment.ok) return deployment.code && deployment.code !== 'credential_scope_denied'
+        ? { refusalCode: deployment.code } : null;
     const principal = projectExternalActionBoundPrincipal(root, current, request.authAuthority);
     // A signed Account root proves credential provenance, not a higher
     // invocation authority than this authenticated request's lowering ceiling.
@@ -877,7 +878,7 @@ export function registerExternalActionRoutes(
                     ? { ...authorization, managedFiniteWake } : authorization);
             } catch (error) {
                 if (error instanceof ApiTokenOperationError && (error.code === "credential_scope_denied" || error.code === "invalid_token"
-                    || error.code === "target_unavailable" || error.code === "source_changed")) {
+                    || error.code === "target_unavailable" || error.code === "source_changed" || error.code === "source_access_denied")) {
                     if (error.code === 'credential_scope_denied' && error.details !== undefined) {
                         const projected = projectExternalActionHttpError(error.code);
                         return sendExternalActionJson(reply, projected.statusCode, { ...projected.payload,

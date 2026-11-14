@@ -47,12 +47,14 @@ import { inTx } from '@/storage/inTx';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { resolveArtifactAccessInTx } from '@/app/artifacts/artifactAccessService';
 import { createProjectSourceInTx, readProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
+import { setMachineAccessGrantInTx } from '@/app/machines/machineAccess';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 import { createDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
 import { listDeploymentTargetLinksInTx } from './deploymentTargetLinkReadService';
 import { isDeploymentPreparationAuthorizedInTx, isDeploymentPreparationHttpPurposeInTx,
-    readDeploymentCreateHttpPurposeInTx, readDeploymentLinkPreparationHttpPurpose } from './deploymentPreparationAuthorization';
+    readDeploymentCreateHttpPurposeInTx, readDeploymentLinkPreparationHttpPurpose,
+    readDeploymentPreparationAuthorizationInTx } from './deploymentPreparationAuthorization';
 
 describe('reviewed create preparation authority', () => {
     const serverId = `srv_${'b'.repeat(32)}`;
@@ -104,6 +106,50 @@ describe('reviewed create preparation authority', () => {
             deploymentPreparationAdmission: admission });
         return { owner, actor, source, destination, original, input, admission, binding, machine, key, artifact };
     }
+
+    it.each(['authorization', 'fresh', 'retained'] as const)('reports missing Team Source management through the real %s Create root before any effect', async entry => {
+        const f = await fixture();
+        const team = await db.team.create({ data: { name: 'Create Source authority' } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: f.actor.id, role: 'owner' } });
+        expect(await inTx(tx => setMachineAccessGrantInTx(tx, { actorAccountId: f.actor.id,
+            machineId: f.machine.id, principal: { kind: 'team', teamId: team.id }, level: 'view' })))
+            .toMatchObject({ kind: 'saved', readiness: 'ready' });
+        await db.machine.update({ where: { id: f.machine.id }, data: { active: true,
+            operationProtocolCapabilitiesRevision: 1,
+            operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } } } });
+        const { projectSourceId: _source, copyFrom: _copy, ...base } = f.input;
+        const input = { ...base, newProject: { requestKey: crypto.randomUUID(), name: 'Team Source',
+            owner: { kind: 'team' as const, teamId: team.id } } };
+        const admission = projectDeploymentPreparationAdmissionV1(f.binding.actionId, input);
+        if (!admission || admission.operation !== 'create') throw new Error('Expected Team Create projection');
+        const envelope = { v: 1 as const, requestId: f.binding.requestId, target: f.binding.target, input };
+        const binding = { ...f.binding, deploymentPreparationAdmission: admission,
+            requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) };
+        // Machine ownership and explicit Team custody permit transport; Source management is separate.
+        const authorization = await auth.mintExternalActionExecutionAuthorization(binding, { input });
+        await db.teamMembership.update({ where: { teamId_accountId: { teamId: team.id, accountId: f.actor.id } },
+            data: { role: 'member' } });
+        expect(await inTx(tx => readDeploymentPreparationAuthorizationInTx(tx, binding, admission)))
+            .toEqual({ ok: false, code: 'source_access_denied' });
+        const token = await auth.createToken(f.actor.id, undefined, { kind: 'account', authority: 'present_user' });
+        let forwarded = false;
+        await withAuthenticatedTestApp(app => registerExternalActionRoutes(app, {
+            dispatch: createExternalActionDaemonDispatcher({ io: {} as Server,
+                // The daemon transport is the boundary; the Source and Machine owners remain real.
+                forwardRpc: async () => { forwarded = true; throw new Error('Unexpected daemon effect'); } }),
+        }), async app => {
+            const response = await app.inject({ method: 'POST',
+                url: `/v1/actions/deployments.environments.create${entry === 'authorization' ? '/execution-authorization' : ''}`,
+                headers: { authorization: `Bearer ${token}` }, payload: entry === 'fresh' ? envelope
+                    : { v: 1, envelope, machineId: f.machine.id,
+                        ...(entry === 'retained' ? { executionAuthorization: authorization } : {}) } });
+            expect(response.statusCode, response.body).toBe(entry === 'fresh' ? 200 : 403);
+            const failure = entry === 'fresh' ? ExternalActionResponseEnvelopeV1Schema.parse(response.json()).execution
+                : projectExternalActionHttpFailureV1(ExternalActionHttpErrorSchema.parse(response.json()));
+            expect(failure).toMatchObject({ ok: false, errorCode: 'source_access_denied' });
+            expect(forwarded).toBe(false);
+        }, { authentication: 'real' });
+    });
 
     it.each(['fresh', 'retained'] as const)('reports a changed copy source through the real %s Create root without attempting an effect', async entry => {
         const f = await fixture();

@@ -264,7 +264,7 @@ describe('private installed Environment secret launch transport', () => {
         const { machines, ...link } = destinationLink;
         const sourceLink = await db.deploymentTargetLink.create({ data: { ...link, id: crypto.randomUUID(),
             environmentId: source.id, activeDeploymentId: null,
-            machines: { create: machines.map(({ id: _id, targetLinkId: _targetLinkId, ...member }) => member) },
+            machines: { create: machines.map(({ id: _id, targetLinkId: _targetLinkId, ...member }) => ({ ...member, state: 'active' })) },
             ...await f.artifact('deployment-target-link.v1') } });
         const sourceReceipt = await db.deployment.create({ data: { ...destinationReceipt, id: crypto.randomUUID(),
             environmentId: source.id, targetLinkId: sourceLink.id, requestKey: crypto.randomUUID(),
@@ -273,7 +273,7 @@ describe('private installed Environment secret launch transport', () => {
         await db.deploymentTargetLink.update({ where: { id: sourceLink.id }, data: { activeDeploymentId: sourceReceipt.id } });
         await db.deploymentTargetLink.update({ where: { id: destinationLink.id }, data: { activeDeploymentId: destinationReceipt.id } });
         const input = { serverId, environmentId: destination.id, targetLinkId: destinationLink.id,
-            deploymentId: destinationReceipt.id, expectedRevision: destination.revision,
+            deploymentId: sourceReceipt.id, expectedRevision: destination.revision,
             machineId: f.payload.machineId, installationId: f.payload.installationId, mode: 'prepare' as const,
             source: { kind: 'repository' as const, snapshotId: 'a'.repeat(64),
                 origin: { environmentId: source.id, targetLinkId: sourceLink.id } } };
@@ -286,6 +286,8 @@ describe('private installed Environment secret launch transport', () => {
             { input: value });
         };
         await expect(mint(input)).resolves.toMatchObject({ binding: { environmentId: destination.id } });
+        await expect(mint({ ...input, deploymentId: destinationReceipt.id }))
+            .rejects.toMatchObject({ code: 'credential_scope_denied' });
         await expect(mint({ ...input, expectedRevision: destination.revision + 1 }))
             .rejects.toMatchObject({ code: 'source_changed' });
         await expect(mint({ ...input, source: { ...input.source,

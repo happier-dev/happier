@@ -231,7 +231,7 @@ export type ApiTokenSummary = Readonly<{
 }>;
 
 export class ApiTokenOperationError extends Error {
-    constructor(readonly code: "account-disabled" | "invalid_token" | "api_token_id_conflict" | "api_token_encryption_not_ready" | "api_token_encryption_stale" | "api_token_encryption_unavailable" | "api_token_label_invalid" | "api_token_label_mode_mismatch" | "api_token_label_recipient_envelope_rejected" | "credential_authentication_evidence_limit" | "credential_authentication_evidence_unavailable" | "api_token_child_forbidden" | "api_token_child_invalid" | "credential_scope_denied" | "source_changed" | "target_unavailable",
+    constructor(readonly code: "account-disabled" | "invalid_token" | "api_token_id_conflict" | "api_token_encryption_not_ready" | "api_token_encryption_stale" | "api_token_encryption_unavailable" | "api_token_label_invalid" | "api_token_label_mode_mismatch" | "api_token_label_recipient_envelope_rejected" | "credential_authentication_evidence_limit" | "credential_authentication_evidence_unavailable" | "api_token_child_forbidden" | "api_token_child_invalid" | "credential_scope_denied" | "source_access_denied" | "source_changed" | "target_unavailable",
         readonly grantReason?: ApiTokenGrantDenialReasonV1,
         readonly details?: import('@happier-dev/protocol/actions/actionExecutionResult').ActionExecuteFailure['details'],
         readonly failureCause?: import('@happier-dev/protocol/actions/actionExecutionResult').ActionExecuteFailure['failureCause']) {

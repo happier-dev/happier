@@ -75,6 +75,7 @@ export { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 };
 export type ExternalActionPlacementErrorCode =
     | ReturnType<typeof ClientActionRpcFailureCodeV1Schema.parse>
     | "credential_scope_denied"
+    | "source_access_denied"
     | "source_changed"
     | "target_required"
     | "target_not_local"
@@ -200,7 +201,7 @@ interface DispatchPhaseFailure {
     readonly phase: DispatchPhase;
     readonly errorClass: 'TypeError' | 'RangeError' | 'SyntaxError' | 'Error' | 'UnknownError';
     readonly message: 'Unexpected phase failure (details redacted)';
-    readonly authorizationRefusalCode: Extract<ApiTokenOperationError['code'], 'credential_scope_denied' | 'source_changed'> | null;
+    readonly authorizationRefusalCode: Extract<ApiTokenOperationError['code'], 'credential_scope_denied' | 'source_access_denied' | 'source_changed'> | null;
     readonly grantReason: ApiTokenGrantDenialReasonV1 | null;
     readonly databaseErrorCode: ReturnType<typeof readDatabaseErrorCode>;
     /** The mint's own typed refusal that its placement target is gone (retryable), kept over the generic code. */
@@ -253,7 +254,8 @@ function recordDispatchPhaseFailure(
             : error instanceof RangeError ? 'RangeError'
                 : error instanceof SyntaxError ? 'SyntaxError'
                     : error instanceof Error ? 'Error' : 'UnknownError';
-        if (error instanceof ApiTokenOperationError && (error.code === 'credential_scope_denied' || error.code === 'source_changed')) {
+        if (error instanceof ApiTokenOperationError && (error.code === 'credential_scope_denied'
+            || error.code === 'source_access_denied' || error.code === 'source_changed')) {
             authorizationRefusalCode = error.code;
             grantReason = error.grantReason ?? null;
         }

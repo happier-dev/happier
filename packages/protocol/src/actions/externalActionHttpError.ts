@@ -28,6 +28,7 @@ export type ExternalActionHttpErrorCodeV1 = z.infer<typeof ExternalActionHttpErr
 
 const EXTERNAL_ACTION_HTTP_PLACEMENT_ERROR_CODES = [
   'credential_scope_denied',
+  'source_access_denied',
   'source_changed',
   'present_user_required',
   'target_required',
@@ -200,7 +201,7 @@ function isExternalActionHttpAuthenticationErrorCode(
 
 /** Maps a protocol transport failure to its complete HTTP representation. */
 function externalActionHttpErrorStatus(code: ExternalActionHttpErrorCode): 400 | 401 | 403 | 409 | 413 | 500 | 503 {
-  if (code === 'credential_scope_denied' || code === 'present_user_required') return 403;
+  if (code === 'credential_scope_denied' || code === 'source_access_denied' || code === 'present_user_required') return 403;
   if (code === 'invalid_token') return 401;
   if (code === 'auth_unavailable' || code === 'server_unavailable'
     || code === 'database_transaction_conflict_exhausted' || code === 'database_transaction_timeout' || code === 'database_connection_unavailable'
