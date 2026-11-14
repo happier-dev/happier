@@ -11,7 +11,7 @@ let channel: Awaited<ReturnType<typeof createRequesterCurrentnessSocketHarness>>
 beforeEach(async () => { channel = await createRequesterCurrentnessSocketHarness(); });
 afterEach(async () => { await channel.close(); vi.restoreAllMocks(); });
 
-it.each(['no-rules', 'personal-rule'] as const)('reads each committed terminal source once per pass, and only when a receiver can use it (%s)', async (scenario) => {
+it.each([['no-rules', false], ['personal-rule', false], ['no-rules', true], ['personal-rule', true]] as const)('reads each committed terminal source once per pass, and only when a receiver can use it (%s, host Turn %s)', async (scenario, hostTurn) => {
   const sourceSessionId = 'c444444444444444444444444';
   const credentials = { token: 'e30.eyJzdWIiOiJhY2NvdW50LTEifQ.signature', encryption: null };
   const home = 'http://follow-request-cost.test';
@@ -59,6 +59,8 @@ it.each(['no-rules', 'personal-rule'] as const)('reads each committed terminal s
   const dispatchTerminal = (seq: number) => dispatcher.dispatch(SessionFollowRuleSourceOccurrenceV1Schema.parse({ sourceSessionId,
     sourcePublisher: { machineId: 'source-machine', publisherGeneration: '1', committedFenceMs: 1 },
     sourceMessage: { localId: `native-terminal-${seq}`, seq },
+    // The hosting Machine reports its own Turn; the Home still authorizes the routes.
+    ...(hostTurn ? { hostTurn: { id: `host-turn-${seq}`, status: 'completed' } } : {}),
     evidence: { v: 1, ownerAccountId: 'account-1', event: { kind: 'finished' }, facts: { serverId: 'home', kind: 'session' } } }));
   try {
     // The first Turn also opens the retained Account rule configuration; measure the steady per-Turn cost after it.
@@ -69,13 +71,18 @@ it.each(['no-rules', 'personal-rule'] as const)('reads each committed terminal s
     const perTurn = requests.slice(before);
     const count = (request: string) => perTurn.filter(item => item === request).length;
     expect(count(`POST /v2/sessions/${sourceSessionId}/follows/occurrence-routes`)).toBe(1);
-    // Terminal normalization admits the source transport once; preparation reuses it.
-    expect(count('GET /v1/account/encryption/currentness'), JSON.stringify(perTurn)).toBe(1);
-    expect(count(`GET /v2/sessions/${sourceSessionId}`), JSON.stringify(perTurn)).toBe(1);
-    expect(count(`GET /v1/sessions/${sourceSessionId}/messages`)).toBe(1);
+    if (hostTurn) {
+      // A host-reported Turn needs no committed-row re-read to find its Turn.
+      expect(count(`GET /v1/sessions/${sourceSessionId}/messages`), JSON.stringify(perTurn)).toBe(0);
+    } else {
+      // Terminal normalization admits the source transport once; preparation reuses it.
+      expect(count('GET /v1/account/encryption/currentness'), JSON.stringify(perTurn)).toBe(1);
+      expect(count(`GET /v2/sessions/${sourceSessionId}`), JSON.stringify(perTurn)).toBe(1);
+      expect(count(`GET /v1/sessions/${sourceSessionId}/messages`)).toBe(1);
+    }
     if (scenario === 'no-rules') {
       // No rule, no applicable default, no ordinary edge: nothing reads the source's list facts.
-      expect(perTurn, JSON.stringify(perTurn)).toHaveLength(4);
+      expect(perTurn, JSON.stringify(perTurn)).toHaveLength(hostTurn ? 1 : 4);
       expect(personal).toEqual([]);
     } else {
       // A matching personal rule still evaluates against current facts and dispatches.

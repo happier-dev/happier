@@ -1,5 +1,5 @@
 import { z } from '../../zodRuntimePolicy.js';
-export { readOpenedSessionFollowOriginalV1, captureSemanticSessionFollowRuleSourceEvidenceV1,
+export { readOpenedSessionFollowOriginalV1, captureSemanticSessionFollowRuleSourceEvidenceV1, readSessionFollowTerminalSourceTurnV1,
   readSessionFollowSemanticSourceEventV1, readVerifiedSessionFollowHumanInputOriginalV1, isPotentialSessionFollowHumanInputV1 } from './sessionFollowOriginalV1.js';
 export type { SessionFollowOriginalOccurrenceV1, SessionFollowOriginalReadV1 } from './sessionFollowOriginalV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
@@ -42,7 +42,15 @@ export const SessionFollowRuleSourceOccurrenceV1Schema = lazyZodSchema(() => {
   const fields = { sourceSessionId: z.string().check(z.minLength(1)), sourcePublisher: SessionMetadataPublisherPreconditionV1Schema };
   return z.union([
     z.strictObject({ ...fields, sourceTurn: SessionFollowSourceTurnV1Schema, evidence: SessionFollowRuleSourceEvidenceV1Schema }),
-    z.strictObject({ ...fields, sourceMessage: SessionFollowSourceMessageV1Schema, evidence: SessionFollowRuleSourceEvidenceV1Schema })
+    z.strictObject({ ...fields, sourceMessage: SessionFollowSourceMessageV1Schema,
+      /**
+       * Trust boundary: the Machine hosting the Session is the authority for that Session's own
+       * Turns, so it reports the Turn a terminal message closes and the dispatcher does not re-read
+       * the committed row to find it. Home still authorizes the routes (who may follow or manage)
+       * and admits only a persisted Turn of this Session.
+       */
+      hostTurn: z.optional(SessionFollowSourceTurnV1Schema),
+      evidence: SessionFollowRuleSourceEvidenceV1Schema })
       .check(z.refine(value => isMessageBackedFollowEventV1(value.evidence.event), {
         path: ['evidence', 'event'], message: 'Question events require an exact source request',
       })),

@@ -361,6 +361,15 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
     sourceTransport?: AdmittedSourceTransport,
     readSourceFacts?: ReturnType<typeof createSessionFollowSourceFactsRead>, originalRevision?: number): Promise<SessionActivityChangedResult | void> => {
       if ('sourceMessage' in occurrence && (occurrence.evidence.event.kind === 'finished' || occurrence.evidence.event.kind === 'failed_or_stopped')) {
+        if (occurrence.hostTurn) {
+          // The hosting Machine is the authority for its own Turns (see the occurrence schema);
+          // the routes read below still has Home authorize edges and admit only a persisted Turn.
+          const { sourceMessage, hostTurn: sourceTurn, ...facts } = occurrence;
+          const event = resolveSessionFollowTurnEventV1(sourceTurn);
+          return dispatch({ ...facts, sourceTurn, evidence: { ...occurrence.evidence, event } }, receiverSessionId, fromSourceRange,
+            event.kind === occurrence.evidence.event.kind ? occurrence : undefined, sourceMessage,
+            sourceTransport, readSourceFacts, originalRevision);
+        }
         const admitted = await normalizeAdmittedSessionFollowTerminalSourceOccurrence({ ...input, occurrence, isCurrent: current });
         if (!admitted) return;
         const normalized = admitted.occurrence;

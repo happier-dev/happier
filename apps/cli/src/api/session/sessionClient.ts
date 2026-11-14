@@ -33,7 +33,8 @@ import { readSessionWorkStateV1FromMetadata } from '@happier-dev/protocol/sessio
 import type { FollowEventV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { resolveAgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
 import { isAgentStateRequestCoveredByCompletedRequests } from '@happier-dev/agents';
-import { SESSION_FOLLOW_RULE_EVIDENCE_META_KEY_V1, projectSessionFollowRuleSharedSourceEvidenceV1, SessionFollowRuleSourceEvidenceV1Schema, type SessionFollowRuleSourceEvidenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
+import { SESSION_FOLLOW_RULE_EVIDENCE_META_KEY_V1, projectSessionFollowRuleSharedSourceEvidenceV1, readSessionFollowTerminalSourceTurnV1, SessionFollowRuleSourceEvidenceV1Schema, type SessionFollowRuleSourceEvidenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
+import type { SessionFollowTerminalTurnV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowFrontierV1';
 import type { QuestionSessionSnapshot } from '@/agent/permissions/sessionQuestionManager';
 import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import { readSessionAnswersWorkerQuestionsV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
@@ -2928,6 +2929,8 @@ export class ApiSessionClient extends EventEmitter {
     /** Only the original committed owner supplies this identity; notification does not ACK delivery. */
     async notifySessionFollowRuleMessageCommitted(input: Readonly<{
         localId: string; seq: number; evidence: SessionFollowRuleSourceEvidenceV1;
+        /** The host Turn a terminal message closes; this hosting Machine is its authority. */
+        sourceTurn?: SessionFollowTerminalTurnV1 | null;
         /** Host-private author from the verified original admission receipt. */
         authorAccountId?: string;
     }>): Promise<SessionActivityChangedResult | void> {
@@ -2948,7 +2951,8 @@ export class ApiSessionClient extends EventEmitter {
         try {
             result = await notifyDaemonSessionActivityChanged(this.sessionId, {
                 sourceSessionId: this.sessionId, sourcePublisher,
-                sourceMessage: { localId: input.localId, seq: input.seq }, evidence: input.evidence,
+                sourceMessage: { localId: input.localId, seq: input.seq },
+                ...(input.sourceTurn ? { hostTurn: input.sourceTurn } : {}), evidence: input.evidence,
             });
         } catch (error) {
             logger.debug('[API] Follow source unavailable; original personal notification retained', serializeAxiosErrorForLog(error));
@@ -3025,7 +3029,8 @@ export class ApiSessionClient extends EventEmitter {
                 getSessionCommittedTranscriptLocalIds(this).add(opts.localId);
             }
             return { ...result, ...(result.whenCommitted && evidence ? {
-                whenCommitted: result.whenCommitted.then(commit => this.readPersonalFollowCommit(commit, evidence)),
+                whenCommitted: result.whenCommitted.then(commit => this.readPersonalFollowCommit(commit, evidence,
+                    readSessionFollowTerminalSourceTurnV1({ content: { type: 'acp', data: body }, meta: sourceOptions.meta }))),
             } : {}) };
         });
         this.trackPendingUpdate(this.pendingTranscriptMessageUpdates, update);
@@ -3142,7 +3147,8 @@ export class ApiSessionClient extends EventEmitter {
                 ? this.terminalPendingSettlementOperationAbortController.signal : undefined,
             options,
         ).then(result => ({ ...result, ...(result.whenCommitted && evidence ? {
-            whenCommitted: result.whenCommitted.then(commit => this.readPersonalFollowCommit(commit, evidence)),
+            whenCommitted: result.whenCommitted.then(commit => this.readPersonalFollowCommit(commit, evidence,
+                readSessionFollowTerminalSourceTurnV1({ content: { type: 'event', data: event } }))),
         } : {}) }));
         this.trackPendingUpdate(this.pendingTranscriptMessageUpdates, update);
         return update;
@@ -3151,13 +3157,14 @@ export class ApiSessionClient extends EventEmitter {
     private async readPersonalFollowCommit(
         commit: CommittedTranscriptOriginal | null,
         evidence: SessionFollowRuleSourceEvidenceV1,
+        sourceTurn: SessionFollowTerminalTurnV1 | null,
     ): Promise<SessionPersonalFollowCommit | null> {
         if (!commit || this.closed || this.metadataAuthorityKind !== 'owner') return null;
         if (evidence.event.kind === 'failed_or_stopped') return commit;
         let result: SessionActivityChangedResult | void = undefined;
         try {
             result = await this.notifySessionFollowRuleMessageCommitted({
-                localId: commit.localId, seq: commit.committedSequence, evidence,
+                localId: commit.localId, seq: commit.committedSequence, evidence, sourceTurn,
             });
         } catch (error) {
             logger.debug('[API] Follow source unavailable; original personal notification retained', error);

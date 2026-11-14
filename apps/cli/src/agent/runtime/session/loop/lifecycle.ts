@@ -599,11 +599,15 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
         if (mutation.action !== 'cancel') await enqueueTerminalMutation(settledMutation);
         if ((mutation.action === 'fail' || mutation.action === 'cancel') && turnState?.terminalSourceMessage) {
           const marker = turnState.terminalSourceMessage;
+          const settledTurn = 'turnId' in mutation
+            ? { id: mutation.turnId, status: mutation.action === 'fail' ? 'failed' as const : 'cancelled' as const } : null;
           const notifyTerminalOriginal = async (original: Readonly<{ localId: string; committedSequence: number }>) => {
             try {
               const evidence = params.session.captureSessionFollowRuleEvidence({ kind: 'failed_or_stopped' });
+              // This hosting Machine reports the Turn it just settled.
               if (evidence) await params.session.notifySessionFollowRuleMessageCommitted({
                 localId: original.localId, seq: original.committedSequence, evidence,
+                sourceTurn: settledTurn,
               });
             } catch {
               logger.debug(`${params.config.uiLogPrefix} Runtime terminal Follow observation unavailable`, {

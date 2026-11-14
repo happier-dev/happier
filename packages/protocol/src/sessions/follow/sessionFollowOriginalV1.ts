@@ -91,21 +91,11 @@ export function readOpenedSessionFollowOriginalV1(input: Pick<SourceFacts, 'serv
     }
     if (!event) return { status: 'not_semantic' };
     if (event.kind === 'finished' || event.kind === 'failed_or_stopped') {
-      const content = body.data.role === 'agent' ? body.data.content : null;
-      const ready = content?.type === 'event' ? createStoredReadSchema(TranscriptRawAgentEventV1Schema).safeParse(content.data) : null;
-      const native = content?.type === 'acp' || content?.type === 'codex' ? content.data : null;
-      const nativeType = native && typeof native === 'object' && 'type' in native ? native.type : null;
-      const meta = body.data.meta;
-      const hostTurnId = meta && typeof meta === 'object' && 'runtimeTurnId' in meta ? meta.runtimeTurnId : null;
-      // Provider native ids never substitute for a host Turn. Final route admission checks that persisted Turn.
-      const parsedTurn = SessionFollowSourceTurnV1Schema.safeParse(ready?.success && ready.data.type === 'ready'
-        ? { id: ready.data.completedTurnId, status: 'completed' }
-        : { id: hostTurnId, status: nativeType === 'task_complete' ? 'completed'
-          : nativeType === 'turn_failed' ? 'failed'
-            : nativeType === 'turn_cancelled' || nativeType === 'turn_aborted' ? 'cancelled' : null });
-      if (!parsedTurn.success) return { status: 'not_semantic' };
-      const evidence = captureSemanticSessionFollowRuleSourceEvidenceV1({ ...input, event: resolveSessionFollowTurnEventV1(parsedTurn.data) });
-      return evidence ? { status: 'occurrence', occurrence: { sourceSessionId: sourceSessionId.data, sourceTurn: parsedTurn.data, evidence } }
+      const sourceTurn = body.data.role === 'agent'
+        ? readSessionFollowTerminalSourceTurnV1({ content: body.data.content, meta: body.data.meta }) : null;
+      if (!sourceTurn) return { status: 'not_semantic' };
+      const evidence = captureSemanticSessionFollowRuleSourceEvidenceV1({ ...input, event: resolveSessionFollowTurnEventV1(sourceTurn) });
+      return evidence ? { status: 'occurrence', occurrence: { sourceSessionId: sourceSessionId.data, sourceTurn, evidence } }
         : { status: 'unavailable' };
     }
     const sourceMessage = SessionFollowSourceMessageV1Schema.safeParse({ localId: row.data.localId, seq: row.data.seq });
@@ -114,6 +104,28 @@ export function readOpenedSessionFollowOriginalV1(input: Pick<SourceFacts, 'serv
     return evidence ? { status: 'occurrence', occurrence: { sourceSessionId: sourceSessionId.data, sourceMessage: sourceMessage.data, evidence } }
       : { status: 'unavailable' };
   } catch { return { status: 'unavailable' }; }
+}
+
+/**
+ * The host Turn a terminal agent record closes: a Ready event's completed Turn, or the
+ * host `runtimeTurnId` of a native terminal. Provider native ids never substitute for a
+ * host Turn. Shared by the hosting Machine (which reports it at commit) and by readers of
+ * stored originals; Home route admission checks that the Turn is persisted.
+ */
+export function readSessionFollowTerminalSourceTurnV1(record: Readonly<{ content: unknown; meta?: unknown }>) {
+  const content = record.content && typeof record.content === 'object' && 'type' in record.content
+    ? record.content as Readonly<{ type: unknown; data?: unknown }> : null;
+  const ready = content?.type === 'event' ? createStoredReadSchema(TranscriptRawAgentEventV1Schema).safeParse(content.data) : null;
+  const native = content?.type === 'acp' || content?.type === 'codex' ? content.data : null;
+  const nativeType = native && typeof native === 'object' && 'type' in native ? native.type : null;
+  const meta = record.meta;
+  const hostTurnId = meta && typeof meta === 'object' && 'runtimeTurnId' in meta ? meta.runtimeTurnId : null;
+  const parsedTurn = SessionFollowSourceTurnV1Schema.safeParse(ready?.success && ready.data.type === 'ready'
+    ? { id: ready.data.completedTurnId, status: 'completed' }
+    : { id: hostTurnId, status: nativeType === 'task_complete' ? 'completed'
+      : nativeType === 'turn_failed' ? 'failed'
+        : nativeType === 'turn_cancelled' || nativeType === 'turn_aborted' ? 'cancelled' : null });
+  return parsedTurn.success ? parsedTurn.data : null;
 }
 
 /** One classifier for typed producers and opened stored originals, never authored metadata hints. */
