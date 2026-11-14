@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { Pressable, View, type LayoutChangeEvent } from 'react-native';
+import { View, type LayoutChangeEvent } from 'react-native';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import type { BrowserDiagnosticFidelityV1 } from '@happier-dev/protocol/browser/diagnostics/v1';
@@ -737,18 +738,17 @@ export function DiagnosticsRow(props: Readonly<{
     return (
         <View>
             {expandable ? (
-                <Pressable
+                <HappierPressable
                     testID={props.testID}
                     accessibilityRole="button"
-                    accessibilityState={{ expanded: open }}
+                    expanded={open}
                     accessibilityLabel={props.accessibilityLabel ?? props.subject}
                     onPress={toggle}
-                    onHoverIn={() => setHovered(true)}
-                    onHoverOut={() => setHovered(false)}
+                    onHoverChange={setHovered}
                     style={rowStyle}
                 >
                     {content}
-                </Pressable>
+                </HappierPressable>
             ) : (
                 <View testID={props.testID} style={rowStyle}>{content}</View>
             )}

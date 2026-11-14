@@ -1,8 +1,8 @@
 import * as React from 'react';
-import { Pressable, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { HappierDisclosureToggle } from '@happier-dev/plugin-ui/presentation';
+import { HappierDisclosureToggle, HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
 import { Text, TextInput } from '@/components/ui/text/Text';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
@@ -232,27 +232,32 @@ function BrowserDiagnosticsObjectNode(props: Readonly<{
         controls.onExpandObject(objectId, objectGroupId);
     }, [controls, expanded, objectGroupId, objectId]);
 
+    const content = (
+        <>
+            <View style={stylesheet.caretSlot}>
+                {expandable ? <DisclosureCaret expanded={expanded} density="compact" /> : null}
+            </View>
+            {props.name ? <Text style={stylesheet.nodeName}>{`${props.name}:`}</Text> : null}
+            <Text selectable style={stylesheet.nodeValue}>{describeRemoteValue(remote)}{remote.previewTruncated ? ' …' : ''}</Text>
+        </>
+    );
+
     return (
         <View testID={testID} style={stylesheet.node}>
-            <Pressable
-                testID={expandable ? `${testID}-expand` : undefined}
-                disabled={!expandable}
-                onPress={onToggle}
-                accessibilityRole={expandable ? 'button' : undefined}
-                accessibilityState={expandable ? { expanded } : undefined}
-                accessibilityLabel={expandable
-                    ? (expanded
+            {expandable ? (
+                <HappierPressable
+                    testID={`${testID}-expand`}
+                    onPress={onToggle}
+                    accessibilityRole="button"
+                    expanded={expanded}
+                    accessibilityLabel={expanded
                         ? t('browserDiagnostics.host.interaction.eval.collapse')
-                        : t('browserDiagnostics.host.interaction.eval.expand'))
-                    : undefined}
-                style={stylesheet.nodeRow}
-            >
-                <View style={stylesheet.caretSlot}>
-                    {expandable ? <DisclosureCaret expanded={expanded} density="compact" /> : null}
-                </View>
-                {props.name ? <Text style={stylesheet.nodeName}>{`${props.name}:`}</Text> : null}
-                <Text selectable style={stylesheet.nodeValue}>{describeRemoteValue(remote)}{remote.previewTruncated ? ' …' : ''}</Text>
-            </Pressable>
+                        : t('browserDiagnostics.host.interaction.eval.expand')}
+                    style={stylesheet.nodeRow}
+                >
+                    {content}
+                </HappierPressable>
+            ) : <View style={stylesheet.nodeRow}>{content}</View>}
             {expanded && inspector ? (
                 <View style={stylesheet.children} testID={`${testID}-children`}>
                     {inspector.status === 'loading' ? (
