@@ -25,6 +25,7 @@ import { requiresUncertainPriorEffectsAcknowledgement } from './workflowRunDetai
 import { WorkflowReviewCard, decodeWorkflowReviewDraft, serializeWorkflowReviewValue, type WorkflowReviewChoice,
     type WorkflowReviewCardProps, type WorkflowReviewDraft, type WorkflowReviewReading } from './WorkflowReviewCard';
 import { resolveWorkflowInvocationBlock } from './workflowInvocationStructure';
+import { useAnsweredByLabel } from './workflowAnsweredBy';
 
 import type { WorkflowInvocationReviewBuffers } from '@/sync/store/domains/workflowRuns';
 export type { WorkflowInvocationReviewBuffers } from '@/sync/store/domains/workflowRuns';
@@ -95,8 +96,9 @@ export function WorkflowInvocationReview(props: Readonly<{
     const canGenerate = progress.blockKind === 'step' && (!uncertaintyAcknowledgementRequired || uncertaintyAcknowledged);
     const proposalMap = React.useMemo(() => proposal ? projectWorkflowFlow(proposal) : null, [proposal]);
     const resultSource = progress.review?.resultSource;
+    const answeredBy = useAnsweredByLabel(resultSource);
     const resultSourceLabel = resultSource?.kind === 'human'
-        ? t(resultSource.accountId === props.viewerAccountId ? 'workflows.review.editedByYou' : 'workflows.review.editedByPerson')
+        ? answeredBy ?? undefined
         : resultSource?.kind === 'published'
             ? t(resultSource.by === 'agent' ? 'workflows.review.publishedByAgent' : 'workflows.review.publishedByYou') : undefined;
     const [recoveredPlanRun, setRecoveredPlanRun] = React.useState<Readonly<{

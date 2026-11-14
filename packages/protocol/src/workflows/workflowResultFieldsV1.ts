@@ -14,7 +14,7 @@ import type { WorkflowResultContract } from './workflowV1.js';
  * where each property is Yes/No (`boolean`), Text (`string`), Number
  * (`number`), Choice (`string` + non-empty unique string `enum`) or List
  * (`array` of `boolean`/`string`/`number` items), optionally with `title` and
- * `description`. Anything else projects to `advanced` and is never rewritten
+ * `description`, with text length constraints preserved. Anything else projects to `advanced` and is never rewritten
  * by the builder: the projection is exact, so `build(project(x))` equals `x`
  * for every projectable contract.
  */
@@ -46,6 +46,9 @@ export type WorkflowResultField = Readonly<{
   choices?: readonly string[];
   /** List item type. */
   itemType?: WorkflowResultListItemType;
+  /** Imported text constraints remain attached through named-field edits. */
+  minLength?: number;
+  maxLength?: number;
 }>;
 
 export type WorkflowResultFieldsProjection =
@@ -64,7 +67,7 @@ const ROOT_KEYS = new Set([
   'required',
   'additionalProperties',
 ]);
-const FIELD_KEYS = new Set(['type', 'title', 'description', 'enum', 'items']);
+const FIELD_KEYS = new Set(['type', 'title', 'description', 'enum', 'items', 'minLength', 'maxLength']);
 
 /** One authoring rule for the editor and definition edits; retained other keys stay advanced. */
 export function isWorkflowResultFieldNameValid(name: string): boolean {
@@ -105,6 +108,7 @@ function projectField(
   if (Object.keys(schema).some((key) => !FIELD_KEYS.has(key))) return null;
   if (schema.title !== undefined && typeof schema.title !== 'string')
     return null;
+  if (schema.type !== 'string' && (schema.minLength !== undefined || schema.maxLength !== undefined)) return null;
   const base = {
     name,
     required,
@@ -112,6 +116,8 @@ function projectField(
       ? {}
       : { description: schema.description }),
     ...(schema.title === undefined ? {} : { title: schema.title }),
+    ...(schema.minLength === undefined ? {} : { minLength: schema.minLength }),
+    ...(schema.maxLength === undefined ? {} : { maxLength: schema.maxLength }),
   };
   if (schema.type === 'array') {
     if (schema.enum !== undefined || schema.items === undefined) return null;
@@ -190,6 +196,8 @@ export function buildWorkflowResultFieldsContract(
 ): Extract<WorkflowResultContract, { kind: 'json' }> {
   const properties = Object.fromEntries(fields.map((field): [string, PluginJsonSchemaV2] => {
     const described = {
+      ...(field.minLength === undefined || (field.type !== 'text' && field.type !== 'choice') ? {} : { minLength: field.minLength }),
+      ...(field.maxLength === undefined || (field.type !== 'text' && field.type !== 'choice') ? {} : { maxLength: field.maxLength }),
       ...(field.title === undefined ? {} : { title: field.title }),
       ...(field.description === undefined || field.description === ''
         ? {}

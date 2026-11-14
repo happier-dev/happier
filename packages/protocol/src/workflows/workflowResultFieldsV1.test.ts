@@ -42,6 +42,17 @@ const FIELDS: readonly WorkflowResultField[] = [
 ];
 
 describe('named result fields (04 §6.1)', () => {
+  it('preserves text length constraints when authoring and review share named fields', () => {
+    const contract: WorkflowResultContract = { kind: 'json', schema: { type: 'object', properties: {
+      summary: { type: 'string', minLength: 1, maxLength: 200 },
+    }, required: ['summary'], additionalProperties: false } };
+    const projection = projectWorkflowResultFields(contract);
+    expect(projection.kind).toBe('fields');
+    if (projection.kind !== 'fields') throw new Error('Expected named fields');
+    expect(buildWorkflowResultFieldsContract(projection.fields)).toEqual(contract);
+    const changedType = buildWorkflowResultFieldsContract(projection.fields.map(field => ({ ...field, type: 'list', itemType: 'text' })));
+    expect(changedType.schema.properties?.summary).toEqual({ type: 'array', items: { type: 'string' } });
+  });
   it('round-trips every field type through the schema runtime validation reads', () => {
     const contract = buildWorkflowResultFieldsContract(FIELDS);
     expect(projectWorkflowResultFields(contract)).toEqual({
@@ -150,7 +161,7 @@ describe('named result fields (04 §6.1)', () => {
         kind: 'json',
         schema: {
           type: 'object',
-          properties: { a: { type: 'string', maxLength: 3 } },
+          properties: { a: { type: 'number', maximum: 3 } },
         },
       },
     ],

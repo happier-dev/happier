@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { classifyWorkflowHoldV1, WorkflowAuthoredInputV1Schema, type WorkflowAuthoredInputV1, type WorkflowInvocationLifecycleV1, type WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { sameStrictJsonValue, StrictJsonValueSchema, type JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { workflowInputTitle, type WorkflowResultContract } from '@happier-dev/protocol/workflows/workflowV1';
+import { projectWorkflowResultFields } from '@happier-dev/protocol/workflows/workflowResultFieldsV1';
 import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contributions/jsonSchema';
 import { decodeExecutionRunResultObservation } from '@happier-dev/protocol/execution/runs/resultContract';
 import { resolveHappierChoiceControl, resolveHappierStateAnnouncement } from '@happier-dev/plugin-ui/presentation';
@@ -15,6 +16,7 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { VirtualizedList, type VirtualizedListProps } from '@/components/ui/lists/virtualized';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
@@ -143,23 +145,12 @@ export function serializeWorkflowReviewValue(value: JsonValue | undefined, contr
         : !contract || contract.kind === 'text' ? typeof value === 'string' ? value : JSON.stringify(value, null, 2)
             : JSON.stringify(value, null, 2);
 }
-/** Complex schemas retain the entire JSON document; scalar fields share the input owners. */
-function simpleFields(contract: WorkflowResultContract | undefined): Readonly<Record<string, PluginJsonSchemaV2>> | null {
-    if (contract?.kind !== 'json' || contract.schema.type !== 'object' || !contract.schema.properties) return null;
-    const schema = contract.schema;
-    if (schema.$ref || schema.allOf || schema.anyOf || schema.oneOf || schema.not || schema.propertyNames) return null;
-    const fields = contract.schema.properties;
-    if (!Object.values(fields).every((field) => !field.$ref && !field.allOf && !field.anyOf && !field.oneOf && !field.not
-        && (field.type === 'string' || field.type === 'number' || field.type === 'integer' || field.type === 'boolean'))) return null;
-    return fields;
-}
-
 /** A string field is long text when its schema allows a paragraph or its current value already is one. */
 function isLongTextField(schema: PluginJsonSchemaV2, value: unknown): boolean {
     return (schema.maxLength ?? 0) > 200 || (typeof value === 'string' && (value.includes('\n') || value.length > 80));
 }
 
-type ReviewValueProps = Readonly<{ value: JsonValue; contract: WorkflowResultContract | undefined; blockKind?: WorkflowProgressEnvelopeV1['blockKind']; testIDPrefix: string }>;
+type ReviewValueProps = Readonly<{ value: JsonValue; contract: WorkflowResultContract | undefined; blockKind?: WorkflowProgressEnvelopeV1['blockKind']; testIDPrefix: string; scrollProps?: Pick<VirtualizedListProps<never>, 'testID' | 'style' | 'onLayout' | 'onContentSizeChange' | 'onScroll' | 'scrollEventThrottle'> }>;
 
 /**
  * Provider rendering and resolved values belong to execution custody. The reading projection is the
@@ -175,27 +166,29 @@ function WorkflowAuthoredInputReading({ document, testID }: Readonly<{ document:
  * Both the bounded reading and full inspection render the same exact value with the established viewers;
  * a settled or stopped attempt's detail reads its answer through the same rows (DESIGN-16 D5).
  */
-export function WorkflowReviewValue({ value, contract, blockKind, testIDPrefix: prefix }: ReviewValueProps): React.ReactElement {
+export function WorkflowReviewValue({ value, contract, blockKind, testIDPrefix: prefix, scrollProps }: ReviewValueProps): React.ReactElement {
+    const reading = (content: React.ReactElement) => scrollProps
+        ? <ScrollView nestedScrollEnabled keyboardShouldPersistTaps="handled" {...scrollProps}>{content}</ScrollView> : content;
     // A step's authored input reads as the words it was given, never as its wire envelope (DESIGN-17 R1).
     const authored = contract === undefined ? WorkflowAuthoredInputV1Schema.safeParse(value) : null;
     if (authored?.success) {
-        return <SectionContentRow><WorkflowAuthoredInputReading document={authored.data.document} testID={`${prefix}-value`} /></SectionContentRow>;
+        return reading(<SectionContentRow><WorkflowAuthoredInputReading document={authored.data.document} testID={`${prefix}-value`} /></SectionContentRow>);
     }
     const plan = contract?.kind === 'json' ? readWorkflowPlanResult(value) : null;
-    if (plan) return <SectionContentRow><MarkdownView testID={`${prefix}-plan-document`} markdown={plan.document} /></SectionContentRow>;
+    if (plan) return reading(<SectionContentRow><MarkdownView testID={`${prefix}-plan-document`} markdown={plan.document} /></SectionContentRow>);
     // A plain answer is the agent's Markdown: it reads here as it reads in the conversation below it.
     if (typeof value === 'string' && (contract === undefined || contract.kind === 'text')) {
-        return <SectionContentRow><MarkdownView testID={`${prefix}-value`} markdown={value} /></SectionContentRow>;
+        return reading(<SectionContentRow><MarkdownView testID={`${prefix}-value`} markdown={value} /></SectionContentRow>);
     }
     // A structured result reads as label/value rows (lab run-A_completed): fields by their human names, a list
     // one row per item. Raw serialization is only ever behind Copy.
     const titles = contract?.kind === 'json' ? Object.fromEntries(Object.entries(contract.schema.properties ?? {})
         .map(([name, schema]) => [name, schema.title])) : undefined;
     const rows = readWorkflowResultRows(value, titles, blockKind);
-    return rows ? <>{rows.map(row =>
-        <Item key={row.key} title={row.label} showChevron={false} accessoryLayout="stacked"
-            rightElement={<Text selectable style={styles.primary} testID={`${prefix}-value-${row.key}`}>{row.text}</Text>} />)}</>
-        : <SectionContentRow><Text selectable style={styles.primary} testID={`${prefix}-value`}>{serializeWorkflowReviewValue(value, contract)}</Text></SectionContentRow>;
+    return rows ? <VirtualizedList data={rows} keyExtractor={row => row.key} style={styles.previewScroll} {...scrollProps}
+        renderItem={({ item: row }) => <Item key={row.key} title={row.label} showChevron={false} accessoryLayout="stacked"
+            rightElement={<Text selectable style={styles.primary} testID={`${prefix}-value-${row.key}`}>{row.text}</Text>} />} />
+        : reading(<SectionContentRow><Text selectable style={styles.primary} testID={`${prefix}-value`}>{serializeWorkflowReviewValue(value, contract)}</Text></SectionContentRow>);
 }
 
 function WorkflowReviewFullValue(props: ReviewValueProps): React.ReactElement {
@@ -256,7 +249,8 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
     const readiness = classifyWorkflowHoldV1({ lifecycle: props.lifecycle ?? 'waiting_for_review',
         isCurrent: props.isCurrent ?? true, progress: props.progress });
     const held = readiness !== 'resolved';
-    const fields = simpleFields(props.contract);
+    const projection = projectWorkflowResultFields(props.contract);
+    const fields = projection.kind === 'fields' && props.contract?.kind === 'json' ? props.contract.schema.properties ?? {} : null;
     // A hold that asks for one value speaks of one (DESIGN-17 R10); a decision or plain value is one too.
     const singleField = fields === null || Object.keys(fields).length === 1;
     const editing = supplied || (props.waitForYou && !noValueNeeded && held && !props.readOnly);
@@ -269,9 +263,9 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
     // A held result needs no title: the state line says what this is, and the value is what it shows.
     const title = props.waitForYou ? props.waitIdentity ? props.waitIdentity.title : t('workflows.review.waitTitle') : editing ? t('workflows.review.editsTitle')
         : plan ? t('workflows.review.planTitle') : !valid ? t('workflows.review.noValue') : held ? undefined : t('workflows.review.title');
-    const updateText = (text: string) => {
-        if (props.draft?.text === text) return;
-        props.onChangeDraft({ text, contentRevision: revision, editedAt: Date.now() });
+    const updateText = (text: string, rawTextValues?: Readonly<Record<string, string>>) => {
+        if (props.draft?.text === text && rawTextValues === props.draft?.rawTextValues) return;
+        props.onChangeDraft({ text, contentRevision: revision, editedAt: Date.now(), ...(rawTextValues ? { rawTextValues } : {}) });
     };
     const showNewer = () => {
         if (props.pending === true) return;
@@ -289,17 +283,19 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
     };
     const seedEdit = () => { if (!blocked) updateText(serializeWorkflowReviewValue(reading.value, props.contract)); };
     const valueObject = objectValue(shown) ?? {};
-    const definitions = fields === null ? [] : Object.entries(fields).map(([name, schema]) => ({ name,
-        valueType: schema.type === 'integer' ? 'number' as const : schema.type as 'string' | 'number' | 'boolean',
-        required: props.contract?.kind === 'json' && props.contract.schema.required?.includes(name) === true,
-        ...(schema.description ? { description: schema.description } : {}) }));
+    const definitions = projection.kind !== 'fields' ? [] : projection.fields.map((field) => ({ name: field.name,
+        valueType: field.type === 'list' ? 'json' as const : field.type === 'text' || field.type === 'choice' ? 'string' as const : field.type,
+        required: field.required,
+        ...(field.description ? { description: field.description } : {}) }));
     const projected = projectWorkflowRunInputFields({ inputs: definitions, values: valueObject });
-    const changeField = (name: string, value: JsonValue | undefined) => {
+    const changeField = (name: string, value: JsonValue | undefined, rawText?: string) => {
         if (blocked) return;
         touch(name);
         const next = { ...valueObject };
         if (value === undefined) delete next[name]; else next[name] = value;
-        updateText(JSON.stringify(next, null, 2));
+        const rawTextValues = { ...props.draft?.rawTextValues };
+        if (rawText === undefined) delete rawTextValues[name]; else rawTextValues[name] = rawText;
+        updateText(JSON.stringify(next, null, 2), rawTextValues);
     };
     // The result contract supplies choices; structured decisions retain their full JSON/reason editor.
     const decisionChoices = props.contract?.kind === 'decision' && (shown === undefined || typeof shown === 'string')
@@ -457,15 +453,16 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
                 }
                 return <Item key={field.definition.name} title={label} subtitle={schema.description} showChevron={false}
                     accessoryLayout="stacked" rightElement={<FieldTextInput testID={id}
-                        value={formatWorkflowInputValue(valueObject[field.definition.name])}
+                        value={props.draft?.rawTextValues?.[field.definition.name] ?? formatWorkflowInputValue(valueObject[field.definition.name])}
                         accessibilityLabel={label} error={fieldError} editable={!blocked}
                         // Sized to its content: a one-line value is one line; only long text asks for room.
-                        multiline={field.definition.valueType === 'string' && isLongTextField(schema, valueObject[field.definition.name])}
+                        multiline={field.definition.valueType === 'json' || (field.definition.valueType === 'string' && isLongTextField(schema, valueObject[field.definition.name]))}
+                        monospace={field.definition.valueType === 'json'}
                         growWithText
                         keyboardType={field.definition.valueType === 'number' ? 'numeric' : undefined}
                         onChangeText={(text) => {
                             const parsed = parseWorkflowInputTextDraft(field.definition, text);
-                            changeField(field.definition.name, parsed.invalid ? text : field.definition.valueType === 'string' ? text : parsed.value);
+                            changeField(field.definition.name, parsed.invalid ? text : field.definition.valueType === 'string' ? text : parsed.value, text);
                         }} />} />;
             }) : <Item title={t('workflows.input.result')} showChevron={false} accessoryLayout="stacked"
                 rightElement={<FieldTextInput testID={`${prefix}-editor`} value={props.draft?.text ?? serializeWorkflowReviewValue(reading.value, props.contract)}
@@ -473,11 +470,10 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
                     error={valueError} editable={!blocked} multiline growWithText monospace={props.contract !== undefined && props.contract.kind !== 'text'} />} />)
                 : shown !== undefined ? <>
                     <View testID={`${prefix}-preview`} style={styles.preview}>
-                        <ScrollView testID={`${prefix}-preview-scroll`} style={props.primaryActionPlacement === 'footer' ? undefined : styles.previewScroll} nestedScrollEnabled
-                            keyboardShouldPersistTaps="handled" onLayout={previewFades.onViewportLayout}
-                            onContentSizeChange={previewFades.onContentSizeChange} onScroll={previewFades.onScroll} scrollEventThrottle={16}>
-                            <WorkflowReviewValue value={shown} blockKind={props.progress.blockKind} contract={props.contract} testIDPrefix={prefix} />
-                        </ScrollView>
+                        <WorkflowReviewValue value={shown} blockKind={props.progress.blockKind} contract={props.contract} testIDPrefix={prefix}
+                            scrollProps={{ testID: `${prefix}-preview-scroll`, style: props.primaryActionPlacement === 'footer' ? undefined : styles.previewScroll,
+                                onLayout: previewFades.onViewportLayout, onContentSizeChange: previewFades.onContentSizeChange,
+                                onScroll: previewFades.onScroll, scrollEventThrottle: 16 }} />
                         <ScrollEdgeFades color={held ? theme.colors.state.warning.background : theme.colors.surface.base}
                             edges={previewFades.visibility} />
                     </View>

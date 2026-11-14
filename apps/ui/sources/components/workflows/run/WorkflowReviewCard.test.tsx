@@ -8,6 +8,15 @@ import type { WorkflowResultContract } from '@happier-dev/protocol/workflows/wor
 import { installBrowserClipboardBoundary, renderScreen, standardCleanup } from '@/dev/testkit';
 import { ModalProvider } from '@/modal';
 import { WorkflowReviewCard, WorkflowReviewValue, type WorkflowReviewCardProps, type WorkflowReviewDraft } from './WorkflowReviewCard';
+import { VirtualizedList } from '@/components/ui/lists/virtualized';
+
+const resultList = vi.hoisted(() => ({ boundary: null as import('@/dev/testkit/mocks/legendList').CapturingLegendListMockState | null }));
+vi.mock('@legendapp/list/react-native', async original => {
+    const { createCapturingLegendListMock } = await import('@/dev/testkit/mocks/legendList');
+    const mock = createCapturingLegendListMock({ original: await original<Record<string, unknown>>(), renderItems: true, renderItemLimit: 5 });
+    resultList.boundary = mock.state;
+    return mock.module;
+});
 
 const retireCards: Array<() => Promise<void>> = [];
 beforeEach(() => {
@@ -74,6 +83,38 @@ async function changeText(screen: Awaited<ReturnType<typeof renderScreen>>, id: 
 }
 
 describe('WorkflowReviewCard', () => {
+    it('lets the shared viewport mount result rows while preserving the entire list for inspection and copy', async () => {
+        const values = Array.from({ length: 500 }, (_, i) => `Result ${i}`);
+        const { screen } = await mount({ contract: undefined, progress: progress({ result: values }), readOnly: true });
+        expect(resultList.boundary?.props?.data).toHaveLength(500);
+        expect(screen.findHostByTestId('review-value-0')).toBeTruthy();
+        expect(screen.findHostByTestId('review-value-499')).toBeNull();
+        await screen.pressByTestIdAsync('review-copy');
+        expect(Clipboard.setStringAsync).toHaveBeenCalledWith(JSON.stringify(values, null, 2));
+    });
+    it('retains intermediate decimal text in the invocation draft across a remount', async () => {
+        const numeric: WorkflowResultContract = { kind: 'json', schema: { type: 'object', properties: { amount: { type: 'number' } }, required: ['amount'] } };
+        const { screen, readDraft, onComplete } = await mount({ contract: numeric, progress: progress({ result: { amount: 0 } }), waitForYou: true });
+        await changeText(screen, 'review-field-amount', '1');
+        await changeText(screen, 'review-field-amount', '1.');
+        expect(screen.findByTestId('review-field-amount')?.props.value).toBe('1.');
+        const draft = readDraft();
+        const remounted = await mount({ contract: numeric, draft, progress: progress({ result: { amount: 0 } }), waitForYou: true });
+        expect(remounted.screen.findByTestId('review-field-amount')?.props.value).toBe('1.');
+        await changeText(screen, 'review-field-amount', '1.5');
+        await screen.pressByTestIdAsync('review-use');
+        expect(onComplete).toHaveBeenCalledWith({ mode: 'use_result', expectedContentRevision: '7', value: { amount: 1.5 } });
+    });
+    it('answers an authored List and boolean through labelled fields while retaining exact array values', async () => {
+        const { screen, onComplete } = await mount({ waitForYou: true, progress: progress({ result: { names: [], approved: false } }),
+            contract: { kind: 'json', schema: { type: 'object', properties: { names: { type: 'array', items: { type: 'string' }, title: 'Names' }, approved: { type: 'boolean' } }, required: ['names', 'approved'] } } });
+        expect(screen.findByTestId('review-editor')).toBeNull();
+        expect(screen.findByTestId('review-field-names')?.props.accessibilityLabel).toBe('Names');
+        await changeText(screen, 'review-field-names', '["Cedar","Maple"]');
+        await screen.pressByTestIdAsync('review-field-approved:true');
+        await screen.pressByTestIdAsync('review-use');
+        expect(onComplete).toHaveBeenCalledWith({ mode: 'use_result', expectedContentRevision: '7', value: { names: ['Cedar', 'Maple'], approved: true } });
+    });
     it('reads a for-each result as one row per item, never as raw JSON with internal keys', async () => {
         const value = [
             { index: 0, status: 'completed', results: { answer: 'Cedar is ready' } },
@@ -202,7 +243,9 @@ describe('WorkflowReviewCard', () => {
         const value: JsonValue = kind === 'text' ? long : kind === 'plan' ? { document: long, proposal: { name: 'Keep me' } } : { summary: long, approved: false };
         const { screen, publish, onComplete } = await mount({ progress: progress({ result: value }),
             contract: kind === 'text' ? { kind: 'text' } : { kind: 'json', schema: { type: 'object' } } });
-        const preview = screen.findByTestId('review-preview-scroll');
+        // The canonical web list adapts content size from recycler state; exercise the
+        // neutral viewport contract here, whose backend event adaptation has its own tests.
+        const preview = kind === 'object' ? screen.findByType(VirtualizedList as never) : screen.findByTestId('review-preview-scroll');
         expect(preview).not.toBeNull();
         const maxHeight = preview?.props.style.maxHeight;
         expect(maxHeight).toBeGreaterThan(0);
@@ -320,7 +363,7 @@ describe('WorkflowReviewCard', () => {
         expect(screen.findByTestId('review-field-summary')?.props.value).toBe('Local edit');
         await changeText(screen, 'review-field-summary', 'Still local');
         expect(onChangeDraft).toHaveBeenLastCalledWith({ text: JSON.stringify({ summary: 'Still local', approved: true }, null, 2), contentRevision: '7',
-            editedAt: expect.any(Number) });
+            editedAt: expect.any(Number), rawTextValues: { summary: 'Still local' } });
         await screen.pressByTestIdAsync('review-use');
         expect(onComplete).toHaveBeenCalledWith({ mode: 'use_result', expectedContentRevision: '7', value: { summary: 'Local edit', approved: true } });
     });

@@ -14,6 +14,7 @@ import {
 import { reportPopoverContentLayout } from '@/dev/testkit/harness/popoverHarness';
 import { projectWorkflowInvocationStructure } from './workflowInvocationStructure';
 import * as invocationStructure from './workflowInvocationStructure';
+import * as flowSlots from '../flow/useWorkflowFlowNodeSlots';
 import {
   createWorkflowDefinitionFixture,
   createWorkflowInvocationIndexFixture,
@@ -1461,6 +1462,14 @@ describe('WorkflowRunContent', () => {
     );
     expect(screen.findByTestId('workflow-run-flow')).toBeTruthy();
     expect(screen.findByTestId('workflow-run-inspector')).toBeTruthy();
+    const slots = vi.spyOn(flowSlots, 'useWorkflowFlowNodeSlots');
+    try {
+      await act(async () => { screen.changeTextByTestId('workflow-run-replacement-input', 'A'); });
+      await act(async () => { screen.changeTextByTestId('workflow-run-replacement-input', 'A new'); });
+      console.info('B14-05 recovery typing', { keystrokes: 2, flowSlotPreparations: slots.mock.calls.length });
+      expect(slots).toHaveBeenCalledTimes(0);
+    } finally { slots.mockRestore(); }
+
     expect(
       screen.findByTestId('workflow-run-replacement-input'),
     ).not.toBeNull();

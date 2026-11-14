@@ -405,9 +405,22 @@ function WorkflowSelectedDetail(props: Readonly<{
     inlineHeaderTrailing?: React.ReactNode;
     onClose?: () => void;
     identity: string;
+    recoveryTexts: Map<string, Readonly<{ continuation?: string; replacement?: string }>>;
     renderReviewCard?: WorkflowRunContentProps['renderReviewCard'];
     focusReturnRef: React.RefObject<FocusReturnTarget>;
 }>): React.ReactElement | null {
+    const [recoveryText, setRecoveryText] = React.useState(() => props.recoveryTexts.get(props.identity));
+    const changeRecoveryText = (field: 'continuation' | 'replacement', next: string) => {
+        const updated = { ...props.recoveryTexts.get(props.identity), [field]: next };
+        props.recoveryTexts.set(props.identity, updated);
+        setRecoveryText(updated);
+    };
+    const detail: WorkflowInvocationDetailProps = { ...props.detail,
+        continuationText: recoveryText?.continuation,
+        replacementText: recoveryText?.replacement,
+        onChangeContinuationText: next => changeRecoveryText('continuation', next),
+        onChangeReplacementText: next => changeRecoveryText('replacement', next),
+    };
     const source = useSessionInteractionSource(props.sessionId ?? '', props.serverId);
     const interaction = deriveTranscriptInteractionFromSession(source ?? {});
     const executeCommand = useKeyboardCommand();
@@ -425,7 +438,7 @@ function WorkflowSelectedDetail(props: Readonly<{
     const card = props.renderReviewCard?.(props.sessionId !== null && interaction.canSendMessages ? discuss : undefined,
         { compact: props.phone, title: props.title, subtitle: props.subtitle,
             // In a pane the facts scroll with the value, so the decision stays pinned under them.
-            ...(props.phone ? {} : { belowResult: <WorkflowInvocationDetail {...props.detail} resultShownAbove /> }) }) ?? null;
+            ...(props.phone ? {} : { belowResult: <WorkflowInvocationDetail {...detail} resultShownAbove /> }) }) ?? null;
     const reviewShown = card !== null && !reviewDismissed;
     const reviewOpen = props.phone && active && reviewShown;
     const paneHeaderScroll = usePaneHeaderScrollSink();
@@ -480,7 +493,7 @@ function WorkflowSelectedDetail(props: Readonly<{
             onScroll={paneHeaderScroll ? reportInspectorScroll : undefined} scrollEventThrottle={16}
             style={props.sessionId === null ? styles.scroll : styles.inspectorAboveConversation}
             contentContainerStyle={[styles.inspectorContent, inspectorClearance]}>
-            <WorkflowInvocationDetail {...props.detail} />
+            <WorkflowInvocationDetail {...detail} />
         </ScrollView>}
         {props.sessionId === null ? null : <SessionInPane sessionId={props.sessionId}
             serverId={props.serverId} active={active && !reviewOpen} composer
@@ -586,24 +599,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
      * Run change, cannot lose someone's own words. This is the one reviewed
      * buffer, not a second recovery store, and nothing here is persisted.
      */
-    const [recoveryTextByInvocationId, setRecoveryTextByInvocationId] = React.useState<
-        ReadonlyMap<string, Readonly<{ continuation?: string; replacement?: string }>>
-    >(() => new Map());
-    const selectedRecoveryText = props.selectedInvocationId === null
-        ? undefined
-        : recoveryTextByInvocationId.get(props.selectedInvocationId);
-    const setSelectedRecoveryText = React.useCallback((
-        field: 'continuation' | 'replacement',
-        next: string,
-    ) => {
-        const invocationId = props.selectedInvocationId;
-        if (invocationId === null) return;
-        setRecoveryTextByInvocationId((current) => {
-            const updated = new Map(current);
-            updated.set(invocationId, { ...current.get(invocationId), [field]: next });
-            return updated;
-        });
-    }, [props.selectedInvocationId]);
+    const recoveryTexts = React.useRef(new Map<string, Readonly<{ continuation?: string; replacement?: string }>>()).current;
+
     const activityListRef = React.useRef<VirtualizedListRef | null>(null);
     const activityScrollOffsetRef = React.useRef(0);
     const flowScrollRef = React.useRef<ScrollView | null>(null);
@@ -1618,10 +1615,6 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 : props.sourceAction ? 'open_workflow' : null;
     const detailProps = React.useMemo((): WorkflowInvocationDetailProps | null => (
         props.selectedInvocationId === null ? null : {
-            continuationText: selectedRecoveryText?.continuation,
-            onChangeContinuationText: (next) => setSelectedRecoveryText('continuation', next),
-            replacementText: selectedRecoveryText?.replacement,
-            onChangeReplacementText: (next) => setSelectedRecoveryText('replacement', next),
             onSelectInvocation: selectInvocation,
             progress: props.selectedInvocationProgress ?? null,
             finalResult: props.selectedInvocationId === props.finalOutputInvocationId && props.result !== undefined
@@ -1722,9 +1715,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         props.serverId,
         props.run.id,
         props.run.machineId,
-        selectedRecoveryText,
         selectInvocation,
-        setSelectedRecoveryText,
         testIDPrefix,
         workspaceSourceLabel,
     ]);
@@ -1774,7 +1765,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         : props.selectedSessionId !== undefined ? props.selectedSessionId
             : selectedExecution?.kind === 'session' ? selectedExecution.sessionId : null;
     const inspector = detailProps === null || props.selectedInvocationId === null ? null : <WorkflowSelectedDetail
-        key={props.selectedInvocationId} detail={detailProps} sessionId={selectedSessionId}
+        key={props.selectedInvocationId} detail={detailProps} recoveryTexts={recoveryTexts} sessionId={selectedSessionId}
         serverId={props.serverId} active={props.active !== false} phone={phone}
         inlineHeader={!detailsPaneAvailable && props.invocationPage === true}
         title={selectedDetailTitle} subtitle={selectedDetailSubtitle} identity={props.selectedInvocationId}

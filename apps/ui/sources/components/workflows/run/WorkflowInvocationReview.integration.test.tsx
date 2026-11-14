@@ -134,7 +134,7 @@ afterEach(async () => {
 });
 afterAll(() => { vi.unstubAllGlobals(); });
 
-async function harness(options: Readonly<{ emptyResult?: boolean; concurrentHolds?: boolean; runScreen?: boolean; reviewConversation?: boolean; paused?: boolean; runReadError?: 'history_not_readable' | 'encryption_setup_required'; compact?: boolean; access?: 'owner' | 'edit' | 'view'; wait?: boolean; fieldlessWait?: boolean; exactRead?: 'pending' | 'failed'; confirmed?: boolean; plan?: boolean; admittedPlan?: boolean; planProposal?: boolean; planValidationUnavailable?: boolean; uncertainPriorEffects?: boolean; acknowledged?: boolean; ownedOrigin?: boolean }> = {}) {
+async function harness(options: Readonly<{ humanAnswer?: boolean; emptyResult?: boolean; concurrentHolds?: boolean; runScreen?: boolean; reviewConversation?: boolean; paused?: boolean; runReadError?: 'history_not_readable' | 'encryption_setup_required'; compact?: boolean; access?: 'owner' | 'edit' | 'view'; wait?: boolean; fieldlessWait?: boolean; exactRead?: 'pending' | 'failed'; confirmed?: boolean; plan?: boolean; admittedPlan?: boolean; planProposal?: boolean; planValidationUnavailable?: boolean; uncertainPriorEffects?: boolean; acknowledged?: boolean; ownedOrigin?: boolean }> = {}) {
     installShippedNativeFrameScheduler();
     // The real modal/composer schedules SDK frame work. Preserve the canonical
     // timer-backed scheduler rather than running a frame recursively in place.
@@ -196,7 +196,7 @@ async function harness(options: Readonly<{ emptyResult?: boolean; concurrentHold
         },
             blockKind: root ? 'root' : options.wait ? 'wait' : 'step', attempt: '0', logicalInvocationRecordId: id,
             ...(root ? {} : { ...(projectedResultContract === undefined ? {} : { resultContract: projectedResultContract }), ...(options.wait ? {} : { ...(options.emptyResult ? {} : { result: value }),
-                execution: { kind: 'session', sessionId: 'conversation', localInputId: 'initial-input' }, review: { resultSource: { kind: 'execution_input' } } }) }),
+                execution: { kind: 'session', sessionId: 'conversation', localInputId: 'initial-input' }, review: { resultSource: options.humanAnswer ? { kind: 'human', accountId: 'answering-person' } : { kind: 'execution_input' } } }) }),
             ...(!root && options.uncertainPriorEffects ? { uncertainPriorEffects: { activity: 'stopped' } } : {}),
         });
         rows.set(id, { index, parentRevision: run.revision, contentEnvelope: serializeWorkflowStoredContentEnvelopeV1(sealWorkflowProgressStoredEnvelopeV1({ mode: 'plain', binding: binding(index), progress })) });
@@ -239,6 +239,7 @@ async function harness(options: Readonly<{ emptyResult?: boolean; concurrentHold
         const handled = await external.handle(new URL(String(url)), init);
         if (handled) return handled;
         const path = new URL(String(url)).pathname;
+        if (path === '/v1/user/profiles') return json({ users: [{ id: 'answering-person', name: 'Ada Chen', firstName: '', lastName: null, username: '', avatar: null, bio: null, status: 'none', publicKey: null }] });
         if (path === '/health') return json({});
         if (path === '/v1/features') return json({ features: { automations: { enabled: true }, workflows: { enabled: boundary.workflowsEnabled } }, capabilities: {
             accountStoredContentCompatibility: { v: 1, minimumProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
@@ -425,6 +426,10 @@ function editorPromptInput(screen: Awaited<ReturnType<typeof renderScreen>>) {
 const admissions = () => startPlan.mock.calls;
 
 describe('Review through the real Account Action owner and HTTP storage boundary', () => {
+    it('names the authorized human who answered a Plan in its review card', async () => {
+        const { screen } = await harness({ plan: true, humanAnswer: true });
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Ada Chen'));
+    });
     it.each(['7', '8'])('hydrates the first result from incremental private content at revision %s across concurrent holds', async (revision) => {
         routerMock.module.router.setParams({ invocationId: heldId });
         const h = await harness({ runScreen: true, concurrentHolds: true, emptyResult: true });

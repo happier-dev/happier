@@ -68,7 +68,7 @@ export type WorkflowRunRow = Readonly<{
 
 export type WorkflowRunsById = Record<string, WorkflowRunRow>;
 
-export type WorkflowReviewDraft = Readonly<{ text: string; contentRevision: string; editedAt?: number }>;
+export type WorkflowReviewDraft = Readonly<{ text: string; contentRevision: string; editedAt?: number; rawTextValues?: Readonly<Record<string, string>> }>;
 export type WorkflowReviewReading = Readonly<{ value: JsonValue | undefined; revision: string }>;
 export type WorkflowInvocationReviewBuffers = Readonly<{
     drafts: Map<string, WorkflowReviewDraft>;
@@ -137,7 +137,8 @@ export type WorkflowRunsDomain = {
         invocationDetails?: readonly WorkflowInvocationGetResultV1['invocation'][];
         nextCursor: string | null;
         parentRevision: number;
-        mode: WorkflowLoadedSpanMode;
+        /** A completed delta covers history, retaining known records. */
+        mode: WorkflowLoadedSpanMode | 'delta';
     }>) => void;
     /**
      * Merge one exact row without disturbing the currently loaded page. Its
@@ -1021,7 +1022,14 @@ export function createWorkflowRunsDomain<S extends WorkflowRunsDomain>({
                 }).sort(compareInvocationOrder).map((entry) => entry.id);
                 let invocationIds: readonly string[];
                 let cursor = nextCursor;
-                if (mode === 'append') {
+                if (mode === 'delta') {
+                    if (pageIds.length === 0) invocationIds = previousWindow.invocationIds;
+                    else {
+                        const knownIds = new Set(previousWindow.invocationIds);
+                        invocationIds = pageIds.every(id => knownIds.has(id)) ? previousWindow.invocationIds
+                            : byOrder(new Set([...previousWindow.invocationIds, ...pageIds]));
+                    }
+                } else if (mode === 'append') {
                     invocationIds = appendUniqueInvocationIds(previousWindow.invocationIds, pageIds);
                 } else if (mode === 'refresh' && windowId === 'history') {
                     // History rows are append-only for the life of a Run: a
