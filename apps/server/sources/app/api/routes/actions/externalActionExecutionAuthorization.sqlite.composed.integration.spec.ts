@@ -12324,6 +12324,17 @@ describe("external Action execution authorization", () => {
             expect(await verifyHttp('GET', `/v1/machines/${fixture.machine.id}`)).not.toBeNull();
             expect(await verifyHttp('GET', '/v1/account/encryption/currentness')).not.toBeNull();
             expect(await verifyHttp('POST', `/v2/sessions/${sessionId}/agent-transition/cutover`, { v: 1 })).not.toBeNull();
+            // Source Stop retires its control projection through the same owner
+            // tuple writer as standalone Stop, before the target cutover.
+            const stopRetirement = { mode: 'owner', metadataLayoutVersion: 1,
+                expectedOwnerMetadata: { t: 'plain', v: { v: 1 } },
+                sharedMetadata: { ciphertext: JSON.stringify({ v: 1 }), expectedVersion: 0 },
+                ownerMetadata: { t: 'plain', v: { v: 1 } },
+                agentState: { ciphertext: null, expectedVersion: 0 } };
+            expect(await verifyHttp('PATCH', `/v2/sessions/${sessionId}`, stopRetirement)).not.toBeNull();
+            expect(await verifyHttp('PATCH', '/v2/sessions/other', stopRetirement)).toBeNull();
+            expect(await verifyHttp('PATCH', `/v2/sessions/${sessionId}`, { ...stopRetirement, mode: 'shared_editor' })).toBeNull();
+            expect(await verifyHttp('PATCH', `/v2/sessions/${sessionId}`, { metadata: 'untyped' })).toBeNull();
             expect(await verifyHttp('POST', `/v2/sessions/${sessionId}/pending`, { localId: 'unrelated' })).toBeNull();
             expect(await verifyHttp('POST', `/v1/sessions/${sessionId}/archive`, {})).toBeNull();
             expect(await verifyHttp('POST', '/v2/sessions/other/agent-transition/cutover', { v: 1 })).toBeNull();

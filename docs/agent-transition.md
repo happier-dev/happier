@@ -4,6 +4,10 @@ One Happier Session keeps its identity and transcript while the Agent running it
 product name is **Continue with another Agent**. In current 0.3 development source, mutation enters
 through the admitted `session.agent.transition` Account Action; the raw `session.agentTransition`
 machine mutation is retired. Inspection and brief preview remain read-only Machine RPCs.
+The admitted transition also carries its source Stop's metadata retirement: the server accepts
+the same owner-tuple PATCH as standalone Stop, bound to the transition's exact Session. Inspection
+cannot use that mutation phase, and the existing metadata writer retains content and owner access
+admission.
 
 > **Release status.** Unreleased. This exists in the current development source of `dev` and
 > `../0.2`. Do not describe it as available in a

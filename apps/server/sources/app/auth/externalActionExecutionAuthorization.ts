@@ -2120,6 +2120,13 @@ async function isInstalledSessionSubtreeObservationHttpPurpose(verified: Verifie
         || isInstalledSessionSubtreeMember(verified, underSessionId);
 }
 
+/** Stop retires its control projection through the canonical owner tuple writer. */
+function isSessionOwnerMetadataHttpPatch(proof: ExternalActionExecutionRequestProof, sessionId: string): boolean {
+    if (proof.method.toUpperCase() !== 'PATCH' || proof.path !== `/v2/sessions/${encodeURIComponent(sessionId)}`) return false;
+    const patch = SessionMetadataTuplePatchV1Schema.safeParse(proof.body);
+    return patch.success && patch.data.mode === 'owner';
+}
+
 /** Original lifecycle roots consume the same readable recursive subtree as Session listing. */
 async function isInstalledSessionLifecycleHttpPurpose(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof): Promise<boolean> {
@@ -2134,9 +2141,7 @@ async function isInstalledSessionLifecycleHttpPurpose(verified: VerifiedSignedCh
         && (proof.path === path || proof.path === `${path}?accessProjectionVersion=1`);
     const origin = verified.binding.sessionActionOrigin;
     if (actionId === 'session.open' || actionId === 'session.stop') {
-        const patch = proof.method.toUpperCase() === 'PATCH' && proof.path === path
-            ? SessionMetadataTuplePatchV1Schema.safeParse(proof.body) : null;
-        if (!reads && !(patch?.success && patch.data.mode === 'owner')) return false;
+        if (!reads && !isSessionOwnerMetadataHttpPatch(proof, sessionId)) return false;
         const session = await db.session.findUnique({ where: { id: sessionId }, select: { accountId: true } });
         if (session?.accountId !== verified.binding.accountId) return false;
         if (!origin) return verified.effectiveAuthority === 'present_user';
@@ -3187,9 +3192,10 @@ async function isSessionAgentTransitionHttpPurpose(verified: VerifiedExternalAct
         // actual requested ancestor, not borrow the child's resolved Machine.
         return isExternalActionSessionTargetWithinGrant(verified.binding, sessionId);
     }
-    return verified.binding.actionId === 'session.agent.transition' && verified.target.kind === 'session'
-        && method === 'POST' && url.search === ''
-        && url.pathname === `/v2/sessions/${encodeURIComponent(verified.target.sessionId)}/agent-transition/cutover`;
+    if (verified.binding.actionId !== 'session.agent.transition' || verified.target.kind !== 'session') return false;
+    return isSessionOwnerMetadataHttpPatch(proof, verified.target.sessionId)
+        || method === 'POST' && url.search === ''
+            && url.pathname === `/v2/sessions/${encodeURIComponent(verified.target.sessionId)}/agent-transition/cutover`;
 }
 
 /** No generic descendant grant: first-input custody, the transition fence, stop and same-Session resume only. */
