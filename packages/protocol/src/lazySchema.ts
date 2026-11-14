@@ -1,4 +1,4 @@
-import { globalRegistry, type core } from 'zod';
+import { globalRegistry, core } from 'zod';
 
 /**
  * Defers building a module-level schema until it is first used.
@@ -17,18 +17,42 @@ import { globalRegistry, type core } from 'zod';
  */
 export function lazySchema<T extends core.$ZodType>(build: () => T): T {
   let schema: T | undefined;
+  let internals: T['_zod'] | undefined;
   const resolve = (): T => {
     if (schema) return schema;
     schema = build();
     // Zod keeps `.describe()`/`.meta()` in a registry keyed by instance, and
     // JSON Schema projection looks it up by the reference it walks — the proxy.
     const metadata = globalRegistry.get(schema);
-    if (metadata) globalRegistry.add(proxy, metadata);
+    // The id stays on the built schema alone: projection makes the proxy a
+    // reference to it, and Zod rejects two schemas sharing one id.
+    if (metadata) {
+      const { id: _id, ...rest } = metadata;
+      globalRegistry.add(proxy, rest);
+    }
     return schema;
   };
 
   const proxy: T = new Proxy({} as T, {
-    get: (_target, key) => Reflect.get(resolve(), key),
+    get: (_target, key) => {
+      const built = resolve();
+      if (key !== '_zod') return Reflect.get(built, key);
+      if (!internals) {
+        const original = built._zod;
+        const processJSONSchema: NonNullable<typeof original.processJSONSchema> = (ctx, _json, params) => {
+          // Instance hooks capture the built schema. Let Zod walk that identity
+          // and make the already-registered proxy a transparent reference to it.
+          // This also works when method/Standard Schema conversion has no type
+          // processors, and keeps recursive references under their real keys.
+          core.processSchema(built, ctx, params);
+          ctx.seen.get(proxy)!.ref = built;
+        };
+        internals = new Proxy(original, {
+          get: (target, field) => field === 'processJSONSchema' ? processJSONSchema : Reflect.get(target, field),
+        });
+      }
+      return internals;
+    },
     set: (_target, key, value) => Reflect.set(resolve(), key, value),
     has: (_target, key) => Reflect.has(resolve(), key),
     ownKeys: () => Reflect.ownKeys(resolve()),
