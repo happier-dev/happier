@@ -91,6 +91,8 @@ export type ConnectedServiceQuotaGaugeViewModel = Readonly<{
     valueLabel: string;
     ringValueLabel: string;
     badgeLabel: string;
+    /** Names the independently selected center value, even when its ring is not drawn. */
+    ringValueAccessibilityLabel?: string;
     scopePrefix: string | null;
     detailRightLabel: string;
     usedLimitLabel: string | null;
@@ -188,6 +190,12 @@ export function resolveConnectedServiceQuotaMeterScopePrefix(
     if (window === 'daily') return 'd.';
     if (window === 'weekly') return 'w.';
     return null;
+}
+
+/** Longer periods enclose shorter ones in a concentric gauge. */
+function quotaWindowRank(meter: ConnectedServiceQuotaMeterV1): number {
+    const window = resolveConnectedServiceQuotaMeterWindow(meter);
+    return window === 'session' ? 1 : window === 'daily' ? 2 : window === 'weekly' ? 3 : 4;
 }
 
 function meterMatchesWindowMode(
@@ -358,6 +366,8 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
     snapshot: ConnectedServiceQuotaSnapshotV1 | null;
     windowMode: ConnectedServiceQuotaGaugeWindowMode;
     windowModes?: readonly ConnectedServiceQuotaGaugeWindowMode[] | null;
+    /** Independent preference for the remaining percentage printed in the rings. */
+    numberWindowMode?: ConnectedServiceQuotaGaugeWindowMode;
     /** Extra favorites from the account currently used by the session. */
     additionalMeterIds?: readonly string[];
     /** Null means the bound pool policy has not been read yet. */
@@ -435,6 +445,18 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
         ? null
         : resolveConnectedServiceQuotaMeterScopePrefix(effectiveMeter);
     const roundedRemaining = Math.round(effectiveRemainingPct);
+    const numberWindowMode = params.numberWindowMode;
+    const matchingNumberMeters = numberWindowMode
+        ? rankableMeters.filter(meter => meterMatchesWindowMode(meter, numberWindowMode))
+        : [];
+    const numberMeters = matchingNumberMeters.length ? matchingNumberMeters : rankableMeters;
+    const numberMeter = numberWindowMode
+        ? numberMeters.reduce<ConnectedServiceQuotaMeterV1 | null>((selected, meter) => (
+            selected === null || (deriveQuotaMeterValues(meter).remainingPct ?? 100)
+                < (deriveQuotaMeterValues(selected).remainingPct ?? 100) ? meter : selected
+        ), null) ?? effectiveMeter
+        : effectiveMeter;
+    const numberRemainingPct = deriveQuotaMeterValues(numberMeter).remainingPct ?? effectiveRemainingPct;
     const remainingValueLabel = params.formatter.remaining({ percent: `${roundedRemaining}%` });
     const staleAt = params.snapshot.fetchedAt + params.snapshot.staleAfterMs;
     const isStale = params.nowMs > staleAt;
@@ -476,7 +498,8 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
         usedPct: selectedRow.usedPct,
         primaryValueSemantics: 'remaining',
         valueLabel: remainingValueLabel,
-        ringValueLabel: String(roundedRemaining),
+        ringValueLabel: String(Math.round(numberRemainingPct)),
+        ringValueAccessibilityLabel: `${numberMeter.label} ${params.formatter.remaining({ percent: `${Math.round(numberRemainingPct)}%` })}`,
         badgeLabel: selectedWindowPrefix ? `${selectedWindowPrefix} ${remainingValueLabel}` : remainingValueLabel,
         scopePrefix: selectedWindowPrefix,
         detailRightLabel: selectedRow.detailRightLabel,
@@ -487,7 +510,7 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
         recoveryCreditSummary: summarizeConnectedServiceQuotaRecoveryCredits(params.snapshot.recoveryCredits, params.nowMs),
         effectiveMeter,
         allMeterRows,
-        usageRings: displayedMeterRows.map(({ meter, row }) => {
+        usageRings: displayedMeterRows.sort((a, b) => quotaWindowRank(b.meter) - quotaWindowRank(a.meter)).map(({ meter, row }) => {
             const ringRemaining = Math.round(row.remainingPct);
             return {
                 meterId: meter.meterId,

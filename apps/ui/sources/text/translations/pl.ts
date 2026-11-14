@@ -8646,6 +8646,8 @@ settingsSession: {
         customResumePromptPlaceholder: "Kontynuuj od miejsca, w którym skończyłeś.",
       },
       providerUsageGauge: {
+          numberTitle: "Liczba w środku pierścieni",
+          numberSubtitle: "Wybierz limit dla liczby w pierścieniach. Jeśli jest niedostępny, używany jest najbardziej ograniczający limit.",
         title: "Użycie dostawcy",
         footer:
           "Wybierz wskaźniki edytora dla wszystkich kont. Uwzględniają limity użycia wybrane w każdej puli. Ulubione dodają wskaźniki aktywnego konta.",

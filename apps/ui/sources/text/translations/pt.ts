@@ -8764,6 +8764,8 @@ settingsSession: {
         customResumePromptPlaceholder: "Continue de onde parou.",
       },
       providerUsageGauge: {
+          numberTitle: "Número no centro dos anéis",
+          numberSubtitle: "Escolha o limite para o número nos anéis. Se indisponível, será usado o limite mais restritivo.",
         title: "Uso do provedor",
         footer:
           "Escolha os indicadores do editor para todas as contas. Eles respeitam os limites selecionados em cada pool. Os favoritos adicionam indicadores para a conta ativa.",

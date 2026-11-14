@@ -7343,6 +7343,8 @@ settingsSession: {
             customResumePromptPlaceholder: '從你上次停下的地方繼續。',
         },
         providerUsageGauge: {
+            numberTitle: "圓環中心數值",
+            numberSubtitle: "選擇圓環中數值對應的限額。若無法使用，則使用剩餘額度最少的限額。",
             title: '提供者使用量',
             footer: "為所有帳戶選擇輸入框上方的用量儀表。儀表遵循每個池所選的用量限制。收藏的限額會為目前帳戶新增額外儀表。",
             visibilityTitle: '顯示提供者使用量儀表',

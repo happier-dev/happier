@@ -8195,6 +8195,8 @@ settingsSession: {
               customResumePromptPlaceholder: 'Continua des d’on ho vas deixar.',
           },
           providerUsageGauge: {
+              numberTitle: "Número al centre dels anells",
+              numberSubtitle: "Tria el límit del número dins dels anells. Si no està disponible, s’utilitza el límit més restrictiu.",
               title: 'Ús del proveïdor',
               footer: "Tria els indicadors de l’editor per a tots els comptes. Respecten els límits d’ús seleccionats a cada grup. Els preferits afegeixen indicadors per al compte actiu.",
               visibilityTitle: 'Mostra l’indicador d’ús del proveïdor',

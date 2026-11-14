@@ -8414,6 +8414,8 @@ settingsSession: {
       customResumePromptPlaceholder: "从你上次停下的地方继续。",
     },
     providerUsageGauge: {
+        numberTitle: "圆环中心数值",
+        numberSubtitle: "选择圆环中数值对应的限额。若不可用，则使用剩余额度最少的限额。",
       title: "提供方使用量",
       footer:
         "为所有账户选择输入框上方的用量仪表。仪表遵循每个池所选的用量限制。收藏的限额会为当前账户添加额外仪表。",

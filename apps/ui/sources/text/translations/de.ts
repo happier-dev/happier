@@ -8191,6 +8191,8 @@ settingsSession: {
               customResumePromptPlaceholder: 'Mach da weiter, wo du aufgehört hast.',
           },
           providerUsageGauge: {
+              numberTitle: "Zahl in der Ringmitte",
+              numberSubtitle: "Wähle das Limit für die Zahl in den Ringen. Ist es nicht verfügbar, gilt das knappste Limit.",
               title: 'Provider-Nutzung',
               footer: "Wähle Composer-Anzeigen für alle Konten. Sie berücksichtigen die ausgewählten Nutzungslimits jedes Pools. Favoriten ergänzen Anzeigen für das aktive Konto.",
               visibilityTitle: 'Nutzungsanzeige des Providers zeigen',
