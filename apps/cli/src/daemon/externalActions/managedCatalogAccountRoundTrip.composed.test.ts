@@ -23,6 +23,10 @@ import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/m
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityActionOutputSchemasV1 } from '@happier-dev/protocol/plugins/availability/actions';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { computeMachineOwnerEnvelopeFingerprintV1 } from '@happier-dev/protocol/machines/machineOwnerEnvelopeFingerprintV1';
+import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { wrapApiTokenEncryptionAccessV1 } from '@happier-dev/protocol/crypto/apiTokenEncryptionAccess';
 import { formatAccountApiTokenCredentialV1 } from '@happier-dev/protocol/auth/accountApiTokens';
 import { connect } from '@happier-dev/sdk';
@@ -86,6 +90,7 @@ import { createDaemonExternalActionTargetResolver, createDaemonApprovalExecution
 import { fetchAccountProfile } from '@/api/accountProfile';
 import { prepareAccountSettingsV2Content } from '@/settings/accountSettings/updateAccountSettingsV2WithRetry';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { encrypt } from '@/api/encryption';
 import { createDaemonManagedMachineActionAdapter } from '../startup/managedMachineActionAdapter';
 import { fixture as nativeFixture } from '@/plugins/runtime/invocation/actions/managedCustody.testkit';
 import { createManagedProviderOperationAuthority } from '../connectedServices/purposeBindings/managedProviderOperationAuthority';
@@ -110,7 +115,7 @@ import { readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/
 import { resolvePluginStorePaths } from '@/plugins/store/paths';
 import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
-import { createAuthoredAdmittedPluginRuntimeFixture, retireAdmittedPluginRuntimeRegistry } from '@/plugins/testkit/admittedRuntime';
+import { createAdmittedPluginRuntimeFixture, createAuthoredAdmittedPluginRuntimeFixture, retireAdmittedPluginRuntimeRegistry } from '@/plugins/testkit/admittedRuntime';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { createMachineRecipeReadAction } from '@/machines/setup/machineRecipeActionDeps';
 import { createMachineServicesRuntime } from '../local/services/launch/machineServices';
@@ -120,7 +125,7 @@ import { registerDaemonContributionRegistryProjectionHandler } from '@/rpc/handl
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { DAEMON_PLUGIN_UI_RESOURCE_WATCH_MIN_WAIT_MS } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { RpcHandler, RpcHandlerContext } from '@/api/rpc/types';
-import { MachineServicesDetailResultV1Schema, type MachineMetadataFieldReadV1 } from '@happier-dev/protocol';
+import { MachineServicesDetailResultV1Schema, MachineServicesListResultV1Schema, type MachineMetadataFieldReadV1 } from '@happier-dev/protocol';
 import { createBrowserSidecarCdpControlAdapter, type BrowserSidecarCdpControlTransport } from '../browser/sidecar/controlAdapter';
 import { createBrowserAutomationDaemonService } from '../browser/automation/service';
 import { createBrowserAutomationCdpAdapter } from '../browser/automation/adapters/cdp';
@@ -215,6 +220,7 @@ const { TokenStorage } = await import('../../../../ui/sources/auth/storage/token
 const provisionerCatalog = await loadManagedProvisionerCatalogForTests();
 const { captureLazyActionAccountContext } = await import('../../../../ui/sources/sync/ops/actions/actionAccountContext');
 const { executeOriginalAccountMachineAction } = await import('../../../../ui/sources/sync/api/externalActionAccountTransport');
+const { machinePluginUiResourceRead } = await import('../../../../ui/sources/sync/ops/machineContributionRegistryProjection');
 
 describe('managed catalog original Account transport', () => {
   let database: LightSqliteHarness;
@@ -2695,6 +2701,177 @@ describe('managed catalog original Account transport', () => {
       if (nativeBoundary.listening) await new Promise<void>((resolve, reject) =>
         nativeBoundary.close(error => error ? reject(error) : resolve()));
       await rm(happyHomeDir, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['plain', 'e2ee'] as const)('reads shared service inventory through the real UI Resource and Home codec without requester credentials (%s)', async mode => {
+    const secret = new Uint8Array(32).fill(mode === 'plain' ? 71 : 74);
+    const machineKey = deriveAccountMachineKeyFromRecoverySecret(secret);
+    const publicKey = tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey;
+    const signing = tweetnacl.sign.keyPair.fromSeed(secret);
+    const requester = await db.account.create({ data: { publicKey: Buffer.from(signing.publicKey).toString('hex'), encryptionMode: mode,
+      ...(mode === 'e2ee' ? { contentPublicKey: publicKey,
+        contentPublicKeySig: signAccountContentKeyBindingV1({ accountSigningSecretKey: signing.secretKey, contentPublicKey: publicKey }) } : {}) } });
+    const ownerSecret = new Uint8Array(32).fill(mode === 'plain' ? 72 : 75);
+    const ownerMachineKey = deriveAccountMachineKeyFromRecoverySecret(ownerSecret);
+    const ownerPublicKey = tweetnacl.box.keyPair.fromSecretKey(ownerMachineKey).publicKey;
+    const ownerSigning = tweetnacl.sign.keyPair.fromSeed(ownerSecret);
+    const owner = await db.account.create({ data: { publicKey: Buffer.from(ownerSigning.publicKey).toString('hex'), encryptionMode: mode,
+      ...(mode === 'e2ee' ? { contentPublicKey: ownerPublicKey,
+        contentPublicKeySig: signAccountContentKeyBindingV1({ accountSigningSecretKey: ownerSigning.secretKey, contentPublicKey: ownerPublicKey }) } : {}) } });
+    await makeShareEligibleForTest(owner.id, requester.id);
+    const homeId = await getOrCreateServerIdentityId();
+    const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(73));
+    const installationId = `shared-inventory-${mode}-installation`;
+    const target = { serverId: configuration.activeServerId, machineId: `shared-inventory-${mode}` };
+    const dataKey = tweetnacl.randomBytes(32);
+    const ownerEnvelope = mode === 'plain' ? Buffer.from(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')
+      : sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: ownerPublicKey, randomBytes: tweetnacl.randomBytes });
+    const publishedMetadata = { host: 'Shared inventory host', platform: 'linux', happyCliVersion: 'test',
+      homeDir: '/home/shared', happyHomeDir: '/home/shared/.happier' };
+    await db.machine.create({ data: { id: target.machineId, accountId: owner.id, installationId,
+      installationPublicKey: installation.publicKey, dataEncryptionKey: ownerEnvelope,
+      metadata: mode === 'plain' ? encodePlainMachineStoredContent(publishedMetadata) : encodeBase64(encrypt(dataKey, 'dataKey', publishedMetadata)),
+      metadataVersion: 1, active: true, lastActiveAt: new Date(),
+      operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } }, operationProtocolCapabilitiesRevision: 1 } });
+    expect(await inTx(tx => setMachineAccessGrantInTx(tx, { machineId: target.machineId, actorAccountId: owner.id,
+      principal: { kind: 'account', accountId: requester.id }, level: 'admin' }))).toMatchObject({ kind: 'saved' });
+    if (mode === 'e2ee') await db.machineKeyEnvelope.create({ data: { machineId: target.machineId, recipientAccountId: requester.id,
+      encryptedDataKey: sealEncryptedDataKeyEnvelopeV1({ dataKey, recipientPublicKey: publicKey, randomBytes: tweetnacl.randomBytes }),
+      machineOwnerEnvelopeFingerprint: computeMachineOwnerEnvelopeFingerprintV1(ownerEnvelope),
+      recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(publicKey) } });
+    const token = await createAccountTokenForTests(requester.id, { kind: 'account', authority: 'present_user' });
+    const installedCredentials: StoredCredentials = { token: await createAccountTokenForTests(owner.id, {
+      kind: 'terminal', authority: 'account_automation' }), encryption: mode === 'plain' ? null
+        : { type: 'dataKey', machineKey: ownerMachineKey, publicKey: ownerPublicKey } };
+    const serverUrl = 'https://shared-inventory-home.example';
+    const uiServerId = await home.addHome({ name: 'Shared inventory', serverUrl, serverIdentityId: homeId,
+      accountId: requester.id, accountEncryptionMode: mode, currentAccount: true });
+    vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue(mode === 'plain'
+      ? { token } : { token, secret: encodeBase64(secret, 'base64url') });
+    await updateSettings(settings => ({ ...settings, servers: { ...settings.servers, [target.serverId]: {
+      id: target.serverId, name: 'Shared inventory', serverUrl, webappUrl: serverUrl, createdAt: 1, updatedAt: 1, lastUsedAt: 1,
+      homeConnectionDescriptorAuthority: 'exact', homeConnectionDescriptor: { v: 1, homeServerIdentityId: homeId,
+        canonicalServerUrl: serverUrl, revision: 1, endpoints: [{ kind: 'https', url: serverUrl }] },
+    } } }));
+    const fixture = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions: { pluginIds: [] } });
+    const services = fixture.registry.projectManagedServices;
+    const handles: Awaited<ReturnType<typeof services.superviseProject>>[] = [];
+    const watch = { v: 1 as const, watchId: 'shared-native-worker', name: 'Shared native worker',
+      adapter: { pluginId: 'fixture.native', localId: 'service' }, nativeResourceId: 'worker.service', lifecyclePurpose: 'infrastructure' as const };
+    const metadata: MachineMetadataFieldReadV1 = { status: 'ready', metadataVersion: 1,
+      metadata: { serviceWatchesV1: { v: 1, watches: [watch] } } };
+    const runtime = createMachineServicesRuntime({ target, readMetadata: () => metadata,
+      captureMetadataPort: () => ({ read: async () => metadata, compareAndSwap: async () => ({ status: 'unavailable' }) }) });
+    const executor = createCliActionExecutorHarness({ credentials: installedCredentials, token: installedCredentials.token,
+      mode: mode === 'plain' ? 'plain' : 'dataKey', ctx: mode === 'plain' ? null : ownerMachineKey,
+      sessionId: 'cli-global', serverId: target.serverId, serverHttpBaseUrl: serverUrl,
+      actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1(undefined) },
+      machineActionDirectTargetTransport: { machineId: target.machineId, machineServiceAction: runtime.execute,
+        invoke: async () => { throw new Error('Inventory must execute through the local service owner'); } },
+    }).executor;
+    const handlers = new Map<string, RpcHandler<unknown, unknown>>();
+    registerDaemonContributionRegistryProjectionHandler({ registerHandler(method, handler) {
+      handlers.set(method, handler as RpcHandler<unknown, unknown>);
+    } }, { resolveHostActionExecutor: () => executor, readHostResourceAccountId: () => owner.id });
+    const app = Fastify().withTypeProvider<ZodTypeProvider>();
+    const io = new Server(createServer());
+    const resourceRequesters: string[] = [];
+    let admissions = 0;
+    let restoreHttp = () => {};
+    let captured: Awaited<ReturnType<typeof captureLazyActionAccountContext>> | undefined;
+    try {
+      // Native inspection is the OS boundary. Publication, supervision and the
+      // requester-specific disclosure selection remain the actual owners.
+      for (const account of [owner, requester]) {
+        const workspace = { id: `${account.id}-workspace`, machineId: target.machineId,
+          serverId: homeId, rootPath: fixture.happyHomeDir, createdAtMs: 1 };
+        handles.push(await services.superviseProject({ kind: 'workspace', workspace,
+          declaration: { workspaceRefId: workspace.id, selection: { kind: 'manifest', name: `${account.id}-worker` } },
+          requester: { serverId: homeId, machineId: target.machineId, accountId: account.id, installationId },
+          cwd: fixture.happyHomeDir, serviceId: `${account.id}-service`, specIdentity: `${account.id}-native-observation`, isCurrent: () => true,
+          authorizeLaunch: async () => { throw new Error('Inventory must not launch a service'); },
+          processSpec: { mode: { kind: 'native', observationOnly: true, builtinLifecycle: {
+            async inspect() { return { phase: 'running', readiness: 'not_reported', endpoint: null }; },
+            async stop() { throw new Error('Inventory must not stop a service'); },
+          } } } }));
+      }
+      app.setValidatorCompiler(validatorCompiler); app.setSerializerCompiler(serializerCompiler);
+      enableErrorHandlers(app); enableAuthentication(app);
+      registerAccountEncryptionRoutes(app); registerAccountSettingsRoutes(app); registerAccountProfileRoute(app); machinesRoutes(app);
+      app.get('/v1/features', async () => FeaturesResponseSchema.parse({ features: {},
+        capabilities: { serverIdentity: { serverIdentityId: homeId } } }));
+      registerExternalActionRoutes(app, { dispatch: createExternalActionDaemonDispatcher({ io, forwardRpc: async request => {
+        const { ExternalActionDaemonDispatchRequestSchema } = await import('@happier-dev/protocol/actions');
+        const admitted = ExternalActionDaemonDispatchRequestSchema.parse(request.callParams);
+        expect(admitted.executionAuthorization.binding).toMatchObject({ accountId: requester.id, custodianAccountId: owner.id,
+          machineId: target.machineId, admittedMachineRole: 'manage', accountEncryptionMode: mode });
+        expect(openExternalActionRequesterAccountContextV1({ authorization: admitted.executionAuthorization,
+          purpose: { kind: 'external_action' }, machineId: target.machineId, installationId, serverIdentityId: homeId,
+          installationPrivateKey: installation.secretKey, includeInvocation: true })).toBeNull();
+        const codec = openManagedControllerActionCodecV1({ authorization: admitted.executionAuthorization,
+          machineId: target.machineId, installationId, serverIdentityId: homeId,
+          installationPrivateKey: installation.secretKey, includeInvocation: true });
+        expect(codec).toMatchObject({ material: { type: 'dataKey' } });
+        expect(codec).not.toHaveProperty('credentials');
+        admissions++;
+        const result = await executeExternalAction({ actionId: admitted.actionId, envelope: admitted.envelope, principal: admitted.principal,
+          executionAuthorization: admitted.executionAuthorization, currentMachineId: target.machineId,
+          currentInstallationId: installationId, currentServerId: target.serverId, currentServerHttpBaseUrl: serverUrl,
+          currentAccountId: owner.id, signal: new AbortController().signal,
+          externalActionMachineRequestPrivateKey: installation.secretKey,
+          verifyExecutionAuthorization: input => verifyExternalActionExecutionAuthorizationCurrent({ ...input, installationId,
+            privateKey: installation.secretKey, serverHttpBaseUrl: serverUrl }),
+          resolveTarget: createDaemonExternalActionTargetResolver({ credentials: installedCredentials }), executor,
+          prepareRequesterAccountContext: async () => { throw new Error('Native inventory must not acquire full requester credentials'); },
+          invokeResource: async (method, params, context) => {
+            expect(readRequesterAccountActionContext(context.callerInputAuthorization)).toBeNull();
+            resourceRequesters.push(context.callerInputAuthorization!.binding.accountId);
+            const handler = handlers.get(method);
+            if (!handler) throw new Error(`Missing registered Resource handler: ${method}`);
+            return handler(params, context);
+          },
+        });
+        return { ok: true, result: result.kind === 'response' ? createExternalActionDaemonDispatchResponse(result.prepared) : result };
+      } }) });
+      restoreHttp = installAxiosFastifyAdapter({ app, origin: serverUrl });
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+        const url = new URL(input instanceof Request ? input.url : String(input));
+        if (url.pathname !== '/v1/features') return home.request(input, init);
+        const response = await app.inject({ method: 'GET', url: url.pathname });
+        return new Response(response.payload, { status: response.statusCode, headers: { 'content-type': 'application/json' } });
+      });
+      for (const path of ['/v1/machines/read-batch', '/v1/actions/machines.services.list', '/v1/actions/machines.services.list/execution-authorization']) {
+        home.answer(uiServerId, `POST ${path}`, { select: async (value, request) => {
+          const response = await app.inject({ method: 'POST', url: path,
+            headers: Object.fromEntries(new Headers(request.init?.headers).entries()), payload: value });
+          return { status: response.statusCode, body: response.json() };
+        } });
+      }
+      captured = await captureLazyActionAccountContext(uiServerId);
+      const input = { serverId: homeId, machineId: target.machineId };
+      const finite = await executeOriginalAccountMachineAction({ account: captured, actionId: 'machines.services.list',
+        machineId: target.machineId, input, requestId: `shared-inventory-finite-${mode}`, authority: 'present_user' });
+      expect(finite, finite.ok ? undefined : JSON.stringify(finite)).toMatchObject({ ok: true, result: { kind: 'snapshot' } });
+      const finiteSnapshot = MachineServicesListResultV1Schema.parse(finite.ok ? finite.result : null);
+      const resource = await machinePluginUiResourceRead(target.machineId, { serverId: uiServerId, accountId: requester.id,
+        resource: { hostRead: 'machines.services.list', input } });
+      expect(resource).toMatchObject({ supported: true, result: { ok: true, contentType: 'application/json' } });
+      if (!resource.supported || !resource.result.ok) throw new Error('Expected shared inventory Resource bytes');
+      const resourceSnapshot = MachineServicesListResultV1Schema.parse(JSON.parse(Buffer.from(resource.result.bytesBase64, 'base64').toString('utf8')));
+      if (finiteSnapshot.kind !== 'snapshot' || resourceSnapshot.kind !== 'snapshot') throw new Error('Expected native inventory snapshots');
+      const visibleServiceIds = ['shared-native-worker', `${requester.id}-service`].sort();
+      expect(finiteSnapshot.services.map(row => row.serviceId).sort()).toEqual(visibleServiceIds);
+      expect(resourceSnapshot.services.map(row => row.serviceId).sort()).toEqual(visibleServiceIds);
+      const disclosed = JSON.stringify([finiteSnapshot, resourceSnapshot]);
+      expect(disclosed).not.toContain(`${owner.id}-service`);
+      expect(disclosed).not.toContain(fixture.happyHomeDir);
+      expect(resourceRequesters).toEqual([requester.id]);
+      expect(admissions).toBe(2);
+    } finally {
+      captured?.dispose(); restoreHttp(); await app.close(); await io.close();
+      for (const handle of handles) await handle.dispose();
+      await runtime.dispose(); await fixture.dispose();
     }
   });
 
