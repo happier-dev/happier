@@ -1,3 +1,4 @@
+import { createCliPrivateLabelActionOpener } from '@/api/privateLabels';
 import { createConnectedAccountActionTeamResourceCatalogReader } from '@/daemon/connectedServices/purposeBindings/actionTeamResourceCatalog';
 import { executeManagedProvisionerDiscovery, projectAccountManagedProvisioners, type ManagedProvisionerDiscoveryEntry } from '@happier-dev/cli-common/machines/managed/provisioners';
 import { listConnectedAccountActionFormOptions, projectConnectedAccountHostAccessScopes } from '@happier-dev/cli-common/connectedAccounts';
@@ -30,7 +31,8 @@ export async function executeCliManagedProvisionerList(input: Readonly<{
             const signal = input.signal ?? new AbortController().signal;
             return Promise.all(scopes.map(async scope => ({ purpose: { consumer: entry.contribution, purpose: scope.purpose },
                 options: [...await listConnectedAccountActionFormOptions({ available: true,
-                    listTeamResources: createConnectedAccountActionTeamResourceCatalogReader({ homeDomainAction: input.homeDomainAction }),
+                    listTeamResources: createConnectedAccountActionTeamResourceCatalogReader({ homeDomainAction: input.homeDomainAction,
+                        privateLabelOpen: createCliPrivateLabelActionOpener(input.credentials.encryption) }),
                     resolveService: async (service, requestSignal) => {
                         let manifest = selection.manifest;
                         if (service.pluginId !== manifest.id) {

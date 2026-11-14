@@ -1,3 +1,4 @@
+import { createCliPrivateLabelActionOpener } from '@/api/privateLabels';
 import { createConnectedAccountActionTeamResourceCatalogReader } from './actionTeamResourceCatalog';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { createRequesterTeamCredentialDirectMaterialClient } from '../directMaterial/teamCredentialDirectMaterialClient';
@@ -17,6 +18,7 @@ import { createDaemonConnectedAccountPurposeBindingRuntime } from './createDaemo
 export function createRequesterConnectedAccountPurposeBindingRuntime(input: Readonly<{
   operationContext: SavedSecretOperationContextV1;
   accountId: string;
+  serverId: string;
   machineId?: string;
   reloadController: Pick<PluginReloadController, 'acquireRuntimeRegistry' | 'tryAcquireRuntimeRegistry' | 'isRuntimeRegistryCurrent' | 'subscribe'>;
   nativeReloadController?: Parameters<typeof createDaemonConnectedAccountPurposeBindingRuntime>[0]['nativeReloadController'];
@@ -75,8 +77,9 @@ export function createRequesterConnectedAccountPurposeBindingRuntime(input: Read
     credentialOwnerAccountId: input.accountId, workerMachineId: input.machineId, store, reloadController: input.reloadController,
     nativeReloadController: input.nativeReloadController,
     listTeamResources: createConnectedAccountActionTeamResourceCatalogReader({
+      privateLabelOpen: createCliPrivateLabelActionOpener(credentials.encryption),
       homeDomainAction: (...args) => createAccountServerActionDeps({ token: credentials.token, credentials,
-        serverHttpBaseUrl: operationContext.serverHttpBaseUrl }).homeDomainAction!(...args),
+        serverId: input.serverId, serverHttpBaseUrl: operationContext.serverHttpBaseUrl }).homeDomainAction!(...args),
     }),
     allowNativeAccountCredentials: input.allowNativeAccountCredentials,
     openTeamDirect: input.openTeamDirect ?? (request => directMaterial.open(request)),

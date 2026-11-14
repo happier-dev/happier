@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ManagedAcquireInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAcquireInputV1Schema, isManagedPresetAcquireInputV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachinePresetV1Schema } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { bindManagedPresetAcquireOriginV1 } from './presetOrigination';
 import { deriveEd25519KeyPair } from '@happier-dev/protocol/crypto/ed25519';
@@ -50,6 +50,7 @@ describe('fixed-controller preset origination', () => {
     });
 
     it('carries an omitted opaque preset policy unchanged to native qualification', async () => {
+        if (!isManagedPresetAcquireInputV1(input)) throw new Error('Expected opaque preset acquire input');
         const { retention: _retention, wakeOnAcceptedMessage: _wake, ...withoutPolicy } = input;
         const unspecified = ManagedMachinePresetV1Schema.parse({ ...preset, retention: undefined, wakeOnAcceptedMessage: undefined });
         await expect(bindManagedPresetAcquireOriginV1({ input: withoutPolicy, preset: unspecified,

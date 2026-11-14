@@ -1,5 +1,9 @@
+import { executeExternalAction } from '@/daemon/externalActions/executeExternalAction';
+import { createDaemonExternalActionTargetResolver } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
+import { sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
+import { sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import type { ConnectedAccountPurposeTeamResource } from '@happier-dev/cli-common/connectedAccounts';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
-import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import axios from 'axios';
 import { execFile } from 'node:child_process';
@@ -1301,6 +1305,37 @@ function retainTeamMemberReviewedSnapshot(carrier: ReturnType<typeof createTeamM
 }
 
 describe('opaque managed preset admission', () => {
+    it('accepts a plain preset snapshot without an enrollment identity before native work', async () => {
+        const homeId = 'native-plain-no-enrollment';
+        const launch = { provider: { pluginId: 'acme.compute', localId: 'vm' }, schemaVersion: 1,
+            name: 'Plain preset guest', choices: {} };
+        const carrier = createTeamMemberE2eePresetCarrier({ homeId, machineId: 'plain-no-enrollment', launch,
+            allocation: 'unsubmitted' });
+        const acquisition = { selection: carrier.acquisition.selection, controller,
+            retention: { kind: 'until-delete' as const }, wakeOnAcceptedMessage: false };
+        const admission = ManagedAdmissionOutputV1Schema.parse({
+            machine: { ...carrier.admission.machine, preset: { ...carrier.admission.machine.preset,
+                contentEncryptionMode: 'plain' } },
+            presetContent: { content: { t: 'plain', v: { v: 1, name: 'Plain preset', launch } }, recipients: [] },
+            replayed: false,
+        });
+        const native = nativeFixture({ credentialPurposes: [] });
+        vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
+        vi.spyOn(axios, 'post').mockImplementation(async url => {
+            if (String(url).endsWith('/admit')) return { status: 200, data: admission };
+            throw new Error(`Unexpected Home POST ${String(url)}`);
+        });
+        const accepted: unknown[] = [];
+        const driver = createManagedMachineAcquisitionDriver({ ...accountInputs, token: carrier.token,
+            serverUrl: 'https://home.example', homeId, controller, runtimeRegistry: native.runtimeRegistry,
+            credentials: { token: carrier.token, encryption: null } });
+        await expect(driver.execute('machines.managed.acquire', acquisition, { requestId: 'plain-no-enrollment-request',
+            context: { surface: 'ui', operationAcceptance: { operationId: 'plain-no-enrollment-operation',
+                accept(value) { accepted.push(value); throw new Error('Stop after plain preset acceptance'); } } } })).rejects.toThrow('Stop after plain preset acceptance');
+        expect(accepted).toEqual([{ managedId: admission.machine.id, operation: { operationId: 'plain-no-enrollment-operation' } }]);
+        expect(native.effects()).toBe(0);
+    });
+
     it.each([['plain', 'omitted', false], ['e2ee', 'omitted', false], ['plain', 'both', true],
         ['e2ee', 'both', true], ['plain', 'partial', true], ['plain', 'partial', false], ['plain', 'both', false]] as const)(
         'qualifies saved policy independently of delegated overrides (%s, %s, delegated=%s)', async (mode, fields, delegated) => {
@@ -1763,7 +1798,7 @@ describe('opaque managed preset admission', () => {
                 canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }) });
 
         await expect(acquisition.execute('machines.managed.acquire', carrier.acquisition, { requestId: 'team-e2ee-request',
-            context: { runtimeAccountId: 'owner', actionRequestId: 'team-e2ee-request', surface: 'cli', externalActionExecutionAuthorization: authorization,
+            context: { runtimeAccountId: 'team-member', defaultSessionMachineId: controller.machineId, actionRequestId: 'team-e2ee-request', surface: 'cli', externalActionExecutionAuthorization: authorization,
                 externalActionTarget: root.binding.target,
                 operationAcceptance: { operationId: 'team-e2ee-operation', accept(value) { accepted.push(value); } },
                 operationOwnerUpdate: { update() {} } },
@@ -1798,7 +1833,7 @@ describe('opaque managed preset admission', () => {
             recipients: carrier.admission.presetContent.recipients, accountId: 'owner', accountKey: carrier.custodianKey });
         expect(opened?.nativeResult).toMatchObject({ kind: 'bound', resource: { value: privateCrabboxResource } });
     });
-    it.each(['explicit', 'preset'] as const)('routes an opened Team E2EE acquire through its admitted broker and refuses a non-custodian runtime (%s controller)', async controllerSource => {
+    it.each(['explicit', 'preset'] as const)('routes real requester dispatch through the admitted custodian broker (%s controller)', async controllerSource => {
         const homeId = 'srv_team_e2ee_brokered_child';
         const requestId = 'team-e2ee-brokered-child-request';
         const provider = { pluginId: 'acme.compute', localId: 'vm' };
@@ -1832,53 +1867,164 @@ describe('opaque managed preset admission', () => {
             credentialPurposes: [{ purpose: 'upstream', service }], referenceManifests: [nativeAccountReferenceManifest(['cloud'])] });
         const carrier = createTeamMemberE2eePresetCarrier({ homeId, machineId: 'team-e2ee-brokered-machine', launch,
             allocation: 'unsubmitted', custodianAccountId: 'owner' });
-        vi.spyOn(axios, 'get').mockImplementation(async url => {
-            const path = String(url);
-            if (path.endsWith('/account/profile')) return { status: 200, data: { id: 'owner' } };
-            if (path.endsWith('/encryption/currentness')) return { status: 200, data: { mode: 'e2ee', version: 1, settingsVersion: 1,
-                signingKeyFingerprint: null,
-                contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(carrier.custodianPublicKey), updatedAt: 1 } };
-            throw new Error(`Unexpected brokered-child GET ${new URL(path).pathname}`);
-        });
         const signing = tweetnacl.sign.keyPair();
-        const root = ExternalActionExecutionAuthorizationV1Schema.parse({ ...originAuthorization(homeId, requestId), binding: {
-            ...originAuthorization(homeId, requestId).binding,
-            accountId: 'team-member', custodianAccountId: 'owner', accountEncryptionMode: 'e2ee',
-        } });
-        const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: root,
-            serverId: 'daemon-local-profile', serverIdentityId: homeId, serverHttpBaseUrl: 'https://home.example',
-            target: root.binding.target, installationId: controller.installationId, privateKey: signing.secretKey,
-            rootAdmitted: true, isCurrent: async () => true });
-        if (!authorization) throw new Error('Requester root authority was not established');
         const driverInput = { token: carrier.token, serverUrl: 'https://home.example', homeId, controller,
             runtimeRegistry: native.runtimeRegistry, managedProviderOperationAuthority: authority,
+            externalActionMachineRequestPrivateKey: signing.secretKey,
             credentials: { token: carrier.token, encryption: { type: 'dataKey' as const, machineKey: carrier.custodianKey,
                 publicKey: carrier.custodianPublicKey } },
             homeTarget: resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
                 canonicalServerUrl: 'https://home.example', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example' }] }, authority: 'current_connection' }),
         };
-        const opened = await openManagedPresetAdmission({ input: driverInput, acquisition: carrier.acquisition, admission: carrier.admission });
-        const createInvocation = (runtimeAccountId: 'owner' | 'team-member') => {
-            const baseOptions = { requestId, context: { runtimeAccountId, actionRequestId: requestId, surface: 'cli' as const,
-                externalActionExecutionAuthorization: authorization, externalActionTarget: root.binding.target,
-                operationOwnerUpdate: { update() {} } } };
-            // A preset acquire may leave the controller to the preset; Home's admitted row names it.
+        // Real external dispatch stamps requester identity and the receiving Machine
+        // independently for delegated requests; the ordinary owner entry stays separate.
+        const invokeOnController = async (custodianAccountId = 'owner', currentMachineId = controller.machineId, requesterAccountId = 'team-member') => {
             const { controller: _explicitController, ...presetAcquisition } = carrier.acquisition;
             const parentInput = controllerSource === 'explicit' ? carrier.acquisition : presetAcquisition;
-            const options = withManagedOpaquePresetReview(baseOptions, { machine: opened, opaqueMachine: carrier.admission.machine,
-                parent: { actionId: 'machines.managed.acquire', input: parentInput }, requestId });
-            const action = 'machines.managed.acquire' as const;
-            const client = createManagedMachineControllerClient(driverInput, options, action);
-            return createManagedNativeInvocation({ input: driverInput, options, client, machine: opened, action }, () => opened);
+            const principal = { accountId: requesterAccountId, authority: 'present_user' as const,
+                authentication: { kind: 'account' as const, tokenEpoch: 7 } };
+            const target = { kind: 'machine' as const, machineId: controller.machineId };
+            const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(31) };
+            const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                binding: { serverIdentityId: homeId, accountId: principal.accountId, authentication: principal.authentication,
+                    actionId: 'machines.managed.acquire', requestId, target },
+                material, input: parentInput, randomBytes: tweetnacl.randomBytes });
+            const authorization = sealManagedControllerActionCodecV1({
+                authorization: ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'home-admitted-team-acquire', binding: {
+                    serverIdentityId: homeId, accountId: principal.accountId, authentication: principal.authentication,
+                    custodianAccountId, machineId: controller.machineId, installationId: controller.installationId,
+                    actionId: 'machines.managed.acquire', requestId, target, accountEncryptionMode: 'e2ee',
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+                } }), material, installationPublicKey: signing.publicKey, randomBytes: tweetnacl.randomBytes,
+                invocation: { caller: { kind: 'host' }, surface: 'cli', authority: 'present_user' },
+            });
+            let acquisitionFailure: unknown;
+            let retained = carrier.admission.machine;
+            const bootstrapCredentials: Array<ReturnType<typeof ManagedBootstrapCredentialCreateV1Schema.parse>> = [];
+            const reports: Array<ReturnType<typeof ManagedControllerReportV1Schema.parse>> = [];
+            const previousBrokerRoles = brokeredRoles.length;
+            const post = vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
+                const path = String(url);
+                if (path.endsWith('/admit')) return { status: 200, data: carrier.admission };
+                if (path.endsWith('/submit')) {
+                    retained = ManagedMachineV1Schema.parse({ ...retained, allocation: 'may-exist' });
+                    return { status: 200, data: { machine: retained, submitted: true } };
+                }
+                if (path.endsWith('/create-bootstrap-credential')) {
+                    const request = ManagedBootstrapCredentialCreateV1Schema.parse(body);
+                    bootstrapCredentials.push(request.credential);
+                    retained = ManagedMachineV1Schema.parse({ ...retained, bootstrapCredentialRef: {
+                        kind: 'shared_resource', resourceId: request.credential.resourceId,
+                    } });
+                    return { status: 200, data: { machine: retained } };
+                }
+                if (path.endsWith('/report')) {
+                    const report = ManagedControllerReportV1Schema.parse(body);
+                    reports.push(report);
+                    retained = ManagedMachineV1Schema.parse({ ...retained,
+                        ...(report.result.kind === 'bound' ? { allocation: 'bound' } : {}),
+                        ...(report.observation ? { observation: report.observation } : {}),
+                    });
+                    // The second report is the durable pre-bootstrap checkpoint;
+                    // stop at this genuine Home boundary after native acquisition.
+                    if (reports.length > 1) throw new Error('Fixture stops at native report transport');
+                    return { status: 200, data: { machine: retained } };
+                }
+                throw new Error(`Unexpected brokered-child POST ${new URL(path).pathname}`);
+            });
+            const get = vi.spyOn(axios, 'get').mockImplementation(async url => {
+                const path = String(url);
+                if (path.endsWith('/account/profile')) return { status: 200, data: { id: 'owner' } };
+                if (path.endsWith('/encryption/currentness')) return { status: 200, data: { mode: 'e2ee', version: 1, settingsVersion: 1,
+                    signingKeyFingerprint: null,
+                    contentKeyFingerprint: computeAccountEncryptionMigrateKeyFingerprintV1(carrier.custodianPublicKey), updatedAt: 1 } };
+                if (path.endsWith('/v2/account/settings')) return { status: 200, data: { content: null, version: 1 } };
+                if (path.endsWith('/resources/materials')) {
+                    const credential = bootstrapCredentials[0];
+                    if (!credential) throw new Error('Missing bootstrap credential fixture');
+                    const envelope = credential.keyEnvelopes?.[0];
+                    return { status: 200, data: { resources: [{ resourceId: credential.resourceId,
+                        encryptionMode: credential.encryptionMode, storedContent: credential.storedContent,
+                        recipientEnvelope: envelope ? { encryptedDataKey: envelope.encryptedDataKey,
+                            recipientContentPublicKeyFingerprint: envelope.recipientContentPublicKeyFingerprint } : null,
+                        entry: { ref: formatSharedSavedSecretRefV1(credential.resourceId), source: 'shared_resource', relationship: 'owner',
+                            name: 'Managed machine bootstrap', kind: 'other', ownerAccountId: 'owner', revision: 1, materialStatus: 'ready',
+                            capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } },
+                    }] } };
+                }
+                throw new Error(`Unexpected brokered-child GET ${new URL(path).pathname}`);
+            });
+            const acquisition = createManagedMachineAcquisitionDriver(driverInput);
+            const operations = createHostActionOperationRuntime({ machineId: controller.machineId,
+                resolveAccountId: async () => principal.accountId, generateOperationId: () => 'brokered-acquire-operation' });
+            let acquisitionWork: Promise<JsonValue | null> | undefined;
+            const executeAcquisition = (context: ActionExecutorContext, dispatchedInput: unknown = parentInput) => operations.observeExecution({
+                actionId: 'machines.managed.acquire', input: dispatchedInput, actionRequestId: requestId,
+                execute: async operationContext => {
+                    const admittedContext = { ...context, ...operationContext };
+                    expect(admittedContext.runtimeAccountId).toBe(principal.accountId);
+                    if (requesterAccountId === 'owner') expect(admittedContext.defaultSessionMachineId).toBeUndefined();
+                    acquisitionWork = acquisition.execute('machines.managed.acquire', dispatchedInput, { requestId,
+                        context: admittedContext, signal: admittedContext.signal });
+                    try { return { ok: true, result: await acquisitionWork }; }
+                    catch (error) {
+                        acquisitionFailure = error;
+                        return { ok: false, errorCode: 'internal_error', error: 'Fixture acquisition failure' };
+                    }
+                },
+            });
+
+            let response: Awaited<ReturnType<typeof executeExternalAction>> | undefined;
+            if (requesterAccountId === 'owner') {
+                const ownAuthorization = await projectExternalActionRequesterHttpAuthorization({ authorization,
+                    serverId: 'daemon-local-profile', serverIdentityId: homeId, serverHttpBaseUrl: 'https://home.example',
+                    target, installationId: controller.installationId, privateKey: signing.secretKey,
+                    rootAdmitted: true, isCurrent: async () => true });
+                if (!ownAuthorization) throw new Error('Missing owner root authorization');
+                // Existing ordinary owner entry: its Account and signed target
+                // already agree; no receiving-Machine context fact is required.
+                await executeAcquisition({ runtimeAccountId: principal.accountId, actionRequestId: requestId, surface: 'cli',
+                    externalActionExecutionAuthorization: ownAuthorization, externalActionTarget: target });
+            } else response = await executeExternalAction({ actionId: 'machines.managed.acquire', envelope, principal,
+                executionAuthorization: authorization, currentMachineId, currentAccountId: 'owner',
+                currentInstallationId: controller.installationId, currentServerId: 'daemon-local-profile',
+                currentServerHttpBaseUrl: 'https://home.example',
+                externalActionMachineRequestPrivateKey: signing.secretKey, surface: 'cli',
+                resolveEncryption: async () => ({ serverIdentityId: homeId, material }),
+                // Home's already-admitted root verification is the network boundary.
+                verifyExecutionAuthorization: async () => true,
+                resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: carrier.token, encryption: null } }),
+                executor: { execute: async (action, actionInput, context) => {
+                    expect(action).toBe('machines.managed.acquire');
+                    expect(context).toMatchObject({ runtimeAccountId: principal.accountId, defaultSessionMachineId: currentMachineId });
+                    if (!context) throw new Error('Missing admitted dispatch context');
+                    // The real operation owner supplies acceptance; the real
+                    // acquire owner opens and binds opaque review itself.
+                    return await executeAcquisition(context, actionInput);
+                } },
+            });
+            await acquisitionWork?.catch(() => undefined);
+            get.mockRestore(); post.mockRestore();
+            return { response, acquisitionFailure, reports, brokeredRoles: brokeredRoles.slice(previousBrokerRoles) };
         };
 
-        await expect(createInvocation('owner').invoke('acquire', { launch: opened.launch.choices })).resolves.toEqual(roleResult('acquire'));
-        expect(brokeredRoles).toEqual(['acquire']);
+        const admitted = await invokeOnController();
+        expect(admitted.acquisitionFailure).toMatchObject({ code: 'managed_controller_request_failed' });
+        expect(admitted.brokeredRoles).toEqual(['acquire', 'check', 'options']);
+        expect(admitted.reports).toContainEqual(expect.objectContaining({ result: expect.objectContaining({ kind: 'bound' }) }));
         expect(native.effects()).toBe(0);
 
-        await expect(createInvocation('team-member').invoke('acquire', { launch: opened.launch.choices }))
-            .rejects.toMatchObject({ code: 'credential_scope_denied' });
-        expect(brokeredRoles).toEqual(['acquire']);
+        const owner = await invokeOnController('owner', controller.machineId, 'owner');
+        expect(owner.acquisitionFailure).toMatchObject({ code: 'managed_controller_request_failed' });
+        expect(owner.brokeredRoles).toEqual(['acquire', 'check', 'options']);
+        expect(owner.reports).toContainEqual(expect.objectContaining({ result: expect.objectContaining({ kind: 'bound' }) }));
+
+        const wrongCustodian = await invokeOnController('unrelated-custodian');
+        expect(wrongCustodian.acquisitionFailure).toMatchObject({ code: 'credential_scope_denied' });
+        expect(wrongCustodian.brokeredRoles).toEqual([]);
+        const wrongController = await invokeOnController('owner', 'unrelated-controller');
+        expect(wrongController.response).toMatchObject({ kind: 'invalid_request', errorCode: 'invalid_encrypted_envelope' });
+        expect(wrongController.brokeredRoles).toEqual([]);
         expect(native.effects()).toBe(0);
     });
 });
@@ -2361,10 +2507,10 @@ describe('managed acquisition durable custody', () => {
                 disclosedMember: { service: services[0]!, accountId: 'sharer-private-account' } },
             { source: 'team_resource' as const, resourceId: 'shared-cloud', deliveryMode: 'brokered' as const },
         ];
-        const teamResource = TeamCredentialResourceCatalogEntryV1Schema.parse({ id: 'shared-cloud', teamId: 'team-a',
-            displayName: 'Shared cloud', resourceRevision: 1, readiness: { kind: 'available' }, recoveryAction: null,
+        const teamResource: ConnectedAccountPurposeTeamResource = { id: 'shared-cloud', teamId: 'team-a',
+            displayName: 'Shared cloud', sourceOwnerDisplayName: null, resourceRevision: 1, readiness: { kind: 'available' }, recoveryAction: null,
             mayBroker: true, mayReceiveDirect: true, directMaterialState: 'current', sessionUsePolicy: 'personal_allowed',
-            providerModels: [], connectedServiceSelections: teamSelections, sourcePresentation: { kind: 'connected_service', service: services[0]! } });
+            providerModels: [], connectedServiceSelections: teamSelections, sourcePresentation: { kind: 'connected_service', service: services[0]! } };
         const runtime = createDaemonConnectedAccountPurposeBindingRuntime({
             listTeamResources: async () => availability === 'available' ? [teamResource] : [],
             resolveQualifiedConnectedAccountV4Support: () => 'advertised',

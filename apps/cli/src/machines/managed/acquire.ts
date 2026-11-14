@@ -1067,7 +1067,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
             }
             if (action === 'machines.managed.acquire') {
                 const acquisition = ManagedAcquireInputV1Schema.parse(parsed);
-                const hasAttendedEnrollmentRequirement = (identity: ManagedMachineFullV1['enrollmentIdentity']) => identity.kind === 'dedicatedDaemonUser'
+                const hasAttendedEnrollmentRequirement = (identity: ManagedMachineFullV1['enrollmentIdentity']) => identity?.kind === 'dedicatedDaemonUser'
                     && identity.adminAccessAtCreation === 'ask'
                     && (options.context?.surface === 'agent' || options.context?.surface === 'mcp'
                         || options.context?.authority === 'account_automation' || options.context?.actionCaller?.kind === 'session');
@@ -1102,7 +1102,7 @@ export function createManagedMachineAcquisitionDriver(input: ManagedMachineAcqui
                         if (hasAttendedEnrollmentRequirement(machine.enrollmentIdentity)) {
                             throw new ManagedMachineControllerError('enrollment_attendance_required');
                         }
-                        openedRequiresEnrollmentRead = machine.enrollmentIdentity.kind === 'dedicatedDaemonUser';
+                        openedRequiresEnrollmentRead = machine.enrollmentIdentity?.kind === 'dedicatedDaemonUser';
                         const opaqueMachine = hydrator.structural(machine);
                         admittedExecutionOptions = isManagedOpaquePresetMachineV1(opaqueMachine)
                             ? withManagedOpaquePresetReview(options, { machine, opaqueMachine,

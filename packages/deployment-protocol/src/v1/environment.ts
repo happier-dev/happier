@@ -17,7 +17,7 @@ import type { MachineSecretGrantV1 } from '../secrets/machineSecretGrantV1.js';
 
 export { DeploymentComposeSelectorsV1Schema, DeploymentStoredDefinitionV1Schema, DeploymentSecretBindingSourceV1Schema, DeploymentVariableBindingSourceV1Schema, DeploymentNonSecretVariableBindingSourceV1Schema, EnvironmentVariableBindingV1Schema, EnvironmentVariableBindingInputV1Schema, EnvironmentVariableBindingGrantReferenceV1Schema, StoredAppPresetInputV1Schema, DeploymentTemplateRefV1Schema, StoredAppPresetBindingV1Schema } from '@happier-dev/protocol/deployments/storedAppInputV1';
 export type { EnvironmentVariableBindingV1, EnvironmentVariableBindingInputV1, EnvironmentVariableBindingGrantReferenceV1, StoredAppPresetInputV1 } from '@happier-dev/protocol';
-export { EnvironmentSecretBindingV1Schema, EnvironmentSecretBindingStoredReadV1Schema, EnvironmentSecretBindingInputV1Schema, EnvironmentSecretBindingIdentityV1Schema, EnvironmentDataRoleAddressV1Schema, environmentSecretBindingIdentityV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
+export { EnvironmentSecretBindingV1Schema, EnvironmentSecretBindingStoredReadV1Schema, EnvironmentSecretBindingInputV1Schema, EnvironmentSecretBindingIdentityV1Schema, EnvironmentDataRoleAddressV1Schema, environmentSecretBindingIdentityV1, isSettledEnvironmentSecretBindingV1 } from '@happier-dev/protocol/deployments/storedAppInputV1';
 export type { EnvironmentSecretBindingV1, EnvironmentSecretBindingInputV1, EnvironmentSecretBindingIdentityV1,
     EnvironmentDataRoleAddressV1 } from '@happier-dev/protocol';
 export { DeploymentCreationDefaultsV1Schema, DEFAULT_DEPLOYMENT_RETAIN_PREVIOUS_DEPLOYMENTS_V1, ResolvedDeploymentCreationDefaultsV1Schema, DeploymentCreationDefaultSourceV1Schema } from '@happier-dev/protocol/projects/deploymentCreationDefaultsV1';
@@ -98,10 +98,10 @@ const environmentContentShape = {
     /** Existing Workflow custody locates the authenticated branch-create captures on PR close. */
     previewCreationRunId: z.optional(WorkflowRunIdV1Schema),
 };
-const uniqueBindings = z.refine((content: { bindings: readonly EnvironmentSecretBindingV1[] }) =>
+const uniqueBindings = z.refine<{ bindings: readonly EnvironmentSecretBindingV1[] }>((content) =>
     new Set(content.bindings.map(environmentSecretBindingIdentityV1)).size === content.bindings.length,
     { message: 'Binding purpose identities must be unique.' });
-const uniqueGrantRefs = z.refine((content: { bindings: readonly EnvironmentSecretBindingV1[] }) => {
+const uniqueGrantRefs = z.refine<{ bindings: readonly EnvironmentSecretBindingV1[] }>((content) => {
     const refs = content.bindings.flatMap(binding => binding.purpose === 'variable' && binding.grantRef ? [binding.grantRef] : []);
     return new Set(refs).size === refs.length;
 }, { message: 'Variable Machine-grant references must be unique.' });

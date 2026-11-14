@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { PluginConnectedAccountAuthenticationV2Schema } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
-import { TeamCredentialResourceCatalogEntryV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
-import { listConnectedAccountActionFormOptions } from './purposeInventory.js';
+import { listConnectedAccountActionFormOptions, type ConnectedAccountPurposeTeamResource } from './purposeInventory.js';
 import { captureConnectedAccountInvocationPurposeBinding, createConnectedAccountPurposePort, readDeclaredConnectedAccountActionSelection,
   assertConnectedAccountPurposeTargetAuthorized,
   type ConnectedAccountInvocationPurposeBinding } from './purposeBinding.js';
@@ -24,12 +23,12 @@ describe('Account purpose selection through the shared Credentials owner', () =>
     const direct = { source: 'team_resource' as const, resourceId: 'shared-cloud', deliveryMode: 'direct' as const,
       disclosedMember: { service, accountId: 'sharer-account' } };
     const brokered = { source: 'team_resource' as const, resourceId: 'shared-cloud', deliveryMode: 'brokered' as const };
-    const resource = TeamCredentialResourceCatalogEntryV1Schema.parse({
-      id: 'shared-cloud', teamId: 'team-a', displayName: 'Shared cloud', resourceRevision: 1,
+    const resource: ConnectedAccountPurposeTeamResource = {
+      id: 'shared-cloud', teamId: 'team-a', displayName: 'Shared cloud', sourceOwnerDisplayName: null, resourceRevision: 1,
       readiness: { kind: 'available' }, recoveryAction: null, mayBroker: true, mayReceiveDirect: true,
       directMaterialState: 'current', sessionUsePolicy: 'personal_allowed', providerModels: [],
       connectedServiceSelections: [direct, brokered], sourcePresentation: { kind: 'connected_service', service },
-    });
+    };
     let catalogReads = 0;
     const options = await listConnectedAccountActionFormOptions({ available: true,
       resolveService: async () => ({ service, authentication }), listAccounts: async () => [profile],

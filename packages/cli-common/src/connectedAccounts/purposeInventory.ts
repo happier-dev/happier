@@ -5,6 +5,9 @@ import { PluginError } from '../plugins/errors.js';
 import type { ConnectedAccountActionFormSelectionV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import type { TeamCredentialResourceCatalogEntryV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 
+/** Keyholding hosts open recipient labels before this display-only projection. */
+export type ConnectedAccountPurposeTeamResource = Omit<TeamCredentialResourceCatalogEntryV1, 'displayName'> & Readonly<{ displayName: string | null }>;
+
 /** Existing Action-form inventory boundary, shared with the daemon projection. */
 export const CONNECTED_ACCOUNT_AUTHORIZED_INVENTORY_BOUND = 256;
 const CONNECTED_ACCOUNT_DISPLAY_NAME_MAX_LENGTH = 512;
@@ -15,7 +18,7 @@ export type ConnectedAccountPurposeTargetSource = Readonly<{
     service: QualifiedConnectedAccountRef['service']; authentication: PluginConnectedAccountAuthenticationV2;
   }> | null>;
   listAccounts(service: QualifiedConnectedAccountRef['service'], signal: AbortSignal, observationOnly?: boolean): Promise<readonly QualifiedConnectedAccountProfileV4[]>;
-  listTeamResources?: (signal: AbortSignal) => Promise<readonly TeamCredentialResourceCatalogEntryV1[]>;
+  listTeamResources?: (signal: AbortSignal) => Promise<readonly ConnectedAccountPurposeTeamResource[]>;
   readGroup?: (ref: Readonly<{ service: QualifiedConnectedAccountRef['service']; groupId: string }>, signal: AbortSignal) => Promise<QualifiedConnectedAccountGroupV4 | null>;
 }>;
 
@@ -90,7 +93,7 @@ export async function readConnectedAccountPurposeInventory(
 export function projectConnectedAccountActionFormOptions(input: Readonly<{
   inventory: readonly ConnectedAccountPurposeInventoryEntry[];
   serviceRefs: readonly QualifiedConnectedAccountRef['service'][];
-  teamResources?: readonly TeamCredentialResourceCatalogEntryV1[];
+  teamResources?: readonly ConnectedAccountPurposeTeamResource[];
 }>): readonly Readonly<{ value: ConnectedAccountActionFormSelectionV1; label: string }>[] {
   const options: Array<Readonly<{ value: ConnectedAccountActionFormSelectionV1; label: string }>> = input.inventory
     .filter(entry => entry.state === 'connected').map(entry => Object.freeze({ value: entry.account, label: entry.displayName }));

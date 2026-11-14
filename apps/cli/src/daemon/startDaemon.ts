@@ -1,3 +1,4 @@
+import { createCliPrivateLabelActionOpener } from '@/api/privateLabels';
 import { publishDaemonHostEvent } from './events/publishDaemonHostEvent';
 import { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1 } from '@happier-dev/protocol/plugins/events/machineServiceObservationV1';
 import { readRequesterAccountActionContext } from './sessionEncryption/requesterAccountActionContext';
@@ -1700,6 +1701,7 @@ export async function startDaemon(
       openTeamDirect: teamCredentialDirectMaterialClient.open,
       executeTeamCredentialBrokerAction,
       listTeamResources: createConnectedAccountActionTeamResourceCatalogReader({
+        privateLabelOpen: createCliPrivateLabelActionOpener(credentials.encryption),
         homeDomainAction: (...args) => createAccountServerActionDeps({ token: credentials.token, credentials,
           serverId: configuration.activeServerId, serverHttpBaseUrl: readDaemonHomeServerHttpBaseUrl() }).homeDomainAction!(...args),
       }),

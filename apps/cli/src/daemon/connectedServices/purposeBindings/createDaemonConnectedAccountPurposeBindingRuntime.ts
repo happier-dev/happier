@@ -2,7 +2,7 @@ import { ConnectedAccountUiProjectionEntryV1Schema } from '@happier-dev/protocol
 import { createConnectedAccountPurposeMaterializer, readConnectedAccountPurposeInventory, readConnectedAccountPurposeTargetInventory,
   projectConnectedAccountPurposeTargetInventory, projectConnectedAccountActionFormOptions,
   createConnectedAccountPurposeTargetAccountListing, connectedAccountListedAccountOutOfScope as listedAccountOutOfScope,
-  CONNECTED_ACCOUNT_AUTHORIZED_INVENTORY_BOUND, type ConnectedAccountPurposeInventoryEntry } from '@happier-dev/cli-common/connectedAccounts';
+  CONNECTED_ACCOUNT_AUTHORIZED_INVENTORY_BOUND, type ConnectedAccountPurposeInventoryEntry, type ConnectedAccountPurposeTargetSource } from '@happier-dev/cli-common/connectedAccounts';
 import type { DaemonPluginActionFormConnectedAccountOption } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { RequesterConnectedAccountObservation } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { ConnectedAccountMaterializationRequestSchema } from '@happier-dev/protocol/connect/connected-account-purposes';
@@ -279,7 +279,7 @@ function assertCurrentRegistry(
 export function createDaemonConnectedAccountPurposeBindingRuntime(params: Readonly<{
   credentialOwnerAccountId?: string;
   establishedRuntimeOwner: QualifiedConnectedAccountMaterializationOwner;
-  listTeamResources?: (signal: AbortSignal) => Promise<readonly import('@happier-dev/protocol/teams/credentials/resourceV1').TeamCredentialResourceCatalogEntryV1[]>;
+  listTeamResources?: ConnectedAccountPurposeTargetSource['listTeamResources'];
   openTeamDirect?: TeamCredentialDirectMaterialClient['open'];
   executeTeamCredentialBrokerAction?: ExecuteTeamCredentialBrokerAction;
   workerMachineId?: string;

@@ -191,7 +191,9 @@ function matchesManagedOpaquePresetCustodianProof(proof: ManagedOpaquePresetCust
     || binding.actionId !== parent.actionId
     || binding.accountId !== proof.requesterAccountId
     || binding.custodianAccountId !== proof.custodianAccountId
-    || context.runtimeAccountId !== proof.custodianAccountId
+    || context.runtimeAccountId !== proof.requesterAccountId
+    || (proof.requesterAccountId !== proof.custodianAccountId
+      && context.defaultSessionMachineId !== proof.controller.machineId)
     || context.actionRequestId !== proof.requestId
     || binding.requestId !== proof.requestId
     || binding.serverIdentityId !== proof.homeId
@@ -206,8 +208,8 @@ function matchesManagedOpaquePresetCustodianProof(proof: ManagedOpaquePresetCust
 
 /**
  * Retain Home's exact opaque-preset custody admission on the existing child
- * policy. This is the one exception to requester-runtime equality: a Team
- * requester may have admitted an acquire on its custodian's controller.
+ * policy. The root retains the requester Account; the host's receiving
+ * Machine proves placement when a different Account owns the custodian controller.
  */
 export function retainManagedOpaquePresetCustodianAdmissionV1(policy: HostReviewedChildPolicyV1,
   params: Readonly<{ parent: HostReviewedParentV1; context: ActionExecutorContext;

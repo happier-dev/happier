@@ -43,14 +43,15 @@ describe('opaque preset reviewed child issuer', () => {
     })).toBeNull();
   });
 
-  it('allows an exact signed Team acquire to dispatch its opened provider child on the custodian controller', async () => {
+  it.each(['team-member', 'owner'])('allows an exact signed acquire on the custodian controller for requester %s', async requesterAccountId => {
     const target = { kind: 'machine' as const, machineId: 'controller' };
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'signed-root', binding: {
-      serverIdentityId: 'home', accountId: 'team-member', custodianAccountId: 'owner',
+      serverIdentityId: 'home', accountId: requesterAccountId, custodianAccountId: 'owner',
       authentication: { kind: 'account', tokenEpoch: 1 }, machineId: 'controller', installationId: 'controller-installation',
       actionId: 'machines.managed.acquire', requestId: 'team-request', requestEnvelopeDigest: 'A'.repeat(43), target,
     } });
-    const context: ActionExecutorContext = { surface: 'cli', runtimeAccountId: 'owner', actionRequestId: 'team-request',
+    const context: ActionExecutorContext = { surface: 'cli', runtimeAccountId: requesterAccountId,
+      ...(requesterAccountId !== 'owner' ? { defaultSessionMachineId: 'controller' } : {}), actionRequestId: 'team-request',
       externalActionExecutionAuthorization: authorization, externalActionTarget: target };
     let executions = 0;
     const port = createManagedOpaquePresetReviewedChildPortV1({
@@ -70,13 +71,19 @@ describe('opaque preset reviewed child issuer', () => {
   });
 
   it.each([
-    ['a different controller', 'owner', { homeId: 'home', custodianAccountId: 'owner', requestId: 'team-request',
-      controller: { machineId: 'other-controller', installationId: 'controller-installation' } }],
-    ['a different signed request', 'owner', { homeId: 'home', custodianAccountId: 'owner', requestId: 'other-request',
-      controller: { machineId: 'controller', installationId: 'controller-installation' } }],
-    ['the requester runtime instead of the custodian', 'team-member', { homeId: 'home', custodianAccountId: 'owner', requestId: 'team-request',
-      controller: { machineId: 'controller', installationId: 'controller-installation' } }],
-  ] as const)('refuses a Team custodian child when custody names %s', async (_caseName, runtimeAccountId, custody) => {
+    ['a different controller', 'team-member', { homeId: 'home', custodianAccountId: 'owner', requestId: 'team-request',
+      controller: { machineId: 'other-controller', installationId: 'controller-installation' } }, 'controller'],
+    ['a different signed request', 'team-member', { homeId: 'home', custodianAccountId: 'owner', requestId: 'other-request',
+      controller: { machineId: 'controller', installationId: 'controller-installation' } }, 'controller'],
+    ['a different runtime principal', 'unrelated-account', { homeId: 'home', custodianAccountId: 'owner', requestId: 'team-request',
+      controller: { machineId: 'controller', installationId: 'controller-installation' } }, 'controller'],
+    ['a different custodian', 'team-member', { homeId: 'home', custodianAccountId: 'unrelated-account', requestId: 'team-request',
+      controller: { machineId: 'controller', installationId: 'controller-installation' } }, 'controller'],
+    ['no receiving Machine', 'team-member', { homeId: 'home', custodianAccountId: 'owner', requestId: 'team-request',
+      controller: { machineId: 'controller', installationId: 'controller-installation' } }, undefined],
+    ['a different receiving Machine', 'team-member', { homeId: 'home', custodianAccountId: 'owner', requestId: 'team-request',
+      controller: { machineId: 'controller', installationId: 'controller-installation' } }, 'other-controller'],
+  ] as const)('refuses a Team custodian child when custody names %s', async (_caseName, runtimeAccountId, custody, receivingMachineId) => {
     const target = { kind: 'machine' as const, machineId: 'controller' };
     const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'signed-root', binding: {
       serverIdentityId: 'home', accountId: 'team-member', custodianAccountId: 'owner',
@@ -86,7 +93,7 @@ describe('opaque preset reviewed child issuer', () => {
     let executions = 0;
     const port = createManagedOpaquePresetReviewedChildPortV1({
       parent: { actionId: 'machines.managed.acquire', input: { selection: { kind: 'preset', homeId: 'home', id: 'preset', revision: 4 } } },
-      context: { surface: 'cli', runtimeAccountId, actionRequestId: 'team-request',
+      context: { surface: 'cli', runtimeAccountId, defaultSessionMachineId: receivingMachineId, actionRequestId: 'team-request',
         externalActionExecutionAuthorization: authorization, externalActionTarget: target },
       custody, launch: { provider: { pluginId: 'fixture.compute', localId: 'vm' }, schemaVersion: 1, name: 'Private', choices: {} },
       provisioner, localId: 'acquire', role: 'acquire', execute: async (): Promise<ActionExecuteResult> => {
