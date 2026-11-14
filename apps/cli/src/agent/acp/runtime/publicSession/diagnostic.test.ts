@@ -4,6 +4,7 @@ import { writeAcpTestAgentScript } from '@/agent/acp/testkit/subprocessHarness';
 import { createRuntimeFailureTranscriptProjector } from '@/agent/runtime/session/transcripts/runtimeFailureTranscript';
 import { createPublicAcpSession, type PublicAcpComposerDependencies } from './createPublicAcpSession';
 import { expect, it } from 'vitest';
+import { sanitizeNativeAgentSessionBoundaryError } from '@/agent/runtime/registry/engineRegistry/nativeAgentSessionBoundaryError';
 import { SessionRuntimeIssueV1Schema } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { classifyPrimarySessionRuntimeIssue } from '@/agent/runtime/session/errors/classifyPrimarySessionRuntimeIssue';
 import { createPublicAcpDiagnostic } from './diagnostic';
@@ -32,6 +33,8 @@ it('preserves a more specific native phase and reason instead of replacing them'
 
 
 it.each([false, true, 'recorded' as const])('carries a multiline backend refusal through ACP and transcript publication, then recovers (request dump=%s)', async requestDump => {
+  // Native privacy projection retains the public first line, never request-dump contents.
+  const expectedMessage = requestDump === 'recorded' ? 'Cannot connect to API' : 'Error handling request {';
   await withTempDir('gemini-acp-refusal-', async directory => {
     // Only the external native process and transcript persistence are substituted.
     const script = writeAcpTestAgentScript({ dir: directory, fileName: 'gemini.mjs', source: `
@@ -81,7 +84,7 @@ it.each([false, true, 'recorded' as const])('carries a multiline backend refusal
       if (!failure || failure.kind !== 'turn-failed') throw new Error('Missing turn failure');
       const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', provider: 'gemini', error: failure.diagnostic });
       expect(issue).toMatchObject({ source: 'agent_session_error', failureCause: { phase: 'turn',
-        providerErrorCode: -32603, providerErrorMessage: expect.stringContaining('Cannot connect to API') } });
+        providerErrorCode: -32603, providerErrorMessage: expect.stringContaining(expectedMessage) } });
       if (requestDump === 'recorded') {
         expect(issue.failureCause?.providerErrorMessage).toContain('service=session');
         expect(issue.failureCause?.providerErrorMessage).toContain('errorName=APIError');
@@ -94,13 +97,66 @@ it.each([false, true, 'recorded' as const])('carries a multiline backend refusal
         } } });
       await project(failure);
       expect(writes).toContainEqual(expect.objectContaining({ meta: expect.objectContaining({ runtimeIssueV1:
-        expect.objectContaining({ sanitizedPreview: expect.stringContaining('Cannot connect to API'),
+        expect.objectContaining({ sanitizedPreview: expect.stringContaining(expectedMessage),
           failureCause: expect.objectContaining({ providerErrorCode: -32603,
-            providerErrorMessage: expect.stringContaining('Cannot connect to API') }) }) }) }));
+            providerErrorMessage: expect.stringContaining(expectedMessage) }) }) }) }));
       expect(JSON.stringify(writes)).not.toMatch(/synthetic-private-token|PRIVATE_BODY/);
       await session.send({ inputIds: ['retry'], input: { text: 'Try again' }, delivery: { kind: 'newTurn', turnId: 'retry' } });
       await expect.poll(() => events.some(event => event.kind === 'turn-complete' && event.turnId === 'retry')).toBe(true);
       expect(events).toContainEqual(expect.objectContaining({ kind: 'message-delta', text: 'RECOVERED_OK' }));
     } finally { watch.dispose(); await session.dispose(); }
+  });
+});
+
+
+it('retains native startup detail through public ACP opening and the host sanitizer', async () => {
+  await withTempDir('acp-start-native-cause-', async directory => {
+    const script = writeAcpTestAgentScript({ dir: directory, fileName: 'start-refusal.mjs', source: `
+      import { createInterface } from 'node:readline';
+      for await (const line of createInterface({ input: process.stdin })) {
+        const r = JSON.parse(line); if (r.id === undefined) continue;
+        const response = r.method === 'initialize'
+          ? { result: { protocolVersion: 1, agentCapabilities: {} } }
+          : { error: { code: -32603, message: 'Native onboarding refused token=synthetic-private-token', data: {} } };
+        process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: r.id, ...response }) + '\\n');
+      }
+    ` });
+    const failure: unknown = await createPublicAcpSession({ kind: 'create', sessionId: 'startup', cwd: directory }, {
+      transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'fixture-cli' } },
+    }, {
+      pluginId: 'acme.startup', agentId: 'startup', signal: new AbortController().signal, isCurrent: () => true,
+      systemTools: { resolve: async () => ({ toolId: 'fixture-cli', launch: { kind: 'binary', executablePath: process.execPath, args: [script] } }) },
+      interactions: { async request() { throw new Error('Unexpected interaction'); } },
+      media: { async registerSourceRoot() { throw new Error('Unexpected media'); } },
+      models: { bind: () => ({ dispose() {} }) }, modes: { bind: () => ({ dispose() {} }) },
+    }).then(async session => { await session.dispose(); throw new Error('Unexpected startup success'); }, error => error);
+    const sanitized = sanitizeNativeAgentSessionBoundaryError(failure, true);
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', startupPhase: 'client_start', error: sanitized });
+    expect(issue.failureCause).toMatchObject({ providerErrorCode: -32603,
+      providerErrorMessage: expect.stringContaining('Native onboarding refused') });
+    expect(JSON.stringify({ issue, diagnostic: (sanitized as Error & { diagnostic?: unknown }).diagnostic }))
+      .not.toContain('synthetic-private-token');
+  });
+});
+
+
+
+it('retains the native process refusal when its ACP transport closes during startup', async () => {
+  await withTempDir('acp-closed-native-cause-', async directory => {
+    const script = writeAcpTestAgentScript({ dir: directory, fileName: 'closed.mjs', source:
+      "process.stderr.write('Error: No such device or address (os error 6) token=synthetic-private-token\\n'); process.exit(1);" });
+    const failure: unknown = await createPublicAcpSession({ kind: 'create', sessionId: 'startup', cwd: directory }, {
+      transport: { kind: 'stdio', executable: { kind: 'systemTool', id: 'fixture-cli' } },
+    }, {
+      pluginId: 'acme.startup', agentId: 'startup', signal: new AbortController().signal, isCurrent: () => true,
+      systemTools: { resolve: async () => ({ toolId: 'fixture-cli', launch: { kind: 'binary', executablePath: process.execPath, args: [script] } }) },
+      interactions: { async request() { throw new Error('Unexpected interaction'); } },
+      media: { async registerSourceRoot() { throw new Error('Unexpected media'); } },
+      models: { bind: () => ({ dispose() {} }) }, modes: { bind: () => ({ dispose() {} }) },
+    }).then(async session => { await session.dispose(); throw new Error('Unexpected startup success'); }, error => error);
+    const issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', startupPhase: 'client_start',
+      error: sanitizeNativeAgentSessionBoundaryError(failure, true) });
+    expect(issue.failureCause).toMatchObject({ phase: 'client_start', providerErrorMessage: expect.stringContaining('No such device or address') });
+    expect(JSON.stringify(issue)).not.toContain('synthetic-private-token');
   });
 });

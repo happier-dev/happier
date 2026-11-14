@@ -3274,7 +3274,7 @@ describe('createPublicAcpSession', () => {
       // This fixture supplies only capabilities the native factory consumes, with the real host composer.
       const context = {
         signal,
-        services: { exec: { run } },
+        services: { exec: { run, readEnvironment: () => ({}) } },
         protocols: { acp: { open: (request: AgentSessionOpenRequest, options: AgentAcpRuntimeOptions) =>
           createPublicAcpSession(request, options, fixture.dependencies) } },
       } as unknown as AgentSessionRuntimeContext;
@@ -3341,7 +3341,7 @@ describe('createPublicAcpSession', () => {
           openExecutionRunV1: (request: Parameters<typeof createPublicAcpExecutionRun>[0], options: AgentAcpRuntimeOptions) => createPublicAcpExecutionRun(request, options, fixture.dependencies),
       } };
       const unavailableServices = createUnavailablePluginServices();
-      const services = { ...unavailableServices, exec: { ...unavailableServices.exec, run: runHelp } };
+      const services = { ...unavailableServices, exec: { ...unavailableServices.exec, run: runHelp, readEnvironment: () => ({}) } };
       if (!factory.sessions?.executionRunContextV1) throw new Error('Expected Gemini native Session and Run');
       const sessions = factory.sessions;
       const runs = factory.sessions.executionRunContextV1;

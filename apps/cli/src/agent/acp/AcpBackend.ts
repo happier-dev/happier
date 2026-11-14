@@ -1385,7 +1385,12 @@ export class AcpBackend implements CatalogAcpBackend {
     const failure = !this.disposed && this.connection?.signal.aborted
       && error instanceof Error && error.name !== 'AbortError' && !('code' in error)
       ? Object.assign(new Error(AGENT_STARTUP_FAILURE_PREVIEWS.agent_startup_transport_failed, { cause: error }),
-        { code: 'agent_startup_transport_failed' as const })
+        { code: 'agent_startup_transport_failed' as const,
+          // The closed connection loses the process's native refusal. Reuse the
+          // startup owner's sanitized stderr/exit projection before cleanup.
+          failureCause: { phase: 'client_start' as const, failureReason: 'unclassified_provider_error' as const,
+            ...readNativeStartupFailureDetail(new Error(`${error.message}${this.buildStartupFailureDiagnosticSuffix()}`)) },
+        })
       : error;
     await this.cleanupInitializedProcessConnection({ graceMs: 250 });
     throw failure;
