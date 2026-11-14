@@ -515,11 +515,11 @@ export function DeploymentDatabasePage(
           />
           {headerFacts.length > 0 ? (
             // The headline facts as one ruled sheet of cells (lab dDb), two to a row on a phone.
-            <ItemGroup header="none" testID={`${id}.facts`}>
+            <ItemGroup testID={`${id}.facts`}>
               <FactStrip facts={headerFacts} layout="columns" divided narrow={props.phone} testID={`${id}.facts.strip`} />
             </ItemGroup>
           ) : null}
-          <ItemGroup header="none">
+          <ItemGroup>
             <Item testID={`${id}.query`} title={t('projects.deployments.databaseQuery.title')}
               {...(database.kind === 'managed' && queryDeclarations.state.status === 'loading'
                 ? { subtitle: t('projects.deployments.loading') } : {})}
