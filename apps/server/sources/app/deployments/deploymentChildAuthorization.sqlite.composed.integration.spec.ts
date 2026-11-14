@@ -139,7 +139,8 @@ import { SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1, SessionPendingEnqueueByMac
 import { createDeploymentInTx, transitionDeploymentInTx } from './deploymentService';
 import { setDeploymentEnvironmentControllerInTx } from './deploymentControllerService';
 import { readDeploymentMachineReferencesInTx, readDeploymentReceiptInTx } from './deploymentReadService';
-import { createDeploymentEnvironmentInTx, updateDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
+import { createDeploymentEnvironmentInTx, updateDeploymentEnvironmentInTx, loadDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
+import { canDeployDeploymentEnvironment } from './deploymentAdmission';
 import { readDeploymentAcceptedExecution, hasAcceptedDeploymentReceiptInTx, readAcceptedDeploymentReceiptInTx } from './deploymentAcceptedExecution';
 import { syncEnvironmentSecretGrantsInTx } from './environmentSecretGrantRepository';
 import { readEnvironmentSecretLaunchAdmissionInTx } from './environmentSecretLaunchAdmission';
@@ -1894,7 +1895,16 @@ describe('deployment children retain their controller Action authority', () => {
                 owner: { kind: 'account', accountId: owner.id },
                 audience: [{ principal: { kind: 'account', accountId: f.account.id }, level: 'view' }],
             } });
-            // Creator identity and readable Source access do not grant removal.
+            await db.deploymentEnvironmentDeployer.create({ data: { environmentId: f.environment.id,
+                principalKind: 'account', principalId: f.account.id, createdByAccountId: owner.id } });
+            await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: { deployerMode: 'chosen' } });
+            const deployer = await inTx(tx => loadDeploymentEnvironmentInTx(tx, f.account.id, serverId, f.environment.id));
+            expect(deployer.ok, 'the non-manager must retain readable Source custody').toBe(true);
+            if (!deployer.ok) throw new Error(deployer.error);
+            expect(deployer.admission.canManage).toBe(false);
+            expect(canDeployDeploymentEnvironment(deployer.admission, { ...deployer.row, deletedAt: null }),
+                'the same chosen deployer is authorized while the Environment is active').toBe(true);
+            // Creator identity and chosen deploy rights do not grant retained-resource removal.
             await expect(mint()).rejects.toMatchObject({ code: 'credential_scope_denied' });
         }
         if (f.workflowActionOrigin) {
@@ -2400,7 +2410,7 @@ describe('deployment children retain their controller Action authority', () => {
         await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { activeDeploymentId: f.receipt.id } });
         const grant = { v: 1 as const, kind: 'environmentValues' as const, environmentId: f.environment.id,
             machineId: f.member.id, installationId: f.member.installationId,
-            binding: { purpose: 'variable' as const, phase: 'runtime' as const, name: 'BACKUP_DATABASE' },
+            binding: { purpose: 'variable' as const, phase: 'runtime' as const, grantRef: crypto.randomUUID() },
             sealedContent: 'opaque-installation-encrypted-environment-values' };
         await inTx(tx => syncEnvironmentSecretGrantsInTx(tx, { environmentId: f.environment.id, grants: [grant] }));
         for (const actionId of DEPLOYMENT_BACKUP_ACTION_IDS_V1) {
@@ -2814,7 +2824,7 @@ describe('deployment children retain their controller Action authority', () => {
         // The private storage boundary retains installation ciphertext; this server never opens it.
         const grant = { v: 1 as const, kind: 'environmentValues' as const, environmentId: f.environment.id,
             machineId: f.member.id, installationId: f.member.installationId,
-            binding: { purpose: 'variable' as const, phase: 'runtime' as const, name: 'RESTORE_DATABASE' },
+            binding: { purpose: 'variable' as const, phase: 'runtime' as const, grantRef: crypto.randomUUID() },
             sealedContent: 'opaque-installation-encrypted-environment-values' };
         await inTx(tx => syncEnvironmentSecretGrantsInTx(tx, { environmentId: f.environment.id, grants: [grant] }));
         const actionId = 'deployments.backups.restore' as const;

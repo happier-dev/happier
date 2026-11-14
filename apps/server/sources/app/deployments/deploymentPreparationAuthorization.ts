@@ -689,15 +689,16 @@ export function createDeploymentCandidateArtifactMutationGuard(input: Readonly<{
 }
 
 export type DeploymentPreparationAuthorization = Readonly<{ ok: true }>
-    | Readonly<{ ok: false; code: 'credential_scope_denied' | 'source_changed' }>;
+    | Readonly<{ ok: false; code: 'credential_scope_denied' | 'source_access_denied' | 'source_changed' }>;
 
 async function readCreateSource(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
     admission: CreateAdmission, authentication: DeploymentAuthentication): Promise<DeploymentPreparationAuthorization> {
     if (deploymentPreparationOperationForActionV1(binding.actionId) !== 'create') return { ok: false, code: 'credential_scope_denied' };
     const source = admission.source ? await resolveProjectSourceAccessInTx(tx, binding.accountId, admission.source.id, authentication) : null;
     const owner = admission.newProject?.owner ?? (source?.ok ? source.owner : null);
-    if (!owner || (admission.newProject ? !await canManageProjectSourceOwnerInTx(tx, binding.accountId, owner, authentication)
-        : !source?.ok || !source.canManageOwner)) return { ok: false, code: 'credential_scope_denied' };
+    if (!owner) return { ok: false, code: 'credential_scope_denied' };
+    if (admission.newProject ? !await canManageProjectSourceOwnerInTx(tx, binding.accountId, owner, authentication)
+        : !source?.ok || !source.canManageOwner) return { ok: false, code: 'source_access_denied' };
     if (admission.copyFrom) {
         const copied = await loadDeploymentEnvironmentInTx(tx, binding.accountId, binding.serverIdentityId,
             admission.copyFrom.environmentId, authentication);

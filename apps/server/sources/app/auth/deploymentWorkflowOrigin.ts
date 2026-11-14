@@ -1,9 +1,10 @@
 import type { ExternalActionExecutionAuthorizationBindingV1, ExternalActionTargetV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { AuthTokenAuthenticationEvidenceV1 } from '@happier-dev/protocol/auth/authToken';
 import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1,
+    DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
     DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { isAutomationOriginRunPublisherTx } from '@/app/automations/automationTriggerCauseChain';
-import { canDeployDeploymentEnvironment, admitDeploymentMachineInTx } from '@/app/deployments/deploymentAdmission';
+import { canDeployDeploymentEnvironment, canTeardownDeploymentEnvironment, admitDeploymentMachineInTx } from '@/app/deployments/deploymentAdmission';
 import { loadDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvironmentService';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import type { Tx } from '@/storage/inTx';
@@ -94,11 +95,14 @@ export async function hasCurrentDeploymentWorkflowOriginInTx(reader: Tx, input: 
         input.serverIdentityId ?? await getOrCreateServerIdentityId(), environmentId, {
             authenticationAuthority: 'account_automation', authenticationEvidence: input.authentication?.evidence,
         }, phase === 'execution' ? { environmentId } : undefined);
-    if (!environment.ok || environment.row.deletedAt
-        || phase === 'admission' && !canDeployDeploymentEnvironment(environment.admission, environment.row)
+    const teardown = input.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1;
+    if (!environment.ok || !teardown && environment.row.deletedAt
+        || phase === 'admission' && !(teardown
+            ? canTeardownDeploymentEnvironment(environment.admission, environment.row)
+            : canDeployDeploymentEnvironment(environment.admission, environment.row))
         || scope && (scope.source.id !== environment.admission.source.id || scope.source.revision !== environment.admission.source.revision)
         || environment.row.controllerMachineId !== input.target.machineId) return false;
-    if (input.actionId !== 'deployments.teardown') {
+    if (!teardown) {
         const link = await reader.deploymentTargetLink.findFirst({ where: { id: environment.row.runtimeTargetLinkId ?? '',
             environmentId, role: 'runtime', deletedAt: null, detachedAt: null }, select: { id: true } });
         if (!link) return false;

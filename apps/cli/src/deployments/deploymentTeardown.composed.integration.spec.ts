@@ -341,7 +341,7 @@ describe('deployment teardown through the canonical Action front door', () => {
                 }
             }, 180_000);
 
-        it.skipIf(process.platform === 'win32').each(['detached', 'manual', 'workflow', 'partial', 'healthy', 'network-in-use', 'reviewed-ingress-domains', 'reviewed-ingress-domain-retirement-fails', 'retained-retry-failed', 'retained-retry-unknown'] as const)('tears down the actual retained native generation through the Action without a supplied cleanup boundary (%s)', async caller => withSocketTempDir(async socketDirectory => {
+        it.skipIf(process.platform === 'win32').each(['removed-environment', 'detached', 'manual', 'workflow', 'partial', 'healthy', 'network-in-use', 'reviewed-ingress-domains', 'reviewed-ingress-domain-retirement-fails', 'retained-retry-failed', 'retained-retry-unknown'] as const)('tears down the actual retained native generation through the Action without a supplied cleanup boundary (%s)', async caller => withSocketTempDir(async socketDirectory => {
             vi.stubEnv('HAPPIER_FEATURE_WORKFLOWS__ENABLED', '1');
             const root = await mkdtemp(join(tmpdir(), 'happier-teardown-native-'));
             const previousHome = configuration.happyHomeDir;
@@ -479,7 +479,7 @@ describe('deployment teardown through the canonical Action front door', () => {
                 await docker.seedNetwork(retainedNetworks[1]!); // external, without project ownership
                 const deletedVolume = `${identity.projectName}_delete`;
                 const keptVolume = `${identity.projectName}_keep`;
-                if (retainedRetry || caller === 'detached') {
+                if (retainedRetry || caller === 'detached' || caller === 'removed-environment') {
                     await docker.seedVolume(deletedVolume, identity.projectName);
                     await docker.seedVolume(keptVolume, identity.projectName);
                 }
@@ -545,6 +545,30 @@ describe('deployment teardown through the canonical Action front door', () => {
                         environmentId: detail.environment.id, expectedRevision: detail.environment.revision,
                         requestKey: randomUUID() });
                     expect(refusedDelete, JSON.stringify(refusedDelete)).toMatchObject({ ok: false, errorCode: 'deployment_teardown_required' });
+                }
+                if (caller === 'removed-environment') {
+                    const foreignVolume = 'unrelated_retained_data';
+                    await docker.seedVolume(foreignVolume, `${identity.projectName}-foreign`);
+                    const removed = await fixture.invoke('deployments.teardown', { serverId: home.serverId,
+                        environmentId: detail.environment.id, reason: 'manual', removeEnvironment: true,
+                        requestKey: randomUUID() });
+                    expect(removed, JSON.stringify(removed)).toMatchObject({ ok: true,
+                        result: { ok: true, state: 'succeeded', environmentRemoved: true } });
+                    expect(await docker.readVolumeNames()).toEqual([deletedVolume, keptVolume, foreignVolume].sort());
+                    const source = await db.projectSource.findUniqueOrThrow({ where: { id: detail.environment.projectSourceId } });
+                    const sourceRemoved = await fixture.invoke('projects.sources.delete', { serverId: home.serverId,
+                        sourceId: source.id, expectedRevision: source.revision });
+                    expect(sourceRemoved, JSON.stringify(sourceRemoved)).toMatchObject({ ok: true, result: { ok: true } });
+                    const retainedDelete = await fixture.invoke('deployments.teardown', { serverId: home.serverId,
+                        environmentId: detail.environment.id, targetLinkId: link.id, reason: 'manual',
+                        volumes: [{ name: deletedVolume, disposition: 'delete', confirmation: deletedVolume }],
+                        requestKey: randomUUID() });
+                    expect(retainedDelete, JSON.stringify(retainedDelete)).toMatchObject({ ok: true,
+                        result: { ok: true, state: 'succeeded' } });
+                    expect(await docker.readVolumeNames()).toEqual([keptVolume, foreignVolume].sort());
+                    expect(await db.deploymentEnvironment.findUnique({ where: { id: detail.environment.id } }))
+                        .toMatchObject({ deletedAt: expect.any(Date) });
+                    return;
                 }
                 const input = { serverId: home.serverId, environmentId: detail.environment.id,
                     targetLinkId: link.id, expectedRevision: detail.environment.revision,

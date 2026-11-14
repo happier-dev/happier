@@ -10,7 +10,7 @@ import type { Tx } from '@/storage/inTx';
 import { disableDeploymentEnvironmentAutomationsInTx } from '@/app/automations/automationDeploymentEnvironment';
 import { getActivePrismaRuntime } from '@/storage/prisma';
 import { readTransactionDatabaseTime } from '@/storage/transactionDatabaseTime';
-import { admitDeploymentMachinesInTx, deploymentFailure, canDeployDeploymentEnvironment, type DeploymentAuthentication } from './deploymentAdmission';
+import { admitDeploymentMachinesInTx, deploymentFailure, canDeployDeploymentEnvironment, canTeardownDeploymentEnvironment, type DeploymentAuthentication } from './deploymentAdmission';
 import { loadDeploymentEnvironmentInTx, loadDeploymentEnvironmentCustodyInTx, lockDeploymentEnvironmentInTx, updateDeploymentEnvironmentInTx,
     type AdmittedDeploymentEnvironment } from './deploymentEnvironmentService';
 import { admitDeploymentStoredContentInTx, deploymentContentReference, updateDeploymentStoredContentInTx } from './deploymentStoredContent';
@@ -29,6 +29,12 @@ import { deploymentTeardownMembershipAdmissionSchema, haveDeploymentMembershipRo
 import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 
 type Receipt = NonNullable<Awaited<ReturnType<Tx['deployment']['findUnique']>>>;
+/** Detach and Environment removal retire the association while retaining native resource custody. */
+function isRetainedTeardownTarget(operation: string, environment: Readonly<{ deletedAt: Date | null }>,
+    link: Readonly<{ detachedAt: Date | null }>,
+): boolean {
+    return operation === 'teardown' && (environment.deletedAt !== null || link.detachedAt !== null);
+}
 function retainedDomainTeardownFailure() {
     return { ok: false as const, error: 'unsupported_action' as const, errorCode: 'unsupported_action' as const,
         effectAttempted: false as const, details: { reason: 'retained_domain_custody',
@@ -109,7 +115,8 @@ export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
     if (!admitted) await lockDeploymentEnvironmentInTx(tx, input.environmentId);
     const loaded = admitted ?? await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, input.environmentId, authentication);
     if (!loaded.ok) return loaded;
-    if (!canDeployDeploymentEnvironment(loaded.admission, loaded.row)) return deploymentFailure('deployment_access_denied');
+    if (!(operation === 'teardown' ? canTeardownDeploymentEnvironment(loaded.admission, loaded.row)
+        : canDeployDeploymentEnvironment(loaded.admission, loaded.row))) return deploymentFailure('deployment_access_denied');
     const removeEnvironment = operation === 'teardown' && 'removeEnvironment' in input && input.removeEnvironment === true;
     if (removeEnvironment && !loaded.admission.canManage) return deploymentFailure('deployment_access_denied');
     const rollbackOfDeploymentId = 'deploymentId' in input ? input.deploymentId : null;
@@ -129,9 +136,9 @@ export async function createDeploymentInTx(tx: Tx, actorAccountId: string,
     }
     const link = await tx.deploymentTargetLink.findFirst({ where: { id: input.targetLinkId, environmentId: input.environmentId },
         include: { machines: { orderBy: { position: 'asc' } } } });
-    // Detach retires the association while retaining its native workload custody.
+    // Retired associations still identify the exact retained native resources.
     if (!link || link.revision !== input.expectedTargetLinkRevision
-        || link.deletedAt && !(operation === 'teardown' && link.detachedAt)) return deploymentFailure('deployment_conflict');
+        || link.deletedAt && !isRetainedTeardownTarget(operation, loaded.row, link)) return deploymentFailure('deployment_conflict');
     const requiresBuilder = operation !== 'teardown' && isOwnServerDeploymentTarget(link);
     const accepted = executionBinding ? await resolveDeploymentAcceptedIdentityInTx(tx, {
         binding: executionBinding, actorAccountId, serverId: input.serverId, operation,
@@ -273,9 +280,9 @@ export async function transitionDeploymentInTx(tx: Tx, actorAccountId: string, i
     // The signed captured role owns this admitted receipt write. Grant withdrawal
     // takes effect at the next admission, without stranding its running receipt.
     const loaded = await loadDeploymentEnvironmentCustodyInTx(tx, { serverId: input.serverId,
-        environmentId: input.environmentId, includeRemoved: removedReplay });
+        environmentId: input.environmentId, includeRemoved: row.operation === 'teardown' });
     if (!loaded.ok) return loaded;
-    if ((link.deletedAt || link.detachedAt) && !(row.operation === 'teardown' && link.detachedAt)
+    if ((link.deletedAt || link.detachedAt) && !isRetainedTeardownTarget(row.operation, loaded.row, link)
         && !removedReplay) return deploymentFailure('deployment_conflict');
     if (row.operation !== 'teardown' && loaded.row.runtimeTargetLinkId !== link.id) return deploymentFailure('deployment_conflict');
     const native = executionBinding?.deploymentNativeAdmission;
