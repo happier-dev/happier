@@ -37,7 +37,7 @@ import { isDeploymentWorkspaceListHttpPurpose, isDeploymentPreparationHttpPurpos
     isSetupDeploymentPreparationReadEffect } from '@/app/deployments/deploymentPreparationAuthorization';
 import { isScmRefineInputRpcPurposeV1, verifyScmRefineSavedSessionV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { isProjectWorkspaceSyncOpenActionV1, isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
-import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
+import { isSessionListActionId, isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import { readWorkspaceSyncSourceAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isDeploymentActionIdV1, DeploymentDeployAdmissionInputV1Schema, DeploymentRollbackAdmissionInputV1Schema,
     DeploymentDeployInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentPromoteInputV1Schema,
@@ -2085,10 +2085,11 @@ async function readBotTemplateHttpPurpose(verified: VerifiedExternalActionExecut
 }
 
 /** One readable recursive membership owner serves lifecycle operands and selected-lead observation. */
-async function isInstalledSessionLifecycleSubtreeMember(verified: VerifiedExternalActionExecutionRequest,
+async function isInstalledSessionSubtreeMember(verified: VerifiedExternalActionExecutionRequest,
     sessionId: string): Promise<boolean> {
     const origin = verified.binding.sessionActionOrigin;
-    if (!origin || !isLedSubtreeSessionLifecycleActionId(verified.binding.actionId)) return false;
+    if (!origin || !isLedSubtreeSessionLifecycleActionId(verified.binding.actionId)
+        && !isSessionListActionId(verified.binding.actionId)) return false;
     const members = await inReadSnapshot(tx => readSessionManagedSubtreeSessionIdsInTx(tx, {
         accountId: verified.binding.accountId, rootSessionId: origin.caller.sessionId,
         authentication: { env: process.env, authority: verified.effectiveAuthority,
@@ -2102,10 +2103,11 @@ async function isInstalledSessionLifecycleSubtreeMember(verified: VerifiedExtern
 /** Original roots retain policy reads; lifecycle cascade may select a still-led nested root. */
 async function isInstalledSessionSubtreeObservationHttpPurpose(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof, snapshotBatch: SessionReadBatchRequestV1 | null): Promise<boolean | null> {
-    // Only installed lifecycle observations claim this purpose. Other roots
+    // Installed listing and lifecycle observations share this purpose. Other roots
     // keep their declared selector preparation; non-observations use their effect purpose.
     if (!verified.binding.sessionActionOrigin
-        || !isLedSubtreeSessionLifecycleActionId(verified.binding.actionId) && verified.binding.actionId !== 'session.open'
+        || !isLedSubtreeSessionLifecycleActionId(verified.binding.actionId)
+            && !isSessionListActionId(verified.binding.actionId) && verified.binding.actionId !== 'session.open'
         || !snapshotBatch && proof.path !== '/v2/sessions/query') return null;
     const origin = verified.binding.sessionActionOrigin;
     if (!origin || verified.effectActionId !== verified.binding.actionId
@@ -2115,7 +2117,7 @@ async function isInstalledSessionSubtreeObservationHttpPurpose(verified: Verifie
     const underSessionId = snapshotBatch?.underSessionId ?? (query?.success ? query.data.underSessionId : undefined);
     if (!underSessionId) return false;
     return underSessionId === origin.caller.sessionId
-        || isInstalledSessionLifecycleSubtreeMember(verified, underSessionId);
+        || isInstalledSessionSubtreeMember(verified, underSessionId);
 }
 
 /** Original lifecycle roots consume the same readable recursive subtree as Session listing. */
@@ -2146,7 +2148,7 @@ async function isInstalledSessionLifecycleHttpPurpose(verified: VerifiedSignedCh
             && Object.keys(proof.body).length === 0;
         if (!reads && !mutation) return false;
     }
-    return isInstalledSessionLifecycleSubtreeMember(verified, sessionId);
+    return isInstalledSessionSubtreeMember(verified, sessionId);
 }
 
 /** Post-commit preparation signs its operand read; the Session route retains access admission. */
