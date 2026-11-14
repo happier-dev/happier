@@ -820,6 +820,20 @@ describe('the mounted PostHog selected-evidence control', () => {
 });
 
 describe('the mounted PostHog sensitive code-variable control', () => {
+    it('shows a host permission refusal without treating it as declined confirmation', async () => {
+        const page = await mountDetail(activityResult({}), SAMPLED_EVIDENCE, {
+            readCodeVariables: async () => { throw new PluginError({ code: 'denied' }); },
+        });
+        await selectTab(page, 'Stack trace');
+        await act(async () => {
+            await page.press(await page.getByRole('button', { name: 'Reveal captured variables' }));
+        });
+        await expect(page.getByText('Captured variables are unavailable')).resolves.toBeDefined();
+        await expect(page.getByText('denied')).resolves.toBeDefined();
+        await act(async () => { await page.press(await page.getByRole('button', { name: 'Details' })); });
+        await expect(page.getByText('Code')).resolves.toBeDefined();
+    });
+
     it('keeps reveal available after the host confirmation is cancelled', async () => {
         let attempts = 0;
         const page = await mountDetail(activityResult({}), SAMPLED_EVIDENCE, {

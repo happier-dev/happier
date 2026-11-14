@@ -1,15 +1,22 @@
 // @vitest-environment jsdom
 import { act } from 'react';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
-import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginTestkit, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import type { PluginUiTestkit, PluginTestkit, PluginUiTestkitHostHandlers } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { TRIAGE_SOURCES_READ_CONFIGURED_ACTION_REF_V1, type TriageSourceAccountBindingV1 } from '@happier-dev/triage-protocol/v1';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { activate } from '../../activate.js';
+import { activate as activateAccount } from '../../accountRuntime.js';
+import { PLUGIN_MANIFEST } from '../../manifest.js';
+import { PosthogConfigurationDirectoryResultV1Schema } from '../../connect/configurationContract.js';
+import organizationsPage from '../../api/__fixtures__/organizationsPage.json' with { type: 'json' };
+import projectsPage from '../../api/__fixtures__/organizationProjectsPage.json' with { type: 'json' };
 
 import {
   POSTHOG_ACTION_IDS,
   POSTHOG_PLUGIN_ID,
+  POSTHOG_SOURCE_CONTRIBUTION_ID,
   POSTHOG_SOURCE_DISPLAY_NAME,
 } from '../../posthogContracts.js';
 
@@ -31,6 +38,7 @@ import { renderSurface } from './renderSettingsSurface.js';
 
 const recorded: { action: unknown; input: unknown }[] = [];
 const mounted: PluginUiTestkit[] = [];
+const plugins: PluginTestkit[] = [];
 const accountBinding = {
   purpose: 'posthog-api',
   account: {
@@ -143,7 +151,7 @@ async function executeAction(
   return { kind: 'read', status: 'complete', instances: [] };
 }
 
-async function mountSettings(): Promise<PluginUiTestkit> {
+async function mountSettings(handler?: PluginUiTestkitHostHandlers['executeAction']): Promise<PluginUiTestkit> {
   let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({
@@ -153,7 +161,7 @@ async function mountSettings(): Promise<PluginUiTestkit> {
       surfaceContext: createSurfaceContextFixture(),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: {
-        executeAction: async ({ action, input, signal }) => await executeAction({ action, input, signal }),
+        executeAction: handler ?? (async ({ action, input, signal }) => await executeAction({ action, input, signal })),
       },
     });
   });
@@ -168,9 +176,46 @@ afterEach(async () => {
   configurationResult = null;
   discoveredBinding = accountBinding;
   for (const fixture of mounted.splice(0)) await fixture.dispose();
+  for (const plugin of plugins.splice(0)) await plugin.dispose();
 });
 
 describe('the mounted PostHog PRs & Issues settings page', () => {
+  it('keeps configuration usable and shows the registered directory HTTP failure and issued request ID', async () => {
+    let failDirectory = false;
+    const results: Array<{ requestId: string; result: JsonValue | void }> = [];
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      connectedAccounts: {
+        async listAccounts() { return { status: 'complete', accounts: [{ account: accountBinding.account, displayName: 'PostHog', state: 'connected', connectedAccountOrigins: ['https://eu.posthog.com'], connectedAccountBases: ['https://eu.posthog.com'] }] }; },
+        async materializeListedAccount() { return { kind: 'httpHeaders', headers: { authorization: 'Bearer test-only-placeholder' } }; },
+      },
+      http: { async request(request) {
+        const organizations = new URL(request.url).pathname === '/api/organizations/';
+        const status = organizations && failDirectory ? 429 : 200;
+        const body = status === 429 ? {} : organizations ? { ...organizationsPage, next: null } : { ...projectsPage, next: null };
+        return { status, finalUrl: request.url, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify(body)) };
+      } },
+    } });
+    plugins.push(plugin);
+    const page = await mountSettings(async ({ action, input, requestId, signal }) => {
+      if (typeof action === 'string' || input === undefined) throw new Error('Expected a registered source Action');
+      // The configured-instance store belongs to the host; source Actions run their real handlers.
+      if (action.pluginId !== POSTHOG_PLUGIN_ID) return { kind: 'read', status: 'complete', instances: [] };
+      const result = await plugin.invokeAction(action.localId, input, { surface: 'ui', signal, requestId });
+      if (action.localId === POSTHOG_ACTION_IDS.configuration) results.push({ requestId, result });
+      return result;
+    });
+    const add = await page.findByRole('button', { name: 'Add Example Storefront to PRs & Issues' });
+    failDirectory = true;
+    await act(async () => { await page.press(add); });
+    await vi.waitFor(() => expect(results[0]).toBeDefined());
+    const read = results[0]!;
+    expect(PosthogConfigurationDirectoryResultV1Schema.parse(read.result)).toMatchObject({ kind: 'unavailable', failure: { code: 'posthog/rate-limited', requestId: read.requestId } });
+    await expect(page.getByRole('radio', { name: 'All' })).resolves.toBeDefined();
+    await act(async () => { await page.press(await page.getByRole('button', { name: 'Details' })); });
+    await expect(page.getByText('posthog/rate-limited')).resolves.toBeDefined();
+    await expect(page.getByText(read.requestId)).resolves.toBeDefined();
+  });
+
   it('uses the shared All choice while preserving source-owned window policies', async () => {
     const page = await mountSettings();
     await act(async () => { await page.press(await page.getByRole('button', { name: 'Add Example organization to PRs & Issues' })); });
@@ -209,7 +254,10 @@ describe('the mounted PostHog PRs & Issues settings page', () => {
     ]);
     // Both mount reads are reads: opening a settings page must never configure
     // anything.
-    expect(recorded.map((entry) => entry.input)).toEqual([{ v: 1 }, { v: 1 }]);
+    expect(recorded.map((entry) => entry.input)).toEqual([
+      { v: 1 },
+      { v: 1, source: { pluginId: POSTHOG_PLUGIN_ID, localId: POSTHOG_SOURCE_CONTRIBUTION_ID } },
+    ]);
   });
 
   it('names this source the way its own descriptor spells it', async () => {

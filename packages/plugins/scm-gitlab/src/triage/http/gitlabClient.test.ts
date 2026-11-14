@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { createGitlabHttpFetcher } from '../invocation.js';
+import { projectGitlabSourceFailure } from '../sourceFailure.js';
+import { createStubGitlabTransport } from '../testkit/gitlabTriage.test-support.js';
 import { normalizeGitlabConfiguredBaseUrl } from '../origin.js';
 import {
   authorizeGitlabInvocation,
@@ -52,6 +55,16 @@ const ACCOUNT = Object.freeze({
 });
 
 describe('authorizeGitlabInvocation', () => {
+  it('retains the originating request through real host HTTP and the source failure projector', async () => {
+    const transport = createStubGitlabTransport({ respond: () => ({ status: 429, body: {} }) });
+    const result = await requestGitlabJson({ invocation: AUTHORIZED, url: 'https://gitlab.com/api/v4/projects/3',
+      fetcher: createGitlabHttpFetcher({ ...transport.context, requestId: 'originating-gitlab-read' }),
+      signal: new AbortController().signal, nowMs: NOW_MS });
+    expect(result.kind).toBe('failed');
+    if (result.kind !== 'failed') return;
+    expect(projectGitlabSourceFailure(result.failure)).toMatchObject({ class: 'rateLimit', requestId: 'originating-gitlab-read' });
+  });
+
   it('preserves the shared typed host refusal and Happier request identity', async () => {
     const result = await authorizeGitlabInvocation({
       connectedAccounts: {
@@ -66,6 +79,7 @@ describe('authorizeGitlabInvocation', () => {
     expect(result).toEqual({ kind: 'failed', failure: {
       class: 'authentication', code: 'connected_service_credential_reconnect_required',
       detail: 'Happier Request ID: host-request-1',
+      requestId: 'host-request-1',
     } });
   });
 

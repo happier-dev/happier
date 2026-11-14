@@ -1,4 +1,6 @@
 import { bitbucketPortableAuthentication } from './auth/connectedAccountRuntime.js';
+import { BITBUCKET_HOSTING_OPERATION_ACTIONS_V1 } from './hostingActions.js';
+import { BITBUCKET_HOSTING_OPERATION_ACTION_IDS_V1 } from './hostingActionIds.js';
 import { BITBUCKET_ACCOUNT_ACTIONS, BITBUCKET_NETWORK_HOST_ACCESS_ID, sources, READ_HOST_ACCESS, INSTANCE_ACCOUNT_BINDINGS } from './accountActions.js';
 export { BITBUCKET_NETWORK_HOST_ACCESS_ID } from './accountActions.js';
 /**
@@ -180,6 +182,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
     ],
   },
   actions: {
+    ...BITBUCKET_HOSTING_OPERATION_ACTIONS_V1,
     ...BITBUCKET_ACCOUNT_ACTIONS,
     [BITBUCKET_TRIAGE_ACTION_IDS.prepareReviewWorkspace]: {
       title: 'Prepare a Bitbucket Cloud pull-request review workspace',
@@ -222,6 +225,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
         kind: 'bitbucket',
         capabilities: ['detect', 'clone', 'fetch', 'push', 'pullRequest'],
         authService: BITBUCKET_CONNECTED_ACCOUNT_SERVICE_ID,
+        operationActions: BITBUCKET_HOSTING_OPERATION_ACTION_IDS_V1,
       },
       runtime: {
         adapter: {

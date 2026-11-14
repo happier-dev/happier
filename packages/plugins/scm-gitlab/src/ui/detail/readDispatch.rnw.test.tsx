@@ -28,10 +28,14 @@ function launchInput() {
       observedAtMs: 1_760_000_700_000, locator: { v: 1, routingToken: 'group/project' },
       snapshot: { v: 1, title: 'Read dispatch', scopeLabel: 'group/project', state: { presentation: 'active', nativeLabel: 'Opened' }, facts: [] }, viewer: { involvement: [] } }, linkedSessions: [] });
 }
-async function mountRegisteredChanges(misbind: false | 'approvals' | 'comparison' = false) {
+async function mountRegisteredChanges(misbind: false | 'approvals' | 'comparison' = false, status: number | 'transport' | 'invalidJson' | 'invalidShape' = 200) {
   let release!: () => void;
   const pending = new Promise<void>(resolve => { release = resolve; });
   const transport = createStubGitlabTransport({ respond: request => {
+    if (status === 'transport') throw new Error('Network unavailable');
+    if (status === 'invalidJson') return { status: 200, bodyText: '{' };
+    if (status === 'invalidShape') return { status: 200, body: {} };
+    if (status !== 200) return { status, body: {} };
     if (request.url.includes('/diffs')) return { status: 200, body: [{ old_path: 'src/dispatch.ts', new_path: 'src/dispatch.ts', new_file: false, renamed_file: false, deleted_file: false }] };
     if (request.url.endsWith('/approvals')) return { status: 200, body: { approvals_required: 1, approvals_left: 1, approved_by: [] } };
     if (request.url.endsWith('/approval_rules')) return { status: 200, body: [] };
@@ -50,6 +54,7 @@ async function mountRegisteredChanges(misbind: false | 'approvals' | 'comparison
   } });
   plugins.push(plugin);
   const producerResults: unknown[] = [];
+  const issuedRequestIds: string[] = [];
   let detail!: PluginUiTestkit;
   await act(async () => {
     detail = await createPluginUiTestkit({ identity: { instanceId: 'gitlab-dispatch', mountNonce: 'gitlab-dispatch-mount' },
@@ -59,22 +64,38 @@ async function mountRegisteredChanges(misbind: false | 'approvals' | 'comparison
         if (body !== null && !React.isValidElement(body)) throw new Error('Expected native detail');
         return body;
       }), launchInput: launchInput(), surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-      handlers: { executeAction: async ({ action, input }) => {
+      handlers: { executeAction: async ({ action, input, requestId }) => {
         if (typeof action === 'string' || action.pluginId !== GITLAB_PLUGIN_ID || input === undefined) throw new Error('Wrong Action owner');
+        issuedRequestIds.push(requestId);
         const changes = action.localId === GITLAB_TRIAGE_DETAIL_ACTION_IDS.listChanges;
         const request = misbind && changes ? GitlabChangesInputV1Schema.parse(input) : null;
         const result = await plugin.invokeAction(request === null || misbind === 'comparison' ? action.localId : GITLAB_TRIAGE_DETAIL_ACTION_IDS.readApprovals,
           request === null ? input : misbind === 'comparison' ? { ...request, comparison: true }
-            : { v: 1, instance: request.instance, localRef: request.localRef, routingToken: request.routingToken }, { surface: 'ui' });
+            : { v: 1, instance: request.instance, localRef: request.localRef, routingToken: request.routingToken }, { surface: 'ui', requestId });
         if (changes) producerResults.push(result);
         return result;
       } },
     });
   });
   mounted.push(detail);
-  return { detail, producerResults, release };
+  return { detail, producerResults, release, issuedRequestIds };
 }
 describe('registered GitLab detail read dispatch', () => {
+  it.each([
+    [429, 'rateLimit', 'too-many-requests'],
+    ['transport', 'transient', 'transport-failed'],
+    ['invalidJson', 'unsupportedContract', 'undecodable-body'],
+    ['invalidShape', 'unsupportedContract', 'gitlab-detail-response-invalid'],
+  ] as const)('shows the registered provider %s failure code and the actual read request identity in Details', async (status, failureClass, code) => {
+    const { detail, producerResults, release, issuedRequestIds } = await mountRegisteredChanges(false, status);
+    await act(async () => { release(); });
+    expect(GitlabChangesResultV1Schema.parse(producerResults[0])).toMatchObject({ kind: 'unavailable', failure: { class: failureClass, code, requestId: issuedRequestIds[0] } });
+    const details = await detail.getByRole('button', { name: 'Details' });
+    await act(async () => { await detail.press(details); });
+    await expect(detail.getByText('Code')).resolves.toBeDefined();
+    await expect(detail.getByText('Request ID')).resolves.toBeDefined();
+    await expect(detail.getByText(issuedRequestIds[0]!)).resolves.toBeDefined();
+  });
   it('retains pending and settled changes across equivalent parsed launch input', async () => {
     const { detail, producerResults, release } = await mountRegisteredChanges();
     await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); });

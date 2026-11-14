@@ -1,5 +1,5 @@
 import type { PluginActionExecution } from '@happier-dev/plugin-ui';
-import { projectTriageSourceReadFailureV1 } from '@happier-dev/triage-sources/runtime';
+import { projectTriageSourceReadFailureV1, type TriageSourceReadFailureV1 } from '@happier-dev/triage-sources/runtime';
 import type { TriageDetailSurfaceInputV1, TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
 /** A result the surface could not read is a contract break, not an empty read. */
@@ -14,8 +14,8 @@ export const ROUTE_UNAVAILABLE: TriageSourceFailureV1 = Object.freeze({
   code: 'gitlab-locator-unusable',
 });
 
-export function dispatchFailure(execution: ExecuteResult, fallbackCode: string): TriageSourceFailureV1 {
-  return projectTriageSourceReadFailureV1(execution, fallbackCode, 'gitlab-detail-read-not-dispatched');
+export function dispatchFailure(execution: ExecuteResult, fallbackCode: string, sourceFailure?: TriageSourceFailureV1): TriageSourceReadFailureV1 {
+  return projectTriageSourceReadFailureV1(execution, fallbackCode, 'gitlab-detail-read-not-dispatched', sourceFailure);
 }
 
 export type ExecuteResult = PluginActionExecution;

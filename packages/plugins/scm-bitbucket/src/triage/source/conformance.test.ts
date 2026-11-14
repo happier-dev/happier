@@ -167,12 +167,17 @@ describe('Bitbucket Triage source contribution conformance', () => {
     const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0];
     expect(Object.keys(contribution?.operations ?? {}).sort())
       .toEqual(['get', 'listInstances', 'prepareReviewWorkspace', 'scan', 'verifyReviewWorkspace']);
-    // And the mounted-only list is exact: discovery, the authoritative read and
-    // the five detail planes, and nothing else.
+    // Source reads own this mounted-only subset. Unrelated hosting operations
+    // have their own declarations and conformance tests.
+    const sourceActionIds = new Set<string>([
+      ...Object.values(BITBUCKET_TRIAGE_ACTION_IDS),
+      ...Object.values(BITBUCKET_TRIAGE_DETAIL_ACTION_IDS),
+      ...Object.values(BITBUCKET_TRIAGE_MUTATION_ACTION_IDS),
+    ]);
     expect(
       PLUGIN_MANIFEST.contributes.actions
-        .filter((action) => action.placementBindings !== undefined
-          && action.placementBindings.length === 0)
+        .filter((action) => sourceActionIds.has(action.id)
+          && action.placementBindings !== undefined && action.placementBindings.length === 0)
         .map((action) => action.id)
         .sort(),
     ).toEqual([

@@ -86,6 +86,15 @@ function createBitbucketPullRequest(overrides?: Readonly<Record<string, unknown>
 }
 
 describe('Bitbucket API adapter', () => {
+  it('projects only the accepted merge commit rather than the source head', async () => {
+    const { mapBitbucketPullRequest } = await import('./mapping.js');
+    const merge_commit = { hash: 'a'.repeat(40) };
+    const project = (state: string, mergeCommit: unknown) => mapBitbucketPullRequest(provider,
+      createBitbucketPullRequest({ state, merge_commit: mergeCommit }));
+    expect(project('MERGED', merge_commit)).toMatchObject({ headSha: 'head-sha', mergeCommitSha: 'a'.repeat(40) });
+    expect(project('MERGED', null)).not.toHaveProperty('mergeCommitSha');
+    expect(project('OPEN', merge_commit)).not.toHaveProperty('mergeCommitSha');
+  });
   it.each([
     { nativeState: 'OPEN', state: 'draft' },
     { nativeState: 'MERGED', state: 'merged' },

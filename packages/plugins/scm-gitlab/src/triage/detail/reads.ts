@@ -91,8 +91,11 @@ const RESPONSE_SHAPE_INVALID: GitlabFailure = Object.freeze({
   code: 'gitlab-detail-response-invalid',
 });
 
-function failed<T>(failure: GitlabFailure): GitlabDetailReadResultV1<T> {
-  return Object.freeze({ ok: false as const, failure });
+function failed<T>(failure: GitlabFailure, requestId?: string): GitlabDetailReadResultV1<T> {
+  return Object.freeze({
+    ok: false as const,
+    failure: failure.requestId || !requestId ? failure : Object.freeze({ ...failure, requestId }),
+  });
 }
 
 function succeeded<T>(value: T): GitlabDetailReadResultV1<T> {
@@ -129,7 +132,7 @@ async function readPagedCollection<TProjection extends GitlabPageProjectionV1<un
     nowMs: dependencies.nowMs,
   });
   if (result.kind === 'failed') return failed(result.failure);
-  if (!Array.isArray(result.response.body)) return failed(RESPONSE_SHAPE_INVALID);
+  if (!Array.isArray(result.response.body)) return failed(RESPONSE_SHAPE_INVALID, result.response.requestId);
 
   const projected = input.project(result.response.body);
   const selection = selectGitlabNextPageUrl(
@@ -281,13 +284,13 @@ export async function readGitlabComparisonMetadata(
     fetcher: dependencies.fetcher, signal: dependencies.signal, nowMs: dependencies.nowMs });
   if (result.kind === 'failed') return failed(result.failure);
   const body = result.response.body;
-  if (typeof body !== 'object' || body === null || Array.isArray(body)) return failed(RESPONSE_SHAPE_INVALID);
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return failed(RESPONSE_SHAPE_INVALID, result.response.requestId);
   const identity = buildGitlabEntryIdentity({ kindId: 'merge-request', origin: route.origin,
     row: body as Readonly<Record<string, unknown>> });
   if (identity.kind !== 'built' || identity.identity.collisionScope !== collisionScope
-    || identity.identity.entryId !== route.iid || identity.locator.repositoryKey !== route.repositoryKey) return failed(RESPONSE_SHAPE_INVALID);
+    || identity.identity.entryId !== route.iid || identity.locator.repositoryKey !== route.repositoryKey) return failed(RESPONSE_SHAPE_INVALID, result.response.requestId);
   const endpoints = readGitlabComparisonEndpoints(body);
-  return endpoints === null ? failed({ class: 'unsupportedContract', code: 'gitlab-comparison-endpoints-unavailable' }) : succeeded(endpoints);
+  return endpoints === null ? failed({ class: 'unsupportedContract', code: 'gitlab-comparison-endpoints-unavailable' }, result.response.requestId) : succeeded(endpoints);
 }
 
 /**
@@ -323,7 +326,7 @@ export type GitlabPipelinesReadV1 = GitlabDetailPageV1<GitlabProjectedPipelineRo
   /** `null` whenever the per-job breakdown could not be read, never zeroes. */
   rollup: GitlabPipelineRollupV1 | null;
   rollupPipelineId: string | null;
-  jobs: ReturnType<typeof projectGitlabPipelineJobs> & Readonly<{ total: number | null }>;
+  jobs: ReturnType<typeof projectGitlabPipelineJobs> & Readonly<{ total: number | null; failure?: GitlabFailure }>;
 }>;
 
 async function readCompleteGitlabPipelineRollup(
@@ -339,7 +342,10 @@ async function readCompleteGitlabPipelineRollup(
   const rows: GitlabPipelinesReadV1['jobs']['rows'][number][] = [];
   let projectionTruncated = false;
   let incomplete = false;
-  const partial = () => ({ rollup: null, jobs: { rows, total: null, incomplete: true, projectionTruncated } });
+  const partial = (failure?: GitlabFailure) => ({
+    rollup: null,
+    jobs: { rows, total: null, incomplete: true, projectionTruncated, ...(failure === undefined ? {} : { failure }) },
+  });
 
   while (!visited.has(url)) {
     visited.add(url);
@@ -350,14 +356,17 @@ async function readCompleteGitlabPipelineRollup(
       signal: dependencies.signal,
       nowMs: dependencies.nowMs,
     });
-    if (jobs.kind === 'failed') return partial();
+    if (jobs.kind === 'failed') return partial(jobs.failure);
 
     const projected = projectGitlabPipelineJobs(jobs.response.body);
     rows.push(...projected.rows);
     incomplete ||= projected.incomplete;
     projectionTruncated ||= projected.projectionTruncated;
     const pageRollup = projectGitlabPipelineRollup(jobs.response.body);
-    if (pageRollup === null) return partial();
+    if (pageRollup === null) return partial({
+      ...RESPONSE_SHAPE_INVALID,
+      ...(jobs.response.requestId === undefined ? {} : { requestId: jobs.response.requestId }),
+    });
     total += Array.isArray(jobs.response.body) ? jobs.response.body.length : 0;
     failingCount += pageRollup.failingCount;
     runningCount += pageRollup.runningCount;
@@ -380,13 +389,29 @@ async function readCompleteGitlabPipelineRollup(
   return partial();
 }
 
+/** One page of native pipeline statuses, without reading their jobs. */
+export async function readGitlabPipelineStatusesPage(
+  input: Readonly<{
+    route: GitlabDetailRouteInputV1;
+    perPage: number;
+    position: GitlabDetailPagePositionV1;
+  }>,
+  dependencies: GitlabDetailReadDependenciesV1,
+): Promise<GitlabDetailReadResultV1<GitlabDetailPageV1<GitlabProjectedPipelineRowV1>>> {
+  const url = resolveUrl(
+    input.position,
+    () => buildGitlabMergeRequestPipelinesUrl(input.route, input.perPage),
+  );
+  if (!url.ok) return failed(url.failure);
+  return readPagedCollection(dependencies, {
+    url: url.url,
+    project: (body) => projectGitlabPipelineRows(body, GITLAB_DETAIL_BOUNDS_V1, input.perPage),
+  });
+}
+
 /**
- * One page of the merge request's pipelines, plus the newest pipeline's rollup.
- *
- * The rollup needs a second read — GitLab's pipeline row carries a status but no
- * per-job breakdown — and that read is allowed to fail without taking the page
- * with it. What it may never do is answer `0 failing` when it failed: `null` and
- * `{0,0,0}` are different answers and this is where they stay different.
+ * Explicit Checks demand adds the newest pipeline's full per-job breakdown.
+ * A failed breakdown remains unknown rather than becoming zero failing jobs.
  */
 export async function readGitlabPipelinesPage(
   input: Readonly<{
@@ -396,15 +421,7 @@ export async function readGitlabPipelinesPage(
   }>,
   dependencies: GitlabDetailReadDependenciesV1,
 ): Promise<GitlabDetailReadResultV1<GitlabPipelinesReadV1>> {
-  const url = resolveUrl(
-    input.position,
-    () => buildGitlabMergeRequestPipelinesUrl(input.route, input.perPage),
-  );
-  if (!url.ok) return failed(url.failure);
-  const page = await readPagedCollection(dependencies, {
-    url: url.url,
-    project: (body) => projectGitlabPipelineRows(body, GITLAB_DETAIL_BOUNDS_V1, input.perPage),
-  });
+  const page = await readGitlabPipelineStatusesPage(input, dependencies);
   if (!page.ok) return failed(page.failure);
 
   const newest = page.value.rows[0];
@@ -490,7 +507,7 @@ export async function readGitlabApprovalsSurface(
   });
   if (stateResponse.kind === 'failed') return failed(stateResponse.failure);
   const state = projectGitlabApprovalState(stateResponse.response.body, GITLAB_DETAIL_BOUNDS_V1);
-  if (state === null) return failed(RESPONSE_SHAPE_INVALID);
+  if (state === null) return failed(RESPONSE_SHAPE_INVALID, stateResponse.response.requestId);
 
   const rulesResponse = await requestGitlabJson({
     invocation: dependencies.invocation,
@@ -517,7 +534,13 @@ function projectApprovalRulesRead(
       : Object.freeze({ kind: 'unavailable' as const, failure: response.failure });
   }
   if (!Array.isArray(response.response.body)) {
-    return Object.freeze({ kind: 'unavailable' as const, failure: RESPONSE_SHAPE_INVALID });
+    return Object.freeze({
+      kind: 'unavailable' as const,
+      failure: Object.freeze({
+        ...RESPONSE_SHAPE_INVALID,
+        ...(response.response.requestId === undefined ? {} : { requestId: response.response.requestId }),
+      }),
+    });
   }
   const projected = projectGitlabApprovalRules(response.response.body, GITLAB_DETAIL_BOUNDS_V1);
   return Object.freeze({

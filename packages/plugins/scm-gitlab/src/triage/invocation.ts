@@ -23,6 +23,7 @@ const HTTP_TEXT_DECODER = new TextDecoder();
 
 export type GitlabHostReadContext = Readonly<{
   signal: PluginAccountActionContext['signal'];
+  requestId?: PluginAccountActionContext['requestId'];
   services: Pick<PluginAccountActionContext['services'], 'http' | 'connectedAccounts'>;
 }>;
 
@@ -38,6 +39,7 @@ export function createGitlabHttpFetcher(context: GitlabHostReadContext): GitlabH
     }, { signal: init.signal });
     return {
       status: response.status,
+      ...(context.requestId === undefined ? {} : { requestId: context.requestId }),
       statusText: '',
       headers: createGitlabResponseHeaders(response.headers),
       text: async () => HTTP_TEXT_DECODER.decode(response.body),

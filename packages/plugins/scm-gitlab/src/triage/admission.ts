@@ -151,6 +151,7 @@ export async function admitGitlabItemInvocation(
   if (!identity.ok) return identity;
 
   const authorized = await authorizeGitlabConfiguredInstance({
+    ...(context.requestId === undefined ? {} : { requestId: context.requestId }),
     instance: input.instance,
     connectedAccounts: readGitlabConnectedAccounts(context),
     signal: context.signal,

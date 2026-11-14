@@ -59,6 +59,10 @@ export function mapGitlabMergeRequest(
   const diffRefs = isRecord(raw.diff_refs) ? raw.diff_refs : null;
   const baseSha = diffRefs ? readString(diffRefs.base_sha) : null;
   const headSha = diffRefs ? readString(diffRefs.head_sha) : null;
+  const state = mapGitlabMergeRequestState(raw.state);
+  const mergeCommitSha = state === 'merged'
+    ? readString(raw.merge_commit_sha) ?? readString(raw.squash_commit_sha)
+    : null;
   const createdAtMs = parseTimestampMs(raw.created_at);
   const closedAtMs = parseTimestampMs(raw.closed_at);
   const mergedAtMs = parseTimestampMs(raw.merged_at);
@@ -75,9 +79,10 @@ export function mapGitlabMergeRequest(
     ...(headRepositoryNameWithOwner && providerNameWithOwner
       ? { isCrossRepository: !sameNameWithOwner(headRepositoryNameWithOwner, providerNameWithOwner) }
       : {}),
-    state: mapGitlabMergeRequestState(raw.state),
+    state,
     ...(baseSha !== null ? { baseSha } : {}),
     ...(headSha !== null ? { headSha } : {}),
+    ...(mergeCommitSha !== null ? { mergeCommitSha } : {}),
     ...(createdAtMs !== null ? { createdAtMs } : {}),
     ...(closedAtMs !== null ? { closedAtMs } : {}),
     ...(mergedAtMs !== null ? { mergedAtMs } : {}),

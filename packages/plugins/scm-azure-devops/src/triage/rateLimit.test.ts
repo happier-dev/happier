@@ -101,6 +101,8 @@ describe('resolveAzureDevOpsRetryNotBeforeMs', () => {
     // `TriageSourceFailureV1.retryNotBeforeMs` is declared integer, and the header is
     // provider text rather than a validated integer.
     const evidence = readAzureDevOpsRateLimitEvidence({ 'retry-after': '1.5005' });
+    expect(evidence.retryAfterSeconds).toBe(1.5005);
+    expect(evidence.retryAfterAtEpochMs).toBeNull();
     expect(resolveAzureDevOpsRetryNotBeforeMs(evidence, NOW_MS)).toBe(NOW_MS + 1_501);
   });
 });

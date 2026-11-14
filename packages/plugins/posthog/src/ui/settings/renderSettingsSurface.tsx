@@ -17,9 +17,12 @@
 import * as React from 'react';
 import {
   isTriageSourceConnectedAccountInstanceV1,
+  type TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
+import { projectTriageSourceReadFailureV1 } from '@happier-dev/triage-sources/runtime';
 import {
   createTriageSourceSettingsSurface,
+  TriageSourceReadFailureDetails,
   type TriageSourceSettingsDraftFieldsPropsV1,
 } from '@happier-dev/triage-sources/ui';
 import {
@@ -154,7 +157,7 @@ function PosthogDraftFields({ draft, busy, onChange }: TriageSourceSettingsDraft
   const [detailWindow, setDetailWindow] = React.useState(() => windowDraft(configuration?.detailWindowPolicy));
   const [organizations, setOrganizations] = React.useState<readonly Organization[]>([]);
   const [next, setNext] = React.useState<string | undefined>();
-  const [message, setMessage] = React.useState<string | null>(null);
+  const [notice, setNotice] = React.useState<Readonly<{ message: string; failure?: TriageSourceFailureV1 }> | null>(null);
   const [loading, setLoading] = React.useState(false);
   const pending = React.useRef<AbortController | null>(null);
   const action = React.useMemo(() => ({ pluginId: POSTHOG_PLUGIN_ID, localId: POSTHOG_ACTION_IDS.configuration }), []);
@@ -172,13 +175,16 @@ function PosthogDraftFields({ draft, busy, onChange }: TriageSourceSettingsDraft
       if (controller.signal.aborted) return;
       const parsed = execution.status === 'success' ? PosthogConfigurationDirectoryResultV1Schema.safeParse(execution.result) : null;
       if (!parsed?.success || parsed.data.kind !== 'organizations') {
-        setMessage(text('plugins.posthog.ui.settings.readFailed', 'PostHog could not read this configuration page.'));
+        const failure = parsed?.success && parsed.data.kind === 'unavailable' ? parsed.data.failure
+          : { class: 'unsupportedContract', code: 'posthog/response-unreadable' } as const;
+        setNotice({ message: text('plugins.posthog.ui.settings.readFailed', 'PostHog could not read this configuration page.'),
+          failure: projectTriageSourceReadFailureV1(execution, failure.code, failure.code, failure) });
         return;
       }
       const page = parsed.data;
       setOrganizations((previous) => cursor === undefined ? page.rows : [...previous, ...page.rows]);
       setNext(page.next);
-      setMessage(page.incomplete ? text('plugins.posthog.ui.settings.partial', 'Some provider rows or paging information could not be read; the visible choices remain usable.') : null);
+      setNotice(page.incomplete ? { message: text('plugins.posthog.ui.settings.partial', 'Some provider rows or paging information could not be read; the visible choices remain usable.') } : null);
     } finally {
       if (pending.current === controller) { pending.current = null; setLoading(false); }
     }
@@ -202,7 +208,8 @@ function PosthogDraftFields({ draft, busy, onChange }: TriageSourceSettingsDraft
     ? organizations : [{ organizationUuid: configuration.organizationUuid, displayName: draft.locator?.displayLabel ?? configuration.organizationUuid,
       localInstanceKey: draft.localInstanceKey }, ...organizations];
   return <Stack gap="medium">
-    {message === null ? null : <Banner tone="warning" title={text('plugins.posthog.ui.settings.attention', 'Configuration needs attention')} description={message} />}
+    {notice === null ? null : <><Banner tone="warning" title={text('plugins.posthog.ui.settings.attention', 'Configuration needs attention')} description={notice.message} />
+      <TriageSourceReadFailureDetails failures={[notice.failure ?? null]} /></>}
     <Form.Select label={text('plugins.posthog.ui.settings.organization', 'Organization')}
       options={options.map((row) => ({ value: row.organizationUuid, label: row.displayName }))}
       value={configuration.organizationUuid} disabled={busy}

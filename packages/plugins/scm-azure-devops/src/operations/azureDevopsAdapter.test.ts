@@ -96,6 +96,13 @@ function getOpenOrReusePullRequest(adapter: ReturnType<typeof createAzureDevopsO
 }
 
 describe('Azure DevOps operations adapter', () => {
+  it('projects the completed merge commit and never treats an active test merge or source head as published', () => {
+    const lastMergeCommit = { commitId: 'a'.repeat(40) };
+    expect(mapAzurePullRequest(provider, createAzurePullRequest({ status: 'completed', lastMergeCommit })))
+      .toMatchObject({ headSha: 'source-sha', mergeCommitSha: 'a'.repeat(40) });
+    expect(mapAzurePullRequest(provider, createAzurePullRequest({ status: 'completed' }))).not.toHaveProperty('mergeCommitSha');
+    expect(mapAzurePullRequest(provider, createAzurePullRequest({ status: 'active', lastMergeCommit }))).not.toHaveProperty('mergeCommitSha');
+  });
   it.each([
     { status: 'active', state: 'draft' },
     { status: 'completed', state: 'merged' },

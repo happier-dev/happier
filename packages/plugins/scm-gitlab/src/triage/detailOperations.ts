@@ -103,6 +103,7 @@ export async function readGitlabOverview(
   if (!parsed.success) return unavailable(INVALID_INPUT_FAILURE);
   const request = parsed.data;
   const result = await getGitlabTriageEntry({
+    ...(context.requestId === undefined ? {} : { requestId: context.requestId }),
     get: {
       v: 1,
       instance: request.instance,
@@ -136,6 +137,7 @@ export async function readGitlabPullRequestStatus(input: unknown, context: Plugi
   const identity = admitGitlabItemIdentity({ localRef: parsed.data.localRef, admissibleKinds: ['merge-request'] });
   if (!identity.ok) return unavailable(identity.failure);
   const read = await readGitlabTriageEntryForOverview({
+    ...(context.requestId === undefined ? {} : { requestId: context.requestId }),
     get: parsed.data, connectedAccounts: readGitlabConnectedAccounts(context),
     fetcher: createGitlabHttpFetcher(context), signal: context.signal, nowMs: Date.now(),
   });
@@ -158,6 +160,7 @@ export async function readGitlabPullRequestStatus(input: unknown, context: Plugi
       failed: rollup?.failingCount ?? (jobs.total === 0 ? 0 : null),
       pending: rollup?.runningCount ?? (jobs.total === 0 ? 0 : null),
       total: jobs.total, rows: [...jobs.rows], incomplete: jobs.incomplete,
+      ...(jobs.failure === undefined ? {} : { failure: jobs.failure }),
     };
   }
   let review: TriagePullRequestStatusV1['review'] = null;

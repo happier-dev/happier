@@ -8,6 +8,7 @@
  */
 
 import type { GitlabConfiguredOrigin } from './origin.js';
+import { gitlabRepositoryEventSourceInstanceId } from '@happier-dev/plugin-sdk/scm';
 import { encodeGitlabConfiguredOriginScope } from './origin.js';
 import type { GitlabEntryIdentity, GitlabEntryLocator, GitlabKindId } from './types.js';
 
@@ -123,7 +124,7 @@ export function buildGitlabEntryIdentity(input: GitlabIdentityInput): GitlabIden
 
 /** Project selection and entry identity share this exact immutable project namespace. */
 export function buildGitlabProjectCollisionScope(origin: GitlabConfiguredOrigin, projectId: string): string {
-  return `gitlab:${encodeGitlabConfiguredOriginScope(origin)}:${projectId}`;
+  return gitlabRepositoryEventSourceInstanceId(origin.normalized, projectId);
 }
 
 /** Comparison repository identity includes the deployment, as native entry identity does. */

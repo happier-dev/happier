@@ -1,3 +1,4 @@
+import { parseRetryAfterValue } from '@happier-dev/plugin-sdk/connected-accounts';
 import { readTriageResponseHeaderV1 } from '@happier-dev/triage-protocol/v1';
 
 import type { AzureDevOpsRateLimitEvidence } from './types.js';
@@ -12,12 +13,15 @@ export function readAzureDevOpsRateLimitEvidence(
   headers: Readonly<Record<string, string>>,
 ): AzureDevOpsRateLimitEvidence {
   const retryAfter = readTriageResponseHeaderV1(headers, 'retry-after');
-  const retryAfterSeconds = readNonNegativeNumber(retryAfter);
+  const retryAfterEvidence = parseRetryAfterValue(retryAfter);
+  const retryAfterSeconds = retryAfter !== null && /^\d+(?:\.\d+)?$/u.test(retryAfter)
+    ? retryAfterEvidence.seconds
+    : null;
   return {
     retryAfterSeconds,
     // RFC 9110 also permits an HTTP-date; Azure documents delta-seconds but the date form
     // is honored rather than discarded.
-    retryAfterAtEpochMs: retryAfterSeconds === null ? readHttpDate(retryAfter) : null,
+    retryAfterAtEpochMs: retryAfterSeconds === null ? retryAfterEvidence.dateMs : null,
     resetEpochSeconds: readNonNegativeNumber(readTriageResponseHeaderV1(headers, 'x-ratelimit-reset')),
     remaining: readNonNegativeNumber(readTriageResponseHeaderV1(headers, 'x-ratelimit-remaining')),
     limit: readNonNegativeNumber(readTriageResponseHeaderV1(headers, 'x-ratelimit-limit')),
@@ -65,11 +69,5 @@ function readNonNegativeNumber(raw: string | null): number | null {
   if (raw === null) return null;
   if (!/^\d+(?:\.\d+)?$/u.test(raw)) return null;
   const parsed = Number(raw);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function readHttpDate(raw: string | null): number | null {
-  if (raw === null) return null;
-  const parsed = Date.parse(raw);
   return Number.isFinite(parsed) ? parsed : null;
 }

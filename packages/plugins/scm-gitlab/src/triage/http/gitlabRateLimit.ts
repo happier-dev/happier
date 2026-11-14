@@ -16,6 +16,8 @@
  * deadline rather than an invented one.
  */
 
+import { parseRetryAfterValue } from '@happier-dev/plugin-sdk/connected-accounts';
+
 import type { GitlabResponseHeaders } from './gitlabHeaders.js';
 
 export type GitlabRetryEvidenceSource = 'retry-after' | 'ratelimit-reset' | 'ratelimit-reset-time';
@@ -25,14 +27,6 @@ export type GitlabRetryEvidence = Readonly<{
   retryNotBeforeMs: number;
   source: GitlabRetryEvidenceSource;
 }>;
-
-function readDeltaSeconds(raw: string | null): number | null {
-  if (raw === null) return null;
-  const trimmed = raw.trim();
-  if (!/^\d+$/u.test(trimmed)) return null;
-  const seconds = Number(trimmed);
-  return Number.isFinite(seconds) ? seconds : null;
-}
 
 function readEpochSeconds(raw: string | null): number | null {
   if (raw === null) return null;
@@ -65,7 +59,10 @@ export function readGitlabRetryEvidence(
   nowMs: number,
 ): GitlabRetryEvidence | null {
   // `Retry-After` is the response's own instruction and wins when present.
-  const retryAfterSeconds = readDeltaSeconds(headers.get('retry-after'));
+  const retryAfter = headers.get('retry-after')?.trim();
+  const retryAfterSeconds = retryAfter !== undefined && /^\d+$/u.test(retryAfter)
+    ? parseRetryAfterValue(retryAfter).seconds
+    : null;
   if (retryAfterSeconds !== null) {
     const retryNotBeforeMs = nowMs + retryAfterSeconds * 1000;
     if (Number.isSafeInteger(retryNotBeforeMs)) {

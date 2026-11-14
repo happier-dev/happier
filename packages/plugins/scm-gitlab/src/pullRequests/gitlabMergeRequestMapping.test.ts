@@ -26,6 +26,7 @@ describe('GitLab merge request mapping', () => {
       merged_at: '2026-10-02T12:00:00Z',
       closed_at: null,
       diff_refs: { base_sha: 'base', head_sha: 'head' },
+      merge_commit_sha: 'a'.repeat(40),
       description: 'body should not appear in summaries',
     })).toEqual({
       provider,
@@ -40,7 +41,19 @@ describe('GitLab merge request mapping', () => {
       mergedAtMs: Date.parse('2026-10-02T12:00:00Z'),
       baseSha: 'base',
       headSha: 'head',
+      mergeCommitSha: 'a'.repeat(40),
     });
+  });
+
+  it('uses the actual squash commit when no merge commit exists and never substitutes the source head', () => {
+    const raw = {
+      iid: 17, title: 'Squashed MR', web_url: 'https://gitlab.com/happier-dev/mobile/app/-/merge_requests/17',
+      source_branch: 'feature', target_branch: 'main', state: 'merged',
+      diff_refs: { head_sha: 'c'.repeat(40) }, merge_commit_sha: null, squash_commit_sha: 'b'.repeat(40),
+    };
+    expect(mapGitlabMergeRequest(provider, raw)).toMatchObject({ headSha: 'c'.repeat(40), mergeCommitSha: 'b'.repeat(40) });
+    expect(mapGitlabMergeRequest(provider, { ...raw, squash_commit_sha: null })).not.toHaveProperty('mergeCommitSha');
+    expect(mapGitlabMergeRequest(provider, { ...raw, state: 'opened' })).not.toHaveProperty('mergeCommitSha');
   });
 
   it('keeps native close time separate from absent merge time and omits invalid dates', () => {

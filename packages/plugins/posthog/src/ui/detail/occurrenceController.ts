@@ -17,6 +17,7 @@
 
 import { useCallback, useEffect, useMemo, useReducer, useRef } from 'react';
 import { useExecutePluginAction, useTabPanelActivity } from '@happier-dev/plugin-ui';
+import { projectTriageSourceReadFailureV1 } from '@happier-dev/triage-sources/runtime';
 import { useTriageDetailRequest } from '@happier-dev/triage-sources/ui';
 import {
     triagePagedPanelInitialState,
@@ -276,22 +277,17 @@ export function usePosthogOccurrenceController(
             dispatch({
                 kind: 'pageFailed',
                 token,
-                failure: {
-                    class: execution.status === 'error' ? 'transient' : 'unknown',
-                    code: execution.status === 'idle' || execution.status === 'pending'
-                        ? 'posthog/sampled-read-not-dispatched'
-                        : execution.code,
-                },
+                failure: projectTriageSourceReadFailureV1(execution, MALFORMED_RESULT_FAILURE.code, 'posthog/sampled-read-not-dispatched'),
             });
             return;
         }
         const parsed = readSampledResult(execution.result);
         if (parsed === null) {
-            dispatch({ kind: 'pageFailed', token, failure: MALFORMED_RESULT_FAILURE });
+            dispatch({ kind: 'pageFailed', token, failure: projectTriageSourceReadFailureV1(execution, MALFORMED_RESULT_FAILURE.code, 'posthog/sampled-read-not-dispatched', MALFORMED_RESULT_FAILURE) });
             return;
         }
         if (parsed.kind === 'unavailable') {
-            dispatch({ kind: 'pageFailed', token, failure: parsed.failure });
+            dispatch({ kind: 'pageFailed', token, failure: projectTriageSourceReadFailureV1(execution, parsed.failure.code, 'posthog/sampled-read-not-dispatched', parsed.failure) });
             return;
         }
         dispatch({

@@ -124,6 +124,7 @@ export function mapAzurePullRequest(
   const isDraft = typeof raw.isDraft === 'boolean' ? raw.isDraft : undefined;
   const author = readAuthor(raw);
   const state = mapAzurePullRequestState(raw);
+  const mergeCommitSha = state === 'merged' ? readNestedString(raw, 'lastMergeCommit', 'commitId') : null;
   const createdAtMs = parseTimestampMs(raw.creationDate);
   const closedAtMs = parseTimestampMs(raw.closedDate);
 
@@ -139,6 +140,7 @@ export function mapAzurePullRequest(
     isCrossRepository: headRepositoryNameWithOwner.toLowerCase() !== coordinates.nameWithOwner.toLowerCase(),
     ...(headSha !== null ? { headSha } : {}),
     ...(baseSha !== null ? { baseSha } : {}),
+    ...(mergeCommitSha !== null ? { mergeCommitSha } : {}),
     state,
     ...(createdAtMs !== null ? { createdAtMs } : {}),
     ...(closedAtMs !== null ? { closedAtMs } : {}),

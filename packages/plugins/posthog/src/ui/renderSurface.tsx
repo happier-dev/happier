@@ -22,6 +22,8 @@
 
 import * as React from 'react';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
+import { TriageSourceReadFailureDetails } from '@happier-dev/triage-sources/ui';
+import { projectTriageSourceReadFailureV1 } from '@happier-dev/triage-sources/runtime';
 import { TriageActivityTimeline, TriageDetailInstance, TriageDetailPanel, TriageDetailStory, useTriageEvidenceDisclosure, useTriageSourcePanelIntentV1, triageEvidenceDisclosureActionResultV1, type TriageActivityEventV1, type TriageSourcePanelCommandV1 } from '@happier-dev/triage-sources/ui';
 import { TriageDetailSpread, TriageSourceWrites, useTriageDetailPanelOpener, useTriageDetailRequest, type TriageDetailSpreadTileV1, type TriageDetailTrendV1, type TriageSourceWriteV1 } from '@happier-dev/triage-sources/ui';
 import {
@@ -197,19 +199,27 @@ function useLiveEntry(
             if (execution.status !== 'success') {
                 setLive({
                     kind: 'failed',
-                    failure: {
-                        class: execution.status === 'error' ? 'transient' : 'unknown',
-                        code: execution.status === 'idle' || execution.status === 'pending'
-                            ? 'posthog/detail-get-not-dispatched'
-                            : execution.code,
-                    },
+                    failure: projectTriageSourceReadFailureV1(execution, LIVE_RESULT_UNREADABLE.code, 'posthog/detail-get-not-dispatched'),
                 });
                 return;
             }
             const parsed = PosthogNativeOverviewResultV1Schema.safeParse(execution.result);
-            setLive(parsed.success
-                ? { kind: 'settled', ...parsed.data }
-                : { kind: 'failed', failure: LIVE_RESULT_UNREADABLE });
+            if (!parsed.success) {
+                setLive({ kind: 'failed', failure: projectTriageSourceReadFailureV1(execution, LIVE_RESULT_UNREADABLE.code, 'posthog/detail-get-not-dispatched', LIVE_RESULT_UNREADABLE) });
+                return;
+            }
+            const result = parsed.data;
+            setLive({ kind: 'settled', ...result,
+                observation: result.observation.kind === 'unresolved'
+                    ? { ...result.observation, failure: projectTriageSourceReadFailureV1(execution, result.observation.failure.code, 'posthog/detail-get-not-dispatched', result.observation.failure) }
+                    : result.observation,
+                ...(result.assignment?.kind !== 'unavailable' ? {} : {
+                    assignment: { ...result.assignment, failure: projectTriageSourceReadFailureV1(execution, result.assignment.failure.code, 'posthog/detail-get-not-dispatched', result.assignment.failure) },
+                }),
+                ...(result.enrichmentFailure === undefined ? {} : {
+                    enrichmentFailure: projectTriageSourceReadFailureV1(execution, result.enrichmentFailure.code, 'posthog/detail-get-not-dispatched', result.enrichmentFailure),
+                }),
+            });
         })();
         return () => {
             signal.removeEventListener('abort', abort);
@@ -424,21 +434,21 @@ function OverviewPanel({
                 */}
                 {model.read.kind === 'unavailable' || model.read.kind === 'refused'
                     ? (
-                        <Banner
+                        <><Banner
                             tone="warning"
                             title="Showing the last observation"
                             titleKey="plugins.posthog.ui.lastObservation"
                             description={lastObservationDescription(model.read, text)}
-                        />
+                        /><TriageSourceReadFailureDetails failures={[model.read.kind === 'unavailable' ? model.read.failure : null]} /></>
                     )
                     : null}
                 {model.read.kind === 'materialized' && model.read.enrichmentFailure !== undefined
-                    ? <Banner
+                    ? <><Banner
                         tone="warning"
                         title="Query enrichment is unavailable"
                         titleKey="plugins.posthog.ui.enrichmentUnavailable"
                         description={model.read.enrichmentFailure.code}
-                    />
+                    /><TriageSourceReadFailureDetails failures={[model.read.enrichmentFailure]} /></>
                     : null}
                 {model.nativeStateNow === null
                     ? null
@@ -580,6 +590,7 @@ function SampledUnavailable({
             description={failure === null
                 ? text('plugins.posthog.ui.readFailed', 'PostHog could not complete this read.')
                 : failure.code}
+            action={<TriageSourceReadFailureDetails failures={[failure]} />}
         />
     );
 }
@@ -595,12 +606,12 @@ function SampledFailureNotice({
     failure,
 }: Readonly<{ failure: TriageSourceFailureV1 }>): React.ReactElement {
     return (
-        <Banner
+        <><Banner
             tone="warning"
             title="Showing the sample read so far"
             titleKey="plugins.posthog.ui.partialSample"
             description={failure.code}
-        />
+        /><TriageSourceReadFailureDetails failures={[failure]} /></>
     );
 }
 
@@ -866,6 +877,7 @@ function StackTracePanel({
                                                 title="Captured variables are unavailable"
                                                 titleKey="plugins.posthog.ui.codeVariables.unavailable"
                                                 description={codeVariables.state.failure.code}
+                                                action={<TriageSourceReadFailureDetails failures={[codeVariables.state.failure]} />}
                                             />
                                         )
                                         : (
@@ -1089,6 +1101,7 @@ function ActivityPanel({
                 description={state.failure === null
                     ? text('plugins.posthog.ui.readFailed', 'PostHog could not complete this read.')
                     : state.failure.code}
+                action={<TriageSourceReadFailureDetails failures={[state.failure]} />}
             />
         );
     }
@@ -1104,12 +1117,12 @@ function ActivityPanel({
                 ? {}
                 : {
                     header: (
-                        <Banner
+                        <><Banner
                             tone="warning"
                             title="Showing the activity read so far"
                             titleKey="plugins.posthog.ui.partialActivity"
                             description={state.failure.code}
-                        />
+                        /><TriageSourceReadFailureDetails failures={[state.failure]} /></>
                     ),
                 })}
             empty={state.omittedRowCount === 0 && state.incomplete === null

@@ -20,6 +20,19 @@ describe('readGitlabRetryEvidence', () => {
     });
   });
 
+  it('keeps Retry-After limited to integer seconds and preserves reset fallback', () => {
+    for (const value of ['1.5', '-5', 'Tue, 05 Jan 2021 11:00:00 GMT']) {
+      expect(readGitlabRetryEvidence(
+        createGitlabResponseHeaders({ 'Retry-After': value }),
+        NOW_MS,
+      )).toBeNull();
+      expect(readGitlabRetryEvidence(
+        createGitlabResponseHeaders({ 'Retry-After': value, 'RateLimit-Reset': '1609844400' }),
+        NOW_MS,
+      )).toEqual({ retryNotBeforeMs: 1_609_844_400_000, source: 'ratelimit-reset' });
+    }
+  });
+
   it('reads RateLimit-Reset as absolute epoch seconds, not a relative delay', () => {
     const evidence = readGitlabRetryEvidence(
       createGitlabResponseHeaders({ 'ratelimit-reset': '1609844400' }),

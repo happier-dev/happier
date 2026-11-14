@@ -31,10 +31,12 @@ import {
   normalizeTriageSingleLineV1,
   projectTriageDisplayTextV1,
   type TriagePullRequestStatusV1,
+  type TriageRowFactV1,
 } from '@happier-dev/triage-protocol/v1';
 
 import { readGitlabDiscussionResolution } from '../mapping/discussionResolution.js';
 import type { GitlabComparisonFileV1, GitlabPatchEvidenceV1 } from './contracts.js';
+import type { GitlabDetailPageV1 } from './reads.js';
 import {
   GITLAB_MAX_DETAIL_PAGE_SIZE_V1,
   type GitlabActivityEventSourceV1,
@@ -500,6 +502,34 @@ const PASSING_JOB_STATUSES = new Set(['success']);
 
 type GitlabJobRowV1 = NonNullable<TriagePullRequestStatusV1['checks']>['rows'][number];
 
+function projectGitlabCheckState(status: string | undefined): GitlabJobRowV1['state'] {
+  const normalized = status?.trim() ?? '';
+  return PASSING_JOB_STATUSES.has(normalized) ? 'passed'
+    : FAILING_JOB_STATUSES.has(normalized) ? 'failed'
+      : RUNNING_JOB_STATUSES.has(normalized) ? 'pending'
+        : normalized === 'canceled' || normalized === 'skipped' || normalized === 'manual' ? 'neutral' : 'unknown';
+}
+
+/** A native pipeline status proves its summary, never a count of its jobs. */
+export function projectGitlabOpeningChecksFact(
+  page: GitlabDetailPageV1<GitlabProjectedPipelineRowV1> | null,
+  headSha: string | null,
+): TriageRowFactV1 {
+  let value: TriageRowFactV1['value'] = { kind: 'status', value: 'Checks unavailable', tone: 'warning' };
+  if (page !== null && headSha !== null && page.omittedRowCount === 0) {
+    const newest = page.rows[0];
+    if (newest === undefined && page.nextUrl === null && page.incomplete === null) {
+      value = { kind: 'status', value: 'No pipelines', tone: 'neutral' };
+    } else if (newest?.sha === headSha) {
+      const state = projectGitlabCheckState(newest.status);
+      if (state === 'passed') value = { kind: 'status', value: 'All passing', tone: 'success' };
+      else if (state === 'failed') value = { kind: 'status', value: 'Failing', tone: 'danger' };
+      else if (state === 'pending') value = { kind: 'status', value: 'Running', tone: 'info' };
+    }
+  }
+  return { id: 'gitlab/checks', importance: 'primary', value };
+}
+
 export function projectGitlabPipelineJobs(body: unknown): Readonly<{
   rows: readonly GitlabJobRowV1[];
   incomplete: boolean;
@@ -516,11 +546,7 @@ export function projectGitlabPipelineJobs(body: unknown): Readonly<{
       incomplete = true;
       continue;
     }
-    const status = readString(candidate.status)?.trim();
-    const state = PASSING_JOB_STATUSES.has(status ?? '') ? 'passed'
-      : FAILING_JOB_STATUSES.has(status ?? '') ? 'failed'
-        : RUNNING_JOB_STATUSES.has(status ?? '') ? 'pending'
-          : status === 'canceled' || status === 'skipped' || status === 'manual' ? 'neutral' : 'unknown';
+    const state = projectGitlabCheckState(readString(candidate.status) ?? undefined);
     const startedAtMs = readTimestampMs(candidate.started_at);
     const completedAtMs = readTimestampMs(candidate.finished_at);
     const detailsUrl = boundedWebUrl(candidate.web_url, GITLAB_DETAIL_BOUNDS_V1);
@@ -550,10 +576,10 @@ export function projectGitlabPipelineRollup(body: unknown): GitlabPipelineRollup
     if (!isRecord(candidate)) return null;
     const status = readString(candidate.status);
     if (status === null) return null;
-    const normalized = status.trim();
-    if (FAILING_JOB_STATUSES.has(normalized)) failingCount += 1;
-    else if (RUNNING_JOB_STATUSES.has(normalized)) runningCount += 1;
-    else if (PASSING_JOB_STATUSES.has(normalized)) passingCount += 1;
+    const state = projectGitlabCheckState(status);
+    if (state === 'failed') failingCount += 1;
+    else if (state === 'pending') runningCount += 1;
+    else if (state === 'passed') passingCount += 1;
     // `canceled`, `skipped`, `manual` are neither failing, running nor passing,
     // and are deliberately counted in none of the three.
   }

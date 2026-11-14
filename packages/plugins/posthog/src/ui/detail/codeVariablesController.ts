@@ -1,7 +1,8 @@
 /** Active-Stack-panel ownership for host-admitted Tier-3 code variables. */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useExecutePluginAction, useTabPanelActivity } from '@happier-dev/plugin-ui';
+import { isPluginActionConfirmationDeclined, useExecutePluginAction, useTabPanelActivity } from '@happier-dev/plugin-ui';
+import { projectTriageSourceReadFailureV1 } from '@happier-dev/triage-sources/runtime';
 import type { TriageDetailSurfaceInputV1, TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
 import { POSTHOG_ACTION_IDS, POSTHOG_PLUGIN_ID } from '../../posthogContracts.js';
@@ -81,20 +82,14 @@ export function usePosthogCodeVariablesController(
             }, { signal: activeSignal });
             if (activeSignal.aborted || token !== generation.current) return;
             pending.current = false;
-            // The mounted host projects a declined confirmation as denied.
-            if (execution.status === 'error' && execution.code === 'denied') {
+            if (isPluginActionConfirmationDeclined(execution)) {
                 setState(IDLE);
                 return;
             }
             if (execution.status !== 'success') {
                 setState({
                     kind: 'unavailable',
-                    failure: {
-                        class: execution.status === 'error' ? 'transient' : 'unknown',
-                        code: execution.status === 'idle' || execution.status === 'pending'
-                            ? 'posthog/code-variables-not-dispatched'
-                            : execution.code,
-                    },
+                    failure: projectTriageSourceReadFailureV1(execution, 'posthog/code-variables-result-unreadable', 'posthog/code-variables-not-dispatched'),
                 });
                 return;
             }
@@ -102,15 +97,15 @@ export function usePosthogCodeVariablesController(
             if (!parsed.success) {
                 setState({
                     kind: 'unavailable',
-                    failure: {
+                    failure: projectTriageSourceReadFailureV1(execution, 'posthog/code-variables-result-unreadable', 'posthog/code-variables-not-dispatched', {
                         class: 'unsupportedContract',
                         code: 'posthog/code-variables-result-unreadable',
-                    },
+                    }),
                 });
                 return;
             }
             setState(parsed.data.kind === 'unavailable'
-                ? { kind: 'unavailable', failure: parsed.data.failure }
+                ? { kind: 'unavailable', failure: projectTriageSourceReadFailureV1(execution, parsed.data.failure.code, 'posthog/code-variables-not-dispatched', parsed.data.failure) }
                 : {
                     kind: 'revealed',
                     variablesText: parsed.data.variablesText,

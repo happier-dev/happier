@@ -50,10 +50,13 @@ import { projectGitlabPresentObservation } from './sourceObservation.js';
 import { buildGitlabItemUrl } from './detail/routes.js';
 import type { GitlabDetailRouteInputV1 } from './detail/routes.js';
 import type { GitlabDetailReadDependenciesV1 } from './detail/reads.js';
+import { readGitlabPipelineStatusesPage } from './detail/reads.js';
+import { projectGitlabOpeningChecksFact } from './detail/projection.js';
 
 type GitlabOverviewReadContext = Readonly<{ route: GitlabDetailRouteInputV1; dependencies: GitlabDetailReadDependenciesV1 }>;
 
 export type GitlabGetOperationInput = Readonly<{
+  requestId?: string;
   get: TriageGetInputV1;
   connectedAccounts: GitlabConnectedAccounts;
   fetcher: GitlabHttpFetcher;
@@ -64,8 +67,11 @@ export type GitlabGetOperationInput = Readonly<{
 function unresolved(
   localRef: TriageSourceEntryLocalRefV1,
   failure: TriageSourceFailureV1,
+  requestId?: string,
 ): TriageGetResultV1 {
-  return { kind: 'unresolved', localRef, failure };
+  return { kind: 'unresolved', localRef,
+    failure: requestId === undefined || failure.requestId !== undefined ? failure : { ...failure, requestId },
+  };
 }
 
 async function executeGitlabTriageEntry(
@@ -78,15 +84,16 @@ async function executeGitlabTriageEntry(
     localRef,
     admissibleKinds: GITLAB_TRIAGE_KIND_IDS,
   });
-  if (!identity.ok) return unresolved(localRef, identity.failure);
+  if (!identity.ok) return unresolved(localRef, identity.failure, input.requestId);
 
   const authorized = await authorizeGitlabConfiguredInstance({
+    ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
     instance: input.get.instance,
     connectedAccounts: input.connectedAccounts,
     signal: input.signal,
   });
   if (authorized.kind === 'failed') {
-    return unresolved(localRef, projectGitlabSourceFailure(authorized.failure));
+    return unresolved(localRef, projectGitlabSourceFailure(authorized.failure), input.requestId);
   }
   const { origin, invocation } = authorized.resolved;
 
@@ -95,7 +102,7 @@ async function executeGitlabTriageEntry(
     origin,
     input.get.lastKnownLocator?.routingToken,
   );
-  if (!routed.ok) return unresolved(localRef, routed.failure);
+  if (!routed.ok) return unresolved(localRef, routed.failure, input.requestId);
   const { kindId } = routed.route;
 
   const item = await requestGitlabJson({
@@ -114,9 +121,9 @@ async function executeGitlabTriageEntry(
         class: 'permission',
         code: 'item-unreadable',
         detail: 'GitLab answers a hidden, confidential and removed item identically.',
-      });
+      }, input.requestId);
     }
-    return unresolved(localRef, projectGitlabSourceFailure(item.failure));
+    return unresolved(localRef, projectGitlabSourceFailure(item.failure), input.requestId);
   }
 
   const decoded = decodeGitlabRow({ kindId, origin, row: item.response.body });
@@ -125,7 +132,7 @@ async function executeGitlabTriageEntry(
       class: 'unsupportedContract',
       code: 'undecodable-item',
       detail: `The GitLab response could not be identified: ${decoded.reason}.`,
-    });
+    }, input.requestId);
   }
   const entry = decoded.entry;
   if (entry.identity.collisionScope !== localRef.collisionScope
@@ -135,14 +142,14 @@ async function executeGitlabTriageEntry(
       class: 'unsupportedContract',
       code: 'identity-mismatch',
       detail: 'GitLab answered with an entry other than the one addressed.',
-    });
+    }, input.requestId);
   }
   if (entry.locator.routingToken !== routed.route.repositoryKey) {
     return unresolved(localRef, {
       class: 'unsupportedContract',
       code: 'locator-mismatch',
       detail: 'GitLab answered from a repository other than the source-minted locator.',
-    });
+    }, input.requestId);
   }
   if (captureDescription !== undefined) {
     const body = item.response.body as Readonly<Record<string, unknown>>;
@@ -159,7 +166,7 @@ async function executeGitlabTriageEntry(
     nowMs: input.nowMs,
   });
   if (viewer.kind === 'failed') {
-    return unresolved(localRef, projectGitlabSourceFailure(viewer.failure));
+    return unresolved(localRef, projectGitlabSourceFailure(viewer.failure), input.requestId);
   }
   const involvement = deriveGitlabItemInvolvement({
     viewerUsername: viewer.viewer.username,
@@ -186,8 +193,22 @@ export async function getGitlabTriageEntry(
   input: GitlabGetOperationInput,
 ): Promise<TriageGetResultV1> {
   let description: string | null = null;
-  const result = await executeGitlabTriageEntry(input, (value) => { description = value; });
-  if (result.kind !== 'present') return result;
+  const captured: { readContext?: GitlabOverviewReadContext } = {};
+  const observed = await executeGitlabTriageEntry(input, (value, _entry, readContext) => {
+    description = value;
+    captured.readContext = readContext;
+  });
+  if (observed.kind !== 'present') return observed;
+  let result = observed;
+  if (result.localRef.kindId === 'merge-request') {
+    const read = captured.readContext === undefined ? null : await readGitlabPipelineStatusesPage({
+      route: captured.readContext.route,
+      perPage: 1,
+      position: { kind: 'first' },
+    }, captured.readContext.dependencies);
+    const fact = projectGitlabOpeningChecksFact(read?.ok ? read.value : null, result.nativeRevision ?? null);
+    result = { ...result, snapshot: { ...result.snapshot, facts: [...result.snapshot.facts, fact] } };
+  }
   const project = (text: string, descriptionTruncated: boolean) => ({
     ...result,
     detailData: { overview: {

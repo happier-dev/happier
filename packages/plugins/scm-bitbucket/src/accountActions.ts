@@ -17,7 +17,7 @@ export const INSTANCE_ACCOUNT_BINDINGS = [{
   purpose: BITBUCKET_CONNECTED_ACCOUNT_PURPOSE,
 }];
 
-const ACCOUNT_EXECUTION = { target: 'account', account: { artifactId: 'bitbucket-account-runtime', exportName: 'activate' } } as const;
+export const BITBUCKET_ACCOUNT_EXECUTION = { target: 'account', account: { artifactId: 'bitbucket-account-runtime', exportName: 'activate' } } as const;
 
 export const BITBUCKET_ACCOUNT_ACTIONS = {
     [BITBUCKET_TRIAGE_ACTION_IDS.listInstances]: {
@@ -30,7 +30,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       resultSchema: sources.operations.listInstances.declaration.resultSchema.jsonSchema,
       hostAccess: READ_HOST_ACCESS,
       run: listBitbucketInstancesAction,
-      execution: ACCOUNT_EXECUTION,
+      execution: BITBUCKET_ACCOUNT_EXECUTION,
     },
     [BITBUCKET_TRIAGE_ACTION_IDS.scan]: {
       title: 'Scan Bitbucket Cloud pull requests',
@@ -42,7 +42,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: scanBitbucketSourceAction,
-      execution: ACCOUNT_EXECUTION,
+      execution: BITBUCKET_ACCOUNT_EXECUTION,
     },
     [BITBUCKET_TRIAGE_ACTION_IDS.get]: {
       title: 'Read one Bitbucket Cloud pull request',
@@ -55,7 +55,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: getBitbucketSourceEntryAction,
-      execution: ACCOUNT_EXECUTION,
+      execution: BITBUCKET_ACCOUNT_EXECUTION,
     },
     [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listActivity]: {
       title: 'Read a Bitbucket activity page',
@@ -68,7 +68,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: listBitbucketActivity,
-      execution: ACCOUNT_EXECUTION,
+      execution: BITBUCKET_ACCOUNT_EXECUTION,
     },
     [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readOverview]: {
       title: 'Refresh a Bitbucket pull-request overview',
@@ -80,7 +80,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: readBitbucketOverview,
-      execution: ACCOUNT_EXECUTION,
+      execution: BITBUCKET_ACCOUNT_EXECUTION,
     },
     [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readDiff]: {
       title: 'Read a Bitbucket pull-request diff',
@@ -92,7 +92,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: readBitbucketDiff,
-      execution: ACCOUNT_EXECUTION,
+      execution: BITBUCKET_ACCOUNT_EXECUTION,
     },
     [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listBuilds]: {
       title: 'Read a Bitbucket build-status page',
@@ -105,7 +105,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: listBitbucketBuilds,
-      execution: ACCOUNT_EXECUTION,
+      execution: BITBUCKET_ACCOUNT_EXECUTION,
     },
     [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listComments]: {
       title: 'Read a Bitbucket comment page',
@@ -118,7 +118,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: listBitbucketComments,
-      execution: ACCOUNT_EXECUTION,
+      execution: BITBUCKET_ACCOUNT_EXECUTION,
     },
     [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.merge]: {
       title: 'Merge a Bitbucket pull request',
@@ -147,7 +147,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: mergeBitbucketPullRequestAction,
-      execution: ACCOUNT_EXECUTION,
+      execution: BITBUCKET_ACCOUNT_EXECUTION,
     },
     [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.decline]: {
       title: 'Decline a Bitbucket pull request',
@@ -175,7 +175,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: declineBitbucketPullRequestAction,
-      execution: ACCOUNT_EXECUTION,
+      execution: BITBUCKET_ACCOUNT_EXECUTION,
     },
     [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.resolveComment]: {
       title: 'Resolve a Bitbucket comment thread',
@@ -203,7 +203,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: resolveBitbucketCommentAction,
-      execution: ACCOUNT_EXECUTION,
+      execution: BITBUCKET_ACCOUNT_EXECUTION,
     },
     [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.unresolveComment]: {
       title: 'Reopen a Bitbucket comment thread',
@@ -231,7 +231,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: unresolveBitbucketCommentAction,
-      execution: ACCOUNT_EXECUTION,
+      execution: BITBUCKET_ACCOUNT_EXECUTION,
     },
     [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.submitReview]: {
       title: 'Submit this Bitbucket pull-request review',
@@ -258,7 +258,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: publishBitbucketPullRequestReviewAction,
-      execution: ACCOUNT_EXECUTION,
+      execution: BITBUCKET_ACCOUNT_EXECUTION,
     },
     [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.createReviewComment]: {
       title: 'Publish this Bitbucket review comment',
@@ -276,7 +276,7 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: createBitbucketPullRequestReviewCommentAction,
-      execution: ACCOUNT_EXECUTION,
+      execution: BITBUCKET_ACCOUNT_EXECUTION,
     },
     [BITBUCKET_TRIAGE_MUTATION_ACTION_IDS.replyToReviewComment]: {
       title: 'Reply to this Bitbucket review comment',
@@ -294,6 +294,6 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: replyToBitbucketPullRequestReviewCommentAction,
-      execution: ACCOUNT_EXECUTION,
+      execution: BITBUCKET_ACCOUNT_EXECUTION,
     }
 } as const;

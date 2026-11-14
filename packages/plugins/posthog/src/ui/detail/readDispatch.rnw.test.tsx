@@ -5,8 +5,9 @@ import { defineUiSurface } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { createPluginTestkit, createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { TriageDetailSurfaceInputV1Schema } from '@happier-dev/triage-protocol/v1';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { activate } from '../../activate.js';
+import { activate as activateAccount } from '../../accountRuntime.js';
 import { PLUGIN_MANIFEST } from '../../manifest.js';
 import { POSTHOG_PLUGIN_ID, POSTHOG_ACTION_IDS, POSTHOG_CONNECTED_ACCOUNT_PURPOSE } from '../../posthogContracts.js';
 import { encodePosthogConfiguration } from '../../source/instance.js';
@@ -38,11 +39,11 @@ function launchInput() {
     observation: { entryRef: { source, kindId: 'error-issue', collisionScope: 'posthog:https://eu.posthog.com:00000000-0000-4000-8000-0000000000d1', entryId: '00000000-0000-4000-8000-000000000001' },
       observedAtMs: 1_760_000_700_000, locator: { v: 1 }, snapshot: { v: 1, title: 'Read dispatch', scopeLabel: 'Storefront', state: { presentation: 'active', nativeLabel: 'Active' }, facts: [] }, viewer: { involvement: [] } }, linkedSessions: [] });
 }
-async function mountRegisteredActivity(misbind = false) {
+async function mountRegisteredActivity(misbind = false, status = 200) {
   let release!: () => void;
   const pending = new Promise<void>(resolve => { release = resolve; });
   const requests: string[] = [];
-  const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate }, services: {
+  const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
     connectedAccounts: {
       async listAccounts() { return { status: 'complete', accounts: [{ account, displayName: 'PostHog', state: 'connected', connectedAccountOrigins: ['https://eu.posthog.com'], connectedAccountBases: ['https://eu.posthog.com'] }] }; },
       async materializeListedAccount() { return { kind: 'httpHeaders', headers: { authorization: 'Bearer test-only-placeholder' } }; },
@@ -50,12 +51,14 @@ async function mountRegisteredActivity(misbind = false) {
     http: { async request(request) {
       requests.push(request.url);
       if (request.url.includes('/activity/')) await pending;
+      if (status !== 200) return { status, finalUrl: request.url, headers: {}, body: new TextEncoder().encode('{}') };
       const body = request.url.includes('/activity/') ? { ...activityPage, next: null } : sampledPage;
       return { status: 200, finalUrl: request.url, headers: { 'content-type': 'application/json' }, body: new TextEncoder().encode(JSON.stringify(body)) };
     } },
   } });
   plugins.push(plugin);
   const producerResults: unknown[] = [];
+  const readRequestIds: string[] = [];
   let detail!: PluginUiTestkit;
   await act(async () => {
     detail = await createPluginUiTestkit({ identity: { instanceId: 'posthog-dispatch', mountNonce: 'posthog-dispatch-mount' },
@@ -64,21 +67,32 @@ async function mountRegisteredActivity(misbind = false) {
         if (body !== null && !React.isValidElement(body)) throw new Error('Expected native detail');
         return body;
       }), launchInput: launchInput(), surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
-      handlers: { executeAction: async ({ action, input }) => {
+      handlers: { executeAction: async ({ action, input, requestId, signal }) => {
         if (typeof action === 'string' || action.pluginId !== POSTHOG_PLUGIN_ID || input === undefined) throw new Error('Wrong Action owner');
         const activity = action.localId === POSTHOG_ACTION_IDS.issueActivity;
         const request = misbind && activity ? PosthogIssueActivityInputV1Schema.parse(input) : null;
         const result = await plugin.invokeAction(request === null ? action.localId : POSTHOG_ACTION_IDS.issueEvents,
-          request === null ? input : { v: 1, instance: request.instance, localRef: request.localRef, limit: POSTHOG_ISSUE_EVENTS_MAX_LIMIT }, { surface: 'ui' });
-        if (activity) producerResults.push(result);
+          request === null ? input : { v: 1, instance: request.instance, localRef: request.localRef, limit: POSTHOG_ISSUE_EVENTS_MAX_LIMIT }, { surface: 'ui', signal, requestId });
+        if (activity) { producerResults.push(result); readRequestIds.push(requestId); }
         return result;
       } },
     });
   });
   mounted.push(detail);
-  return { detail, requests, producerResults, release };
+  return { detail, requests, producerResults, readRequestIds, release };
 }
 describe('registered PostHog activity read dispatch', () => {
+  it('shows the registered HTTP failure code and issued request identity in Details', async () => {
+    const { detail, producerResults, readRequestIds, release } = await mountRegisteredActivity(false, 429);
+    await act(async () => { release(); });
+    await vi.waitFor(() => expect(producerResults).toHaveLength(1));
+    expect(PosthogIssueActivityResultV1Schema.parse(producerResults[0])).toMatchObject({ kind: 'unavailable', failure: { class: 'rateLimit', code: 'posthog/rate-limited', requestId: readRequestIds[0] } });
+    await expect(detail.getByText('posthog/rate-limited')).resolves.toBeDefined();
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Details' })); });
+    await expect(detail.getByText('Code')).resolves.toBeDefined();
+    await expect(detail.getByText('Request ID')).resolves.toBeDefined();
+    await expect(detail.getByText(readRequestIds[0]!)).resolves.toBeDefined();
+  });
   it('retains pending and settled activity across equivalent parsed launch input', async () => {
     const { detail, requests, producerResults, release } = await mountRegisteredActivity();
     expect(requests.some(url => url.includes('/activity/'))).toBe(true);

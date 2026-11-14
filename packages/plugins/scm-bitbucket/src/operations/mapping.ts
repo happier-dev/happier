@@ -92,6 +92,8 @@ export function mapBitbucketPullRequest(
   const providerNameWithOwner = provider.nameWithOwner?.trim();
   const baseSha = readNestedString(raw, 'destination', 'commit', 'hash');
   const headSha = readNestedString(raw, 'source', 'commit', 'hash');
+  const state = mapBitbucketState(raw);
+  const mergeCommitSha = state === 'merged' ? readNestedString(raw, 'merge_commit', 'hash') : null;
   const isDraft = typeof raw.draft === 'boolean' ? raw.draft : undefined;
   const author = readBitbucketAuthor(raw);
   const createdAtMs = parseTimestampMs(raw.created_on);
@@ -110,7 +112,8 @@ export function mapBitbucketPullRequest(
       : {}),
     ...(headSha !== null ? { headSha } : {}),
     ...(baseSha !== null ? { baseSha } : {}),
-    state: mapBitbucketState(raw),
+    ...(mergeCommitSha !== null ? { mergeCommitSha } : {}),
+    state,
     ...(createdAtMs !== null ? { createdAtMs } : {}),
     ...(typeof isDraft === 'boolean' ? { isDraft } : {}),
     ...(author ? { author } : {}),

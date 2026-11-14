@@ -4,8 +4,10 @@
  * These are deliberately owned by this package and named in GitLab's own vocabulary.
  * They are the single seam a later unit binds to the source contract: every field here
  * exists because a GitLab response supplies it, not because a contract field needed
- * filling. Nothing in this corridor imports a Triage schema.
+ * filling. Source failures use the canonical Triage diagnostic shape.
  */
+
+import type { TriageSourceFailureV1 } from '@happier-dev/triage-protocol/v1';
 
 /** GitLab's own item vocabulary. `merge-request` is not `pull-request`. */
 export const GITLAB_KIND_IDS = ['merge-request', 'issue'] as const;
@@ -15,26 +17,9 @@ export type GitlabKindId = (typeof GITLAB_KIND_IDS)[number];
  * Closed failure classification. Every arm is reachable from an observed GitLab
  * response or transport outcome; there is no catch-all success.
  */
-export type GitlabFailureClass =
-  | 'authentication'
-  | 'permission'
-  | 'rateLimit'
-  | 'transient'
-  | 'unsupportedContract'
-  | 'unknown';
+export type GitlabFailureClass = TriageSourceFailureV1['class'];
 
-export type GitlabFailure = Readonly<{
-  class: GitlabFailureClass;
-  /** Stable machine code. Never provider prose and never a credential. */
-  code: string;
-  /** Bounded non-secret explanation. */
-  detail?: string;
-  /**
-   * Absolute epoch milliseconds derived from GitLab's own retry evidence.
-   * Absent means GitLab supplied none: this client never invents one.
-   */
-  retryNotBeforeMs?: number;
-}>;
+export type GitlabFailure = TriageSourceFailureV1;
 
 /** Presentation projection of a native GitLab state. */
 export type GitlabStatePresentation = 'active' | 'resolved' | 'closed' | 'unknown';

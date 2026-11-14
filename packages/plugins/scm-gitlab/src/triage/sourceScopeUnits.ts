@@ -51,6 +51,7 @@ export async function listGitlabScopeUnitsAction(input: unknown, context: Plugin
     url = retained.url;
   }
   const authorized = await authorizeGitlabConfiguredInstance({ instance: draft,
+    ...(context.requestId === undefined ? {} : { requestId: context.requestId }),
     connectedAccounts: readGitlabConnectedAccounts(context), signal: context.signal });
   if (authorized.kind === 'failed') return { kind: 'failed', failure: projectGitlabSourceFailure(authorized.failure) };
   const result = await requestGitlabJson({ invocation: authorized.resolved.invocation, url,

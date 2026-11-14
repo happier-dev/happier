@@ -89,6 +89,36 @@ function pathOf(request: RecordedGitlabRequest): string {
 
 describe('GitLab shared pull request status', () => {
   it.each([
+    { label: 'permission refusal', response: { status: 403, body: { message: '403' } },
+      failure: { class: 'permission', code: 'forbidden' }, expected: { state: 'unknown', rows: [] } },
+    { label: 'malformed successful response', response: ok({ jobs: [] }),
+      failure: { class: 'unsupportedContract', code: 'gitlab-detail-response-invalid' }, expected: { state: 'unknown', rows: [] } },
+    { label: 'malformed job beside a healthy job', response: ok([{ id: 1, name: 'unit', status: 'success' }, { id: 2 }]),
+      failure: { class: 'unsupportedContract', code: 'gitlab-detail-response-invalid' },
+      expected: { state: 'incomplete', rows: [{ id: '1', name: 'unit', state: 'passed' }] } },
+  ])('retains observed merge-request facts and the issued jobs failure for $label', async ({ response, failure, expected }) => {
+    const requestId = 'gitlab-pipeline-jobs-request-91';
+    const stub = createStubGitlabTransport({ respond: (request) => {
+      const path = pathOf(request);
+      if (path.endsWith('/merge_requests/7')) return ok(mergeRequest);
+      if (path.endsWith('/user')) return ok({ id: 41, username: 'viewer' });
+      if (path.endsWith('/approvals')) return { status: 403 };
+      if (path.endsWith('/merge_requests/7/pipelines')) return ok([{ id: 91, status: 'running' }]);
+      if (path.endsWith('/pipelines/91/jobs')) return response;
+      return undefined;
+    } });
+    const result = TriagePullRequestStatusResultV1Schema.parse(await readGitlabPullRequestStatus({
+      v: 1, instance: gitlabTestConfiguredInstance(), localRef: MERGE_REQUEST_REF,
+      lastKnownLocator: { v: 1, routingToken: ROUTING_TOKEN },
+    }, { ...stub.context, requestId }));
+    expect(result).toMatchObject({
+      kind: 'status', branch: { headRevision: 'a'.repeat(40) },
+      checks: { ...expected, passed: null, failed: null, total: null, failure: { ...failure, requestId } },
+    });
+    expect(stub.requests.filter(request => pathOf(request).endsWith('/pipelines/91/jobs'))).toHaveLength(1);
+  });
+
+  it.each([
     { has_conflicts: true, merge_status: 'cannot_be_merged', expected: true },
     { has_conflicts: false, merge_status: 'can_be_merged', expected: false },
     { has_conflicts: false, merge_status: 'checking', expected: null },
@@ -349,6 +379,7 @@ describe('GitLab overview plane', () => {
           });
         }
         if (path.endsWith('/user')) return ok({ id: 41, username: 'viewer' });
+        if (path.endsWith('/merge_requests/7/pipelines')) return ok([{ id: 91, status: 'failed', sha: 'a'.repeat(40) }]);
         return undefined;
       },
     });
@@ -360,9 +391,14 @@ describe('GitLab overview plane', () => {
       kind: 'overview',
       description: 'Current provider description',
       descriptionTruncated: false,
-      observation: { kind: 'present', snapshot: { title: 'Current provider title' } },
+      observation: { kind: 'present', snapshot: { title: 'Current provider title', facts: expect.arrayContaining([
+        { id: 'gitlab/checks', importance: 'primary', value: { kind: 'status', value: 'Failing', tone: 'danger' } },
+      ]) } },
     });
     expect(stub.requests[0]?.url).toContain('/projects/group%2Fsubgroup%2Fproject/');
+    expect(stub.requests.filter(request => pathOf(request).endsWith('/merge_requests/7/pipelines'))
+      .map(request => new URL(request.url).search)).toEqual(['?per_page=1']);
+    expect(stub.requests.some(request => pathOf(request).includes('/jobs'))).toBe(false);
   });
 });
 
@@ -767,24 +803,28 @@ describe('GitLab approvals plane', () => {
     expect(result.projectionTruncated).toBe(true);
   });
 
-  it('keeps a real rules failure distinct from a licence answer', async () => {
+  it.each([503, 200])('keeps a real rules failure distinct from a licence answer with its request identity (%s)', async (status) => {
+    const requestId = 'c139f47f-0fd2-439e-a562-71ad933c1815';
     const stub = createStubGitlabTransport({
       respond: (request) => {
         const path = pathOf(request);
         if (path.endsWith('/merge_requests/7/approvals')) return ok(APPROVAL_STATE);
         if (path.endsWith('/merge_requests/7/approval_rules')) {
-          return { status: 503, body: { message: 'unavailable' } };
+          return { status, body: { message: 'unavailable' } };
         }
         return undefined;
       },
     });
 
     const result = GitlabApprovalsResultV1Schema.parse(
-      await readGitlabApprovals(itemInput(), stub.context),
+      await readGitlabApprovals(itemInput(), { ...stub.context, requestId }),
     );
     if (result.kind !== 'approvals') throw new Error('the approvals read must settle');
     // A forge outage is not a licence tier, and must not be reported as one.
     expect(result.rules.kind).toBe('unavailable');
+    expect(result.rules).toMatchObject({ kind: 'unavailable', failure: { requestId } });
+    expect(result.userCanApprove).toBe(true);
+    expect(result.approvalsRequired).toBe(2);
   });
 });
 

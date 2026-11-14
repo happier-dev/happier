@@ -301,7 +301,7 @@ export function useGitlabNotes(
     const parsed = GitlabNotesResultV1Schema.safeParse(execution.result);
     if (!parsed.success) return { kind: 'failed' as const, failure: UNREADABLE_RESULT };
     if (parsed.data.kind === 'unavailable') {
-      return { kind: 'failed' as const, failure: parsed.data.failure };
+      return { kind: 'failed' as const, failure: dispatchFailure(execution, 'gitlab-detail-read-failed', parsed.data.failure) };
     }
     return { kind: 'page' as const, page: toPage(parsed.data) };
   }, [execute, instance, limit, localRef, routingToken]);
@@ -359,7 +359,7 @@ export function useGitlabActivityEvents(
     const parsed = GitlabActivityEventsResultV1Schema.safeParse(execution.result);
     if (!parsed.success) return { kind: 'failed' as const, failure: UNREADABLE_RESULT };
     if (parsed.data.kind === 'unavailable') {
-      return { kind: 'failed' as const, failure: parsed.data.failure };
+      return { kind: 'failed' as const, failure: dispatchFailure(execution, 'gitlab-detail-read-failed', parsed.data.failure) };
     }
     return { kind: 'page' as const, page: toPage(parsed.data) };
   }, [execute, instance, limit, localRef, routingToken, source]);
@@ -404,7 +404,7 @@ export function useGitlabDiscussions(
     const parsed = GitlabDiscussionsResultV1Schema.safeParse(execution.result);
     if (!parsed.success) return { kind: 'failed' as const, failure: UNREADABLE_RESULT };
     if (parsed.data.kind === 'unavailable') {
-      return { kind: 'failed' as const, failure: parsed.data.failure };
+      return { kind: 'failed' as const, failure: dispatchFailure(execution, 'gitlab-detail-read-failed', parsed.data.failure) };
     }
     return { kind: 'page' as const, page: toPage(parsed.data) };
   }, [execute, instance, localRef, routingToken]);
@@ -462,7 +462,7 @@ export function useGitlabChanges(
     const parsed = GitlabChangesResultV1Schema.safeParse(execution.result);
     if (!parsed.success) return { kind: 'failed' as const, failure: UNREADABLE_RESULT };
     if (parsed.data.kind === 'unavailable') {
-      return { kind: 'failed' as const, failure: parsed.data.failure };
+      return { kind: 'failed' as const, failure: dispatchFailure(execution, 'gitlab-detail-read-failed', parsed.data.failure) };
     }
     if (parsed.data.kind !== 'changes') return { kind: 'failed' as const, failure: UNREADABLE_RESULT };
     const page = parsed.data;
@@ -545,7 +545,7 @@ export function useGitlabRawDiff(
         return;
       }
       if (parsed.data.kind === 'unavailable') {
-        setState({ kind: 'unavailable', failure: parsed.data.failure });
+        setState({ kind: 'unavailable', failure: dispatchFailure(execution, 'gitlab-detail-read-failed', parsed.data.failure) });
         return;
       }
       setState({
@@ -612,7 +612,7 @@ export function useGitlabPipelines(
     const parsed = GitlabPipelinesResultV1Schema.safeParse(execution.result);
     if (!parsed.success) return { kind: 'failed' as const, failure: UNREADABLE_RESULT };
     if (parsed.data.kind === 'unavailable') {
-      return { kind: 'failed' as const, failure: parsed.data.failure };
+      return { kind: 'failed' as const, failure: dispatchFailure(execution, 'gitlab-detail-read-failed', parsed.data.failure) };
     }
     const page = parsed.data;
     if (continuation === null) {
@@ -712,7 +712,7 @@ export function useGitlabApprovals(
         return;
       }
       if (parsed.data.kind === 'unavailable') {
-        setState({ kind: 'unavailable', failure: parsed.data.failure });
+        setState({ kind: 'unavailable', failure: dispatchFailure(execution, 'gitlab-detail-read-failed', parsed.data.failure) });
         return;
       }
       const { kind: _kind, ...view } = parsed.data;

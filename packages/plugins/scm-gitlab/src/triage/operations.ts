@@ -71,6 +71,7 @@ export async function scanGitlabSourceAction(
 ): Promise<TriageScanResultV1> {
   const scan = requireOperationInput(TriageScanInputV1Schema.safeParse(input), 'scan');
   const result = await scanGitlabTriageSource({
+    ...(context.requestId === undefined ? {} : { requestId: context.requestId }),
     scan,
     connectedAccounts: readGitlabConnectedAccounts(context),
     fetcher: createGitlabHttpFetcher(context),
@@ -86,6 +87,7 @@ export async function getGitlabSourceEntryAction(
 ): Promise<TriageGetResultV1> {
   const get = requireOperationInput(TriageGetInputV1Schema.safeParse(input), 'get');
   const result = await getGitlabTriageEntry({
+    ...(context.requestId === undefined ? {} : { requestId: context.requestId }),
     get,
     connectedAccounts: readGitlabConnectedAccounts(context),
     fetcher: createGitlabHttpFetcher(context),

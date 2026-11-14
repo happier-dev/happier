@@ -2,7 +2,7 @@ import * as React from 'react';
 import type { PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
 import type { TriageDetailSurfaceInputV1 } from '@happier-dev/triage-protocol/v1';
 import { Button, ErrorState, LoadingState, PropertyList, Stack, Text, useExecutePluginAction, usePluginTranslation } from '@happier-dev/plugin-ui';
-import { useTriageDetailRequest, type TriageSourceWriteSettlementV1 } from '@happier-dev/triage-sources/ui';
+import { TriageSourceReadFailureDetails, useTriageDetailRequest, type TriageSourceWriteSettlementV1 } from '@happier-dev/triage-sources/ui';
 import { POSTHOG_ACTION_IDS, POSTHOG_PLUGIN_ID } from '../../posthogContracts.js';
 import type { PosthogAssignmentReadV1 } from '../../source/detail/nativeOverviewContract.js';
 import { PosthogIssueAssignInputV1Schema } from '../../source/writeContracts.js';
@@ -60,5 +60,6 @@ export function PosthogAssigneeProperty({ input, assignment, reading, held, sett
                     : text('plugins.posthog.ui.assignment.failed', 'Could not load assignable people')}
                     action={<Button variant="plain" size="small" title={text('plugins.posthog.ui.assignment.retry', 'Retry')} onPress={onRefresh} />} />
                 : null}
+        {reading || assignment?.kind !== 'unavailable' ? null : <TriageSourceReadFailureDetails failures={[assignment.failure]} />}
     </Stack>;
 }

@@ -76,7 +76,7 @@ export function useGitlabOverview(input: TriageDetailSurfaceInputV1): GitlabOver
       if (!parsed.success) {
         setState(current => ({ ...current, refreshing: false, failure: UNREADABLE_RESULT }));
       } else if (parsed.data.kind === 'unavailable') {
-        const failure = parsed.data.failure;
+        const failure = dispatchFailure(execution, 'gitlab-overview-read-failed', parsed.data.failure);
         setState(current => ({ ...current, refreshing: false, failure }));
       } else {
         const value = parsed.data;
