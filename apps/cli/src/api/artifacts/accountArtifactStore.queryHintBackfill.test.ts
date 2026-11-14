@@ -287,6 +287,7 @@ describe('explicit daemon Account Artifact query-hint backfill', () => {
         api: {} as never, credentials: home.credentials, logger: { debug() {}, info() {}, warn(...args: unknown[]) { warnings.push(args); } },
         processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: 'false' },
         controlPort: 43102, machineId: 'machine', machineIdProvider: () => 'machine', runtimeId: 'artifact-backfill-bootstrap', cliVersion: '0.0.0',
+        runningRuntime: { entrypoint: null, tree: null, builtAt: null, manifestVerified: false },
         startupSource: 'manual' as const, serviceLabel: undefined, daemonLogPath: '/tmp/artifact-bootstrap.log', controlToken: 'control',
         publishDaemonState: () => true, happyHomeDir: '/tmp/artifact-bootstrap-home', activeServerDir: '/tmp/artifact-bootstrap-server',
         filesystemAccessPolicy: { kind: 'osUser' as const }, publicReleaseChannel: 'dev' as const,

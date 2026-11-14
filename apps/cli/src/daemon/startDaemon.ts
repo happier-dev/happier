@@ -3542,6 +3542,7 @@ export async function startDaemon(
       machineIdProvider: () => machineId,
       runtimeId,
       cliVersion: packageJson.version,
+      runningRuntime,
       startupSource,
       serviceLabel,
       daemonLogPath: logger.logFilePath,

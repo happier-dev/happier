@@ -38,7 +38,7 @@ import { createTailscaleTransferServeLifecycle } from '@/machines/transfer/tails
 import { resolveMachineTransferRuntimeConfig } from '@/machines/transfer/transferRuntimeConfig';
 import { createDaemonTransferRuntimeState, createDaemonTransferRuntimeStatePublisher } from '../transferRuntimeState';
 import { resolveTailscaleTransferListenerState } from '../resolveTailscaleTransferListenerState';
-import { resolveRunningCliRuntimeIdentity } from '@/packagedRuntime/resolveRunningCliRuntimeIdentity';
+import type { RunningCliRuntimeIdentity } from '@/packagedRuntime/resolveRunningCliRuntimeIdentity';
 import { resolveFirstPartyLegacyConnectedServiceIdForQualifiedServiceKey } from '@/plugins/projection/registry/connectedAccountPurposeCompatibility';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { createCliRegistryHostV1 } from '@/registries/createCliRegistryHost';
@@ -161,6 +161,8 @@ export type StartDaemonRuntimeBootstrapParams = Readonly<{
   serviceLabel: string | undefined;
   daemonLogPath: string;
   controlToken: string;
+  /** Verified once by startDaemon; re-verifying would read and hash the whole bundled closure again. */
+  runningRuntime: RunningCliRuntimeIdentity;
   publishDaemonState: (state: DaemonLocallyPersistedState) => boolean;
   onDaemonStatePublished?: () => void;
   happyHomeDir: string;
@@ -310,7 +312,7 @@ export async function startDaemonRuntimeBootstrap(
   const stopDirectPeerServer = async () => { await directPeerServerLifecycle.stop(); };
   let stopTailscaleTransferServeLifecycle: () => Promise<void> = async () => {};
 
-  const runningRuntime = resolveRunningCliRuntimeIdentity();
+  const { runningRuntime } = params;
   const accountId = readAccountIdFromToken(params.credentials.token);
   const fileState: DaemonLocallyPersistedState = {
     pid: process.pid,

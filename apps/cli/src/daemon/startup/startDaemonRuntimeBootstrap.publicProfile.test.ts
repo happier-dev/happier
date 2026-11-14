@@ -41,6 +41,7 @@ describe('native public-profile bootstrap composition', () => {
       logger: { debug() {}, info() {}, warn() {} },
       processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: 'false' },
       controlPort: 43101, machineId: 'machine-1', machineIdProvider: () => 'machine-1', runtimeId: 'runtime-1', cliVersion: '0.0.0',
+        runningRuntime: { entrypoint: null, tree: null, builtAt: null, manifestVerified: false },
       startupSource: 'manual' as const, serviceLabel: undefined, daemonLogPath: '/tmp/daemon.log', controlToken: 'control',
       publishDaemonState: () => true, happyHomeDir: '/tmp/profile-bootstrap-home', activeServerDir: '/tmp/profile-bootstrap-server',
       filesystemAccessPolicy: { kind: 'osUser' as const }, publicReleaseChannel: 'dev' as const,

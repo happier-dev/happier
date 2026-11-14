@@ -26,6 +26,8 @@ import { createTransferRecipientKeyPair, decryptEncryptedTransferChunkEnvelope }
 import { PreparedTransferRpcResponseV1Schema } from '@happier-dev/protocol/machines/transfer/preparedTransferRpcV1';
 import { TransferChunkEnvelopeSchema } from '@happier-dev/protocol/machines/transfer/transferStream';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+// The daemon owner verifies the running closure; these fixtures run from source.
+const UNVERIFIED_RUNTIME = { entrypoint: null, tree: null, builtAt: null, manifestVerified: false } as const;
 
 const healthSwitchContext = { credentialHealthSwitchLeases: new InMemoryConnectedServiceAuthGroupSwitchLeaseRegistry<import("@happier-dev/protocol").QualifiedConnectedAccountServiceRef>(), };
 
@@ -136,7 +138,7 @@ describe('startDaemonRuntimeBootstrap', () => {
       logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn() },
       processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: 'false' },
       controlPort: 41233, machineId: 'machine-1', machineIdProvider: () => 'machine-1',
-      runtimeId: 'runtime-1', cliVersion: '0.0.0-test', startupSource: 'manual', serviceLabel: undefined,
+      runtimeId: 'runtime-1', cliVersion: '0.0.0-test', runningRuntime: UNVERIFIED_RUNTIME, startupSource: 'manual', serviceLabel: undefined,
       daemonLogPath: '/tmp/happier-daemon.log', controlToken: 'control-token',
       // Persisting the daemon publication is an OS boundary. Its assembly and
       // Account projection run through the actual bootstrap owner.
@@ -211,7 +213,7 @@ describe('startDaemonRuntimeBootstrap', () => {
       machineId: 'machine-1',
       machineIdProvider: () => 'machine-1',
       runtimeId: 'runtime-1',
-      cliVersion: '0.0.0-test',
+      cliVersion: '0.0.0-test', runningRuntime: UNVERIFIED_RUNTIME,
       startupSource: 'manual',
       serviceLabel: undefined,
       daemonLogPath: '/tmp/happier-daemon.log',
@@ -284,7 +286,7 @@ describe('startDaemonRuntimeBootstrap', () => {
       machineId: 'machine-1',
       machineIdProvider: () => 'machine-1',
       runtimeId: 'runtime-1',
-      cliVersion: '0.0.0-test',
+      cliVersion: '0.0.0-test', runningRuntime: UNVERIFIED_RUNTIME,
       startupSource: 'manual',
       serviceLabel: undefined,
       daemonLogPath: '/tmp/happier-daemon.log',
@@ -374,7 +376,7 @@ describe('startDaemonRuntimeBootstrap', () => {
       machineId: 'machine-1',
       machineIdProvider: () => 'machine-1',
       runtimeId: 'runtime-1',
-      cliVersion: '0.0.0-test',
+      cliVersion: '0.0.0-test', runningRuntime: UNVERIFIED_RUNTIME,
       startupSource: 'manual',
       serviceLabel: undefined,
       daemonLogPath: '/tmp/happier-daemon.log',
@@ -437,6 +439,43 @@ describe('startDaemonRuntimeBootstrap', () => {
     );
   });
 
+  it('publishes the runtime identity its daemon owner verified instead of re-verifying the closure', async () => {
+    vi.stubEnv('HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED', 'false');
+    vi.stubEnv('HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED', 'false');
+    // startDaemon verifies the running closure once (a full read + hash of every bundled file);
+    // the daemon state must carry that identity, not a second verification of its own.
+    const runningRuntime = { entrypoint: '/opt/happier/cli/versions/v1/package-dist/index.mjs', tree: 'package-dist' as const,
+      builtAt: '2026-11-14T02:13:36.653Z', manifestVerified: true };
+    let published: Record<string, unknown> | undefined;
+    const result = await startDaemonRuntimeBootstrap({
+      api: {} as never,
+      credentials: { token: 'token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(7) } },
+      logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn() },
+      processEnv: { HAPPIER_CONNECTED_SERVICES_REFRESH_ENABLED: 'false' },
+      controlPort: 41235, machineId: 'machine-1', machineIdProvider: () => 'machine-1',
+      runtimeId: 'runtime-1', cliVersion: '0.0.0-test', startupSource: 'manual', serviceLabel: undefined,
+      daemonLogPath: '/tmp/happier-daemon.log', controlToken: 'control-token', runningRuntime,
+      publishDaemonState: state => { published = state as unknown as Record<string, unknown>; return true; },
+      happyHomeDir: '/tmp/happy-home', activeServerDir: '/tmp/happy-active-server',
+      filesystemAccessPolicy: { kind: 'osUser' }, publicReleaseChannel: 'dev',
+      connectedServicesRestartRequestedSessions: new Set(), trackedSessionsByKey: new Map(),
+      connectedServiceAuthGroupPreTurnSwitchCoordinator: {
+        ...healthSwitchContext,
+        switchBeforeTurn: vi.fn(async () => ({ status: 'session_not_found' as const })),
+        applyCommittedGeneration: vi.fn(async () => ({ reconciliationDisposition: 'failed' as const, errorCode: 'session_not_found' })),
+        applyCredentialUpdate: vi.fn(async () => ({ status: 'failed' as const, errorCode: 'session_not_found' })),
+      },
+      connectedServiceRuntimeQuotaSnapshots: new ConnectedServiceAuthGroupRuntimeQuotaSnapshotStore(),
+      providerAccountUsageStore: createProviderAccountUsageStore(),
+    });
+    try {
+      expect(published).toMatchObject({
+        startedWithRuntimeEntrypoint: runningRuntime.entrypoint,
+        startedWithRuntimeBuiltAt: runningRuntime.builtAt,
+      });
+    } finally { await result.stopDirectPeerServer(); await result.stopTailscaleTransferServeLifecycle(); }
+  });
+
   it('routes refreshed runtime credentials through the canonical session application owner', async () => {
     vi.stubEnv('HAPPIER_MACHINE_TRANSFER_DIRECT_PEER_SERVER_ENABLED', 'false');
     const logger = { debug: vi.fn(), info: vi.fn(), warn: vi.fn() };
@@ -478,7 +517,7 @@ describe('startDaemonRuntimeBootstrap', () => {
       machineId: 'machine-1',
       machineIdProvider: () => 'machine-1',
       runtimeId: 'runtime-1',
-      cliVersion: '0.0.0-test',
+      cliVersion: '0.0.0-test', runningRuntime: UNVERIFIED_RUNTIME,
       startupSource: 'manual',
       serviceLabel: undefined,
       daemonLogPath: '/tmp/happier-daemon.log',
@@ -562,7 +601,7 @@ describe('startDaemonRuntimeBootstrap', () => {
       machineId: 'machine-1',
       machineIdProvider: () => 'machine-1',
       runtimeId: 'runtime-1',
-      cliVersion: '0.0.0-test',
+      cliVersion: '0.0.0-test', runningRuntime: UNVERIFIED_RUNTIME,
       startupSource: 'manual',
       serviceLabel: undefined,
       daemonLogPath: '/tmp/happier-daemon.log',
@@ -655,7 +694,7 @@ describe('startDaemonRuntimeBootstrap', () => {
       machineId: 'machine-1',
       machineIdProvider: () => 'machine-1',
       runtimeId: 'runtime-1',
-      cliVersion: '0.0.0-test',
+      cliVersion: '0.0.0-test', runningRuntime: UNVERIFIED_RUNTIME,
       startupSource: 'manual',
       serviceLabel: undefined,
       daemonLogPath: '/tmp/happier-daemon.log',
