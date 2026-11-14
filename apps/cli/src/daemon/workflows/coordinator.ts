@@ -730,8 +730,14 @@ function persistedFailure(record: WorkflowCoordinatorInvocation): WorkflowLeafFa
       return new WorkflowLeafFailure('cancelled', code);
     case 'cancel_requested':
       return new WorkflowLeafFailure('interrupted', code);
-    case 'outcome_uncertain':
-      return new WorkflowLeafFailure(record.execution ? 'interrupted' : 'outcome_uncertain', code);
+    case 'outcome_uncertain': {
+      // Exact native operation correspondence remains observable. Scalar lost
+      // acknowledgements and partially unknown Run launches do not prove it.
+      const recoverable = record.blockKind === 'action'
+        ? record.execution?.kind === 'action' && Boolean(record.execution.awaitedOperations?.length)
+        : record.execution !== undefined;
+      return new WorkflowLeafFailure(recoverable ? 'interrupted' : 'outcome_uncertain', code);
+    }
     case 'failed':
       if (code === 'invalid_reference_scope' || code === 'missing_reference') {
         return new WorkflowLeafFailure('failed', code);
@@ -1784,7 +1790,6 @@ async function executeActionBlock(
     const result = row.result ?? null;
     return result;
   }
-  if (row?.lifecycle === 'outcome_uncertain') throw new WorkflowLeafFailure('outcome_uncertain', row.reason ?? 'outcome_uncertain');
   const heldConsent = row?.lifecycle === 'needs_attention'
     && row.execution?.kind === 'action' && row.execution.actionId === leaf.actionId
     ? readWorkflowProjectSetupConsentHold(row.execution.actionId, row.execution.output) : null;
@@ -1820,9 +1825,9 @@ async function executeActionBlock(
     row = await context.deps.store.commitFact({ key: row!.key, lifecycle: state, reason: code,
       ...(result === undefined ? {} : { result }), ...(failureCause === undefined ? {} : { failureCause }),
       ...(message === undefined ? {} : { reasonMessage: message }) });
-    // An admitted Action keeps its failed leaf for exact invocation recovery,
+    // An admitted Action keeps its failed/uncertain leaf for exact invocation recovery,
     // just like an admitted Session step; terminal Run failure forbids retry.
-    const parentState = state === 'failed' && row.execution?.kind === 'action'
+    const parentState = row.execution?.kind === 'action'
       ? persistedFailure(row)!.state : state;
     throw new WorkflowLeafFailure(parentState, code, collectable);
   };

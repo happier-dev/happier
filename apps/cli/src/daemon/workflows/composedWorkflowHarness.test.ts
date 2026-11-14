@@ -54,6 +54,7 @@ import type { WorkflowAcceptedOriginV1 } from '@happier-dev/protocol/workflows/w
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { buildWorkflowActionContext } from './daemonRuntime';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { ActionOperationSnapshotV1Schema } from '@happier-dev/protocol/actions/operations/v1';
 import { createBlockingApprovalCoordinator } from '@happier-dev/protocol/actions/blockingApprovalCoordinator';
 import { ApprovalRequestV2Schema, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { resolveApprovalRequesterConfirmationV1 } from '@happier-dev/protocol/approvals/approvalRequestV1';
@@ -2427,6 +2428,150 @@ describe('composed Workflow front door and claimed execution', () => {
         expect(kit.run()).toMatchObject({ state: 'succeeded', workflowCustodyState: 'settled' });
       }
     });
+
+  it.each(['succeeded', 'failed', 'cancelled', 'native_unknown', 'uncertain_sibling'] as const)(
+    'recovers the accepted Setup retry after unavailable observation to its native %s outcome', async scenario => {
+    const outcome = scenario === 'uncertain_sibling' ? 'succeeded' : scenario === 'native_unknown' ? 'failed' : scenario;
+    const runId = '17171717-1717-4717-8717-171717171719';
+    const directory = await projectDirectory();
+    const input = { homeId: 'server-1', machineId, targets: [{ homeId: 'server-1', machineId,
+      sources: [{ kind: 'direct', setup: {} }], desiredRevision: 0, recipePlans: [] }] };
+    getActionSpec('machines.setup.apply').inputSchema.parse(input);
+    const acceptedEnvelope = await sealDirectAccepted({ runId, directory,
+      definition: { version: 1, inputs: [], defaults: retainedConversationDefaults(), blocks: [{ kind: 'action',
+        id: 'setup', actionId: 'machines.setup.apply', input: Object.fromEntries(Object.entries(input)
+          .map(([key, value]) => [key, { kind: 'literal', value }])) },
+        ...(scenario === 'uncertain_sibling' ? [{ kind: 'action' as const, id: 'next-setup', actionId: 'machines.setup.apply',
+          input: Object.fromEntries(Object.entries(input).map(([key, value]) => [key, { kind: 'literal' as const, value }])) }] : []),
+      ] } });
+    const kit = createWorkflowRunStorageTestkit({ runId, machineId, origin: { kind: 'direct' }, acceptedEnvelope });
+    let launches = 0;
+    let unavailable = false;
+    const operation = (state: 'succeeded' | 'failed' | 'cancelled') => ActionOperationSnapshotV1Schema.parse({
+      version: 1, title: 'Apply Setup',
+      operationId: launches === 1 ? 'setup-original' : 'setup-retry', revision: 2, actionId: 'machines.setup.apply',
+      state, scope: { accountId, machineId }, requestId: 'setup-request', createdAt: 1, startedAt: 1, settledAt: 2,
+      cancellation: 'supported', ...(state === 'failed'
+        ? { error: { errorCode: launches !== 1 && scenario === 'native_unknown' ? 'outcome_unknown' : 'machine_setup_child_failed',
+          error: 'Setup exited with status 23' } }
+        : state === 'succeeded' ? { result: { exitCode: 0 } } : {}),
+    });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      // The native Setup transport and operation observation are process boundaries.
+      machineSetupApply: async () => { launches++; return { status: 'accepted', operationId:
+        launches === 1 ? 'setup-original' : launches === 2 ? 'setup-retry' : 'setup-sibling', machineId }; },
+    });
+    const action = { executor, buildContext: async (execution: Parameters<typeof buildWorkflowActionContext>[0]) => ({
+      ...buildWorkflowActionContext(execution), serverId: 'server-1', runtimeAccountId: accountId,
+      bypassApprovals: true }),
+      observeRun: async () => { throw new Error('Setup must observe its native operation'); },
+      observeOperation: async () => {
+        if (unavailable || launches === 3) throw new Error('transport_disconnected');
+        return operation(launches === 1 ? 'failed' : outcome);
+      },
+    };
+    const coordinate = async (attempt: number) => {
+      const coordinator = workflowDaemonProcess({ storage: kit, directory, action });
+      if (attempt === 0 || kit.run().state !== 'queued') return coordinator({ runId, attempt,
+        expectedRevision: kit.run().revision, accountCurrentness: currentness, acceptedEnvelope });
+      // Retry releases the previous claim. Model Home's claim transaction at
+      // the HTTP boundary and keep the worker claim decoder/executor real.
+      vi.spyOn(axios, 'post').mockImplementation(async (url, body: unknown) => {
+        if (!url.endsWith('/v3/automations/runs/claim')) return writeSessionReadiness(url, body);
+        await kit.execute({ operation: 'transition', runId, parentAttempt: attempt,
+          expectedRevision: kit.run().revision, state: 'claimed', checkpointEnvelope: kit.checkpointEnvelope()! });
+        return { status: 200, data: AutomationV3WorkerClaimResponseSchema.parse({ run: {
+          id: runId, automationId: null, attempt, leaseExpiresAt: Date.now() + 120_000,
+          revision: kit.run().revision, recipeKind: 'workflow-v2', triggerRetired: false,
+          origin: { kind: 'direct' }, triggerId: null, workflowAcceptedSnapshotEnvelope: acceptedEnvelope,
+        }, automation: null, accountCurrentness: currentness }) };
+      });
+      const claimClient = createAutomationClaimClient({ token: 'token', createPublisherHeader: async () => null });
+      const claimed = await claimClient.claimRun({ machineId, scope: 'workflow', leaseDurationMs: 120_000 });
+      if (!claimed.run || claimed.automation !== null || !claimed.accountCurrentness) throw new Error('retry_claim_missing');
+      let result: Awaited<ReturnType<typeof coordinator>> | undefined;
+      await executeClaimedRun({ machineId, claimClient, claimed, heartbeatMs: 60_000, leaseDurationMs: 120_000,
+        coordinateWorkflowRun: async claim => { result = await coordinator(claim); return result; } });
+      if (!result) throw new Error('retry_was_not_claimed');
+      return result;
+    };
+    expect(await coordinate(0)).toMatchObject({ state: 'interrupted' });
+    const original = rowFor(kit, 'setup')!;
+    expect(original.lifecycle).toBe('failed');
+    const owner = createWorkflowRunActionOwner({ resolveAccountId: async () => accountId, storage: kit,
+      definitions: { get: async () => { throw new Error('unexpected_definition_read'); } },
+      resolveEncryption: async () => ({ kind: 'available', witness: currentness }),
+      observeRecovery: ({ progress }) => observeWorkflowInvocationRecoveryEvidence({ runId,
+        credentials: { token: 'token', encryption: null }, machineId, progress,
+        getRun: async () => { throw new Error('Setup must not observe an execution Run'); },
+        getOperation: async () => ({ kind: 'found', operation: operation('failed') }),
+      }),
+    });
+    const retry = WorkflowActionOutputSchemasV1['workflow.run.invocations.retry'].parse(await owner.execute({
+      actionId: 'workflow.run.invocations.retry', context: { surface: 'cli', authority: 'account_automation',
+        callerPermissionMode: 'safe-yolo' },
+      input: { runId, expectedRevision: kit.run().revision, invocation: { recordId: original.id },
+        causalInvocationIds: [original.id], conversation: 'fresh_agent', input: { kind: 'original' } },
+    }));
+    expect(retry).toMatchObject({ disposition: 'accepted', invocation: { attempt: '1' } });
+    unavailable = true;
+    const interrupted = await coordinate(1);
+    expect(launches).toBe(2);
+    expect(openRowProgress(kit, kit.rowById(retry.invocation.id)!.index)).toMatchObject({ execution: {
+      kind: 'action', actionRequestId: `${runId}/${original.id}/1`,
+      awaitedOperations: [{ operationId: 'setup-retry', machineId }],
+    } });
+    expect(interrupted).toMatchObject({ state: 'interrupted' });
+    expect(kit.run()).toMatchObject({ state: 'interrupted', workflowCustodyState: 'pending' });
+    expect(kit.rowById(retry.invocation.id)?.index).toMatchObject({ lifecycle: 'outcome_uncertain', attempt: '1' });
+    // Reconstruct the coordinator before native completion is available: it must
+    // retain custody and must not dispatch the already submitted attempt again.
+    expect(await coordinate(1)).toMatchObject({ state: 'interrupted' });
+    unavailable = false;
+    const observe = createWorkflowInvocationRecoveryObserver({ credentials: { token: 'token', encryption: null }, machineId,
+      actionExecutor: { execute: async () => { throw new Error('must_not_replace_setup'); } },
+      nativeActionOperations: { get: async () => ({ kind: 'found', operation: operation(outcome) }),
+        wait: async () => ({ kind: 'found', operation: operation(outcome) }),
+        cancel: async () => { throw new Error('must_not_cancel_setup'); } },
+    });
+    await createWorkflowRunRecoveryReader({ accountId, machineId,
+      storage: { execute: async (request, options) => request.operation === 'recovery.list'
+        ? { candidates: [{ run: kit.run(), parentAttempt: 1 }] } : kit.execute(request, options) },
+      resolveAccountEncryption: async () => ({ kind: 'available', witness: currentness }), reconcileInvocation: observe,
+    })('reconnect');
+    if (outcome !== 'succeeded') {
+      // The existing recovery owner requires acknowledgement of uncertain prior
+      // effects after a failed/stopped native attempt; success alone resolves it.
+      expect(kit.rowById(retry.invocation.id)?.index.lifecycle).toBe('needs_attention');
+      expect(openRowProgress(kit, kit.rowById(retry.invocation.id)!.index)).toMatchObject({
+        uncertainPriorEffects: { activity: 'stopped' }, reason: { code: 'outcome_uncertain' },
+      });
+      if (outcome === 'failed') expect(openRowProgress(kit, kit.rowById(retry.invocation.id)!.index))
+        .toMatchObject({ result: { operation: { state: 'failed', error: { errorCode: scenario === 'native_unknown'
+          ? 'outcome_unknown' : 'machine_setup_child_failed' } } } });
+      expect(kit.run()).toMatchObject({ state: 'interrupted', workflowCustodyState: 'pending' });
+    } else {
+      expect(kit.rowById(retry.invocation.id)?.index.lifecycle).toBe('completed');
+      const expectedState = scenario === 'uncertain_sibling' ? 'interrupted' : 'succeeded';
+      expect(await coordinate(1)).toMatchObject({ state: expectedState });
+      expect(kit.run()).toMatchObject({ state: expectedState,
+        workflowCustodyState: expectedState === 'interrupted' ? 'pending' : 'settled' });
+    }
+    if (scenario === 'succeeded') {
+      const root = kit.rows().find(row => openRowProgress(kit, row.index).blockKind === 'root')!;
+      expect(openRowProgress(kit, root.index)).toMatchObject({ stepProgress: { completed: 1, total: 1,
+        destinations: [{ observation: { recordId: retry.invocation.id, attempt: '1', lifecycle: 'completed' } }] } });
+    }
+    if (scenario === 'uncertain_sibling') {
+      expect(kit.rowById(retry.invocation.id)?.index.lifecycle).toBe('completed');
+      expect(rowFor(kit, 'next-setup')?.lifecycle).toBe('outcome_uncertain');
+    }
+    expect(openRowProgress(kit, kit.rowById(original.id)!.index)).toMatchObject({ reason: { code: 'machine_setup_child_failed' },
+      result: { operation: { state: 'failed' } } });
+    expect(kit.rowById(original.id)?.index.lifecycle).toBe('superseded');
+    expect(openRowProgress(kit, kit.rowById(retry.invocation.id)!.index)).toMatchObject({ previousAttemptRecordId: original.id });
+    expect(launches).toBe(scenario === 'uncertain_sibling' ? 3 : 2);
+  });
 
   it('settles a personless Workflow Action refusal through the accepted context and coordinator', async () => {
     const runId = '17171717-1717-4717-8717-171717171718';
