@@ -824,6 +824,27 @@ describe('Environment draft Machine Home', () => {
     } finally { standardCleanup(); account.dispose(); storage.setState(previous); }
   });
 
+  // QA-DEPLOY-1114 #25: the Already built doors open /deployments/new; its route keeps the door's Machine too.
+  it('starts the Already built draft route on the Machine its Deploy an app here door names', async () => {
+    const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://draft-route-machine.test', accountId: 'alice',
+      serverIdentityId: `srv_${'w'.repeat(32)}`, currentAccount: true });
+    const account = await captureLazyActionAccountContext(serverId);
+    const previous = storage.getState();
+    try {
+      homes.answer(serverId, 'POST /v1/machines/managed/actions/list', { body: { machines: [] } });
+      await publishMachineInventoryForTest(account.accountLifetime.scope, [
+        createMachineFixture({ id: 'first', installationId: 'first-installation', activeAt: Date.now() }),
+        createMachineFixture({ id: 'chosen', installationId: 'chosen-installation', activeAt: Date.now() })]);
+      routerMock.spies.setParams({ serverId, newDefinition: 'compose', deployMachine: 'chosen' });
+      const { WorkspaceRouteBody } = await import('@/app/(app)/deployments/new');
+      const screen = await renderScreen(<WorkspaceRouteBody />);
+      const machine = () => screen.findAllByType(SessionMachineField).find(node => node.props.testID === 'project-deployments.draft.machine');
+      await vi.waitFor(() => expect(machine()).toBeTruthy());
+      expect(machine()!.props.machineId).toBe('chosen');
+      await screen.unmount();
+    } finally { routerMock.resetParams(); standardCleanup(); account.dispose(); storage.setState(previous); }
+  });
+
   it('starts on an answering Machine, never an unreachable one, and says the typed remedy when the target is unavailable', async () => {
     const serverId = await homes.addHome({ name: 'Project', serverUrl: 'https://draft-reachable.test', accountId: 'alice',
       serverIdentityId: `srv_${'r'.repeat(32)}`, currentAccount: true });

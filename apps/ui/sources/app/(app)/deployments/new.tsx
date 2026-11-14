@@ -7,7 +7,8 @@ import { DeploymentDefinitionDraftPage } from '@/components/projects/deployments
 export function WorkspaceRouteBody() {
   const params = useLocalSearchParams<Record<string, string | string[] | undefined>>();
   const kind = readProjectRouteStringParam(params.newDefinition);
-  return <DeploymentDefinitionDraftPage serverId={readProjectRouteStringParam(params.serverId)} definitionKind={kind === 'image' ? 'image' : 'compose'} />;
+  return <DeploymentDefinitionDraftPage serverId={readProjectRouteStringParam(params.serverId)} definitionKind={kind === 'image' ? 'image' : 'compose'}
+    initialMachineId={readProjectRouteStringParam(params.deployMachine)} />;
 }
 
 export default function RouteEntry() { return <WorkspaceRouteEntry Body={WorkspaceRouteBody} />; }
