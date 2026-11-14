@@ -1,6 +1,6 @@
 import type { JsonValue } from '@happier-dev/protocol';
 import type { ActionOperationProgressV1 } from '@happier-dev/protocol/actions/operations/v1';
-import { ManagedEnrollmentFullCorrelationV1Schema, type ManagedControllerCurrentnessV1, type ManagedEnrollmentFullCorrelationV1, type ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedEnrollmentFullCorrelationV1Schema, type ManagedControllerCurrentnessV1, type ManagedEnrollmentCorrelationV1, type ManagedEnrollmentFullCorrelationV1, type ManagedMachineActionIdV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { MANAGED_BOOTSTRAP_RETRY_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { AcquireResultV1Schema, ManagedBootstrapCarrierV1Schema, ProviderObservationV1Schema, type AcquireResultV1, type ManagedBootstrapCarrierV1, type ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
@@ -32,6 +32,7 @@ export type ManagedNativeInvocationIO = Readonly<{
 export type ManagedNativeInvocation = (role: ManagedNativeRole, body: unknown, io?: ManagedNativeInvocationIO) => Promise<JsonValue | null>;
 export type ManagedReconciliationHome = Readonly<{
     correlation(machine: ManagedMachineFullV1): ManagedControllerCurrentnessV1;
+    projectEnrollmentCorrelation(machine: ManagedMachineFullV1, correlation: ManagedEnrollmentFullCorrelationV1): ManagedEnrollmentCorrelationV1;
     row(path: string, body: unknown, signal?: AbortSignal | null): Promise<ManagedMachineFullV1>;
     submit(machine: ManagedMachineFullV1): Promise<Readonly<{ submitted: boolean; machine: ManagedMachineFullV1 }>>;
     reportIssuedAcquireFact(machine: ManagedMachineFullV1, result: Extract<AcquireResultV1, { kind: 'bound' | 'pending' }>, configurationFacts?: ManagedConfigurationFactsV1): Promise<ManagedMachineFullV1>;
@@ -47,6 +48,7 @@ export type ManagedReconciliationEnrollment = Readonly<{
     machine: ManagedMachineFullV1;
     carrier: ManagedBootstrapCarrierV1;
     correlation: ManagedEnrollmentFullCorrelationV1;
+    homeCorrelation: ManagedEnrollmentCorrelationV1;
     invoke: ManagedNativeInvocation;
     credentialRevision?: number;
     guestHostPublicKey?: string;
@@ -385,8 +387,9 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
                 }
                 if (!machine.enrolledMachineId || carrier.kind === 'native') {
                     const correlation = ManagedEnrollmentFullCorrelationV1Schema.parse({ ...input.home.correlation(machine), resource: machine.resource });
-                    if (!machine.enrolledMachineId) machine = await input.home.row('enrollment-context', correlation);
-                    machine = await input.bootstrap.enroll({ machine, carrier, correlation, invoke, credentialRevision,
+                    const homeCorrelation = input.home.projectEnrollmentCorrelation(machine, correlation);
+                    if (!machine.enrolledMachineId) machine = await input.home.row('enrollment-context', homeCorrelation);
+                    machine = await input.bootstrap.enroll({ machine, carrier, correlation, homeCorrelation, invoke, credentialRevision,
                         onInstalled: async () => {
                             if (machine.bootstrapInstalled) return;
                             machine = await input.home.row('report', { ...input.home.correlation(machine),

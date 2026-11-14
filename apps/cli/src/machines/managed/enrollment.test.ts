@@ -73,7 +73,7 @@ describe('runManagedMachineEnrollment', () => {
   it('retains the original typed installation failure through the local task wait', async () => {
     const cause = Object.assign(new Error('private filesystem path'), { code: 'EACCES' });
     const failure = new SystemTaskExecutionError('invalid_payload', 'Payload preparation failed.', { cause });
-    await expect(runManagedMachineEnrollment({ correlation, target, carrier }, {
+    await expect(runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier }, {
       readCurrentManagedRow: async () => machine,
       native: {
         // Native execution is the OS boundary; the real enrollment/task owner must retain its failure.
@@ -86,7 +86,7 @@ describe('runManagedMachineEnrollment', () => {
 
   it('refuses requester enrollment without the owning Action operation before any guest effect', async () => {
     let effects = 0;
-    await expect(runManagedMachineEnrollment({ correlation, target, carrier }, {
+    await expect(runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier }, {
       readCurrentManagedRow: async () => Object.assign({}, machine, { enrollmentAccountId: 'requesting-member' }),
       native: {
         exec: async () => { effects++; throw new Error('Requester approval has no owning operation'); },
@@ -127,7 +127,7 @@ describe('runManagedMachineEnrollment', () => {
 
   it.each([undefined, { homeDir: '/persistent/home', happyHomeDir: '/persistent/home/.happier', daemonStartup: 'native-process' as const }])('refuses an unsupported dedicated identity before installing or inheriting the bootstrap account (%j)', async guestHome => {
     const commands: string[] = [];
-    await expect(runManagedMachineEnrollment({ correlation, target, carrier: { ...carrier, ...(guestHome ? { guestHome } : {}) } }, {
+    await expect(runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier: { ...carrier, ...(guestHome ? { guestHome } : {}) } }, {
       readCurrentManagedRow: async () => ({ ...machine, enrollmentIdentity: {
         kind: 'dedicatedDaemonUser' as const, username: 'happier' as const, serviceMode: 'user' as const,
         role: 'deployTarget' as const, adminAccessAtCreation: 'preauthorized' as const,
@@ -281,7 +281,7 @@ describe('runManagedMachineEnrollment', () => {
         },
         async putFile() { fragments++; },
       };
-      await expect(runManagedMachineEnrollment({ correlation, target, channel: 'preview', onEvent: event => { events.push(event); },
+      await expect(runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, channel: 'preview', onEvent: event => { events.push(event); },
         onTask: task => { taskId = task.taskId; }, onPrompt: prompt => {
           prompts.push(prompt);
           if (prompt?.kind === 'administrator.establish') queueMicrotask(() => {
@@ -381,7 +381,7 @@ describe('runManagedMachineEnrollment', () => {
         vi.stubEnv('HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_TIMEOUT_MS', '100');
         vi.stubEnv('HAPPIER_BOOTSTRAP_SETUP_THIS_COMPUTER_SERVICE_READY_POLL_MS', '50');
       }
-      const update = runManagedMachineEnrollment({ correlation, target, carrier, channel: 'preview' }, {
+      const update = runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier, channel: 'preview' }, {
         readCurrentManagedRow: async () => ({ ...machine, enrolledMachineId: 'ordinary-machine', enrollmentIdentity: {
           kind: 'dedicatedDaemonUser', username: 'happier', serviceMode: 'user', role: 'deployTarget', adminAccessAtCreation: 'preauthorized',
         } }),
@@ -440,7 +440,7 @@ describe('runManagedMachineEnrollment', () => {
       };
       // Installation must reach the real recipe's auth consumer; empty output is deliberately invalid.
       await withReleaseMirror(async (releases) => {
-        await expect(runManagedMachineEnrollment({ correlation, target, carrier, channel: 'stable' }, {
+        await expect(runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier, channel: 'stable' }, {
           readCurrentManagedRow: async () => { authorityReads++; return machine; }, native,
         })).rejects.toMatchObject({ code: 'invalid_cli_response' });
         expect(releases).toEqual([]);
@@ -492,7 +492,7 @@ describe('runManagedMachineEnrollment', () => {
       const { getLiveSystemTasksRunnerAdapter } = await import('@/capabilities/systemTasks/liveSystemTasksRunner');
       const consent = { kind: 'auth.approveRemoteProvisioning', message: 'Sign this managed machine into your Account for Account-wide automation?' };
       await withReleaseMirror(async () => {
-        const enrollment = runManagedMachineEnrollment({ correlation, target, carrier, channel: 'stable', signal: lifetime.signal,
+        const enrollment = runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier, channel: 'stable', signal: lifetime.signal,
           onTask: (task) => { taskId = task.taskId; }, onPrompt: (prompt) => { prompts.push(prompt); },
         }, { readCurrentManagedRow: async () => {
           authorityReads++;
@@ -523,7 +523,7 @@ describe('runManagedMachineEnrollment', () => {
     try {
       vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', root);
       await withReleaseMirror(async (releases) => {
-        await expect(runManagedMachineEnrollment({ correlation, target, carrier }, {
+        await expect(runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier }, {
           readCurrentManagedRow: async () => machine,
           native: {
             exec: async () => ({ status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' }),
@@ -543,7 +543,7 @@ describe('runManagedMachineEnrollment', () => {
     vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', '');
     vi.stubEnv('HAPPIER_PUBLIC_RELEASE_CHANNEL', hostChannel);
     await withReleaseMirror(async (releases) => {
-      await expect(runManagedMachineEnrollment({ correlation, target, carrier, ...(channel ? { channel } : {}) }, {
+      await expect(runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier, ...(channel ? { channel } : {}) }, {
         readCurrentManagedRow: async () => machine,
         native: { exec: async () => ({ status: 0, stdout: 'Linux\nx86_64\n/home/guest\n', stderr: '' }),
           putFile: async () => { throw new Error('No payload may be delivered after release lookup fails'); } },
@@ -574,7 +574,7 @@ describe('runManagedMachineEnrollment', () => {
         putFile: async ({ path, bytes }) => { await mkdir(dirname(path), { recursive: true }); await writeFile(path, bytes); },
       };
       await withReleaseMirror(async releases => {
-        const update = runManagedMachineEnrollment({ correlation, target, carrier, channel: 'stable' }, {
+        const update = runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier, channel: 'stable' }, {
           readCurrentManagedRow: async () => ({ ...machine, enrollmentIdentity: serviceExit === 0 ? undefined : machine.enrollmentIdentity,
             enrolledMachineId: 'ordinary-machine' }), native,
         });
@@ -594,7 +594,7 @@ describe('runManagedMachineEnrollment', () => {
     try {
       await writeFile(join(root, 'happier'), '#!/bin/sh\nexit 0\n');
       vi.stubEnv('HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_ROOT', root);
-      const result = runManagedMachineEnrollment({ correlation, target, carrier, channel: 'stable' }, {
+      const result = runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier, channel: 'stable' }, {
         readCurrentManagedRow: async () => ({ ...machine, enrolledMachineId: 'ordinary-machine',
           enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } }),
         native: { async exec({ command }) {
@@ -625,8 +625,8 @@ describe('runManagedMachineEnrollment', () => {
         if (!request.processConfig) throw new Error('Retry must not reinstall or re-enroll the ordinary Machine');
         return { status: attempt++ === 0 ? 1 : 0, stdout: '', stderr: '' };
       }, putFile: async () => { throw new Error('Retry must not deliver another installer or pairing payload'); } } };
-    await expect(runManagedMachineEnrollment({ correlation, target, carrier: bootCarrier }, dependencies)).rejects.toMatchObject({ code: 'native_boot_unconfirmed' });
-    expect(await runManagedMachineEnrollment({ correlation, target, carrier: bootCarrier }, dependencies)).toEqual({ machineId: 'ordinary-machine' });
+    await expect(runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier: bootCarrier }, dependencies)).rejects.toMatchObject({ code: 'native_boot_unconfirmed' });
+    expect(await runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier: bootCarrier }, dependencies)).toEqual({ machineId: 'ordinary-machine' });
     expect(requests).toEqual([expect.objectContaining({ command: expect.stringContaining("'/persistent/home/.happier/cli/current/happier' 'daemon' 'start-sync'"),
       processConfig: {
         environment: { HOME: '/persistent/home', HAPPIER_HOME_DIR: '/persistent/home/.happier' },
@@ -636,7 +636,7 @@ describe('runManagedMachineEnrollment', () => {
   });
   it('runs native installer observations under the declared persistent guest home, not the image default home', async () => {
     const commands: string[] = [];
-    await expect(runManagedMachineEnrollment({ correlation, target, carrier: { ...carrier,
+    await expect(runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier: { ...carrier,
       guestHome: { homeDir: '/persistent/home', happyHomeDir: '/persistent/home/.happier', daemonStartup: 'native-process' } } }, {
       readCurrentManagedRow: async () => ({ ...machine, enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } }),
       native: { exec: async ({ command }) => { commands.push(command); return { status: 1, stdout: '', stderr: '' }; }, putFile: async () => {} },
@@ -647,7 +647,7 @@ describe('runManagedMachineEnrollment', () => {
   });
   it('refuses retired enrollment without sending a private payload to the guest', async () => {
     let nativeCalls = 0;
-    await expect(runManagedMachineEnrollment({ correlation, target, carrier }, {
+    await expect(runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier }, {
       readCurrentManagedRow: async () => ({ ...machine, creationState: 'canceled' }),
       native: {
         exec: async () => { nativeCalls++; return { status: 0, stdout: '', stderr: '' }; },
@@ -659,7 +659,7 @@ describe('runManagedMachineEnrollment', () => {
 
   it('refuses a replaced native identity without installing or reacquiring', async () => {
     let nativeCalls = 0;
-    await expect(runManagedMachineEnrollment({ correlation, target, carrier }, {
+    await expect(runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier }, {
       readCurrentManagedRow: async () => ({ ...machine, resource: { ...resource, value: { nativeId: 'another-guest' } } }),
       native: {
         exec: async () => { nativeCalls++; return { status: 0, stdout: '', stderr: '' }; },

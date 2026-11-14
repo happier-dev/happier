@@ -438,7 +438,7 @@ export function createManagedMachineControllerClient(input: ManagedMachineAcquis
             return hydrator.normalize((await request(path, prepared, headers.headers, ManagedControllerMachineOutputV1Schema, null)).machine);
     }
     return {
-        post, row, correlation, readCurrent, isCurrent, isOriginCurrent, assertConnection,
+        post, row, correlation, projectEnrollmentCorrelation: hydrator.projectEnrollmentCorrelation, readCurrent, isCurrent, isOriginCurrent, assertConnection,
         setHomeOperationRetry(lifetime?: HomeOperationRetry) { homeRetry = lifetime; },
         async submit(machine: ManagedMachineFullV1) { return await submitIdentity(machine, 'acquire'); },
         async submitIntent(machine: ManagedMachineFullV1) { return await submitIdentity(machine, 'rebuild'); },

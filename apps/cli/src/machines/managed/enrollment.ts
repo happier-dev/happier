@@ -5,7 +5,7 @@ import { runManagedMachineEnrollment as runSharedManagedMachineEnrollment, proje
   SystemTaskExecutionError, type ManagedNativeBootstrapIO,
   type ManagedMachineEnrollmentDependencies as PortableEnrollmentDependencies } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import type { InteractiveSystemTaskEventInput, InteractiveSystemTaskKind } from '@happier-dev/cli-common/systemTasks';
-import type { ManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { ManagedEnrollmentCorrelationV1, ManagedEnrollmentFullCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { SavedSecretRefV1 } from '@happier-dev/protocol';
@@ -28,7 +28,8 @@ export type ManagedMachineEnrollmentDependencies = Readonly<{
 
 /** Host custody binds the existing binary task to one retained resource. */
 export async function runManagedMachineEnrollment(input: Readonly<{
-  correlation: ManagedEnrollmentCorrelationV1;
+  correlation: ManagedEnrollmentFullCorrelationV1;
+  homeCorrelation: ManagedEnrollmentCorrelationV1;
   target: ResolvedHomeTarget;
   carrier: unknown;
   guestHostPublicKey?: string;
@@ -118,7 +119,7 @@ export async function runManagedMachineEnrollment(input: Readonly<{
         ? TERMINAL_AUTH_POLL_INTERVAL_MS : REMOTE_HOME_ENROLLMENT_POLL_INTERVAL_MS, signal: input.signal }),
     createPairingDelivery: enrollmentAccountId => {
       if (!input.operationId) return undefined;
-      responseOwner = { correlation, operationId: input.operationId, enrollmentAccountId, readTaskId: () => liveTaskId,
+      responseOwner = { correlation: input.homeCorrelation, operationId: input.operationId, enrollmentAccountId, readTaskId: () => liveTaskId,
         reviewedChild: input.reviewedChild };
       return createManagedEnrollmentPairingDelivery(responseOwner);
     },

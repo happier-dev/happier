@@ -1,5 +1,5 @@
 import type { ResolvedHomeTarget } from '../../homeTarget/homeTarget.js';
-import type { ManagedEnrollmentFullCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+import type { ManagedEnrollmentCorrelationV1, ManagedEnrollmentFullCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedMachineFullV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import type { HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/types';
 import type { MachineProvisionerProcessConfigV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
@@ -49,6 +49,7 @@ export type ManagedNativePayloadInstallation = Readonly<{
 
 export type ManagedMachineEnrollmentInput = Readonly<{
   correlation: ManagedEnrollmentFullCorrelationV1;
+  homeCorrelation: ManagedEnrollmentCorrelationV1;
   target: ResolvedHomeTarget;
   carrier: unknown;
   /** Only the retained generated bundle supplies this; scanner evidence is not trust. */
@@ -150,7 +151,7 @@ export async function runManagedMachineEnrollment(input: ManagedMachineEnrollmen
     && (nativeGuestHome !== undefined || row.enrollmentIdentity?.kind === 'guestProcess');
   const configuration = {
     relay: { relayUrl: input.target.canonicalAuthUrl, webappUrl: input.target.webappUrl },
-    homeTarget: input.target, managedEnrollment: correlation,
+    homeTarget: input.target, managedEnrollment: input.homeCorrelation,
     machineDisplayName: row.launch.name,
     enrollmentIdentity: row.enrollmentIdentity,
     requireLocalApproval: true,

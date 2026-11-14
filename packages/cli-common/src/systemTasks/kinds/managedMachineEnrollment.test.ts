@@ -22,7 +22,7 @@ describe('portable managed enrollment', () => {
     const carrier = { kind: 'ssh', address: 'guest.example', port: 2222, user: 'happier-bootstrap', credentialRef,
       ...(generated ? { hostKeySource: 'retained-credential' } : {}),
       hostKeyEvidence: { hostKey: '[guest.example]:2222 ssh-ed25519 BQYHCA==', fingerprint: 'SHA256:vendor-observed' } };
-    const input = { correlation, target, channel: 'stable' as const, carrier,
+    const input = { correlation, homeCorrelation: correlation, target, channel: 'stable' as const, carrier,
       guestHostPublicKey: publicKey };
     await expect(runManagedMachineEnrollment(input, {
       readCurrentManagedRow: async () => ({ ...machine, bootstrapCredentialRef: credentialRef }),
@@ -57,7 +57,7 @@ describe('portable managed enrollment', () => {
     const completion = { kind: 'remote_home_enrollment_result', protocolVersion: 1, success: true,
       homeServerIdentityId: target.homeServerIdentityId, machineId: 'joined', encryptionType: 'tokenOnly',
       pairingAuthentication: 'v3', remoteProfileId: 'guest-home' };
-    const enrollment = runManagedMachineEnrollment({ correlation, target, channel: 'stable', operationId: 'admitted-operation',
+    const enrollment = runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, channel: 'stable', operationId: 'admitted-operation',
       onInstalled: async () => { phases.push('installed'); },
       carrier: { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 } } }, {
       readCurrentManagedRow: async () => { rowReads++; return { ...machine, enrolledMachineId: retainedEnrollment ? 'joined' : undefined,
@@ -112,7 +112,7 @@ describe('portable managed enrollment', () => {
     let rowReads = 0;
     const controller = new AbortController();
     const guestHome = { homeDir: '/persistent/home', happyHomeDir: '/persistent/home/.happier', daemonStartup: 'native-process' };
-    const result = await runManagedMachineEnrollment({ correlation, target, channel: 'stable', signal: controller.signal,
+    const result = await runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, channel: 'stable', signal: controller.signal,
       carrier: { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 }, guestHome } }, {
       readCurrentManagedRow: async () => { rowReads++; return machine; },
       native: { exec: async request => { commands.push(request); return { status: 0, stdout: '', stderr: '' }; },

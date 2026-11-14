@@ -50,8 +50,8 @@ it.each(['empty', 'invalid', 'command_failed', 'spawn_failed'] as const)(
         const target = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: homeId,
             canonicalServerUrl: 'https://home.example.test', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example.test' }] },
             authority: 'trusted_enrollment' });
-        await expect(runManagedMachineEnrollment({ correlation: { homeId, managedId: row.id, controller, resource,
-            requestId: 'request', expectedIntentRevision: 0 }, target, carrier, guestHostPublicKey }, {
+        const correlation = { homeId, managedId: row.id, controller, resource, requestId: 'request', expectedIntentRevision: 0 };
+        await expect(runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier, guestHostPublicKey }, {
             readCurrentManagedRow: async () => row,
             materializeBootstrapCredential: async () => ({ path: '/fixture/key', dispose: async () => {} }),
         })).rejects.toMatchObject({ code: 'native_ssh_host_key_unavailable',

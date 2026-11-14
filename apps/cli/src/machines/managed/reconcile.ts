@@ -611,7 +611,7 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
 async function runManagedEnrollment(params: ManagedMachineReconciliationInput, enrollmentInput: ManagedReconciliationEnrollment,
     invocation: ReturnType<typeof createManagedNativeInvocation>): Promise<ManagedMachineFullV1> {
     let machine = enrollmentInput.machine;
-    const { carrier, correlation, invoke } = enrollmentInput;
+    const { carrier, correlation, homeCorrelation, invoke } = enrollmentInput;
     const bootstrapCredentialRevision = enrollmentInput.credentialRevision;
     const { target, contribution, occurrenceId } = invocation;
     const domainRef = { kind: 'managedMachine' as const, id: machine.id, controller: machine.controller, resource: machine.resource };
@@ -627,7 +627,7 @@ async function runManagedEnrollment(params: ManagedMachineReconciliationInput, e
     let enrollmentLifetime: HomeOperationRetry | undefined;
     let enrollmentAttempted = false;
     try {
-        const enrollment = await runManagedMachineEnrollment({ correlation, target, carrier, signal: params.options.signal,
+        const enrollment = await runManagedMachineEnrollment({ correlation, homeCorrelation, target, carrier, signal: params.options.signal,
             onInstalled: enrollmentInput.onInstalled,
             reviewedChild: params.options.context?.hostReviewedChild,
             accountCredentials: readRequesterAccountActionContext(params.options.context?.externalActionExecutionAuthorization)?.credentials,

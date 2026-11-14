@@ -80,9 +80,9 @@ describe('retained guest QA payload replacement', () => {
             for (const build of ['create-time-build', 'newer-qa-build']) {
                 const bytes = executable(build);
                 await writeFile(join(payloadRoot, 'happier'), bytes);
-                await expect(runManagedMachineEnrollment({
-                    correlation: { homeId: retained.homeId, managedId: retained.id, requestId: build,
-                        expectedIntentRevision: retained.intentRevision, controller: retained.controller, resource },
+                const correlation = { homeId: retained.homeId, managedId: retained.id, requestId: build,
+                    expectedIntentRevision: retained.intentRevision, controller: retained.controller, resource };
+                await expect(runManagedMachineEnrollment({ correlation, homeCorrelation: correlation,
                     target, carrier: { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 } },
                     channel: 'stable',
                 }, { readCurrentManagedRow: async () => retained, native })).resolves.toEqual({ machineId: 'retained-machine' });

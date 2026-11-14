@@ -3118,6 +3118,14 @@ check that exact Account before creating the ordinary Machine. The CLI registers
 managed enrollment before persisting its credential. Custodian-created Machines
 keep controller-local `auth/terminalAuthApproval.ts` approval.
 
+Opaque preset enrollment keeps two views of the same admitted correlation: the
+full local resource for native bootstrap and the structural Home correlation for
+enrollment-context, installer responses, guest pairing and registration. The
+Protocol projection uses the original Home row; CLI hydration and UI Account
+enrollment consume it before sending those requests. Home applies one retained-row
+resource matcher to enrollment and installer admission: opaque rows omit the
+resource, while ordinary rows retain the existing resource match.
+
 In current 0.3 development, the strict acquire schema requires the reviewed
 `enrollmentIdentity`; downstream enrollment does not repeat its presence check.
 The controller reads the retained acquisition at entry and once before releasing
@@ -3131,9 +3139,10 @@ delivers the guest's terminal-pairing v3 context only to the admitted requester'
 authenticated client. The same `CAPABILITIES_INVOKE` / `tool.systemTasks/respond`
 transport carries a transient result, not an Action operation or task observation.
 Home checks the current creation, the requester's present-user Account token,
-controller installation and resource once, then relays the purpose only over the
-custodian controller's authenticated Home socket. The controller accepts that
-stamp from no other ingress and makes no callback to Home; the live task closure
+controller installation and retained resource correlation once, then relays the
+purpose only over the custodian controller's authenticated Home socket. The
+controller accepts that stamp from no other ingress and makes no callback to Home;
+the live task closure
 additionally binds the managed row and operation/task/question. Both delivery and the final
 answer are checked. No controller Machine grant, key copy or new pairing issuer is
 created. Home necessarily sees this transient context over its authenticated

@@ -28,7 +28,7 @@ describe('Devcontainer consumes ordinary managed enrollment', () => {
     const admitted = { ...correlation, resource: observedResource };
     const commands: string[] = [];
     let payloadDelivered = false;
-    await expect(runManagedMachineEnrollment({ correlation: admitted, target, carrier }, {
+    await expect(runManagedMachineEnrollment({ correlation: admitted, homeCorrelation: admitted, target, carrier }, {
       // The current-row HTTP reader returns the owner's parsed row, including
       // normalized contribution references, rather than this boundary literal.
       readCurrentManagedRow: async () => ManagedMachineV1Schema.parse({ ...machine, resource: observedResource }),
@@ -46,7 +46,7 @@ describe('Devcontainer consumes ordinary managed enrollment', () => {
     { title: 'different physical controller', row: { ...machine, controller: { ...correlation.controller, machineId: 'other-host' } }, code: 'enrollment_retired' },
   ])('rejects $title before child credential or binary delivery', async ({ row, code }) => {
     let delivered = false;
-    await expect(runManagedMachineEnrollment({ correlation, target, carrier }, {
+    await expect(runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier }, {
       readCurrentManagedRow: async () => ManagedMachineV1Schema.parse(row),
       // Native IO is the external boundary. Host currentness and enrollment
       // admission execute unchanged; no enrollment or policy helper is mocked.
@@ -59,7 +59,7 @@ describe('Devcontainer consumes ordinary managed enrollment', () => {
   });
   it('rejects archived enrollment before native IO even when the creation is active', async () => {
     let delivered = false;
-    await expect(runManagedMachineEnrollment({ correlation, target, carrier }, {
+    await expect(runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier }, {
       readCurrentManagedRow: async () => ManagedMachineV1Schema.parse({ ...machine, archivedAt: 1 }),
       native: { exec: async () => { delivered = true; return { status: 0, stdout: '', stderr: '' }; },
         putFile: async () => { delivered = true; } },

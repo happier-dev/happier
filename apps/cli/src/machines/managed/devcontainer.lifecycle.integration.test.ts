@@ -18,8 +18,8 @@ import { DEVCONTAINER_PLUGIN } from '@happier-dev/plugins-devcontainer';
 import { defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
 import { defineMachineProvisionerSchemas, MachineProvisionerBootstrapCarrierV1Schema,
   MachineProvisionerCheckResultV1Schema, MachineProvisionerObservationV1Schema, MachineProvisionerPowerResultV1Schema,
-  MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema,
-  MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/plugin-sdk/machine-provisioners';
+  MachineProvisionerNativeExecResultV1Schema, MachineProvisionerPutFileResultV1Schema } from '@happier-dev/plugin-sdk/machine-provisioners';
+import { MachineProvisionerContributionV1Schema, MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { SystemTaskExecutionError } from '@happier-dev/cli-common/systemTasks';
 import { fetchGitHubReleaseByTag } from '@happier-dev/release-runtime/github';
@@ -27,7 +27,7 @@ import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/m
 import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
 import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/jsonSchemaValidation';
 import { deriveManagedDevcontainerChildProjectionV1 } from '@happier-dev/protocol/machines/managed/devcontainerV1';
-import { ManagedAdmissionInputV1Schema, ManagedEnrollmentCorrelationV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAdmissionInputV1Schema, ManagedEnrollmentFullCorrelationV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { AcquireResultV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { signMachineInstallationProof, verifyMachineInstallationProof, MachineInstallationProofV1Schema } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { ApiClient } from '@/api/api';
@@ -261,7 +261,7 @@ async function lifecycleFixture(root: string, onTestFinished: (cleanup: () => vo
     operationOwnerUpdate: { update() {} } } };
   const client = createManagedMachineControllerClient(input, options, 'machines.managed.acquire');
   const native = createManagedNativeInvocation({ input, options, client, machine: row, action: 'machines.managed.acquire' }, () => row);
-  const correlation = () => ManagedEnrollmentCorrelationV1Schema.parse({ ...client.correlation(row), resource: row.resource });
+  const correlation = () => ManagedEnrollmentFullCorrelationV1Schema.parse({ ...client.correlation(row), resource: row.resource });
   async function register(machineId: string, admitted = correlation()) {
     const keys = tweetnacl.sign.keyPair();
     const installationId = `${machineId}-installation`;
@@ -376,8 +376,10 @@ describe('public-author Devcontainer lifecycle composition', () => {
         homeId, controller, contribution, selectors: { workspaceFolder: root, configPath },
       }, f.options));
       expect(reviewed.base).toMatchObject({ available: true, effectReview: { kind: 'devcontainer' } });
-      const descriptor = DEVCONTAINER_PLUGIN.manifest.contributes.machineProvisioners?.[0];
-      if (!descriptor) throw new Error('Missing Devcontainer provisioner');
+      const authoredDescriptor = DEVCONTAINER_PLUGIN.manifest.contributes.machineProvisioners?.[0];
+      if (!authoredDescriptor) throw new Error('Missing Devcontainer provisioner');
+      // The host consumes the protocol-normalized contribution, as the reconciler does.
+      const descriptor = MachineProvisionerContributionV1Schema.parse(authoredDescriptor);
       const selected = projectMachineProvisionerSelectionV1({ options: reviewed, selection: {}, launchSchema: descriptor.launchSchema });
       expect(selected.kind).toBe('ready');
       if (selected.kind !== 'ready') throw new Error('Reviewed Devcontainer launch was not executable');
@@ -453,7 +455,7 @@ describe('public-author Devcontainer lifecycle composition', () => {
         resource: { value: { name: 'native-original-replacement' } } });
       expect(f.readRow().enrolledMachineId).toBeUndefined();
       let staleDelivery = false;
-      await expect(runManagedMachineEnrollment({ correlation: oldCorrelation, target,
+      await expect(runManagedMachineEnrollment({ correlation: oldCorrelation, homeCorrelation: oldCorrelation, target,
         carrier: { kind: 'native', transport: { contributionRef, schemaVersion: 1 } } }, {
         readCurrentManagedRow: async () => f.readRow(), native: { exec: async () => { staleDelivery = true; return { status: 0, stdout: '', stderr: '' }; },
           putFile: async () => { staleDelivery = true; } },
@@ -521,7 +523,7 @@ describe('public-author Devcontainer lifecycle composition', () => {
         const taskOwner = (await import('@/capabilities/systemTasks/liveSystemTasksRunner')).getLiveSystemTasksRunnerAdapter();
         onTestFinished(async () => { if (taskId) { await taskOwner.cancel({ taskId }); await taskOwner.wait({ taskId }); } });
         const json = (value: unknown) => ({ status: 0, stdout: JSON.stringify(value), stderr: '' });
-        const result = await runManagedMachineEnrollment({ correlation: admitted, target,
+        const result = await runManagedMachineEnrollment({ correlation: admitted, homeCorrelation: admitted, target,
           carrier: { kind: 'native', transport: { contributionRef, schemaVersion: 1 } },
           // This downloads and verifies the public stable artifact through the
           // real installer. Guest command outputs represent the CURRENT source

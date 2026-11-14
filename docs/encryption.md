@@ -1613,6 +1613,14 @@ belong to that snapshot.
 Keyholders open it for execution and presentation; Home lifecycle projections
 must not copy those facts back into plaintext rows or reports.
 
+Opaque preset enrollment sends only the retained Home, creation, request,
+revision and controller correlation to enrollment-context, installer responses,
+pairing and registration. The shared outbound projection uses the original
+structural Home row rather than its opened private snapshot. Native bootstrap
+keeps the opened resource locally; opening it does not make that resource public. Home's enrollment
+owner matches the retained opaque lifecycle and custody, while ordinary full
+enrollment still requires its matching resource.
+
 Revisioned Machine presets and admitted managed-creation setup snapshots retain
 SavedSecret references, not resolved credential values. Those references are
 inside private content. Personal-source promotion captures the readable preset

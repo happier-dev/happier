@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { machineSetup } from '@happier-dev/cli-common';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { ManagedMachineV1Schema, type ManagedMachineEnrollmentIdentityV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { ManagedEnrollmentCorrelationV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedEnrollmentFullCorrelationV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedBootstrapCarrierV1Schema } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
@@ -125,7 +125,7 @@ describe('normalized Machine catalog at the shared enrollment boundary', () => {
     });
     const backend: machineSetup.MachineSetupBackend = { observe, apply: async step => { applied.add(step.id); } };
     const resource = { contributionRef, schemaVersion: definition.schemaVersion, value: { fixture: fixture.key } };
-    const correlation = ManagedEnrollmentCorrelationV1Schema.parse({ homeId: 'srv_catalog_home', managedId: fixture.key,
+    const correlation = ManagedEnrollmentFullCorrelationV1Schema.parse({ homeId: 'srv_catalog_home', managedId: fixture.key,
       requestId: 'catalog-enrollment', expectedIntentRevision: 1,
       controller: { machineId: 'controller', installationId: 'installation' }, resource });
     const credentialRef = { kind: 'shared_resource', resourceId: 'catalog-ssh-key' } as const;
@@ -183,7 +183,7 @@ describe('normalized Machine catalog at the shared enrollment boundary', () => {
         await mkdir(dirname(knownHostsPath), { recursive: true });
         await writeFile(knownHostsPath, hostKey + '\n');
       }
-      const enrollment = runManagedMachineEnrollment({ correlation, target, carrier, channel: 'stable',
+      const enrollment = runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier, channel: 'stable',
         onPrompt: prompt => { if (prompt) throw new Error(`Unexpected catalog enrollment prompt: ${prompt.kind}`); },
       }, {
         readCurrentManagedRow: async () => machine,

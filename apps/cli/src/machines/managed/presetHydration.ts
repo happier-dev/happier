@@ -13,7 +13,8 @@ import { AcquireResultV1Schema, ProviderObservationV1Schema, projectManagedOpaqu
     type AcquireResultV1, type MachineProvisionerSizeV1, type ProviderObservationV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { ManagedAcquireInputV1Schema, ManagedResizeOutputV1Schema, isManagedOpaquePresetReadV1,
     projectManagedOpaquePresetAcquireResultV1, projectManagedOpaquePresetIntentResultV1,
-    projectManagedOpaquePresetResizeResultV1, type ManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
+    projectManagedOpaquePresetResizeResultV1, projectManagedEnrollmentCorrelationV1,
+    type ManagedEnrollmentCorrelationV1, type ManagedEnrollmentFullCorrelationV1, type ManagedMachineReadV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedOpaquePresetCustodianAdmissionV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { hydrateManagedOpaquePresetMachineV1, prepareManagedOpaquePresetAcquireV1, prepareManagedOpaquePresetReportV1,
     readManagedOpaquePresetNativeControlResultV1, type ManagedOpaquePresetContentOpenerV1 } from '@happier-dev/cli-common/machines/managed';
@@ -479,8 +480,13 @@ export function createManagedPresetHydrator(input: Readonly<{
         return snapshot?.structural && machine.preset && samePreset(snapshot.preset, machine.preset) ? snapshot.structural : machine;
     }
 
+    function projectEnrollmentCorrelation(machine: ManagedMachineFullV1,
+        correlation: ManagedEnrollmentFullCorrelationV1): ManagedEnrollmentCorrelationV1 {
+        return projectManagedEnrollmentCorrelationV1(structural(machine), correlation);
+    }
+
     return { open, openSnapshot, withPresetDefinition, openRecipientProjection, openRead, withE2eeAccountKey, normalize, prepareAdmissionAcquire, prepareResize, preparePresetContentReport, prepareControllerReport, prepareResizeReport,
-        rememberReviewedFacts, readReviewedFacts, isOpaque, structural };
+        rememberReviewedFacts, readReviewedFacts, isOpaque, structural, projectEnrollmentCorrelation };
 }
 
 export type ManagedPresetHydrator = ReturnType<typeof createManagedPresetHydrator>;

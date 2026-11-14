@@ -10,7 +10,7 @@ import { executeManagedMachineAcquire } from './acquire.js';
 import { executeManagedMachineDeleteIntent, prepareManagedMachineDeleteIntent } from './destroy.js';
 import { SystemTaskExecutionError } from '../../systemTasks/runSystemTask.js';
 import { ManagedConfigurationFactsV1Schema } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
-import { ManagedControllerReportV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedControllerReportV1Schema, projectManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineControllerError, ManagedMachineNativeRefusal } from './controllerErrors.js';
 
 const machine = ManagedMachineFullV1Schema.parse({
@@ -129,6 +129,7 @@ function boundary(initial: ManagedMachineFullV1 = machine) {
     const input: ManagedMachineReconciliation = {
         machine: initial, requestId: 'request', action: 'machines.managed.acquire', provisioner,
         home: {
+            projectEnrollmentCorrelation: projectManagedEnrollmentCorrelationV1,
             correlation: row => ({ homeId: row.homeId, managedId: row.id, expectedIntentRevision: row.intentRevision,
                 controller: row.controller, requestId: 'request' }),
             row: async (path, body) => {

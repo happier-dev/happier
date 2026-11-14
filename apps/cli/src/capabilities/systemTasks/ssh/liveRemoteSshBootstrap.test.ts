@@ -1380,7 +1380,7 @@ describe('createLiveRemoteSshBootstrapTaskKind', () => {
     const dispose = vi.fn(async () => {});
     // Both fresh scan and supplied evidence agree on the substituted key. Only
     // the retained bundle's generated pin must decide trust through the real adapter.
-    const enrollment = runManagedMachineEnrollment({ correlation, target, channel: 'preview',
+    const enrollment = runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, channel: 'preview',
       guestHostPublicKey: (matches ? TRUSTED_HOST_KEY : MISMATCHED_TRUSTED_HOST_KEY).split(' ').slice(1).join(' '),
       carrier: { kind: 'ssh', address: 'example.test', user: 'happier-bootstrap', port: 22, credentialRef,
         hostKeySource: 'retained-credential',

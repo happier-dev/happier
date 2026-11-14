@@ -10,7 +10,7 @@ import { createManagedNativeBootstrapIO, reconcileManagedMachine, type ManagedNa
 import { runManagedMachineEnrollment } from '@happier-dev/cli-common/systemTasks/nativeRemoteSshBootstrap';
 import { resolveHomeTargetFromDescriptor } from '@happier-dev/cli-common/homeTarget';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { ManagedEnrollmentCorrelationV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedEnrollmentFullCorrelationV1Schema, projectManagedEnrollmentCorrelationV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { connectedAccountRuntime } from '../account.js';
 import { MACHINE_PROVISIONER, PLUGIN, PLUGIN_MANIFEST } from '../manifest.js';
 import { FLY_GUEST_BOOT, FlyExecRequestSchema, FlyMachineSchema } from './schemas.js';
@@ -23,7 +23,7 @@ const machine = ManagedMachineV1Schema.parse({ id: 'managed-fly', homeId: 'srv_f
   allocation: 'bound', creationState: 'active', resource, enrolledMachineId: 'ordinary-machine',
   desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
   enrollmentIdentity: { kind: 'guestProcess', role: 'sandbox' } });
-const correlation = ManagedEnrollmentCorrelationV1Schema.parse({ homeId: machine.homeId, managedId: machine.id,
+const correlation = ManagedEnrollmentFullCorrelationV1Schema.parse({ homeId: machine.homeId, managedId: machine.id,
   requestId: 'retry-existing', expectedIntentRevision: 1, controller, resource });
 const unexpected = async (): Promise<never> => { throw new Error('Boot repair must reuse the admitted resource and enrollment'); };
 
@@ -88,7 +88,7 @@ describe('Fly through the shared managed native recipe', () => {
       const reports: unknown[] = [];
       const result = await reconcileManagedMachine({ machine, action: 'machines.managed.bootstrap.retry', requestId: correlation.requestId,
         provisioner: { id: 'fly', ...MACHINE_PROVISIONER },
-        home: { correlation: () => correlation, async row(path, body) {
+        home: { correlation: () => correlation, projectEnrollmentCorrelation: projectManagedEnrollmentCorrelationV1, async row(path, body) {
           expect(path).toBe('report');
           reports.push(body);
           return machine;
@@ -101,7 +101,7 @@ describe('Fly through the shared managed native recipe', () => {
             const target = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerIdentityId: machine.homeId,
               canonicalServerUrl: 'https://home.example.test', revision: 1, endpoints: [{ kind: 'https', url: 'https://home.example.test' }] },
               authority: 'trusted_enrollment' });
-            const enrolled = await runManagedMachineEnrollment({ correlation: input.correlation, target, channel: 'stable', carrier: input.carrier }, {
+            const enrolled = await runManagedMachineEnrollment({ correlation: input.correlation, homeCorrelation: input.homeCorrelation, target, channel: 'stable', carrier: input.carrier }, {
               readCurrentManagedRow: async () => { admissionReads++; return input.machine; }, native: io,
               createPromptId: () => 'unused', runTask: unexpected, approveLocalAuthRequest: unexpected,
             });

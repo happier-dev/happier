@@ -31,7 +31,7 @@ import { createDaemonManagedMachinePolicyRuntime, readManagedMachinePolicyCensus
 import type { ManagedConnectionState } from '@happier-dev/connection-supervisor';
 import { readManagedMachine } from './readManagedMachine';
 import { createManagedNativeInvocation } from './reconcile';
-import { managedMachineActionEndpointPathV1, ManagedAdmissionOutputV1Schema, ManagedControllerMachineOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { managedMachineActionEndpointPathV1, ManagedAdmissionOutputV1Schema, ManagedControllerMachineOutputV1Schema, ManagedEnrollmentCorrelationV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { executeContributedAction } from '@/plugins/runtime/invocation/actions/executeContributedAction';
 import { createManagedProviderOperationAuthority } from '@/daemon/connectedServices/purposeBindings/managedProviderOperationAuthority';
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
@@ -94,7 +94,7 @@ import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machin
 import { projectExternalActionRequesterHttpAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, ExternalActionExecutionAuthorizationV1Schema, ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { EXTERNAL_ACTION_HTTP_BODY_LIMIT_BYTES } from '@happier-dev/protocol/actions/externalActionApi';
-import { verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { decodeExternalActionHttpBodyV1, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { formatSshCommandFailure, readSshCommandFailure } from '@happier-dev/protocol/ssh/commandFailure';
 import { sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol';
 import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '@/daemon/connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
@@ -696,13 +696,15 @@ describe('creation environment stage', () => {
             .rejects.toMatchObject({ code: 'enrollment_attendance_required' });
         expect(post).not.toHaveBeenCalled();
     });
-    const runHomeRecoveryScenario = async (scenario: 'recover' | 'expire' | 'late-confirmation' | 'install-recover' | 'payload-memory' | 'cloud-ssh' | 'cloud-ssh-root') => {
+    const runHomeRecoveryScenario = async (scenario: 'recover' | 'expire' | 'late-confirmation' | 'install-recover' | 'payload-memory' | 'cloud-ssh' | 'cloud-ssh-root' | 'opaque-enrollment-default' | 'opaque-enrollment-override' | 'plain-enrollment-context') => {
         const cloudSsh = scenario.startsWith('cloud-ssh');
+        const opaque = scenario.startsWith('opaque-enrollment') ? sealedOpaqueEnrollmentFixture(scenario.endsWith('override')) : undefined;
+        const enrollmentContextOnly = Boolean(opaque) || scenario === 'plain-enrollment-context';
         const root = await filesystem.mkdtemp(join(tmpdir(), 'managed-controller-home-recovery-'));
         const guestHome = join(root, 'guest');
         const payload = join(root, 'payload');
         const homeId = 'srv_controller_home_recovery';
-        const token = cloudSsh ? `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature` : 'token';
+        const token = cloudSsh || opaque ? `fixture.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature` : 'token';
         const reference = { kind: 'shared_resource' as const, resourceId: 'cloud-key' };
         const publicKeyPair = generateKeyPairSync('rsa', { modulusLength: 1024,
             privateKeyEncoding: { type: 'pkcs1', format: 'pem' }, publicKeyEncoding: { type: 'spki', format: 'pem' } });
@@ -711,6 +713,11 @@ describe('creation environment stage', () => {
         let retained = ManagedMachineV1Schema.parse({ ...machine, homeId, allocation: 'bound', resource: {
             contributionRef: input.selection.launch.provider, schemaVersion: 1, value: {},
         }, ...(cloudSsh ? { bootstrapCredentialRef: reference } : {}) });
+        if (opaque) {
+            const { enrolledMachineId: _enrolled, machineSetup: _setup, ...unenrolled } = opaque.admission.machine;
+            retained = ManagedMachineV1Schema.parse({ ...unenrolled, homeId });
+        }
+        const enrollmentRequests: unknown[] = [];
         let unavailableReads = 0;
         let installing = false;
         let nowMs = Date.now();
@@ -718,8 +725,27 @@ describe('creation environment stage', () => {
         const pairingExpiresAtMs = startedAt + 15 * 60_000;
         let operationRuntime: ReturnType<typeof createHostActionOperationRuntime> | undefined;
         let work: Promise<unknown> | undefined;
-        const server = createServer((request, response) => {
+        const server = createServer(async (request, response) => {
             response.setHeader('Content-Type', 'application/json');
+            if (request.url?.endsWith('/enrollment-context')) {
+                const chunks = [];
+                for await (const chunk of request) chunks.push(chunk);
+                const wire = JSON.parse(Buffer.concat(chunks).toString());
+                const body = ManagedEnrollmentCorrelationV1Schema.parse(decodeExternalActionHttpBodyV1(wire)?.body ?? wire);
+                enrollmentRequests.push(body);
+                if (opaque && 'resource' in body) {
+                    response.writeHead(409);
+                    response.end(JSON.stringify({ error: 'invalid_request' }));
+                    return;
+                }
+                if (enrollmentContextOnly) {
+                    // This regression ends at Home's outbound boundary. The real
+                    // cancellation owner stops guest work after Home accepts it.
+                    response.end(JSON.stringify({ machine: retained }));
+                    await operationRuntime?.handlers.cancel({ operationId: `controller-home-${scenario}` });
+                    return;
+                }
+            }
             if (request.url?.endsWith('/controller/current')
                 && (scenario === 'install-recover' ? installing && unavailableReads === 0 : retained.enrolledMachineId
                     && (scenario === 'expire' || scenario === 'recover' && unavailableReads === 0))) {
@@ -734,7 +760,8 @@ describe('creation environment stage', () => {
             if (request.url?.startsWith('/v1/features')) {
                 response.end(JSON.stringify({ features: {}, capabilities: { serverIdentity: { serverIdentityId: homeId } }, homeConnectionDescriptor: descriptor }));
             } else if (request.url === '/v1/account/encryption/currentness') {
-                response.end(JSON.stringify({ mode: 'plain', version: 1, settingsVersion: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 0 }));
+                response.end(JSON.stringify({ mode: opaque ? 'e2ee' : 'plain', version: 1, settingsVersion: 1, signingKeyFingerprint: null,
+                    contentKeyFingerprint: opaque ? computeAccountEncryptionMigrateKeyFingerprintV1(opaque.publicKey) : null, updatedAt: 0 }));
             } else if (request.url === '/v1/account/profile') response.end(JSON.stringify({ id: 'owner' }));
             else if (request.url?.startsWith('/v2/account/settings')) response.end(JSON.stringify({ content: null, version: 1 }));
             else if (request.url?.endsWith('/resources/materials')) response.end(JSON.stringify({ resources: [{ resourceId: reference.resourceId,
@@ -742,7 +769,9 @@ describe('creation environment stage', () => {
                     source: 'shared_resource', relationship: 'owner', name: 'Cloud key', kind: 'other', ownerAccountId: 'owner', revision: 1,
                     materialStatus: 'ready', capabilities: { use: true, rename: true, rotate: true, manageAccess: true, delete: true } } }] }));
             else if (request.url === '/v1/auth/response') response.end('{}');
-            else response.end(JSON.stringify({ machine: retained, ...(request.url?.endsWith('/admit') ? { replayed: true } : {}) }));
+            else response.end(JSON.stringify({ machine: retained, ...(request.url?.endsWith('/admit') ? { replayed: true,
+                ...(opaque ? { presetContent: opaque.admission.presetContent,
+                    presetContentOverride: opaque.admission.presetContentOverride } : {}) } : {}) }));
         });
         await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
         const address = server.address();
@@ -871,8 +900,10 @@ esac
                     return observeGuest(child, remoteArgs.join(' '));
                 });
             }
-            const native = nativeFixture({ privateNative: true, credentialPurposes: [], nativeRoleResults: results,
+            const native = nativeFixture({ privateNative: true, ...(opaque ? { nativeActionSurfaces: ['cli'] as const } : {}),
+                credentialPurposes: [], nativeRoleResults: results,
                 onNativeRole: async (role, body) => {
+                    if (enrollmentContextOnly && role === 'bootstrap') expect(body).toMatchObject({ resource: {} });
                     if (role === 'putFile' && isJsonObject(body)
                         && typeof body.guestPath === 'string' && typeof body.bytesBase64 === 'string') {
                         if (scenario === 'payload-memory') deliveries.push({ bytes: Buffer.byteLength(body.bytesBase64, 'base64'),
@@ -899,24 +930,45 @@ esac
                         stdoutBase64: Buffer.from(result.stdout).toString('base64'), stderrBase64: '', stdoutTruncated: false, stderrTruncated: false };
                 } });
             vi.spyOn(Date, 'now').mockImplementation(() => nowMs);
+            const signing = tweetnacl.sign.keyPair();
+            const rootAuthorization = opaque ? ExternalActionExecutionAuthorizationV1Schema.parse({ ...originAuthorization(homeId, 'creation'),
+                binding: { ...originAuthorization(homeId, 'creation').binding, accountEncryptionMode: 'e2ee' } }) : undefined;
+            const authorization = rootAuthorization ? await projectExternalActionRequesterHttpAuthorization({ authorization: rootAuthorization,
+                serverId: 'daemon-local-profile', serverIdentityId: homeId, serverHttpBaseUrl: serverUrl,
+                target: rootAuthorization.binding.target, installationId: controller.installationId, privateKey: signing.secretKey,
+                rootAdmitted: true, isCurrent: async () => true }) : undefined;
+            if (opaque && !authorization) throw new Error('Missing admitted fixture root');
             const acquisition = createManagedMachineAcquisitionDriver({ token, serverUrl, homeId, controller,
-                ...accountInputs, credentials: { token, encryption: null }, runtimeRegistry: native.runtimeRegistry, homeTarget });
+                ...(opaque ? { externalActionMachineRequestPrivateKey: signing.secretKey } : {}),
+                ...accountInputs, credentials: opaque ? { token, encryption: { type: 'dataKey', machineKey: opaque.accountKey, publicKey: opaque.publicKey } }
+                    : { token, encryption: null }, runtimeRegistry: native.runtimeRegistry, homeTarget });
             const operations = operationRuntime = createHostActionOperationRuntime({ machineId: controller.machineId, resolveAccountId: async () => 'owner',
                 generateOperationId: () => `controller-home-${scenario}` });
-            const actionInput = { ...input, selection: { ...input.selection, homeId } };
+            const actionInput = opaque ? { ...opaque.input, selection: { ...opaque.input.selection, homeId } }
+                : { ...input, selection: { ...input.selection, homeId } };
             const executor = createActionExecutor({ managedMachineAction: async ({ actionId, input, context }) =>
                 await acquisition.execute(actionId, input, { requestId: 'creation', signal: context.signal,
-                    context: { ...context, operationOwnerUpdate: { update(value: Parameters<NonNullable<ActionExecutorContext['operationOwnerUpdate']>['update']>[0]) {
+                    context: { ...context, ...(authorization ? { runtimeAccountId: 'owner', actionRequestId: 'creation',
+                        externalActionExecutionAuthorization: authorization, externalActionTarget: authorization.binding.target } : {}),
+                        operationOwnerUpdate: { update(value: Parameters<NonNullable<ActionExecutorContext['operationOwnerUpdate']>['update']>[0]) {
                         if (value.progress?.phase === 'ssh.installCli') installing = true;
                         context.operationOwnerUpdate?.update(value);
                     } } } }) } as ActionExecutorDeps);
             await operations.observeExecution({ actionId: 'machines.managed.acquire', input: actionInput, actionRequestId: 'creation',
                 execute: async context => {
                     const execution = executor.execute('machines.managed.acquire', actionInput, { ...context, surface: 'cli', authority: 'present_user',
+                        actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }),
                         presentUserConfirmation: { actionId: 'machines.managed.acquire' } });
                     work = execution;
                     return await execution;
                 } });
+            if (enrollmentContextOnly) {
+                await operations.handlers.getV2({ operationId: `controller-home-${scenario}`, waitForTerminal: true });
+                expect(enrollmentRequests).toEqual([expect.objectContaining({ homeId, managedId: retained.id })]);
+                if (opaque) expect(enrollmentRequests[0]).not.toHaveProperty('resource');
+                else expect(enrollmentRequests[0]).toHaveProperty('resource');
+                return;
+            }
             let taskId = '';
             await expect.poll(async () => {
                 const found = await operations.handlers.getV2({ operationId: `controller-home-${scenario}` });
@@ -1004,6 +1056,8 @@ esac
         () => runHomeRecoveryScenario('payload-memory'), 180_000);
     it.each(['cloud-ssh', 'cloud-ssh-root'] as const)('acquires through cloud SSH installCli with an expired root password (%s)',
         runHomeRecoveryScenario, 60_000);
+    it.each(['opaque-enrollment-default', 'opaque-enrollment-override', 'plain-enrollment-context'] as const)(
+        'projects enrollment-context with the admitted resource visibility (%s)', runHomeRecoveryScenario, 60_000);
     it.each(['succeeded', 'skipped'] as const)('retains the original first message across failed setup until exact paid row becomes %s', async state => {
         const fixture = plainOpaqueSetupReplayFixture();
         let retained = fixture.admission.machine;
@@ -1293,6 +1347,45 @@ function createTeamMemberE2eePresetCarrier(input: Readonly<{
         replayed: input.replayed ?? false });
     const token = `fixture.${Buffer.from(JSON.stringify({ sub: custodianAccountId })).toString('base64url')}.signature`;
     return { admission, acquisition, memberKey, memberPublicKey, custodianKey, custodianPublicKey, custodianAccountId, token };
+}
+
+/** Open the real sealed retained snapshot with and without the sealed enrollment delta. */
+function sealedOpaqueEnrollmentFixture(withOverride: boolean) {
+    const base = plainOpaqueSetupReplayFixture();
+    if (!('presetContent' in base.admission)) throw new Error('Expected opaque source fixture admission');
+    const plain = base.admission.presetContent.content;
+    if (plain.t !== 'plain' || !plain.v.launch || !plain.v.reviewedFacts || !plain.v.nativeResult) {
+        throw new Error('Expected retained plain source fixture content');
+    }
+    const accountKey = new Uint8Array(32).fill(26);
+    const publicKey = tweetnacl.box.keyPair.fromSecretKey(accountKey).publicKey;
+    const recipient = SavedSecretResourceEnvelopeCensusRecipientV1Schema.parse({
+        account: { kind: 'account', accountId: 'owner', firstName: 'Owner', lastName: null, username: 'owner', avatarUrl: null },
+        readiness: { status: 'available', contentPublicKey: encodeBase64(publicKey, 'base64'),
+            contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(publicKey) }, envelopeStatus: 'missing',
+    });
+    const presetId = base.admission.machine.preset.id;
+    const authored = sealManagedMachinePresetContentV1({ presetId, mode: 'e2ee',
+        content: { v: plain.v.v, name: plain.v.name, launch: plain.v.launch }, recipientCensus: [recipient],
+        randomBytes: length => new Uint8Array(length).fill(27) });
+    const retainedContent = replaceManagedMachinePresetLaunchNameV1({ presetId, mode: 'e2ee', ...authored,
+        accountId: 'owner', accountKey, launchName: plain.v.launch.name,
+        reviewedFacts: plain.v.reviewedFacts, nativeResult: plain.v.nativeResult,
+        randomBytes: length => new Uint8Array(length).fill(29) });
+    if (!retainedContent) throw new Error('Expected sealed retained native snapshot');
+    const presetContent = { ...authored, content: retainedContent };
+    const presetContentOverride = withOverride ? createManagedMachinePresetAcquireOverrideV1({ presetId, mode: 'e2ee',
+        projection: projectManagedMachinePresetForRecipientV1({ ...presetContent, recipientAccountId: 'owner' }),
+        accountId: 'owner', accountKey, enrollmentIdentity: { kind: 'existingUser', role: 'personal' },
+        randomBytes: length => new Uint8Array(length).fill(28) }) : undefined;
+    if (withOverride && !presetContentOverride) throw new Error('Expected sealed enrollment override');
+    const admission = ManagedAdmissionOutputV1Schema.parse({ machine: { ...base.admission.machine,
+        preset: { ...base.admission.machine.preset, contentEncryptionMode: 'e2ee' } }, presetContent,
+        ...(presetContentOverride ? { presetContentOverride } : {}), replayed: true });
+    if (!('presetContent' in admission)) throw new Error('Expected opaque sealed fixture admission');
+    const { presetContentOverride: _plainOverride, ...acquisition } = base.input;
+    return { admission, accountKey, publicKey, input: { ...acquisition,
+        ...(presetContentOverride ? { presetContentOverride } : {}) } };
 }
 
 function retainTeamMemberReviewedSnapshot(carrier: ReturnType<typeof createTeamMemberE2eePresetCarrier>,

@@ -84,8 +84,8 @@ async function enroll(managedId: string, key: string, generated = false, retaine
     let taskReady!: (taskId: string) => void;
     const taskId = new Promise<string>(resolve => { taskReady = resolve; });
     const owner = getLiveSystemTasksRunnerAdapter();
-    const result = await runManagedMachineEnrollment({ correlation: { homeId, managedId, controller, resource,
-        requestId: `request-${managedId}`, expectedIntentRevision: 0 }, target, carrier, guestHostPublicKey: retainedKey,
+    const correlation = { homeId, managedId, controller, resource, requestId: `request-${managedId}`, expectedIntentRevision: 0 };
+    const result = await runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, carrier, guestHostPublicKey: retainedKey,
         onTask: task => { taskReady(task.taskId); }, onPrompt: prompt => {
             if (!prompt) return;
             prompts.push(prompt.kind);

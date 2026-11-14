@@ -20,7 +20,7 @@ const target = resolveHomeTargetFromDescriptor({ descriptor: { v: 1, homeServerI
 function retryGuest(operation: AbortController | undefined, readyAtMs: number, standaloneSignal?: AbortSignal) {
   let statusReads = 0;
   let installations = 0;
-  const result = runManagedMachineEnrollment({ correlation, target, channel: 'stable',
+  const result = runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, channel: 'stable',
     ...(operation ? { operationId: 'admitted-retry', signal: operation.signal } : { signal: standaloneSignal }),
     carrier: { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 } },
   }, {
@@ -53,7 +53,7 @@ describe('retained native bootstrap readiness lifetime', () => {
     const secret = 'SERVICE_DIAGNOSTIC_PRIVATE_TOKEN';
     const diagnostic = `old output\n${'é'.repeat(40_000)}\nservice manager refused ${step}\naccess_token=${secret}\n`;
     const executor = createActionExecutor({ managedMachineAction: async () => runManagedMachineEnrollment({
-      correlation, target, channel: 'stable',
+      correlation, homeCorrelation: correlation, target, channel: 'stable',
       carrier: { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 } },
     }, {
       readCurrentManagedRow: async () => ({ ...machine,
@@ -111,7 +111,7 @@ describe('retained native bootstrap readiness lifetime', () => {
     let runningPayload = currentPayload;
     let runningPid = 5376;
     const serviceCommands: string[] = [];
-    const result = await runManagedMachineEnrollment({ correlation, target, channel: 'stable',
+    const result = await runManagedMachineEnrollment({ correlation, homeCorrelation: correlation, target, channel: 'stable',
       carrier: { kind: 'native', transport: { contributionRef: resource.contributionRef, schemaVersion: 1 } } }, {
       readCurrentManagedRow: async () => ({ ...machine, enrollmentIdentity: undefined }),
       createPromptId: () => 'unused',
