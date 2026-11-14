@@ -353,25 +353,14 @@ function MachineServicePresent(props: Readonly<{
           </View>
         </>
       ) : null}
-        <View style={usage && detail ? styles.history : null}>
-          <MachineServiceUsageHistory serverId={props.serverId} machineId={props.machineId} serviceId={service.serviceId}
-            active={props.active} />
-        </View>
+        {/* A Machine that isn't answering has no history to read; the stale line above already says so. */}
+        {props.offline ? null : (
+          <View style={usage && detail ? styles.history : null}>
+            <MachineServiceUsageHistory serverId={props.serverId} machineId={props.machineId} serviceId={service.serviceId}
+              active={props.active} />
+          </View>
+        )}
       </ItemGroup>
-      {configuration ? (
-        // Configuration (lab dCtr): a label beside each reported value, what qualifies it beneath; several values list.
-        <ItemGroup title={t('machineServices.configuration.title')}
-          description={t('machineServices.configuration.description')} testID="machine-service-configuration">
-          {configuration.map((row) => row.entries.length === 1 ? (
-            <Item key={row.key} testID={`machine-service-configuration.${row.key}`} mode="info" title={row.label}
-              detail={row.entries[0]!.value} {...(row.entries[0]!.note ? { subtitle: row.entries[0]!.note } : {})} />
-          ) : (
-            <Item key={row.key} testID={`machine-service-configuration.${row.key}`} mode="info" title={row.label}
-              subtitleLines={0}
-              subtitle={row.entries.map((entry) => entry.note ? `${entry.value} · ${entry.note}` : entry.value).join('\n')} />
-          ))}
-        </ItemGroup>
-      ) : null}
       <ItemGroup
         title={t('machineServices.logs.title')}
         description={t('machineServices.logs.description', { service: serviceName })}
@@ -386,6 +375,20 @@ function MachineServicePresent(props: Readonly<{
           onOpenEnvironment={openEnvironment}
         />
       </ItemGroup>
+      {configuration ? (
+        // Configuration (lab dCtr, after Logs): a label beside each reported value, what qualifies it beneath; several values list.
+        <ItemGroup title={t('machineServices.configuration.title')}
+          description={t('machineServices.configuration.description')} testID="machine-service-configuration">
+          {configuration.map((row) => row.entries.length === 1 ? (
+            <Item key={row.key} testID={`machine-service-configuration.${row.key}`} mode="info" title={row.label}
+              detail={row.entries[0]!.value} {...(row.entries[0]!.note ? { subtitle: row.entries[0]!.note } : {})} />
+          ) : (
+            <Item key={row.key} testID={`machine-service-configuration.${row.key}`} mode="info" title={row.label}
+              subtitleLines={0}
+              subtitle={row.entries.map((entry) => entry.note ? `${entry.value} · ${entry.note}` : entry.value).join('\n')} />
+          ))}
+        </ItemGroup>
+      ) : null}
       {/* What starts here by itself (OPS-AUTOMATIONS-1102 D2): triggers on this service's Machine, set up from here. */}
       <SubjectTriggersSection subject={triggerSubject} subjectName={serviceName} />
     </View>
