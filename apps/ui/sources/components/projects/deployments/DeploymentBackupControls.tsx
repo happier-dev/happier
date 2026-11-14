@@ -44,7 +44,6 @@ import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterA
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { Switch } from '@/components/ui/forms/Switch';
-import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import type { PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import type { DeploymentBackupConfigureInputV1, DeploymentBackupConfigureResultV1 } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
@@ -56,68 +55,21 @@ import { WORKFLOWS_NEW_ROUTE } from '@/components/workflows/workflowsRoutes';
 import { SFTP_BACKUP_DESTINATION_REF_V1 } from '@happier-dev/protocol/plugins/contributions/backupDestinations';
 import { BACKUP_RECEIVER_RECIPE_REF_V1 } from '@happier-dev/protocol/machines/setup/machineRecipeReferenceV1';
 import type { MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
-import { useMachineListForServer, useMachineListForServerSelection } from '@/sync/store/hooks';
-import type { Machine } from '@/sync/domains/state/storageTypes';
+import { useMachineListForServer } from '@/sync/store/hooks';
 import type { StoragePathCapacityV1 } from '@happier-dev/protocol/storage/storageV1';
-import { fetchMachineStoragePathCapacityViaAction } from '@/sync/domains/machines/storage/machineRpc';
-import { getSettledMachineDisplayName } from '@/utils/sessions/machineDisplayNames';
 import { SessionMachineField } from '@/components/sessions/new/placement/SessionPlacementChips';
 import { MachineSetupRecipeInputs } from '@/components/settings/machines/managed/MachineSetupRecipeInputs';
-import { readMachineSetupRecipeInputState } from '@/components/settings/machines/managed/machineSetupRecipeInputs';
+import { readMachineSetupRecipeInputState } from '@/components/settings/machines/managed/machineSetupRecipeInputsModel';
 import { deploymentActionRefusalRemedy } from './deploymentPresentation';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
 import { deploymentBackupKeepFields as KEEP_FIELDS, deploymentBackupKeepLabels as KEEP_LABEL,
   deploymentBackupRetentionDraftFrom as draftFrom, retentionFromDraft,
   type DeploymentBackupKeepField as KeepField } from './deploymentBackupRetention';
+import { useBackupPathCapacity, BackupPathCapacityReview } from './DeploymentBackupCapacity';
 export { retentionFromDraft } from './deploymentBackupRetention';
 
 const noop = () => {};
 type Snapshot = DeploymentBackupInventoryResultV1['snapshots'][number];
-
-/** Demand observation of the selected runtime filesystem; repository admission remains configure-owned. */
-function useBackupPathCapacity(detail: DeploymentEnvironmentReadDetailV1, path: unknown,
-  lifetime: ServerAccountScopeLifetime | undefined, enabled: boolean) {
-  const serverId = detail.environment.serverId;
-  const machineId = deploymentDataTargetOperands(detail)?.machineId;
-  const selectMachineName = React.useCallback((machines: readonly Machine[]) =>
-    getSettledMachineDisplayName(machines.find(entry => entry.id === machineId), machines) ?? machineId ?? '', [machineId]);
-  const machineName = useMachineListForServerSelection(serverId, selectMachineName);
-  const selectedPath = typeof path === 'string' ? path : '';
-  const accountId = lifetime?.scope.accountId;
-  const [observation, setObservation] = React.useState<Readonly<{
-    serverId: string; machineId: string; path: string; accountId: string; capacity: StoragePathCapacityV1;
-  }> | null>(null);
-  React.useEffect(() => {
-    if (!enabled || !selectedPath || !machineId || !accountId || !lifetime?.isCurrent()) return;
-    const controller = new AbortController();
-    void fetchMachineStoragePathCapacityViaAction({ serverId, machineId, path: selectedPath,
-      expectedAccountId: accountId, signal: controller.signal }).then(result => {
-      if (controller.signal.aborted || !lifetime.isCurrent()) return;
-      setObservation({ serverId, machineId, path: selectedPath, accountId,
-        capacity: result.ok ? result.value : { status: 'unknown', path: selectedPath, reason: result.errorCode ?? result.reason } });
-    });
-    return () => controller.abort();
-  }, [enabled, selectedPath, machineId, serverId, accountId, lifetime]);
-  const capacity = enabled && observation?.serverId === serverId && observation.machineId === machineId
-    && observation.path === selectedPath && observation.accountId === accountId ? observation.capacity : undefined;
-  return { capacity, machineName };
-}
-
-function BackupPathCapacityReview(props: Readonly<{ capacity?: StoragePathCapacityV1; machine: string; testID: string }>) {
-  const { capacity } = props;
-  if (!capacity) return <Item testID={`${props.testID}.capacityReview`} mode="info"
-    title={t('projects.deployments.settingsSections.setupCapacityUnknown')}
-    subtitle={t('projects.deployments.settingsSections.setupCapacityAtBackupMachine')} />;
-  // A read that couldn't say goes through the page's failure line: the sentence names where, the code stays behind Details.
-  if (capacity.status !== 'known') return <SurfaceStateCard testID={`${props.testID}.capacity`} size="line" kind="unavailable"
-    title={t('projects.deployments.settingsSections.setupCapacityUnknown')}
-    reason={`${props.machine} · ${capacity.path}`} diagnosticCode={capacity.reason} />;
-  return <Item testID={`${props.testID}.capacity`} mode="info"
-    title={t('projects.deployments.settingsSections.setupCapacityKnown')}
-    detail={formatMachineBytes(capacity.freeBytes, 'storage')}
-    subtitle={[props.machine, capacity.volume?.label,
-      capacity.volume?.mountPath ?? capacity.path, formatAsOfTime(capacity.observedAt)].filter(Boolean).join(' · ')} />;
-}
 
 /** Explicit finite Actions only. The saved configuration and capture receipts remain authoritative. */
 export function DeploymentBackupControls(props: Readonly<{
@@ -302,8 +254,9 @@ export function DeploymentBackupDestinationRow(props: Readonly<{
   const localize = usePluginLocalizedTextResolver({ projection: projection.pluginUiProjection });
   const destination = projection.pluginUiProjection?.backupDestinationsById[
     buildQualifiedPluginContributionKey(props.configuration.destinationRef)];
-  const localCapacity = useBackupPathCapacity(props.detail, props.configuration.config.path, props.lifetime,
-    destination?.definition.locality === 'local');
+  const pathCapacity = useBackupPathCapacity(props.detail.environment.serverId,
+    destination?.definition.locality === 'local' ? deploymentDataTargetOperands(props.detail)?.machineId : undefined,
+    props.configuration.config.path, props.lifetime, true);
   const inputHints = React.useMemo(() => destination
     ? deriveActionInputHints(destination.definition.configSchema, destination.definition.fieldHints) : null, [destination]);
   const fields = React.useMemo(() => inputHints
@@ -316,7 +269,7 @@ export function DeploymentBackupDestinationRow(props: Readonly<{
     catch (error) {
       const outcome = readDeploymentActionError(error);
       const failure = outcome.kind === 'refused' ? presentActionFailureOutcome(outcome.failure
-        ?? { ok: false, errorCode: outcome.code, error: outcome.code }, 'deployment') : null;
+        ?? { errorCode: outcome.code, error: outcome.code }, 'deployment') : null;
       setTested({ ok: false, line: failure?.reason ?? t('projects.deployments.settingsSections.destinationRetry') });
     }
     finally { setRunning(false); }
@@ -336,8 +289,8 @@ export function DeploymentBackupDestinationRow(props: Readonly<{
       bottomElement={destination ? <ActionInputFields fields={fields} input={props.configuration.config}
         editable={false} resolveFieldOptions={destinationFieldOptions} onPatch={noop} /> : undefined}
     />
-    {destination?.definition.locality === 'local' ? <BackupPathCapacityReview capacity={localCapacity.capacity}
-      machine={localCapacity.machineName} testID={`${props.testID}.destination`} /> : null}
+    <BackupPathCapacityReview capacity={pathCapacity.capacity}
+      machine={pathCapacity.machineName} testID={`${props.testID}.destination`} />
     {destination?.definition.locality === 'local' ? <Item testID={`${props.testID}.destination.localWarning`}
       mode="info" title={t('projects.deployments.settingsSections.setupLocalWarning')}
       subtitle={t('projects.deployments.settingsSections.setupLocalGrowth')} /> : null}</>
@@ -571,13 +524,15 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
   const inputHints = React.useMemo(() => deriveActionInputHints(destination.definition.configSchema, destination.definition.fieldHints), [destination]);
   const [fields, setFields] = React.useState<Record<string, unknown>>(() => seedInputByFieldHints({ inputHints },
     intent?.initialIntent?.configuration.config ?? {}));
-  const localCapacity = useBackupPathCapacity(props.detail, fields.path, props.lifetime,
-    !intent && destination.definition.locality === 'local');
+  const [destinationSetup, setDestinationSetup] = React.useState<DeploymentBackupAnotherMachineSetupV1>();
+  const pathCapacity = useBackupPathCapacity(props.detail.environment.serverId,
+    anotherMachine ? destinationSetup?.machineId
+      : destination.definition.locality === 'local' ? deploymentDataTargetOperands(props.detail)?.machineId : undefined,
+    anotherMachine ? destinationSetup?.receiverInputs.repositoryPath : fields.path, props.lifetime, !intent);
   const [sourceIds, setSourceIds] = React.useState(() => intent?.initialIntent?.configuration.sources.map(choice => choice.sourceId) ?? props.sourceChoices.map(choice => choice.sourceId));
   const [keep, setKeep] = React.useState(() => draftFrom(intent?.initialIntent?.configuration.retention ?? props.defaults?.values.backupRetention ?? { kind: 'keepEverything' }));
   const [bindings, setBindings] = React.useState<NonNullable<BackupConfigurePreparation['backupBindings']>>(() => intent?.initialIntent?.bindings ?? []);
   const [prefix, setPrefix] = React.useState(() => intent?.initialIntent?.prefix ?? '');
-  const [destinationSetup, setDestinationSetup] = React.useState<DeploymentBackupAnotherMachineSetupV1>();
   const serverId = props.lifetime?.scope.serverId ?? props.detail.environment.serverId;
   const machines = useMachineListForServer(serverId);
   // A receiver is set up by its installation: only Machines that report one can be chosen.
@@ -703,8 +658,8 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
         selectedId={destinationId} disabled={locked} onSelect={chooseDestination} fill /></FieldItem> : null}
     {destination.definition.locality === 'local' ? <Item mode="info" title={t('projects.deployments.settingsSections.setupLocalWarning')}
       subtitle={t('projects.deployments.settingsSections.setupLocalGrowth')} /> : null}
-    {destination.definition.locality === 'local' && !result?.review?.capacity ? <BackupPathCapacityReview
-      capacity={localCapacity.capacity} machine={localCapacity.machineName || props.machine} testID={id} /> : null}
+    {!result?.review?.capacity ? <BackupPathCapacityReview
+      capacity={pathCapacity.capacity} machine={pathCapacity.machineName || props.machine} testID={id} /> : null}
     {anotherMachine ? <>
       <SessionMachineField serverId={serverId} testID={`${id}.receiver`} machines={receiverMachines}
         title={t('projects.deployments.settingsSections.setupReceiverMachine')}
@@ -756,8 +711,8 @@ export function DeploymentBackupSetupSheet(props: BackupSetupCommonProps & Backu
         ? t('projects.deployments.settingsSections.credentialSet') : t(`projects.deployments.settingsSections.${optional ? 'setupRoleOptional' : 'setupRoleRequired'}`)}
       mode="info" rightElement={props.lifetime ? <SectionActionButton testID={`${id}.role.${role}.choose`}
         title={t('projects.deployments.settingsSections.credentialChoose')} disabled={locked} onPress={() => { void chooseSecret(role); }} /> : undefined} />)}</ItemGroup>}
-    <DeploymentBackupConfigurationResult result={result} machine={localCapacity.machineName || props.machine} testID={id}
-      capacity={result?.review?.capacity ? localCapacity.capacity : undefined} />
+    <DeploymentBackupConfigurationResult result={result} machine={pathCapacity.machineName || props.machine} testID={id}
+      capacity={result?.review?.capacity ? pathCapacity.capacity : undefined} />
     {refused ? <SurfaceStateCard testID={`${id}.refused`} size="line" kind="error" title={t('projects.deployments.addRefused')}
       reason={deploymentActionRefusalRemedy(refused.code)} diagnosticCode={refused.code} /> : null}
     {scheduleChange.outcome && props.mode !== 'intent' ? <DeployOutcomeBanner controller={scheduleChange.banner}

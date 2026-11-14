@@ -509,6 +509,12 @@ describe('trigger source display provenance', () => {
       project, inputs: { ...inputs, backupTarget: { ...inputs.backupTarget, deploymentId: 'nested' } }, trigger });
     expect(await executor.execute('workflow.trigger.list', { deploymentBackup: { ...target, deploymentId: 'nested' } }, ownCaller))
       .toMatchObject({ ok: true, result: { sets: [{ automationId: nested.set.automationId }] } });
+    const row = f.rows.get(saved.set.automationId)!;
+    f.rows.set(row.id, { ...row, scheduleOccurrences: undefined });
+    expect(await executor.execute('workflow.trigger.list', { deploymentBackup: target }, ownCaller))
+      .toMatchObject({ ok: false, errorCode: 'source_unavailable' });
+    expect(await executor.execute('workflow.trigger.list', { deploymentBackup: { ...target, deploymentId: 'other' } }, ownCaller))
+      .toMatchObject({ ok: true, result: { sets: [{ automationId: inline.set.automationId }] } });
   });
 
   it('finds an enabled Nightly Automation before a Target exists and excludes its paused trigger', async () => {
@@ -525,10 +531,17 @@ describe('trigger source display provenance', () => {
     const listed = await executor.execute('workflow.trigger.list', { deploymentBackupEnvironment: backupEnvironment }, ownCaller);
     expect(listed, JSON.stringify(listed)).toMatchObject({ ok: true, result: { sets: [{ automationId: saved.set.automationId }] } });
     const row = f.rows.get(saved.set.automationId)!;
-    f.rows.set(row.id, { ...row, triggers: row.triggers.map(item => ({ ...item, enabled: false })) });
+    expect(row.scheduleOccurrences).toEqual([]);
+    f.rows.set(row.id, { ...row, scheduleOccurrences: undefined,
+      triggers: row.triggers.map(item => ({ ...item, enabled: false })) });
     expect(await executor.execute('workflow.trigger.list', { deploymentBackupEnvironment: backupEnvironment }, ownCaller))
       .toMatchObject({ ok: true, result: { sets: [] } });
     f.rows.set(row.id, { ...row, scheduleOccurrences: undefined });
+    expect(await executor.execute('workflow.trigger.list', { scope: 'account_all' }, ownCaller))
+      .toMatchObject({ ok: true, result: { sets: [{ automationId: row.id }] } });
+    expect(await executor.execute('workflow.trigger.list', { deploymentBackupEnvironment: {
+      ...backupEnvironment, environmentId: 'unrelated' } }, ownCaller))
+      .toMatchObject({ ok: true, result: { sets: [] } });
     expect(await executor.execute('workflow.trigger.list', { deploymentBackupEnvironment: backupEnvironment }, ownCaller))
       .toMatchObject({ ok: false, errorCode: 'source_unavailable' });
   });

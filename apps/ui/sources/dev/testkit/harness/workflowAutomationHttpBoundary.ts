@@ -29,7 +29,7 @@ export function selectWorkflowAutomationListFixture(rows: readonly AutomationDef
     const offset = query.cursor === undefined ? 0 : Number(query.cursor.replace('fixture-page-', ''));
     const page = filtered.slice(offset, offset + query.limit);
     return AutomationDefinitionListResponseSchema.parse({ automations: page.map(({ executionRecipe: _recipe,
-        templateCiphertext: _template, triggers, ...row }) => AutomationDefinitionListItemSchema.parse({ ...row,
+        templateCiphertext: _template, scheduleOccurrences: _occurrences, triggers, ...row }) => AutomationDefinitionListItemSchema.parse({ ...row,
             triggers: triggers.map(({ triggerDefinitionEnvelope: _envelope, ...trigger }) => trigger) })),
         nextCursor: offset + page.length < filtered.length ? `fixture-page-${offset + page.length}` : null });
 }
@@ -54,6 +54,8 @@ export function createWorkflowAutomationDetailFixture(params: Readonly<{
             workspace: { directory: '/repo' }, executionTarget: { kind: 'session' },
             ...(params.definition ? { inlineDefinition: params.definition } : {}),
         } }, triggerEvidence: null },
+        // Current Home reads include the exact projection, even before any occurrence exists.
+        scheduleOccurrences: [],
         assignments: [{ machineId: 'machine-1', enabled: true, priority: 0, updatedAt: 1 }],
         triggers: params.triggerId ? [{ id: params.triggerId, kind: 'schedule', enabled: true, revision: 1,
             schedule: { kind: 'interval', everyMs: 86400000, scheduleExpr: null, timezone: null },
@@ -133,6 +135,7 @@ export function createWorkflowAutomationHttpBoundary(): {
                     workflowDefinitionId: created.workflowDefinitionId ?? null, scopeSessionId: created.scopeSessionId ?? null,
                     targetType: null, existingSessionId: null, templateVersion: created.executionRecipe.templateVersion,
                     lastRunAt: null, createdAt: 1, updatedAt: 1, executionRecipe: created.executionRecipe,
+                    scheduleOccurrences: [],
                     ...(created.executionRecipe.v === 2 && created.executionRecipe.managedTarget !== undefined
                         ? { managedTarget: created.executionRecipe.managedTarget } : {}),
                     assignments: (created.assignments ?? []).map(row => ({ ...row, enabled: row.enabled ?? true, priority: row.priority ?? 0, updatedAt: 1 })),

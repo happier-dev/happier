@@ -745,7 +745,10 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
             ? targets.environments.some(value => value.serverId === deploymentBackupEnvironment.serverId
               && value.environmentId === deploymentBackupEnvironment.environmentId)
             : targets.captures.some(value => sameStrictJsonValue(value, deploymentBackup));
-          if (matches) return set;
+          if (matches) {
+            if (row.scheduleOccurrences === undefined) refuse('source_unavailable');
+            return set;
+          }
           return null;
         } else if (managedTarget) {
           const set = await projection(row);

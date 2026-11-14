@@ -16,7 +16,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { PLUGIN_MANIFEST } from '../../../../../../packages/plugins/backup-destinations/src/manifest';
 import { BACKUP_RECEIVER_RECIPE } from '../../../../../../packages/plugins/machine-recipes/src/backupReceiver';
 import { BACKUP_RECEIVER_RECIPE_REF_V1 } from '@happier-dev/protocol/machines/setup/machineRecipeReferenceV1';
-import { SFTP_BACKUP_DESTINATION_REF_V1 } from '@happier-dev/protocol/plugins/contributions/backupDestinations';
+import { BackupDestinationContributionV1Schema, SFTP_BACKUP_DESTINATION_REF_V1 } from '@happier-dev/protocol/plugins/contributions/backupDestinations';
 import { deploymentBackupPolicyV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
 import { getWorkflowStarterExamplesV1 } from '@happier-dev/protocol/workflows/builtins/examples';
 import { AutomationDefinitionDetailSchema } from '@happier-dev/protocol/automations/automationApiV3';
@@ -41,6 +41,13 @@ installHomeGovernanceBoundaries(homes);
 installDisconnectedServerSocketBoundary();
 const { formatAutomationScheduleLabel } = await import('@/components/automations/list/automationListFormatting');
 const { t } = await import('@/text');
+/** Configure-mode props of the sheet (its props are a Configure | intent union). */
+type ConfigureProps = Extract<React.ComponentProps<typeof DeploymentBackupSetupSheet>, { mode?: 'configure' }>;
+/** A bundled destination as the daemon projects it: admitted through the contribution schema. */
+function declaredDestination(localId: string) {
+  const declared = PLUGIN_MANIFEST.contributes.backupDestinations?.find(entry => entry.id === localId);
+  return declared ? BackupDestinationContributionV1Schema.parse(declared) : undefined;
+}
 const { formatMachineBytes } = await import('@/components/machines/vitals/machineVitalsPresentation');
 const { Item } = await import('@/components/ui/lists/Item');
 const { DeploymentBackupSetup, DeploymentBackupSetupSheet, DeploymentBackupDestinationRow, DeploymentBackupScheduleRow } = await import('./DeploymentBackupControls');
@@ -110,7 +117,7 @@ it('reads local path capacity on the runtime Machine before Test, on path change
     createMachineFixture({ id: replacementMachineId, activeAt: Date.now() }),
     createMachineFixture({ id: detail.environment.controllerMachineId, activeAt: Date.now() }),
   ]);
-  const definition = PLUGIN_MANIFEST.contributes.backupDestinations?.find(entry => entry.id === 'local');
+  const definition = declaredDestination('local');
   if (!definition) throw new Error('Expected local destination');
   const destination = { id: `${PLUGIN_MANIFEST.id}/${definition.id}`, pluginId: PLUGIN_MANIFEST.id,
     pluginVersion: PLUGIN_MANIFEST.version, definition };
@@ -131,7 +138,7 @@ it('reads local path capacity on the runtime Machine before Test, on path change
     }
     throw new Error(`Capacity review must not run a repository effect: ${request.method}`);
   });
-  const configure = vi.fn<React.ComponentProps<typeof DeploymentBackupSetupSheet>['configure']>();
+  const configure = vi.fn<ConfigureProps['configure']>();
   const common = { detail, destination, lifetime: account.accountLifetime, machine: runtimeMachineId,
     testID: 'capacity-setup', sourceChoices: [{ kind: 'volume' as const, sourceId: 'content', service: 'web', volume: 'content', consistency: 'stopDuringCopy' as const }],
     review: { pendingId: null, request() {}, open() {} }, configure, onChanged() {}, onClose() {} };
@@ -180,11 +187,11 @@ it('reads local path capacity on the runtime Machine before Test, on path change
 it('shows unknown local capacity before effects and keeps zero capacity eligible for Keep everything', async () => {
   const initial = createDeploymentEnvironmentDetailV1();
   const detail = { ...initial, runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] };
-  const definition = PLUGIN_MANIFEST.contributes.backupDestinations?.find(entry => entry.id === 'local');
+  const definition = declaredDestination('local');
   if (!definition) throw new Error('Expected canonical local destination');
   const destination = { id: `${PLUGIN_MANIFEST.id}/${definition.id}`, pluginId: PLUGIN_MANIFEST.id,
     pluginVersion: PLUGIN_MANIFEST.version, definition };
-  const configure = vi.fn<React.ComponentProps<typeof DeploymentBackupSetupSheet>['configure']>(async input => input.intent === 'test'
+  const configure = vi.fn<ConfigureProps['configure']>(async input => input.intent === 'test'
     ? { kind: 'tested', test: { kind: 'reachable', repositoryId: 'a'.repeat(64) },
       review: { capacity: { status: 'known', path: '/backups/repository', freeBytes: 0, observedAt: 1794300000000,
         volume: { volumeId: 'archive', mountPath: '/archive-disk', label: 'Archive' } } } }
@@ -263,7 +270,7 @@ it('sets up another Machine through its receiver recipe and retains settled cred
   await publishMachineInventoryForTest(account.accountLifetime.scope, [
     createMachineFixture({ id: detail.environment.controllerMachineId, activeAt: Date.now() }), receiver,
   ]);
-  const definition = PLUGIN_MANIFEST.contributes.backupDestinations?.find(entry => entry.id === SFTP_BACKUP_DESTINATION_REF_V1.localId);
+  const definition = declaredDestination(SFTP_BACKUP_DESTINATION_REF_V1.localId);
   if (!definition) throw new Error('Expected canonical SFTP destination');
   const destination = { id: `${PLUGIN_MANIFEST.id}/${definition.id}`, pluginId: PLUGIN_MANIFEST.id,
     pluginVersion: PLUGIN_MANIFEST.version, definition };
@@ -274,9 +281,16 @@ it('sets up another Machine through its receiver recipe and retains settled cred
       definition: { id: recipeRef.recipeId, ...BACKUP_RECEIVER_RECIPE },
     } } },
   } });
-  transport.read.mockImplementation((request: { method: string }) => {
+  const capacityReads: Array<{ machineId: string; path: string }> = [];
+  transport.read.mockImplementation((request: { method: string; machineId: string; payload: { path: string } }) => {
     if (request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)
       return DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1, projection });
+    if (request.method === 'daemon.storage.path.capacity.get') {
+      capacityReads.push({ machineId: request.machineId, path: request.payload.path });
+      return request.payload.path === '/srv/archive/unavailable'
+        ? { status: 'unknown', path: request.payload.path, reason: 'path_not_found' }
+        : { status: 'known', path: request.payload.path, freeBytes: 16384, observedAt: 1794300000000 };
+    }
     throw new Error(`Reviewing receiver inputs must not execute an effect: ${request.method}`);
   });
   const receiverInputs = { username: 'archive', chrootPath: '/srv/archive', repositoryPath: '/srv/archive/repository',
@@ -285,7 +299,7 @@ it('sets up another Machine through its receiver recipe and retains settled cred
   const senderIdentity = { publicKey: 'ssh-ed25519 cHVibGlj', sshPrivateKey: { kind: 'secret' as const,
     ref: 'happier:shared-secret:v1:sender-key', resourceRevision: 1 }, repositoryPassword: { kind: 'secret' as const,
     ref: 'happier:shared-secret:v1:repository-password', resourceRevision: 2 } };
-  const configure = vi.fn<React.ComponentProps<typeof DeploymentBackupSetupSheet>['configure']>(async input => input.intent === 'test'
+  const configure = vi.fn<ConfigureProps['configure']>(async input => input.intent === 'test'
     ? { kind: 'tested', test: { kind: 'reachable', repositoryId: 'a'.repeat(64) },
       destinationSetup: { ...input.destinationSetup!, senderIdentity }, setupOperation: { operationId: 'receiver-setup' } }
     : { kind: 'configured', environmentId: detail.environment.id, revision: 2,
@@ -298,12 +312,27 @@ it('sets up another Machine through its receiver recipe and retains settled cred
     const select = screen.findAllByType(ValueFieldSelect).find(entry => entry.props.testID === 'receiver-setup.destination');
     expect(select).toBeDefined();
     expect(select!.props.items.some((entry: { id: string }) => entry.id === 'anotherMachine')).toBe(true);
+    const expectUnknown = () => expect(screen.findAllByType(Item)
+      .find(row => row.props.testID === 'receiver-setup.capacityReview')?.props.title)
+      .toBe(t('projects.deployments.settingsSections.setupCapacityUnknown'));
+    expectUnknown(); // An external SFTP destination has no known host filesystem.
     await act(async () => select!.props.onSelect('anotherMachine'));
+    expectUnknown();
     await act(async () => screen.findAllByType(SessionMachineField)[0]!.props.onSelectMachine(receiver));
     await vi.waitFor(() => expect(screen.findAllByType(MachineSetupRecipeInputs)).toHaveLength(1));
+    expectUnknown();
+    expect(capacityReads).toEqual([]);
     const recipe = screen.findAllByType(MachineSetupRecipeInputs)[0]!;
     expect(recipe.props.suppliedInputKeys).toEqual(['senderPublicKey']);
     await act(async () => recipe.props.onChange({ items: [{ kind: 'setupRecipe', selection: { ref: recipeRef, inputs: receiverInputs } }] }));
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain(formatMachineBytes(16384, 'storage')));
+    expect(capacityReads).toEqual([{ machineId: receiver.id, path: receiverInputs.repositoryPath }]);
+    await act(async () => recipe.props.onChange({ items: [{ kind: 'setupRecipe', selection: { ref: recipeRef,
+      inputs: { ...receiverInputs, repositoryPath: '/srv/archive/unavailable' } } }] }));
+    await vi.waitFor(() => expect(screen.findAllByProps({ diagnosticCode: 'path_not_found' }).length).toBeGreaterThan(0));
+    expect(screen.getTextContent()).not.toContain(formatMachineBytes(16384, 'storage'));
+    await act(async () => recipe.props.onChange({ items: [{ kind: 'setupRecipe', selection: { ref: recipeRef, inputs: receiverInputs } }] }));
+    await vi.waitFor(() => expect(screen.getTextContent()).toContain(formatMachineBytes(16384, 'storage')));
     await screen.pressByTestIdAsync('receiver-setup.test');
     expect(configure).toHaveBeenCalledWith(expect.objectContaining({ intent: 'test', destinationSetup: {
       kind: 'anotherMachine', machineId: receiver.id, expectedInstallationId: receiver.installationId, receiverInputs },
@@ -311,6 +340,13 @@ it('sets up another Machine through its receiver recipe and retains settled cred
     await screen.pressByTestIdAsync('receiver-setup.save');
     expect(configure).toHaveBeenLastCalledWith(expect.objectContaining({ intent: 'save',
       destinationSetup: expect.objectContaining({ senderIdentity }) }));
+    const saved = DeploymentBackupConfigurationV1Schema.parse(configure.mock.calls.at(-1)![0].configuration);
+    const readsBeforeReopen = capacityReads.length;
+    await act(async () => screen.update(<DeploymentBackupDestinationRow detail={detail} configuration={saved}
+      lifetime={account.accountLifetime} actions={null} testID="receiver-saved" />));
+    expect(screen.findAllByType(Item).find(row => row.props.testID === 'receiver-saved.destination.capacityReview')?.props.title)
+      .toBe(t('projects.deployments.settingsSections.setupCapacityUnknown'));
+    expect(capacityReads).toHaveLength(readsBeforeReopen);
   } finally { await screen.unmount(); account.dispose(); }
 });
 
