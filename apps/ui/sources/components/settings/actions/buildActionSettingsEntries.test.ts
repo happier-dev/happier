@@ -82,10 +82,10 @@ describe('buildActionSettingsEntries', () => {
                 sessionHandoffEnabled: true, voiceShareDeviceInventory: true,
             },
         });
-        // Custody (`approval.result`) is not confirmation. The host-attributed
-        // present user's reversible defaults are direct; automation retains its floor.
-        // A bare Discard is the incumbent whole-file/HEAD operation; P5's reversible
-        // comparison input has its own contextual confirmation contract.
+        // Custody (`approval.result`) is not confirmation. Commit 02102e614e1 and
+        // docs/actions.md separate own-UI automation approval from native confirmation.
+        // Discard's HEAD/mixed native review remains covered by actionApprovalPolicy.test.ts;
+        // Settings reports the automation default, which stays Ask for Agent/MCP.
         const defaults = [
             ['workspace.tabs.open', false, false],
             ['file.view.get', false, false],
@@ -96,7 +96,7 @@ describe('buildActionSettingsEntries', () => {
             ['daemon.filesystem.writeFile', false, true],
             ['daemon.filesystem.rename', false, true],
             ['daemon.filesystem.readFile', false, false],
-            ['scm.change.discard', true, true],
+            ['scm.change.discard', false, true],
             ['scm.diffSummary.reviewed.mark', false, false],
             ['scm.diffSummary.reviewed.unmark', false, false],
             ['scm.file.read', false, false],
