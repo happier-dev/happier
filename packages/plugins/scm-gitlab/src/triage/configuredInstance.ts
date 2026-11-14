@@ -103,7 +103,7 @@ function isSameAccount(
  * neither can distinguish two GitLab deployments mounted below the same host.
  */
 async function confirmGitlabConfiguredBaseIsCurrent(input: Readonly<{
-  instance: GitlabConnectedInstanceAuthority;
+  instance: Pick<GitlabConnectedInstanceAuthority, 'binding'>;
   origin: GitlabConfiguredOrigin;
   connectedAccounts: GitlabConnectedAccounts;
   signal: AbortSignal;
@@ -155,14 +155,25 @@ async function confirmGitlabConfiguredBaseIsCurrent(input: Readonly<{
 }
 
 export async function authorizeGitlabConfiguredInstance(input: Readonly<{
+  requestId?: string;
   instance: GitlabInstanceAuthority;
   connectedAccounts: GitlabConnectedAccounts;
   signal: AbortSignal;
 }>): Promise<GitlabConfiguredInvocationResult> {
   const resolution = resolveGitlabConfiguredInstance(input.instance);
   if (resolution.kind === 'failed') return resolution;
-  const { origin, instance } = resolution;
+  return authorizeGitlabBoundAccount({ ...input, origin: resolution.origin, instance: resolution.instance });
+}
 
+/** Exact-account/base authorization shared by Triage and repository Event setup. */
+export async function authorizeGitlabBoundAccount(input: Readonly<{
+  requestId?: string;
+  instance: Pick<GitlabConnectedInstanceAuthority, 'binding'>;
+  origin: GitlabConfiguredOrigin;
+  connectedAccounts: GitlabConnectedAccounts;
+  signal: AbortSignal;
+}>): Promise<GitlabConfiguredInvocationResult> {
+  const { origin, instance } = input;
   const stale = await confirmGitlabConfiguredBaseIsCurrent({
     instance,
     origin,
@@ -172,6 +183,7 @@ export async function authorizeGitlabConfiguredInstance(input: Readonly<{
   if (stale !== null) return { kind: 'failed', failure: stale };
 
   const authorization = await authorizeGitlabInvocation({
+    ...(input.requestId === undefined ? {} : { requestId: input.requestId }),
     connectedAccounts: input.connectedAccounts,
     purpose: instance.binding.purpose,
     account: instance.binding.account,
