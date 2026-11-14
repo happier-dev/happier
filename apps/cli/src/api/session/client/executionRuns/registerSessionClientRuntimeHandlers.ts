@@ -113,7 +113,6 @@ import { createCommittedExecutionRunTranscriptPublisher } from '@/agent/runtime/
 import { resolveExecutionRunPublicBackendId } from '@/agent/runtime/bridges/executionRun/backendTargets';
 import type { ApiSessionClient } from '@/api/session/sessionClient';
 import type { ExecutionRunHostBridgeContract } from '@/agent/runtime/bridges/executionRun/executionRunBridgeContract';
-import { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } from '@/daemon/externalActions/daemonExternalActionTargetResolver';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { RequesterWorkAttributionV1Schema } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { findSessionMarkerTrackingKey, hashProcessCommand, readSessionMarker } from '@/daemon/sessionRegistry';
@@ -741,6 +740,8 @@ export function registerSessionClientRuntimeHandlers(
     > = async (args) => {
         const credentials = await readOwnerAccountCredentials();
         if (!credentials || !sessionMachineId) return false;
+        // Loaded on the first approved operation: most Sessions never run one.
+        const { createDaemonApprovalExecutionOriginCurrentnessFromCredentials } = await import('@/daemon/externalActions/daemonExternalActionTargetResolver');
         const checker = createDaemonApprovalExecutionOriginCurrentnessFromCredentials({
             credentials,
             machineId: sessionMachineId,

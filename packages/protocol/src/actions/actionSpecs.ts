@@ -1124,9 +1124,25 @@ function normalizeActionPublicExposure(spec: PreNormalizedActionSpec): Normalize
   };
 }
 
+// Declarations by id, so one lookup normalizes one Action, not the catalog
+// (the normalized catalog is ~9 MiB live per process; P03-CODE-COVERAGE).
+const ACTION_SPEC_DECLARATIONS_BY_ID = memoizeActionSpecValue(() => new Map(
+  ACTION_SPECS_WITHOUT_APPROVAL.map((spec) => [spec.id, spec] as const),
+));
+const ACTION_SPECS_WITH_PUBLIC_EXPOSURE_BY_ID = new Map<ActionId, NormalizedActionSpec>();
+
+function readActionSpecWithPublicExposure(spec: PreNormalizedActionSpec): NormalizedActionSpec {
+  let normalized = ACTION_SPECS_WITH_PUBLIC_EXPOSURE_BY_ID.get(spec.id);
+  if (!normalized) {
+    normalized = normalizeActionPublicExposure(spec);
+    ACTION_SPECS_WITH_PUBLIC_EXPOSURE_BY_ID.set(spec.id, normalized);
+  }
+  return normalized;
+}
+
 function createActionSpecsWithPublicExposure() {
   return Object.freeze(
-  ACTION_SPECS_WITHOUT_APPROVAL.map(normalizeActionPublicExposure),
+  ACTION_SPECS_WITHOUT_APPROVAL.map(readActionSpecWithPublicExposure),
 );
 }
 
@@ -2140,8 +2156,7 @@ export const PUBLIC_ACTION_OUTPUT_SCHEMAS: ActionSchemaCarriersById<PublicAction
   'public',
 ));
 
-export const ACTION_SPECS: readonly ActionSpec[] = lazyActionSpecArray(() => Object.freeze(
-  ACTION_SPECS_WITH_PUBLIC_EXPOSURE.map((spec): ActionSpec => {
+function completeActionSpec(spec: NormalizedActionSpec): ActionSpec {
     const pluginCallerPolicy = resolveActionPluginCallerPolicy(spec);
     const argsExample = spec.examples?.voice?.argsExample ?? ACTION_VOICE_ARGS_EXAMPLES[spec.id];
     const completed = completeActionInputHints({
@@ -2162,20 +2177,79 @@ export const ACTION_SPECS: readonly ActionSpec[] = lazyActionSpecArray(() => Obj
       },
     });
     return completed;
-  }),
-));
+}
 
-const ACTION_SPECS_BY_ID = memoizeActionSpecValue(() => new Map(ACTION_SPECS.map((spec) => [spec.id, spec] as const)));
+const ACTION_SPECS_BY_ID = new Map<ActionId, ActionSpec>();
+
+function readActionSpec(id: ActionId): ActionSpec | undefined {
+  let spec = ACTION_SPECS_BY_ID.get(id);
+  if (!spec) {
+    const declaration = ACTION_SPEC_DECLARATIONS_BY_ID().get(id);
+    if (!declaration) return undefined;
+    spec = completeActionSpec(readActionSpecWithPublicExposure(declaration));
+    ACTION_SPECS_BY_ID.set(id, spec);
+  }
+  return spec;
+}
+
+export const ACTION_SPECS: readonly ActionSpec[] = lazyActionSpecArray(() => Object.freeze(
+  ACTION_SPECS_WITHOUT_APPROVAL.map((declaration) => readActionSpec(declaration.id)!),
+));
 
 export function listActionSpecs(): readonly ActionSpec[] {
   return ACTION_SPECS;
+}
+
+/**
+ * Binding facts of every Action, in catalog order, read from the declarations:
+ * normalization never changes `surfaces.rpc` or `bindings`. RPC registration and
+ * the MCP tool catalog select from these and normalize only the Actions they use.
+ */
+export type ActionSpecBindingDeclaration = Readonly<{
+  id: ActionId;
+  surfaces: Readonly<{ rpc: boolean }>;
+  bindings?: ActionSpec['bindings'];
+}>;
+
+const ACTION_SPEC_BINDING_DECLARATIONS: readonly ActionSpecBindingDeclaration[] = lazyActionSpecArray(() => Object.freeze(
+  (ACTION_SPECS_WITHOUT_APPROVAL as readonly PreNormalizedActionSpec[]).map((spec): ActionSpecBindingDeclaration => Object.freeze({
+    id: spec.id,
+    surfaces: Object.freeze({ rpc: spec.surfaces.rpc === true }),
+    ...(spec.bindings ? { bindings: spec.bindings } : {}),
+  })),
+));
+
+export function listActionSpecBindingDeclarations(): readonly ActionSpecBindingDeclaration[] {
+  return ACTION_SPEC_BINDING_DECLARATIONS;
+}
+
+/** RPC registration facts of every Action: id, primary method, aliases. */
+export type ActionSpecRpcRegistration = Readonly<{
+  id: ActionId;
+  surfaces: Readonly<{ rpc: true }>;
+  bindings: NonNullable<ActionSpec['bindings']> & Readonly<{ rpcMethod: string }>;
+}>;
+
+const ACTION_SPEC_RPC_REGISTRATIONS: readonly ActionSpecRpcRegistration[] = lazyActionSpecArray(() => Object.freeze(
+  ACTION_SPEC_BINDING_DECLARATIONS.filter((spec): spec is ActionSpecRpcRegistration => (
+    spec.surfaces.rpc && typeof spec.bindings?.rpcMethod === 'string' && spec.bindings.rpcMethod.length > 0
+  )),
+));
+
+export function listActionSpecRpcRegistrations(): readonly ActionSpecRpcRegistration[] {
+  return ACTION_SPEC_RPC_REGISTRATIONS;
+}
+
+/** One Action by id, normalized on first read; undefined for an unknown id. */
+export function findActionSpec(id: string): ActionSpec | undefined {
+  return readActionSpec(id as ActionId);
 }
 
 export function getActionSpec<TActionId extends ActionId>(id: TActionId): Readonly<{
   inputSchema: WithClientRoutingSchema<TActionId, CanonicalActionSpecById[TActionId]['inputSchema']>;
 }> & ActionSpec;
 export function getActionSpec(id: ActionId): ActionSpec {
-  const spec = ACTION_SPECS_BY_ID().get(id);
+  const spec = readActionSpec(id);
   if (!spec) {
     // This is a programmer error: all call sites should be type-safe and list-backed.
     throw new Error(`Unknown action spec: ${id}`);

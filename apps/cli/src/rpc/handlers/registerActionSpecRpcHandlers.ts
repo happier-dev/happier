@@ -10,7 +10,7 @@ import { FilesystemEffectFailureDetailsV1Schema } from '@happier-dev/protocol/ac
 import { TargetedActionRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { readExecutionRunStartRunCreation, withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import type { ActionExecuteResult, ActionExecutorContext, ActionId } from '@happier-dev/protocol/actions';
-import { ACTION_SPECS, getActionSpec, isPluginProvenanceOnlyActionId } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec, isPluginProvenanceOnlyActionId, listActionSpecRpcRegistrations } from '@happier-dev/protocol/actions/actionSpecs';
 import { logger } from '@/ui/logger';
 import type { ActionSpecSurfaceBindings, ActionSurfaceBindingContext } from '@happier-dev/protocol/actions/actionSpecs';
 import { SessionSpawnNewResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
@@ -305,7 +305,9 @@ function buildRpcSurfaceBindingContext(
 }
 
 export function registerActionSpecRpcHandlers<TActionId extends ActionId = ActionId>(params: RegisterActionSpecRpcHandlersParams<NoInfer<TActionId>>): void {
-    const actionSpecs = params.actionSpecs ?? ACTION_SPECS;
+    // Registration reads only the id → RPC-method index; a handler normalizes its
+    // own spec on first call, so boot never builds the whole Action catalog.
+    const actionSpecs: readonly ActionSpecRpcHandlerSpec[] = params.actionSpecs ?? listActionSpecRpcRegistrations();
     const isSelectedActionId = buildActionFamilySelection<TActionId>(params);
     const methods = buildIncludedSet(params.methods);
     const scopes = params.scopes ?? null;
@@ -313,31 +315,34 @@ export function registerActionSpecRpcHandlers<TActionId extends ActionId = Actio
     const registeredMethods = new Map<string, string>();
     const targetMachineId = normalizeOptionalString(params.targetMachineId);
 
-    for (const spec of actionSpecs) {
-        if (spec.surfaces?.rpc !== true) {
+    for (const declaration of actionSpecs) {
+        if (declaration.surfaces?.rpc !== true) {
             continue;
         }
-        const actionId = spec.id;
-        const rpcMethod = normalizeOptionalString(spec.bindings?.rpcMethod);
+        const actionId = declaration.id;
+        const rpcMethod = normalizeOptionalString(declaration.bindings?.rpcMethod);
         if (!actionId || !rpcMethod) {
             continue;
         }
         if (!isSelectedActionId(actionId) || !isIncluded(rpcMethod, methods)) {
             continue;
         }
-        if (scopes && !isActionSpecRpcSpecInScopes(spec, scopes)) {
+        if (scopes && !isActionSpecRpcSpecInScopes(declaration, scopes)) {
             continue;
         }
         if (exceptionMethods.has(rpcMethod)) {
             continue;
         }
 
+        let resolvedSpec: ActionSpecRpcHandlerSpec | undefined;
+        const readSpec = (): ActionSpecRpcHandlerSpec => resolvedSpec ??= params.actionSpecs ? declaration : getActionSpec(actionId);
         const handleAction = async (
             input: unknown,
             context?: RpcHandlerContext,
             method: string = rpcMethod,
             isAlias: boolean = method !== rpcMethod,
         ) => {
+            const spec = readSpec();
             const typedActionId = actionId;
             if (context?.machineAdmission
                 && (typedActionId === 'session.spawn_new' || typedActionId === 'execution.run.start'
@@ -547,7 +552,7 @@ export function registerActionSpecRpcHandlers<TActionId extends ActionId = Actio
                 : unwrapActionResultForRpc(typedActionId, transportFailure(typedActionId, 'invalid_action_transport_output'));
         };
 
-        for (const method of collectRpcMethodsForSpec(spec)) {
+        for (const method of collectRpcMethodsForSpec(declaration)) {
             if (exceptionMethods.has(method)) {
                 continue;
             }

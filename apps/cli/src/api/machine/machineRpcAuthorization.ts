@@ -107,7 +107,7 @@ import {
   SESSION_SPAWN_NEW_RPC_SCOPES,
   MACHINE_SESSION_LIFECYCLE_RPC_SCOPES,
 } from '@/rpc/handlers/actionSpecRpcRegistration';
-import { ACTION_SPECS } from '@happier-dev/protocol/actions/actionSpecs';
+import { listActionSpecRpcRegistrations } from '@happier-dev/protocol/actions/actionSpecs';
 import {
   PRIVATE_SPAWN_SESSION_RPC_METHODS,
   SpawnDaemonSessionRequestSchema,
@@ -173,7 +173,7 @@ const nativeFilesystemMethods: readonly string[] = [
 let nativeSessionMethods: readonly string[] | undefined;
 function readNativeSessionMethods(): readonly string[] {
   return nativeSessionMethods ??= collectActionSpecRpcMethodsForScopes(
-    ACTION_SPECS,
+    listActionSpecRpcRegistrations(),
     [...SESSION_SPAWN_NEW_RPC_SCOPES, ...MACHINE_SESSION_LIFECYCLE_RPC_SCOPES],
   );
 }

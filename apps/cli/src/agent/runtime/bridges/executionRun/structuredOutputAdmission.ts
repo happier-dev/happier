@@ -1,5 +1,5 @@
 import { AgentModelsProbeObservationSchema } from '@happier-dev/protocol/capabilities';
-import { invokeCliPreflightMethod, type CliProbeDependencies } from '@/capabilities/probes/agentPreflight';
+import type { CliProbeDependencies } from '@/capabilities/probes/agentPreflight';
 import { withAgentPreflightCatalog } from '@/capabilities/probes/withAgentPreflightCatalog';
 import { resolveExecutionRunRuntimeBackendId } from './backendTargets';
 import type { ExecutionRunManagerStartParams } from './executionRunTypes';
@@ -38,6 +38,8 @@ export async function readNativeExecutionRunOfferedModel(params: Parameters<NonN
     preflightDependencies?: Pick<CliProbeDependencies, 'createApiClient' | 'activatePurposeBindings' | 'connectedAccountsOwner'>;
   }>) {
   const agentId = resolveExecutionRunRuntimeBackendId(params.backendTarget);
+  // Structured-output runs are rare; the probe owner loads on the first one.
+  const { invokeCliPreflightMethod } = await import('@/capabilities/probes/agentPreflight');
   const response = await invokeCliPreflightMethod(agentId, 'probeModels', {
     backendTarget: params.backendTarget, cwd: params.cwd, runtimeDescriptorV1: params.runtimeDescriptorV1,
     connectedServices: params.connectedServices,

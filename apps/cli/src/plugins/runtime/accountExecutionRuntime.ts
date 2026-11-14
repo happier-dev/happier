@@ -2,13 +2,13 @@ import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { createConnectedServiceCredentialApi } from '@/api/client/connectedServiceCredentialApi';
 import { resolveQualifiedConnectedAccountAtomicV4Negotiation } from '@/api/client/qualifiedConnectedAccountApi';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { createRequesterConnectedAccountPurposeBindingRuntime } from '@/daemon/connectedServices/purposeBindings/createRequesterConnectedAccountPurposeBindingRuntime';
+import type { createRequesterConnectedAccountPurposeBindingRuntime } from '@/daemon/connectedServices/purposeBindings/createRequesterConnectedAccountPurposeBindingRuntime';
 import { isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { fetchServerFeaturesSnapshot, type CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import type { PluginReloadController, PluginRuntimeRegistryLease } from './reload/controller';
 import { pluginReloadController } from './reload/singleton';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from './reload/runtimeLease';
-import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
+import type { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 
 type RegistryInput = NonNullable<Parameters<typeof resolveExecutablePluginRuntimeRegistry>[0]>;
 export type AccountExecutionRuntimeInput = Readonly<{
@@ -29,6 +29,12 @@ export type AccountExecutionRuntimeInput = Readonly<{
 /** Compose the existing Account services from an already admitted identity. */
 export async function resolveAccountExecutionRuntime(input: AccountExecutionRuntimeInput) {
     const authority = input.accountExecution;
+    // Session hosts and the daemon load these on the first Account execution:
+    // most never run one (V8 coverage, P03-CODE-COVERAGE).
+    const [{ resolveExecutablePluginRuntimeRegistry }, { createRequesterConnectedAccountPurposeBindingRuntime }] = await Promise.all([
+        import('./resolveExecutablePluginRuntimeRegistry'),
+        import('@/daemon/connectedServices/purposeBindings/createRequesterConnectedAccountPurposeBindingRuntime'),
+    ]);
     return await runWithServerHttpBaseUrl(authority.serverUrl, async () => {
         const operationContext = authority.savedSecretOperationContext;
         const accountId = readAccountIdFromToken(authority.credentials.token);

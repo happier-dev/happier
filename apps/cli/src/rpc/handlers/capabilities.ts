@@ -1,4 +1,4 @@
-import { invokeCliPreflightMethod, resolveCliProbeInvokeParams, type CliProbeDependencies, type CliProbeRequestContext } from '@/capabilities/probes/agentPreflight';
+import type { CliProbeDependencies, CliProbeRequestContext } from '@/capabilities/probes/agentPreflight';
 import type { RpcHandlerRegistrar } from '@/api/rpc/types';
 import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import type { InstalledPluginCapabilityEntryV1 } from '@happier-dev/protocol/capabilities';
@@ -146,6 +146,8 @@ async function invokeCliProbeOrInstallMethod(
         return null;
     }
 
+    // Probes are a rare capabilities RPC; their owner loads on the first probe.
+    const { invokeCliPreflightMethod, resolveCliProbeInvokeParams } = await import('@/capabilities/probes/agentPreflight');
     const { timeoutMs } = resolveCliProbeInvokeParams(params);
     const deadline = new AbortController();
     const signal = requestContext.signal ? AbortSignal.any([requestContext.signal, deadline.signal]) : deadline.signal;

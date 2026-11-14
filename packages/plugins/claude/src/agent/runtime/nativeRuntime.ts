@@ -60,7 +60,6 @@ import {
   partitionClaudeTerminalUserArgs,
 } from './terminal/argv.js';
 import { isClaudeUnifiedTerminalSelected, readClaudeTerminalRuntimeSelection } from './terminal/unified/selection.js';
-import { openClaudeNativeUnifiedTerminalSession } from './terminal/unified/nativeSession.js';
 import type {
   ClaudeUnifiedPromptDeliveryIdentity,
   ClaudeUnifiedPromptDeliveryOutcome,
@@ -1569,7 +1568,8 @@ async function openClaudeNativeAgentSdkExecutionRunConversation(input: Readonly<
 export const createClaudeAgentRuntime = (_context: Parameters<AgentRuntimeFactory>[0]) => createClaudeNativeRuntime({
   openSession: createClaudeNativeSessionOpener({
     openAgentSdkSession: openClaudeNativeAgentSdkSession,
-    openUnifiedTerminalSession: openClaudeNativeUnifiedTerminalSession,
+    // The unified terminal runtime loads only when it is selected (P03-CODE-COVERAGE).
+    openUnifiedTerminalSession: async (input) => (await import('./terminal/unified/nativeSession.js')).openClaudeNativeUnifiedTerminalSession(input),
   }),
   resolveSupportsEffort: resolveClaudeInstalledEffortSupport,
   resolveSupportsSystemPromptSnapshotOff: resolveClaudeInstalledSystemPromptSnapshotOffSupport,

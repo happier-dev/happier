@@ -1,7 +1,7 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 import { sameStrictJsonValue } from '../json/strictJsonValue.js';
-import { listActionSpecs } from '../actions/actionSpecs.js';
+import { findActionSpec, listActionSpecs } from '../actions/actionSpecs.js';
 import { resolveEffectiveActionInputFields } from '../actions/actionInputHintsRuntime.js';
 import { readInputPath } from '../inputs/inputPredicates.js';
 
@@ -803,7 +803,7 @@ function validateLeafInputContract(
     } else deferredFields.add(field);
   }
   if (leaf.kind === 'action') {
-    const spec = listActionSpecs().find((candidate) => candidate.id === leaf.actionId);
+    const spec = findActionSpec(leaf.actionId);
     if (!spec) return; // Contributed contracts are resolved by the admission materializer.
     for (const field of Object.keys(spec.contextualDefaults ?? {})) {
       if (!Object.hasOwn(leaf.input, field)) deferredFields.add(field);
