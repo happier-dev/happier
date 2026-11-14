@@ -102,6 +102,22 @@ describe('CLI version reuse', () => {
     });
   });
 
+  it.each([{ killed: true }, { code: 1 }])('does not retain a version banner from an unsuccessful process (%j)', async (failure) => {
+    await withNativeCli(async ({ detect }) => {
+      processBoundary.beforeProbe = async () => {
+        throw Object.assign(new Error('version command failed'), failure,
+          { stdout: 'opencode 1.2.3\n', stderr: '' });
+      };
+      // Preserve the existing best-effort projection for this observation.
+      expect((await detect(request)).clis.opencode.version).toBe('1.2.3');
+      processBoundary.beforeProbe = null;
+      processBoundary.version = '2.0.0';
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(Date.now() + 31_000);
+      expect((await detect(request)).clis.opencode.version).toBe('2.0.0');
+    });
+  });
+
   it('explicit refresh and verification probe even an unchanged native executable', async () => {
     await withNativeCli(async ({ detect }) => {
       await detect(request);

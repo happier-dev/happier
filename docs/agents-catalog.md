@@ -213,7 +213,8 @@ opaque scripts, package-manager shims and unclassified overrides keep probing.
 Concurrent ordinary version probes share the existing bounded execution path.
 Explicit `bypassCache` and `verifyVersion` requests always probe afresh, and
 invalidation retires pending observations so they cannot restore stale facts.
-Failures are not retained as version facts. This is development-source behavior,
+Banners from failed executions remain best-effort metadata for that observation,
+but are not retained as version facts. This is development-source behavior,
 with no new request fields or persistent storage format.
 
 ### Checklist id conventions

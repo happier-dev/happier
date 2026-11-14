@@ -4,6 +4,8 @@ import { AsyncTtlCache } from '@happier-dev/protocol';
 
 import { logger } from '@/ui/logger';
 
+export type CliVersionProbeResult = Readonly<{ version: string | null; successful: boolean }>;
+
 type VersionFact = Readonly<{ identity: string; version: string }>;
 
 /** Inventory reuse only; launch/install verification continues to own its fresh probes. */
@@ -22,7 +24,7 @@ export class CliVersionCache {
         nativeInstall: boolean;
         fresh: boolean;
         probeKey: string;
-        probe: () => Promise<string | null>;
+        probe: () => Promise<CliVersionProbeResult>;
     }>): Promise<string | null> {
         let cache = this.#caches.get(params.name);
         if (!cache || params.fresh) {
@@ -35,10 +37,10 @@ export class CliVersionCache {
             return cached.value.version;
         }
         const run = async () => {
-            const version = await params.probe();
+            const { version, successful } = await params.probe();
             // Updates may retarget a launcher while the bounded process probe is running.
             // Admit only an observation bracketed by the same executable identity.
-            if (identity && version && await readNativeExecutableIdentity(params.resolvedPath) === identity) {
+            if (successful && identity && version && await readNativeExecutableIdentity(params.resolvedPath) === identity) {
                 cache.setSuccess(params.name, { identity, version });
             }
             return version;

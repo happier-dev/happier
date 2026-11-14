@@ -15,7 +15,7 @@ import { getProviderCliRuntimeSpec } from '@happier-dev/agents';
 import { classifyProviderCliInstall, resolvePlatformFromNodePlatform, isProviderCliPathRunnable, providerCliPathRequiresJavaScriptRuntime } from '@happier-dev/cli-common/providers';
 import { resolveWindowsCommandInvocation, resolveWindowsCommandOnPath } from '@happier-dev/cli-common/process';
 
-import { CliVersionCache } from './cliVersionCache';
+import { CliVersionCache, type CliVersionProbeResult } from './cliVersionCache';
 import { logger } from '@/ui/logger';
 
 const execFileAsync = promisify(execFile);
@@ -418,12 +418,12 @@ async function detectCliVersion(params: {
             const version = await withCliSnapshotProbeTimeout(probeCliVersion(params), params.probeTimeoutMs);
             if (version !== CLI_SNAPSHOT_PROBE_TIMEOUT) return version;
             logger.warn('[capabilities] CLI version probe exceeded its inventory budget', { name: params.name });
-            return null;
+            return { version: null, successful: false };
         },
     });
 }
 
-async function probeCliVersion(params: { name: DetectCliName; resolvedPath: string; verifyVersion: boolean; probeTimeoutMs: number }): Promise<string | null> {
+async function probeCliVersion(params: { name: DetectCliName; resolvedPath: string; verifyVersion: boolean; probeTimeoutMs: number }): Promise<CliVersionProbeResult> {
     // Best-effort, must never throw.
     try {
         // Ambient listing keeps each attempt short (runs in parallel for many CLIs) so one retry
@@ -489,32 +489,32 @@ async function probeCliVersion(params: { name: DetectCliName; resolvedPath: stri
             file: string,
             args: string[],
             options: ExecFileBestEffortOptions,
-	        ): Promise<string | null> => {
+	        ): Promise<CliVersionProbeResult> => {
 	            const first = await probeSemverOnce(file, args, options);
-	            if (first.semver) return first.semver;
+	            if (first.semver) return { version: first.semver, successful: first.error === null };
 
 	            const shouldRetry =
 	                (first.error && isTransientExecFileError(first.error))
 	                || (!first.error && first.combinedTrimmed.length === 0);
-	            if (!shouldRetry) return null;
+	            if (!shouldRetry) return { version: null, successful: false };
 
 	            // Best-effort retry for transient spawn/timeout failures (can happen under load).
 	            await new Promise((resolve) => setTimeout(resolve, 0));
 	            const second = await probeSemverOnce(file, args, options);
-	            return second.semver;
+	            return { version: second.semver, successful: second.error === null };
 	        };
 
         if (needsJavaScriptRuntime) {
             const runtimeExecutable = await resolveJavaScriptRuntimeExecutableForCliSnapshot();
-            if (!runtimeExecutable) return null;
+            if (!runtimeExecutable) return { version: null, successful: false };
             for (const args of argsToTry) {
-                const semver = await probeSemverWithRetry(runtimeExecutable, [params.resolvedPath, ...args], {
+                const observation = await probeSemverWithRetry(runtimeExecutable, [params.resolvedPath, ...args], {
                     timeout: timeoutMs,
                     windowsHide: true,
                 });
-                if (semver) return semver;
+                if (observation.version) return observation;
             }
-            return null;
+            return { version: null, successful: false };
         }
 
         if (isCmdScript) {
@@ -533,16 +533,16 @@ async function probeCliVersion(params: { name: DetectCliName; resolvedPath: stri
         }
 
         for (const args of argsToTry) {
-            const semver = await probeSemverWithRetry(params.resolvedPath, args, {
+            const observation = await probeSemverWithRetry(params.resolvedPath, args, {
                 timeout: timeoutMs,
                 windowsHide: true,
             });
-            if (semver) return semver;
+            if (observation.version) return observation;
         }
 
-        return null;
+        return { version: null, successful: false };
     } catch {
-        return null;
+        return { version: null, successful: false };
     }
 }
 
