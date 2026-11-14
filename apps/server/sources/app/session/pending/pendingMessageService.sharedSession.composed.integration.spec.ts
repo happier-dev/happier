@@ -306,8 +306,7 @@ describe("pendingMessageService (shared sessions)", () => {
     const createManagedPendingFixture = async () => {
         const owner = await createAccount("managed-input-owner");
         const session = await createSession(owner.id);
-        const homeId = `srv_${"c".repeat(32)}`;
-        process.env.HAPPIER_SERVER_IDENTITY_ID = homeId;
+        const homeId = await getOrCreateServerIdentityId();
         const controllerKeys = tweetnacl.sign.keyPair();
         const controller = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
             metadata: "{}", installationId: "input-controller-installation", installationPublicKey: Buffer.from(controllerKeys.publicKey) } });
