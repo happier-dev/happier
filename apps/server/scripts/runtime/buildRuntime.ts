@@ -1,8 +1,8 @@
 import { mkdir, readFile, rm } from 'node:fs/promises';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { build } from 'esbuild';
+import { build, type Plugin } from 'esbuild';
 import { buildPublicShareViewerBundle } from '../buildPublicShareViewer.mjs';
 import { buildPublicProfileRenderer, stagePublicProfileAssets } from '../buildPublicProfileRenderer.mjs';
 import {
@@ -56,7 +56,42 @@ export async function buildServerRuntime(params: BuildServerRuntimeParams): Prom
 
   await buildPublicShareViewerBundle({ projectDir });
   await buildPublicProfileRenderer({ projectDir, check: true });
+  await bundleServerRuntimeEntrypoints({ projectDir, outDir });
+  await stagePublicProfileAssets({ projectDir, outDir });
 
+  return {
+    outDir,
+    entrypoints: {
+      full: join(outDir, 'main.js'),
+      light: join(outDir, 'main.light.js'),
+    },
+  };
+}
+
+/**
+ * Generated Prisma clients are CommonJS packages that locate their query engine
+ * and schema beside themselves. Bundling one into an ESM chunk turns its
+ * `require("node:fs")` into esbuild's throwing dynamic-require shim, so the
+ * runtime imports the installed client instead, at its path from the output.
+ */
+function externalGeneratedPrismaClients(outDir: string): Plugin {
+  return {
+    name: 'external-generated-prisma-clients',
+    setup(pluginBuild) {
+      pluginBuild.onResolve({ filter: /[/\\]generated[/\\](?:sqlite|mysql)-client(?:[/\\]|$)/ }, (args) => {
+        const fromOutput = relative(outDir, resolve(args.resolveDir, args.path)).split(sep).join('/');
+        return { path: fromOutput.startsWith('.') ? fromOutput : `./${fromOutput}`, external: true };
+      });
+    },
+  };
+}
+
+/** Bundles the full and light server entrypoints into `outDir` (flat ESM chunks). */
+export async function bundleServerRuntimeEntrypoints(params: Readonly<{
+  projectDir: string;
+  outDir: string;
+}>): Promise<void> {
+  const { projectDir, outDir } = params;
   const external = await readRuntimeExternalPackages(projectDir);
   await build({
     absWorkingDir: projectDir,
@@ -72,18 +107,10 @@ export async function buildServerRuntime(params: BuildServerRuntimeParams): Prom
     },
     tsconfig: join(projectDir, 'tsconfig.json'),
     external: [...external, 'bun:sqlite'],
+    plugins: [externalGeneratedPrismaClients(outDir)],
     logLevel: 'silent',
     sourcemap: false,
   });
-  await stagePublicProfileAssets({ projectDir, outDir });
-
-  return {
-    outDir,
-    entrypoints: {
-      full: join(outDir, 'main.js'),
-      light: join(outDir, 'main.light.js'),
-    },
-  };
 }
 
 function takeArgValue(argv: string[], name: string): string {
