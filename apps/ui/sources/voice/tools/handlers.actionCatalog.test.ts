@@ -674,24 +674,18 @@ describe('Voice Action reference catalog', () => {
     if (!current) throw new Error('Expected owned notice');
     const input = { artifactId: stored.id, expectedRevision: current.revision,
       header: { ...current.header, status: 'dismissed' }, body: current.body };
-    let announceCreated: () => void = () => { throw new Error('Missing creation observer'); };
-    const askCreated = new Promise<void>(resolve => { announceCreated = resolve; });
-    home.artifacts(serverId).afterNextCreate(async () => { announceCreated(); });
-    const pending = handlers.action_execute!({ actionId: 'artifact.update', input }, { serverId, effectId: 'dismiss-notice' });
-    await askCreated;
-    const ask = home.artifacts(serverId).list().find(row => {
-      const parsed = ApprovalRequestSchema.safeParse(JSON.parse(home.artifacts(serverId).readPlainBody(row.id) ?? 'null'));
-      return parsed.success && parsed.data.actionId === 'artifact.update';
-    });
+    const pending = JSON.parse(await handlers.action_execute!({ actionId: 'artifact.update', input }, { serverId, effectId: 'dismiss-notice' }));
+    expect(pending, JSON.stringify(pending)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    const ask = home.artifacts(serverId).read(pending.result.artifactId);
     if (!ask) throw new Error('Expected notice update Ask');
     expect(ApprovalRequestSchema.parse(JSON.parse(home.artifacts(serverId).readPlainBody(ask.id) ?? 'null')))
-      .toMatchObject({ status: 'open', actionId: 'artifact.update', requestedSurface: 'voice', approval: { flow: 'blocking' } });
+      .toMatchObject({ status: 'open', actionId: 'artifact.update', requestedSurface: 'voice', approval: { flow: 'deferred' } });
     expect(home.artifacts(serverId).read(stored.id)?.headerVersion).toBe(current.revision.headerVersion);
     const result = await createDefaultActionExecutor().execute('approval.request.decide', {
       artifactId: ask.id, decision: 'approve',
     }, { surface: 'ui', serverId, authority: 'present_user', actionCaller: { kind: 'host' } });
-    expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
-    expect(JSON.parse(await pending)).toMatchObject({ ok: true, result: { artifactId: stored.id } });
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { status: 'executed',
+      execution: { ok: true, result: { artifactId: stored.id } } } });
     const dismissed = JSON.parse(await handlers.action_execute!({ actionId: 'artifact.get', input: { artifactId: stored.id } }, { serverId }));
     expect(ArtifactActionOutputSchemasV1['artifact.get'].parse(dismissed.result).artifact)
       .toMatchObject({ header: { status: 'dismissed', source: content.source }, body });

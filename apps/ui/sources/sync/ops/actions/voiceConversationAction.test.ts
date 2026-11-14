@@ -32,12 +32,14 @@ import { createVoiceSessionLifecycleController } from '@/voice/session/voiceSess
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { VOICE_CONVERSATIONS_SETTINGS } from '@/voice/settings/voiceSettingsDeclarations';
 import { publishCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
-import { setVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleControllerStore';
+import { acknowledgeVoiceSessionRuntimeReady, setVoiceSessionLifecycleController } from '@/voice/session/voiceSessionLifecycleControllerStore';
 import { getVoiceSessionAttemptId, getVoiceSessionPresentedAttemptId, resetVoiceSessionRuntimeStateForTests, setVoiceSessionSnapshot } from '@/voice/session/voiceSessionStore';
 import { registerVoiceAdapters } from '@/voice/session/voiceAdapterRegistry';
 import { createVoiceCaptureAdmissionController } from '@/voice/runtime/input/VoiceCaptureAdmissionController';
 import { useVoiceTargetStore } from '@/voice/runtime/voiceTargetStore';
 import { storage } from '@/sync/domains/state/storage';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
+import { createModalModuleMock } from '@/dev/testkit/mocks/modal';
 import { createActionExecutor} from '@happier-dev/protocol/actions/actionExecutor';
 import { createPlainSessionOwnerMetadataEnvelopeV1, createSessionOwnerMetadataV1,
     projectSessionSharedMetadataV1} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
@@ -87,7 +89,16 @@ installDisconnectedServerSocketBoundary();
 await loadSyncSingletonForTests();
 
 // Supply only the human confirmation outcome; keep alert presentation real.
-beforeEach(async () => { const { Modal } = await import('@/modal'); vi.spyOn(Modal, 'confirm').mockResolvedValue(true); });
+beforeEach(async () => {
+    const { Modal } = await import('@/modal');
+    vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
+    // The receiving executor carries its review in a custom modal. Reuse the
+    // testkit's human-choice adapter while retaining real alert presentation.
+    const choice = createModalModuleMock({ spies: { confirm: (...args) => Modal.confirm(...args) } });
+    const show = Modal.show.bind(Modal);
+    vi.spyOn(Modal, 'show').mockImplementation(config => config.chrome?.testID === 'actions.confirmation-review.modal'
+        ? choice.spies.show(config) : show(config));
+});
 
 const runtimeCleanup: Array<() => Promise<void>> = [];
 let homeFixtureOrdinal = 0;
@@ -174,6 +185,7 @@ async function createHarness(start = true, featureEnabled = true, deferActivatio
     if (deferActivation) {
         // Plugin activation consumes the selected Home's Machine readiness before awaiting its runtime.
         const machine = createMachineFixture({ id: 'voice-action-machine', activeAt: Date.now() });
+        publishMachineActivity(machine, machine, []);
         storage.setState(state => ({ machines: { ...state.machines, [machine.id]: machine },
             machineListByServerId: { ...state.machineListByServerId, [serverId]: [machine] } }));
     }
@@ -253,6 +265,7 @@ async function createHarness(start = true, featureEnabled = true, deferActivatio
     runtimeCleanup.push(async () => { activationRelease.resolve(undefined); await activation; unpublish(); });
     const lifecycle = createVoiceSessionLifecycleController({ captureAdmission: createVoiceCaptureAdmissionController() });
     setVoiceSessionLifecycleController(lifecycle);
+    acknowledgeVoiceSessionRuntimeReady(true);
     lifecycle.subscribe(() => setVoiceSessionSnapshot(lifecycle.getSnapshot()));
     lifecycle.setConfiguredProviderId(entry.providerId);
     if (start) {
