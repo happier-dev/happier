@@ -8516,6 +8516,22 @@ has no tracked source-declaration protocol or Account reader at these paths.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 Usage analytics token aggregates add optional closed
+`measured: { total, fromParts: true }`. Each admitted contribution contributes
+its reported total when present, otherwise its measured parts as a floor;
+aggregates conserve those amounts and retain floor provenance. The six raw
+observation fields remain distinct reported facts, including `total`. Scalar
+execution, calendar, recap and Work projections carry `tokensFromParts` when
+their amount includes such a floor. Ingest and individual observation shapes
+remain unchanged, and readers accept older aggregate responses without the
+optional fields. Matching Protocol, server and UI source reload together;
+older strict development readers reject the added aggregate fields. The private
+activity summary advances its existing cache version from 8 to 9 and rebuilds
+from retained source facts, without a database migration. The inspected `../0.2`
+frontier `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no
+`packages/protocol/src/usage` counterpart. No adapter, wire epoch or second
+reconciliation path is introduced.
+
 Unreleased 0.3 Computer interrupted input results may carry optional `code`,
 retaining the native refusal independently of completion certainty. The result
 and its target identity remain closed; omission remains valid. Matching Protocol,
@@ -9909,7 +9925,10 @@ The unpublished 0.3 signed external Action binding adds optional literal
 Team preset and bound custodian controller. The receiving daemon consumes that
 decision through its existing approval owner while retaining the member
 principal and custodian credentials. Callers cannot supply the fact; omission
-retains ordinary approval policy. This is authority in a closed signed binding,
+retains ordinary approval policy. Fresh acquisition admission that resolves a
+delegated preset requires this verified bit and otherwise refuses with
+`permission_denied`; retained admissions remain read-only replays without
+requalifying delegation. This is authority in a closed signed binding,
 so matching Home, Protocol and daemon source reload together; earlier strict
 development readers reject the addition. This uses the existing V1 epoch and
 unpublished direct cut, with no persistence migration or reverse-development

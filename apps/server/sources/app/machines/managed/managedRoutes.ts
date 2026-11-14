@@ -255,7 +255,7 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             ? (await readManagedWakeTargets({ actorAccountId: request.userId, request: { homeId, controller }, managedId })).targets
             : targets };
     }));
-    app.post('/v1/machines/managed/controller/prepare-policy', { preHandler: app.authenticate, schema: { body: ManagedPolicyAdmissionInputV1Schema, response: { 200: ManagedControllerMachineOutputV1Schema } } }, async (request, reply) => respond(reply, async () => {
+    app.post('/v1/machines/managed/controller/prepare-policy', { preHandler: app.authenticate, schema: { body: ManagedPolicyAdmissionInputV1Schema, response: { 200: ManagedPolicyAdmissionOutputV1Schema } } }, async (request, reply) => respond(reply, async () => {
         const verified = await requireManagedPolicyRequest(request, '/v1/machines/managed/controller/prepare-policy', request.body, 'admit');
         if (!sameManagedInput(verified.carrier.purpose, request.body.purpose)
             || verified.carrier.payload.managedPolicy?.requestId !== request.body.requestId) throw new ManagedMachineError('permission_denied');
@@ -379,7 +379,8 @@ export function registerManagedMachineRoutes(app: Fastify): void {
                 || !sameManagedInput(projected.input, request.body.input)
                 || projected.continuationPresent !== request.body.continuationPresent) throw new ManagedMachineError('permission_denied');
         }
-        return await admitManagedAcquire({ custodianAccountId, requesterAccountId: request.userId, authentication: readTeamOperationAuthenticationFromRequest(request), requestEnvelopeDigest, input: request.body });
+        return await admitManagedAcquire({ custodianAccountId, requesterAccountId: request.userId,
+            managedAcquireDelegation: request.externalActionExecutionAuthorizationBinding?.managedAcquireDelegation, authentication: readTeamOperationAuthenticationFromRequest(request), requestEnvelopeDigest, input: request.body });
     }));
     app.post("/v1/machines/managed/controller/context", { preHandler: app.authenticate, schema: { body: ManagedControllerContextInputV1Schema } }, async (request, reply) => respond(reply, async () => {
         const proof = request.headers[MANAGED_POLICY_PROOF_HEADER] !== undefined
@@ -501,7 +502,7 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             // Controller reconnection refreshes an existing native fact; it does
             // not admit allocation, bootstrap completion or configuration changes.
             if (!request.body.observation || request.body.result.kind !== 'bound'
-                || request.body.bootstrapInstalled || request.body.configurationFacts) throw new ManagedMachineError('permission_denied');
+                || request.body.bootstrapInstalled || ('configurationFacts' in request.body && request.body.configurationFacts)) throw new ManagedMachineError('permission_denied');
             await requireManagedPolicyRequest(request, '/v1/machines/managed/controller/report', request.body, 'report');
             return await reportManagedAcquire(request.body, { requestAuthority: 'intent' });
         }

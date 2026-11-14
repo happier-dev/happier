@@ -15,7 +15,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { randomUUID } from '@/platform/randomUUID';
 import { createPrivateLabelClient } from '@/sync/ops/privateLabels/privateLabelClient';
-import { sealTeamGroupName } from '@/sync/ops/teams/teamGroupLabels';
+import { sealTeamGroupLabel } from '@/sync/ops/teams/teamGroupLabels';
 import { createTeamGroup } from '@/sync/ops/teams/teamGroupOperations';
 import { isTeamActionApprovalPendingError } from '@/sync/ops/teams/teamActionClient';
 import { t } from '@/text';
@@ -32,6 +32,7 @@ type CreateSubmissionIdentity = Readonly<{
     groupId: string;
     requestKey: string;
     sealedName: PrivateLabelStoredV1 | null;
+    sealedDescription: PrivateLabelStoredV1 | null;
 }>;
 
 const CreateGroupForm = React.memo(function CreateGroupForm(props: Readonly<{
@@ -103,34 +104,35 @@ const CreateGroupForm = React.memo(function CreateGroupForm(props: Readonly<{
                 groupId: randomUUID(),
                 requestKey: randomUUID(),
                 sealedName: null,
+                sealedDescription: null,
             };
-            submissionRef.current = submission;
-        }
-        let sealedName = submission.sealedName;
-        if (!sealedName) {
-            sealedName = await sealTeamGroupName({
-                client: createPrivateLabelClient(context.scope),
-                teamId: context.address.teamId,
-                groupId: submission.groupId,
-                value: submission.name,
-            });
-            if (!sealedName) {
-                submitInFlightRef.current = false;
-                setSubmitting(false);
-                setError(t('teams.errors.generic'));
-                return;
-            }
-            submission = { ...submission, sealedName };
             submissionRef.current = submission;
         }
         let outcome: Awaited<ReturnType<typeof createTeamGroup>>;
         try {
+            const client = createPrivateLabelClient(context.scope);
+            let sealedName = submission.sealedName;
+            if (!sealedName) {
+                sealedName = await sealTeamGroupLabel({ client, field: 'name', teamId: context.address.teamId,
+                    groupId: submission.groupId, value: submission.name });
+                if (!sealedName) throw new Error('Group name unavailable');
+                submission = { ...submission, sealedName };
+                submissionRef.current = submission;
+            }
+            let sealedDescription = submission.sealedDescription;
+            if (submission.description !== null && !sealedDescription) {
+                sealedDescription = await sealTeamGroupLabel({ client, field: 'description', teamId: context.address.teamId,
+                    groupId: submission.groupId, value: submission.description });
+                if (!sealedDescription) throw new Error('Group description unavailable');
+                submission = { ...submission, sealedDescription };
+                submissionRef.current = submission;
+            }
             outcome = await createTeamGroup({
                 scope: context.scope,
                 address: context.address,
                 groupId: submission.groupId,
                 name: sealedName,
-                description: submission.description,
+                description: sealedDescription,
                 requestKey: submission.requestKey,
                 onApprovalSucceeded: openCreatedGroup,
                 onApprovalFailed: () => setError(t('teams.errors.generic')),

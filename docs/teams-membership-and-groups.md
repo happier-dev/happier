@@ -213,9 +213,11 @@ nesting, no Group role, no per-Group policy, no allow/deny precedence, no persis
 "Everyone" Group, and no Group-as-context. The Team principal already denotes active
 non-guest members; a Group is exactly the narrower audience.
 
-- Names reuse the shared Team display-name owner. The stored `nameKey` adds only the case
-  fold that in-Team uniqueness requires, and it is a uniqueness key only — nothing routes,
-  links, or authorizes through it. An archived Group still holds its name.
+- Names and descriptions use the private-label owner described in [Encryption](encryption.md#private-labels-and-server-readable-exceptions-03-development).
+  The human author's persisted Account mode decides Plain or E2EE content; the
+  recipient projection carries only that viewer's envelope. Raw pre-envelope text
+  remains readable until its next normal metadata save. The server orders and
+  targets Groups by structural IDs; display names need not be unique.
 - Archive stops Group-derived access immediately while retaining every membership row and
   horizon; restore re-enables exactly the retained grants that are still valid.
 - A Group membership can exist only for an Account that belongs to the same Team, enforced

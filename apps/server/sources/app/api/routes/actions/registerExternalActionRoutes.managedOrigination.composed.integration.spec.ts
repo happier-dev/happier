@@ -1,5 +1,4 @@
 import { SessionActionRpcOriginV1Schema } from '@happier-dev/protocol/socketRpc';
-import { createExternalActionAuthorizedRequestHeaders } from '../../../../../../cli/src/api/externalActionExecutionAuthorization';
 import { resolveMachineRetentionPolicyV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { createManagedMachinePresetAcquireOverrideV1, projectManagedMachinePresetForRecipientV1,
     openManagedMachinePresetContentV1, sealManagedMachinePresetContentV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetContentV1';
@@ -40,7 +39,7 @@ import { auth } from '@/app/auth/auth';
 import { verifyCurrentExternalActionPrincipal } from '@/app/auth/externalActionExecutionAuthorization';
 import { createReleaseLessDeclarationV1 } from '@/app/plugins/availability/currentDeclaration';
 import { resolveMachineAccess } from '@/app/machines/machineAccess';
-import { createMachinePreset } from '@/app/machines/managed/machinePresetService';
+import { archiveMachinePreset, createMachinePreset, restoreMachinePreset } from '@/app/machines/managed/machinePresetService';
 import { db, initDbPostgres } from '@/storage/db';
 import { createDbMaintenanceClient } from '@/storage/prisma';
 import { readDatabaseTransactionConfigFromEnv } from '@/config/databaseTransactions';
@@ -824,7 +823,7 @@ describe('composed CLI managed Action origination', () => {
         }
     });
 
-    it.each([['plain', 'none'], ['e2ee', 'none'], ['plain', 'member'], ['plain', 'owner']] as const)(
+    it.each([['plain', 'none'], ['e2ee', 'none'], ['plain', 'member'], ['plain', 'owner'], ['plain', 'member-archived'], ['plain', 'member-equal']] as const)(
         'admits omitted preset policy only from the exact signed native root (%s, Session source=%s)', async (mode, sessionSource) => {
         const selected = await fixture(true);
         const requester = sessionSource === 'owner' ? selected : await fixture(true, mode);
@@ -840,15 +839,19 @@ describe('composed CLI managed Action origination', () => {
                 id, homeId, owner: { kind: 'team', teamId: team.id }, contentEncryptionMode: 'plain', content, recipients: [],
                 controller: selected.controller, teamAcquireDelegated: true,
             } })).toMatchObject({ kind: 'saved' });
-        const input = ManagedAcquireInputV1Schema.parse({ selection: { kind: 'preset', homeId, id, revision: 0 },
-            controller: selected.controller, presetContentOverride: { content: { ...content,
+        const policy = resolveMachineRetentionPolicyV1({ billing: { location: 'cloud', stoppedBilling: 'billed' },
+                nativeCapabilities: { supportedIntents: ['delete'], finiteOnly: true } });
+        let input = ManagedAcquireInputV1Schema.parse({ selection: { kind: 'preset', homeId, id, revision: 0 },
+            controller: selected.controller,
+            ...(sessionSource === 'member-equal' ? { retention: policy.retention, wakeOnAcceptedMessage: policy.wakeOnAcceptedMessage } : {}),
+            presetContentOverride: { content: { ...content,
                 v: { ...content.v, enrollmentIdentity: selected.input.enrollmentIdentity } } } });
         const target = { kind: 'machine' as const, machineId: selected.controller.machineId };
         const binding = { serverIdentityId: homeId, accountId: requester.account.id,
             authentication: { kind: 'account' as const, tokenEpoch: requester.account.tokenEpoch },
             actionId: 'machines.managed.acquire', requestId: crypto.randomUUID(), target };
         const material = { type: 'dataKey' as const, machineKey: tweetnacl.randomBytes(32) };
-        const envelope = mode === 'plain' ? { v: 1 as const, requestId: binding.requestId, target, input }
+        let envelope = mode === 'plain' ? { v: 1 as const, requestId: binding.requestId, target, input }
             : sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
                 binding, material, input, randomBytes: tweetnacl.randomBytes });
         const instance = await app(async () => { throw new Error('Only the native HTTP admission is exercised'); }, () => {}, []);
@@ -873,15 +876,28 @@ describe('composed CLI managed Action origination', () => {
                     caller: { kind: 'session', sessionId: session.id, starterDepth: 1, turnDepth: 2 },
                     sourceTurnId: 'native-policy-turn', callerPermissionMode: 'default', requestId: binding.requestId,
                     causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } });
+                if (sessionSource === 'member-archived') {
+                    expect(await archiveMachinePreset({ accountId: selected.account.id,
+                        authentication: { authenticationAuthority: 'present_user' }, input: { id, homeId, expectedRevision: 0 } }))
+                        .toMatchObject({ kind: 'saved', preset: { revision: 1 } });
+                    // Author the predictable post-restore revision while the preset is archived.
+                    input = ManagedAcquireInputV1Schema.parse({ ...input, selection: { kind: 'preset', homeId, id, revision: 2 } });
+                    envelope = { v: 1, requestId: binding.requestId, target, input };
+                }
                 authorization = await auth.mintExternalActionExecutionAuthorization({ ...authorization.binding,
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
                     managedAcquireDelegation: undefined, sessionActionOrigin: origin,
                     sessionActionSource: { machineId: source.controller.machineId, installationId: source.controller.installationId } },
                 { input, resolveCurrentSessionMachine: async () => source.controller.machineId });
                 expect(authorization.binding).toMatchObject({ sessionActionOrigin: origin,
-                    ...(sessionSource === 'member' ? { managedAcquireDelegation: true } : {}) });
+                    ...(sessionSource === 'member' || sessionSource === 'member-equal' ? { managedAcquireDelegation: true } : {}) });
+                if (sessionSource === 'member-archived') {
+                    expect(authorization.binding.managedAcquireDelegation).toBeUndefined();
+                    expect(await restoreMachinePreset({ accountId: selected.account.id,
+                        authentication: { authenticationAuthority: 'present_user' }, input: { id, homeId, expectedRevision: 1 } }))
+                        .toMatchObject({ kind: 'saved', preset: { revision: 2 } });
+                }
             }
-            const policy = resolveMachineRetentionPolicyV1({ billing: { location: 'cloud', stoppedBilling: 'billed' },
-                nativeCapabilities: { supportedIntents: ['delete'], finiteOnly: true } });
             const body = { requestId: binding.requestId, input, continuationPresent: false,
                 presetPolicy: { retention: policy.retention, wakeOnAcceptedMessage: policy.wakeOnAcceptedMessage },
                 originalActionEnvelope: envelope };
@@ -899,11 +915,30 @@ describe('composed CLI managed Action origination', () => {
             const requesterOnly = await instance.inject({ method: 'POST', url: '/v1/machines/managed/controller/admit', payload: body,
                 headers: { authorization: `Bearer ${requester.token}` } });
             expect(requesterOnly.statusCode).toBe(403);
-            if (sessionSource === 'member') {
+            if (sessionSource === 'member' || sessionSource === 'member-archived') {
                 if (!sourceKeys) throw new Error('Missing member Session source keys');
                 const forged = await send({ ...body,
                     presetPolicy: { retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true } }, sourceKeys.secretKey);
-                expect(forged.statusCode, forged.body).toBe(401);
+                expect(forged.statusCode, forged.body).toBe(sessionSource === 'member-archived' ? 403 : 401);
+                if (sessionSource === 'member-archived') {
+                    expect(forged.json()).toMatchObject({ code: 'permission_denied' });
+                    expect(await db.managedMachine.count({ where: { homeId, admittedActionRequestId: binding.requestId } })).toBe(0);
+                    const unqualifiedAuthorization = authorization;
+                    authorization = await auth.mintExternalActionExecutionAuthorization({ ...authorization.binding, managedAcquireDelegation: undefined },
+                        { input, resolveCurrentSessionMachine: async () => requester.controller.machineId });
+                    expect(authorization.binding.managedAcquireDelegation).toBe(true);
+                    const admitted = await send(body);
+                    expect(admitted.statusCode, admitted.body).toBe(200);
+                    expect(admitted.json()).toMatchObject({ replayed: false, machine: { retention: policy.retention, wakeOnAcceptedMessage: false } });
+                    expect(await archiveMachinePreset({ accountId: selected.account.id,
+                        authentication: { authenticationAuthority: 'present_user' }, input: { id, homeId, expectedRevision: 2 } }))
+                        .toMatchObject({ kind: 'saved', preset: { revision: 3 } });
+                    authorization = unqualifiedAuthorization;
+                    const replayed = await send(body, sourceKeys.secretKey);
+                    expect(replayed.statusCode, replayed.body).toBe(200);
+                    expect(replayed.json()).toMatchObject({ replayed: true, machine: { id: admitted.json().machine.id } });
+                    return;
+                }
             }
             expect(await db.managedMachine.count({ where: { homeId, admittedActionRequestId: binding.requestId } })).toBe(0);
             await db.managedMachinePreset.update({ where: { id }, data: { retentionOverride: { kind: 'until-delete' } } });
@@ -924,7 +959,9 @@ describe('composed CLI managed Action origination', () => {
             const row = await db.managedMachine.findUniqueOrThrow({ where: { homeId_admittedActionRequestId: { homeId, admittedActionRequestId: binding.requestId } } });
             const { presetContentOverride: _override, ...computeInput } = input;
             expect(row.admittedInput).toMatchObject({ computeInput, requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) });
-            expect(row.admittedInput).not.toHaveProperty('computeInput.retention');
+            if (sessionSource === 'member-equal') expect(row.admittedInput).toMatchObject({
+                computeInput: { retention: policy.retention, wakeOnAcceptedMessage: policy.wakeOnAcceptedMessage } });
+            else expect(row.admittedInput).not.toHaveProperty('computeInput.retention');
         } finally { await instance.close(); }
     });
 

@@ -698,8 +698,8 @@ function createTeamActionSpecs() {
     outputSchema: TeamGroupV1Schema,
     inputHints: { fields: [
       TEAM_ID_FIELD,
-      approvalField('name', 'Group name', { required: true }),
-      approvalField('description', 'Description', { widget: 'textarea' }),
+      approvalField('name', 'Group name', { required: true, widget: 'json' }),
+      approvalField('description', 'Description', { widget: 'json' }),
     ] },
   }),
   homeDomainActionRow({
@@ -715,8 +715,8 @@ function createTeamActionSpecs() {
     inputHints: { fields: [
       TEAM_ID_FIELD,
       GROUP_ID_FIELD,
-      approvalField('name', 'Group name'),
-      approvalField('description', 'Description', { widget: 'textarea' }),
+      approvalField('name', 'Group name', { widget: 'json' }),
+      approvalField('description', 'Description', { widget: 'json' }),
     ] },
   }),
   homeDomainActionRow({

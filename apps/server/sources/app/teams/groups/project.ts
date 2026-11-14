@@ -13,7 +13,7 @@ import {
 import { TeamExternalGroupBindingMode } from "@/storage/enums.generated";
 import type { Tx } from "@/storage/inTx";
 import { sessionHistoryAccessOf } from "../memberships/sessionHistory";
-import { projectTeamGroupNameForRecipient } from "./privateLabels";
+import { projectTeamGroupLabelForRecipient } from "./privateLabels";
 
 /**
  * The Group row and the two facts its metadata lifecycle depends on: whether a
@@ -185,11 +185,14 @@ export function projectTeamGroupV1(input: Readonly<{
         v: 1,
         id: input.row.id,
         teamId: input.row.teamId,
-        name: projectTeamGroupNameForRecipient({
+        name: projectTeamGroupLabelForRecipient({
             serialized: input.row.name,
             recipientAccountId: input.recipientAccountId,
         }),
-        description: input.row.description,
+        description: input.row.description === null ? null : projectTeamGroupLabelForRecipient({
+            serialized: input.row.description,
+            recipientAccountId: input.recipientAccountId,
+        }),
         archivedAt: input.row.archivedAt?.getTime() ?? null,
         memberCount: input.memberCount,
         management,

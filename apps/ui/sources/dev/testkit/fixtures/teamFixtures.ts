@@ -72,13 +72,13 @@ export function teamCapabilitiesFixture(
     return { ...NO_TEAM_CAPABILITIES_V1, viewTeam: true, viewRoster: true, ...granted };
 }
 
-export function teamGroupFixture(overrides?: Omit<Partial<TeamGroupV1>, 'name'> & { name?: string | TeamGroupV1['name'] }): TeamGroupV1 {
+export function teamGroupFixture(overrides?: Omit<Partial<TeamGroupV1>, 'name' | 'description'> & { name?: string | TeamGroupV1['name']; description?: string | TeamGroupV1['description'] }): TeamGroupV1 {
     const name = overrides?.name ?? 'Developers';
+    const description = overrides?.description ?? null;
     return {
         v: 1,
         id: 'group-1',
         teamId: 'team-1',
-        description: null,
         memberCount: 1,
         archivedAt: null,
         management: { kind: 'native' },
@@ -87,6 +87,9 @@ export function teamGroupFixture(overrides?: Omit<Partial<TeamGroupV1>, 'name'> 
         name: typeof name === 'string'
             ? { kind: 'available', label: { content: { t: 'plain', v: name }, recipientEnvelope: null } }
             : name,
+        description: typeof description === 'string'
+            ? { kind: 'available', label: { content: { t: 'plain', v: description }, recipientEnvelope: null } }
+            : description,
     };
 }
 

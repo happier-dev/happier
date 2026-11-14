@@ -47,6 +47,8 @@ export function qualifyManagedAcquisitionPolicy(input: Pick<ReturnType<typeof re
 export async function admitManagedAcquire(params: Readonly<{
     custodianAccountId: string;
     requesterAccountId: string;
+    /** Verified Home binding; fresh delegated admission cannot inherit Session-source authority. */
+    managedAcquireDelegation?: true;
     authentication?: TeamOperationAuthenticationContext;
     requestEnvelopeDigest: string;
     input: ManagedAdmissionInputV1;
@@ -112,6 +114,7 @@ export async function admitManagedAcquire(params: Readonly<{
                     ...request.input.selection, boundController: review.controller });
                 if (selected.kind === "conflict") throw new ManagedMachineError("request_conflict");
                 if (selected.kind === "refused") throw new ManagedMachineError(selected.code);
+                if (selected.delegated && params.managedAcquireDelegation !== true) throw new ManagedMachineError('permission_denied');
                 if (!sameManagedInput(selected.preset.controller, review.controller)) throw new ManagedMachineError("controller_retired");
                 const preset = { id: selected.preset.id, revision: selected.preset.revision } as const;
                 const presetContent = ManagedAdmissionPresetContentV1Schema.parse(selected.presetContent);

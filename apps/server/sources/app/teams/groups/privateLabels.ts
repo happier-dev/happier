@@ -9,7 +9,7 @@ import {
     validatePrivateLabelStoredForModeV1,
 } from '@happier-dev/protocol/crypto/privateLabelV1';
 import { prepareSavedSecretResourceRecipientEnvelopesV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
-import type { TeamGroupNameProjectionV1 } from '@happier-dev/protocol/teams';
+import type { TeamGroupLabelProjectionV1 } from '@happier-dev/protocol/teams';
 import * as privacyKit from 'privacy-kit';
 import tweetnacl from 'tweetnacl';
 
@@ -23,8 +23,8 @@ import {
 } from '@/app/encryption/savedSecretRecipientEnvelopeCensus';
 import type { Tx } from '@/storage/inTx';
 
-export type TeamGroupNameWriteResult =
-    | Readonly<{ kind: 'ready'; serialized: string }>
+export type TeamGroupLabelsWriteResult =
+    | Readonly<{ kind: 'ready'; serialized: { name?: string; description?: string | null } }>
     | Readonly<{ kind: 'invalid_mode' }>
     | Readonly<{ kind: 'invalid_recipients' }>;
 
@@ -37,11 +37,11 @@ type TeamGroupSealAudienceResult =
     | Readonly<{ kind: 'ready'; serialized: string }>
     | Readonly<{ kind: 'recipient_unavailable' }>;
 
-/** Raw historic names remain readable until their next normal save. */
-export function projectTeamGroupNameForRecipient(params: Readonly<{
+/** Raw historic Group text remains readable until its next normal save. */
+export function projectTeamGroupLabelForRecipient(params: Readonly<{
     serialized: string;
     recipientAccountId: string;
-}>): TeamGroupNameProjectionV1 {
+}>): TeamGroupLabelProjectionV1 {
     const parsed = parsePrivateLabelStoredV1(params.serialized, { allowLegacyPlaintext: true });
     if (parsed.kind === 'invalid') return { kind: 'unavailable' };
     return {
@@ -53,6 +53,9 @@ export function projectTeamGroupNameForRecipient(params: Readonly<{
         }),
     };
 }
+
+/** Name-only consumers retain the same canonical projection owner. */
+export const projectTeamGroupNameForRecipient = projectTeamGroupLabelForRecipient;
 
 function toEnvelopeRows(label: PrivateLabelStoredV1): readonly ResourceRecipientEnvelopeRow[] | null {
     try {
@@ -70,12 +73,16 @@ function toEnvelopeRows(label: PrivateLabelStoredV1): readonly ResourceRecipient
  * A human author supplies opaque label bytes; this server-side admission binds
  * their persisted mode and current Team recipient audience once at the write.
  */
-export async function prepareTeamGroupNameForHumanWriteInTx(params: Readonly<{
+export async function prepareTeamGroupLabelsForHumanWriteInTx(params: Readonly<{
     tx: Tx;
     authorAccountId: string;
     teamId: string;
-    label: PrivateLabelStoredV1;
-}>): Promise<TeamGroupNameWriteResult> {
+    labels: Readonly<{ name?: PrivateLabelStoredV1; description?: PrivateLabelStoredV1 | null }>;
+}>): Promise<TeamGroupLabelsWriteResult> {
+    const serialized: { name?: string; description?: string | null } = {};
+    if (params.labels.description === null) serialized.description = null;
+    const supplied = Object.values(params.labels).filter((label): label is PrivateLabelStoredV1 => label != null);
+    if (supplied.length === 0) return { kind: 'ready', serialized };
     const author = await params.tx.account.findUnique({
         where: { id: params.authorAccountId },
         select: { encryptionMode: true },
@@ -83,28 +90,29 @@ export async function prepareTeamGroupNameForHumanWriteInTx(params: Readonly<{
     if (!author) return { kind: 'invalid_mode' };
     const mode = resolveEffectiveAccountEncryptionModeFromAccountRow(author);
     if (mode.status !== 'ready') return { kind: 'invalid_mode' };
-
-    const validated = validatePrivateLabelStoredForModeV1({ mode: mode.mode, stored: params.label });
-    if (validated.kind !== 'available') return { kind: 'invalid_mode' };
+    for (const label of supplied) {
+        if (validatePrivateLabelStoredForModeV1({ mode: mode.mode, stored: label }).kind !== 'available') {
+            return { kind: 'invalid_mode' };
+        }
+    }
     if (mode.mode === 'e2ee') {
         const expectedRecipientAccountIds = await resolveSavedSecretAudienceAccountIdsInTx(params.tx, {
-            ownerAccountId: params.authorAccountId,
-            accountIds: [],
-            teamIds: [params.teamId],
-            groupIds: [],
+            ownerAccountId: params.authorAccountId, accountIds: [], teamIds: [params.teamId], groupIds: [],
         });
         const accounts = expectedRecipientAccountIds.length === 0 ? [] : await params.tx.account.findMany({
-            where: { id: { in: [...expectedRecipientAccountIds] } },
-            select: RESOURCE_RECIPIENT_ACCOUNT_SELECT,
+            where: { id: { in: [...expectedRecipientAccountIds] } }, select: RESOURCE_RECIPIENT_ACCOUNT_SELECT,
         });
-        const envelopes = toEnvelopeRows(validated.stored);
-        if (envelopes === null || readRequiredResourceRecipientEnvelopeRejectionV1({
-            expectedRecipientAccountIds,
-            envelopes,
-            recipientsById: new Map(accounts.map((account) => [account.id, account])),
-        }) !== null) return { kind: 'invalid_recipients' };
+        const recipientsById = new Map(accounts.map((account) => [account.id, account]));
+        for (const label of supplied) {
+            const envelopes = toEnvelopeRows(label);
+            if (envelopes === null || readRequiredResourceRecipientEnvelopeRejectionV1({
+                expectedRecipientAccountIds, envelopes, recipientsById,
+            }) !== null) return { kind: 'invalid_recipients' };
+        }
     }
-    return { kind: 'ready', serialized: serializePrivateLabelStoredV1(validated.stored) };
+    if (params.labels.name !== undefined) serialized.name = serializePrivateLabelStoredV1(params.labels.name);
+    if (params.labels.description != null) serialized.description = serializePrivateLabelStoredV1(params.labels.description);
+    return { kind: 'ready', serialized };
 }
 
 async function sealTeamGroupNameToCurrentAudienceInTx(params: Readonly<{

@@ -709,7 +709,7 @@ it.each(['managed-provider-authority', 'settings-key-subscriptions', 'usage-owne
       try {
         pluginRuntime = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: ['happier.agent.codex', 'happier.agent.claude'] } });
         const purposeRuntime = createRequesterConnectedAccountPurposeBindingRuntime({
-          operationContext: requester.bootstrap.savedSecretOperationContext, accountId: 'bob', machineId: 'machine',
+          serverId: requester.bootstrap.attribution.serverId, operationContext: requester.bootstrap.savedSecretOperationContext, accountId: 'bob', machineId: 'machine',
           reloadController: pluginRuntime.controller, getAccountEncryptionMode: options => requester.api.getAccountEncryptionMode(options),
           isCurrent: requester.isCurrent, allowNativeAccountCredentials: false, resolveQualifiedConnectedAccountV4Support: () => 'advertised',
         });

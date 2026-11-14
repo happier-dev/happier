@@ -3,8 +3,12 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 
 /** One recipient-safe Team Group label projection, reused by every Group reader. */
-export const TeamGroupNameProjectionV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
+export const TeamGroupLabelProjectionV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('available'), label: PrivateLabelReadV1Schema }),
   z.strictObject({ kind: z.literal('unavailable') }),
 ]));
-export type TeamGroupNameProjectionV1 = z.infer<typeof TeamGroupNameProjectionV1Schema>;
+export type TeamGroupLabelProjectionV1 = z.infer<typeof TeamGroupLabelProjectionV1Schema>;
+
+/** Existing Group-name consumers share the same label projection owner. */
+export const TeamGroupNameProjectionV1Schema = TeamGroupLabelProjectionV1Schema;
+export type TeamGroupNameProjectionV1 = TeamGroupLabelProjectionV1;

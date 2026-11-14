@@ -1,3 +1,9 @@
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { projectPrivateLabelForRecipientV1 } from '@happier-dev/protocol/crypto/privateLabelV1';
+import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
+import { createLegacyAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { createPrivateLabelClient } from '@/sync/ops/privateLabels/privateLabelClient';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -7,7 +13,7 @@ import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { accountDisplayProfileFixture } from '@/dev/testkit/fixtures/homeGovernanceFixtures';
 import { teamCapabilitiesFixture, teamGroupFixture, teamGroupMemberFixture, teamMembershipFixture, teamPolicyFixture, teamSummaryFixture } from '@/dev/testkit/fixtures/teamFixtures';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
@@ -143,6 +149,77 @@ afterEach(() => {
 });
 
 describe('TeamGroupDetailScreen', () => {
+    it('opens an E2EE description for the real editor and header, then clears it with explicit null', async () => {
+        const secret = new Uint8Array(32).fill(52);
+        const credentials = { token: createAccountTokenForTests('account-ada'), secret: encodeBase64(secret, 'base64url') };
+        const encryption = await createEncryptionFromAuthCredentials(credentials);
+        if (!encryption) throw new Error('E2EE fixture needs actual key material');
+        const serverId = await harness.addHome({ name: 'Description Home', serverUrl: 'https://description-detail.example',
+            accountId: 'account-ada', teamsEnabled: true, accountEncryptionMode: 'e2ee', credentials });
+        harness.answer(serverId, 'GET /v1/account/encryption/currentness', { body: createLegacyAccountEncryptionCurrentnessFixture({ secret }) });
+        await harness.selectHomes([serverId]);
+        harness.answer(serverId, TEAM_GET_PATH, { body: teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ manageGroups: true }) }) });
+        harness.answer(serverId, '/v1/account/private-labels/recipient-census', { body: { contentEncryptionMode: 'e2ee',
+            recipients: [{ account: { kind: 'account', accountId: 'account-ada', firstName: null, lastName: null, username: null, avatarUrl: null },
+                readiness: { status: 'available', contentPublicKey: encodeBase64(encryption.contentDataKey),
+                    contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(encryption.contentDataKey) }, envelopeStatus: 'missing' }] } });
+        const description = await createPrivateLabelClient({ serverId, accountId: 'account-ada' }).seal({
+            owner: { kind: 'team', teamId: 'team-1' }, binding: { entity: 'team_group', field: 'description', id: 'group-1' },
+            value: 'Private Group context' });
+        if (!description) throw new Error('Description sealing failed');
+        expect(JSON.stringify(description)).not.toContain('Private Group context');
+        const group = teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES, description: { kind: 'available',
+            label: projectPrivateLabelForRecipientV1({ stored: description, recipientAccountId: 'account-ada' }) } });
+        harness.answer(serverId, GROUP_GET_PATH, { body: group });
+        harness.answer(serverId, GROUP_MEMBERS_LIST_PATH, { body: { items: [], nextCursor: null } });
+        harness.answer(serverId, GROUP_UPDATE_PATH, { body: teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES }) });
+        const screen = await renderGroupDetail(serverId);
+        await vi.waitFor(() => expect(screen.findByTestId('team-group-description')?.props.value).toBe('Private Group context'));
+        expect(screen.getTextContent()).toContain('Private Group context');
+        act(() => screen.changeTextByTestId('team-group-description', ''));
+        await screen.pressByTestIdAsync('team-group-save');
+        await vi.waitFor(() => expect(harness.requestsFor(GROUP_UPDATE_PATH)).toHaveLength(1));
+        expect(harness.requestsFor(GROUP_UPDATE_PATH)[0]!.input).toMatchObject({ description: null });
+        expect(harness.requestsFor(GROUP_UPDATE_PATH)[0]!.input).not.toHaveProperty('name');
+    });
+
+    it('promotes a readable legacy description on a normal name save without rewriting on read', async () => {
+        const serverId = await addManagedHome();
+        harness.answer(serverId, '/v1/account/private-labels/recipient-census', { body: { contentEncryptionMode: 'plain', recipients: [] } });
+        const group = teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES, description: { kind: 'available',
+            label: { content: { t: 'plain', v: 'Retained context' }, recipientEnvelope: null, legacyPlaintext: true } } });
+        harness.answer(serverId, GROUP_GET_PATH, { body: group });
+        harness.answer(serverId, GROUP_MEMBERS_LIST_PATH, { body: { items: [], nextCursor: null } });
+        harness.answer(serverId, GROUP_UPDATE_PATH, { body: teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES,
+            name: 'Renamed', description: 'Retained context' }) });
+        const screen = await renderGroupDetail(serverId);
+        await vi.waitFor(() => expect(screen.findByTestId('team-group-description')?.props.value).toBe('Retained context'));
+        expect(harness.requestsFor(GROUP_UPDATE_PATH)).toHaveLength(0);
+        act(() => screen.changeTextByTestId('team-group-name', 'Renamed'));
+        await screen.pressByTestIdAsync('team-group-save');
+        await vi.waitFor(() => expect(harness.requestsFor(GROUP_UPDATE_PATH)).toHaveLength(1));
+        expect(harness.requestsFor(GROUP_UPDATE_PATH)[0]!.input).toMatchObject({
+            description: { content: { t: 'plain', v: 'Retained context' }, recipients: [] } });
+        expect(harness.requestsFor(GROUP_UPDATE_PATH)[0]!.input).not.toHaveProperty('description.legacyPlaintext');
+    });
+
+    it('keeps an unavailable description visible and omits it from an unrelated name save', async () => {
+        const serverId = await addManagedHome();
+        harness.answer(serverId, '/v1/account/private-labels/recipient-census', { body: { contentEncryptionMode: 'plain', recipients: [] } });
+        const group = teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES, description: { kind: 'unavailable' } });
+        harness.answer(serverId, GROUP_GET_PATH, { body: group });
+        harness.answer(serverId, GROUP_MEMBERS_LIST_PATH, { body: { items: [], nextCursor: null } });
+        harness.answer(serverId, GROUP_UPDATE_PATH, { body: { ...group, name: teamGroupFixture({ name: 'Renamed' }).name } });
+        const screen = await renderGroupDetail(serverId);
+        await vi.waitFor(() => expect(screen.findByTestId('team-group-name')?.props.value).toBe('Developers'));
+        expect(screen.findByTestId('team-group-description')?.props.editable).toBe(false);
+        expect(screen.findByTestId('team-group-description')?.props.placeholder).toBe('common.unavailable');
+        act(() => screen.changeTextByTestId('team-group-name', 'Renamed'));
+        await screen.pressByTestIdAsync('team-group-save');
+        await vi.waitFor(() => expect(harness.requestsFor(GROUP_UPDATE_PATH)).toHaveLength(1));
+        expect(harness.requestsFor(GROUP_UPDATE_PATH)[0]!.input).not.toHaveProperty('description');
+    });
+
     it('UX keeps dirty Group metadata when navigation is canceled', async () => {
         const serverId = await addManagedHome();
         harness.answer(serverId, GROUP_GET_PATH, { body: teamGroupFixture({ capabilities: MANAGED_GROUP_CAPABILITIES }) });
@@ -184,7 +261,7 @@ describe('TeamGroupDetailScreen', () => {
         await vi.waitFor(() => expect(harness.requestsFor(GROUP_UPDATE_PATH)).toHaveLength(1));
         expect(harness.requestsFor(GROUP_UPDATE_PATH)[0]?.input).toMatchObject({
             name: { content: { t: 'plain', v: 'Retained Group' }, recipients: [] },
-            description: 'Updated description',
+            description: { content: { t: 'plain', v: 'Updated description' }, recipients: [] },
         });
     });
 

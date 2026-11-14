@@ -1,9 +1,15 @@
+import { createLegacyAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
+import { createPrivateLabelClient } from '@/sync/ops/privateLabels/privateLabelClient';
+import { projectPrivateLabelForRecipientV1, PrivateLabelStoredV1Schema } from '@happier-dev/protocol/crypto/privateLabelV1';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { collectRenderedTestIds, renderScreen, standardCleanup, teamCapabilitiesFixture, teamGroupFixture, teamSummaryFixture } from '@/dev/testkit';
-import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { createAccountTokenForTests, createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 
 import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 
@@ -77,6 +83,41 @@ afterEach(() => {
 });
 
 describe('TeamGroupCreateScreen', () => {
+    it.each(['plain', 'e2ee'] as const)('seals %s descriptions at the real Action HTTP boundary and preserves exact retry ciphertext', async mode => {
+        const credentials = mode === 'e2ee' ? { token: createAccountTokenForTests('account-ada'),
+            secret: encodeBase64(new Uint8Array(32).fill(41), 'base64url') } : undefined;
+        const encryption = credentials ? await createEncryptionFromAuthCredentials(credentials) : null;
+        const serverId = await harness.addHome({ name: 'Description Home', serverUrl: 'https://description.example',
+            accountId: 'account-ada', teamsEnabled: true, accountEncryptionMode: mode,
+            ...(credentials ? { credentials } : {}) });
+        if (mode === 'e2ee') harness.answer(serverId, 'GET /v1/account/encryption/currentness', { body: createLegacyAccountEncryptionCurrentnessFixture({ secret: new Uint8Array(32).fill(41) }) });
+        await harness.selectHomes([serverId]);
+        harness.answer(serverId, TEAM_GET_PATH, { body: teamSummaryFixture({ capabilities: teamCapabilitiesFixture({ manageGroups: true }) }) });
+        harness.answer(serverId, PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, { body: { contentEncryptionMode: mode,
+            recipients: encryption ? [{ account: { kind: 'account', accountId: 'account-ada', firstName: null,
+                lastName: null, username: null, avatarUrl: null }, readiness: { status: 'available',
+                contentPublicKey: encodeBase64(encryption.contentDataKey),
+                contentPublicKeyFingerprint: computeContentPublicKeyFingerprint(encryption.contentDataKey) }, envelopeStatus: 'missing' }] : [] } });
+        harness.answer(serverId, GROUP_CREATE_PATH, { status: 409, body: { error: 'team_conflict' } });
+        const screen = await renderCreate(serverId);
+        await waitForTestId(screen, 'team-group-create-name');
+        act(() => screen.changeTextByTestId('team-group-create-name', 'Design'));
+        act(() => screen.changeTextByTestId('team-group-create-description', 'Private context'));
+        await screen.pressByTestIdAsync('team-group-create-submit');
+        await vi.waitFor(() => expect(harness.requestsFor(GROUP_CREATE_PATH)).toHaveLength(1));
+        const input = harness.requestsFor(GROUP_CREATE_PATH)[0]!.input as Record<string, unknown>;
+        const label = PrivateLabelStoredV1Schema.parse(input.description);
+        expect(label.content.t).toBe(mode === 'e2ee' ? 'encrypted' : 'plain');
+        if (mode === 'e2ee') expect(JSON.stringify(input)).not.toContain('Private context');
+        const client = createPrivateLabelClient({ serverId, accountId: 'account-ada' });
+        await expect(client.open({ binding: { entity: 'team_group', field: 'description', id: String(input.groupId) },
+            label: projectPrivateLabelForRecipientV1({ stored: label, recipientAccountId: 'account-ada' }),
+            readPolicy: { kind: 'team-resource' } })).resolves.toBe('Private context');
+        await screen.pressByTestIdAsync('team-group-create-submit');
+        await vi.waitFor(() => expect(harness.requestsFor(GROUP_CREATE_PATH)).toHaveLength(2));
+        expect(harness.requestsFor(GROUP_CREATE_PATH)[1]!.input).toEqual(input);
+    });
+
     it('UX keeps a new Group draft when navigation is canceled', async () => {
         const serverId = await addHome({ manageGroups: true });
         const screen = await renderCreate(serverId);

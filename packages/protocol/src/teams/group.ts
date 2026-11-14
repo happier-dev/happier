@@ -5,8 +5,8 @@ import { AccountDisplayProfileV1Schema } from '../account/accountDisplayProfileV
 import {
   PrivateLabelStoredV1Schema,
 } from '../crypto/privateLabelV1.js';
-import { TeamGroupNameProjectionV1Schema } from './groupLabel.js';
-export { TeamGroupNameProjectionV1Schema, type TeamGroupNameProjectionV1 } from './groupLabel.js';
+import { TeamGroupNameProjectionV1Schema, TeamGroupLabelProjectionV1Schema } from './groupLabel.js';
+export { TeamGroupLabelProjectionV1Schema, type TeamGroupLabelProjectionV1, TeamGroupNameProjectionV1Schema, type TeamGroupNameProjectionV1 } from './groupLabel.js';
 import {
   decodeTeamKeysetCursorV1,
   encodeTeamKeysetCursorV1,
@@ -107,16 +107,17 @@ export const NO_TEAM_GROUP_CAPABILITIES_V1: TeamGroupCapabilitiesV1 = Object.fre
  * sum of contributions: a person contributed by native plus two directories is
  * one member, and the count the roster shows must be the count the roster pages.
  *
- * `name` is a recipient-safe label projection. The stored audience and every
- * other recipient's envelope remain server-private; invalid historical raw
- * values fail closed as unavailable instead of being reinterpreted as text.
+ * `name` and non-null `description` are recipient-safe label projections. The stored audience and every
+ * other recipient's envelope remain server-private. Raw pre-envelope values
+ * retain explicit legacy read provenance until normal save; malformed envelopes
+ * fail closed as unavailable.
  */
 export const TeamGroupV1Schema = lazyZodSchema(() => z.strictObject({
   v: z.literal(1),
   id: TeamGroupIdSchema,
   teamId: TeamIdSchema,
   name: TeamGroupNameProjectionV1Schema,
-  description: z.nullable(z.string()),
+  description: z.nullable(TeamGroupLabelProjectionV1Schema),
   archivedAt: z.nullable(z.number()),
   memberCount: z.number().check(z.int(), z.minimum(0)),
   management: TeamGroupManagementV1Schema,
@@ -157,8 +158,6 @@ export const TeamGroupMemberV1Schema = lazyZodSchema(() => z.strictObject({
   contributions: TeamGroupMemberContributionsV1Schema,
 }));
 export type TeamGroupMemberV1 = z.infer<typeof TeamGroupMemberV1Schema>;
-
-const TeamGroupDescriptionInputV1Schema = lazyZodSchema(() => z.string().check(z.maxLength(TEAM_GROUP_DESCRIPTION_MAX_LENGTH_V1 * 4)));
 
 export const TEAM_GROUPS_PAGE_LIMIT_MAX_V1 = 100;
 export const TEAM_GROUPS_PAGE_LIMIT_DEFAULT_V1 = 50;
@@ -204,7 +203,7 @@ export const TeamGroupCreateInputV1Schema = lazyZodSchema(() => z.strictObject({
   /** Client-minted so the name ciphertext can bind to this immutable row id. */
   groupId: TeamGroupIdSchema,
   name: PrivateLabelStoredV1Schema,
-  description: z.optional(z.nullable(TeamGroupDescriptionInputV1Schema)),
+  description: z.optional(z.nullable(PrivateLabelStoredV1Schema)),
   requestKey: z.string().check(z.minLength(1), z.maxLength(128)),
 }));
 export type TeamGroupCreateInputV1 = z.infer<typeof TeamGroupCreateInputV1Schema>;
@@ -215,7 +214,7 @@ export const TeamGroupUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({
   teamId: TeamIdSchema,
   groupId: TeamGroupIdSchema,
   name: z.optional(PrivateLabelStoredV1Schema),
-  description: z.optional(z.nullable(TeamGroupDescriptionInputV1Schema)),
+  description: z.optional(z.nullable(PrivateLabelStoredV1Schema)),
 }).check(z.refine((input) => input.name !== undefined || input.description !== undefined, { message: 'Group metadata patch changes nothing' })));
 export type TeamGroupUpdateInputV1 = z.infer<typeof TeamGroupUpdateInputV1Schema>;
 

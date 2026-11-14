@@ -130,7 +130,7 @@ export function createTeamGroup(params: Readonly<{
     /** Minted before sealing so the ciphertext is bound to the immutable Group row. */
     groupId: string;
     name: PrivateLabelStoredV1;
-    description: string | null;
+    description: PrivateLabelStoredV1 | null;
     requestKey: string;
     /**
      * Receives the created Group once a deferred approval executes. Its id
@@ -162,7 +162,7 @@ export function updateTeamGroup(params: Readonly<{
     address: TeamAddress;
     groupId: string;
     name?: PrivateLabelStoredV1;
-    description?: string | null;
+    description?: PrivateLabelStoredV1 | null;
 }>): Promise<TeamGroupOutcome<TeamGroupV1>> {
     return groupMutation({
         scope: params.scope,

@@ -21,7 +21,6 @@ import {
     teamGroupMembersQueryKeyV1,
     teamGroupsQueryKeyV1,
     teamMemberGroupsQueryKeyV1,
-    validateTeamGroupDescriptionV1,
 } from "@happier-dev/protocol/teams";
 import { resolveGrantableTeamGroupsForActorInTx } from "./grantableGroups";
 
@@ -52,7 +51,7 @@ import {
     projectTeamGroupManagementV1,
     type TeamGroupRow,
 } from "./project";
-import { prepareTeamGroupNameForHumanWriteInTx } from "./privateLabels";
+import { prepareTeamGroupLabelsForHumanWriteInTx } from "./privateLabels";
 
 /**
  * The authorized flat-Group operations.
@@ -376,7 +375,7 @@ function groupCreateRequestKey(actorAccountId: string, teamId: string, requestKe
 function groupCreatePayloadDigest(input: Readonly<{
     groupId: string;
     name: PrivateLabelStoredV1;
-    description: string | null;
+    description: PrivateLabelStoredV1 | null;
 }>): string {
     return createHash("sha256")
         .update(JSON.stringify([input.groupId, input.name, input.description]))
@@ -398,7 +397,7 @@ export async function createTeamGroupForActorInTx(
         actorAccountId: string;
         groupId: string;
         name: PrivateLabelStoredV1;
-        description?: string | null;
+        description?: PrivateLabelStoredV1 | null;
         requestKey: string;
         authentication?: TeamOperationAuthenticationContext;
     }>,
@@ -414,14 +413,11 @@ export async function createTeamGroupForActorInTx(
     const qualified = await qualifyTeamViewerInTx(tx, { context, authentication: input.authentication });
     if (!qualified.ok) return qualified;
 
-    const description = validateTeamGroupDescriptionV1(input.description);
-    if (description.status !== "ok") return denied("invalid_team_input");
-
     const dedupeKey = groupCreateRequestKey(context.actorAccountId, input.teamId, input.requestKey);
     const digest = groupCreatePayloadDigest({
         groupId: input.groupId,
         name: input.name,
-        description: description.description,
+        description: input.description ?? null,
     });
     const now = await readTransactionDatabaseTime(tx);
     const recorded = await fetchRepeatKey(tx, dedupeKey, now);
@@ -433,13 +429,13 @@ export async function createTeamGroupForActorInTx(
         return { ok: true, value: await projectGroupInTx(tx, { context, row: replayed }) };
     }
 
-    const name = await prepareTeamGroupNameForHumanWriteInTx({
+    const labels = await prepareTeamGroupLabelsForHumanWriteInTx({
         tx,
         authorAccountId: input.actorAccountId,
         teamId: input.teamId,
-        label: input.name,
+        labels: { name: input.name, ...(input.description === undefined ? {} : { description: input.description }) },
     });
-    if (name.kind !== "ready") return denied("invalid_team_input");
+    if (labels.kind !== "ready") return denied("invalid_team_input");
     // The client minted this id before sealing, so it is the exact cipher
     // binding. An improbable reused id is a visible retry conflict, not a
     // label-derived uniqueness decision.
@@ -452,8 +448,8 @@ export async function createTeamGroupForActorInTx(
         data: {
             id: input.groupId,
             teamId: input.teamId,
-            name: name.serialized,
-            ...(description.description === null ? {} : { description: description.description }),
+            name: labels.serialized.name!,
+            ...(labels.serialized.description === undefined ? {} : { description: labels.serialized.description }),
         },
         select: TEAM_GROUP_ROW_SELECT,
     });
@@ -504,7 +500,7 @@ export async function updateTeamGroupForActorInTx(
         actorAccountId: string;
         groupId: string;
         name?: PrivateLabelStoredV1;
-        description?: string | null;
+        description?: PrivateLabelStoredV1 | null;
         authentication?: TeamOperationAuthenticationContext;
     }>,
 ): Promise<TeamGroupServiceResult<TeamGroupV1>> {
@@ -520,28 +516,18 @@ export async function updateTeamGroupForActorInTx(
     const qualified = await qualifyTeamViewerInTx(tx, { context, authentication: input.authentication });
     if (!qualified.ok) return qualified;
 
-    const data: { name?: string; description?: string | null } = {};
-    if (input.name !== undefined) {
-        const name = await prepareTeamGroupNameForHumanWriteInTx({
-            tx,
-            authorAccountId: input.actorAccountId,
-            teamId: input.teamId,
-            label: input.name,
-        });
-        if (name.kind !== "ready") return denied("invalid_team_input");
-        data.name = name.serialized;
-    }
-    if (input.description !== undefined) {
-        const description = validateTeamGroupDescriptionV1(input.description);
-        if (description.status !== "ok") return denied("invalid_team_input");
-        data.description = description.description;
-    }
+    const labels = await prepareTeamGroupLabelsForHumanWriteInTx({
+        tx, authorAccountId: input.actorAccountId, teamId: input.teamId,
+        labels: { ...(input.name === undefined ? {} : { name: input.name }),
+            ...(input.description === undefined ? {} : { description: input.description }) },
+    });
+    if (labels.kind !== 'ready') return denied('invalid_team_input');
 
     // Group labels have no server-side text uniqueness. The immutable Group ID
     // remains the update target, so no label-collision recovery branch is needed.
     const updated = await tx.teamGroup.update({
         where: { id: row.id },
-        data,
+        data: labels.serialized,
         select: TEAM_GROUP_ROW_SELECT,
     });
 

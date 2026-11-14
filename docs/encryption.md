@@ -1436,7 +1436,7 @@ claim that the UI cutover, source/history erasure or composed live validation is
 
 ### Private labels and server-readable exceptions (0.3 development)
 
-Account API-token and Account Home-directory labels, Team Group names, Team
+Account API-token and Account Home-directory labels, Team Group names/descriptions, Team
 credential display names and audit subjects, and Pool names/descriptions use the
 shared private-label content owner and Saved Secret Account recipient envelopes.
 Existing String/JSON carriers contain tagged Plain content or ciphertext.
@@ -1460,6 +1460,13 @@ The normal binding save assigns the opaque reference and re-seals that binding;
 new grant writes reject the historical name-addressed arm. `MachineSecretGrant`
 has no separate row id: its subject digest is the primary key, while one private
 binding reference is authored before sealing to each recipient installation.
+
+Group names and descriptions bind ciphertext to the immutable Group id with
+`entity: 'team_group'` and their respective `field: 'name'` or `field: 'description'`.
+Both use the human author's persisted Account mode and the same current Team
+recipient audience. A missing description remains null; update omission leaves
+it unchanged, while explicit null clears it. Clients promote readable legacy
+Group metadata on its next normal metadata save; reads never rewrite it.
 
 Group sorting and search run over the client's opened loaded collection. The
 server uses structural IDs for order and cursors; `nameKey` is removed. Credential

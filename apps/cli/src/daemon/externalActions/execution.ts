@@ -738,7 +738,7 @@ resolveServerFeaturesSnapshot?: () =>
         if (!await isCurrent()) return null;
         const { purposes } = createRequesterConnectedAccountPurposeBindingRuntime({
           executeTeamCredentialBrokerAction: params.executeTeamCredentialBrokerAction,
-          operationContext: providerProjectionAccount.operationContext,
+          serverId: params.serverId, operationContext: providerProjectionAccount.operationContext,
           accountId: providerProjectionAccount.accountId, machineId: params.machineId,
           reloadController: pluginRuntimeController, isCurrent,
           getAccountEncryptionMode: async options => (await fetchAccountEncryptionCurrentness({ credentials: providerProjectionAccount.operationContext.credentials, token: providerProjectionAccount.operationContext.credentials.token,

@@ -10183,6 +10183,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `agentStart` (json): Agent startup
 - `reviewedFacts` (json): Reviewed configuration facts
 - `creationScopeRetention` (json): Creation Scope Retention
+- `presetContentOverride` (json): Preset Content Override
 
 ## `machines.managed.birth.get`
 
@@ -10432,6 +10433,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `size.cpuCores` (number): CPU cores
 - `size.memoryBytes` (integer): Memory (bytes)
 - `size.diskBytes` (integer): Disk (bytes)
+- `presetContentOverride` (json): Preset Content Override
 
 ## `machines.managed.retention.update`
 
@@ -10671,7 +10673,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `retention` (json): Retention policy
 - `wakeOnAcceptedMessage` (boolean): Wake on accepted message
 - `simultaneousLimit` (json): Simultaneous machine limit
-- `controllerDisplayName` (text): Controller Display Name
+- `contentEncryptionMode` (select, required): Content Encryption Mode
+- `content` (json, required): Content
+- `recipients` (json, required): Recipients
 - `teamAcquireDelegated` (boolean): Team Acquire Delegated
 
 ## `machines.presets.get`
@@ -18927,6 +18931,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `catalogMutations` (json): Catalog Mutations
 - `additionalSavedSecretResources` (json): Additional Saved Secret Resources
 - `personalSecretPromotions` (json): Personal Secret Promotions
+- `opaquePresetRewrites` (json): Opaque Preset Rewrites
 - `remoteHostMutation` (json): Remote Host Mutation
 - `notificationChannelMutation` (json): Notification Channel Mutation
 - `connectedAccountCredentialMutation` (json): Connected Account Credential Mutation
@@ -21631,6 +21636,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `target.ref` (select): Workflow
 - `sessionId` (json, required): Session Id
 - `project` (json): Project
+- `display` (json): Display
 - `approvalProfileId` (json): Approval Profile Id
 - `executionTarget` (json): Execution Target
 - `inputs` (json): Inputs
@@ -22949,7 +22955,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `teamId` (text, required): Team Id
 - `resourceId` (text, required): Resource Id
-- `displayName` (text, required): Display Name
+- `displayName` (json, required): Display Name
 - `source` (json, required): Source
 - `deliveryPolicy` (json): Delivery Policy
 - `sessionUsePolicy` (select, required): Session Use Policy
@@ -23024,7 +23030,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `resourceId` (text, required): Resource Id
 - `teamMembershipId` (text, required): Team Membership Id
-- `label` (text, required): Label
+- `keyId` (text, required): Key Id
+- `label` (json, required): Label
 - `expiresAt` (json): Expires At
 
 ## `teams.credentials.externalKeys.list`
@@ -23147,7 +23154,6 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `teamId` (json): Team Id
 - `cursor` (json): Cursor
 - `limit` (json): Limit
-- `search` (json): Search
 - `filter` (json): Filter
 - `scope` (json): Scope
 
@@ -23245,7 +23251,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `resourceId` (text, required): Resource Id
 - `expectedRevision` (integer, required): Expected Revision
 - `enabled` (boolean): Enabled
-- `displayName` (text): Display Name
+- `displayName` (json): Display Name
 - `deliveryPolicy` (json): Delivery Policy
 - `sessionUsePolicy` (select): Session Use Policy
 - `brokerPlacement` (json): Broker Placement
@@ -23254,7 +23260,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `teams.credentials.usage.export`
 
-**Export Team credential usage** — Return CSV file bytes from the authorized Team credential usage query, preserving the selected ranked-row scope and measurement coverage. Saving and sharing remain explicit client operations.
+**Export Team credential usage** — Build CSV file bytes on the keyholding client from the authorized Team credential usage projection, preserving the selected ranked-row scope and measurement coverage. Saving and sharing remain explicit client operations.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -23265,8 +23271,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `query` (json, required): Usage query
-- `resourceName` (text, required): Resource display name
 - `breakdownRowCount` (number): Selected ranked rows
+- `clientId` (text): Client Id
 
 ## `teams.credentials.usage.query`
 
@@ -23575,9 +23581,10 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `teamId` (text, required): Team ID
-- `name` (text, required): Group name
-- `description` (textarea): Description
+- `name` (json, required): Group name
+- `description` (json): Description
 - `v` (number, required): V
+- `groupId` (text, required): Group Id
 - `requestKey` (text, required): Request Key
 
 ## `teams.groups.get`
@@ -23697,8 +23704,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `teamId` (text, required): Team ID
 - `groupId` (text, required): Group ID
-- `name` (text): Group name
-- `description` (textarea): Description
+- `name` (json): Group name
+- `description` (json): Description
 - `v` (number, required): V
 
 ## `teams.identity.connections.create`
@@ -27246,6 +27253,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `target` (json): Target
 - `project` (json): Project
 - `observationOnly` (json): Observation Only
+- `display` (json): Display
 - `approvalProfileId` (json): Approval Profile Id
 - `executionTarget` (json): Execution Target
 - `inputs` (json): Inputs

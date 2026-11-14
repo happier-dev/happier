@@ -893,6 +893,7 @@ export function createExternalActionDaemonDispatcher(params: Readonly<{
                 // The unchanged root envelope binds that first write to this proof.
                 if (review.retention !== undefined && review.wakeOnAcceptedMessage !== undefined) managedAdmission = await admitManagedAcquire({ custodianAccountId: executionAuthorization.binding.custodianAccountId,
                     requesterAccountId: request.principal.accountId,
+                    managedAcquireDelegation: executionAuthorization.binding.managedAcquireDelegation,
                     authentication: { authenticationAuthority: principal.authority,
                         authenticationEvidence: principal.authenticationEvidence },
                     requestEnvelopeDigest: executionAuthorization.binding.requestEnvelopeDigest,

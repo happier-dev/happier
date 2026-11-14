@@ -107,7 +107,7 @@ export async function createDeploymentTargetRoleAdmissionHost(context: ActionExe
         if (!requesterPurposes) {
             const credentialApi = createConnectedServiceCredentialApi(credentials);
             requesterPurposes = createRequesterConnectedAccountPurposeBindingRuntime({
-                operationContext: saved, accountId: credentialOwnerAccountId, machineId,
+                operationContext: saved, accountId: credentialOwnerAccountId, serverId, machineId,
                 resolvePlatformOperationRequestHeaders: request => headers(context, authorization?.binding.actionId ?? '', request),
                 reloadController: config.connectedAccountRuntimeRegistry,
                 getAccountEncryptionMode: options => runWithServerHttpBaseUrl(serverHttpBaseUrl,
@@ -134,7 +134,7 @@ export async function createDeploymentTargetRoleAdmissionHost(context: ActionExe
             const detail = await readDeploymentEnvironmentForHost(request, { open, assertCurrent,
                 async readMetadata(current) {
                     const raw = await storage('deployments.environments.get', { serverId, environmentId: current.environmentId }, current.context);
-                    if ('errorCode' in raw) return refuse(raw.errorCode, 'deployment.target.admission.environment_read', raw.failureCause);
+                    if ('ok' in raw && !raw.ok && 'errorCode' in raw) return refuse(raw.errorCode, 'deployment.target.admission.environment_read', raw.failureCause);
                     const result = DeploymentEnvironmentGetResultV1Schema.parse(raw);
                     if (!result.ok) return refuse(result.error);
                     return result;
@@ -152,7 +152,7 @@ export async function createDeploymentTargetRoleAdmissionHost(context: ActionExe
             async readMetadata(current) {
                 const raw = await storage('deployments.receipts.get', { serverId, environmentId: current.environmentId,
                     deploymentId: current.deploymentId }, current.context);
-                if ('errorCode' in raw) return refuse(raw.errorCode, 'deployment.target.admission.receipt_read', raw.failureCause);
+                if ('ok' in raw && !raw.ok && 'errorCode' in raw) return refuse(raw.errorCode, 'deployment.target.admission.receipt_read', raw.failureCause);
                 const result = DeploymentReceiptGetResultV1Schema.parse(raw);
                 if (!result.ok) return refuse(result.error);
                 return result;

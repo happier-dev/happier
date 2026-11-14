@@ -161,7 +161,7 @@ export async function createRequesterSessionRuntimeContext(input: Readonly<{
     },
   });
   const { established, qualifiedConnectedAccountApi, purposes } = createRequesterConnectedAccountPurposeBindingRuntime({
-    operationContext: savedSecrets, accountId: bootstrap.attribution.accountId, machineId: bootstrap.attribution.machineId,
+    serverId: bootstrap.attribution.serverId, operationContext: savedSecrets, accountId: bootstrap.attribution.accountId, machineId: bootstrap.attribution.machineId,
     reloadController: pluginReloadController,
     getAccountEncryptionMode: async options => await withHome(() => api.getAccountEncryptionMode(options)),
     // New secret acquisition admits through the captured credential owner.

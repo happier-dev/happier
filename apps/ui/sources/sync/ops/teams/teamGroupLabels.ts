@@ -11,11 +11,15 @@ type PrivateLabelSealer = Pick<ReturnType<typeof createPrivateLabelClient>, 'sea
 
 // A Group's admitted stored arm, not the viewing Account's current mode,
 // decides whether a recipient projection may be opened.
-const TEAM_GROUP_LABEL_READ_POLICY = { kind: 'team-resource' } as const satisfies PrivateLabelReadPolicyV1;
+export const TEAM_GROUP_LABEL_READ_POLICY = { kind: 'team-resource' } as const satisfies PrivateLabelReadPolicyV1;
 
-/** The immutable cipher binding for a Team Group's human-readable name. */
+/** The immutable cipher binding for each human-authored Group label. */
+export function teamGroupLabelBinding(groupId: string, field: 'name' | 'description') {
+    return { entity: 'team_group', field, id: groupId } as const;
+}
+
 export function teamGroupNameBinding(groupId: string) {
-    return { entity: 'team_group', field: 'name', id: groupId } as const;
+    return teamGroupLabelBinding(groupId, 'name');
 }
 
 /**
@@ -52,8 +56,9 @@ export async function openTeamGroupNameProjection(params: Readonly<{
 }
 
 /** Seals one human-authored Group label through the canonical census owner. */
-export async function sealTeamGroupName(params: Readonly<{
+export async function sealTeamGroupLabel(params: Readonly<{
     client: PrivateLabelSealer;
+    field: 'name' | 'description';
     teamId: string;
     groupId: string;
     value: string;
@@ -61,7 +66,7 @@ export async function sealTeamGroupName(params: Readonly<{
 }>): Promise<PrivateLabelStoredV1 | null> {
     return await params.client.seal({
         owner: { kind: 'team', teamId: params.teamId },
-        binding: teamGroupNameBinding(params.groupId),
+        binding: teamGroupLabelBinding(params.groupId, params.field),
         value: params.value,
         signal: params.signal,
     });

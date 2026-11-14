@@ -87,7 +87,7 @@ export async function prepareRequesterOperationMaterial(input: Readonly<{
     const directMaterial = createRequesterTeamCredentialDirectMaterialClient({ credentials: account.credentials,
       serverHttpBaseUrl: account.serverHttpBaseUrl, readAccountEncryptionMode: readMode });
     const runtime = createRequesterConnectedAccountPurposeBindingRuntime({
-      operationContext, accountId: selected.requester.accountId,
+      serverId: selected.homeServerIdentityId, operationContext, accountId: selected.requester.accountId,
       machineId: selected.requester.machineId, reloadController: input.reloadController,
       getAccountEncryptionMode: options => readMode(options?.signal), isCurrent,
       allowNativeAccountCredentials: false,

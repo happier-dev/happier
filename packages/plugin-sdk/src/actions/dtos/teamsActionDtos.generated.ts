@@ -1060,7 +1060,22 @@ export type TeamsActionInputById = {
             }[];
         };
         requestKey: string;
-        description?: null | string | undefined;
+        description?: null | undefined | {
+            content: {
+                t: 'encrypted';
+                c: string;
+            } | {
+                t: 'plain';
+                v: string;
+            };
+            recipients: {
+                accountId: string;
+                envelope: {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+            }[];
+        };
     };
     readonly "teams.groups.update": {
         v: 1;
@@ -1082,7 +1097,22 @@ export type TeamsActionInputById = {
                 };
             }[];
         };
-        description?: null | string | undefined;
+        description?: null | undefined | {
+            content: {
+                t: 'encrypted';
+                c: string;
+            } | {
+                t: 'plain';
+                v: string;
+            };
+            recipients: {
+                accountId: string;
+                envelope: {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+            }[];
+        };
     };
     readonly "teams.groups.archive": {
         v: 1;
@@ -7585,7 +7615,25 @@ export type TeamsActionResultById = {
             } | {
                 kind: 'unavailable';
             };
-            description: null | string;
+            description: null | {
+                kind: 'available';
+                label: {
+                    content: {
+                        t: 'encrypted';
+                        c: string;
+                    } | {
+                        t: 'plain';
+                        v: string;
+                    };
+                    recipientEnvelope: null | {
+                        encryptedDataKey: string;
+                        recipientContentPublicKeyFingerprint: string;
+                    };
+                    legacyPlaintext?: true | undefined;
+                };
+            } | {
+                kind: 'unavailable';
+            };
             archivedAt: null | number;
             memberCount: number;
             management: {
@@ -7635,7 +7683,25 @@ export type TeamsActionResultById = {
             } | {
                 kind: 'unavailable';
             };
-            description: null | string;
+            description: null | {
+                kind: 'available';
+                label: {
+                    content: {
+                        t: 'encrypted';
+                        c: string;
+                    } | {
+                        t: 'plain';
+                        v: string;
+                    };
+                    recipientEnvelope: null | {
+                        encryptedDataKey: string;
+                        recipientContentPublicKeyFingerprint: string;
+                    };
+                    legacyPlaintext?: true | undefined;
+                };
+            } | {
+                kind: 'unavailable';
+            };
             archivedAt: null | number;
             memberCount: number;
             management: {
@@ -7684,7 +7750,25 @@ export type TeamsActionResultById = {
         } | {
             kind: 'unavailable';
         };
-        description: null | string;
+        description: null | {
+            kind: 'available';
+            label: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
+        } | {
+            kind: 'unavailable';
+        };
         archivedAt: null | number;
         memberCount: number;
         management: {
@@ -7731,7 +7815,25 @@ export type TeamsActionResultById = {
         } | {
             kind: 'unavailable';
         };
-        description: null | string;
+        description: null | {
+            kind: 'available';
+            label: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
+        } | {
+            kind: 'unavailable';
+        };
         archivedAt: null | number;
         memberCount: number;
         management: {
@@ -7778,7 +7880,25 @@ export type TeamsActionResultById = {
         } | {
             kind: 'unavailable';
         };
-        description: null | string;
+        description: null | {
+            kind: 'available';
+            label: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
+        } | {
+            kind: 'unavailable';
+        };
         archivedAt: null | number;
         memberCount: number;
         management: {
@@ -7825,7 +7945,25 @@ export type TeamsActionResultById = {
         } | {
             kind: 'unavailable';
         };
-        description: null | string;
+        description: null | {
+            kind: 'available';
+            label: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
+        } | {
+            kind: 'unavailable';
+        };
         archivedAt: null | number;
         memberCount: number;
         management: {
@@ -7872,7 +8010,25 @@ export type TeamsActionResultById = {
         } | {
             kind: 'unavailable';
         };
-        description: null | string;
+        description: null | {
+            kind: 'available';
+            label: {
+                content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: string;
+                };
+                recipientEnvelope: null | {
+                    encryptedDataKey: string;
+                    recipientContentPublicKeyFingerprint: string;
+                };
+                legacyPlaintext?: true | undefined;
+            };
+        } | {
+            kind: 'unavailable';
+        };
         archivedAt: null | number;
         memberCount: number;
         management: {
