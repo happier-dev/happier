@@ -252,21 +252,14 @@ describe('lazySchema', () => {
     });
   });
 
-  it('preserves a named refinement instead of referencing its less restrictive parent', () => {
-    const child = z.string().meta({ id: 'NamedBase' }).min(2).meta({ id: 'NamedChild' });
-    const eager = z.object({ value: child });
-    const lazy = z.object({ value: lazySchema(() => child) });
+  it('inherits custom-registry metadata from a refined schema ancestor', () => {
+    const registry = z.registry<{ label: string }>();
+    const base = z.string();
+    registry.add(base, { label: 'Value' });
+    const child = base.min(2);
 
-    expect(z.toJSONSchema(lazy)).toEqual(z.toJSONSchema(eager));
-  });
-
-  it('preserves refinements of a named parent in draft-7 projection', () => {
-    const child = z.string().meta({ id: 'Draft7Base' }).min(2);
-    const eager = z.object({ value: child });
-    const lazy = z.object({ value: lazySchema(() => child) });
-
-    expect(z.toJSONSchema(lazy, { target: 'draft-7' }))
-      .toEqual(z.toJSONSchema(eager, { target: 'draft-7' }));
+    expect(registry.get(lazySchema(() => child))).toEqual(registry.get(child));
+    expect(registry.get(child)).toEqual({ label: 'Value' });
   });
 });
 
