@@ -33,11 +33,12 @@ function mount(serverId = 'server-a', selectTarget?: () => SessionServerStartDra
     // Presentation is the person/platform boundary. The selector, seed reader,
     // target resolution and strict settlement all use the production owners.
     const present = vi.fn(() => ({ result: Promise.resolve(selectedDraft), close() {} }));
-    const selectPlacement = vi.fn((offered: readonly PluginUiSessionPlacementCandidateV1[]) => ({
+    const selectPlacement = vi.fn((offered: readonly PluginUiSessionPlacementCandidateV1[]):
+        SessionServerStartDraftPresentation<PluginUiSessionPlacementCandidateV1> => ({
         result: Promise.resolve(offered[1] ?? null), close() {},
     }));
     const select = createPluginActionInputSelector({
-        host: { serverId, targetPluginId: 'acme.caller', accountLifetime },
+        host: { serverId, machineId: undefined, targetPluginId: 'acme.caller', accountLifetime },
         isCurrent: () => true,
         composeSessionServerStartDraft: params => composeSessionServerStartDraft({ ...params, present, selectPlacement, selectTarget }),
     });

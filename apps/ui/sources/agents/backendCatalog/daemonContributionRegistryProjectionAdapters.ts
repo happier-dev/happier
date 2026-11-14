@@ -23,7 +23,7 @@ import { AGENT_IDS, type AgentId } from '@happier-dev/agents';
 import { normalizePluginUiProjection, resolvePluginUiProjectionPlatform, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { preparePluginUiProjectionOrigins } from '@/sync/domains/plugins/ui/projectionOrigins';
 import { readConnectedAccountDescriptorProjection, type ConnectedAccountDescriptorMachineProjection } from '@/sync/domains/connectedServices/connectedAccountDescriptorProjection';
-import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { adoptParsedNativeJsonValueForTransport, projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { PluginUiPlatformV1 } from '@happier-dev/protocol/plugins/ui';
 import { createPluginActionInputSelectionFactsPublication, type PluginActionInputSelectionSnapshot } from '@/components/plugins/surfaces/pluginActionInputSelectionFacts';
 import { admitAgentConnectedAccountPurposeDeclarations } from '@happier-dev/protocol/account/settings/connected-services';
@@ -152,13 +152,20 @@ export function publishDaemonMergedProjectionInputs(params: Readonly<{
     const candidate = previous ? Object.getOwnPropertyDescriptor(previous, ownedProjectionInput)?.value as OwnedProjectionInput | undefined : undefined;
     const prior = candidate?.owner === previous ? candidate : undefined;
     const ownedPrevious = prior ? previous : undefined;
-    // The describe/selected-read transport already used the strict V2 schema.
-    // Keep its public raw identity, but never use its mutable graph as our prior
-    // comparison authority or lend its aliases to ready descriptive slices.
+    // The describe/selected-read transport already used the strict V2 schema. Its
+    // parsed graph (or a section join of parsed graphs) is this publication's only
+    // copy: admit it in place, so `pluginProjectionV2` and every owned slice share
+    // one immutable value and no second resident copy is made.
+    adoptParsedNativeJsonValueForTransport(params.projection);
+    if (params.composerSurfaceCatalog) adoptParsedNativeJsonValueForTransport(params.composerSurfaceCatalog);
+    if (params.automationEligibleEvents) adoptParsedNativeJsonValueForTransport(params.automationEligibleEvents);
     const familiesById = publishProjectionFields(params.projection.familiesById, prior?.projection.familiesById,
-        (family, before) => family ? publishProjectionFields({ ...family,
-            entriesById: publishProjectionFields(family.entriesById, before?.entriesById),
-        }, before) : undefined);
+        // A family with no predecessor is published as admitted: the parse owner's
+        // snapshot is shared by reference, never re-assembled from its entries.
+        (family, before) => !family ? undefined : !before ? projectNativeJsonValueForTransport(family)
+            : publishProjectionFields({ ...family,
+                entriesById: publishProjectionFields(family.entriesById, before.entriesById),
+            }, before));
     const projection = publishProjectionFields({ ...params.projection,
         installedPackagesById: publishProjectionFields(params.projection.installedPackagesById, prior?.projection.installedPackagesById),
         agentsById: publishProjectionFields(params.projection.agentsById, prior?.projection.agentsById),
@@ -595,8 +602,8 @@ export function resolvePluginProjectionEditableSettingsGroup(
 
 /** Presentation only: both held Account declarations and daemon replies use the same mapper. */
 export function buildV2PluginProjectionById(
-    projection: Pick<PluginUiProjectionModel, 'generation' | 'installedPackagesById' | 'actionsById' | 'resourcesById'>
-        & Partial<Pick<PluginProjectionV2, 'diagnostics' | 'agentsById' | 'settingsById' | 'familiesById'>>,
+    projection: Pick<PluginUiProjectionModel, 'generation' | 'installedPackagesById' | 'actionsById' | 'resourcesById' | 'diagnostics'>
+        & Partial<Pick<PluginProjectionV2, 'agentsById' | 'settingsById' | 'familiesById'>>,
 ): Readonly<Record<string, PluginProjectionEntry>> {
     const actionsByPluginId = new Map<string, PluginProjectionAction[]>();
     for (const action of Object.values(projection.actionsById)) {

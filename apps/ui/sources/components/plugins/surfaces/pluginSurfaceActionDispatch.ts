@@ -781,9 +781,10 @@ function createClientActionUi(
 ) {
     const selectedInputs = createSelectedActionInputCustody();
     const registeredAuthority = selection.registration.authority;
+    const initialAuthority = registeredAuthority && 'machineId' in registeredAuthority ? registeredAuthority
+        : accountContext ? input.contributedAction : undefined;
     let authority: Readonly<{ machineId: string; serverId?: string }> | undefined =
-        registeredAuthority && 'machineId' in registeredAuthority ? registeredAuthority
-            : accountContext ? input.contributedAction : undefined;
+        initialAuthority ? { machineId: initialAuthority.machineId, serverId: initialAuthority.serverId ?? undefined } : undefined;
     const accountLifetime = selection.registration.accountLifetime;
     const resolvedSessionTargets = input.hostAction?.context?.sessionTargetsV1;
     const hasSessionScope = () => !!accountLifetime && (!resolvedSessionTargets

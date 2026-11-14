@@ -1,7 +1,7 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
 
-import { cloneNativeJsonValueForTransport, cloneStrictPluginJsonValue } from '../plugins/contributions/strictJsonValue.js';
+import { adoptParsedNativeJsonValueForTransport as adoptParsedNativeJsonValueForTransportOwner, cloneNativeJsonValueForTransport, cloneStrictPluginJsonValue } from '../plugins/contributions/strictJsonValue.js';
 
 /**
  * The one Protocol-owned strict JSON value: data that has already passed
@@ -41,6 +41,16 @@ export function normalizeStrictJsonValue(input: unknown): JsonValue {
 /** Projects native optional object members; unsupported JSON data still fails closed. */
 export function projectNativeJsonValueForTransport(input: unknown): JsonValue {
   return cloneNativeJsonValueForTransport(input, 'value') as JsonValue;
+}
+
+/**
+ * Admits a value its caller just parsed and exclusively owns (a schema parse
+ * output) as the immutable transport snapshot in place: the same strict rules and
+ * undefined-member omission as `projectNativeJsonValueForTransport`, without a copy.
+ * The returned value is the input, frozen; later projections share it by identity.
+ */
+export function adoptParsedNativeJsonValueForTransport<T>(input: T): T {
+  return adoptParsedNativeJsonValueForTransportOwner(input, 'value');
 }
 
 /**

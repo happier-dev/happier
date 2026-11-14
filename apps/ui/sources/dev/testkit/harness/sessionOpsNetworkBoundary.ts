@@ -1,7 +1,6 @@
 import { vi } from 'vitest';
 import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { createAccountEncryptionCurrentnessFixtureForCredentials, createPlainAccountEncryptionCurrentnessFixture } from '../fixtures/accountEncryptionCurrentness';
 import { createCompactSessionListFetchBoundary } from './sessionReadBatchHttpBoundary';
 import { waitForTestEvent } from '../hooks/waitForTestEvent';
 
@@ -35,18 +34,13 @@ type SessionOpsSocketBoundary = ReturnType<typeof import('../mocks/socketIo').cr
 }>;
 type SessionOpsSocketFactory = (serverUrl: string, options: SessionOpsSocketOptions) => SessionOpsSocketBoundary['socket'];
 
-// Runtime consumers retain the SDK import between fixture installations.
-const installedSocketBoundary = vi.hoisted(() => ({ current: null as SessionOpsSocketFactory | null }));
-
-/** Hoist this external transport boundary before importing consumers of the shared socket client. */
+/**
+ * The UI Vitest setup already registers the shared Socket.IO boundary before every import;
+ * a suite that hoists its own registration gets that same boundary.
+ */
 export async function createSessionOpsSocketIoClientBoundary(importOriginal: <T>() => Promise<T>) {
-    const actual = await importOriginal<typeof import('socket.io-client')>();
-    const createSocket = (serverUrl: string, options: SessionOpsSocketOptions) => {
-        const current = installedSocketBoundary.current;
-        if (!current) throw new Error('Session operations Socket boundary is not installed');
-        return current(serverUrl, options);
-    };
-    return { ...actual, io: createSocket, connect: createSocket, default: createSocket };
+    const { createDormantSocketIoClientBoundary } = await import('./serverAccountConnectionHarness');
+    return await createDormantSocketIoClientBoundary(importOriginal);
 }
 
 export type SessionOpsNetworkBoundary = Awaited<ReturnType<typeof installSessionOpsNetworkBoundary>>;
@@ -106,8 +100,10 @@ export async function installSessionOpsNetworkBoundary() {
         socketConfigurator?.(recordedBoundary);
         return socket;
     };
-    installedSocketBoundary.current = createSocket;
-    vi.doMock('socket.io-client', createSessionOpsSocketIoClientBoundary);
+    const { installSocketIoClientFactoryBoundary } = await import('./serverAccountConnectionHarness');
+    // The stub is this fixture's whole external transport; the SDK's Socket type is not reconstructed.
+    const socketFactoryBoundary = installSocketIoClientFactoryBoundary((uri, options) =>
+        createSocket(String(uri), (options ?? {}) as SessionOpsSocketOptions) as unknown as import('socket.io-client').Socket);
 
     // This harness serves scoped saved Homes. It does not fabricate a focused Sync Account.
     const { upsertServerProfile, adoptHomeProfile } = await import('@/sync/domains/server/serverProfiles');
@@ -157,6 +153,9 @@ export async function installSessionOpsNetworkBoundary() {
         if (url.pathname === '/v1/auth/ping') return Response.json({});
         if (url.pathname === '/v1/account/encryption') return Response.json({ mode: homes.get(url.origin)!.encryptionMode, updatedAt: 1 });
         if (url.pathname === '/v1/account/encryption/currentness') {
+            // The socket mock imports this harness before TokenStorage can finish loading.
+            const { createAccountEncryptionCurrentnessFixtureForCredentials, createPlainAccountEncryptionCurrentnessFixture } =
+                await import('../fixtures/accountEncryptionCurrentness');
             const home = homes.get(url.origin)!;
             if (home.encryptionMode === 'plain') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
             // An E2EE Home reports the persisted identity of the material it issued to this Account.
@@ -283,10 +282,7 @@ export async function installSessionOpsNetworkBoundary() {
                 for (const socket of sockets) socket.disconnect();
                 resetRuntimeFetch();
                 credentialObserver.mockRestore();
-                if (installedSocketBoundary.current === createSocket) {
-                    installedSocketBoundary.current = null;
-                    vi.doUnmock('socket.io-client');
-                }
+                socketFactoryBoundary.dispose();
                 try { for (const write of credentialWrites.splice(0).reverse()) await write.rollback(); }
                 finally { locks?.restore(); localStorage?.restore(); }
             }
