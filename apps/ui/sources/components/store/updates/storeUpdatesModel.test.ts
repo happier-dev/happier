@@ -71,6 +71,18 @@ describe('buildStoreUpdates', () => {
     expect(buildStoreUpdates([row], [{ ...results[0]!, upstream: { state: 'unchecked', reason: { state: 'unreachable' } } }])
       .sections[0]?.entries[0]).toMatchObject({ state: 'unchecked', reason: { state: 'unreachable' } });
   });
+
+  // SIMPLIFY-REVIEW-1114 → QA-DEPLOY-1114: before the Apps check answers, a held App is awaiting its first check, never
+  // "nothing to keep up to date"; once a check answered without it, the App has no source that publishes versions.
+  it('holds an App the first check has not answered for as awaiting, and an App the check left out as untracked', () => {
+    const detail = createDeploymentEnvironmentDetailV1();
+    const row: InstalledAppRow = { kind: 'app', key: 'app:env', scope,
+      native: { environment: detail.environment, title: detail.content.name, chip: null }, home: '/environment', projectKeys: null };
+    const before = buildStoreUpdates([row], []);
+    expect(before).toMatchObject({ tracked: 0, awaiting: 1, count: null });
+    const answered = buildStoreUpdates([row], [], { checkedAt: 20, failed: false, basis: captureStoreUpdateBasis([row]) });
+    expect(answered).toMatchObject({ tracked: 0, awaiting: 0 });
+  });
   it('keeps browser extension updates profile-qualified and supersedes an applied version without losing another profile', () => {
     const extensionId = 'a'.repeat(32);
     const browserRow = (profileId: string, version: string, current = false, catalog = true, machineId = 'machine-a', unpacked = false): InstalledRow => ({

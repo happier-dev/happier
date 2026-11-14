@@ -56,6 +56,8 @@ export type StoreUpdatesView = Readonly<{
   }>[];
   /** Held items that came from a source that can publish a newer version; zero means "up to date" would mean nothing. */
   tracked: number;
+  /** Held Apps no check has answered for yet: not untracked, just not asked. "Nothing to keep up to date" waits for them. */
+  awaiting: number;
   /** Items the latest check could not reach, by their source's failure. */
   unchecked: number;
   /** Coverage of the latest finite reply, restricted to still-current held subjects. */
@@ -168,6 +170,7 @@ export function buildStoreUpdates(
   );
   const byKind = new Map<StoreUpdateKind, StoreUpdateEntry[]>();
   let tracked = 0;
+  let awaiting = 0;
   let unchecked = 0;
   let successful = 0;
   let complete = check?.checkedAt != null && !check.failed;
@@ -197,7 +200,11 @@ export function buildStoreUpdates(
       continue;
     }
     // App provenance stays private to the Environment. Only its tracker's supplied observations establish tracking.
-    if (row.kind === 'app' && !checked.has(`app:${row.native.environment.id}`)) continue;
+    // Before a check answers, an App without an observation is awaiting it; after, it has no source that publishes versions.
+    if (row.kind === 'app' && !checked.has(`app:${row.native.environment.id}`)) {
+      if (check?.checkedAt == null) awaiting += 1;
+      continue;
+    }
     const item = readTracked(row);
     if (!item) continue;
     tracked += 1;
@@ -259,6 +266,7 @@ export function buildStoreUpdates(
     count: complete ? sections.reduce((total, section) => total + section.entries.filter(entry => entry.state !== 'current').length, 0) : null,
     sections,
     tracked,
+    awaiting,
     unchecked,
     freshness: { checked: successful, tracked, checkedAt: check?.attemptedAt ?? check?.checkedAt ?? null },
   };

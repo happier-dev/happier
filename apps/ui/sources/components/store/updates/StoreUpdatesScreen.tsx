@@ -170,6 +170,7 @@ export function StoreUpdatesScreen(): React.ReactNode {
               unresolved.length > 0 || check.failed ? null : <View style={styles.inset}>
                 <UpdatesEmpty
                   tracked={view.tracked}
+                  awaiting={view.awaiting}
                   current={view.count === 0}
                   partial={unresolved.length > 0}
                 />
@@ -202,9 +203,10 @@ export function StoreUpdatesScreen(): React.ReactNode {
 
 /** Nothing to review: shown only when every kind loaded and the check didn't fail; "up to date" only after a check. */
 function UpdatesEmpty(
-  props: Readonly<{ tracked: number; current: boolean; partial: boolean }>,
+  props: Readonly<{ tracked: number; awaiting: number; current: boolean; partial: boolean }>,
 ) {
-  if (!props.partial && props.tracked === 0) {
+  // Apps still awaiting their first check are not "nothing to keep up to date": they read as not checked yet.
+  if (!props.partial && props.tracked === 0 && props.awaiting === 0) {
     return (
       <SurfaceStateCard
         testID="store.updates.noSources"
