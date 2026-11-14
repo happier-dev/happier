@@ -12,10 +12,10 @@ describe('Session access Action contracts', () => {
   it('privately issues Session links on the answering client for agent callers and keeps direct people on Account placement', () => {
     const spec = getActionSpec('session.public_link.create');
     const input = { sessionId: 'shared-session' };
-    expect(resolveActionExecutionPlacementForInput(spec, input, { kind: 'session' })).toBe('client');
-    expect(resolveActionExecutionPlacementForInput(spec, input, { kind: 'workflowRun' })).toBe('client');
-    expect(resolveActionExecutionPlacementForInput(spec, input, { kind: 'host' })).toBe('account');
-    expect(resolveActionExecutionPlacementForInput(spec, input)).toBe('account');
+    expect(resolveActionExecutionPlacementForInput(spec, input, { kind: 'session' }, 'agent')).toBe('client');
+    expect(resolveActionExecutionPlacementForInput(spec, input, { kind: 'workflowRun' }, 'agent')).toBe('client');
+    expect(resolveActionExecutionPlacementForInput(spec, input, { kind: 'host' }, 'ui')).toBe('account');
+    expect(resolveActionExecutionPlacementForInput(spec, input, undefined, 'ui')).toBe('account');
   });
   it('routes manual crypto and layout intents to the connected client with strict non-secret operands and the shared Ask-first floor', () => {
     for (const [name, input] of [

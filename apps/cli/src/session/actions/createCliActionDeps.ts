@@ -1173,7 +1173,7 @@ export function createCliActionDeps(params: CliActionDepsParams,
             });
             if (!selected.ok) return selected;
             const target = resolveExternalActionMachineTarget({ actionId, rawInput: input,
-              target: context.externalActionTarget, ownerMachineId: selected.machineId });
+              target: context.externalActionTarget, ownerMachineId: selected.machineId, context });
             return target.kind === 'rejected' ? target.execution : selected;
           });
           if (!execution.ok) return execution;

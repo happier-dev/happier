@@ -322,6 +322,7 @@ export async function runCompiledActionCliCommand(params: Readonly<{
   let context: ActionCliPresentationContext = { command, json, input, callerInput };
 
   let result: ActionExecuteResult;
+  let bridgeSessionId = params.agentBridgeSessionId;
   if (params.agentBridgeSessionId !== undefined || hasSessionMcpContext()) {
     if (hasFlagBeforeTerminator(actionCliCommandInputArgv(command, params.argv), new Set(commandTransportValueFlags(command)))) {
       await reportFailure({ json, kind, failure: { errorCode: 'invalid_arguments',
@@ -452,7 +453,7 @@ export async function runCompiledActionCliCommand(params: Readonly<{
       ...(command.actionId === 'action.spec.search'
         || command.actionId === 'action.spec.get'
         || isWorkflowActionCliCommand(command.actionId)
-        || resolveActionExecutionPlacementForInput(command.spec, input) === 'client'
+        || resolveActionExecutionPlacementForInput(command.spec, input, undefined, params.agentBridgeSessionId ? 'agent' : 'cli') === 'client'
         ? { externalActionClient: true as const }
         : {}),
     };
@@ -483,7 +484,6 @@ export async function runCompiledActionCliCommand(params: Readonly<{
       input = Object.freeze({ ...input, sessionId: resolved.sessionId });
       context = { command, json, input, callerInput };
     }
-    let bridgeSessionId: string | undefined;
     if (params.agentBridgeSessionId) {
       const resolved = await executor.resolveSessionTarget(params.agentBridgeSessionId);
       if (!resolved.ok) throw Object.assign(new Error(resolved.code), { code: resolved.code });
@@ -515,7 +515,7 @@ export async function runCompiledActionCliCommand(params: Readonly<{
       // Workflow aliases retain the generic invocation's complete target;
       // Account Actions also retain their exact execution Machine selector.
       ...(executionTarget && (isWorkflowActionCliCommand(command.actionId)
-        || resolveActionExecutionPlacementForInput(command.spec, input) === 'account')
+        || resolveActionExecutionPlacementForInput(command.spec, input, undefined, bridgeSessionId ? 'agent' : 'cli') === 'account')
         ? { externalActionTarget: executionTarget } : {}),
       ...(command.binding.observation === 'changes' ? {
         onWaitSnapshot: async (snapshot: unknown) => writeJsonStdout({
@@ -552,7 +552,7 @@ export async function runCompiledActionCliCommand(params: Readonly<{
   const payload = result.ok ? unwrapCliActionSuccessPayload(result.result) : undefined;
   if (result.ok) {
     if (await tryHandleApprovalRequestCreated({ envelopeKind: kind, json, result: payload,
-      executionPlacement: resolveActionExecutionPlacementForInput(command.spec, input) })) return;
+      executionPlacement: resolveActionExecutionPlacementForInput(command.spec, input, undefined, bridgeSessionId ? 'agent' : 'cli') })) return;
     // The Action succeeded; its outcome union may still report a pending or
     // refused operation. Classify that canonical payload before generic nested
     // failure normalization discards the domain-specific receipt.

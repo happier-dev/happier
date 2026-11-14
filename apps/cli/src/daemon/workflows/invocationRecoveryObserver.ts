@@ -440,7 +440,7 @@ export function createWorkflowInvocationRecoveryObserver(params: Readonly<{
       // The durable Action request identity still names that original owner;
       // losing its observer never authorizes replay or unsolicited cancellation.
       if (input.progress.blockKind === 'action' && id.success && getActionSpec(id.data).operation
-        && resolveActionExecutionPlacementForInput(getActionSpec(id.data), execution.input) === 'machine' && !execution.awaitedOperations?.length
+        && resolveActionExecutionPlacementForInput(getActionSpec(id.data), execution.input, { kind: 'workflowRun' }, 'agent') === 'machine' && !execution.awaitedOperations?.length
         && !execution.awaitedRuns?.length && execution.output === undefined && params.nativeActionOperations?.findAction) {
         try {
           const found = await params.nativeActionOperations.findAction(execution, input.signal);

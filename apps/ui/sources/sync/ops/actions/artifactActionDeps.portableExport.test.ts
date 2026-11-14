@@ -91,7 +91,7 @@ it('downloads admitted binary bytes on the answering client through the agent Ac
     const input = { artifactId: 'binary', destination: 'client' };
     const context = { surface: 'agent' as const, authority: 'account_automation' as const,
         serverId: fixture.home.id, runtimeAccountId: account.accountId, bypassApprovals: true };
-    expect(resolveActionExecutionPlacementForInput(getActionSpec('artifact.export'), input)).toBe('client');
+    expect(resolveActionExecutionPlacementForInput(getActionSpec('artifact.export'), input, undefined, 'ui')).toBe('client');
     expect(resolveActionApprovalRouting({ actionId: 'artifact.export', spec: getActionSpec('artifact.export'), input,
         context: { ...context, bypassApprovals: false } }).required).toBe(true);
     const result = await execute('artifact.export', input, context);
@@ -141,8 +141,8 @@ it.each([
     const spec = getActionSpec('artifact.export');
     expect(resolveActionApprovalRouting({ actionId: 'artifact.export', spec,
         input: { portable }, context: { ...context, bypassApprovals: false } }).required).toBe(true);
-    expect(resolveActionExecutionPlacementForInput(spec, { portable })).toBe('client');
-    expect(resolveActionExecutionPlacementForInput(spec, { artifactId: 'binary', path: 'copy.bin' })).toBe('machine');
+    expect(resolveActionExecutionPlacementForInput(spec, { portable }, undefined, 'ui')).toBe('client');
+    expect(resolveActionExecutionPlacementForInput(spec, { artifactId: 'binary', path: 'copy.bin' }, undefined, 'ui')).toBe('machine');
     const result = await execute('artifact.export', { portable }, context);
     if (!result.ok) throw new Error(JSON.stringify(result));
     expect(result).toMatchObject({ ok: true, result: { exported: true, fileName } });

@@ -111,7 +111,7 @@ export function createDaemonSessionAccountActionAuthorizationPreparer(params: Re
         : credentials.encryption;
     let selectedMachineId = operation.actionId === 'session.board.item.upsert'
       ? params.machineId : targetMachineId ?? params.machineId;
-    if (resolveActionExecutionPlacementForInput(getActionSpec(operation.actionId), operation.input) === 'machine') {
+    if (resolveActionExecutionPlacementForInput(getActionSpec(operation.actionId), operation.input, sessionActionOrigin.caller, operation.surface ?? 'agent') === 'machine') {
       let ownerMachineId: string | undefined;
       if ((MANAGED_MACHINE_ACTION_IDS_V1 as readonly string[]).includes(operation.actionId)) {
         const parsed = getActionSpec(operation.actionId).inputSchema.safeParse(operation.input);
@@ -130,6 +130,7 @@ export function createDaemonSessionAccountActionAuthorizationPreparer(params: Re
         }
       }
       const selected = resolveExternalActionMachineTarget({ actionId: operation.actionId, rawInput: operation.input,
+        context: { actionCaller: sessionActionOrigin.caller, surface: operation.surface ?? 'agent' },
         ...(targetMachineId ? { target: { kind: 'machine', machineId: targetMachineId } } : {}),
         fallbackMachineId: params.machineId, ...(ownerMachineId ? { ownerMachineId } : {}) });
       if (selected.kind !== 'ready') return refused('preparation', 'action_execution_target');

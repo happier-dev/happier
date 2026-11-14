@@ -880,7 +880,7 @@ describe('BrowserShell', () => {
       'browser.context.attachToComposer': ['agent'], 'browser.context.annotation.attachDraft': ['agent'],
     } });
     for (const operation of operations) {
-      expect(resolveActionExecutionPlacementForInput(getActionSpec(operation.actionId), operation.input)).toBe('client');
+      expect(resolveActionExecutionPlacementForInput(getActionSpec(operation.actionId), operation.input, undefined, 'ui')).toBe('client');
       expect(isAgentInitiatedApprovalRequiredByDefault(operation.actionId)).toBe(true);
       await act(async () => {
         const result = await executor.execute(operation.actionId, operation.input, { surface, serverId: scope.serverId, runtimeAccountId: scope.accountId });

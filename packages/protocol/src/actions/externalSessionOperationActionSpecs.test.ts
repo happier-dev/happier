@@ -14,7 +14,7 @@ describe('external-session operation ActionSpecs', () => {
         expect(resolveActionSurfaceAvailability({ actionId, surface, requireToolBinding: surface !== 'cli' }), `${actionId}:${surface}`)
           .toMatchObject({ available: true });
       }
-      expect(resolveActionExecutionPlacementForInput(spec, input)).toBe('machine');
+      expect(resolveActionExecutionPlacementForInput(spec, input, undefined, 'ui')).toBe('machine');
     }
   });
   it('admits reference-only materialize receipt replay without weakening status or control results', async () => {

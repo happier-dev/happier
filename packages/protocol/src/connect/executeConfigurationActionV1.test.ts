@@ -56,7 +56,7 @@ describe('connected-service configuration Action owner', () => {
         const executor = createActionExecutor(createActionExecutorBoundaryFixture({ connectedServiceAction: ({ actionId, input }) => executeConnectedServiceConfigurationActionV1(host, actionId, input) }));
         const id = 'connectedServices.accounts.testConnection';
         expect(ActionIdSchema.safeParse(id).success).toBe(true);
-        expect(getActionSpec(id).executionPlacementForInput?.({ account, ...(machineId ? { machineId } : {}) })).toBe(machineId ? 'machine' : 'account');
+        expect(getActionSpec(id).executionPlacementForInput?.({ account, ...(machineId ? { machineId } : {}) }, undefined, 'ui')).toBe(machineId ? 'machine' : 'account');
         expect(await executor.execute(id, { account, ...(machineId ? { machineId } : {}) }, { surface: 'cli', authority: 'account_automation' })).toEqual({ ok: true, result });
     });
 
@@ -332,7 +332,7 @@ describe('connected-service configuration Action owner', () => {
             .toEqual({ ok: true, result: { applied: true, revision: 'revision-2' } });
         expect(commands).toEqual([{ machineId, command: { operation: 'replaceConfiguration',
             target: exactTarget, expectedRevision: 'revision-1', values: {}, secretValues: {} } }]);
-        expect(getActionSpec('connectedServices.configuration.replace').executionPlacementForInput?.(input)).toBe(machineId ? 'machine' : 'account');
+        expect(getActionSpec('connectedServices.configuration.replace').executionPlacementForInput?.(input, undefined, 'ui')).toBe(machineId ? 'machine' : 'account');
         const readInput = { ...(machineId ? { machineId } : {}), target: exactTarget };
         expect(await executor.execute('connectedServices.configuration.get', readInput, { surface: 'cli' }))
             .toMatchObject({ ok: true, result: { target: exactTarget, configuration: { revision: 'revision-2' } } });

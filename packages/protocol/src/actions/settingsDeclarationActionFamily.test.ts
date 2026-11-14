@@ -76,9 +76,9 @@ describe('explicit Settings resource target admission', () => {
     const input = SettingsDeclarationActionInputSchemasV1[actionId].parse({ anchor: 'appearance.atmosphereSource',
       ...(actionId === 'settings.set' ? { value: 'none' } : {}) });
     const spec = getActionSpec(actionId);
-    expect(resolveActionExecutionPlacementForInput(spec, input)).toBe('account');
+    expect(resolveActionExecutionPlacementForInput(spec, input, undefined, 'ui')).toBe('account');
     expect(resolveActionExecutionPlacementForInput(spec, { ...input,
-      target: { kind: 'public_profile_draft', serverId: 'home-1' } })).toBe('client');
+      target: { kind: 'public_profile_draft', serverId: 'home-1' } }, undefined, 'ui')).toBe('client');
   });
 
   it('admits exact Home, Team and connection addresses and rejects caller authority fields', () => {

@@ -279,7 +279,7 @@ export function createExternalMcpServer(params: Readonly<{
                 ...(context?.signal ? { signal: context.signal } : {}) });
             }
             const executionPlacement = builtInActionId.success
-              ? resolveActionExecutionPlacementForInput(getActionSpec(builtInActionId.data), input) : null;
+              ? resolveActionExecutionPlacementForInput(getActionSpec(builtInActionId.data), input, context?.actionCaller, toolSurface) : null;
             const controlControllerTarget = await resolveManagedControlControllerTarget({ actionId, rawInput: input,
               credentials: params.credentials, serverHttpBaseUrl, ...(context?.signal ? { signal: context.signal } : {}) });
             if (!builtInActionId.success || (
@@ -303,6 +303,7 @@ export function createExternalMcpServer(params: Readonly<{
                 ?? controlControllerTarget
                 ?? (params.machineId ? { kind: 'machine', machineId: params.machineId } : undefined),
               currentMachineId: params.machineId ?? '',
+              context: { actionCaller: context?.actionCaller, surface: toolSurface },
             });
             if (reconciliation.kind === 'rejected') return reconciliation.execution;
             // The same ingress owner selects explicit parsed Session targets.

@@ -290,7 +290,7 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
       // still pass their ordinary locality checks below.
       const liveInputCustody = requestSpec?.approvalInputCustody === 'live_only';
       const machineEffect = requestSpec !== null && !liveInputCustody
-        && resolveActionExecutionPlacementForInput(requestSpec, operands) === 'machine';
+        && resolveActionExecutionPlacementForInput(requestSpec, operands, origin.caller, origin.surface) === 'machine';
       const target = origin.target
         // Machine-only effects replay on the recorded Machine. A contextual
         // Session is not their target; explicit Session operands still recheck locality.
@@ -308,6 +308,7 @@ export function createDaemonApprovalExecutionOriginCurrentness(input: Readonly<{
           actionId: signedRootActionId.data,
           target,
           currentMachineId: input.machineId,
+          context: { actionCaller: origin.caller, surface: origin.surface },
           ...(signal ? { signal } : {}),
         });
         if (!currentTarget) return stale('target_unavailable');
@@ -562,7 +563,7 @@ export function createDaemonExternalActionTargetResolver(input: Readonly<{
   currentMachineHost?: string | null;
   currentMachineHomeDir?: string | null;
 }>): ResolveExternalActionTarget {
-  return async ({ actionId, actionInput, target, currentMachineId, signal }) => {
+  return async ({ actionId, actionInput, target, currentMachineId, context, signal }) => {
     if (!target) {
       return { kind: 'machine', machineId: currentMachineId };
     }
@@ -572,7 +573,7 @@ export function createDaemonExternalActionTargetResolver(input: Readonly<{
     }
 
     const serverFeaturesSnapshot = await input.resolveServerFeaturesSnapshot?.();
-    if (resolveActionExecutionPlacementForInput(getActionSpec(actionId), actionInput) === 'account') {
+    if (resolveActionExecutionPlacementForInput(getActionSpec(actionId), actionInput, context?.actionCaller, context?.surface ?? 'api') === 'account') {
       const session = await fetchSessionById({ reason: 'session-action',
         token: input.credentials.token,
         sessionId: target.sessionId,

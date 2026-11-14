@@ -453,7 +453,7 @@ export function resolveActionApprovalRouting(args: ResolveActionApprovalRoutingA
   const retainedNativeRead = args.retainHostOperationApproval === true
     && args.context?.surface === 'ui' && (!args.context.actionCaller || args.context.actionCaller.kind === 'host')
     && args.spec.sideEffectClass === 'read' && !custodyStaysOnLiveInvocation
-    && resolveActionExecutionPlacementForInput(args.spec, args.input) === 'machine'
+    && resolveActionExecutionPlacementForInput(args.spec, args.input, args.context.actionCaller, args.context.surface) === 'machine'
     // The Resource observation cannot be reconstructed by detached Artifact
     // replay. Only its executor-proved live invocation retains that callback.
     && !(args.actionId === 'machines.services.logs.read' && args.context.machineServiceLogsResource);

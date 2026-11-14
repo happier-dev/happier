@@ -16,7 +16,7 @@ describe('mounted area operations through the canonical Action/Artifact/binder o
     it('places layout selection on the answering client as a presentation effect', () => {
         const spec = getActionSpec('widgets.area.layout.select');
         const surface = { ...scope, owner: { kind: 'pluginArea', pluginId: 'example', pageId: 'overview', area: 'pinned' } };
-        expect(spec.executionPlacementForInput?.({ surface }) ?? spec.executionPlacement).toBe('client');
+        expect(spec.executionPlacementForInput?.({ surface }, undefined, 'ui') ?? spec.executionPlacement).toBe('client');
         expect(spec.sideEffectClass).toBe('write');
         expect(spec.safety).toBe('safe');
     });

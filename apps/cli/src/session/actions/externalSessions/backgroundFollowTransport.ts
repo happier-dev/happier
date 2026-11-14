@@ -23,7 +23,7 @@ export async function executeBackgroundFollowTransport(params: Readonly<{
     sessionId: input.sessionId, ...(params.signal ? { signal: params.signal } : {}) });
   if (!linked.ok) return { ok: true, result: { ok: false, errorCode: linked.errorCode, error: linked.error } };
   const target = resolveExternalActionMachineTarget({ actionId: 'sessions.external.backgroundFollow.set', rawInput: input,
-    target: params.context.externalActionTarget, ownerMachineId: linked.session.machineId });
+    target: params.context.externalActionTarget, ownerMachineId: linked.session.machineId, context: params.context });
   if (target.kind === 'rejected') return target.execution;
   const dispatch = (method: string, raw: unknown) => callExactMachineRpc({ credentials: params.credentials,
     serverUrl: params.serverHttpBaseUrl ?? resolveServerHttpBaseUrl(), machineId: target.machineId,

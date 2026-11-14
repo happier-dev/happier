@@ -15,7 +15,7 @@ describe('CLI deferred approval output', () => {
         executionPlacement: resolveActionExecutionPlacementForInput(getActionSpec('session.board.layout.update'), {
           sessionId: 's1', expectedLayoutRevision: null,
           operation: { op: 'tab.create', tabId: 'overview', title: 'Overview' },
-        }),
+        }, undefined, 'cli'),
       };
       expect(await tryHandleApprovalRequestCreated(params)).toBe(true);
     } finally {

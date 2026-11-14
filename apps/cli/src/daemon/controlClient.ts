@@ -4,7 +4,7 @@ import type { SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/contr
  * Used by CLI commands to interact with running daemon
  */
 
-import { isPidPresent, isPidProvablyAbsent } from '@happier-dev/cli-common/process';
+import { isPidPresent, isPidProvablyAbsent, probeProcessLiveness } from '@happier-dev/cli-common/process';
 import type { SessionFollowOccurrenceNotification } from './sessions/sessionActivityChangedContract';
 import { SessionActivityChangedResponseSchema, type SessionActivityChangedResult } from './sessions/sessionActivityChangedContract';
 export type { SessionActivityChangedResult } from './sessions/sessionActivityChangedContract';
@@ -324,10 +324,9 @@ export async function inspectDaemonRunningStateAndCleanupStaleState(): Promise<D
     return { status: 'not-running' };
   }
 
-  try {
-    process.kill(state.pid, 0);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === 'ESRCH') {
+  const liveness = probeProcessLiveness(state.pid);
+  if (liveness !== 'alive') {
+    if (liveness === 'absent') {
       if (state.controlToken) {
         const presence = await inspectPublishedDaemonPresence(state);
         if (presence.status === 'running') return { status: 'running', state };
@@ -667,7 +666,7 @@ export async function requestDaemonSignedRootActionExecution(
   const { getActionSpec, resolveActionExecutionPlacementForInput } = await import('@happier-dev/protocol/actions/actionSpecs');
   const spec = getActionSpec(request.actionId);
   const { sideEffectClass } = spec;
-  const executionPlacement = resolveActionExecutionPlacementForInput(spec, request.input);
+  const executionPlacement = resolveActionExecutionPlacementForInput(spec, request.input, undefined, request.surface ?? 'cli');
   // These roots compose the same daemon-owned change and development controls.
   const usesPluginControl = request.actionId === 'plugins.install'
     || request.actionId === 'plugins.uninstall'
@@ -1887,13 +1886,11 @@ async function waitForProcessDeath(pid: number, timeout: number, observation?: P
   }
   const start = Date.now();
   while (Date.now() - start < timeout) {
-    try {
-      process.kill(pid, 0);
-      await new Promise(resolve => setTimeout(resolve, 100));
-    } catch (error) {
-      if (isProcessNotFound(error)) return;
-      throw error;
-    }
+    const liveness = probeProcessLiveness(pid);
+    if (liveness === 'absent') return;
+    // A pid we may not signal cannot be watched to its death here; fail as before rather than wait.
+    if (liveness === 'access_denied') throw new Error(`Process ${pid} cannot be observed by this user`);
+    await new Promise(resolve => setTimeout(resolve, 100));
   }
   throw new Error('Process did not die within timeout');
 }

@@ -141,7 +141,9 @@ describe('configured widget Actions', () => {
       { actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: { 'widgets.item.remove': { approvalRequiredSurfaces: ['ui'] } } }) },
       { surface: 'agent', authority: 'account_automation' },
     ];
-    for (const extra of approvalContexts) expect(await remove(instance.id, extra)).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    for (const extra of approvalContexts) expect(await remove(instance.id, extra)).toMatchObject({
+      ok: false, errorCode: extra.surface === 'agent' ? 'approvals_not_supported' : 'action_interactive_review_required',
+    });
     expect(flattenWidgetLayoutWidgetsV1((await store.read()).items).filter(entry => entry.instance.id === instance.id)).toHaveLength(1);
     const inline: WidgetInstanceV1 = { ...instance, id: 'inline', definition: { kind: 'inline', definition: {
       v: 1, id: 'inline-definition', name: 'Only copy', provenance: { source: { kind: 'authored' } }, sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' },
@@ -149,9 +151,9 @@ describe('configured widget Actions', () => {
       body: { kind: 'declarative', document: { version: 1, root: { kind: 'text', text: 'Only saved content' } } },
     } } };
     await store.apply({ kind: 'add', instance: inline });
-    expect(await remove(inline.id)).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    expect(await remove(inline.id)).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
     await store.apply({ kind: 'group_create', groupId: 'group', instanceIds: [instance.id] });
-    expect(await remove('group')).toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+    expect(await remove('group')).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
     expect((await store.read()).items).toEqual(expect.arrayContaining([
       expect.objectContaining({ kind: 'group', id: 'group' }), expect.objectContaining({ kind: 'widget', instance: inline }),
     ]));
@@ -185,7 +187,7 @@ describe('configured widget Actions', () => {
       await add();
       const actionsSettings = normalizeActionsSettingsV1({ v: 1, actions: { 'home.hub.layout.update': { approvalRequiredSurfaces: ['ui'] } } });
       expect(await executor.execute('home.hub.layout.update', { intent: { kind: 'widget_remove', instanceId: instance.id } }, { ...context, actionsSettings }))
-        .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+        .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
       expect(await executor.execute('home.hub.layout.update', { intent: { kind: 'widget_remove', instanceId: instance.id } }, { surface: 'agent', authority: 'account_automation' }))
         .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
     }
@@ -550,8 +552,8 @@ describe('configured widget Actions', () => {
   it('delivers Companion reads and transfers through the answering client while Home stays Account-owned', async () => {
     const companion = { ...surface, owner: { kind: 'companion', sessionId: 'session' } } as const;
     const readSpec = getActionSpec('widgets.item.inputs.get');
-    expect(resolveActionExecutionPlacementForInput(readSpec, readSpec.inputSchema.parse({ ref: { surface: companion, instanceId: 'checks' } }))).toBe('client');
-    expect(resolveActionExecutionPlacementForInput(readSpec, readSpec.inputSchema.parse({ ref: { surface, instanceId: 'checks' } }))).toBe('account');
+    expect(resolveActionExecutionPlacementForInput(readSpec, readSpec.inputSchema.parse({ ref: { surface: companion, instanceId: 'checks' } }), undefined, 'ui')).toBe('client');
+    expect(resolveActionExecutionPlacementForInput(readSpec, readSpec.inputSchema.parse({ ref: { surface, instanceId: 'checks' } }), undefined, 'ui')).toBe('account');
     const bindings = { count: { kind: 'value', value: 7 } } as const;
     // The connected-client hop is a transport boundary; admission/placement are real.
     const executor = createActionExecutor({
@@ -780,12 +782,12 @@ describe('configured widget Actions', () => {
       const ask = normalizeActionsSettingsV1({ v: 1, actions: { 'widgets.item.rename': { approvalRequiredSurfaces: ['ui'] } } });
       expect(await executor.execute('widgets.item.rename', { ref, displayName: 'Await approval' },
         { surface: 'ui', authority: 'present_user', actionsSettings: ask }))
-        .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+        .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
       const nativeRename = { intent: { kind: 'widget_rename', boardId: 'board', ref, displayName: 'Native' } } as const;
       if (kind === 'workBoard') {
         const askBoard = normalizeActionsSettingsV1({ v: 1, actions: { 'boards.apply': { approvalRequiredSurfaces: ['ui'] } } });
         expect(await executor.execute('boards.apply', nativeRename, { surface: 'ui', authority: 'present_user', actionsSettings: askBoard }))
-          .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
+          .toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
       }
       expect(boundary.rows.get(row.artifactId)).toBe(before);
       const actionsSettings = normalizeActionsSettingsV1({ v: 1,

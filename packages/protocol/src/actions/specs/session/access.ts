@@ -8,7 +8,7 @@ import { SessionAccessGrantSetActionInputV1Schema, SessionPublicLinkCreateAction
 import { SetSessionResponsibilityRequestSchema, SetSessionResponsibilityResponseSchema, SessionResponsibilityCandidatesRequestSchema, SessionResponsibilityCandidatesResponseSchema } from '../../../sessions/access/sessionResponsibilityV1.js';
 import { z } from '../../../zodRuntimePolicy.js';
 import { SessionManagerSetActionInputV1Schema, SessionManagerSetResultV1Schema } from '../../../sessions/follow/sessionManagerV1.js';
-import { projectPublicLinkCreationObservation } from '../artifacts.js';
+import { projectPublicLinkCreationObservation, resolvePublicLinkCreationPlacement } from '../artifacts.js';
 import { SessionIdRequiredInputSchema } from '../common.js';
 import type { PreNormalizedActionSpec } from '../definition.js';
 
@@ -202,8 +202,7 @@ function createSessionAccessActionSpecs() {
     requiredAuthority: 'account_automation',
     executionPlacement: 'account',
     executionPlacements: ['account', 'client'],
-    executionPlacementForInput: (_input: unknown, caller?: Readonly<{ kind: string }>) =>
-      caller?.kind === 'session' || caller?.kind === 'workflowRun' ? 'client' : 'account',
+    executionPlacementForInput: resolvePublicLinkCreationPlacement,
     cli: { commands: [{ path: ['session', 'public-link', 'create'], visibility: 'canonical' }] },
     placements: [],
     bindings: { mcpToolName: 'session_public_link_create' },

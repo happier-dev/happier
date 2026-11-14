@@ -467,7 +467,7 @@ describe('daemon Session Account authority', () => {
     const execute = createDaemonSessionAccountActionExecutor({ serverId: 'inherited-home',
       serverHttpBaseUrl, token, machineId: 'machine',
       prepareExternalActionAuthorization: async ({ operation: action, sessionActionOrigin }) => {
-        const selected = resolveActionExecutionPlacementForInput(getActionSpec(action.actionId), action.input) === 'machine'
+        const selected = resolveActionExecutionPlacementForInput(getActionSpec(action.actionId), action.input, sessionActionOrigin.caller, action.surface ?? 'agent') === 'machine'
           ? resolveExternalActionMachineTarget({ actionId: action.actionId, rawInput: action.input, fallbackMachineId: 'machine' })
           : { kind: 'ready' as const, machineId: 'machine' };
         if (selected.kind === 'rejected') return null;

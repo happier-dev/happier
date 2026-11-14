@@ -48,6 +48,42 @@ const workflowRequesterAttribution = materializeActionRequestAttributionV1({
 });
 
 describe('createActionExecutor (durable plugin approval caller provenance)', () => {
+  it('replays a fixed-client Find proposal as the deciding person while retaining its Session provenance', async () => {
+    let stored: ApprovalRequest | null = null;
+    const mountedClientInvocations: ActionExecutorContext[] = [];
+    const executor = createActionExecutor({
+      // Artifact persistence, mounted client delivery and Session delivery are
+      // boundaries; approval admission, origin validation and replay stay real.
+      approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'find-proposal' }; },
+      approvalsGet: async () => stored,
+      approvalsUpdate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
+      isApprovalExecutionOriginCurrent: async () => true,
+      uiFindAction: async ({ context }) => {
+        mountedClientInvocations.push(context);
+        return { ok: true, result: { status: 'idle' } };
+      },
+      sessionSendMessage: async input => ({ status: 'accepted', localId: input.localId }),
+    });
+    expect(await executor.execute('ui.find', { op: 'close' }, {
+      surface: 'agent', authority: 'account_automation', serverId: 'home', serverIdentityId: 'identity',
+      runtimeAccountId: 'account', defaultSessionId: 'origin-session', actionRequestId: 'find-request',
+      actionCaller: { kind: 'session', sessionId: 'origin-session', starterDepth: 0, turnDepth: 0 },
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+        'ui.find': { approvalRequiredSurfaces: ['agent'] },
+      } }),
+    })).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+    expect(mountedClientInvocations).toEqual([]);
+    expect(await executor.execute('approval.request.decide', { artifactId: 'find-proposal', decision: 'approve' }, {
+      surface: 'ui', authority: 'present_user', serverId: 'home', serverIdentityId: 'identity',
+      runtimeAccountId: 'account', actionCaller: { kind: 'host' },
+    })).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true, result: { status: 'idle' } } } });
+    expect(mountedClientInvocations).toMatchObject([{
+      surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+    }]);
+    expect(stored).toMatchObject({ executionOriginV1: {
+      caller: { kind: 'session', sessionId: 'origin-session' },
+    } });
+  });
   it('retains client placement when a person approves a Session public-link proposal from the CLI', async () => {
     let stored: ApprovalRequest | null = null;
     const executor = createActionExecutor({

@@ -309,7 +309,7 @@ describe('Provider Settings Actions', () => {
     for (const { id, spec, input, expected } of admittedCases) {
       expect(spec.surfaces.agent, id).toBe(true);
       expect(spec.surfaces.cli, id).toBe(true);
-      expect(resolveActionExecutionPlacementForInput(spec, input), id).toBe(expected);
+      expect(resolveActionExecutionPlacementForInput(spec, input, undefined, 'ui'), id).toBe(expected);
     }
     expect(getActionSpec('providers.connections.update').executionPlacement).toBe('account');
     expect(getActionSpec('providers.models.list').executionPlacement).toBe('account');

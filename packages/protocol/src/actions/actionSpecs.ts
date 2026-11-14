@@ -1046,9 +1046,10 @@ export function resolveActionPermissionChangingV1(
 export function resolveActionExecutionPlacementForInput(
   spec: Pick<ActionSpec, 'executionPlacement' | 'executionPlacementForInput'>,
   input: unknown,
-  caller?: Readonly<{ kind: string }>,
+  caller: Readonly<{ kind: string }> | undefined,
+  surface: keyof ActionSurfaces,
 ): ActionExecutionPlacement {
-  return spec.executionPlacementForInput?.(input, caller) ?? spec.executionPlacement;
+  return spec.executionPlacementForInput?.(input, caller, surface) ?? spec.executionPlacement;
 }
 
 function normalizeActionPublicExposure(spec: PreNormalizedActionSpec): NormalizedActionSpec {

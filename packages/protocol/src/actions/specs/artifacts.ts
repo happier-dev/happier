@@ -1,5 +1,6 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import type { PreNormalizedActionSpec } from './definition.js';
+import type { ActionExecutionPlacement, ActionSurfaces } from '../metadata.js';
 import { readRecord } from '../../inputs/inputRecords.js';
 import { ARTIFACT_ACCESS_ACTION_IDS_V1, ArtifactAccessActionInputSchemasV1, ArtifactAccessActionOutputSchemasV1 } from '../../artifacts/artifactAccessV1.js';
 import { ARTIFACT_ACTION_IDS_V1, ArtifactActionInputSchemasV1, ArtifactActionOutputSchemasV1, type ArtifactActionIdV1 } from '../../artifacts/artifactActionsV1.js';
@@ -24,6 +25,16 @@ export const ARTIFACT_ACCESS_ACTION_SPECS: readonly (PreNormalizedActionSpec & R
   inputHints: { title: 'Document sharing', fields: [] },
   cli: { acceptsServerId: true, commands: [{ path: id.split('.'), visibility: 'canonical' }] },
 })));
+
+/** Only the person on a person surface receives a capability in their result. */
+export function resolvePublicLinkCreationPlacement(
+  _input: unknown,
+  caller: Readonly<{ kind: string }> | undefined,
+  surface: keyof ActionSurfaces,
+): ActionExecutionPlacement {
+  return (surface === 'cli' || surface === 'ui') && (!caller || caller.kind === 'host')
+    ? 'account' : 'client';
+}
 
 export type PublicLinkCreationObservation = Readonly<{
   status: 'public_link_created';
@@ -111,8 +122,7 @@ export const ARTIFACT_ACTION_SPECS: readonly (PreNormalizedActionSpec & Readonly
     requiredAuthority: 'account_automation', executionPlacement:
       id === 'artifact.publish_from_file' || id === 'artifact.export' ? 'machine' : 'account',
     ...(id === 'artifact.public_link.create' ? { executionPlacements: ['account', 'client'] as const,
-      executionPlacementForInput: (_input: unknown, caller?: Readonly<{ kind: string }>) =>
-        caller?.kind === 'session' || caller?.kind === 'workflowRun' ? 'client' as const : 'account' as const } : {}),
+      executionPlacementForInput: resolvePublicLinkCreationPlacement } : {}),
     placements: [], bindings: { rpcMethod: id, mcpToolName: id.replaceAll('.', '_'),
       ...(voice ? { voiceClientToolName: id.replaceAll('.', '_') } : {}) },
     surfaces: { ui: true, cli: true, rpc: true, agent: true, mcp: true,

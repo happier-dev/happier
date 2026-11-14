@@ -134,7 +134,7 @@ describe('Provider Action placement declarations', () => {
       const spec = PROVIDER_ACTION_SPECS_V1.find(spec => spec.id === id);
       if (!spec) throw new Error(`Missing Provider Action: ${id}`);
       const input = spec.inputSchema.parse(raw);
-      expect(spec.executionPlacementForInput?.(input) ?? spec.executionPlacement, id).toBe(expected);
+      expect(spec.executionPlacementForInput?.(input, undefined, 'ui') ?? spec.executionPlacement, id).toBe(expected);
     }
     expect(PROVIDER_ACTION_SPECS_V1.find(spec => spec.id === 'providers.connections.update')?.executionPlacement).toBe('account');
     expect(PROVIDER_ACTION_SPECS_V1.find(spec => spec.id === 'providers.probe')?.executionPlacement).toBe('machine');

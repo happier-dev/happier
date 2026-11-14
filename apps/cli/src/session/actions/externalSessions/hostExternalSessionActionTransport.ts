@@ -63,7 +63,7 @@ export function createHostExternalSessionActionTransport(params: Readonly<{
     if (sessionId && !ownerMachineId) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
     const target = resolveExternalActionMachineTarget({
       actionId, rawInput: semantic, target: context.externalActionTarget,
-      ownerMachineId, fallbackMachineId: context.defaultSessionMachineId,
+      ownerMachineId, fallbackMachineId: context.defaultSessionMachineId, context,
     });
     if (target.kind === 'rejected') return target.execution;
     const method = spec.bindings?.rpcMethod;

@@ -53,7 +53,7 @@ it('routes a cold prepared preview Create through its canonical Machine approval
     preview: { templateEnvironmentId: 'template', expectedTemplateRevision: 1, runtimeTargetLinkId: 'template-runtime', pullRequestId: '17' },
     firstTargetLink: { contentArtifactId: 'runtime-content', contentHeaderVersion: 1, contentBodyVersion: 1,
       machines: [{ machineId: 'runtime', installationId: 'installation-runtime' }] } });
-  expect(resolveActionExecutionPlacementForInput(spec, input)).toBe('machine');
+  expect(resolveActionExecutionPlacementForInput(spec, input, undefined, 'ui')).toBe('machine');
 });
 
 it.each([
@@ -3232,8 +3232,8 @@ describe('Action Spec Registry', () => {
     const spec = getActionSpec('browser.diagnostics.eval');
     const input = spec.inputSchema.parse({ v: 1, browserSessionId: 'browser_session_1', viewId: 'view_1', navigationGeneration: 0,
       tier: 'injectedPage', evalRequestId: 'eval_1', expression: 'document.title', objectGroupId: 'group_1', diagnosticsInteractionEnabled: true });
-    expect(resolveActionExecutionPlacementForInput(spec, input)).toBe('client');
-    expect(resolveActionExecutionPlacementForInput(spec, { ...input, tier: 'cdp' })).toBe('machine');
+    expect(resolveActionExecutionPlacementForInput(spec, input, undefined, 'ui')).toBe('client');
+    expect(resolveActionExecutionPlacementForInput(spec, { ...input, tier: 'cdp' }, undefined, 'ui')).toBe('machine');
     expect(spec.executionPlacements).toEqual(['client', 'machine']);
   });
 

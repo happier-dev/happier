@@ -75,7 +75,7 @@ export function createSessionAccountActionExecutor(params: Readonly<{
       const builtIn = ActionIdSchema.safeParse(actionId);
       const spec = builtIn.success ? getActionSpec(builtIn.data) : null;
       if (!voiceRun && requiresExplicitScmMachineTarget(actionId)) return await params.base.execute(actionId, input, context);
-      let executionPlacement = spec ? resolveActionExecutionPlacementForInput(spec, input) : null;
+      let executionPlacement = spec ? resolveActionExecutionPlacementForInput(spec, input, context?.actionCaller, context?.surface ?? 'agent') : null;
       if (!voiceRun && actionId === 'action.invoke' && !params.hasAccountAuthority) {
         // Account-only releases need not exist in the bound Machine catalog.
         // This host-private read uses the same capability, witness and lifetime;

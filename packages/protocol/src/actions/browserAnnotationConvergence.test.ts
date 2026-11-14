@@ -14,7 +14,7 @@ describe('browser annotation Actions', () => {
   it('places supplied-picker capture at the client and ordinary capture at the Machine', () => {
     const spec = getActionSpec('browser.context.captureSelectedElement');
     const input = { browserSessionId: 'browser_1', viewId: 'view_1' };
-    const placement = (value: unknown) => spec.executionPlacementForInput?.(value) ?? spec.executionPlacement;
+    const placement = (value: unknown) => spec.executionPlacementForInput?.(value, undefined, 'ui') ?? spec.executionPlacement;
     expect(placement(input)).toBe('machine');
     expect(placement({ ...input, pickerResult: {
       v: 1, pickerRequestId: 'picker_1', viewId: 'view_1', navigationGeneration: 1,

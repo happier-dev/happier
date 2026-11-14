@@ -605,7 +605,8 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
             findAction: async (execution, signal) => {
               const id = ActionIdSchema.safeParse(execution.actionId);
               if (!id.success || !execution.input || typeof execution.input !== 'object' || Array.isArray(execution.input)) return null;
-              const target = resolveExternalActionMachineTarget({ actionId: id.data, rawInput: execution.input, target: undefined });
+              const target = resolveExternalActionMachineTarget({ actionId: id.data, rawInput: execution.input, target: undefined,
+                context: { surface: 'agent' } });
               if (target?.kind !== 'ready') return null;
               const homeId = typeof execution.input.homeId === 'string' ? execution.input.homeId
                 : getActionSpec(id.data).invocationServerIdForInput?.(execution.input) ?? serverId;

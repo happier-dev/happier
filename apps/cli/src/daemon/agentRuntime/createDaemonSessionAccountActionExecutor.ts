@@ -160,7 +160,6 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
         ...(authority.signal ? { signal: authority.signal } : {}),
       } });
     }
-    let executionPlacement = resolveActionExecutionPlacementForInput(getActionSpec(operation.actionId), operation.input);
     const operationSurface = operation.surface ?? 'agent';
     // An Ask-first plugin install only retains the daemon-evaluated candidate
     // in an ordinary Approval Artifact. The Machine effect is admitted later
@@ -178,6 +177,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       || witness.workDepth !== readAgentStartCallerWorkDepthV1(caller.data)) {
       return refuse('caller_witness_invalid');
     }
+    let executionPlacement = resolveActionExecutionPlacementForInput(getActionSpec(operation.actionId), operation.input, caller.data, operationSurface);
     // Process/Session custody does not authorize borrowing the daemon Account.
     // The exact authenticated Home's owner projection proves same-account use
     // once, at this Action's admission; a shared recipient requires its own

@@ -3,7 +3,7 @@ import { actionInputValidationFailure } from '@happier-dev/protocol/actions/exec
 import { readLocalServiceControlActionRequest } from '@happier-dev/protocol/actions/specs/localServices';
 import { MANAGED_MACHINE_ACTION_IDS_V1, ManagedAcquireInputV1Schema, ManagedMachineActionInputSchemasV1, isManagedRetainedControlInvocation, resolveManagedAcquireReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { SessionSpawnNewActionAgentAuthoringInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
-import type { ActionExecuteResult, ActionExecutorContext, ExternalActionTargetV1, ActionId } from '@happier-dev/protocol/actions';
+import type { ActionExecuteResult, ActionExecutorContext, ExternalActionTargetV1, ActionId, ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions';
 import { readActionSessionTargetField } from '@happier-dev/protocol/actions/executor/sessionTargets';
 import { normalizeSessionTargetV1 } from '@happier-dev/protocol/actions/sessionTargetV1';
 import { PluginSettingsAdministrationActionIdV1Schema, resolvePluginSettingsAdministrationTargetV1 } from '@happier-dev/protocol/plugins/settingsAdministration';
@@ -30,6 +30,7 @@ export async function resolveManagedControlControllerTarget(input: Readonly<{
   rawInput: unknown;
   credentials: StoredCredentials;
   serverHttpBaseUrl: string;
+  authorization?: ExternalActionExecutionAuthorizationV1;
   signal?: AbortSignal;
 }>): Promise<Readonly<{ kind: 'machine'; machineId: string }> | null> {
   if (!isManagedRetainedControlInvocation(input.actionId, input.rawInput)) return null;
@@ -37,7 +38,9 @@ export async function resolveManagedControlControllerTarget(input: Readonly<{
   if (!parsed.success) return null;
   const machine = await readManagedMachine({ credentials: input.credentials, serverHttpBaseUrl: input.serverHttpBaseUrl,
     homeId: parsed.data.homeId,
-    managedId: 'managedMachineId' in parsed.data ? parsed.data.managedMachineId : parsed.data.managedId, ...(input.signal ? { signal: input.signal } : {}) });
+    managedId: 'managedMachineId' in parsed.data ? parsed.data.managedMachineId : parsed.data.managedId,
+    ...(input.authorization ? { authorization: input.authorization } : {}),
+    ...(input.signal ? { signal: input.signal } : {}) });
   return machine.controller ? { kind: 'machine', machineId: machine.controller.machineId } : null;
 }
 
@@ -135,6 +138,7 @@ export function resolveSelectedExternalActionMachineTarget(input: Readonly<{
   rawInput: unknown;
   target: ExternalActionTargetV1 | undefined;
   fallbackMachineId?: string;
+  context?: Pick<ActionExecutorContext, 'actionCaller' | 'surface'>;
 }>): ReturnType<typeof resolveExternalActionMachineTarget> | null {
   const parsed = parseActionTargetInput(input.actionId, input.rawInput);
   if (!parsed.success) return null;
@@ -187,6 +191,7 @@ export function reconcileExternalActionTarget(input: Readonly<{
   rawInput: unknown;
   target: ExternalActionTargetV1 | undefined;
   currentMachineId: string;
+  context?: Pick<ActionExecutorContext, 'actionCaller' | 'surface'>;
 }>): ExternalActionTargetReconciliation {
   const spec = getActionSpec(input.actionId);
   const parsed = parseActionTargetInput(input.actionId, input.rawInput);
@@ -236,7 +241,7 @@ export function reconcileExternalActionTarget(input: Readonly<{
   }
 
   const isExecutionRun = input.actionId.startsWith('execution.run.');
-  const executionPlacement = resolveActionExecutionPlacementForInput(spec, parsed.data);
+  const executionPlacement = resolveActionExecutionPlacementForInput(spec, parsed.data, input.context?.actionCaller, input.context?.surface ?? 'api');
   const canDeriveSessionTarget = executionPlacement === 'session' || executionPlacement === 'client' || isExecutionRun;
   // `action.invoke` is machine-placed so account- and machine-scoped
   // contributions can run without a Session. Its nested plugin input is never
@@ -308,6 +313,7 @@ export function resolveExternalActionMachineTarget(input: Readonly<{
   fallbackMachineId?: string | null;
   /** Authenticated receiving-Machine or linked-Session ownership; input cannot retarget it. */
   ownerMachineId?: string | null;
+  context?: Pick<ActionExecutorContext, 'actionCaller' | 'surface'>;
 }>): Readonly<{ kind: 'ready'; machineId: string }> | Readonly<{ kind: 'rejected'; execution: ActionExecuteResult }> {
   // Selection has not dispatched Start, so a refusal proves no Run was created.
   const reject = (execution: ActionExecuteResult): Readonly<{ kind: 'rejected'; execution: ActionExecuteResult }> => ({
@@ -327,6 +333,7 @@ export function resolveExternalActionMachineTarget(input: Readonly<{
   if (explicitMachineId && explicitMachineId !== machineId) return reject(targetNotLocal('target_machine_selection'));
   const reconciliation = reconcileExternalActionTarget({
     actionId: input.actionId, rawInput: parsed.data, target: input.target, currentMachineId: machineId,
+    ...(input.context ? { context: input.context } : {}),
   });
   return reconciliation.kind === 'rejected' ? reject(reconciliation.execution) : { kind: 'ready', machineId };
 }

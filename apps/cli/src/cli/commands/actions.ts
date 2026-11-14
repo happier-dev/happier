@@ -576,7 +576,7 @@ async function execute(args: string[], deps: ActionsDeps, signal?: AbortSignal, 
   }
   if (await tryHandleApprovalRequestCreated({ envelopeKind: 'actions_invoke', json, result: data,
     executionPlacement: localInvocation ? resolveActionExecutionPlacementForInput(
-      getActionSpec(localInvocation.actionId), resolvedInput) : contributedExecutionPlacement,
+      getActionSpec(localInvocation.actionId), resolvedInput, undefined, sessionMcp ? 'agent' : 'cli') : contributedExecutionPlacement,
   })) return;
   if (json) await printJsonEnvelope({ ok: true, kind: 'actions_invoke', data }); else await writeJsonStdout(data, { pretty: true });
 }

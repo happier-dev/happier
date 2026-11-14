@@ -1315,8 +1315,8 @@ export function createDaemonControlApp({
           const controlControllerTarget = await externalActionApi.resolveManagedControlControllerTarget?.(
             parsed.data.actionId, parsed.data.input, lifetime.signal) ?? null;
           if (requiresManagedMachineDaemonIngress(parsed.data.actionId,
-            resolveActionExecutionPlacementForInput(getActionSpec(parsed.data.actionId), parsed.data.input), controlControllerTarget, parsed.data.input)
-            && requiresOriginalAccountMachineActionProof(parsed.data.actionId, parsed.data.input)) {
+            resolveActionExecutionPlacementForInput(getActionSpec(parsed.data.actionId), parsed.data.input, undefined, surface), controlControllerTarget, parsed.data.input)
+            && requiresOriginalAccountMachineActionProof(parsed.data.actionId, parsed.data.input, { surface })) {
             if (!externalActionApi.executeOriginalAccountAction)
               return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
             return await externalActionApi.executeOriginalAccountAction({

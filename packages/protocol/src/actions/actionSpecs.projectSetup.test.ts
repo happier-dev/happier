@@ -34,8 +34,8 @@ describe('Project preparation Action contracts', () => {
     expect(spec.inputSchema.parse(input)).toEqual(input);
     expect(spec.inputSchema.safeParse({ ...input, heldOperationId: undefined }).success).toBe(false);
     expect(spec.inputSchema.safeParse({ ...input, skipForInvocation: true }).success).toBe(false);
-    expect(resolveActionExecutionPlacementForInput(spec, input)).toBe('account');
-    expect(resolveActionExecutionPlacementForInput(spec, { ...input, consentScope: 'thisTime' })).toBe('machine');
+    expect(resolveActionExecutionPlacementForInput(spec, input, undefined, 'ui')).toBe('account');
+    expect(resolveActionExecutionPlacementForInput(spec, { ...input, consentScope: 'thisTime' }, undefined, 'ui')).toBe('machine');
     for (const surface of ['agent', 'mcp', 'cli'] as const) {
       expect(spec.surfaces[surface]).toBe(true);
       expect(resolveActionApprovalRouting({ actionId: spec.id, spec, input, context: { surface, authority: 'account_automation' },
@@ -74,9 +74,10 @@ describe('Project preparation Action contracts', () => {
     const actionArgs = PROJECT_ACTION_INPUT_SCHEMAS_V1['projects.script.run'].parse({ workspace, selection, choice });
     const presentation = describeApprovalActionFields({ actionId: 'projects.script.run', actionArgs });
     expect(presentation.unrepresentable).toBeNull();
-    for (const [path, value] of Object.entries({ workspace, selection, choice })) {
+    for (const [path, value] of Object.entries({ workspace, selection })) {
       expect(presentation.rows).toContainEqual(expect.objectContaining({ kind: 'value', path, value: JSON.stringify(value) }));
     }
+    expect(presentation.rows).toContainEqual(expect.objectContaining({ kind: 'value', path: 'choice', value: 'Primary' }));
   });
   it('withholds approval when a required checkout cannot be represented', () => {
     const presentation = describeApprovalActionFields({ actionId: 'projects.script.run', actionArgs: { selection: { kind: 'named', name: 'fresh' } } });

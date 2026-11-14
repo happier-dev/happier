@@ -92,6 +92,7 @@ export type ResolveExternalActionTarget = (input: Readonly<{
   actionInput?: unknown;
   target: ExternalActionTargetV1 | undefined;
   currentMachineId: string;
+  context?: Pick<ActionExecutorContext, 'actionCaller' | 'surface'>;
   signal?: AbortSignal;
 }>) => Promise<ExternalActionTargetV1 | null>;
 
@@ -621,11 +622,20 @@ async function executeExternalActionRequest(input: Readonly<{
       ...(envelope.data.requestId === undefined ? {} : { requestId: envelope.data.requestId }) };
   }
 
+  const invocation = requesterContext?.invocation ?? controllerInvocation ?? input.localRootInvocation;
+  // A creation codec is the SOURCE's packet, which may belong to another person.
+  // Surface selects this Account's Require and a named Session opens delegated
+  // decisions, so those facts come only from this Account's own admitted invocation.
+  const ownInvocation = envelope.data.managedCreationCodec ? requesterContext?.invocation : invocation;
+  const actionSurface = sessionActionOrigin || workflowActionOrigin ? 'agent' : apiTokenPrincipal ? 'api'
+    : resolveExternalActionAccountInvocationSurface(accountPrincipal?.authentication.kind, ownInvocation?.surface ?? input.surface);
+  const placementContext = { actionCaller: sessionActionOrigin?.caller ?? invocation?.caller, surface: actionSurface };
   const reconciliation = reconcileExternalActionTarget({
     actionId: actionId.data,
     rawInput: decodedInput,
     target: envelope.data.target,
     currentMachineId: input.currentMachineId,
+    context: placementContext,
   });
   if (reconciliation.kind === 'rejected') {
     return prepare({
@@ -647,6 +657,7 @@ async function executeExternalActionRequest(input: Readonly<{
       actionInput: decodedInput,
       target: reconciliation.target,
       currentMachineId: input.currentMachineId,
+      context: placementContext,
       ...(input.signal ? { signal: input.signal } : {}),
     }));
   } catch (error) {
@@ -813,11 +824,6 @@ async function executeExternalActionRequest(input: Readonly<{
   if (envelope.data.pluginInvocation && !pluginCaller) return prepare({ v: 1, actionId: actionId.data,
     ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}),
     execution: { ok: false, errorCode: 'plugin_mounted_caller_unavailable', error: 'plugin_mounted_caller_unavailable' } });
-  const invocation = requesterContext?.invocation ?? controllerInvocation ?? input.localRootInvocation;
-  // A creation codec is the SOURCE's packet, which may belong to another person.
-  // Surface selects this Account's Require and a named Session opens delegated
-  // decisions, so those facts come only from this Account's own admitted invocation.
-  const ownInvocation = envelope.data.managedCreationCodec ? requesterContext?.invocation : invocation;
   const invocationAttribution = admitExternalActionRequesterInvocationAttributionV1(invocation, admittedAuthorization?.binding,
     pluginCaller ?? invocation?.caller);
   if (!invocationAttribution.ok) {
@@ -920,9 +926,7 @@ async function executeExternalActionRequest(input: Readonly<{
       verifyMachineAdmissionCurrent: originalRootCurrentness,
     } : {}),
     ...(recordActionStartDiagnostic ? { recordActionStartDiagnostic } : {}),
-    surface: pluginCaller ? 'plugin' : sessionActionOrigin || workflowActionOrigin ? 'agent' : apiTokenPrincipal
-      ? 'api'
-      : resolveExternalActionAccountInvocationSurface(accountPrincipal?.authentication.kind, ownInvocation?.surface ?? input.surface),
+    surface: pluginCaller ? 'plugin' : actionSurface,
     authority: unstampedManagedChild || invocation && invocation.authority !== 'present_user'
       ? 'account_automation'
       // The restored private host invocation establishes the person's CLI use

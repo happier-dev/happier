@@ -98,7 +98,7 @@ export function createSessionActionConfirmationAdapter(params: Readonly<{
                 || request.context.defaultSessionId !== params.sessionId
                 || request.context.surface !== 'agent'
                 || request.context.authority !== 'account_automation'
-                || resolveActionExecutionPlacementForInput(getActionSpec(request.actionId), request.input) !== 'session'
+                || resolveActionExecutionPlacementForInput(getActionSpec(request.actionId), request.input, request.context.actionCaller, request.context.surface) !== 'session'
             ) return unavailable;
             const runtimeAccountId = await params.getAuthenticatedAccountId();
             if (!runtimeAccountId) return unavailable;

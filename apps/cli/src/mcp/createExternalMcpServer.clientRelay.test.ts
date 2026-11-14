@@ -31,12 +31,100 @@ import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionExec
   createDeploymentCandidatePublicationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { ed25519 } from '@noble/curves/ed25519';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 
 const credentials = { token: 'mcp-test-token', encryption: null, credentialProvenance: 'stored_session' } as const;
 const workspace = { ok: true, tabs: [], groups: [], splits: [], rootNodeId: 'main', focusedGroupId: 'main', maximizedGroupId: null };
 
 describe('standalone MCP client Action admission', () => {
   afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
+
+  it('keeps waived public-link opening material out of the standalone MCP result', async () => {
+    const accountId = 'mcp-link-owner';
+    const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+    const credentials = { token, encryption: null, credentialProvenance: 'stored_session' } as const;
+    const artifactId = 'mcp-shareable-artifact';
+    const settings = normalizeActionsSettingsV1({ v: 1, actions: {},
+      approvalWaivedSurfaces: { 'artifact.public_link.create': ['mcp'] } });
+    vi.stubEnv('HAPPIER_ACTIONS_SETTINGS_V1', JSON.stringify(settings));
+    const publicShare = { id: 'mcp-public-share', subject: { kind: 'artifact', id: artifactId },
+      expiresAt: null, maxUses: null, useCount: 0, isConsentRequired: false, networkOff: false,
+      createdAt: 1, updatedAt: 1, keyDerivation: 'fragment_v1' };
+    // Home HTTP and the connected App RPC are boundaries. Placement, waived
+    // approval, MCP formatting, daemon ingress and reverse dispatch stay real.
+    const home = createServer((request, response) => {
+      request.resume();
+      const path = new URL(request.url ?? '/', 'http://localhost').pathname;
+      response.setHeader('content-type', 'application/json');
+      if (path === '/v1/account/profile') response.end(JSON.stringify({ id: accountId }));
+      else if (path === '/v1/account/encryption/currentness') response.end(JSON.stringify({
+        mode: 'plain', version: 1, updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null }));
+      else if (path === '/v1/account/encryption') response.end(JSON.stringify({ mode: 'plain', updatedAt: 1 }));
+      else if (path === '/v2/account/settings') response.end(JSON.stringify({ version: 1,
+        content: { t: 'plain', v: { actionsSettingsV1: settings } } }));
+      else if (path === `/v1/artifacts/${artifactId}`) response.end(JSON.stringify({
+        id: artifactId, ownerAccountId: accountId, access: 'owner', encryptionMode: 'plain',
+        header: encodePlainArtifactStoredContent({ kind: 'html', title: 'MCP visual', requestedCapabilities: { network: 'open' } }),
+        body: encodePlainArtifactStoredContent({ body: '<p>MCP visual</p>', mime: 'text/html' }),
+        dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER, headerVersion: 1, bodyVersion: 1,
+        seq: 1, createdAt: 1, updatedAt: 1,
+      }));
+      else if (path === '/v1/public-shares') response.end(JSON.stringify({ publicShare,
+        viewerOrigin: 'https://public.example.test' }));
+      else { response.statusCode = 404; response.end(JSON.stringify({ error: 'unexpected_route' })); }
+    });
+    home.listen(0, '127.0.0.1'); await once(home, 'listening');
+    const homeAddress = home.address();
+    if (!homeAddress || typeof homeAddress === 'string') throw new Error('Missing Home address');
+    const serverHttpBaseUrl = `http://127.0.0.1:${homeAddress.port}`;
+    await writeStoredCredentialsForServerId(configuration.activeServerId, credentials);
+    const deliveries: string[] = [];
+    const clientActionExecute = createClientActionReverseDispatcher(() => ({
+      hasConnectedClientRpcHandler: () => true,
+      callConnectedClientRpc: async (_method, raw, options) => {
+        const dispatch = UiActionDispatchRequestV1Schema.parse(raw);
+        deliveries.push(dispatch.actionId); options.onIssued();
+        // The App owns private link delivery; its published result omits url.
+        return { ok: true, result: { v: 1, execution: { ok: true, result: { publicShare } } } };
+      },
+    }));
+    const { executor } = createCliActionExecutorHarness({ token, credentials, sessionId: '',
+      mode: 'plain', ctx: null, serverId: configuration.activeServerId, serverHttpBaseUrl,
+      actionsSettingsProvider: { getActionsSettings: () => settings },
+    }, { clientActionExecute });
+    const app = createDaemonControlApp({ getChildren: () => [], machineId: 'mcp-link-machine',
+      controlToken: 'private-link-control', stopSession: async () => ({ status: 'not_found' }),
+      spawnSession: async () => ({ type: 'success', sessionId: 'unused' }),
+      requestShutdown: () => {}, onHappySessionWebhook: () => {}, externalActionApi: {
+        currentServerId: configuration.activeServerId, executor,
+        verifyPat: async () => { throw new Error('Account MCP must not use PAT admission'); },
+        resolveTarget: createDaemonExternalActionTargetResolver({ credentials, serverApiUrl: serverHttpBaseUrl }),
+      } });
+    await app.listen({ host: '127.0.0.1', port: 0 });
+    const address = app.server.address();
+    if (!address || typeof address === 'string') throw new Error('Missing daemon address');
+    const { mcp } = runWithServerHttpBaseUrl(serverHttpBaseUrl, () => createExternalMcpServer({
+      credentials, machineId: 'mcp-link-machine',
+      daemonControlTarget: { pid: process.pid, httpPort: address.port, controlToken: 'private-link-control' },
+    }));
+    const client = new Client({ name: 'standalone-public-link', version: '1' });
+    const [serverTransport, clientTransport] = InMemoryTransport.createLinkedPair();
+    try {
+      await mcp.connect(serverTransport); await client.connect(clientTransport);
+      const result = CallToolResultSchema.parse(await client.callTool({ name: 'action_execute',
+        arguments: { actionId: 'artifact.public_link.create', input: { artifactId } } }));
+      expect(result.isError === true).toBe(false);
+      // Assert a boolean so a regression never prints opening material.
+      expect(JSON.stringify(result).includes('#k=')).toBe(false);
+      expect(deliveries).toEqual(['artifact.public_link.create']);
+      const content = result.content.find(item => item.type === 'text');
+      const payload: unknown = content?.type === 'text' ? JSON.parse(content.text) : null;
+      expect(typeof payload === 'object' && payload !== null && 'publicShare' in payload).toBe(true);
+    } finally {
+      await client.close(); await mcp.close(); await app.close();
+      home.closeAllConnections(); await new Promise<void>(resolve => home.close(() => resolve()));
+    }
+  });
 
   it.each([{ denied: false }, { denied: true }])('delivers compact Deploy to the Environment controller before originating Ask (denied=$denied)', async ({ denied }) => {
     const token = `header.${Buffer.from(JSON.stringify({ sub: 'deployment-owner', tokenEpoch: 1,

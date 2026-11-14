@@ -815,7 +815,10 @@ export function resolveApprovalRequestAppExecutionPlacement(approval: ApprovalRe
   if (!spec || !input?.success || spec.workspaceWrite === true
     || spec.approvalInputCustody === 'live_only' || retainedLiveResult) return null;
   const placement = resolveActionExecutionPlacementForInput(spec, input.data,
-    approval.v === 2 ? approval.executionOriginV1.caller : undefined);
+    approval.v === 2 ? approval.executionOriginV1.caller : undefined,
+    approval.v === 2 ? approval.executionOriginV1.surface
+      : approval.createdBy.surface === 'session_agent' ? 'agent'
+        : approval.createdBy.surface === 'system' ? 'ui' : approval.createdBy.surface);
   return placement === 'account' || placement === 'client' ? placement : null;
 }
 

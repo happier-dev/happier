@@ -79,7 +79,7 @@ function parseStrictApprovalFailure(input: Readonly<{
   request: Readonly<{
     actionId: ActionId;
     actionArgs: unknown;
-    executionOriginV1: Pick<ApprovalRequestV2['executionOriginV1'], 'serverId' | 'serverIdentityId' | 'sessionId' | 'target' | 'caller'>;
+    executionOriginV1: Pick<ApprovalRequestV2['executionOriginV1'], 'serverId' | 'serverIdentityId' | 'sessionId' | 'target' | 'caller' | 'surface'>;
   }>;
   failure: ActionExecuteFailure;
 }>, storedRead = false): ActionExecuteFailure | null {
@@ -235,7 +235,7 @@ function parseStrictApprovalFailure(input: Readonly<{
   if (clientDetails.success) {
     const spec = getActionSpec(input.request.actionId);
     const args = (storedRead ? createStoredReadSchema(spec.inputSchema) : spec.inputSchema).safeParse(input.request.actionArgs);
-    if (!args.success || resolveActionExecutionPlacementForInput(spec, args.data, input.request.executionOriginV1.caller) !== 'client') return null;
+    if (!args.success || resolveActionExecutionPlacementForInput(spec, args.data, input.request.executionOriginV1.caller, input.request.executionOriginV1.surface) !== 'client') return null;
     const mayHaveEffect = spec.sideEffectClass !== 'read' && spec.sideEffectClass !== 'none';
     const code = input.failure.errorCode;
     const expected = mayHaveEffect ? code === 'outcome_uncertain'
@@ -263,7 +263,7 @@ function parseStrictApprovalFailure(input: Readonly<{
     if (details.success) {
       const spec = getActionSpec(input.request.actionId);
       const args = (storedRead ? createStoredReadSchema(spec.inputSchema) : spec.inputSchema).safeParse(input.request.actionArgs);
-      if (!args.success || resolveActionExecutionPlacementForInput(spec, args.data, input.request.executionOriginV1.caller) !== 'account'
+      if (!args.success || resolveActionExecutionPlacementForInput(spec, args.data, input.request.executionOriginV1.caller, input.request.executionOriginV1.surface) !== 'account'
         || spec.sideEffectClass === 'read' || spec.sideEffectClass === 'none') return null;
       return { ...input.failure, details: details.data };
     }

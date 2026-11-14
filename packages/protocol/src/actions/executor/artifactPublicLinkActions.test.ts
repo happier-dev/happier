@@ -269,13 +269,15 @@ describe('keyholding Artifact public-link Actions', () => {
     } else expect(bodies[0]).not.toHaveProperty('encryptedDataKey');
   });
 
-  it('selects person and agent placement at the declaration owner', async () => {
+  it.each(['artifact.public_link.create', 'session.public_link.create'] as const)('selects person placement only on person surfaces for %s', async actionId => {
     const { resolveActionExecutionPlacementForInput } = await import('../actionSpecs.js');
-    const spec = getActionSpec('artifact.public_link.create');
-    const input = { artifactId: 'artifact-1' };
-    expect(resolveActionExecutionPlacementForInput(spec, input, { kind: 'host' })).toBe('account');
-    expect(resolveActionExecutionPlacementForInput(spec, input, { kind: 'session' })).toBe('client');
-    expect(resolveActionExecutionPlacementForInput(spec, input, { kind: 'workflowRun' })).toBe('client');
+    const spec = getActionSpec(actionId);
+    for (const surface of ['ui', 'cli', 'mcp', 'agent', 'voice', 'rpc', 'api', 'plugin'] as const) {
+      for (const caller of [undefined, { kind: 'host' }, { kind: 'session' }, { kind: 'workflowRun' }, { kind: 'plugin' }]) {
+        const person = (surface === 'cli' || surface === 'ui') && (!caller || caller.kind === 'host');
+        expect(resolveActionExecutionPlacementForInput(spec, {}, caller, surface), `${surface}/${caller?.kind ?? 'absent'}`).toBe(person ? 'account' : 'client');
+      }
+    }
   });
 
   it('issues a link without a mounted consumer and refuses foreign share revocation', async () => {

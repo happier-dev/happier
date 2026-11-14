@@ -75,7 +75,7 @@ export function resolveApprovalExecutor(request: ApprovalRequest | TargetActionA
   if (isLocalServiceStopActionIdV1(actionId) && origin.caller.kind === 'host'
     && !origin.machineId && !origin.externalActionExecutionAuthorization && !origin.principalId && !origin.credentialId
     && (origin.surface === 'cli' || origin.surface === 'mcp' || origin.surface === 'ui')) {
-    return { kind: 'app', placement: resolveActionExecutionPlacementForInput(spec, input.data, origin.caller) };
+    return { kind: 'app', placement: resolveActionExecutionPlacementForInput(spec, input.data, origin.caller, origin.surface) };
   }
   // Workflow model invitations reserve a slot; the Workflow owns Session start.
   // Keep that caller on its daemon, just as Session publications keep theirs.
@@ -84,7 +84,7 @@ export function resolveApprovalExecutor(request: ApprovalRequest | TargetActionA
     ? 'session'
     : actionId === 'discussion.invite' && origin.caller.kind === 'workflowRun'
       && origin.caller.discussionModelReservation
-      ? 'machine' : resolveActionExecutionPlacementForInput(spec, input.data, origin.caller);
+      ? 'machine' : resolveActionExecutionPlacementForInput(spec, input.data, origin.caller, origin.surface);
   // Native deployment roots and retained managed controls return to their controller, including
   // public read projections that omit private replay authorization. The daemon
   // reads that custody from the original Artifact; location grants no authority.
@@ -107,7 +107,7 @@ export function resolveApprovalExecutor(request: ApprovalRequest | TargetActionA
     // The Account root's reviewed native effects retain their original host.
     // App replay would discard the Machine custody needed by those children.
     if (reviewed.success && reviewed.data.children.some(child => typeof child.action === 'string'
-      && resolveActionExecutionPlacementForInput(getActionSpec(child.action), child.input ?? child.scopeInput, origin.caller) === 'machine')) {
+      && resolveActionExecutionPlacementForInput(getActionSpec(child.action), child.input ?? child.scopeInput, origin.caller, origin.surface) === 'machine')) {
       return { kind: 'daemon', machineId: origin.target.machineId };
     }
   }

@@ -33,7 +33,7 @@ export async function dispatchProjectsDispatch1(inv: Pick<CoreInvocation, 'actio
   if (actionId === PROJECT_STARTER_CREATE_ACTION_ID_V1) {
     const input = parsed.data as AdmittedActionInputById[typeof PROJECT_STARTER_CREATE_ACTION_ID_V1];
     return createProjectFromStarter(input, (childId, childInput) => executeHostChild(childId, childInput,
-      resolveActionExecutionPlacementForInput(getActionSpec(childId), childInput) === 'machine'
+      resolveActionExecutionPlacementForInput(getActionSpec(childId), childInput, ctx.actionCaller, ctx.surface ?? 'ui') === 'machine'
         ? { ...ctx, serverId: input.serverId, externalActionTarget: { kind: 'machine', machineId: input.machineId } }
         : ctx));
   }

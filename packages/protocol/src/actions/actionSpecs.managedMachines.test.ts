@@ -16,7 +16,7 @@ describe('managed Machine host Action contracts', () => {
     const spec = getActionSpec('machines.managed.delete');
     const input = spec.inputSchema.parse({ homeId: 'home', managedId: 'managed', expectedRevision: 1,
       when: 'now', intent: 'delete', reviewedDependencies: true });
-    expect(resolveActionExecutionPlacementForInput(spec, input)).toBe('account');
+    expect(resolveActionExecutionPlacementForInput(spec, input, undefined, 'ui')).toBe('account');
     expect(spec.executionPlacements).toEqual(expect.arrayContaining(['account', 'machine']));
   });
 
@@ -39,7 +39,7 @@ describe('managed Machine host Action contracts', () => {
           : actionId === 'machines.managed.bootstrap.retry' ? { expectedIntentRevision: 1 }
           : {}),
       });
-      expect(resolveActionExecutionPlacementForInput(spec, input)).toBe('account');
+      expect(resolveActionExecutionPlacementForInput(spec, input, undefined, 'ui')).toBe('account');
       expect(spec.executionPlacements).toEqual(expect.arrayContaining(['account', 'machine']));
     }
   });
@@ -48,14 +48,14 @@ describe('managed Machine host Action contracts', () => {
     const controller = { machineId: 'own-native', installationId: 'installation' };
     for (const actionId of ['machines.provisioners.list', 'machines.provisioners.check', 'machines.provisioners.options'] as const) {
       const spec = getActionSpec(actionId);
-      expect(resolveActionExecutionPlacementForInput(spec, { homeId: 'home' })).toBe('account');
-      expect(resolveActionExecutionPlacementForInput(spec, { homeId: 'home', controller })).toBe('machine');
+      expect(resolveActionExecutionPlacementForInput(spec, { homeId: 'home' }, undefined, 'ui')).toBe('account');
+      expect(resolveActionExecutionPlacementForInput(spec, { homeId: 'home', controller }, undefined, 'ui')).toBe('machine');
     }
     const acquire = getActionSpec('machines.managed.acquire');
     for (const selection of [{ kind: 'one-off', homeId: 'home' }, { kind: 'preset', homeId: 'home', id: 'preset', revision: 1 }]) {
-      expect(resolveActionExecutionPlacementForInput(acquire, { selection })).toBe('account');
+      expect(resolveActionExecutionPlacementForInput(acquire, { selection }, undefined, 'ui')).toBe('account');
       const native = selection.kind === 'one-off' ? { selection: { ...selection, controller } } : { selection, controller };
-      expect(resolveActionExecutionPlacementForInput(acquire, native)).toBe('machine');
+      expect(resolveActionExecutionPlacementForInput(acquire, native, undefined, 'ui')).toBe('machine');
     }
   });
 
@@ -101,7 +101,7 @@ describe('managed Machine host Action contracts', () => {
       const input = { homeId: 'home', archived: true, ...selection };
       expect(spec.inputSchema.safeParse(input).success).toBe(true);
       expect(spec.inputSchema.parse(input)).toEqual(input);
-      expect(resolveActionExecutionPlacementForInput(spec, input)).toBe('account');
+      expect(resolveActionExecutionPlacementForInput(spec, input, undefined, 'ui')).toBe('account');
     }
     expect(spec.inputSchema.parse({ homeId: 'home' })).toEqual({ homeId: 'home' });
     expect(spec.inputSchema.safeParse({ homeId: 'home', presetId: '' }).success).toBe(false);
@@ -221,7 +221,7 @@ describe('managed Machine host Action contracts', () => {
   it('places admitted-creation cancellation on the Account without losing its danger or operation contract', () => {
     const spec = getActionSpec('machines.managed.cancel');
     const input = spec.inputSchema.parse({ homeId: 'home', managedId: 'waiting', expectedIntentRevision: 0 });
-    expect(resolveActionExecutionPlacementForInput(spec, input)).toBe('account');
+    expect(resolveActionExecutionPlacementForInput(spec, input, undefined, 'ui')).toBe('account');
     expect(spec).toMatchObject({ safety: 'danger', sideEffectClass: 'danger',
       operation: { version: 1, visibility: 'activity', progress: 'reported' },
       serverTransport: { method: 'POST', path: '/v1/machines/managed/actions/cancel' },

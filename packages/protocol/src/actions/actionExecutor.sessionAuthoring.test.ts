@@ -14,7 +14,7 @@ describe('ordinary editable Session authoring Action', () => {
     expect(spec.safety).toBe('safe');
     expect(spec.sideEffectClass).toBe('external');
     expect(spec.surfaces).toMatchObject({ ui: true, cli: true, agent: true, voice: true, mcp: true });
-    expect(resolveActionExecutionPlacementForInput(spec, input)).toBe('client');
+    expect(resolveActionExecutionPlacementForInput(spec, input, undefined, 'ui')).toBe('client');
     expect(spec.inputSchema.safeParse({ ...input, pluginId: 'caller-credit' }).success).toBe(false);
     expect(spec.inputSchema.safeParse({ seed: { ...input.seed, send: true } }).success).toBe(false);
     expect(spec.inputSchema.safeParse({ sourceSession: { serverId: 'home-a', sessionId: 'session-a' } }).success).toBe(true);
