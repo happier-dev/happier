@@ -1,5 +1,5 @@
-import { accessSync, closeSync, constants as fsConstants, existsSync, openSync, readSync } from 'node:fs';
-import { dirname, isAbsolute, join } from 'node:path';
+import { accessSync, closeSync, constants as fsConstants, existsSync, openSync, readSync, realpathSync } from 'node:fs';
+import { basename, dirname, isAbsolute, join } from 'node:path';
 
 import {
   BUNDLED_AGENT_CONTRIBUTION_IDENTITIES,
@@ -460,23 +460,30 @@ function resolveAgentCliSystemCommand(
 ): string | null {
   const binaryNames = [runtimeSpec.binaryName, ...(runtimeSpec.alternativeBinaryNames ?? [])];
   const candidates = binaryNames.map((binaryName) => ({
+    binaryName,
     knownUserCommand: resolveCommandInKnownUserDirs(runtimeSpec, binaryName, processEnv),
     pathCommand: resolveExecutableCommand(binaryName, { env: processEnv, cwd: runtimeOptions.cwd }),
   }));
-  if (runtimeSpec.systemCommandResolutionStrategy !== 'known-user-first-runnable') {
-    for (const candidate of candidates) {
-      const command = candidate.pathCommand ?? candidate.knownUserCommand;
-      if (command) return command;
-    }
-    return null;
-  }
-
+  const knownUserFirst = runtimeSpec.systemCommandResolutionStrategy === 'known-user-first-runnable';
   for (const candidate of candidates) {
-    for (const command of [candidate.knownUserCommand, candidate.pathCommand]) {
+    const commands = knownUserFirst
+      ? [candidate.knownUserCommand, candidate.pathCommand]
+      : [candidate.pathCommand, candidate.knownUserCommand];
+    for (const command of commands) {
       if (!command) continue;
-      if (isAgentCliPathRunnable(command, processEnv, runtimeOptions)) {
-        return command;
+      if (candidate.binaryName !== runtimeSpec.binaryName) {
+        // Alternative names are aliases of the declared CLI, not independent
+        // products. Cursor's installer, for example, links `agent` to
+        // `cursor-agent`; another product can also own `agent` on PATH.
+        // Resolve filesystem identity without executing a potentially
+        // interactive program during detection, install checks or startup.
+        try {
+          const normalize = (name: string) => process.platform === 'win32'
+            ? name.toLowerCase().replace(/\.(exe|cmd|bat|com)$/i, '') : name;
+          if (normalize(basename(realpathSync(command))) !== normalize(runtimeSpec.binaryName)) continue;
+        } catch { continue; }
       }
+      if (!knownUserFirst || isAgentCliPathRunnable(command, processEnv, runtimeOptions)) return command;
     }
   }
   return null;

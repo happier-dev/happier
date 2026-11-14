@@ -20,6 +20,33 @@ import {
   resolveAgentCliManagedCommandPathForRuntime,
 } from './resolution';
 
+describe('Agent CLI alternative executable identity', () => {
+  it.skipIf(process.platform === 'win32')('rejects an unrelated agent and accepts the vendor alias to cursor-agent', () => {
+    const root = mkdtempSync(join(tmpdir(), 'cursor-executable-identity-'));
+    const bin = join(root, 'bin');
+    const vendor = join(root, 'vendor', 'cursor-agent');
+    const alias = join(bin, 'agent');
+    const runtime = { id: 'cursor', title: 'Cursor', binaryName: 'cursor-agent',
+      alternativeBinaryNames: ['agent'], sourcePreferenceDefault: 'system-first',
+      managedInstall: null, manualInstallKind: 'none', manualInstallRecipes: null,
+      acceptsJavaScriptFileOverride: false } satisfies AgentCliRuntimeDescriptor;
+    const resolve = () => resolveAgentCliCommandForRuntime(runtime, { processEnv: { HOME: root, PATH: bin } });
+    try {
+      mkdirSync(bin, { recursive: true });
+      // A real executable boundary: this must never be invoked to identify it.
+      writeFileSync(alias, '#!/bin/sh\nexit 99\n', { mode: 0o755 });
+      expect(resolve()).toBeNull();
+      rmSync(alias);
+      mkdirSync(dirname(vendor), { recursive: true });
+      writeFileSync(vendor, '#!/bin/sh\nexit 99\n', { mode: 0o755 });
+      symlinkSync(vendor, alias);
+      expect(resolve()).toEqual({ source: 'system', command: alias });
+      writeFileSync(join(bin, 'cursor-agent'), '#!/bin/sh\nexit 99\n', { mode: 0o755 });
+      expect(resolve()).toEqual({ source: 'system', command: join(bin, 'cursor-agent') });
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+});
+
 const originalPlatformDescriptor = Object.getOwnPropertyDescriptor(process, 'platform');
 
 it.skipIf(process.platform === 'win32')('member selection prefers local user and managed code before explicitly shared managed code', () => {

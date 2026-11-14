@@ -69,6 +69,15 @@ JavaScript runtime, while the current native release binary does not.
 
 ## Runtime contract
 
+In 0.3 development source, native Agent CLI detection, install checks and launch
+share `resolveAgentCliCommandForRuntime` in `cli-common`. An alternative binary
+name must resolve through the filesystem to the declared primary filename.
+Cursor's `agent` alias therefore selects its vendor-installed `cursor-agent`
+target, while an unrelated `agent` on PATH leaves Cursor unavailable. This
+qualification starts no process and opens no terminal; explicit binary overrides
+remain deliberate user selections. The vendor layout is documented by the
+[Cursor installer](https://cursor.com/install).
+
 In current development source, `scripts/pipeline/release/bun-standalone.entitlements.plist`
 owns the macOS hardened-runtime permissions for shipped Bun executables. Standalone
 signing consumes it directly. Desktop sidecar preparation derives
