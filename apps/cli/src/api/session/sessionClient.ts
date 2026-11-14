@@ -142,6 +142,7 @@ import {
 import type { SessionCatchUpRequest } from './sessionChangesSyncOnConnect';
 import { createSessionClientMaterializationRuntime } from './client/lifecycle/createSessionClientMaterializationRuntime';
 import { buildOutboundSessionMessagePayload } from './client/transport/outboundSessionMessagePayload';
+import { redactTranscriptSecrets } from './client/transport/transcriptSecretRedaction';
 import { createSessionClientUpdateRuntime } from './client/transport/createSessionClientUpdateRuntime';
 import {
     createRuntimeSessionClientDurableMutationOutbox,
@@ -4204,9 +4205,11 @@ export class ApiSessionClient extends EventEmitter {
                     onOwnerSnapshotContextChanged: (refreshed) => { Object.assign(admission, refreshed); },
                     mutation: {
                         kind: 'agentState',
+                        // Agent state carries Agent-authored tool input (permission request
+                        // arguments); every commit passes the transcript redactor once.
                         update: (state) => {
                             const next = handler(state);
-                            return this.agentStateRequestStore?.applyAppliedCompletions(next) ?? next;
+                            return redactTranscriptSecrets(this.agentStateRequestStore?.applyAppliedCompletions(next) ?? next);
                         },
                     },
                 }));

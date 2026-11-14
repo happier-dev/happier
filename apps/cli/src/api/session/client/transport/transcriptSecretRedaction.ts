@@ -1,7 +1,8 @@
 /**
  * Exact-value redaction of host-minted secrets that an Agent can read and echo into its
- * transcript. Applied once, at the Session message writer (`buildOutboundSessionMessagePayload`),
- * before encryption or plain storage.
+ * transcript. Applied once at each Session writer of Agent-authored content, before encryption or
+ * plain storage: the message writer (`buildOutboundSessionMessagePayload`) and the Agent-state commit
+ * (`ApiSessionClient.updateAgentState`, which carries permission request arguments).
  *
  * Labeled mitigation for 127.0.0.1 listeners, which have no kernel peer proof: the Windows
  * Session MCP transport, plugin-hosted loopback MCP servers and the session hook server. Their

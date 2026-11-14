@@ -19,6 +19,7 @@ import { buildSessionMetadataEnvelopeFields } from '@/session/metadata/buildSess
 import type { Session } from '@/api/types';
 import { createSessionClientDurableMutationPersistenceContext, parseRuntimeSessionClientDurableMutation } from './client/transport/mutations/sessionClientDurableMutationPersistence';
 import { ApiSessionClient, type ApiSessionClientOptions } from './sessionClient';
+import { registerTranscriptSecret, TRANSCRIPT_SECRET_REDACTED } from './client/transport/transcriptSecretRedaction';
 import { createSessionScopedSocketConnection } from './sockets';
 
 // Substitute only the Home HTTP/Socket.IO boundaries. Request ownership, the
@@ -502,6 +503,39 @@ describe('ApiSessionClient exact request settlement recovery', () => {
       reloadConfiguration();
     }
   }, 60_000);
+
+  it('commits a permission request carrying a live registered secret to Agent state only in redacted form', async () => {
+    // Fake host-minted secret: an Agent that read it may echo it into a tool call it asks to approve.
+    const secret = 'fake-live-hook-secret-0123456789abcdef';
+    const unregister = registerTranscriptSecret(secret);
+    const session = createOwnerSession({ id: 'redacted-permission-request', agentState: {} });
+    const row = createOwnerRow(session);
+    serveSession(row);
+    const client = createClient(session, [createSocket()]);
+    const store = new AgentStateRequestStore({ session: client, logPrefix: '[RedactedPermission]' });
+    client.bindAgentStateRequestStore(store);
+    const coordinator = createPermissionRequestCoordinator<{ decision: string }>({ store });
+    try {
+      const toolInput = { command: `curl -H 'x-happier-hook-secret: ${secret}' http://127.0.0.1/hook` };
+      const pending = coordinator.requestDecision({ requestId: 'leaky', toolName: 'Bash', toolInput });
+      void pending.catch(() => undefined);
+      await vi.waitFor(() => expect(JSON.parse(row.agentState ?? '{}').requests?.leaky).toBeDefined());
+      expect(row.agentState).not.toContain(secret);
+      expect(JSON.parse(row.agentState ?? '{}').requests.leaky.arguments).toEqual({
+        command: `curl -H 'x-happier-hook-secret: ${TRANSCRIPT_SECRET_REDACTED}' http://127.0.0.1/hook`,
+      });
+      const context = coordinator.getResponseContext('leaky');
+      expect(context).not.toBeNull();
+      await expect(coordinator.completeResponse({ context: context!, acknowledgeDecisionApplication: async () => undefined,
+        completion: { result: { decision: 'approved' }, completedRequest: { status: 'approved', decision: 'approved' } },
+      })).resolves.toBe(true);
+      await expect(pending).resolves.toEqual({ decision: 'approved' });
+      const saved = JSON.parse(row.agentState ?? '{}');
+      expect(saved.requests).not.toHaveProperty('leaky');
+      expect(saved.completedRequests.leaky).toMatchObject({ status: 'approved' });
+      expect(row.agentState).not.toContain(secret);
+    } finally { store.dispose(); unregister(); }
+  });
 
   it.each(['observed-abort', 'native-decision'] as const)('settles actual deferred permission composition after queued publication (%s)', async mode => {
     const session = createOwnerSession({ id: `deferred-permission-${mode}`, agentState: {} });
