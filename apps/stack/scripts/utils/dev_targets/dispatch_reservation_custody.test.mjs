@@ -78,6 +78,45 @@ async function liveController(t, record, locked) {
   return { child, closed };
 }
 
+for (const { staleWorkerIdentity, sweep } of [{ staleWorkerIdentity: false, sweep: false },
+  { staleWorkerIdentity: true, sweep: false }, { staleWorkerIdentity: false, sweep: true }]) {
+test(`a crashed remote launcher ${staleWorkerIdentity ? 'does not signal a mismatched worker identity' : sweep ? 'is cancelled by the next custody sweep' : 'retains a handle that cancels its surviving worker'}`, { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await reservationReader(t);
+  const pidFile = fixture.path('remote-exec/native-crashed-launcher.pid');
+  const releaseFile = fixture.path('release');
+  const custody = new URL('./remote_execution_custody.sh', import.meta.url).pathname;
+  const child = spawn('/bin/bash', [custody, 'run', pidFile, 'native-crashed-launcher',
+    '/bin/sh', '-c', 'printf ready; while [ -d "${1%/*}" ] && [ ! -f "$1" ]; do sleep 0.1; done', 'payload', releaseFile], {
+    env: { ...process.env, HAPPIER_REMOTE_EXEC_LIFELINE: '0', TMPDIR: fixture.root },
+  });
+  const closed = once(child, 'close');
+  child.stderr.resume();
+  t.after(async () => { await writeFile(releaseFile, 'release').catch(error => { if (error.code !== 'ENOENT') throw error; }); await closed; });
+  await once(child.stdout, 'data');
+  const record = (await readFile(pidFile, 'utf8')).trim().split('\n');
+  assert.ok(record.length >= 3, 'custody must exist before the payload announces readiness');
+  const workerPid = Number(record[1]);
+  if (staleWorkerIdentity) {
+    record[3] = '1';
+    await writeFile(pidFile, record.join('\n') + '\n');
+  }
+  assert.doesNotThrow(() => process.kill(workerPid, 0));
+  const exited = once(child, 'exit');
+  child.kill('SIGKILL'); // OS boundary: crash only this test-owned launcher.
+  await exited;
+  const cancelled = spawnSync('/bin/bash', sweep
+    ? [custody, 'run', fixture.path('remote-exec/native-next.pid'), 'native-next', '/bin/true']
+    : [custody, 'cancel', pidFile, 'native-crashed-launcher'], {
+    encoding: 'utf8', env: { ...process.env, HAPPIER_REMOTE_EXEC_LIFELINE: '0', TMPDIR: fixture.root },
+  });
+  const observed = spawnSync('ps', ['-o', 'stat=', '-p', String(workerPid)], { encoding: 'utf8' });
+  assert.equal(cancelled.status, 0);
+  const stopped = observed.status !== 0 || observed.stdout.trim().startsWith('Z');
+  assert.equal(Boolean(stopped), !staleWorkerIdentity,
+    'cancellation must require the recorded worker birth identity after launcher death');
+});
+}
+
 test('a live legacy controller with an unlocked reservation is not an orphan', { skip: process.platform !== 'linux' }, async t => {
   const fixture = await reservationReader(t);
   const record = fixture.path('worker.active.legacy');

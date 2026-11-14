@@ -605,7 +605,13 @@ job-count ceiling. Process and scratch custody retain their separate lifecycle o
 In current 0.3 development, the controller alone holds the dispatch reservation
 lifetime lock; transport and control children close their inherited descriptor.
 The existing custody sweep can therefore retire a remote execution after its
-controller dies. Workspace captures use the same owner-stamped allocation and
+controller dies. The remote wrapper publishes its custody record before starting
+the worker. Before executing the payload, the worker atomically adds its process
+group and kernel start identity to that same record. If the wrapper crashes,
+explicit cancellation and the orphan sweep use the surviving worker's recorded
+identity; a missing wrapper alone no longer discards custody. Legacy records
+without a worker start identity retain their existing live-wrapper cancellation.
+Workspace captures use the same owner-stamped allocation and
 abandoned-staging reaper as publication staging. The next capture reclaims
 captures whose recorded owner has departed; live, uncertain and foreign-host
 owners are retained. Capture scans do not apply legacy staging rules to other

@@ -20,7 +20,7 @@ exec_in_jobs_slice() {
     && systemctl --user show-environment >/dev/null 2>&1 \
     && [ "$(systemctl --user show happier-jobs.slice --property=LoadState --value 2>/dev/null || true)" = loaded ]; then
     jobs_slice_token=$(heavyweight_process_token "$$")
-    exec systemd-run --expand-environment=no "--unit=$(jobs_scope_unit "$$" "$jobs_slice_token")" \
+    exec systemd-run --expand-environment=no "--unit=$(jobs_scope_unit "${jobs_scope_owner_pid:-$$}" "${jobs_scope_owner_token:-$jobs_slice_token}")" \
       --user --scope --quiet --slice=happier-jobs.slice "--nice=$jobs_slice_nice" -- "$@"
   fi
 

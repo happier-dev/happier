@@ -3302,6 +3302,7 @@ function installRemoteCustody(repoDir) {
   copyFileSync(fileURLToPath(new URL('./native_execution_signals.sh', import.meta.url)), join(directory, 'native_execution_signals.sh'));
   mkdirSync(join(repoDir, 'apps/stack/scripts/utils/proc'), { recursive: true });
   copyFileSync(fileURLToPath(new URL('../proc/native_process_identity.sh', import.meta.url)), join(repoDir, 'apps/stack/scripts/utils/proc/native_process_identity.sh'));
+  copyFileSync(fileURLToPath(new URL('../proc/native_process_priority.sh', import.meta.url)), join(repoDir, 'apps/stack/scripts/utils/proc/native_process_priority.sh'));
   const hostState = join(repoDir, 'apps/stack/scripts/utils/proc/native_host_admission_state.sh');
   if (!existsSync(hostState)) copyFileSync(fileURLToPath(new URL('../proc/native_host_admission_state.sh', import.meta.url)), hostState);
 }

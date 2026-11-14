@@ -52,6 +52,23 @@ signal_member() {
   return "$native_signal_result"
 }
 
+publish_record() {
+  # Publish one complete identity before the payload starts. Readers must never
+  # observe a truncated rewrite of the execution's sole custody record.
+  printf '%s\n%s\n%s\n%s\n' "$1" "$2" "$3" "$4" > "$pid_file.next" &&
+    mv -f -- "$pid_file.next" "$pid_file"
+}
+
+if [ "$mode" = payload ]; then
+  wrapper_pid=$1
+  wrapper_token=$2
+  shift 2
+  publish_record "$wrapper_pid" "$$" "$wrapper_token" "$(heavyweight_process_token "$$")" || exit 1
+  jobs_scope_owner_pid=$wrapper_pid
+  jobs_scope_owner_token=$wrapper_token
+  exec_worker_payload "$@"
+fi
+
 finish_group_cancellation() {
   if group_has_current_member "$1" "$2"; then
     signal_member "$3" KILL pgid "$1" "$2"
@@ -66,6 +83,23 @@ cancel_record() {
   [ -f "$pid_file" ] || return 0
   pid=$(sed -n '1p' "$pid_file")
   case "$pid" in ''|*[!0-9]*) return 0 ;; esac
+  recorded_token=$(sed -n '3p' "$pid_file")
+  group=$(sed -n '2p' "$pid_file")
+  group_token=$(sed -n '4p' "$pid_file")
+  if heavyweight_process_is_provably_retired "$pid" "${recorded_token:--}"; then
+    # A crashed wrapper cannot invalidate its still-current worker identity.
+    # Legacy records without that witness cannot authorize a group signal.
+    case "$group:$group_token" in ''|*[!0-9:]*|:*|*:) rm -f -- "$pid_file"; return 0 ;; esac
+    if heavyweight_process_is_current "$group" "$group_token" &&
+        [ "$(ps -p "$group" -o pgid= 2>/dev/null | tr -d ' ')" = "$group" ]; then
+      members=$(group_identities "$group")
+      signal_member "$reason" TERM pgid "$group" "$members"
+      sleep 2
+      finish_group_cancellation "$group" "$members" "$reason" || return $?
+    fi
+    rm -f -- "$pid_file"
+    return 0
+  fi
   command=$(ps -p "$pid" -o command= 2>/dev/null || true)
   case "$command" in *"$execution_id"*) ;; *) rm -f -- "$pid_file"; return 0 ;; esac
   recorded_token=$(sed -n '3p' "$pid_file")
@@ -230,7 +264,8 @@ for pid_file in "${requested_pid_file%/*}"/native-*.pid; do
     printf '[preferred-execution] reaping orphaned remote execution %s\n' "$execution_id" >&2
     cancel_record reaper_orphan
   elif [ -z "$parent" ]; then
-    rm -f -- "$pid_file"
+    # Wrapper loss does not prove its recorded worker group has finished.
+    cancel_record reaper_orphan
   fi
 done
 pid_file=$requested_pid_file
@@ -238,7 +273,8 @@ execution_id=$requested_execution_id
 HAPPIER_REMOTE_EXECUTION_ID=$execution_id
 export HAPPIER_REMOTE_EXECUTION_ID
 mkdir -p -- "${pid_file%/*}"
-printf '%s\n' "$$" > "$pid_file"
+wrapper_token=$(heavyweight_process_token "$$")
+publish_record "$$" '' "$wrapper_token" '' || exit 1
 remote_child_pid=
 lifetime_pid=
 lifetime_token=
@@ -330,19 +366,17 @@ if [ "$lifetime_stdin" = 1 ]; then
     control_pipe="$pid_file.stdin"
     mkfifo -m 600 "$control_pipe" || exit 1
     exec 4<> "$control_pipe"
-    (exec 3<&- 4>&-; exec_worker_payload "$@" < "$control_pipe") &
+    (exec 3<&- 4>&-; exec bash "${BASH_SOURCE[0]}" payload "$pid_file" "$execution_id" "$$" "$wrapper_token" "$@" < "$control_pipe") &
   else
     # The lifeline belongs only to the custody reader. A payload's descendant
     # tree must not inherit this private descriptor as it launches more work.
-    (exec 3<&-; exec_worker_payload "$@" </dev/null) &
+    (exec 3<&-; exec bash "${BASH_SOURCE[0]}" payload "$pid_file" "$execution_id" "$$" "$wrapper_token" "$@" </dev/null) &
   fi
 else
-  exec_worker_payload "$@" <&0 &
+  bash "${BASH_SOURCE[0]}" payload "$pid_file" "$execution_id" "$$" "$wrapper_token" "$@" <&0 &
 fi
 remote_child_pid=$!
 command_temp_group=$remote_child_pid
-wrapper_token=$(heavyweight_process_token "$$")
-printf '%s\n%s\n%s\n' "$$" "$remote_child_pid" "$wrapper_token" > "$pid_file"
 if [ "$lifetime_stdin" = 1 ]; then
   (
     [ -z "$control_pipe" ] || exec 4>&-
