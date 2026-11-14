@@ -10,7 +10,9 @@ import {
   createSessionDataKeyHydrationPlan,
   hydrateSessionDataKeys,
   readSessionDataKeyCredentialKind,
+  type SessionDataKeyHydrationState,
 } from '@/sync/encryption/sessionDataKeyHydration';
+import { deriveSessionContentAvailability, readBlockedSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
 import { readSessionAccessRole } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { readSessionDetailAccessProjectionVersion } from '@/sync/api/session/sessionDetailAccessProjection';
 import { readSessionByIdHttp } from '@/sync/engine/sessions/sessionByIdHttp';
@@ -39,7 +41,7 @@ export type ScopedSessionCryptoContext =
   | Readonly<{ encryptionMode: 'plain'; sessionDataKey: null }>
   | Readonly<{ encryptionMode: 'e2ee'; sessionDataKey: Uint8Array }>
   | Readonly<{ encryptionMode: 'legacy_fallback'; sessionDataKey: null }>
-  | Readonly<{ encryptionMode: 'unknown'; sessionDataKey: null }>;
+  | Readonly<{ encryptionMode: 'unknown'; sessionDataKey: null; hydrationState?: SessionDataKeyHydrationState }>;
 
 async function hydrateScopedSessionCryptoContext(params: Readonly<{
   sessionId: string;
@@ -70,7 +72,7 @@ async function hydrateScopedSessionCryptoContext(params: Readonly<{
   if (state === 'legacy_fallback_ready') return { encryptionMode: 'legacy_fallback', sessionDataKey: null };
   const sessionDataKey = hydration.sessionKeys.get(params.sessionId);
   return state === 'ready' && sessionDataKey ? { encryptionMode: 'e2ee', sessionDataKey }
-    : { encryptionMode: 'unknown', sessionDataKey: null };
+    : { encryptionMode: 'unknown', sessionDataKey: null, ...(state ? { hydrationState: state } : {}) };
 }
 
 /**
@@ -244,7 +246,13 @@ export async function resolveScopedSessionEncryption(params: Readonly<{
   });
   assertCurrent();
   const sessionEncryption = installed ? encryption.getSessionEncryption(sessionId) : null;
-  if (!sessionEncryption) throw createSessionEncryptionUnavailableError(sessionId, 'scoped_session_encryption_unavailable');
+  if (!sessionEncryption) {
+    // Keep the hydration owner's settled reason (envelope pending or needing repair).
+    const availability = cryptoContext.encryptionMode === 'unknown' && cryptoContext.hydrationState
+      ? readBlockedSessionContentAvailability(deriveSessionContentAvailability({ hydrationState: cryptoContext.hydrationState }))
+      : null;
+    throw createSessionEncryptionUnavailableError(sessionId, 'scoped_session_encryption_unavailable', availability ?? undefined);
+  }
   return sessionEncryption;
 }
 

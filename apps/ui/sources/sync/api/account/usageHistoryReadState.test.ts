@@ -21,6 +21,7 @@ it('keeps explicit HTTP refusal codes and unsupported-shape failures without car
 it.each([
     { code: 'forbidden', error: new SessionPartsHttpError(403, { error: 'forbidden' }) },
     { code: 'scoped_session_encryption_unavailable', error: createSessionEncryptionUnavailableError('denied', 'scoped_session_encryption_unavailable') },
+    { code: 'encrypted_access_pending', error: createSessionEncryptionUnavailableError('denied', 'scoped_session_encryption_unavailable', 'encrypted_access_pending') },
 ])('keeps lasting Session refusals as quiet partial coverage and transient failures retryable ($code)', ({ code, error }) => {
     const history = new UsageHistoryEntry();
     history.coverage(new Set(['denied', 'unsupported', 'transient']), 0);

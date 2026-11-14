@@ -14,10 +14,14 @@ async function resolveScopedSessionDataKey(
 
 const runtimeFetchMock = vi.hoisted(() => vi.fn());
 
-vi.mock('@/utils/system/runtimeFetch', () => ({
-  runtimeFetch: (...args: unknown[]) => runtimeFetchMock(...args),
-  get runtimeFetchManualResponse() { return this.runtimeFetch; },
-}));
+vi.mock('@/utils/system/runtimeFetch', () => {
+    // Named first so the getter's `this` is this object, not vi.mock's Partial<unknown> factory type.
+    const mocked = {
+      runtimeFetch: (...args: unknown[]) => runtimeFetchMock(...args),
+      get runtimeFetchManualResponse() { return this.runtimeFetch; },
+    };
+    return mocked;
+});
 
 const validSessionById = {
   id: 'session-1',
@@ -46,6 +50,22 @@ describe('resolveScopedSessionDataKey', () => {
     } catch {
       // ignore
     }
+  });
+
+  it.each([
+    { name: 'a recipient without its envelope', viewerRole: 'recipient' as const, envelope: null, availability: 'encrypted_access_pending' },
+    { name: 'an envelope this Account cannot open', viewerRole: 'recipient' as const, envelope: 'AAAA', availability: 'encrypted_access_needs_repair' },
+  ])('fails closed with the content availability of $name', async ({ viewerRole, envelope, availability }) => {
+    const { Encryption } = await import('@/sync/encryption/encryption');
+    const encryption = await Encryption.create(new Uint8Array(32).fill(7));
+    const { resolveScopedSessionEncryption } = await import('./resolveScopedSessionDataKey');
+    const context = { scope: 'scoped', encryption, credentials: { token: 't', secret: 's' }, targetServerId: 'server-a',
+      targetServerUrl: 'https://server-a.test', token: 't', timeoutMs: 1000 } as unknown as Parameters<typeof resolveScopedSessionEncryption>[0]['context'];
+    const failure = await resolveScopedSessionEncryption({ context, sessionId: 'team-session', admittedSession: {
+      id: 'team-session', encryptionMode: 'e2ee', dataEncryptionKey: envelope, viewerRole, isCurrent: () => true,
+    } }).catch((error: unknown) => error);
+    // The scoped code stays; the typed reason is the canonical availability, never plaintext.
+    expect(failure).toMatchObject({ code: 'scoped_session_encryption_unavailable', contentAvailability: availability });
   });
 
   it('retires one caller-owned Session key read without cancelling another reader', async () => {

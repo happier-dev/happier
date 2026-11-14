@@ -37,7 +37,10 @@ export function readUsageHistoryFailure(error: unknown): Readonly<{
 }> {
     const httpStatus = error && typeof error === 'object' && 'httpStatus' in error && typeof error.httpStatus === 'number'
         ? error.httpStatus : error && typeof error === 'object' && 'status' in error && typeof error.status === 'number' ? error.status : undefined;
-    const code = error && typeof error === 'object' && 'errorCode' in error && typeof error.errorCode === 'string' ? error.errorCode
+    // A settled content availability (envelope pending/needing repair) is the Session's typed reason.
+    const code = error && typeof error === 'object' && 'contentAvailability' in error && typeof error.contentAvailability === 'string'
+        ? error.contentAvailability
+        : error && typeof error === 'object' && 'errorCode' in error && typeof error.errorCode === 'string' ? error.errorCode
         : error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
     const bodyCode = error instanceof SessionPartsHttpError && error.body && typeof error.body === 'object'
         && 'code' in error.body && typeof error.body.code === 'string' ? error.body.code : undefined;
