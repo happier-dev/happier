@@ -72,7 +72,9 @@ function familyState(state: ManagedInventorySectionsState, kind: 'configuredChec
       </ItemGroup>
     );
   }
-  // Partly read (a Machine not read yet) is not "none": the inventory's own coverage line, never the empty scene.
+  // Partly read with nothing listed (a Machine not read yet) is not "none": the inventory's own coverage line, never the
+  // empty scene. With rows listed, a partial read is about their facts (a Check's results), so nothing is added.
+  if (family.result.rows.length > 0) return null;
   return <ManagedInventoryCoverage families={[family]} testIDPrefix={testID} />;
 }
 

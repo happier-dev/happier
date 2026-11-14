@@ -90,3 +90,23 @@ it('says some watched services have not loaded while a Machine is unread, never 
   );
   expect(screen.findHostByTestId('services.watched.empty')).toBeNull();
 });
+
+// Partly read results (a Check's health history) are facts of listed rows, not missing rows: no "haven't loaded" line.
+it('lists saved Checks without a "haven\'t loaded" line while only their results are partly read', async () => {
+  const { ServicesChecksView } = await import('./ServicesChecks');
+  const { createAutomationDefinitionSummary } = await import('@/sync/domains/automations/automationDefinitionProjection');
+  const { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1 } = await import('@happier-dev/protocol/deployments/healthCheckV1');
+  const summary = (id: string) => createAutomationDefinitionSummary({ id, name: `Check ${id}`, description: null, enabled: true,
+    targetType: 'existingSession', existingSessionId: 'session-1', templateVersion: 1, lastRunAt: null, createdAt: 1, updatedAt: 1, assignments: [],
+    triggers: [{ id: `33333333-3333-4333-8333-33333333333${id}`, revision: 1, enabled: true, createdAt: 1, updatedAt: 1, kind: 'pluginEvent',
+      eventRef: { pluginId: HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1, localId: 'health-status' }, sourceSelectorId: '22222222-2222-4222-8222-222222222222',
+      sourceContractVersion: 1, observation: { kind: 'checkpointedPull', watcher: null }, sourceStatus: null, sourceCatalogStatus: null }] } as never);
+  await account.restore({ serverIdentityId: 'srv_services_checks_results', machines: [] });
+  const scope = storage.getState().settingsScope!;
+  await act(async () => { storage.setState({ automations: { '1': summary('1'), '2': summary('2') }, isDataReady: true, automationDefinitionNextCursor: null }); });
+  const screen = await renderScreen(<InboxArtifactSourceBoundary>
+    <ServicesChecksView scope={scope} presented selectedKey={null} onSelect={NO_COUNT} onSelectedRow={NO_COUNT} onCount={NO_COUNT} />
+  </InboxArtifactSourceBoundary>);
+  await vi.waitFor(() => expect(screen.getTextContent()).toContain('Check 2'));
+  expect(screen.findHostByTestId('services.checks.coverage.partial')).toBeNull();
+});
