@@ -1,5 +1,5 @@
 diff --git a/dist/cjs/modules/useElementLayout/index.js b/dist/cjs/modules/useElementLayout/index.js
-index f302870..3b15e7f 100644
+index f3028704292..a4b88afdf98 100644
 --- a/dist/cjs/modules/useElementLayout/index.js
 +++ b/dist/cjs/modules/useElementLayout/index.js
 @@ -4,7 +4,6 @@ var _interopRequireDefault = require("@babel/runtime/helpers/interopRequireDefau
@@ -10,7 +10,7 @@ index f302870..3b15e7f 100644
  var _canUseDom = _interopRequireDefault(require("../canUseDom"));
  /**
   * Copyright (c) Nicolas Gallagher.
-@@ -18,6 +17,60 @@ var _canUseDom = _interopRequireDefault(require("../canUseDom"));
+@@ -18,6 +17,81 @@ var _canUseDom = _interopRequireDefault(require("../canUseDom"));
  var DOM_LAYOUT_HANDLER_NAME = '__reactLayoutHandler';
  var didWarn = !_canUseDom.default;
  var resizeObserver = null;
@@ -41,14 +41,33 @@ index f302870..3b15e7f 100644
 +    left
 +  };
 +};
++// A window resize delivers every changed View in one ResizeObserver callback. Measuring each in its own
++// setTimeout(0) ran one task (and one React update) per View: ~45 per resize step on a Home. All queued
++// measurements now run in one deferred pass: every geometry read first, then every onLayout callback,
++// so a callback's synchronous writes cannot force a layout for the next read.
++var pendingMeasurements = [];
++function flushMeasurements() {
++  var queued = pendingMeasurements;
++  pendingMeasurements = [];
++  var report = [];
++  for (var i = 0; i < queued.length; i++) {
++    var deliver = queued[i]();
++    if (deliver) report.push(deliver);
++  }
++  for (var j = 0; j < report.length; j++) report[j]();
++}
++function queueMeasurement(measure) {
++  pendingMeasurements.push(measure);
++  if (pendingMeasurements.length === 1) setTimeout(flushMeasurements, 0);
++}
 +function measureInParent(node, callback) {
 +  var parent = node.parentNode;
 +  if (parent == null) {
 +    return;
 +  }
-+  setTimeout(() => {
++  queueMeasurement(() => {
 +    if (!node.isConnected || !parent.isConnected) {
-+      return;
++      return null;
 +    }
 +    var offsetParent = node.offsetParent;
 +    var x;
@@ -65,13 +84,15 @@ index f302870..3b15e7f 100644
 +      x = rect.left - parentRect.left;
 +      y = rect.top - parentRect.top;
 +    }
-+    callback(x, y, node.offsetWidth, node.offsetHeight);
-+  }, 0);
++    var width = node.offsetWidth;
++    var height = node.offsetHeight;
++    return () => callback(x, y, width, height);
++  });
 +}
  function getResizeObserver() {
    if (_canUseDom.default && typeof window.ResizeObserver !== 'undefined') {
      if (resizeObserver == null) {
-@@ -28,18 +81,25 @@ function getResizeObserver() {
+@@ -28,18 +102,25 @@ function getResizeObserver() {
            if (typeof onLayout === 'function') {
              // We still need to measure the view because browsers don't yet provide
              // border-box dimensions in the entry
@@ -106,7 +127,7 @@ index f302870..3b15e7f 100644
                  },
                  timeStamp: Date.now()
                };
-@@ -63,6 +123,7 @@ function getResizeObserver() {
+@@ -63,6 +144,7 @@ function getResizeObserver() {
  }
  function useElementLayout(ref, onLayout) {
    var observer = getResizeObserver();
@@ -114,7 +135,7 @@ index f302870..3b15e7f 100644
    (0, _useLayoutEffect.default)(() => {
      var node = ref.current;
      if (node != null) {
-@@ -70,22 +131,14 @@ function useElementLayout(ref, onLayout) {
+@@ -70,22 +152,14 @@ function useElementLayout(ref, onLayout) {
      }
    }, [ref, onLayout]);
  
@@ -146,10 +167,10 @@ index f302870..3b15e7f 100644
 \ No newline at end of file
 +module.exports = exports.default;
 diff --git a/dist/modules/useElementLayout/index.js b/dist/modules/useElementLayout/index.js
-index cd75e40..c242556 100644
+index cd75e40a824..7e679ed456a 100644
 --- a/dist/modules/useElementLayout/index.js
 +++ b/dist/modules/useElementLayout/index.js
-@@ -8,11 +8,64 @@
+@@ -8,11 +8,85 @@
   */
  
  import useLayoutEffect from '../useLayoutEffect';
@@ -185,14 +206,33 @@ index cd75e40..c242556 100644
 +    left
 +  };
 +};
++// A window resize delivers every changed View in one ResizeObserver callback. Measuring each in its own
++// setTimeout(0) ran one task (and one React update) per View: ~45 per resize step on a Home. All queued
++// measurements now run in one deferred pass: every geometry read first, then every onLayout callback,
++// so a callback's synchronous writes cannot force a layout for the next read.
++var pendingMeasurements = [];
++function flushMeasurements() {
++  var queued = pendingMeasurements;
++  pendingMeasurements = [];
++  var report = [];
++  for (var i = 0; i < queued.length; i++) {
++    var deliver = queued[i]();
++    if (deliver) report.push(deliver);
++  }
++  for (var j = 0; j < report.length; j++) report[j]();
++}
++function queueMeasurement(measure) {
++  pendingMeasurements.push(measure);
++  if (pendingMeasurements.length === 1) setTimeout(flushMeasurements, 0);
++}
 +function measureInParent(node, callback) {
 +  var parent = node.parentNode;
 +  if (parent == null) {
 +    return;
 +  }
-+  setTimeout(() => {
++  queueMeasurement(() => {
 +    if (!node.isConnected || !parent.isConnected) {
-+      return;
++      return null;
 +    }
 +    var offsetParent = node.offsetParent;
 +    var x;
@@ -209,13 +249,15 @@ index cd75e40..c242556 100644
 +      x = rect.left - parentRect.left;
 +      y = rect.top - parentRect.top;
 +    }
-+    callback(x, y, node.offsetWidth, node.offsetHeight);
-+  }, 0);
++    var width = node.offsetWidth;
++    var height = node.offsetHeight;
++    return () => callback(x, y, width, height);
++  });
 +}
  function getResizeObserver() {
    if (canUseDOM && typeof window.ResizeObserver !== 'undefined') {
      if (resizeObserver == null) {
-@@ -23,18 +76,25 @@ function getResizeObserver() {
+@@ -23,18 +97,25 @@ function getResizeObserver() {
            if (typeof onLayout === 'function') {
              // We still need to measure the view because browsers don't yet provide
              // border-box dimensions in the entry
@@ -250,7 +292,7 @@ index cd75e40..c242556 100644
                  },
                  timeStamp: Date.now()
                };
-@@ -58,6 +118,7 @@ function getResizeObserver() {
+@@ -58,6 +139,7 @@ function getResizeObserver() {
  }
  export default function useElementLayout(ref, onLayout) {
    var observer = getResizeObserver();
@@ -258,7 +300,7 @@ index cd75e40..c242556 100644
    useLayoutEffect(() => {
      var node = ref.current;
      if (node != null) {
-@@ -65,21 +126,13 @@ export default function useElementLayout(ref, onLayout) {
+@@ -65,21 +147,13 @@ export default function useElementLayout(ref, onLayout) {
      }
    }, [ref, onLayout]);
  
@@ -289,7 +331,7 @@ index cd75e40..c242556 100644
 +  }, [ref, observer, hasOnLayout]);
 +}
 diff --git a/src/modules/useElementLayout/index.js b/src/modules/useElementLayout/index.js
-index 6099899..da188f7 100644
+index 6099899ca68..9a35c4f2ca1 100644
 --- a/src/modules/useElementLayout/index.js
 +++ b/src/modules/useElementLayout/index.js
 @@ -11,7 +11,6 @@ import type { ElementRef } from 'react';
@@ -300,7 +342,7 @@ index 6099899..da188f7 100644
  import canUseDOM from '../canUseDom';
  
  const DOM_LAYOUT_HANDLER_NAME = '__reactLayoutHandler';
-@@ -19,6 +18,60 @@ const DOM_LAYOUT_HANDLER_NAME = '__reactLayoutHandler';
+@@ -19,6 +18,81 @@ const DOM_LAYOUT_HANDLER_NAME = '__reactLayoutHandler';
  let didWarn = !canUseDOM;
  let resizeObserver = null;
  
@@ -331,14 +373,33 @@ index 6099899..da188f7 100644
 +    left
 +  };
 +};
++// A window resize delivers every changed View in one ResizeObserver callback. Measuring each in its own
++// setTimeout(0) ran one task (and one React update) per View: ~45 per resize step on a Home. All queued
++// measurements now run in one deferred pass: every geometry read first, then every onLayout callback,
++// so a callback's synchronous writes cannot force a layout for the next read.
++var pendingMeasurements = [];
++function flushMeasurements() {
++  var queued = pendingMeasurements;
++  pendingMeasurements = [];
++  var report = [];
++  for (var i = 0; i < queued.length; i++) {
++    var deliver = queued[i]();
++    if (deliver) report.push(deliver);
++  }
++  for (var j = 0; j < report.length; j++) report[j]();
++}
++function queueMeasurement(measure) {
++  pendingMeasurements.push(measure);
++  if (pendingMeasurements.length === 1) setTimeout(flushMeasurements, 0);
++}
 +function measureInParent(node, callback) {
 +  const parent = node.parentNode;
 +  if (parent == null) {
 +    return;
 +  }
-+  setTimeout(() => {
++  queueMeasurement(() => {
 +    if (!node.isConnected || !parent.isConnected) {
-+      return;
++      return null;
 +    }
 +    const offsetParent = node.offsetParent;
 +    let x;
@@ -355,13 +416,15 @@ index 6099899..da188f7 100644
 +      x = rect.left - parentRect.left;
 +      y = rect.top - parentRect.top;
 +    }
-+    callback(x, y, node.offsetWidth, node.offsetHeight);
-+  }, 0);
++    var width = node.offsetWidth;
++    var height = node.offsetHeight;
++    return () => callback(x, y, width, height);
++  });
 +}
  function getResizeObserver(): ?ResizeObserver {
    if (canUseDOM && typeof window.ResizeObserver !== 'undefined') {
      if (resizeObserver == null) {
-@@ -29,11 +82,25 @@ function getResizeObserver(): ?ResizeObserver {
+@@ -29,11 +103,25 @@ function getResizeObserver(): ?ResizeObserver {
            if (typeof onLayout === 'function') {
              // We still need to measure the view because browsers don't yet provide
              // border-box dimensions in the entry
@@ -389,7 +452,7 @@ index 6099899..da188f7 100644
                  },
                  timeStamp: Date.now()
                };
-@@ -67,6 +134,7 @@ export default function useElementLayout(
+@@ -67,6 +155,7 @@ export default function useElementLayout(
    onLayout?: ?(e: LayoutEvent) => void
  ) {
    const observer = getResizeObserver();
@@ -397,7 +460,7 @@ index 6099899..da188f7 100644
  
    useLayoutEffect(() => {
      const node = ref.current;
-@@ -75,21 +143,13 @@ export default function useElementLayout(
+@@ -75,21 +164,13 @@ export default function useElementLayout(
      }
    }, [ref, onLayout]);
  
