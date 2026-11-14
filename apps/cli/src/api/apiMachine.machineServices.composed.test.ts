@@ -1,3 +1,4 @@
+import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -381,6 +382,14 @@ it.each(['current', 'full-key', 'missing-grant', 'keyless-basis', 'restoration',
             happierHomeDir: home, serverId: target.serverId, environmentId,
         });
         const serviceId = `${deploymentIdentity.environmentInstanceId}/web`;
+        // The network admission boundary supplies custody; a person-shaped
+        // authority string alone is deliberately insufficient for incomplete logs.
+        const personContext = { surface: 'cli' as const, authority: 'present_user' as const,
+            machineAdmission: SocketRpcMachineAdmissionContextV1Schema.parse({ actorAccountId: 'owner',
+                custodianAccountId: 'owner', machineId: target.machineId, installationId, role: 'manage',
+                encryptionMode: custody === 'keyless-basis' || keyHoldingAccount ? 'e2ee' : 'plain' }),
+            verifyMachineAdmissionCurrent: async () => true };
+
         mounted = await createAdmittedPluginRuntimeFixture({ happyHomeDir: home, controller: pluginReloadController,
             runtimeOptions: { pluginIds: [] } });
         const owner = mounted.registry.projectManagedServices;
@@ -553,6 +562,11 @@ it.each(['current', 'full-key', 'missing-grant', 'keyless-basis', 'restoration',
             }) };
             if (path.includes('/encryption')) return { status: 200, data: { mode: custody === 'keyless-basis' || keyHoldingAccount ? 'e2ee' : 'plain', version: 1,
                 signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+            // This journey exercises exact retained-generation log reads. No
+            // Environment is selected for startup restoration in this fixture.
+            if (path === '/v1/deployments/environments') return { status: 200,
+                data: DeploymentEnvironmentListResultV1Schema.parse({ ok: true, items: [], nextCursor: null,
+                    coverage: 'complete', runtimeTargetLinks: [] }) };
             if (path === '/v1/deployments/environments/access') return { status: 200,
                 data: canReadEnvironment ? environmentAccessResponse : deniedEnvironmentAccessResponse };
             if (path.endsWith(`/environments/${environmentId}`)) return { status: 200, data: environmentResponse };
@@ -601,12 +615,12 @@ it.each(['current', 'full-key', 'missing-grant', 'keyless-basis', 'restoration',
         // Binding the optional recovery capability must not eagerly read private
         // receipts. Ordinary Machine discovery and unrelated metadata are not demand.
         await client.executeMachineServiceAction({ actionId: 'machines.services.discovery', input: target,
-            context: { surface: 'cli', authority: 'present_user' } });
+            context: personContext });
         await client.updateMachineMetadata(current => ({ ...current!, displayName: 'Unrelated display name' }));
         expect(reads.some(path => path.includes('/artifacts/') || path.includes('/environments/')
             || path.includes('/receipts/') || path.endsWith('/secret-launch-admission'))).toBe(false);
         const listed = await client.executeMachineServiceAction({ actionId: 'machines.services.list', input: target,
-            context: { surface: 'cli', authority: 'present_user' }, canReadEnvironments: async ids => new Set(ids.filter(id => id === environmentId)),
+            context: personContext, canReadEnvironments: async ids => new Set(ids.filter(id => id === environmentId)),
             requesterAccountId: 'owner' });
         const installed = client;
         const executor = createCliActionExecutor({ token, credentials, mode: 'plain', ctx: null, sessionId: 'cli-global',
@@ -617,7 +631,7 @@ it.each(['current', 'full-key', 'missing-grant', 'keyless-basis', 'restoration',
         if (activationHandoff || activationUpWait) {
             expect(owner.listProjectServices()).toEqual([]);
             const person = await executor.execute('machines.services.logs.read', { ...target, serviceId },
-                { surface: 'cli', authority: 'present_user' });
+                personContext);
             const beforeAgent = (await docker.readInvocations()).filter(request => request.args[0] === 'logs').length;
             const agent = await executor.execute('machines.services.logs.read', { ...target, serviceId },
                 { surface: 'mcp', authority: 'account_automation' });
@@ -644,7 +658,7 @@ it.each(['current', 'full-key', 'missing-grant', 'keyless-basis', 'restoration',
                 await activated.dispose();
                 const beforeClosed = await docker.readInvocations();
                 const personAfterClose = await executor.execute('machines.services.logs.read', { ...target, serviceId },
-                    { surface: 'cli', authority: 'present_user' });
+                    personContext);
                 const agentAfterClose = await executor.execute('machines.services.logs.read', { ...target, serviceId },
                     { surface: 'mcp', authority: 'account_automation' });
                 expect(personAfterClose).toMatchObject({ ok: true, result: { kind: 'page', page: { secretMasking: 'incomplete' } } });
@@ -688,7 +702,7 @@ it.each(['current', 'full-key', 'missing-grant', 'keyless-basis', 'restoration',
                 expect(owner.resolveEnvironmentService(target.serverId, { kind: 'deployment', machineId: target.machineId,
                     environmentId, environmentInstanceId: deploymentIdentity.environmentInstanceId, composeService: 'web', serviceId })).toBeNull();
                 const person = await executor.execute('machines.services.logs.read', { ...target, serviceId },
-                    { surface: 'cli', authority: 'present_user' });
+                    personContext);
                 const agent = await executor.execute('machines.services.logs.read', { ...target, serviceId },
                     { surface: 'mcp', authority: 'account_automation' });
                 const observe = (result: typeof person) => {
@@ -714,16 +728,15 @@ it.each(['current', 'full-key', 'missing-grant', 'keyless-basis', 'restoration',
         expect(listed).toMatchObject({ kind: 'snapshot', services: [] });
         expect(owner.listProjectServices()).toEqual([]);
         const machineLogs = await executor.execute('machines.services.logs.read', { ...target,
-            serviceId }, { surface: 'cli', authority: 'present_user' });
+            serviceId }, personContext);
         // Owner C12 (2026-10-30): Home-held grants and full Account keys do
         // not recover the original deployment's lost in-memory masking basis.
         expect(machineLogs.ok, JSON.stringify(machineLogs)).toBe(true);
         if (!machineLogs.ok) throw new Error('The person lost live-log access after restart');
         const page = ManagedServiceNativeLogResultV1Schema.parse(machineLogs.result);
         expect(page).toMatchObject({ kind: 'page', page: { secretMasking: 'incomplete',
-            text: expect.stringContaining('secret masking may be incomplete until the next deploy'),
+            text: expect.stringContaining('PORT=3000'),
         } });
-        expect(JSON.stringify(page)).toContain('3000');
         const beforeAgent = (await docker.readInvocations()).filter(request => request.args[0] === 'logs').length;
         const agentLogs = await executor.execute('machines.services.logs.read', { ...target,
             serviceId }, { surface: 'mcp', authority: 'account_automation' });
@@ -738,7 +751,7 @@ it.each(['current', 'full-key', 'missing-grant', 'keyless-basis', 'restoration',
             canReadEnvironment = false;
             try {
                 const deniedPersonLogs = await executor.execute('machines.services.logs.read', { ...target,
-                    serviceId }, { surface: 'cli', authority: 'present_user' });
+                    serviceId }, personContext);
                 expect(deniedPersonLogs).toMatchObject({ ok: false, errorCode: 'service_unavailable' });
                 expect((await docker.readInvocations()).filter(request => request.args[0] === 'logs')).toHaveLength(beforeAgent);
             } finally { canReadEnvironment = true; }
@@ -757,10 +770,9 @@ it.each(['current', 'full-key', 'missing-grant', 'keyless-basis', 'restoration',
                 machineId: target.machineId, environmentId, environmentInstanceId: deploymentIdentity.environmentInstanceId,
                 serviceId, composeService: 'web' } };
         const logs = await deps.deploymentAction!('deployments.logs.read', deploymentLogInput,
-            { surface: 'cli', authority: 'present_user' });
-        expect(logs).toMatchObject({ ok: true });
-        expect(JSON.stringify(logs)).toContain('secret masking may be incomplete until the next deploy');
-        expect(JSON.stringify(logs)).toContain('3000');
+            personContext);
+        expect(logs).toMatchObject({ ok: true, kind: 'runtime', logs: { kind: 'page',
+            page: { secretMasking: 'incomplete', text: expect.stringContaining('PORT=3000') } } });
         const beforeDeploymentAgent = (await docker.readInvocations()).filter(request => request.args[0] === 'logs').length;
         const deploymentAgentLogs = await deps.deploymentAction!('deployments.logs.read', deploymentLogInput,
             { surface: 'mcp', authority: 'account_automation' });
@@ -888,7 +900,13 @@ it.each(['current', 'full-key', 'missing-grant', 'keyless-basis', 'restoration',
                     async invoke() { throw new Error('Foreign Home logs must use the installed Machine owner'); } } });
             const beforeForeignLogs = (await docker.readInvocations()).filter(request => request.args[0] === 'logs').length;
             const foreignLogs = await foreignExecutor.execute('machines.services.logs.read', { ...foreignTarget,
-                serviceId: `${foreignIdentity.environmentInstanceId}/web` }, { surface: 'cli', authority: 'present_user' });
+                serviceId: `${foreignIdentity.environmentInstanceId}/web` }, {
+                ...personContext,
+                machineAdmission: SocketRpcMachineAdmissionContextV1Schema.parse({
+                    ...personContext.machineAdmission,
+                    actorAccountId: 'other-home-owner', custodianAccountId: 'other-home-owner',
+                }),
+            });
             const afterForeignLogs = (await docker.readInvocations()).filter(request => request.args[0] === 'logs').length;
             expect({ result: foreignLogs.ok ? 'page' : foreignLogs.errorCode,
                 nativeLogReads: afterForeignLogs - beforeForeignLogs,
