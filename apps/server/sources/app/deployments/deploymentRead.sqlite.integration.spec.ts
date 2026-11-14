@@ -643,4 +643,59 @@ describe('deployment detail admission cost', () => {
             items: [{ environment: { id: environment.id } }] });
     });
 
+    it('carries the serving receipt and current Domains without widening exact Environment header reads', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const source = await inTx(tx => createProjectSourceInTx(tx, owner.id,
+            { serverId, requestKey: randomUUID(), name: 'Serving inventory', audience: [] }));
+        if (!source.ok) throw new Error(source.error);
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id,
+            metadata: '{}', installationId: randomUUID() } });
+        const content = async (kind: string) => {
+            const artifact = await createArtifact({ actorUserId: owner.id, artifactId: randomUUID(), kind: `v1:other:${kind}`,
+                header: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ kind, title: 'Serving page' })),
+                body: privacyKit.decodeBase64(encodePlainArtifactStoredContent({ body: '{}' })),
+                dataEncryptionKey: privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+            if (!artifact.ok) throw new Error(artifact.error);
+            return { contentArtifactId: artifact.artifact.id, contentHeaderVersion: 1, contentBodyVersion: 1 };
+        };
+        const environment = await db.deploymentEnvironment.create({ data: { projectSourceId: source.source.id,
+            createdByAccountId: owner.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+            controllerMachineId: machine.id, ...await content('deployment-environment.v1') } });
+        const target = await db.deploymentTargetLink.create({ data: { environmentId: environment.id,
+            createdByAccountId: owner.id, role: 'runtime', sourceKind: 'host', hostTargetId: 'own-server',
+            targetKind: 'ownServer', state: 'deployed', ...await content('deployment-target-link.v1'),
+            machines: { create: { machineId: machine.id, installationId: machine.installationId!, position: 0, state: 'active' } } } });
+        const receipt = async (state: string, requestedAt: number) => db.deployment.create({ data: {
+            environmentId: environment.id, targetLinkId: target.id, operation: 'deploy', state, requestedAt: new Date(requestedAt),
+            requestedByAccountId: owner.id, requestKey: randomUUID(), actionOperationId: randomUUID(), ...await content('deployment-receipt.v1') } });
+        const serving = await receipt('succeeded', 1000);
+        const latest = await receipt('failed', 2000);
+        await db.deploymentTargetLink.update({ where: { id: target.id }, data: { activeDeploymentId: serving.id } });
+        await db.deploymentEnvironment.update({ where: { id: environment.id }, data: { runtimeTargetLinkId: target.id } });
+        const domainBase = { environmentId: environment.id, targetLinkId: target.id, createdByAccountId: owner.id,
+            state: 'active', ...await content('deployment-domain.v1') };
+        const domain = await db.deploymentDomain.create({ data: domainBase });
+        const removed = await db.deploymentDomain.create({ data: { ...domainBase, deletedAt: new Date() } });
+        const page = await inTx(tx => listDeploymentEnvironmentsInTx(tx, owner.id, { serverId, projectSourceId: source.source.id }));
+        expect(page).toMatchObject({ ok: true, currentDeployments: [{ id: latest.id }],
+            runtimeTargetLinks: [{ id: target.id }], servingDeployments: [{ id: serving.id }], liveAddressDomains: [{ id: domain.id }] });
+        if (!page.ok) throw new Error(page.error);
+        expect(JSON.stringify(page)).not.toContain(removed.id);
+        const queries: string[] = [];
+        const stop = observeSqliteRequests({ before: query => { if (query.model) queries.push(query.model); } });
+        const exact = await inTx(tx => listDeploymentEnvironmentsInTx(tx, owner.id,
+            { serverId, projectSourceId: source.source.id, environmentIds: [environment.id] })).finally(stop);
+        expect(exact).toMatchObject({ ok: true, items: [{ id: environment.id }], currentDeployments: [] });
+        expect(exact).not.toHaveProperty('servingDeployments');
+        expect(exact).not.toHaveProperty('liveAddressDomains');
+        expect(queries.filter(model => model === 'Deployment' || model === 'DeploymentDomain')).toEqual([]);
+        // A malformed retained link must not turn the owner's partial page into
+        // an unmatched serving receipt that strict readers reject wholesale.
+        await db.deploymentTargetLink.update({ where: { id: target.id }, data: { updatedAt: new Date(-1) } });
+        const partial = await inTx(tx => listDeploymentEnvironmentsInTx(tx, owner.id,
+            { serverId, projectSourceId: source.source.id }));
+        expect(partial).toMatchObject({ ok: true, coverage: 'partial', items: [{ id: environment.id }],
+            runtimeTargetLinks: [], servingDeployments: [], currentDeployments: [{ id: latest.id }] });
+    });
+
 });

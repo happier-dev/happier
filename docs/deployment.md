@@ -1001,7 +1001,18 @@ The same already-opened, mode-aware receipt header supplies
 `item.currentDeployment.title`. This is the latest attempt, not necessarily the
 serving version. `item.liveVersionTitle` is present only when that carried receipt
 matches the runtime TargetLink's `activeDeploymentId`; otherwise it is null.
-The list does not open an older serving receipt or its body to fill that gap.
+The version-title projection stays with the latest-attempt header; the separate
+serving receipt below supplies the address without changing that title contract.
+
+Ordinary inventory pages also carry `servingDeployments` and `liveAddressDomains`
+from the selected runtime link and current, nondeleted Domains. Their private
+Artifacts join the same mode-aware batch as Environment content and latest-attempt
+headers. The opened item's `liveAddress` uses the existing live-address resolver:
+an older serving receipt remains authoritative after a failed latest attempt,
+platform URLs come from its recorded observation, and native addresses come from
+its matching current Domain. Missing legacy metadata or unreadable required content
+leaves the address omitted; a known unresolved address is null. Exact-ID Environment
+header demand reads no receipt or Domain content.
 Header batching, continuation and Source disclosure remain with their existing
 owners; rendering and loaded-surface evidence remain with the surface owners.
 

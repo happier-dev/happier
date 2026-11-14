@@ -621,6 +621,9 @@ export const DeploymentEnvironmentListResultV1Schema = lazyZodSchema(() => z.uni
     /** Exact admitted Source presentation; its existing metadata contract owns name disclosure. */
     projectSources: z.optional(z.array(deploymentProjectSourcePresentationV1Schema)),
     runtimeTargetLinks: z.optional(z.array(DeploymentTargetLinkHeaderV1Schema)),
+    /** Current runtime custody, independent of the latest attempt. Private bytes stay in Artifacts. */
+    servingDeployments: z.optional(z.array(DeploymentReceiptHeaderV1Schema)),
+    liveAddressDomains: z.optional(z.array(DeploymentDomainHeaderV1Schema)),
     currentDeployments: z.optional(z.array(DeploymentReceiptHeaderV1Schema)), nextCursor: z.nullable(DeploymentIdentifierV1Schema),
     activity: z.optional(z.strictObject({ running: z.boolean(), failed: z.boolean(),
       /** Number of readable Environments whose latest attempt is running or failed. */

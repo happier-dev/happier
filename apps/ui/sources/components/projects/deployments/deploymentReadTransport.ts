@@ -20,7 +20,8 @@ import { captureLazyActionAccountContext, type LazyActionAccountContext } from '
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { HappyError } from '@/utils/errors/errors';
 import { domainHealthObserver, environmentHealthObserver } from './observeEnvironmentHealth';
-import { projectDeploymentReceiptHistoryEntryV1, readDeploymentDatabaseSizesV1, selectDeploymentRuntimeTargetLinkV1 } from '@happier-dev/deployments';
+import { projectDeploymentReceiptHistoryEntryV1, projectDeploymentReceiptUrlFactsV1, readDeploymentDatabaseSizesV1, selectDeploymentRuntimeTargetLinkV1 } from '@happier-dev/deployments';
+import { deploymentLiveAddressDemand, resolveDeploymentLiveAddress } from './deploymentLiveAddressFacts';
 
 function failure(code: string, retryable = false): Extract<DeploymentReadResultV1<never>, { ok: false }> {
     return { ok: false, failure: { code, retryable } };
@@ -206,12 +207,34 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
             const receipts = query.environmentIds === undefined
                 ? (page.currentDeployments ?? []).filter(row => environmentsById.has(row.environmentId)) : [];
             const currentByEnvironment = new Map(receipts.map((receipt, index) => [receipt.environmentId, { receipt, index }]));
+            const addressMetadata = query.environmentIds === undefined && page.servingDeployments !== undefined
+                && page.liveAddressDomains !== undefined && page.runtimeTargetLinks !== undefined;
+            const serving = addressMetadata ? page.servingDeployments ?? [] : [];
+            if (serving.some(receipt => {
+                const runtime = runtimeByEnvironment.get(receipt.environmentId);
+                return runtime?.activeDeploymentId !== receipt.id || runtime.id !== receipt.targetLinkId;
+            })) return failure('invalid_response');
+            const servingById = new Map(serving.map((receipt, index) => [receipt.id, { receipt, index }]));
+            const servingEnvironments = new Set(serving.map(receipt => receipt.environmentId));
+            const domains = addressMetadata ? (page.liveAddressDomains ?? []).filter(domain => servingEnvironments.has(domain.environmentId)) : [];
+            const servingOffset = page.items.length + receipts.length;
+            const domainOffset = servingOffset + serving.length;
             // Existing headers predate configured-backup membership. Open the visible page once,
-            // including current receipt headers, so old configurations need no rewrite or per-row read.
+            // including current/serving receipts and current Domains without per-row reads.
             const contents = await readArtifactsByRow([...page.items.map(row => row.contentArtifactId),
-                ...receipts.map(row => row.contentArtifactId)], ids => account.readArtifactContents(ids, { signal: options.signal }));
+                ...receipts.map(row => row.contentArtifactId), ...serving.map(row => row.contentArtifactId),
+                ...domains.map(row => row.contentArtifactId)], ids => account.readArtifactContents(ids, { signal: options.signal }));
             const items = [];
             let coverage = page.coverage;
+            const domainsByEnvironment = new Map<string, { items: Parameters<typeof resolveDeploymentLiveAddress>[1][number][]; complete: boolean }>();
+            for (const [index, domain] of domains.entries()) {
+                let group = domainsByEnvironment.get(domain.environmentId);
+                if (!group) { group = { items: [], complete: true }; domainsByEnvironment.set(domain.environmentId, group); }
+                const read = contents[domainOffset + index];
+                const opened = readDeploymentDomainArtifactV1(domain, read?.status === 'fulfilled' ? read.value : null);
+                if (opened.ok) group.items.push({ domain, content: opened.content });
+                else { group.complete = false; coverage = 'partial'; }
+            }
             for (const [index, environment] of page.items.entries()) {
                 const read = contents[index];
                 if (!read || read.status !== 'fulfilled') { coverage = 'partial'; continue; }
@@ -229,12 +252,33 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                     else coverage = 'partial';
                 }
                 const runtimeTargetLink = runtimeByEnvironment.get(environment.id) ?? null;
+                let liveAddress: string | null | undefined;
+                if (addressMetadata && (runtimeTargetLink || environment.runtimeTargetLinkId === undefined)) {
+                    if (!runtimeTargetLink?.activeDeploymentId) liveAddress = null;
+                    else {
+                        const active = servingById.get(runtimeTargetLink.activeDeploymentId);
+                        if (active) {
+                            const read = contents[servingOffset + active.index];
+                            const opened = readDeploymentReceiptArtifactV1(active.receipt, read?.status === 'fulfilled' ? read.value : null);
+                            if (opened.ok) {
+                                const receipt = { deployment: active.receipt, content: opened.content,
+                                    facts: projectDeploymentReceiptUrlFactsV1(opened.content) };
+                                const domains = domainsByEnvironment.get(environment.id);
+                                const resolved = resolveDeploymentLiveAddress(receipt, domains?.items ?? [], true);
+                                if (resolved) liveAddress = resolved.url;
+                                else if (!deploymentLiveAddressDemand(receipt, true)
+                                    || (page.coverage !== 'partial' && domains?.complete !== false)) liveAddress = null;
+                            } else coverage = 'partial';
+                        }
+                    }
+                }
                 items.push({ environment, title: label.title, projectSourceName,
                     ...(opened.ok ? { backupConfigured: opened.content.backup !== undefined
                         && !('notNeeded' in opened.content.backup),
                         previewTemplateConfigured: opened.content.previewTemplate !== undefined } : {}),
                     liveVersionTitle: currentDeployment && runtimeTargetLink?.activeDeploymentId === currentDeployment.id
                         ? currentDeployment.title ?? null : null,
+                    ...(liveAddress === undefined ? {} : { liveAddress }),
                     ...(page.runtimeTargetLinks === undefined ? {} : { runtimeTargetLink }),
                     currentDeployment });
             }

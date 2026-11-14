@@ -103,6 +103,12 @@ export function projectDeploymentReceiptHistoryEntryV1({ content, deployment }: 
             member.steps.map(step => ({ ...step, machineId: member.machineId })))] };
 }
 
+/** Observed address facts without preparing unconsumed execution step/log trees. */
+export function projectDeploymentReceiptUrlFactsV1(content: DeploymentReceiptDetailV1['content']):
+    Pick<DeploymentReceiptFactsV1, 'urls' | 'urlsObservedAtMs'> {
+    return { urls: content.platform?.observation.urls ?? null, urlsObservedAtMs: content.platform?.observation.observedAtMs ?? null };
+}
+
 /** Historical evidence comes from the receipt; optional current retention facts share the opened history page. */
 export function projectDeploymentReceiptFactsV1(receipt: DeploymentReceiptDetailV1,
     retainedHistory?: DeploymentReceiptRetainedHistoryV1): DeploymentReceiptFactsV1 {
@@ -147,7 +153,7 @@ export function projectDeploymentReceiptFactsV1(receipt: DeploymentReceiptDetail
                 return member.steps.map(step => ({ ...step, machineId: member.machineId, logs, stageLogs: forStep(step, member.machineId) }));
             }),
         ],
-        urls: content.platform?.observation.urls ?? null, urlsObservedAtMs: content.platform?.observation.observedAtMs ?? null,
+        ...projectDeploymentReceiptUrlFactsV1(content),
         health: { source: 'receipt', members: content.machineResults },
         downtime: projectDeploymentDowntimeClassV1(rollout, content.ownServer?.rollbackTarget != null) ?? null,
     };

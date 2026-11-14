@@ -28,7 +28,7 @@ import type { Prisma } from '@prisma/client';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { resolveProjectSourcesAccessInTx } from '@/app/projects/sources/projectSourceService';
 import { deploymentInProgressStates } from './deploymentAcceptedExecution';
-import { readDeploymentDomainEnvironmentIdsForMachineInTx, projectDeploymentDomainMachineReferences } from './deploymentDomainService';
+import { readDeploymentDomainEnvironmentIdsForMachineInTx, projectDeploymentDomainMachineReferences, projectDeploymentDomainHeader } from './deploymentDomainService';
 import type { VerifiedExternalActionExecutionRequest } from '@/app/auth/externalActionExecutionAuthorization';
 import { normalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity } from '@happier-dev/protocol/scm/hostingRepositoryIdentity';
 import { readDeploymentBindingSavedSecretRevisionsV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
@@ -309,7 +309,9 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
             // history. Ordinary inventory retains its incumbent receipt projection.
             deployments: input.environmentIds === undefined
                 ? { orderBy: [{ requestedAt: 'desc' }, { id: 'desc' }], take: 1 } : false,
-            runtimeTargetLink: { include: { machines: { orderBy: { position: 'asc' } } } } } });
+            domains: input.environmentIds === undefined ? { where: { deletedAt: null }, orderBy: { id: 'asc' } } : false,
+            runtimeTargetLink: { include: { machines: { orderBy: { position: 'asc' } },
+                activeDeployment: input.environmentIds === undefined } } } });
     // Carry only the existing page window into the next query. The database
     // merges it with that selection chunk in its native collation, preserving
     // the ordinary list/cursor contract without a JavaScript ordering copy.
@@ -355,6 +357,8 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
     const items: ReturnType<typeof projectDeploymentEnvironmentHeader>[] = [];
     const projectSources = new Map<string, Pick<DeploymentSourceAdmission['source'], 'id' | 'name'>>();
     const currentDeployments: ReturnType<typeof projectDeploymentReceiptHeader>[] = [];
+    const servingDeployments: ReturnType<typeof projectDeploymentReceiptHeader>[] = [];
+    const liveAddressDomains: ReturnType<typeof projectDeploymentDomainHeader>[] = [];
     const runtimeTargetLinks: ReturnType<typeof projectDeploymentTargetHeader>[] = [];
     let coverage: 'complete' | 'partial' = 'complete';
     const selectedRepository = input.previewRepository ? normalizeScmHostingRepositoryIdentity(input.previewRepository) : null;
@@ -381,11 +385,21 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
             if (projected) currentDeployments.push(projected);
             else coverage = 'partial';
         }
+        for (const domain of row.domains ?? []) {
+            const projected = projectDeploymentListRow(() => projectDeploymentDomainHeader(domain));
+            if (projected) liveAddressDomains.push(projected);
+            else coverage = 'partial';
+        }
         if (row.runtimeTargetLink) {
             const link = row.runtimeTargetLink;
             const projected = projectDeploymentListRow(() => projectDeploymentTargetHeader(link));
             if (projected) runtimeTargetLinks.push(projected);
             else coverage = 'partial';
+            if (projected && link.activeDeployment) {
+                const receipt = projectDeploymentListRow(() => projectDeploymentReceiptHeader(link.activeDeployment!));
+                if (receipt) servingDeployments.push(receipt);
+                else coverage = 'partial';
+            }
         }
     }
     const last = selected.at(-1);
@@ -393,6 +407,7 @@ export async function listDeploymentEnvironmentsInTx(tx: Tx, actorAccountId: str
         ? items.at(-1)?.id === last.id ? last.id : sealDeploymentReadCursor(actorAccountId, input, last.id)
         : null;
     return { ok: true as const, items, projectSources: [...projectSources.values()], currentDeployments, runtimeTargetLinks, coverage,
+        ...(input.environmentIds === undefined ? { servingDeployments, liveAddressDomains } : {}),
         nextCursor };
 }
 

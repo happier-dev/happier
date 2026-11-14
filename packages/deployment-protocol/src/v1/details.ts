@@ -25,6 +25,8 @@ export const DeploymentEnvironmentCollectionV1Schema = z.strictObject({
         previewTemplateConfigured: z.optional(z.boolean()),
         /** Unknown unless the carried receipt is the runtime link's actual active deployment. */
         liveVersionTitle: z.optional(z.nullable(z.string())),
+        /** Opened serving address; null means none resolved, omission means unknown. */
+        liveAddress: z.optional(z.nullable(z.string())),
         runtimeTargetLink: z.optional(z.nullable(DeploymentTargetLinkHeaderV1Schema)),
         currentDeployment: z.optional(z.nullable(z.extend(DeploymentReceiptHeaderV1Schema, {
             title: z.optional(z.string()),

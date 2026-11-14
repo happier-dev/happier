@@ -11,13 +11,14 @@ import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/proto
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { createDeploymentEnvironmentDetailV1, createDeploymentEnvironmentHeaderV1, createDeploymentReceiptDetailV1,
     createDeploymentReceiptHeaderV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol/v1';
+import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, DeploymentPlatformContentV1Schema } from '@happier-dev/deployment-protocol/v1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { encodeBase64 } from '@/encryption/base64';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 import { createDeploymentReadControllerV1 } from '@happier-dev/deployments';
-import { buildDeploymentAccountChangeV1, DeploymentDomainPageSuccessV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { buildDeploymentAccountChangeV1, DeploymentDomainPageSuccessV1Schema, DeploymentEnvironmentListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DeploymentDomainHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 
 
 const homes = createHomeGovernanceHarness();
@@ -35,6 +36,106 @@ const pageItems = (result: unknown) => (result as Readonly<{ value: Readonly<{ i
 describe('deployment scoped read transport', () => {
     beforeEach(() => homes.reset());
     afterEach(() => standardCleanup());
+
+    it.each(['plain', 'e2ee'] as const)('projects %s live addresses from the serving receipt and current Domains in one batch', async mode => {
+        const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-owner' })).toString('base64url')}.signature`;
+        const secret = new Uint8Array(32).fill(11);
+        const serverId = await homes.addHome({ name: 'Live address', serverUrl: 'https://live-address.test',
+            accountId: 'account-owner', accountEncryptionMode: mode,
+            ...(mode === 'e2ee' ? { credentials: { token, secret: encodeBase64(secret, 'base64url') } } : {}) });
+        if (mode === 'e2ee') homes.answer(serverId, '/v1/account/encryption/currentness', { body: {
+            mode: 'e2ee', version: 1, signingKeyFingerprint: 'signing-fingerprint',
+            contentKeyFingerprint: convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1(
+                createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee', material: { type: 'legacy', secret } }).contentPublicKeyFingerprint),
+            updatedAt: 1, recipientEnvelopeReadiness: { status: 'available' },
+        } });
+        const detail = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({ serverId }) });
+        const active = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({
+            id: 'serving-old', contentArtifactId: 'serving-artifact', state: 'succeeded' }) });
+        const latest = createDeploymentReceiptHeaderV1({ id: 'latest-failed', contentArtifactId: 'failed-artifact', state: 'failed' });
+        const runtime = createDeploymentTargetLinkHeaderV1({ activeDeploymentId: active.deployment.id });
+        const domain = DeploymentDomainHeaderV1Schema.parse({ v: 1, id: 'current-domain', environmentId: detail.environment.id,
+            targetLinkId: runtime.id, revision: 1, state: 'active', contentArtifactId: 'current-domain-artifact',
+            contentHeaderVersion: 1, contentBodyVersion: 1, createdByAccountId: 'account-owner', createdAtMs: 1000, updatedAtMs: 1000 });
+        const platform = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({
+            id: 'platform-serving', contentArtifactId: 'platform-artifact', state: 'succeeded' }),
+            content: DeploymentPlatformContentV1Schema.parse({ sourceIntent: { kind: 'repository', projectSourceId: 'source-app',
+                sourceRevision: 1, sha: 'a'.repeat(40) }, sourceMethod: 'gitIntegration', machines: [], images: [], machineResults: [], steps: [],
+                platform: { credentialPrincipal: { kind: 'account', accountId: 'account-owner', purpose: {
+                    consumer: { pluginId: 'happier.deployment-vercel', localId: 'targets-inspect-v1' }, purpose: 'deploy.manage' },
+                    target: { kind: 'account', account: { service: { pluginId: 'happier.machine-vercel', localId: 'vercel' }, accountId: 'connected' } } },
+                    providerIdentity: { providerAccountId: 'team', providerResourceId: 'project', providerEnvironment: 'production' },
+                    providerEnvironment: { kind: 'production' }, targetLinkRevision: 1,
+                    observation: { v: 1, state: 'succeeded', observedAtMs: 1000, urls: ['https://platform.example.test/'] } } }) });
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const writer = await captureLazyActionAccountContext(serverId);
+        try {
+            for (const [id, kind, title, body] of [
+                [detail.environment.contentArtifactId, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, 'App', detail.content],
+                [active.deployment.contentArtifactId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, 'Serving revision', active.content],
+                [latest.contentArtifactId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, 'Failed revision', platform.content],
+                [platform.deployment.contentArtifactId, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1, 'Platform revision', platform.content],
+                [domain.contentArtifactId, 'deployment-domain.v1', 'Current Domain', { hostname: 'app.example.test',
+                    target: { service: 'app', containerPort: 3000 } }],
+            ] as const) await writer.createArtifactDocument({ artifactId: id, header: { kind, title }, body: JSON.stringify(body) });
+        } finally { writer.dispose(); }
+        const root = '/v1/deployments/environments';
+        const base = DeploymentEnvironmentListResultV1Schema.parse({ ok: true, items: [detail.environment],
+            currentDeployments: [latest], runtimeTargetLinks: [runtime], nextCursor: null });
+        const respond = (overrides: object = {}) => homes.answer(serverId, root, { body: { ...base,
+            servingDeployments: [active.deployment], liveAddressDomains: [domain], ...overrides } });
+        const lifetime: ServerAccountScopeLifetime = { scope: { serverId, accountId: 'account-owner' },
+            isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+        const transport = createDeploymentReadTransport(lifetime);
+        const options = { signal: new AbortController().signal };
+        const readItem = async () => {
+            const page = await transport.listEnvironments(lifetime.scope, {}, options);
+            expect(page.ok, JSON.stringify(page)).toBe(true);
+            if (!page.ok) throw new Error(page.failure.code);
+            return page.value.items[0]!;
+        };
+        respond();
+        const before = homes.requests.length;
+        expect(await readItem()).toMatchObject({ liveAddress: 'https://app.example.test/', currentDeployment: { id: latest.id } });
+        const reads = homes.requests.slice(before);
+        expect(reads.filter(request => request.path === '/v1/artifacts/read').map(request => request.input)).toEqual([
+            { artifactIds: [detail.environment.contentArtifactId, latest.contentArtifactId, active.deployment.contentArtifactId, domain.contentArtifactId] },
+        ]);
+        expect(reads.filter(request => request.path.startsWith(`${root}/`))).toEqual([]);
+        const controller = createDeploymentReadControllerV1({ scope: lifetime.scope, transport });
+        const collection = controller.acquireCollection({}, { mounted: true, visible: true, focused: true });
+        try {
+            await collection.refresh();
+            expect(collection.getSnapshot().value?.items[0]).toHaveProperty('liveAddress', 'https://app.example.test/');
+            respond({ liveAddressDomains: [] });
+            controller.invalidate({ environmentId: detail.environment.id });
+            await collection.refresh();
+            expect(collection.getSnapshot().value?.items[0]).toHaveProperty('liveAddress', null);
+        } finally { collection.release(); controller.retire(); }
+        respond({ servingDeployments: [{ ...active.deployment, contentArtifactId: 'missing-serving-content' }] });
+        expect(await readItem()).not.toHaveProperty('liveAddress');
+        respond({ liveAddressDomains: [{ ...domain, contentArtifactId: 'missing-domain-content' }] });
+        expect(await readItem()).not.toHaveProperty('liveAddress');
+        respond({ coverage: 'partial' });
+        expect(await readItem()).toHaveProperty('liveAddress', 'https://app.example.test/');
+        respond({ coverage: 'partial', liveAddressDomains: [] });
+        expect(await readItem()).not.toHaveProperty('liveAddress');
+        respond({ servingDeployments: [platform.deployment], liveAddressDomains: [],
+            runtimeTargetLinks: [{ ...runtime, activeDeploymentId: platform.deployment.id }], coverage: 'partial' });
+        expect(await readItem()).toHaveProperty('liveAddress', 'https://platform.example.test/');
+        respond({ servingDeployments: [{ ...platform.deployment, state: 'failed' }], liveAddressDomains: [],
+            runtimeTargetLinks: [{ ...runtime, activeDeploymentId: platform.deployment.id }] });
+        expect(await readItem()).toHaveProperty('liveAddress', null);
+        homes.answer(serverId, root, { body: base });
+        expect(await readItem()).not.toHaveProperty('liveAddress');
+        respond();
+        const beforeExact = homes.requests.length;
+        const exact = await transport.listEnvironments(lifetime.scope, { environmentIds: [detail.environment.id] }, options);
+        expect(exact.ok).toBe(true);
+        expect(pageItems(exact)[0]).not.toHaveProperty('liveAddress');
+        expect(homes.requests.slice(beforeExact).filter(request => request.path === '/v1/artifacts/read').map(request => request.input))
+            .toEqual([{ artifactIds: [detail.environment.contentArtifactId] }]);
+    });
 
     it.each(['plain', 'e2ee'] as const)('opens %s Account Domain labels from the bundled page without detail fanout', async mode => {
         const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-owner' })).toString('base64url')}.signature`;
