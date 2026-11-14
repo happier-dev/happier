@@ -97,6 +97,7 @@ export type ConnectedServiceQuotaGaugeViewModel = Readonly<{
     detailRightLabel: string;
     usedLimitLabel: string | null;
     resetLabel: string | null;
+    /** Tone of the center number's window. */
     tone: ConnectedServiceQuotaGaugeTone;
     isStale: boolean;
     recoveryCreditSummary: ConnectedServiceQuotaRecoveryCreditSummary | null;
@@ -192,10 +193,29 @@ export function resolveConnectedServiceQuotaMeterScopePrefix(
     return null;
 }
 
-/** Longer periods enclose shorter ones in a concentric gauge. */
-function quotaWindowRank(meter: ConnectedServiceQuotaMeterV1): number {
+/**
+ * Window length used to nest concentric rings, longer periods outside. A reported
+ * duration wins; a named family stands in for its upper bound; unknown periods stay outermost.
+ */
+function quotaWindowNestingDurationMs(meter: ConnectedServiceQuotaMeterV1): number {
+    if (typeof meter.windowDurationMs === 'number' && meter.windowDurationMs > 0) return meter.windowDurationMs;
     const window = resolveConnectedServiceQuotaMeterWindow(meter);
-    return window === 'session' ? 1 : window === 'daily' ? 2 : window === 'weekly' ? 3 : 4;
+    return window === 'session' ? DAY_MS : window === 'daily' ? 2 * DAY_MS : window === 'weekly' ? 8 * DAY_MS : Number.MAX_SAFE_INTEGER;
+}
+
+/** The candidate with the least remaining included quota; meters without a measurable percentage are skipped. */
+function selectLeastRemainingQuotaMeter(
+    candidates: readonly ConnectedServiceQuotaMeterV1[],
+): { meter: ConnectedServiceQuotaMeterV1; remainingPct: number } | null {
+    let selected: { meter: ConnectedServiceQuotaMeterV1; remainingPct: number } | null = null;
+    for (const meter of candidates) {
+        const usedPct = deriveQuotaUtilizationPct(meter);
+        if (usedPct === null) continue;
+        const remainingPct = typeof meter.remainingPct === 'number' && Number.isFinite(meter.remainingPct)
+            ? clampQuotaPct(meter.remainingPct) : clampQuotaPct(100 - usedPct);
+        if (!selected || remainingPct < selected.remainingPct) selected = { meter, remainingPct };
+    }
+    return selected;
 }
 
 function meterMatchesWindowMode(
@@ -402,20 +422,8 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
     const selectedMeters = windowModes.flatMap((mode) => {
         const matching = rankableMeters.filter((meter) => meterMatchesWindowMode(meter, mode));
         // Preserve the predecessor single-window fallback; explicit multi-selections omit missing windows.
-        const candidates = matching.length || params.windowModes?.length ? matching : rankableMeters;
-        let selected: ConnectedServiceQuotaMeterV1 | null = null;
-        let leastRemaining = Number.POSITIVE_INFINITY;
-        for (const meter of candidates) {
-            const usedPct = deriveQuotaUtilizationPct(meter);
-            if (usedPct === null) continue;
-            const remaining = typeof meter.remainingPct === 'number' && Number.isFinite(meter.remainingPct)
-                ? clampQuotaPct(meter.remainingPct) : clampQuotaPct(100 - usedPct);
-            if (remaining < leastRemaining) {
-                selected = meter;
-                leastRemaining = remaining;
-            }
-        }
-        return selected ? [{ meter: selected, remainingPct: leastRemaining }] : [];
+        const selected = selectLeastRemainingQuotaMeter(matching.length || params.windowModes?.length ? matching : rankableMeters);
+        return selected ? [selected] : [];
     });
     // Favorites append to global windows after Pool filtering; dedupe shared meters.
     for (const meterId of params.additionalMeterIds ?? []) {
@@ -445,18 +453,16 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
         ? null
         : resolveConnectedServiceQuotaMeterScopePrefix(effectiveMeter);
     const roundedRemaining = Math.round(effectiveRemainingPct);
+    // The center number follows its own window; "most constrained" and an unreported
+    // window use the lowest drawn ring, so the default never names an undrawn limit.
     const numberWindowMode = params.numberWindowMode;
-    const matchingNumberMeters = numberWindowMode
-        ? rankableMeters.filter(meter => meterMatchesWindowMode(meter, numberWindowMode))
-        : [];
-    const numberMeters = matchingNumberMeters.length ? matchingNumberMeters : rankableMeters;
-    const numberMeter = numberWindowMode
-        ? numberMeters.reduce<ConnectedServiceQuotaMeterV1 | null>((selected, meter) => (
-            selected === null || (deriveQuotaMeterValues(meter).remainingPct ?? 100)
-                < (deriveQuotaMeterValues(selected).remainingPct ?? 100) ? meter : selected
-        ), null) ?? effectiveMeter
-        : effectiveMeter;
-    const numberRemainingPct = deriveQuotaMeterValues(numberMeter).remainingPct ?? effectiveRemainingPct;
+    const center = !numberWindowMode
+        ? selectedMeters[0]
+        : (numberWindowMode === 'most_constrained' ? null : selectLeastRemainingQuotaMeter(
+            rankableMeters.filter((meter) => meterMatchesWindowMode(meter, numberWindowMode)),
+        )) ?? selectLeastRemainingQuotaMeter(selectedMeters.map(({ meter }) => meter)) ?? selectedMeters[0];
+    const centerRow = center.meter === effectiveMeter ? selectedRow : buildMeterRow(center.meter, params.nowMs, params.formatter);
+    const centerRemaining = Math.round(center.remainingPct);
     const remainingValueLabel = params.formatter.remaining({ percent: `${roundedRemaining}%` });
     const staleAt = params.snapshot.fetchedAt + params.snapshot.staleAfterMs;
     const isStale = params.nowMs > staleAt;
@@ -498,19 +504,19 @@ export function computeConnectedServiceQuotaGaugeViewModel(_params: Readonly<{
         usedPct: selectedRow.usedPct,
         primaryValueSemantics: 'remaining',
         valueLabel: remainingValueLabel,
-        ringValueLabel: String(Math.round(numberRemainingPct)),
-        ringValueAccessibilityLabel: `${numberMeter.label} ${params.formatter.remaining({ percent: `${Math.round(numberRemainingPct)}%` })}`,
+        ringValueLabel: String(centerRemaining),
+        ringValueAccessibilityLabel: `${centerRow.label} ${params.formatter.remaining({ percent: `${centerRemaining}%` })}`,
         badgeLabel: selectedWindowPrefix ? `${selectedWindowPrefix} ${remainingValueLabel}` : remainingValueLabel,
         scopePrefix: selectedWindowPrefix,
         detailRightLabel: selectedRow.detailRightLabel,
         usedLimitLabel: selectedRow.usedLimitLabel,
         resetLabel: selectedRow.resetLabel,
-        tone: selectedRow.tone,
+        tone: centerRow.tone,
         isStale,
         recoveryCreditSummary: summarizeConnectedServiceQuotaRecoveryCredits(params.snapshot.recoveryCredits, params.nowMs),
         effectiveMeter,
         allMeterRows,
-        usageRings: displayedMeterRows.sort((a, b) => quotaWindowRank(b.meter) - quotaWindowRank(a.meter)).map(({ meter, row }) => {
+        usageRings: displayedMeterRows.sort((a, b) => quotaWindowNestingDurationMs(b.meter) - quotaWindowNestingDurationMs(a.meter)).map(({ meter, row }) => {
             const ringRemaining = Math.round(row.remainingPct);
             return {
                 meterId: meter.meterId,

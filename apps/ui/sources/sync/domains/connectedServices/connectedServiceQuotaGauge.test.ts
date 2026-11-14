@@ -86,6 +86,41 @@ describe('computeConnectedServiceQuotaGaugeViewModel', () => {
         expect(weeklyOnly?.usageRings.map(ring => ring.meterId)).toEqual(['secondary']);
     });
 
+    it('keeps the default center number on a drawn ring and colors it by the chosen window', () => {
+        const input = {
+            snapshot: snapshot([
+                meter({ meterId: 'primary', label: '5-hour', remainingPct: 0, utilizationPct: 100, windowDurationMs: 18_000_000 }),
+                meter({ meterId: 'secondary', label: 'Weekly', remainingPct: 70, utilizationPct: 30, windowDurationMs: 604_800_000 }),
+            ]),
+            windowMode: 'most_constrained' as const,
+            nowMs: 2_000, formatter,
+        };
+        // An exhausted window the user did not draw must not take over the default center.
+        expect(computeConnectedServiceQuotaGaugeViewModel({
+            ...input, windowModes: ['weekly'], numberWindowMode: 'most_constrained',
+        })?.ringValueLabel).toBe('70');
+        const exhaustedCenter = computeConnectedServiceQuotaGaugeViewModel({
+            ...input, windowModes: ['weekly', 'session'], numberWindowMode: 'session',
+        });
+        const exhaustedAlone = computeConnectedServiceQuotaGaugeViewModel({ ...input, windowModes: ['session'] });
+        const healthyAlone = computeConnectedServiceQuotaGaugeViewModel({ ...input, windowModes: ['weekly'] });
+        expect(exhaustedAlone?.tone).not.toBe(healthyAlone?.tone);
+        expect(exhaustedCenter?.ringValueLabel).toBe('0');
+        expect(exhaustedCenter?.tone).toBe(exhaustedAlone?.tone);
+    });
+
+    it('draws longer windows outside shorter ones even within one window family', () => {
+        const vm = computeConnectedServiceQuotaGaugeViewModel({
+            snapshot: snapshot([
+                meter({ meterId: 'one_hour', label: '1-hour', remainingPct: 10, utilizationPct: 90, windowDurationMs: 3_600_000 }),
+                meter({ meterId: 'five_hour', label: '5-hour', remainingPct: 60, utilizationPct: 40, windowDurationMs: 18_000_000 }),
+            ]),
+            windowMode: 'most_constrained', windowModes: ['session'], additionalMeterIds: ['five_hour'],
+            nowMs: 2_000, formatter,
+        });
+        expect(vm?.usageRings.map(ring => ring.meterId)).toEqual(['five_hour', 'one_hour']);
+    });
+
 
     it('projects Antigravity quota onto the exact active model without borrowing another version', () => {
         const usage = { ...snapshot([
