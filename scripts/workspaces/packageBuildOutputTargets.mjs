@@ -1,5 +1,7 @@
 export {
   WORKSPACE_PACKAGE_BUILD_INPUT_RECORD,
+  PLUGIN_UI_DIST_DIRECTORY,
+  SOURCE_PLUGIN_UI_PUBLISHER_ENTRIES,
   collectPackageBuildOutputTargets,
   isLocalPackageBuildOutputTarget,
   isPackageBuildDistOutputTarget,

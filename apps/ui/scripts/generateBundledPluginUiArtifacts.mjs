@@ -3,6 +3,7 @@ import { lstatSync, readFileSync, readdirSync, realpathSync, statSync } from 'no
 import { createRequire } from 'node:module';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { PLUGIN_UI_PACKAGED_RESOURCES_DIRECTORY } from '../../../packages/cli-common/packageBuildOutputTargets.mjs';
 import { projectBundledPluginUiDeclaration, projectBundledPluginUiFirstPaintDeclaration } from '../../cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs';
 import { PLUGIN_PACKAGE_PREFIX, pluginPackageNameToPackageId, readBundledPluginPackageNames } from '../../cli/scripts/build-owned/bundledPluginMembership.ts';
 import { readBundledPluginUiDeclarationSource, renderBundledPluginUiDeclarationSource } from './bundledPluginUiDeclarationSource.mjs';
@@ -223,7 +224,7 @@ export function readBundledPluginUiArtifactsRetainedInventory(inventoryPath) {
     const pluginId = JSON.parse(encodedPluginId);
     const resourceId = JSON.parse(encodedResourceId);
     const resource = declarations.get(pluginId)?.normalizedManifest?.contributes?.resources?.find(entry => entry.id === resourceId);
-    if (resource?.path) retainRoot(pluginId, `packaged-resources/${resource.path}.bundle`, assetIndex);
+    if (resource?.path) retainRoot(pluginId, `${PLUGIN_UI_PACKAGED_RESOURCES_DIRECTORY}/${resource.path}.bundle`, assetIndex);
   }
   return { roots, declarations };
 }
@@ -446,7 +447,7 @@ export async function collectBundledPluginUiArtifactSources(repoRoot, initialPlu
     }
     for (const resource of declaration?.normalizedManifest?.contributes.resources ?? []) {
       if (resource.source === 'dynamic' || resource.kind !== 'asset' || resource.contentType !== 'application/json') continue;
-      const relativePath = `packaged-resources/${resource.path}.bundle`;
+      const relativePath = `${PLUGIN_UI_PACKAGED_RESOURCES_DIRECTORY}/${resource.path}.bundle`;
       let file = resourceFiles.get(relativePath);
       if (!file) {
         const path = assertArtifactPath(packageRoot, resource.path, packageName);

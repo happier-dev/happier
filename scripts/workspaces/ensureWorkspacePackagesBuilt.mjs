@@ -28,6 +28,8 @@ import { withWorkspaceOutputScriptArgs } from './workspaceOutputScriptArgs.mjs';
 import { resolveTypeScriptCliInvocation, requiresTypeScriptAdmission } from './resolveTypeScriptCliInvocation.mjs';
 import {
   WORKSPACE_PACKAGE_BUILD_INPUT_RECORD as BUILD_INPUT_RECORD,
+  PLUGIN_UI_DIST_DIRECTORY,
+  SOURCE_PLUGIN_UI_PUBLISHER_ENTRIES,
   collectPackageBuildOutputTargets,
   isLocalPackageBuildOutputTarget,
   isPackageBuildDistOutputTarget,
@@ -52,7 +54,21 @@ import {
 } from './workspacePackageDependencies.mjs';
 
 const GENERATED_PLUGIN_UI_ARTIFACTS_MANIFEST_RELATIVE_PATH =
-  'dist/happier-plugin-ui/ui-artifacts.json';
+  `dist/${PLUGIN_UI_DIST_DIRECTORY}/ui-artifacts.json`;
+// Dist paths the source Plugin UI publisher owns. The whole subtree is its own
+// unless the package build ran `build:ui` (and so recorded the subtree); then
+// only its packaged resources and reuse record are.
+const SOURCE_PLUGIN_UI_PUBLISHER_PATHS = Object.freeze([PLUGIN_UI_DIST_DIRECTORY,
+  ...SOURCE_PLUGIN_UI_PUBLISHER_ENTRIES.map((entry) => `${PLUGIN_UI_DIST_DIRECTORY}/${entry}`)]);
+
+/** Dist files the package record owns, excluding what the source Plugin UI publisher writes. */
+function collectPackageOwnedDistFiles(distDir, recordedFiles) {
+  const prefix = `${PLUGIN_UI_DIST_DIRECTORY}/`;
+  const ownsPluginUi = Array.isArray(recordedFiles) && recordedFiles.some((path) => path.startsWith(prefix));
+  const foreign = ownsPluginUi ? SOURCE_PLUGIN_UI_PUBLISHER_PATHS.slice(1) : [PLUGIN_UI_DIST_DIRECTORY];
+  return collectPublishedDistFiles(distDir)
+    .filter((path) => !foreign.some((owned) => path === owned || path.startsWith(`${owned}/`)));
+}
 const DEFAULT_MAX_CONCURRENT_WORKSPACE_BUILDS = 2;
 const WORKSPACE_BUILD_EVENT_PREFIX = '[workspace-build-progress] ';
 let bundledPluginUiManifestGenerator;
@@ -807,7 +823,7 @@ function readVerifiedOutputRecord(distDir, inputFingerprint, { requirePruned = f
     if (requireCompleteDigests && (!Array.isArray(record.files) || record.files.length === 0
       || record.files.some((path) => !record.outputs.some((output) => output.path === path)))) return false;
     if (requirePruned) {
-      const actualFiles = collectPublishedDistFiles(distDir);
+      const actualFiles = collectPackageOwnedDistFiles(distDir, record.files);
       if (
         !Array.isArray(record.files)
         || record.files.length !== actualFiles.length
@@ -832,7 +848,7 @@ function readVerifiedOutputRecord(distDir, inputFingerprint, { requirePruned = f
     const recordedPaths = new Set(outputs.map(output => output.path));
     const previousVerification = new Map((Array.isArray(record.outputVerification) ? record.outputVerification : [])
       .map(output => [output.path, output]));
-    const verification = collectPublishedDistFiles(distDir).flatMap(path => {
+    const verification = collectPackageOwnedDistFiles(distDir, record.files).flatMap(path => {
       if (recordedPaths.has(path)) return [];
       const outputPath = join(distDir, path);
       const stat = lstatSync(outputPath, { bigint: true });
@@ -1424,6 +1440,7 @@ async function consumeWorkspacePackageBuildInputs({
       await buildIntoTempThenReplace(distDir, publishOutputs, {
         preserveDestinationPath: true,
         pruneStale: publicationMode === 'artifact',
+        retainUnstagedPaths: SOURCE_PLUGIN_UI_PUBLISHER_PATHS,
       });
     }
     // Mounted publication can preserve existing inodes or move staged ones.

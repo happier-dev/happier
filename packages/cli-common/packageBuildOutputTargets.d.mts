@@ -1,6 +1,9 @@
 export type PackageBuildOutputTarget = string;
 
 export const WORKSPACE_PACKAGE_BUILD_INPUT_RECORD: '.happier-build-inputs.json';
+export const PLUGIN_UI_DIST_DIRECTORY: 'happier-plugin-ui';
+export const PLUGIN_UI_PACKAGED_RESOURCES_DIRECTORY: 'packaged-resources';
+export const SOURCE_PLUGIN_UI_PUBLISHER_ENTRIES: readonly string[];
 
 export type ResolvePackageBuildOutputTargetPathOptions = Readonly<{
   packageDir: string;

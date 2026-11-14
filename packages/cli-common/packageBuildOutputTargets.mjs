@@ -3,6 +3,12 @@ import { dirname, join, resolve, sep } from 'node:path';
 
 export const WORKSPACE_PACKAGE_BUILD_INPUT_RECORD = '.happier-build-inputs.json';
 
+/** The Plugin UI dist subtree. A package build owns it only when its own `build:ui` records it. */
+export const PLUGIN_UI_DIST_DIRECTORY = 'happier-plugin-ui';
+/** Entries inside that subtree the source Plugin UI publisher writes (packaged resources, its reuse record). */
+export const PLUGIN_UI_PACKAGED_RESOURCES_DIRECTORY = 'packaged-resources';
+export const SOURCE_PLUGIN_UI_PUBLISHER_ENTRIES = Object.freeze([PLUGIN_UI_PACKAGED_RESOURCES_DIRECTORY, WORKSPACE_PACKAGE_BUILD_INPUT_RECORD]);
+
 function collectTargetStrings(value, targets) {
   if (typeof value === 'string') {
     targets.push(value);

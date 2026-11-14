@@ -45,6 +45,7 @@ export async function buildIntoTempThenReplace(
     waitImpl = wait,
     preserveDestinationPath = false,
     pruneStale = true,
+    retainUnstagedPaths = [],
   } = {},
 ) {
   const outDir = String(targetDir ?? '').trim();
@@ -66,6 +67,7 @@ export async function buildIntoTempThenReplace(
         liveDir: outDir,
         rollbackDir: backupDir,
         pruneStale,
+        retainUnstagedPaths,
       });
       // The mounted publisher owns rollback cleanup, including retained
       // recovery backups when restoration fails.

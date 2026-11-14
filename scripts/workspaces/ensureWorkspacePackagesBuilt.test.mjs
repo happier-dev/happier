@@ -4643,6 +4643,57 @@ test('an artifact rebuild that emits unchanged bytes keeps those dist files in p
   assert.equal(existsSync(join(distDir, 'stale.js')), false, 'artifact publication must still prune stale outputs');
 });
 
+for (const packageBuildsUi of [false, true]) test(`source-published Plugin UI artifacts survive a live → artifact → live cycle without a rebuild (package build:ui ${packageBuildsUi})`, async (t) => {
+  // The Plugin UI build, not the package compiler, owns dist/happier-plugin-ui
+  // for a package without `build:ui`. Artifact admission must neither treat
+  // that subtree as stale output nor prune it.
+  const repoRoot = mkdtempSync(join(tmpdir(), 'happier-plugin-ui-ping-pong-'));
+  t.after(() => rmSync(repoRoot, { recursive: true, force: true }));
+  writePnpmWorkspaceFixture(repoRoot, { private: true, workspaces: ['apps/*', 'packages/*'] });
+  writeFileSync(join(repoRoot, 'pnpm-lock.yaml'), '# fixture\n');
+  for (const name of ['cli', 'ui', 'server']) {
+    mkdirSync(join(repoRoot, 'apps', name), { recursive: true });
+    writeFileSync(join(repoRoot, 'apps', name, 'package.json'), JSON.stringify({ name: `@fixture/${name}` }));
+  }
+  const protocolDir = join(repoRoot, 'packages', 'protocol');
+  mkdirSync(join(protocolDir, 'src'), { recursive: true });
+  writeFileSync(join(protocolDir, 'src', 'index.ts'), 'export const current = true;\n');
+  writeFileSync(join(protocolDir, 'tsconfig.json'), '{}\n');
+  writeFileSync(join(protocolDir, 'package.json'), JSON.stringify({
+    name: '@happier-dev/protocol', version: '0.0.0', type: 'module', main: './dist/index.js', types: './dist/index.d.ts',
+    exports: { '.': { types: './dist/index.d.ts', default: './dist/index.js' } }, scripts: { build: 'fixture-build', ...(packageBuildsUi ? { 'build:ui': 'fixture-ui' } : {}) },
+  }));
+  let compiles = 0;
+  const build = async (publicationMode) => await ensureWorkspacePackagesBuiltByName(repoRoot, ['@happier-dev/protocol'], {
+    publicationMode,
+    workspaceBuildBoundary: {
+      async prepareEnv(_packageDir, env) { return { ...env }; },
+      async runPackageBuild(_packageDir, { env }) {
+        compiles += 1;
+        writeFileSync(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.js'), 'export const current = true;\n');
+        writeFileSync(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'index.d.ts'), 'export declare const current: true;\n');
+        if (packageBuildsUi) {
+          mkdirSync(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'happier-plugin-ui'), { recursive: true });
+          writeFileSync(join(env.HAPPIER_WORKSPACE_DIST_OUTPUT_DIR, 'happier-plugin-ui', 'ui-artifacts.json'), '{}\n');
+        }
+      },
+      async runPackageScript() {},
+    },
+  });
+  await build('live');
+  // With a package `build:ui` the source publisher still adds packaged resources and its record.
+  const uiPath = join(protocolDir, 'dist', 'happier-plugin-ui', packageBuildsUi
+    ? 'packaged-resources/assets/i18n/en.json.bundle' : 'react-native/entry.cjs.bundle');
+  mkdirSync(dirname(uiPath), { recursive: true });
+  writeFileSync(uiPath, 'ui bundle\n');
+  const uiInode = statSync(uiPath).ino;
+  assert.equal(compiles, 1);
+  await build('artifact');
+  await build('live');
+  assert.equal(compiles, 1, 'the artifact admission rebuilt a current package because of Plugin UI output');
+  assert.equal(existsSync(uiPath) && statSync(uiPath).ino, uiInode, 'the Plugin UI output was removed or replaced');
+});
+
 test('declared plugin UI artifacts participate in atomic workspace build admission', async () => {
   const repoRoot = mkdtempSync(join(tmpdir(), 'happier-workspace-plugin-ui-admission-'));
   try {

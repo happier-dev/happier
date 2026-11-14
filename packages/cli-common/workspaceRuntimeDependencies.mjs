@@ -329,6 +329,8 @@ function reconcileStagedDirectoryIntoLiveDirectorySync({
   rename,
   remove,
   pruneStale,
+  retainUnstagedPaths,
+  relativeDir = '',
   deferredRemovals,
 }) {
   const pendingRemovals = deferredRemovals ?? [];
@@ -368,6 +370,8 @@ function reconcileStagedDirectoryIntoLiveDirectorySync({
           rename,
           remove,
           pruneStale,
+          retainUnstagedPaths,
+          relativeDir: relativeDir ? `${relativeDir}/${entry.name}` : entry.name,
           deferredRemovals: pendingRemovals,
         });
         continue;
@@ -421,7 +425,8 @@ function reconcileStagedDirectoryIntoLiveDirectorySync({
 
   if (pruneStale) {
     for (const liveEntry of readDir(liveDir)) {
-      if (!stagedNames.has(liveEntry.name)) {
+      if (!stagedNames.has(liveEntry.name)
+        && !retainUnstagedPaths?.has(relativeDir ? `${relativeDir}/${liveEntry.name}` : liveEntry.name)) {
         pendingRemovals.push(resolve(liveDir, liveEntry.name));
       }
     }
@@ -451,11 +456,16 @@ function reconcileStagedDirectoryIntoLiveDirectorySync({
   }
 }
 
+/**
+ * `retainUnstagedPaths` names live paths (relative, `/`-separated) another
+ * producer owns: pruning leaves them in place when the staged tree lacks them.
+ */
 export function publishStagedDirectoryMountedSync({
   stagedDir,
   liveDir,
   rollbackDir,
   pruneStale = false,
+  retainUnstagedPaths = [],
   fsOps = {},
 }) {
   const lstat = fsOps.lstatSync ?? lstatSync;
@@ -495,6 +505,7 @@ export function publishStagedDirectoryMountedSync({
       rename,
       remove,
       pruneStale,
+      retainUnstagedPaths: new Set(retainUnstagedPaths),
     });
   } catch (error) {
     try {
