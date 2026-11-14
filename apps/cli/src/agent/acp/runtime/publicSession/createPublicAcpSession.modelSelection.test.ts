@@ -24,7 +24,8 @@ import { AGENT_DEFINITION as DROID_DEFINITION } from '../../../../../../../packa
 import { createCopilotAgentRuntime } from '../../../../../../../packages/plugins/copilot/src/agent/runtime/factory';
 import { COPILOT_PLUGIN } from '../../../../../../../packages/plugins/copilot/src/manifest';
 import { AGENT_DEFINITION as COPILOT_DEFINITION } from '../../../../../../../packages/plugins/copilot/src/agent/definition';
-import { COPILOT_GITHUB_PURPOSE_ID } from '../../../../../../../packages/plugins/copilot/src/agent/auth/services/accountPurposes';
+import { COPILOT_OPENAI_CODEX_PURPOSE_ID } from '../../../../../../../packages/plugins/copilot/src/agent/auth/services/accountPurposes';
+import { OPENAI_CONNECTED_ACCOUNT_SERVICE, OPENAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-openai/connected-account-service';
 import { COPILOT_PROVIDER_BINDING_ADAPTER_V1 } from '../../../../../../../packages/plugins/copilot/src/agent/providerBinding';
 import { createOpenCodeAgentRuntime } from '../../../../../../../packages/plugins/opencode/src/agent/runtime/nativeRuntime';
 import { OPENCODE_PLUGIN } from '../../../../../../../packages/plugins/opencode/src/manifest';
@@ -184,7 +185,10 @@ async function fixture(dir: string, scenario: 'accept' | 'refuse' | 'current', a
   };
   const agent = PluginAgentContributionV2Schema.parse(plugin.manifest.contributes.agents?.find(entry => entry.id === agentId));
   const services = createUnavailablePluginServices();
-  const account = { service: museAccount ? { pluginId: 'happier.agent.muse', localId: 'muse-account' } : agentId === 'opencode' ? { pluginId: 'happier.voice.openai', localId: 'openai' }
+  // Native-key purposes coexist now; this credential boundary selects one
+  // account, rather than reporting the same account for every declared purpose.
+  const selectedPurpose = museAccount ? 'muse' : agentId === 'copilot' ? COPILOT_OPENAI_CODEX_PURPOSE_ID : OPEN_CODE_OPENAI_API_KEY_PURPOSE_ID;
+  const account = { service: museAccount ? { pluginId: 'happier.agent.muse', localId: 'muse-account' } : agentId === 'opencode' || agentId === 'codebuddy' || agentId === 'droid' ? OPENAI_CONNECTED_ACCOUNT_SERVICE
     : { pluginId: 'happier.agent.codex', localId: 'openai-codex' }, accountId: 'selected' };
   // The status child is an OS boundary; native settings and host qualification stay real.
   const fxExec = agentId === 'fx' && selectedProvider ? createStablePluginExecService({
@@ -207,10 +211,10 @@ async function fixture(dir: string, scenario: 'accept' | 'refuse' | 'current', a
         queueMicrotask(() => listener({kind:'resync',authorityChanged:false})); return {dispose() {}};
       } } : {}),
       // This host port is the external credential boundary of the plugin leaf.
-      getBinding: async purpose => (museAccount ? purpose === 'muse' : agentId !== 'ohmypi' && selectedAccount && purpose !== COPILOT_GITHUB_PURPOSE_ID)
-        && (agentId !== 'opencode' || purpose === OPEN_CODE_OPENAI_API_KEY_PURPOSE_ID) ? { purpose, service: account.service, account,
+      getBinding: async purpose => (museAccount || (agentId !== 'ohmypi' && selectedAccount)) && purpose === selectedPurpose ? { purpose, service: account.service, account,
         target: { kind: 'account' as const, displayName: 'Selected' } } : null,
       materialize: async () => museAccount ? { kind: 'environment' as const, env: { [museAccount === 'apiKey' ? 'META_API_KEY' : 'MUSE_CODE_CREDENTIAL']: 'synthetic-muse-only' } } : agentId === 'opencode' ? { kind: 'environment' as const, env: { OPENAI_API_KEY: 'synthetic-selected' } }
+        : agentId === 'codebuddy' || agentId === 'droid' ? { kind: 'environment' as const, env: { [OPENAI_SELECTED_API_KEY_ENV]: 'synthetic-selected' } }
         : ({ kind: 'httpHeaders' as const, headers: { authorization: 'Bearer synthetic-selected', 'chatgpt-account-id': 'synthetic-account' } }),
     } } } : {}),
     protocols: { acp: { open: (request, options) => {
@@ -599,7 +603,9 @@ describe('FX model selection through the public ACP owner', () => {
             issue = classifyPrimarySessionRuntimeIssue({ cause: 'session_error', error, startupPhase: context.startupPhase });
           },
         });
-        const expectedCause = { phase: 'turn_start', failureReason: 'unclassified_provider_error', providerErrorCode: -32602 };
+        // The ACP diagnostic owns the native refusal phase; transition and
+        // prompt consumers preserve it rather than replacing it with turn_start.
+        const expectedCause = { phase: 'turn', failureReason: 'unclassified_provider_error', providerErrorCode: -32602 };
         expect.soft(transition).toMatchObject({ ok: false, status: 'apply_failed', failureCause: expectedCause });
         expect.soft(issue).toMatchObject({ source: 'agent_session_error', failureCause: expectedCause });
         await expect(createRuntimeOverrideTarget({ runtime: operations,
