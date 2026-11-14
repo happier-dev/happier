@@ -20,6 +20,24 @@ import { createCommittedContributedActionInvoker } from './invocation/actions/cr
 import { createBundledActivationSourceResolver } from './bundledActivationSource';
 
 describe('captured Account execution selection transport', () => {
+    it('selects a bundled Machine provider for controllerless Account controls without an explicit release', async () => {
+        const app = fastify();
+        const pluginId = 'happier.machine.agent37';
+        let reads = 0;
+        app.post(PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intent.read'], async () => {
+            reads += 1;
+            return { availabilityCursor: 1, hostingCapability: { enabled: false }, intent: null,
+                release: null, uiArtifacts: [], packageAssets: [] };
+        });
+        await app.ready();
+        const restore = installAxiosFastifyAdapter({ app, origin: 'http://bundled-account-control.test' });
+        try {
+            expect(await readCurrentAccountPluginExecutionSelection({ pluginId,
+                credentials: { token: 'account', encryption: null }, serverUrl: 'http://bundled-account-control.test' }))
+                .toMatchObject({ kind: 'available', manifest: { id: pluginId }, sourceCustody: { kind: 'bundled_first_party' } });
+            expect(reads).toBe(1);
+        } finally { restore(); await app.close(); }
+    });
     it('reads Account enablement in the shared census and keeps missing intent default-on', async () => {
         const app = fastify();
         const pluginIds = ['happier.language.markdown', 'happier.language.typescript'];

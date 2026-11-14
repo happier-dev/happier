@@ -11,8 +11,8 @@ import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityIntentReadAction
     PluginAvailabilityIntentSetActionInputV1Schema, PluginAvailabilityIntentSetActionOutputV1Schema,
     resolvePluginAccountExecutionSelectionV1, createPluginAccountBundledSelectionV1, isPluginUiReleaseSlotCompatibleWithArtifactLinkV1, snapshotPluginReleaseFactsV1,
     type PluginAvailabilityIntentReadActionOutputV1, type PluginAccountExecutionSelectionV1 } from '@happier-dev/protocol/plugins/availability';
-import { createPluginUiArtifactArchiveV1, decodePluginUiArtifactArchiveBodyV1, openPluginUiArtifactArchiveV1,
-    type PluginUiArtifactsManifestEntryV2 } from '@happier-dev/protocol/plugins/ui';
+import { createPluginUiArtifactArchiveV1, decodePluginUiArtifactArchiveBodyV1, openPluginUiArtifactArchiveV1 } from '@happier-dev/protocol/plugins/ui/artifactArchive';
+import type { PluginUiArtifactsManifestEntryV2 } from '@happier-dev/protocol/plugins/ui/uiArtifactsManifest';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
@@ -124,8 +124,14 @@ export async function readCurrentAccountPluginEnablements(input: AccountReadBind
 export async function readCurrentAccountPluginExecutionSelection(input: AccountReadBinding & Readonly<{
     pluginId: string; bundled?: AccountBundledSelection;
 }>): Promise<PluginAccountExecutionSelectionV1> {
+    const declaration = input.bundled ? undefined
+        : loadCurrentBundledPluginLocatorResult({ pluginIds: [input.pluginId] }).loadedPlugins
+            .find(plugin => plugin.pluginId === input.pluginId);
+    const bundled = input.bundled ?? (declaration ? createPluginAccountBundledSelectionV1({
+        packageName: declaration.sourceSpec.locator, manifest: declaration.manifest,
+    }) : undefined);
     return resolvePluginAccountExecutionSelectionV1({ pluginId: input.pluginId, intentRead: await readIntent(input),
-        ...(input.bundled ? { bundled: input.bundled } : {}) });
+        ...(bundled ? { bundled } : {}) });
 }
 
 /** Cold discovery uses Account custody without loading or activating a daemon module. */
@@ -159,13 +165,8 @@ export async function readCurrentMountedAccountPluginExecutionSelection(input: R
 }>): Promise<PluginAccountExecutionSelectionV1> {
     const unavailable = { kind: 'unavailable' as const, code: 'plugin_account_execution_unavailable' as const };
     if (!await input.runtime.isCurrent()) return unavailable;
-    const declaration = loadCurrentBundledPluginLocatorResult({ pluginIds: [input.pluginId] }).loadedPlugins
-        .find(plugin => plugin.pluginId === input.pluginId);
-    const bundled = declaration ? createPluginAccountBundledSelectionV1({
-        packageName: declaration.sourceSpec.locator, manifest: declaration.manifest,
-    }) : undefined;
     const selection = await readCurrentAccountPluginExecutionSelection({ pluginId: input.pluginId, credentials: input.runtime.credentials,
-        serverUrl: input.runtime.serverHttpBaseUrl, ...(bundled ? { bundled } : {}), ...(input.signal ? { signal: input.signal } : {}) });
+        serverUrl: input.runtime.serverHttpBaseUrl, ...(input.signal ? { signal: input.signal } : {}) });
     return await input.runtime.isCurrent() ? selection : unavailable;
 }
 
